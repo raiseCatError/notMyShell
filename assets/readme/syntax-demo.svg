@@ -1,36 +1,26 @@
 <svg width="600" height="240" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 240">
   <defs>
     <style>
-      .bg { fill: #0B0B0F; rx: 8; }
-      .code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 14px; }
+      .bg { fill: #0B0B0F; rx: 8px; }
+      .code { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 15px; }
       .primary { fill: #F2F0EC; }
       .secondary { fill: #B0B8C2; }
       .subtle { fill: #7D8590; }
-      .accent { fill: #C5B9E8; }
-      .success { fill: #a5d6a7; }
-      .stopped { fill: #d4a373; }
-      .separator { stroke: #3D444D; stroke-width: 1; }
+      .lavender { fill: #C5B9E8; }
+      .failure { fill: rgb(205,115,123); }
+      .amber { fill: rgb(198,156,109); }
     </style>
   </defs>
   <rect width="100%" height="100%" class="bg" />
   
-  <g class="code" transform="translate(20, 30)">
-    <!-- Completed command 1 -->
-    <text y="0" class="accent">❯ <tspan class="primary">git</tspan> <tspan class="primary">status</tspan></text>
-    <text y="22" class="primary">On branch master</text>
-    <text y="42" class="primary">nothing to commit, working tree clean</text>
-    <text y="62"><tspan class="success">✻</tspan> <tspan class="success">Checked status</tspan> <tspan class="secondary">for 0.1s · done 14:30</tspan></text>
-    
-    <line x1="0" y1="80" x2="560" y2="80" class="separator" />
+  <g class="code" transform="translate(32, 44)">
+    <text y="0"><tspan class="subtle">❯</tspan> <tspan class="lavender">git</tspan> <tspan class="primary">status</tspan></text>
+    <text y="24"><tspan class="lavender">✻</tspan> <tspan class="primary">Meowed</tspan> <tspan class="secondary">for 0.4s · done 12:34</tspan></text>
 
-    <!-- Current input -->
-    <text y="110" class="accent">❯ <tspan class="primary">echo</tspan> <tspan class="stopped">"hello world"</tspan> <tspan class="subtle">&amp;&amp;</tspan> <tspan class="accent">cd</tspan> <tspan class="secondary">~/Projects/notMyShell</tspan></text>
-    <text y="130" class="secondary">  # semantic highlighting instantly differentiates builtins, paths, strings</text>
-    
-    <line x1="0" y1="150" x2="560" y2="150" class="separator" />
+    <text y="68"><tspan class="subtle">❯</tspan> <tspan class="failure">gti</tspan> <tspan class="primary">status</tspan></text>
 
-    <!-- Live command -->
-    <text y="180" class="accent">❯ <tspan class="primary">npm</tspan> <tspan class="primary">run</tspan> <tspan class="primary">build</tspan></text>
-    <text y="200"><tspan class="subtle">✻</tspan> <tspan class="primary">Running build</tspan> <tspan class="secondary">for 2.4s...</tspan></text>
+    <text y="112"><tspan class="subtle">❯</tspan> <tspan class="lavender">echo</tspan> <tspan class="amber">"$HOME"</tspan> <tspan class="subtle">|</tspan> <tspan class="lavender">grep</tspan> <tspan class="primary">Projects</tspan></text>
+
+    <text y="156"><tspan class="subtle">❯</tspan> <tspan class="lavender">cd</tspan> <tspan class="secondary">~/Projects/notMyShell</tspan></text>
   </g>
 </svg>

@@ -1,7 +1,6 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/nmsh-wordmark-dark.svg">
-    <img alt="NMSh Logo" src="assets/brand/nmsh-wordmark-light.svg" width="300">
+    <img alt="NMSh Logo" src="assets/brand/nmsh-logo.png" width="300">
   </picture>
 
   <p><b>A terminal frontend for your real shell.</b></p>
