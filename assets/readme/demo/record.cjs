@@ -15,7 +15,7 @@ async function sendKey(session, key) {
 async function run() {
   const session = 'demorec';
   execSync('rm -f assets/readme/demo/demo.cast');
-  execSync(`tmux new-session -d -s ${session} -x 90 -y 18 "asciinema rec -c nmsh assets/readme/demo/demo.cast"`);
+  execSync(`tmux new-session -d -s ${session} -x 90 -y 18 "asciinema rec -c ./bin/nmsh assets/readme/demo/demo.cast"`);
   
   await delay(3500);
 
