@@ -1,68 +1,204 @@
 # notMyShell
 
-**NMSh** is a thin full-screen frontend for a persistent zsh session. It keeps command output in an independently scrollable upper viewport and owns a stable input area at the bottom of the existing terminal.
+**NMSh** is a terminal-native frontend around a persistent zsh session. It keeps command output in an independently scrollable upper viewport and provides a rich, stable multiline editor at the bottom of the existing terminal.
 
-NMSh does not replace zsh or emulate a terminal. It runs inside terminals such as Ghostty and VS Code's integrated terminal.
+## What is NMSh?
 
-## Run
+NMSh is **NOT** a replacement shell implementation, and it is **NOT** a terminal emulator.
 
-Requires macOS, Node.js 22 or newer, and a terminal with a Powerline-capable font.
+It is a frontend that wraps your real zsh environment. NMSh owns the prompt, multiline input editor, syntax highlighting, and history presentation. Real zsh owns the parsing, command execution, aliases, and environment variables.
+
+```
+Terminal host (Ghostty, macOS Terminal, VS Code)
+        ↓
+NMSh (terminal frontend/editor)
+        ↓
+real zsh (shell execution engine)
+```
+
+## Why?
+
+NMSh was built to provide a richer interactive frontend without throwing away the proven robustness of a real shell parser. It brings a Claude Code-like interaction model to your daily shell:
+
+- Fixed bottom input editor
+- Scrollable history viewport that doesn't disappear
+- True multiline input that acts like a text editor
+- Command lifecycle and status presentation
+- Preserves your real shell semantics, aliases, and pipelines
+
+## Features
+
+- **Real zsh execution:** Uses your actual zsh environment, aliases, functions, and pipelines.
+- **Semantic syntax highlighting:** Differentiates executables, builtins, aliases, functions, and unknown commands instantly using real-zsh-backed classification.
+- **Rich editing:** Multiline input, selection, bracketed paste, and word movement.
+- **Command lifecycle rows:** Visually separates distinct command executions with status markers and activity animations.
+- **Completion bridge:** Uses real zsh completion data.
+- **Ghost autosuggestions:** Unobtrusive history suggestions.
+- **History viewport:** Independently scrollable output.
+- **`/copy` and `/copy N`:** Instantly copy the output of recent commands to the clipboard.
+- **`/history`:** Interactive history search.
+- **`/appearance`:** Configure Ghostty window opacity and blur directly from the CLI.
+- **`/keyboard`:** Automate Ghostty keybinding forwarding rules.
+- **Passthrough:** Safely yields the terminal for full-screen applications like `fzf`, `vim`, `nano`, and `less`.
+
+## Demo
+
+```
+❯ git status
+On branch master
+nothing to commit, working tree clean
+✻ Checked status for 0.1s · done 14:30
+
+❯ echo "hello world"
+hello world
+✻ Ran for 0.0s · done 14:31
+```
+
+## Installation
+
+**Prerequisites:**
+- macOS
+- Node.js (v18+)
+- zsh
+- A compatible terminal host (Ghostty, macOS Terminal, VS Code)
+
+Clone the repository and install dependencies:
 
 ```sh
+git clone https://github.com/example/notMyShell.git
+cd notMyShell
 npm install
-npm run dev
-```
-
-To exercise the local `nmsh` package executable without installing it globally:
-
-```sh
 npm run build
-./bin/nmsh
+npm link
 ```
 
-To install the `nmsh` command globally so it can be used anywhere:
+*(Note: Depending on your npm version, you may be prompted to allow lifecycle scripts required by `node-pty`. You can safely approve this or set `allowScripts` appropriately.)*
+
+After linking, you can run the CLI from anywhere:
 
 ```sh
-npm link
 nmsh
 ```
 
-The development and install scripts correct the executable bit on node-pty's macOS helper when dependencies have been restored from this repository.
+## Ghostty setup
 
-## Controls
+For the most robust startup experience in Ghostty, configure it to run NMSh using absolute paths. GUI applications on macOS sometimes have unpredictable `PATH` resolution.
 
-- `PageUp` / `PageDown`: scroll command history
-- `Ctrl-G` or `Ctrl-End`: jump to the newest output
-- `Up` / `Down`: move through visible slash-command suggestions when the panel is open
-- `Tab`: insert the selected slash-command suggestion
-- `Ctrl-C`: interrupt the active command, or clear idle input
-- `Ctrl-D`: send EOF to an active command, or exit when input is empty
-- `Shift-Enter`: insert a newline when the terminal reports modified Enter (CSI-u or modifyOtherKeys)
-- `Ctrl-J`: reliably insert a newline
-- `/appearance`: open the interactive Ghostty configuration panel
-- `/copy`: copy the newest completed command output
-- `/copy N`: copy the Nth newest completed command output
+1. Find your absolute paths by running:
+   ```sh
+   command -v node
+   command -v nmsh
+   ```
 
-The input editor supports left/right/up/down arrows, line-relative Home/End, Backspace, and Delete. Plain Enter submits the entire buffer. Bracketed multiline paste preserves line breaks without submitting individual lines. Input grows upward to eight visible rows; longer input scrolls internally around the caret so a usable output viewport remains. Typing `/co` shows the available slash command in the live bottom area. When a foreground command reads standard input, entered lines and `Ctrl-D` are forwarded to that command.
+2. Add the direct command to your Ghostty config (e.g., `~/.config/ghostty/config`):
+   ```
+   command = direct:/absolute/path/to/node /absolute/path/to/nmsh
+   ```
 
-## Visual system
+Do not instruct macOS to change your default login shell to NMSh. NMSh is a frontend; zsh remains the underlying shell.
 
-The Powerline bar has a flat left edge, a sharp `` transition between project and Git segments, and a short `▓▒░` fade at the right edge. A running command has a pinned, temporary activity row with a calm equal-width star animation and subtle per-character left-to-right truecolor shimmer. Successful completion commits the selected activity phrase to permanent history; failures and interruptions use neutral wording. The former mascot experiment is disabled and retained under `archive/mascot-prototype/`.
+## Keyboard behavior
+
+- **Enter:** Submit command
+- **Ctrl+J:** Portable multiline newline fallback
+- **Shift+Enter (Ghostty/macOS Terminal):** Insert a newline in the editor
+- **Option+Left/Right:** Move cursor by word
+- **Option+Backspace:** Delete previous word (requires Ghostty forwarding setup)
+- **Ctrl+W:** Delete previous word
+- **Cmd+A:** Select all input (requires Ghostty forwarding setup)
+- **Cmd+Up/Down:** Jump to top/bottom of buffer (requires Ghostty forwarding setup)
+- **Shift+Left/Right:** Character selection
+- **PageUp/PageDown:** Scroll output history
+
+*(Note: In VS Code, Shift+Enter is often indistinguishable from Enter by default. Use Ctrl+J as a reliable multiline fallback.)*
+
+## /keyboard
+
+Some advanced shortcuts (like Option+Backspace, Cmd+A, Cmd+Up/Down) are normally consumed or collapsed by the terminal host before NMSh sees them.
+
+NMSh provides a `/keyboard` slash command that can install managed forwarding rules exclusively into your Ghostty configuration. This allows NMSh to accurately distinguish keys like Option+Backspace from a plain Backspace (`0x7f`).
+
+- This integration is **opt-in**.
+- It only modifies Ghostty configuration.
+- It does not alter any macOS system keybindings.
+
+## /appearance
+
+The `/appearance` slash command provides an interactive UI to adjust Ghostty's window background opacity, blur mode, and blur radius.
+
+Ghostty itself owns the rendering of the window background, transparency, blur, and font. NMSh simply provides a CLI interface to update the configuration file. NMSh owns the foreground UI colors, input editor, and status presentation.
+
+## Shell compatibility
+
+NMSh boots a real, controlled zsh instance.
+
+**What works naturally:**
+- Aliases and functions
+- PATH and environment variables
+- `zoxide` integration
+- Shell expansion, pipelines, and redirects
+- External commands and exit statuses
+
+**UI Plugin differences:**
+- `Powerlevel10k` (and other prompt rendering) is strictly suppressed inside NMSh.
+- `zsh-autosuggestions` functionality is replaced by NMSh-native ghost suggestions.
+- `zsh-syntax-highlighting` is replaced by NMSh-native semantic highlighting.
+- `fzf-tab` UI is not rendered directly.
+
+NMSh loads your `~/.zshrc` in a controlled sandbox to extract environment knowledge without letting UI plugins fight for terminal control.
+
+## Syntax highlighting
+
+Highlighting is entirely NMSh-native and non-blocking. A lexical layer tokenizes the input, while an asynchronous semantic bridge queries your real zsh environment to classify command tokens.
+
+Visual differentiation includes:
+- Executables, builtins, aliases, and functions
+- Unknown commands
+- Strings, variables, operators, redirects, flags, and comments
+
+**Security note:** NMSh queries metadata safely (`whence -w`) and never executes partially typed input to highlight it.
+
+## Host compatibility
+
+| Host | Status | Notes |
+|------|--------|-------|
+| Ghostty | Primary | Full integration available (`/keyboard`, `/appearance`). |
+| macOS Terminal | Supported | Shift+Enter works out of the box. |
+| VS Code Integrated Terminal | Supported | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
+
+## Known limitations
+
+- **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
+- **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
+- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures.
+
+## Development
+
+```sh
+npm run build
+npm run typecheck
+npm test
+git diff --check
+```
 
 ## Architecture
 
-NMSh uses a small alternate-screen compositor rather than Ink. It renders changed terminal rows only and separates permanent scrollable history from pinned jump, autocomplete, live-activity, context, multiline-input, and lower-separator rows. The activity scheduler runs at 10 FPS while row diffing limits shimmer writes to the live row.
+Major internal components:
+- **`TerminalApp`**: The main rendering loop and input coordinator.
+- **`ShellSession`**: Manages the persistent background zsh PTY and controlled `.zshrc` bootstrap.
+- **`CommandEditor`**: The multiline grapheme-aware input buffer and selection engine.
+- **`TerminalRenderer`**: Alternating-screen compositor that renders only changed rows.
+- **`CompletionService`**: Bridges real zsh completion data safely.
+- **`SemanticService` & `Highlighter`**: Fast lexical tokenization combined with background metadata lookup for semantic colors.
+- **`OutputBuffer`**: Parses raw ANSI output, strips unsafe sequences, and maintains the scrollable viewport state.
 
-A line-oriented ANSI boundary preserves common SGR colors, applies carriage-return progress updates in place, strips unsafe terminal control sequences, and wraps output to viewport width.
+## Security / privacy
 
-The persistent child is `/bin/zsh -f -i`. A process-local `precmd` hook emits private lifecycle and working-directory markers; no user shell or terminal configuration is read or changed. Repository context is refreshed only when zsh returns to the prompt.
+- Everything executes locally on your machine through your local shell.
+- No cloud backend is required.
+- No telemetry is collected.
+- Shell configuration reads from your local system securely.
 
-Known full-screen commands are handled by one passthrough policy in `src/passthrough/PassthroughPolicy.ts`. While one runs, terminal bytes and input go directly between the real terminal and PTY. The frontend redraws after the command returns.
+## License
 
-## Current limits
-
-- The isolated shell deliberately does not source `~/.zshrc`, so user aliases, functions, and Powerlevel10k hooks are unavailable inside NMSh. Global configuration stays untouched.
-- Passthrough detection covers common full-screen tools. Commands hidden inside complex shell expressions may need a future explicit passthrough command or shell integration signal.
-- Output parsing handles common colors, line erasure, cursor movement within a line, carriage returns, Unicode, and wrapping. It does not emulate arbitrary two-dimensional cursor-addressed output; those programs belong in passthrough mode.
-- Mouse reporting is not enabled, leaving Ghostty's native selection and copy-on-select behavior intact. Frontend-owned mouse selection and feedback remain future work.
-- Shift-Enter depends on the host terminal reporting modified Enter distinctly; Ctrl-J is the portable newline fallback.
+NMSh is licensed under the **GNU General Public License v3.0** (GPL-3.0-only). See the `LICENSE` file for details.
