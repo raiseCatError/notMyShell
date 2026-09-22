@@ -297,7 +297,7 @@ test('macOS Terminal Shift+Enter (ESC CR) decodes as newline and buffers correct
 
 test('copy failure: PTY output + failure lifecycle row are both in payload', () => {
   const output = new OutputBuffer();
-  output.beginCommand('meow');
+  output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:12');
@@ -319,7 +319,7 @@ test('copy failure: PTY output + failure lifecycle row are both in payload', () 
 
 test('copy success: hello + success lifecycle row are both in payload', () => {
   const output = new OutputBuffer();
-  output.beginCommand('echo hello');
+  output.beginCommand('echo hello', ['echo hello']);
   output.write('hello\n');
   output.complete(0);
   output.setCompletionLifecycle('✻ Meowed for 0.0s · done 04:12');
@@ -334,7 +334,7 @@ test('copy success: hello + success lifecycle row are both in payload', () => {
 
 test('copy empty PTY: no output command still copies lifecycle row', () => {
   const output = new OutputBuffer();
-  output.beginCommand('sleep 2');
+  output.beginCommand('sleep 2', ['sleep 2']);
   // No PTY output
   output.complete(0);
   output.setCompletionLifecycle('✻ Slept for 2.0s · done 04:14');
@@ -352,7 +352,7 @@ test('copy empty PTY: no output command still copies lifecycle row', () => {
 
 test('copy interrupted: interrupted lifecycle row is in payload', () => {
   const output = new OutputBuffer();
-  output.beginCommand('sleep 100');
+  output.beginCommand('sleep 100', ['sleep 100']);
   output.complete(130);
   output.setCompletionLifecycle('✘ Stopped after 1.5s · done 04:14');
   output.addHistoryLine('\u001B[31m✘ Stopped after 1.5s\u001B[0m\u001B[2m · done 04:14\u001B[0m');
@@ -367,14 +367,14 @@ test('copy /copy N: Nth recent item includes its full command result', () => {
   const output = new OutputBuffer();
 
   // Command 1 (most recent after both):
-  output.beginCommand('echo first');
+  output.beginCommand('echo first', ['echo first']);
   output.write('first\n');
   output.complete(0);
   output.setCompletionLifecycle('✻ Completed for 0.0s · done 04:10');
   output.addHistoryLine('✻ Completed for 0.0s · done 04:10');
 
   // Command 2 (becomes recent(1) after this):
-  output.beginCommand('meow');
+  output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:11');
@@ -397,7 +397,7 @@ test('copy /copy N: Nth recent item includes its full command result', () => {
 
 test('copy feedback counts reflect full payload (PTY + lifecycle row)', () => {
   const output = new OutputBuffer();
-  output.beginCommand('meow');
+  output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:12');
@@ -417,7 +417,7 @@ test('copy feedback counts reflect full payload (PTY + lifecycle row)', () => {
 
 test('copy no presentation chrome: ANSI codes do not appear in payload', () => {
   const output = new OutputBuffer();
-  output.beginCommand('false');
+  output.beginCommand('false', ['false']);
   // No PTY output
   output.complete(1);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 1 · done 04:15');

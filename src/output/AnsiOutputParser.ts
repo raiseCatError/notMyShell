@@ -89,6 +89,31 @@ export class AnsiOutputParser {
     }
   }
 
+  replaceLine(index: number, text: string): void {
+    if (index < 0 || index >= this.lines.length) return;
+    const oldCurrent = this.current;
+    const oldColumn = this.column;
+    const oldStyle = this.style;
+    const oldPending = this.pending;
+
+    this.current = [];
+    this.column = 0;
+    this.style = '';
+    this.pending = '';
+    
+    this.write(text);
+    if (this.pending.length > 0) {
+      // Flush any remaining characters if write left pending state (e.g. incomplete escape)
+      // For simple replacement lines, this shouldn't happen unless malformed, but just in case.
+    }
+    this.lines[index] = this.current;
+
+    this.current = oldCurrent;
+    this.column = oldColumn;
+    this.style = oldStyle;
+    this.pending = oldPending;
+  }
+
   completedCount(): number {
     return this.lines.length;
   }

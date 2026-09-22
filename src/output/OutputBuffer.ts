@@ -10,6 +10,7 @@ export interface CompletedCommand {
   /** Plain-text lifecycle/completion row, e.g. "✘ Failed after 0.0s · exit 127 · done 04:12" */
   lifecycleText: string;
   exitCode: number;
+  startId: number;
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -33,17 +34,23 @@ export class OutputBuffer {
     });
   }
 
-  beginCommand(command: string): void {
+  beginCommand(command: string, formattedLines: string[]): number {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
     }
-    const lines = command.split('\n');
-    this.parser.addLine(`${GLYPHS.prompt} ${lines[0] ?? ''}`, foreground(UI_COLORS.command));
-    for (let i = 1; i < lines.length; i++) {
-      this.parser.addLine(`  ${lines[i]}`, foreground(UI_COLORS.command));
+    const startId = this.parser.completedCount();
+    for (const line of formattedLines) {
+      this.parser.addLine(line);
     }
     this.active = {command, start: this.parser.completedCount()};
+    return startId;
+  }
+
+  updateCommandHighlight(startId: number, formattedLines: string[]): void {
+    for (let i = 0; i < formattedLines.length; i++) {
+      this.parser.replaceLine(startId + i, formattedLines[i] ?? '');
+    }
   }
 
   write(data: string): void {
@@ -58,6 +65,7 @@ export class OutputBuffer {
       output: this.parser.snapshotPlain(this.active.start),
       lifecycleText: '',
       exitCode,
+      startId: this.active.start,
     };
     this.completed.unshift(record);
     this.active = undefined;

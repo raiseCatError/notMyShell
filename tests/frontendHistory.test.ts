@@ -5,7 +5,7 @@ import {stripAnsi} from '../src/util/text.js';
 
 test('completed activity becomes history without contaminating copy payload', () => {
   const output = new OutputBuffer();
-  output.beginCommand('printf hello');
+  output.beginCommand('printf hello', ['printf hello']);
   output.write('hello\n');
   const record = output.complete(0);
   output.addHistoryLine('✻ Meowed for 1.0s · done 23:48');
@@ -15,7 +15,7 @@ test('completed activity becomes history without contaminating copy payload', ()
 
 test('frontend copy command and result are permanent history but not shell records', () => {
   const output = new OutputBuffer();
-  output.beginCommand('printf hello');
+  output.beginCommand('printf hello', ['printf hello']);
   output.write('hello\n');
   output.complete(0);
   output.addFrontendInteraction('/copy', 'Copied to clipboard · 5 characters · 1 line', '\u001B[38;2;116;181;154m');

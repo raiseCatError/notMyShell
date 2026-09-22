@@ -1,3 +1,4 @@
+import {GLYPHS} from '../ui/glyphs.js';
 import {appendFileSync} from 'node:fs';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
@@ -56,7 +57,7 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…'};
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; activity: ActivityVerbPair};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; activity: ActivityVerbPair; startId: number};
   private passthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
@@ -314,9 +315,10 @@ export class TerminalApp {
       return;
     }
 
-    this.output.beginCommand(command);
+    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null));
+    this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, activity: this.activitySelector.next()};
+    this.running = {command, startedAt, interrupted: false, cleared: false, activity: this.activitySelector.next(), startId};
     this.activityAnimationNow = startedAt;
     this.passthrough = shouldPassthrough(command);
     if (this.passthrough) {
@@ -540,6 +542,74 @@ export class TerminalApp {
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
     this.historyViewport.scrollLines(total, outputHeight, amount);
+  }
+
+
+  private formatCommandAnsi(command: string, startId: number | null): string[] {
+    const inputChars = graphemes(command);
+    const tokens = this.highlighter.tokenize(inputChars, this.semanticService.cache);
+    const charColors = new Array(inputChars.length).fill(PRIMARY);
+
+    for (const token of tokens) {
+      if (token.type === 'Command' && startId !== null) {
+        void this.semanticService.classifyCommand(token.text).then(() => {
+          const newFormatted = this.formatCommandAnsi(command, null);
+          this.output.updateCommandHighlight(startId, newFormatted);
+          this.render();
+        });
+      }
+      let color = PRIMARY;
+      switch (token.type) {
+        case 'Command': color = PRIMARY; break;
+        case 'KnownCommand': color = ACCENT; break;
+        case 'Builtin': color = ACCENT; break;
+        case 'Alias': color = ACCENT; break;
+        case 'Function': color = ACCENT; break;
+        case 'UnknownCommand': color = ERROR; break;
+        case 'Argument': color = PRIMARY; break;
+        case 'String': color = STOPPED; break;
+        case 'Variable': color = ACCENT; break;
+        case 'Operator': color = SUBTLE; break;
+        case 'Path': color = SECONDARY; break;
+        case 'Flag': color = SECONDARY; break;
+        case 'Comment': color = SUBTLE; break;
+        case 'Normal': color = PRIMARY; break;
+      }
+      for (let i = token.start; i < token.end; i++) charColors[i] = color;
+    }
+
+    const lines: string[] = [];
+    let currentLine = '';
+    let isFirstLine = true;
+    let currentColor = '';
+
+    const pushLine = () => {
+      lines.push(`${currentLine}${RESET}`);
+    };
+
+    for (let i = 0; i < inputChars.length; i++) {
+      const char = inputChars[i];
+      if (char === '\n') {
+        pushLine();
+        currentLine = '';
+        isFirstLine = false;
+        currentColor = '';
+        continue;
+      }
+      if (currentLine === '') {
+         const prefix = isFirstLine ? `${GLYPHS.prompt} ` : '  ';
+         currentLine += `${foreground(UI_COLORS.command)}${prefix}`;
+         currentColor = foreground(UI_COLORS.command);
+      }
+      const color = charColors[i] ?? PRIMARY;
+      if (color !== currentColor) {
+         currentLine += `${RESET}${color}`;
+         currentColor = color;
+      }
+      currentLine += char;
+    }
+    pushLine();
+    return lines;
   }
 
   private render(): void {
