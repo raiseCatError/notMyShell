@@ -1,0 +1,69 @@
+# notMyShell (NMSh)
+
+notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
+
+Current primary backend:
+- zsh
+
+Current primary platform:
+- macOS
+
+Primary terminal host during development:
+- Ghostty
+
+Core architecture:
+
+Terminal host
+→ NMSh frontend
+→ persistent real zsh PTY
+
+## Core capabilities
+
+- fixed/persistent bottom input editor
+- scrollable command and output history
+- semantic syntax highlighting
+- submitted commands retain semantic highlighting in history
+- multiline editing
+- shell-aware autocomplete/completion
+- ghost/history suggestions
+- real aliases, functions, environment, cwd and shell state
+- command lifecycle/activity UI
+- passthrough for fullscreen/interactive terminal programs
+- /copy
+- /history
+- /appearance
+- /keyboard
+- zoxide integration
+- Atuin/history bridge where accurate
+- fzf/fullscreen passthrough where accurate
+
+## NMSh is NOT
+
+- not a shell replacement
+- not a terminal emulator
+- not an AI shell
+- not a command-by-command subprocess wrapper
+- not a Warp clone
+
+## Important architecture files
+
+src/app/TerminalApp.ts
+src/shell/ShellSession.ts
+src/shell/SemanticService.ts
+src/input/Highlighter.ts
+src/input/CommandEditor.ts
+src/output/OutputBuffer.ts
+src/output/AnsiOutputParser.ts
+src/output/viewport.ts
+src/terminal/TerminalRenderer.ts
+
+## Documentation
+
+README.md
+ROADMAP.md
+AGENTS.md
+LICENSE
+
+## Repository
+
+https://github.com/raiseCatError/notMyShell

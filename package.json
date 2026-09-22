@@ -1,7 +1,7 @@
 {
   "name": "nmsh",
   "version": "1.0.0",
-  "description": "notMyShell (NMSh), a fixed-bottom frontend for a persistent zsh session",
+  "description": "A cleaner terminal frontend for zsh with persistent input, autocomplete, semantic highlighting, scrollable history, and better command feedback.",
   "private": true,
   "main": "dist/index.js",
   "bin": {
@@ -16,7 +16,16 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
-  "keywords": [],
+  "keywords": [
+    "terminal",
+    "zsh",
+    "shell",
+    "pty",
+    "terminal-ui",
+    "ghostty",
+    "macos",
+    "typescript"
+  ],
   "author": "",
   "license": "GPL-3.0-only",
   "type": "module",
@@ -36,5 +45,10 @@
     "esbuild@0.28.2": true,
     "fsevents@2.3.3": true,
     "node-pty@1.1.0": true
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/raiseCatError/notMyShell.git"
+  },
+  "homepage": "https://github.com/raiseCatError/notMyShell"
 }

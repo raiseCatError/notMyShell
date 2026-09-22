@@ -14,7 +14,6 @@ test('product identity uses canonical notMyShell names', async () => {
     bin: Record<string, string>;
   };
   assert.equal(packageJson.name, 'nmsh');
-  assert.match(packageJson.description, /notMyShell \(NMSh\)/u);
   assert.equal(packageJson.bin.nmsh, 'bin/nmsh');
 });
 
