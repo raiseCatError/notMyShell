@@ -1,12 +1,20 @@
 {
-  "name": "shell-ui-prototype",
+  "name": "nmsh",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "notMyShell (NMSh), a fixed-bottom frontend for a persistent zsh session",
+  "private": true,
+  "main": "dist/index.js",
+  "bin": {
+    "nmsh": "bin/nmsh"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "tsx src/index.tsx",
-    "build": "tsc -p tsconfig.json"
+    "postinstall": "node scripts/ensure-node-pty-helper.mjs",
+    "predev": "node scripts/ensure-node-pty-helper.mjs",
+    "nmsh": "node dist/index.js",
+    "test": "node --import=tsx --test tests/**/*.test.ts",
+    "dev": "tsx src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [],
   "author": "",
@@ -15,7 +23,8 @@
   "dependencies": {
     "ink": "^7.1.1",
     "node-pty": "^1.1.0",
-    "react": "^19.3.0"
+    "react": "^19.3.0",
+    "string-width": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
