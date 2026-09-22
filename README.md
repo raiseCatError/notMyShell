@@ -1,6 +1,30 @@
-# notMyShell
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/nmsh-wordmark-dark.svg">
+    <img alt="NMSh Logo" src="assets/brand/nmsh-wordmark-light.svg" width="300">
+  </picture>
+
+  <p><b>A terminal frontend for your real shell.</b></p>
+
+  <p>
+    <a href="https://github.com/raiseCatError/notMyShell/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-8B84B2.svg" alt="License"></a>
+    <img src="https://img.shields.io/badge/platform-macOS-B0B8C2.svg" alt="macOS">
+    <img src="https://img.shields.io/badge/node-%3E%3D%2018-C5B9E8.svg" alt="Node.js">
+    <img src="https://img.shields.io/badge/shell-zsh-F2F0EC.svg" alt="zsh">
+  </p>
+</div>
+
+<br>
 
 **NMSh** is a terminal-native frontend around a persistent zsh session. It keeps command output in an independently scrollable upper viewport and provides a rich, stable multiline editor at the bottom of the existing terminal.
+
+<br>
+<div align="center">
+  <picture>
+    <img alt="Divider" src="assets/readme/divider.svg" width="600">
+  </picture>
+</div>
+<br>
 
 ## What is NMSh?
 
@@ -8,51 +32,96 @@ NMSh is **NOT** a replacement shell implementation, and it is **NOT** a terminal
 
 It is a frontend that wraps your real zsh environment. NMSh owns the prompt, multiline input editor, syntax highlighting, and history presentation. Real zsh owns the parsing, command execution, aliases, and environment variables.
 
-```
-Terminal host (Ghostty, macOS Terminal, VS Code)
-        ↓
-NMSh (terminal frontend/editor)
-        ↓
-real zsh (shell execution engine)
-```
+<div align="center">
+  <picture>
+    <img alt="NMSh Architecture" src="assets/readme/architecture.svg" width="500">
+  </picture>
+</div>
 
-## Why?
+## Why NMSh?
 
-NMSh was built to provide a richer interactive frontend without throwing away the proven robustness of a real shell parser. It brings a Claude Code-like interaction model to your daily shell:
+NMSh provides a richer interactive frontend without throwing away the proven robustness of a real shell parser. It brings a Claude Code-like interaction model to your daily shell:
 
-- Fixed bottom input editor
-- Scrollable history viewport that doesn't disappear
-- True multiline input that acts like a text editor
-- Command lifecycle and status presentation
-- Preserves your real shell semantics, aliases, and pipelines
+- **Fixed bottom input:** A stable workspace that never jumps around.
+- **Scrollable history:** Output history that doesn't disappear when you edit.
+- **Rich editor:** True multiline input that acts like a text editor.
+- **Preserved semantics:** Your real shell aliases, functions, and pipelines still work.
+
+<br>
+<div align="center">
+  <picture>
+    <img alt="Divider" src="assets/readme/divider.svg" width="600">
+  </picture>
+</div>
+<br>
 
 ## Features
 
-- **Real zsh execution:** Uses your actual zsh environment, aliases, functions, and pipelines.
-- **Semantic syntax highlighting:** Differentiates executables, builtins, aliases, functions, and unknown commands instantly using real-zsh-backed classification.
-- **Rich editing:** Multiline input, selection, bracketed paste, and word movement.
-- **Command lifecycle rows:** Visually separates distinct command executions with status markers and activity animations.
-- **Completion bridge:** Uses real zsh completion data.
-- **Ghost autosuggestions:** Unobtrusive history suggestions.
-- **History viewport:** Independently scrollable output.
-- **`/copy` and `/copy N`:** Instantly copy the output of recent commands to the clipboard.
-- **`/history`:** Interactive history search.
-- **`/appearance`:** Configure Ghostty window opacity and blur directly from the CLI.
-- **`/keyboard`:** Automate Ghostty keybinding forwarding rules.
-- **Passthrough:** Safely yields the terminal for full-screen applications like `fzf`, `vim`, `nano`, and `less`.
+### Shell
+- Real zsh execution and parsing
+- Real aliases, functions, and environment
+- `zoxide` integration
+- Completion bridge using real zsh completion data
 
-## Demo
+### Editor
+- Multiline input and selection
+- Ghost autosuggestions from history
+- **Semantic syntax highlighting** (differentiates executables, builtins, aliases, and functions instantly)
 
-```
-❯ git status
-On branch master
-nothing to commit, working tree clean
-✻ Checked status for 0.1s · done 14:30
+### Interface
+- Command lifecycle rows with activity animation
+- Scrollable history viewport
+- `/copy` and `/copy N` for instant clipboard access
+- `/history` interactive search
+- `/appearance` and `/keyboard` integrations
 
-❯ echo "hello world"
-hello world
-✻ Ran for 0.0s · done 14:31
-```
+### Interactive Apps
+- Safe passthrough yielding for full-screen applications like `fzf`, `vim`, `nano`, and `less`.
+
+<br>
+<div align="center">
+  <picture>
+    <img alt="Divider" src="assets/readme/divider.svg" width="600">
+  </picture>
+</div>
+<br>
+
+## Syntax Highlighting
+
+Highlighting is entirely NMSh-native and non-blocking. A fast lexical layer tokenizes the input, while an asynchronous semantic bridge queries your real zsh environment to classify command tokens.
+
+NMSh safely queries metadata (`whence -w`) and never executes partially typed input.
+
+<div align="center">
+  <picture>
+    <img alt="Syntax highlighting demo" src="assets/readme/syntax-demo.svg" width="600">
+  </picture>
+</div>
+
+<br>
+<div align="center">
+  <picture>
+    <img alt="Divider" src="assets/readme/divider.svg" width="600">
+  </picture>
+</div>
+<br>
+
+## Shell Compatibility
+
+NMSh currently boots a real, controlled zsh instance.
+
+**What works naturally:**
+- Aliases, functions, PATH, and environment variables
+- `zoxide` integration, pipelines, redirects, and external commands
+
+**UI Plugin differences:**
+- `Powerlevel10k` (and other prompt rendering) is strictly suppressed.
+- `zsh-autosuggestions` and `zsh-syntax-highlighting` are replaced by NMSh-native equivalents.
+- `fzf-tab` UI is not rendered directly.
+
+NMSh loads your `~/.zshrc` in a controlled sandbox to extract environment knowledge without letting UI plugins fight for terminal control.
+
+See [ROADMAP.md](ROADMAP.md) for planned shell compatibility, multi-shell adapters, and future work.
 
 ## Installation
 
@@ -74,30 +143,38 @@ npm link
 
 *(Note: Depending on your npm version, you may be prompted to allow lifecycle scripts required by `node-pty`. You can safely approve this or set `allowScripts` appropriately.)*
 
-After linking, you can run the CLI from anywhere:
+After linking, run the CLI from anywhere:
 
 ```sh
 nmsh
 ```
 
-## Ghostty setup
+## Ghostty Setup
 
 For the most robust startup experience in Ghostty, configure it to run NMSh using absolute paths. GUI applications on macOS sometimes have unpredictable `PATH` resolution.
 
-1. Find your absolute paths by running:
+1. Find your absolute paths:
    ```sh
    command -v node
    command -v nmsh
    ```
 
-2. Add the direct command to your Ghostty config (e.g., `~/.config/ghostty/config`):
+2. Add the direct command to your Ghostty config (`~/.config/ghostty/config`):
    ```
    command = direct:/absolute/path/to/node /absolute/path/to/nmsh
    ```
 
 Do not instruct macOS to change your default login shell to NMSh. NMSh is a frontend; zsh remains the underlying shell.
 
-## Keyboard behavior
+## Host Compatibility
+
+| Host | Status | Notes |
+|------|--------|-------|
+| Ghostty | Primary | Full integration available (`/keyboard`, `/appearance`). |
+| macOS Terminal | Supported | Shift+Enter works out of the box. |
+| VS Code Integrated Terminal | Supported | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
+
+## Keyboard Behavior
 
 - **Enter:** Submit command
 - **Ctrl+J:** Portable multiline newline fallback
@@ -112,61 +189,13 @@ Do not instruct macOS to change your default login shell to NMSh. NMSh is a fron
 
 *(Note: In VS Code, Shift+Enter is often indistinguishable from Enter by default. Use Ctrl+J as a reliable multiline fallback.)*
 
-## /keyboard
+### /keyboard & /appearance
 
-Some advanced shortcuts (like Option+Backspace, Cmd+A, Cmd+Up/Down) are normally consumed or collapsed by the terminal host before NMSh sees them.
-
-NMSh provides a `/keyboard` slash command that can install managed forwarding rules exclusively into your Ghostty configuration. This allows NMSh to accurately distinguish keys like Option+Backspace from a plain Backspace (`0x7f`).
-
-- This integration is **opt-in**.
-- It only modifies Ghostty configuration.
-- It does not alter any macOS system keybindings.
-
-## /appearance
+Some advanced shortcuts (like Option+Backspace, Cmd+A) are normally consumed by the terminal host before NMSh sees them. The `/keyboard` slash command installs managed, opt-in forwarding rules exclusively into your Ghostty configuration. It does not alter any macOS system keybindings.
 
 The `/appearance` slash command provides an interactive UI to adjust Ghostty's window background opacity, blur mode, and blur radius.
 
-Ghostty itself owns the rendering of the window background, transparency, blur, and font. NMSh simply provides a CLI interface to update the configuration file. NMSh owns the foreground UI colors, input editor, and status presentation.
-
-## Shell compatibility
-
-NMSh boots a real, controlled zsh instance.
-
-**What works naturally:**
-- Aliases and functions
-- PATH and environment variables
-- `zoxide` integration
-- Shell expansion, pipelines, and redirects
-- External commands and exit statuses
-
-**UI Plugin differences:**
-- `Powerlevel10k` (and other prompt rendering) is strictly suppressed inside NMSh.
-- `zsh-autosuggestions` functionality is replaced by NMSh-native ghost suggestions.
-- `zsh-syntax-highlighting` is replaced by NMSh-native semantic highlighting.
-- `fzf-tab` UI is not rendered directly.
-
-NMSh loads your `~/.zshrc` in a controlled sandbox to extract environment knowledge without letting UI plugins fight for terminal control.
-
-## Syntax highlighting
-
-Highlighting is entirely NMSh-native and non-blocking. A lexical layer tokenizes the input, while an asynchronous semantic bridge queries your real zsh environment to classify command tokens.
-
-Visual differentiation includes:
-- Executables, builtins, aliases, and functions
-- Unknown commands
-- Strings, variables, operators, redirects, flags, and comments
-
-**Security note:** NMSh queries metadata safely (`whence -w`) and never executes partially typed input to highlight it.
-
-## Host compatibility
-
-| Host | Status | Notes |
-|------|--------|-------|
-| Ghostty | Primary | Full integration available (`/keyboard`, `/appearance`). |
-| macOS Terminal | Supported | Shift+Enter works out of the box. |
-| VS Code Integrated Terminal | Supported | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
-
-## Known limitations
+## Known Limitations
 
 - **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
 - **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
@@ -181,18 +210,9 @@ npm test
 git diff --check
 ```
 
-## Architecture
+See [ROADMAP.md](ROADMAP.md) for future multi-shell architecture and extensibility plans.
 
-Major internal components:
-- **`TerminalApp`**: The main rendering loop and input coordinator.
-- **`ShellSession`**: Manages the persistent background zsh PTY and controlled `.zshrc` bootstrap.
-- **`CommandEditor`**: The multiline grapheme-aware input buffer and selection engine.
-- **`TerminalRenderer`**: Alternating-screen compositor that renders only changed rows.
-- **`CompletionService`**: Bridges real zsh completion data safely.
-- **`SemanticService` & `Highlighter`**: Fast lexical tokenization combined with background metadata lookup for semantic colors.
-- **`OutputBuffer`**: Parses raw ANSI output, strips unsafe sequences, and maintains the scrollable viewport state.
-
-## Security / privacy
+## Security & Privacy
 
 - Everything executes locally on your machine through your local shell.
 - No cloud backend is required.

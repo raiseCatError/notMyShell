@@ -1,0 +1,26 @@
+<svg width="400" height="120" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120">
+  <defs>
+    <style>
+      .bg { fill: #F2F0EC; } /* Soft off-white for light mode background */
+      .text-n { fill: #0B0B0F; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-weight: 800; font-size: 64px; }
+      .text-sh { fill: #7D8590; font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-weight: 800; font-size: 64px; }
+      .chev { stroke: #8B84B2; stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; fill: none; } /* Muted lavender */
+      .m-stem { stroke: #0B0B0F; stroke-width: 10; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+    </style>
+  </defs>
+  <rect width="100%" height="100%" class="bg" rx="16"/>
+  
+  <text x="75" y="82" class="text-n">N</text>
+  
+  <!-- Custom M integrating the terminal chevron -->
+  <g transform="translate(130, 36)">
+    <!-- Left vertical stem of M -->
+    <path d="M 5 5 L 5 45" class="m-stem" />
+    <!-- The terminal chevron > originating from the left stem -->
+    <path d="M 5 5 L 25 25 L 5 45" class="chev" />
+    <!-- The right half of the M completing the letterform -->
+    <path d="M 25 25 L 45 5 L 45 45" class="m-stem" />
+  </g>
+  
+  <text x="195" y="82" class="text-sh">Sh</text>
+</svg>

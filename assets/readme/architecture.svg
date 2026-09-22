@@ -1,0 +1,33 @@
+<svg width="600" height="240" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 240">
+  <defs>
+    <style>
+      .box { fill: #0B0B0F; stroke: #3D444D; stroke-width: 2; rx: 8; }
+      .box-nmsh { fill: #1E1B2E; stroke: #C5B9E8; stroke-width: 2; rx: 8; }
+      .text-title { fill: #F2F0EC; font-family: ui-sans-serif, system-ui, sans-serif; font-weight: 600; font-size: 16px; text-anchor: middle; }
+      .text-sub { fill: #B0B8C2; font-family: ui-sans-serif, system-ui, sans-serif; font-size: 13px; text-anchor: middle; }
+      .arrow { stroke: #7D8590; stroke-width: 2; fill: none; }
+      .arrow-head { fill: #7D8590; }
+    </style>
+  </defs>
+  
+  <!-- Terminal Host -->
+  <rect x="200" y="10" width="200" height="50" class="box" />
+  <text x="300" y="32" class="text-title">Terminal Host</text>
+  <text x="300" y="50" class="text-sub">Ghostty / VS Code / Terminal</text>
+  
+  <path d="M 300 60 L 300 85" class="arrow" />
+  <polygon points="296,82 304,82 300,90" class="arrow-head" />
+  
+  <!-- NMSh -->
+  <rect x="180" y="90" width="240" height="60" class="box-nmsh" />
+  <text x="300" y="115" class="text-title" style="fill: #C5B9E8">NMSh</text>
+  <text x="300" y="135" class="text-sub" style="fill: #C5B9E8">Frontend · Editor · Highlighting</text>
+
+  <path d="M 300 150 L 300 175" class="arrow" />
+  <polygon points="296,172 304,172 300,180" class="arrow-head" />
+
+  <!-- real zsh -->
+  <rect x="200" y="180" width="200" height="50" class="box" />
+  <text x="300" y="202" class="text-title">real zsh</text>
+  <text x="300" y="220" class="text-sub">Execution · Aliases · Parser</text>
+</svg>
