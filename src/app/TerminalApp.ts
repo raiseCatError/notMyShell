@@ -23,6 +23,8 @@ import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES}
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
+import {Highlighter, type TokenType} from '../input/Highlighter.js';
+import {SemanticService} from '../shell/SemanticService.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -39,6 +41,8 @@ const STATUS_REFRESH_MS = 100;
 export class TerminalApp {
   private readonly renderer = new TerminalRenderer();
   private readonly editor = new CommandEditor();
+  private readonly highlighter = new Highlighter();
+  private readonly semanticService: SemanticService;
   private readonly keyDecoder = new KeyDecoder();
   private readonly output = new OutputBuffer(() => {
     this.historyViewport.latest();
@@ -70,6 +74,7 @@ export class TerminalApp {
   constructor() {
     const dimensions = this.dimensions();
     this.session = new ShellSession(process.cwd(), dimensions.columns, Math.max(2, dimensions.rows - 4));
+    this.semanticService = new SemanticService(process.cwd());
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
@@ -612,28 +617,47 @@ export class TerminalApp {
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.selection;
 
+    const inputChars = graphemes(this.editor.text);
+    const tokens = this.highlighter.tokenize(inputChars, this.semanticService.cache);
+    const charColors = new Array(inputChars.length).fill(PRIMARY);
+
+    for (const token of tokens) {
+      if (token.type === 'Command') {
+        void this.semanticService.classifyCommand(token.text).then(() => this.render());
+      }
+      let color = PRIMARY;
+      switch (token.type) {
+        case 'Command': color = PRIMARY; break;
+        case 'KnownCommand': color = ACCENT; break;
+        case 'Builtin': color = ACCENT; break;
+        case 'Alias': color = ACCENT; break;
+        case 'Function': color = ACCENT; break;
+        case 'UnknownCommand': color = ERROR; break;
+        case 'Argument': color = PRIMARY; break;
+        case 'String': color = STOPPED; break;
+        case 'Variable': color = ACCENT; break;
+        case 'Operator': color = SUBTLE; break;
+        case 'Path': color = SECONDARY; break;
+        case 'Flag': color = SECONDARY; break;
+        case 'Comment': color = SUBTLE; break;
+        case 'Normal': color = PRIMARY; break;
+      }
+      for (let i = token.start; i < token.end; i++) charColors[i] = color;
+    }
+
     for (const row of input.rows) {
       const prefix = row.prefix.startsWith('❯') ? `${ACCENT}❯${RESET}${row.prefix.slice(1)}` : row.prefix;
-      let textStyled: string;
-      if (!sel) {
-        // No selection — render plain.
-        textStyled = `${PRIMARY}${row.text}${RESET}`;
-      } else if (sel.start >= row.charEnd || sel.end <= row.charStart) {
-        // Selection does not overlap this row.
-        textStyled = `${PRIMARY}${row.text}${RESET}`;
-      } else {
-        // Partial or full overlap — split the row text into pre/sel/post segments.
-        // row.text excludes the prefix and excludes newline characters.
-        // We re-segment row.text to apply character-level highlighting.
-        const glyphsInRow = graphemes(row.text);
-        // Map grapheme positions within row to global char indices.
-        // row.charStart is the global index of the first char in this row.
-        const preEnd = Math.max(0, sel.start - row.charStart);
-        const selEnd = Math.min(glyphsInRow.length, sel.end - row.charStart);
-        const pre = glyphsInRow.slice(0, preEnd).join('');
-        const selected = glyphsInRow.slice(preEnd, selEnd).join('');
-        const post = glyphsInRow.slice(selEnd).join('');
-        textStyled = `${PRIMARY}${pre}${SELECTION_BG}${PRIMARY}${selected}${RESET}${PRIMARY}${post}${RESET}`;
+      let textStyled = '';
+      const glyphsInRow = graphemes(row.text);
+      for (let i = 0; i < glyphsInRow.length; i++) {
+        const globalIndex = row.charStart + i;
+        const isSelected = sel && globalIndex >= sel.start && globalIndex < sel.end;
+        const color = charColors[globalIndex] ?? PRIMARY;
+        if (isSelected) {
+          textStyled += `${SELECTION_BG}${color}${glyphsInRow[i]}${RESET}`;
+        } else {
+          textStyled += `${color}${glyphsInRow[i]}${RESET}`;
+        }
       }
       let suffix = '';
       if (this.editor.ghost && this.editor.cursorIndex === this.editor.text.length && row === input.rows[input.rows.length - 1]) {
@@ -698,6 +722,7 @@ export class TerminalApp {
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
     process.stdin.pause();
     this.renderer.leave();
+    this.semanticService.kill();
     this.finish(exitCode);
   }
 }

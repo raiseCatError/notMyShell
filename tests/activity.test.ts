@@ -28,6 +28,7 @@ test('live activity duration changes while its selected phrase stays stable', ()
 });
 
 test('activity glyph grows and shrinks independently with equal-width frames', () => {
+  assert.ok(ACTIVITY_GLYPH_INTERVAL_MS >= 160 && ACTIVITY_GLYPH_INTERVAL_MS <= 170, 'star cadence must be roughly 165ms');
   assert.equal(activityGlyph(0), '·');
   assert.equal(activityGlyph(ACTIVITY_GLYPH_INTERVAL_MS * 4), '✻');
   assert.equal(activityGlyph(ACTIVITY_GLYPH_INTERVAL_MS * 5), '*');

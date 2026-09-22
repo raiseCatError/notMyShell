@@ -6,7 +6,7 @@ export {ACTIVITY_VERBS, type ActivityVerbPair} from './activityVerbs.js';
 
 import {GLYPHS, SPINNER_FRAMES} from '../ui/glyphs.js';
 
-export const ACTIVITY_GLYPH_INTERVAL_MS = 120;
+export const ACTIVITY_GLYPH_INTERVAL_MS = 165;
 
 export class ActivitySelector {
   private previous = -1;

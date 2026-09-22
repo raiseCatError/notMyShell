@@ -262,9 +262,33 @@ test('VS Code alt keybinding sequence ESC[27;2;13~ also decodes as newline', () 
 });
 
 test('Ctrl+J always inserts newline regardless of terminal host', () => {
-  const keys = decodeKeys('\n');
+  const decoder = new KeyDecoder();
+  const keys = decoder.push('\n');
   assert.equal(keys.length, 1);
   assert.equal(keys[0].kind, 'newline', 'Ctrl+J (\\n) must always decode as newline');
+});
+
+test('macOS Terminal Shift+Enter (ESC CR) decodes as newline and buffers correctly', () => {
+  const decoder = new KeyDecoder();
+
+  // Entire sequence at once
+  const keys = decoder.push('\u001B\r');
+  assert.equal(keys.length, 1);
+  assert.equal(keys[0].kind, 'newline', 'ESC CR must decode as newline');
+
+  // Split sequence
+  decoder.reset();
+  const keys1 = decoder.push('\u001B');
+  assert.equal(keys1.length, 0, 'ESC should buffer');
+  const keys2 = decoder.push('\r');
+  assert.equal(keys2.length, 1);
+  assert.equal(keys2[0].kind, 'newline', 'split ESC CR must decode as newline');
+
+  // Verify regular CR still emits enter
+  decoder.reset();
+  const keys3 = decoder.push('\r');
+  assert.equal(keys3.length, 1);
+  assert.equal(keys3[0].kind, 'enter', 'bare CR must decode as enter');
 });
 
 // ---------------------------------------------------------------------------

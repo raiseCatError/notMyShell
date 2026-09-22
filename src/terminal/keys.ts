@@ -10,6 +10,7 @@ export type Key =
 const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[27;2;13~', 'newline'],
   ['\u001B[13;2u', 'newline'],
+  ['\u001B\r', 'newline'], // macOS Terminal Shift+Enter
   ['\u001B[97;9u', 'selectAll'],
   ['\u001Ba', 'selectAll'], // Portable Alt+A
   // Cmd+Arrow (Kitty modifier 9 = Super/Cmd bit 8 + 1)
