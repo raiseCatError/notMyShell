@@ -17,6 +17,13 @@
 
 **NMSh** is a terminal-native frontend around a persistent zsh session. It keeps command output in an independently scrollable upper viewport and provides a rich, stable multiline editor at the bottom of the existing terminal.
 
+## Visual demo
+
+<div align="center">
+  <img alt="NMSh Demo" src="assets/readme/nmsh-demo.gif" width="700">
+  <p><em>NMSh showing semantic highlighting, the pinned input bar, and live activity feedback.</em></p>
+</div>
+
 <br>
 <div align="center">
   <picture>

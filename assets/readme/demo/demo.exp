@@ -1,0 +1,25 @@
+#!/usr/bin/expect -f
+spawn nmsh
+
+sleep 2
+
+proc type {str} {
+    foreach char [split $str ""] {
+        send $char
+        sleep 0.1
+    }
+    sleep 0.5
+    send "\r"
+}
+
+type "git status"
+sleep 2
+
+type "sleep 3"
+sleep 5
+
+type "echo NMSh animated activity"
+sleep 2
+
+send "exit\r"
+expect eof
