@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: macos-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        node-version: [22.x, 26.x]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
+
+      - name: Verify working tree clean
+        run: git diff --check
+
+      - name: Process leak check
+        run: |
+          if ps -axo pid,ppid,pgid,command | grep -E '[z]sh.*nmsh-semantic|[n]msh-semantic|viewportSyntax' | grep -v grep; then
+            echo "::error::NMSh helper or test processes leaked!"
+            exit 1
+          fi
+          echo "No processes leaked."
