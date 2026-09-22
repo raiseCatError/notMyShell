@@ -1,6 +1,7 @@
 import {graphemes, layoutInput} from './inputLayout.js';
 
 export class CommandEditor {
+  ghost?: string;
   private characters: string[] = [];
   private cursor = 0;
   private selectionAnchor?: number;
@@ -73,6 +74,11 @@ export class CommandEditor {
   }
 
   moveRight(): void {
+    if (this.cursor === this.characters.length && this.ghost) {
+      this.insert(this.ghost.substring(this.characters.length));
+      this.ghost = undefined;
+      return;
+    }
     const sel = this.selection;
     if (sel) {
       this.cursor = sel.end;
@@ -104,6 +110,11 @@ export class CommandEditor {
   }
 
   lineEnd(): void {
+    if (this.cursor === this.characters.length && this.ghost) {
+      this.insert(this.ghost.substring(this.characters.length));
+      this.ghost = undefined;
+      return;
+    }
  
     this.clearSelection();
     const newline = this.characters.indexOf('\n', this.cursor);
@@ -126,6 +137,11 @@ export class CommandEditor {
 
   /** Cmd+Down — move to the very end of the input buffer. */
   moveBufferEnd(): void {
+    if (this.cursor === this.characters.length && this.ghost) {
+      this.insert(this.ghost.substring(this.characters.length));
+      this.ghost = undefined;
+      return;
+    }
  
     this.clearSelection();
     this.cursor = this.characters.length;

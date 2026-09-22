@@ -30,8 +30,11 @@ export function renderKeyboardPanel(state: KeyboardState, columns: number): stri
   const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
   const labelColor = (index: number) => index === state.selectedIndex ? PRIMARY : SECONDARY;
 
-  rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Up/Down          Install for Ghostty${RESET}`);
+  rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Arrows, Opt+Backspace  Install for Ghostty${RESET}`);
 
+  rows.push('');
+  rows.push(`  ${SECONDARY}Ghostty normally collapses Backspace and Option+Backspace to the${RESET}`);
+  rows.push(`  ${SECONDARY}same DEL byte. Installing this allows NMSh to distinguish them.${RESET}`);
   rows.push('');
   rows.push(`  ${SECONDARY}Enter install · Esc cancel${RESET}`);
   

@@ -1,3 +1,6 @@
+import {appendFileSync} from 'node:fs';
+import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
+import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
 import {HistoryViewport} from '../output/viewport.js';
@@ -44,6 +47,10 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly activitySelector = new ActivitySelector();
   private readonly session: ShellSession;
+  private readonly historyService = new HistoryService();
+  private readonly completionService = new CompletionService();
+  private shellSuggestions: CompletionCandidate[] = [];
+  private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…'};
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; activity: ActivityVerbPair};
   private passthrough = false;
@@ -96,6 +103,11 @@ export class TerminalApp {
   }
 
   private readonly onInput = (data: string): void => {
+    if (process.env.NMSH_DEBUG_KEYS === '1') {
+      const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+      const escaped = JSON.stringify(data);
+      appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
+    }
     if (this.passthrough) {
       this.session.write(data);
       return;
@@ -175,6 +187,14 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+
+    if (key.kind === 'historySearch') {
+      if (!this.running) {
+        this.editor.clear();
+        this.editor.insert('/history ');
+      }
+      return;
+    }
     if (key.kind === 'interrupt') {
       if (this.running) {
         this.running.interrupted = true;
@@ -243,6 +263,30 @@ export class TerminalApp {
     }
   }
 
+
+  private async fetchSuggestions(): Promise<void> {
+    if (this.running || this.editor.text.startsWith('/')) {
+      this.shellSuggestions = [];
+      return;
+    }
+    const input = this.editor.text;
+    if (input === this.lastSuggestionInput) return;
+    this.lastSuggestionInput = input;
+
+    if (input.trim().length === 0) {
+      this.shellSuggestions = [];
+      this.render();
+      return;
+    }
+
+    const comps = await this.completionService.suggest(input, this.context.cwd);
+    if (this.editor.text === input) {
+      this.shellSuggestions = comps;
+      this.selectedSuggestion = 0;
+      this.render();
+    }
+  }
+
   private applySuggestion(suggestion: {insertion: string}): void {
     this.editor.clear();
     this.editor.insert(suggestion.insertion);
@@ -260,7 +304,7 @@ export class TerminalApp {
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'help') this.showHelp(command);
-      else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${slash.input}`, ERROR);
+      else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
       this.render();
       return;
     }
@@ -287,7 +331,7 @@ export class TerminalApp {
     if (!this.appearanceState) return;
     const state = this.appearanceState;
     this.appearanceState = undefined;
-    
+
     this.output.addHistoryLine(`${INFO}✻ Saving appearance settings...${RESET}`);
     this.render();
 
@@ -346,7 +390,7 @@ export class TerminalApp {
   private async saveKeyboard(): Promise<void> {
     if (!this.keyboardState) return;
     this.keyboardState = undefined;
-    
+
     this.output.addHistoryLine(`${INFO}✻ Installing Ghostty Cmd+A binding...${RESET}`);
     this.render();
 
@@ -365,13 +409,13 @@ export class TerminalApp {
   private async startAppearance(): Promise<void> {
     const isGhostty = process.env.TERM_PROGRAM === 'ghostty';
     const isVSCode = process.env.TERM_PROGRAM === 'vscode';
-    
+
     if (isVSCode || (!isGhostty && !await detectGhosttyConfigPath())) {
        this.output.addFrontendInteraction('/appearance', `Host: ${isVSCode ? 'VS Code Integrated Terminal' : 'Unsupported Host'}\nWindow opacity and blur are controlled by the host.`, INFO);
        this.render();
        return;
     }
-    
+
     const settings = await readGhosttySettings();
     this.appearanceState = {
       opacity: settings.opacity,
@@ -442,6 +486,7 @@ export class TerminalApp {
     if (this.passthrough) {
       this.passthrough = false;
       this.renderer.resumeAfterPassthrough();
+      this.keyDecoder.reset();
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;
     }
@@ -493,11 +538,27 @@ export class TerminalApp {
   }
 
   private render(): void {
+    void this.fetchSuggestions();
     if (this.stopped || this.passthrough) return;
     const {columns, rows} = this.dimensions();
-    const availableSuggestions = this.running ? [] : slashSuggestions(this.editor.text);
+    const isSlash = this.editor.text.startsWith('/');
+
+    let availableSuggestions: any[] = [];
+    if (!this.running) {
+      if (this.editor.text.startsWith('/history ')) {
+        const q = this.editor.text.substring(9).toLowerCase();
+        const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
+        availableSuggestions = matches.slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
+      } else if (isSlash) {
+        availableSuggestions = slashSuggestions(this.editor.text);
+      } else {
+        availableSuggestions = this.shellSuggestions;
+      }
+    }
+
     const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
     const promptLine = buildPromptLine(this.context, columns);
+    this.editor.ghost = this.historyService.suggest(this.editor.text);
     const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
     const layout = calculateScreenLayout(
       rows,
@@ -574,7 +635,11 @@ export class TerminalApp {
         const post = glyphsInRow.slice(selEnd).join('');
         textStyled = `${PRIMARY}${pre}${SELECTION_BG}${PRIMARY}${selected}${RESET}${PRIMARY}${post}${RESET}`;
       }
-      frameRows.push(`${prefix}${textStyled}`);
+      let suffix = '';
+      if (this.editor.ghost && this.editor.cursorIndex === this.editor.text.length && row === input.rows[input.rows.length - 1]) {
+        suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
+      }
+      frameRows.push(truncateAnsi(`${prefix}${textStyled}${suffix}`, columns));
     }
     if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth('─', columns)}${RESET}`);
 

@@ -5,7 +5,7 @@ import {calculateScreenLayout} from '../src/app/layout.js';
 
 test('slash autocomplete exposes copy variants and help', () => {
   assert.deepEqual(slashSuggestions('/co').map(item => item.name), ['/copy', '/copy N']);
-  assert.deepEqual(slashSuggestions('/h').map(item => item.name), ['/help']);
+  assert.deepEqual(slashSuggestions('/h').map(item => item.name), ['/help', '/history']);
 });
 
 test('autocomplete height clamps while keeping the selected candidate visible', () => {

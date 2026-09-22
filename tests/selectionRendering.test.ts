@@ -320,3 +320,19 @@ test('TASK 9: Ctrl+J (\\n) remains newline fallback', () => {
   const keys = decodeKeys('\n');
   assert.equal(keys[0].kind, 'newline', 'Ctrl+J must remain newline in all hosts');
 });
+
+test('TASK 11: Pipeline regression test for raw 0x17 Option+Backspace', () => {
+  const d = new KeyDecoder();
+  const e = new CommandEditor();
+  pushRaw(d, e, 'hello world');
+  pushRaw(d, e, '\x17');
+  assert.equal(e.text, 'hello ');
+});
+
+test('TASK 12: bare 0x7f acts as backspace', () => {
+  const d = new KeyDecoder();
+  const e = new CommandEditor();
+  pushRaw(d, e, 'hello world');
+  pushRaw(d, e, '\u007f');
+  assert.equal(e.text, 'hello worl');
+});

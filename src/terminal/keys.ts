@@ -4,7 +4,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown'};
+  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown'};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -88,7 +88,7 @@ export function decodeKeys(input: string): Key[] {
       index = contentEnd === -1 ? input.length : contentEnd + 6;
       continue;
     }
-        const sgrMatch = /^\u001B\[<(\d+);(\d+);(\d+)([mM])/.exec(input.slice(index));
+    const sgrMatch = /^\u001B\[<(\d+);(\d+);(\d+)([mM])/.exec(input.slice(index));
     if (sgrMatch) {
       const button = Number(sgrMatch[1]);
       if (button === 64) keys.push({kind: 'wheelUp'} as Key);
@@ -100,6 +100,12 @@ export function decodeKeys(input: string): Key[] {
     if (sequence) {
       keys.push({kind: sequence[1]} as Key);
       index += sequence[0].length;
+      continue;
+    }
+    const csiMatch = /^\u001B\[[0-?]*[ -/]*[@-~]/.exec(input.slice(index));
+    if (csiMatch) {
+      // Unknown CSI sequence, consume and ignore
+      index += csiMatch[0].length;
       continue;
     }
     const codePoint = input.codePointAt(index);
@@ -119,6 +125,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0001') keys.push({kind: 'lineHome'} as Key); // Ctrl+A
     else if (value === '\u0005') keys.push({kind: 'lineEnd'} as Key); // Ctrl+E
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
+    else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
     else if (codePoint >= 0x20 && codePoint !== 0x7f) keys.push({kind: 'text', value} as Key);
   }
   return keys;
@@ -127,6 +134,11 @@ export function decodeKeys(input: string): Key[] {
 export class KeyDecoder {
   private pasteBuffer: string | undefined;
   private keyBuffer = '';
+
+  reset(): void {
+    this.pasteBuffer = undefined;
+    this.keyBuffer = '';
+  }
 
   push(input: string): Key[] {
     const keys: Key[] = [];
@@ -150,8 +162,8 @@ export class KeyDecoder {
         const escape = remaining.lastIndexOf('\u001B');
         if (escape !== -1) {
           const suffix = remaining.slice(escape);
-                    const known = [...SEQUENCES.map(([sequence]) => sequence), '\u001B[200~'];
-          if ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[?<?\d*;?\d*;?\d*$/.test(suffix)) {
+          const known = [...SEQUENCES.map(([sequence]) => sequence), '\u001B[200~'];
+          if ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix)) {
             this.keyBuffer = suffix;
             remaining = remaining.slice(0, escape);
           }

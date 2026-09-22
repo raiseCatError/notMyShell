@@ -33,7 +33,8 @@ export async function installGhosttyKeybinding(): Promise<{success: boolean; err
       'keybind = cmd+up=text:\\x1b[1;9A',
       'keybind = cmd+down=text:\\x1b[1;9B',
       'keybind = cmd+shift+up=text:\\x1b[1;10A',
-      'keybind = cmd+shift+down=text:\\x1b[1;10B'
+      'keybind = cmd+shift+down=text:\\x1b[1;10B',
+      'keybind = alt+backspace=text:\\x1b[127;3u'
     ];
 
     let changed = false;
