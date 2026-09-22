@@ -13,6 +13,19 @@ npm install
 npm run build
 ```
 
+## Branch Model
+
+Normal development and feature branches should target `dev`. `master` is reserved for stable/release-ready code.
+
+Typical flow:
+```bash
+git switch dev
+git pull --ff-only
+git switch -c feature/example
+# Work on feature/example...
+```
+Then submit a Pull Request from `feature/example` to `dev`.
+
 ## Canonical verification
 
 Before submitting a pull request, ensure that your changes pass the canonical verification suite:

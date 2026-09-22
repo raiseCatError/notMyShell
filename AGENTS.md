@@ -63,6 +63,9 @@ app['session'].kill();
 ```
 
 ## Coding-agent behavior
+- Normal work should start from and target `dev`.
+- Do not commit directly to `master` unless the task explicitly concerns a release or stable-branch maintenance.
+- `master` represents the stable/released state.
 - inspect existing architecture before changing it
 - prefer localized changes
 - do not casually rewrite the renderer or PTY architecture
