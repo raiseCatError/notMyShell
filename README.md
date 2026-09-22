@@ -8,8 +8,9 @@
   <p>
     <a href="https://github.com/raiseCatError/notMyShell/blob/master/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-8B84B2.svg" alt="License"></a>
     <img src="https://img.shields.io/badge/platform-macOS-B0B8C2.svg" alt="macOS">
-    <img src="https://img.shields.io/badge/node-%3E%3D%2018-C5B9E8.svg" alt="Node.js">
+    <img src="https://img.shields.io/badge/node-%3E%3D%2022-C5B9E8.svg" alt="Node.js">
     <img src="https://img.shields.io/badge/shell-zsh-F2F0EC.svg" alt="zsh">
+    <a href="https://github.com/raiseCatError/notMyShell/actions/workflows/ci.yml"><img src="https://github.com/raiseCatError/notMyShell/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   </p>
 </div>
 
@@ -135,7 +136,7 @@ See [ROADMAP.md](ROADMAP.md) for planned shell compatibility, multi-shell adapte
 
 **Prerequisites:**
 - macOS
-- Node.js (v18+)
+- Node.js (v22+)
 - zsh
 - A compatible terminal host (Ghostty, macOS Terminal, VS Code)
 

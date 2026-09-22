@@ -1,6 +1,6 @@
 {
   "name": "nmsh",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "A cleaner terminal frontend for zsh with persistent input, autocomplete, semantic highlighting, scrollable history, and better command feedback.",
   "private": true,
   "main": "dist/index.js",
@@ -50,5 +50,8 @@
     "type": "git",
     "url": "https://github.com/raiseCatError/notMyShell.git"
   },
-  "homepage": "https://github.com/raiseCatError/notMyShell"
+  "homepage": "https://github.com/raiseCatError/notMyShell",
+  "engines": {
+    "node": ">=22"
+  }
 }
