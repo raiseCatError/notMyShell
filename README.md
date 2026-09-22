@@ -65,7 +65,7 @@ hello world
 Clone the repository and install dependencies:
 
 ```sh
-git clone https://github.com/example/notMyShell.git
+git clone https://github.com/raiseCatError/notMyShell.git
 cd notMyShell
 npm install
 npm run build
