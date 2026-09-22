@@ -1,0 +1,116 @@
+name: Bug Report
+description: File a bug report to help us improve NMSh
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: input
+    id: nmsh_version
+    attributes:
+      label: NMSh version / commit
+      description: Which version or commit of NMSh are you running?
+      placeholder: e.g., master (commit abc1234)
+    validations:
+      required: true
+  - type: input
+    id: macos_version
+    attributes:
+      label: macOS version
+      description: Which version of macOS are you using?
+      placeholder: e.g., macOS Sonoma 14.2.1
+    validations:
+      required: true
+  - type: dropdown
+    id: terminal_host
+    attributes:
+      label: Terminal host
+      description: Which terminal emulator are you using to run NMSh?
+      options:
+        - Ghostty
+        - macOS Terminal
+        - iTerm2
+        - VS Code Integrated Terminal
+        - WezTerm
+        - Kitty
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: zsh_version
+    attributes:
+      label: zsh version
+      description: Run `zsh --version` and paste the output.
+      placeholder: e.g., zsh 5.9 (x86_64-apple-darwin23.0)
+    validations:
+      required: true
+  - type: input
+    id: node_version
+    attributes:
+      label: Node version
+      description: Run `node -v` and paste the output.
+      placeholder: e.g., v20.10.0
+    validations:
+      required: true
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this bug? Please be specific.
+      placeholder: |
+        1. Open NMSh
+        2. Type '...'
+        3. Press ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected_behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual_behavior
+    attributes:
+      label: Actual behavior
+      description: What actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: relevant_configuration
+    attributes:
+      label: Relevant configuration
+      description: Any relevant excerpts from your `.zshrc` or environment (please scrub sensitive data).
+  - type: textarea
+    id: logs_output
+    attributes:
+      label: Logs/output
+      description: If applicable, add any logs or error outputs. (Please ensure you have scrubbed sensitive data).
+      render: shell
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility frequency
+      description: How often does this issue occur?
+      options:
+        - Always
+        - Often
+        - Sometimes
+        - Rarely
+        - Once
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have searched existing issues to ensure this bug has not already been reported.
+          required: true
+        - label: I am testing on a reasonably recent version/commit of NMSh.
+          required: true
+        - label: I have removed sensitive data from any logs or configuration shared above.
+          required: true

@@ -1,0 +1,60 @@
+name: Feature Request
+description: Propose a new feature or improvement for NMSh
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to request a feature! Please check [ROADMAP.md](../../blob/master/ROADMAP.md) before submitting to see if it's already planned.
+  - type: textarea
+    id: problem_statement
+    attributes:
+      label: What problem does this solve?
+      description: Describe the problem you're trying to solve or the friction you're experiencing.
+    validations:
+      required: true
+  - type: textarea
+    id: proposed_behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe how the new feature would work and how the user would interact with it.
+    validations:
+      required: true
+  - type: textarea
+    id: example_workflow
+    attributes:
+      label: Example workflow
+      description: Provide an example of how you would use this feature in practice.
+  - type: textarea
+    id: alternatives_considered
+    attributes:
+      label: Alternatives considered
+      description: What other approaches or workarounds have you tried?
+  - type: dropdown
+    id: affected_area
+    attributes:
+      label: Affected area
+      description: Which part of NMSh would this affect most?
+      options:
+        - Editor
+        - Shell compatibility
+        - Syntax highlighting
+        - Completion
+        - History
+        - Terminal compatibility
+        - Appearance
+        - Keyboard/input
+        - Passthrough
+        - Performance
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I have checked existing issues and ROADMAP.md to ensure this feature hasn't been requested or planned already.
+          required: true
