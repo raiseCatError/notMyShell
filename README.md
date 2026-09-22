@@ -218,6 +218,13 @@ npm test
 git diff --check
 ```
 
+## Community & Documentation
+
+- **Contributing** → [CONTRIBUTING.md](CONTRIBUTING.md)
+- **Security** → [SECURITY.md](SECURITY.md)
+- **Roadmap** → [ROADMAP.md](ROADMAP.md)
+- **Changelog** → [CHANGELOG.md](CHANGELOG.md)
+
 See [ROADMAP.md](ROADMAP.md) for future multi-shell architecture and extensibility plans.
 
 ## Security & Privacy

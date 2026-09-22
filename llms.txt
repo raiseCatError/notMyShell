@@ -62,6 +62,10 @@ src/terminal/TerminalRenderer.ts
 README.md
 ROADMAP.md
 AGENTS.md
+CONTRIBUTING.md
+SECURITY.md
+CHANGELOG.md
+SUPPORT.md
 LICENSE
 
 ## Repository

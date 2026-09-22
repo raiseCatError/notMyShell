@@ -1,0 +1,61 @@
+# Contributing to NMSh
+
+Thank you for your interest in contributing to notMyShell (NMSh)!
+
+## Setup
+
+To get started with development, clone the repository and build the project:
+
+```bash
+git clone https://github.com/raiseCatError/notMyShell.git
+cd notMyShell
+npm install
+npm run build
+```
+
+## Canonical verification
+
+Before submitting a pull request, ensure that your changes pass the canonical verification suite:
+
+```bash
+npm run build
+npm run typecheck
+npm test
+git diff --check
+```
+
+*Note: When writing tests involving `TerminalApp`, you must carefully tear down child processes and temp ZDOTDIRs using `app['stop'](0)` and `app['session'].kill()` to prevent zombie processes.*
+
+## Guidance
+
+- **Read the docs**: Please read `README.md` first.
+- **Understand the architecture**: Read `AGENTS.md` before making architectural changes.
+- **Check the roadmap**: Review `ROADMAP.md` before starting large features.
+- **Discuss first**: Open an issue to discuss large architectural changes before implementing them to ensure alignment.
+
+## Architectural Contribution Rules
+
+NMSh has several strict architectural invariants:
+
+- NMSh is a frontend over a persistent real shell.
+- Do not replace the persistent PTY with command-by-command spawning.
+- Raw PTY output must not be semantically recolored.
+- NMSh-owned command presentation (like the input editor and submitted commands in history) may be styled.
+- Fullscreen/interactive apps use the passthrough path.
+- Preserve real shell state.
+- Keep `SemanticService` detached from the controlling TTY.
+- Test-created `TerminalApp` instances must cleanly tear down resources.
+
+For more details, see [AGENTS.md](AGENTS.md).
+
+## Pull Request Guidance
+
+When opening a Pull Request:
+- **Keep it focused**: Address a single bug or feature.
+- **Explain**: Describe what changed and why.
+- **Test**: Include automated tests for behavior changes.
+- **Validation**: Distinguish automated testing from physical terminal/manual verification (e.g., testing in Ghostty vs. macOS Terminal).
+- **Scope**: Avoid unrelated formatting or refactors in the same PR.
+- **Reproducibility**: Keep generated/demo assets reproducible using the scripts in `scripts/`.
+
+Commits do not need to follow an excessively strict convention (e.g. Conventional Commits), but clear, descriptive messages are preferred.
