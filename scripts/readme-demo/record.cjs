@@ -14,33 +14,33 @@ async function sendKey(session, key) {
 
 async function run() {
   const session = 'demorec';
-  execSync('rm -f assets/readme/demo/demo.cast');
-  execSync(`tmux new-session -d -s ${session} -x 90 -y 18 "asciinema rec -c ./bin/nmsh assets/readme/demo/demo.cast"`);
+  try { execSync('rm -f scripts/readme-demo/demo.cast'); } catch (e) {}
+  execSync(`tmux new-session -d -s ${session} -x 90 -y 18 "asciinema rec -c ./bin/nmsh scripts/readme-demo/demo.cast"`);
   
   await delay(3500);
 
-  // 1. gti status
+  // 1. gti status (UNKNOWN)
   await typeLiteral(session, 'gti status');
   await delay(1200);
   await sendKey(session, 'C-u');
-
-  // 2. git status
   await delay(500);
-  await typeLiteral(session, 'git status');
+
+  // 2. git --version (KNOWN)
+  await typeLiteral(session, 'git --version');
   await delay(1200);
   await sendKey(session, 'Enter');
   
   await delay(2000);
 
-  // 3. echo "$HOME" | grep Projects
-  await typeLiteral(session, 'echo "$HOME" | grep Projects');
-  await delay(2000);
+  // 3. echo "$HOME" | grep Users (PIPELINE)
+  await typeLiteral(session, 'echo "$HOME" | grep Users');
+  await delay(1500);
   await sendKey(session, 'C-u');
-
-  // 4. sleep 3
   await delay(500);
+
+  // 4. sleep 3 (LIVE ACTIVITY)
   await typeLiteral(session, 'sleep 3');
-  await delay(600);
+  await delay(1000); // pause to show highlighting
   await sendKey(session, 'Enter');
   
   await delay(4500);
@@ -51,7 +51,7 @@ async function run() {
   await typeLiteral(session, 'exit');
   await sendKey(session, 'Enter');
   await delay(1000);
-  execSync(`tmux kill-session -t ${session}`);
+  try { execSync(`tmux kill-session -t ${session}`); } catch (e) {}
 }
 
 run().catch(console.error);
