@@ -1,4 +1,4 @@
-import {AnsiOutputParser} from './AnsiOutputParser.js';
+import {AnsiOutputParser, type SerializedLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
@@ -15,6 +15,13 @@ export interface CompletedCommand {
   endId?: number;
   expanded?: boolean;
   mode?: PresentationMode;
+}
+
+export interface OutputTranscript {
+  records: CompletedCommand[];
+  lines: SerializedLine[];
+  visualGaps: number[];
+  lineTypes: Array<[number, 'command' | 'metadata']>;
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -39,6 +46,35 @@ export class OutputBuffer {
       this.lineTypes.clear();
       this.onClear?.();
     });
+  }
+
+  transcript(): OutputTranscript {
+    return {
+      records: this.completed.map(record => ({...record})),
+      lines: this.parser.snapshot(),
+      visualGaps: [...this.visualGaps],
+      lineTypes: [...this.lineTypes.entries()],
+    };
+  }
+
+  restoreTranscript(transcript: OutputTranscript): void {
+    this.parser.restore(transcript.lines);
+    this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({...record})));
+    this.visualGaps.clear();
+    transcript.visualGaps.forEach(index => this.visualGaps.add(index));
+    this.lineTypes.clear();
+    transcript.lineTypes.forEach(([index, type]) => this.lineTypes.set(index, type));
+    this.active = undefined;
+    this.classifier = undefined;
+  }
+
+  clearPresentation(): void {
+    this.parser.restore([]);
+    this.completed.length = 0;
+    this.visualGaps.clear();
+    this.lineTypes.clear();
+    this.active = undefined;
+    this.classifier = undefined;
   }
 
   beginCommand(command: string, formattedLines: string[], onModeChange?: (mode: PresentationMode) => void): number {

@@ -38,7 +38,9 @@ Large multiline text-only pastes appear as one editable logical atom. Small past
 
 ## Local transcript sessions
 
-`/clear` archives the current NMSh transcript locally, clears its visible presentation, and starts a new presentation session while retaining the same live zsh. It does not normally reset cwd/environment, kill zsh or jobs, or delete the archived transcript. `/resume` offers a keyboard-friendly archive picker and restores transcript history without rewinding real shell state. Store versioned logical/raw data resiliently on-device, with deterministic metadata and no cloud, telemetry, model API, AI summary, or automatic destructive pruning.
+`/clear` archives the current NMSh transcript locally, clears its visible presentation, and starts a new presentation session while retaining the same live zsh. It does not normally reset cwd/environment, kill zsh or jobs, or delete the archived transcript. While a foreground command is running, `/clear` is refused so its transcript is not detached from active execution. `/resume` offers a keyboard-friendly archive picker and restores transcript history without rewinding real shell state; if the current presentation is non-empty, NMSh archives it before switching views. Archives live under `~/Library/Application Support/notMyShell/sessions/` on macOS (or `$XDG_CONFIG_HOME/nmsh/sessions/` when set), use schema version 1 JSON, and are written with mode `0600` in a mode `0700` directory to a synced temporary file before atomic rename and directory sync. They retain structured command/raw-text records and styled terminal cells, not ANSI-only output. Corrupt and unsupported-version archives are left untouched and omitted from the picker. Data is local-only, with no cloud, telemetry, model API, AI summary, or automatic destructive pruning. A temporary file left by a crash is ignored; the final archive is either present after atomic rename or absent.
+
+Both `/clear` and `/resume` wait until the foreground command has finished or been interrupted; neither is sent as input to a running command.
 
 ## Onboarding
 

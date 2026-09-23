@@ -1,12 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {slashSuggestions, suggestionWindow} from '../src/commands/slashCommands.js';
+import {parseSlashCommand, slashSuggestions, suggestionWindow} from '../src/commands/slashCommands.js';
 import {calculateScreenLayout} from '../src/app/layout.js';
 
 test('slash autocomplete exposes copy variants and help', () => {
   assert.deepEqual(slashSuggestions('/co').map(item => item.name), ['/copy', '/copy N']);
   assert.deepEqual(slashSuggestions('/h').map(item => item.name), ['/help', '/history']);
   assert.deepEqual(slashSuggestions('/z').map(item => item.name), ['/zsh']);
+  assert.deepEqual(parseSlashCommand('/clear'), {kind: 'clear'});
+  assert.deepEqual(parseSlashCommand('/resume'), {kind: 'resume'});
 });
 
 test('autocomplete height clamps while keeping the selected candidate visible', () => {

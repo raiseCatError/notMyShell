@@ -10,6 +10,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
+  {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
+  {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/history', insertion: '/history ', description: 'Search history'},
 ];
@@ -19,6 +21,8 @@ export type ParsedSlashCommand =
   | {kind: 'appearance'}
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
+  | {kind: 'clear'}
+  | {kind: 'resume'}
   | {kind: 'help'}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
@@ -30,6 +34,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
+  if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
+  if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (input.startsWith('/history ')) return {kind: 'history', query: input.substring(9).trim()};
   return {kind: 'unknown', input};

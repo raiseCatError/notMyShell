@@ -28,6 +28,7 @@ import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from 
 import {Highlighter, type TokenType} from '../input/Highlighter.js';
 import {SemanticService} from '../shell/SemanticService.js';
 import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
+import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -57,6 +58,7 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
+  private readonly transcriptStore = new TranscriptStore();
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
@@ -79,6 +81,8 @@ export class TerminalApp {
   private originalRawMode = false;
   private shellHandoffCwd?: string;
   private shellHandoffRequested = false;
+  private presentationStartCwd = process.cwd();
+  private resumeSessions?: TranscriptSession[];
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
 
@@ -154,6 +158,19 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.resumeSessions) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.resumeSessions = undefined;
+      } else if (key.kind === 'up') {
+        this.selectedSuggestion = Math.max(0, this.selectedSuggestion - 1);
+      } else if (key.kind === 'down') {
+        this.selectedSuggestion = Math.min(this.resumeSessions.length - 1, this.selectedSuggestion + 1);
+      } else if (key.kind === 'enter') {
+        void this.resumeSelectedSession();
+      }
+      this.render();
+      return;
+    }
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
       const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
@@ -378,6 +395,12 @@ export class TerminalApp {
         if (this.editor.text.trim() === '/zsh') {
           this.editor.clear();
           this.output.addFrontendInteraction('/zsh', 'Wait for the foreground command to finish or interrupt it, then run /zsh.', INFO);
+        } else if (this.editor.text.trim() === '/clear') {
+          this.editor.clear();
+          this.output.addFrontendInteraction('/clear', 'Wait for the foreground command to finish before archiving this transcript.', INFO);
+        } else if (this.editor.text.trim() === '/resume') {
+          this.editor.clear();
+          this.output.addFrontendInteraction('/resume', 'Wait for the foreground command to finish before switching transcripts.', INFO);
         } else {
           this.session.write(`${this.editor.text}\r`);
         }
@@ -439,6 +462,8 @@ export class TerminalApp {
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
+      else if (slash.kind === 'clear') await this.startFreshPresentation();
+      else if (slash.kind === 'resume') await this.openResumePicker();
       else if (slash.kind === 'help') this.showHelp(command);
       else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
       this.render();
@@ -586,6 +611,64 @@ export class TerminalApp {
       this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
     } catch {
       this.output.addFrontendInteraction(command, 'Clipboard copy failed', ERROR);
+    }
+  }
+
+  private async archiveCurrentPresentation(): Promise<void> {
+    const transcript = this.output.transcript();
+    await this.transcriptStore.archive({
+      startCwd: this.presentationStartCwd,
+      finalCwd: this.shellCwd,
+      transcript,
+    });
+  }
+
+  private async startFreshPresentation(): Promise<void> {
+    if (this.running) {
+      this.output.addFrontendInteraction('/clear', 'Wait for the foreground command to finish before clearing the transcript.', INFO);
+      return;
+    }
+    try {
+      await this.archiveCurrentPresentation();
+      this.output.clearPresentation();
+      this.presentationStartCwd = this.shellCwd;
+      this.historyViewport.latest();
+    } catch {
+      this.output.addFrontendInteraction('/clear', 'Could not archive this transcript; the current view was kept.', ERROR);
+    }
+  }
+
+  private async openResumePicker(): Promise<void> {
+    try {
+      const sessions = await this.transcriptStore.list();
+      if (sessions.length === 0) {
+        this.output.addFrontendInteraction('/resume', 'No archived NMSh transcript sessions were found.', INFO);
+        return;
+      }
+      this.resumeSessions = sessions;
+      this.selectedSuggestion = 0;
+    } catch {
+      this.output.addFrontendInteraction('/resume', 'Could not read local transcript archives.', ERROR);
+    }
+  }
+
+  private async resumeSelectedSession(): Promise<void> {
+    const sessions = this.resumeSessions;
+    if (!sessions) return;
+    const selected = sessions[this.selectedSuggestion];
+    if (!selected) return;
+    try {
+      const current = this.output.transcript();
+      if (current.records.length > 0 || current.lines.length > 0) await this.archiveCurrentPresentation();
+      this.output.restoreTranscript(selected.transcript);
+      this.presentationStartCwd = selected.startCwd;
+      this.resumeSessions = undefined;
+      this.selectedSuggestion = 0;
+      this.historyViewport.latest();
+      this.render();
+    } catch {
+      this.output.addFrontendInteraction('/resume', 'Could not restore the selected transcript; the current view was kept.', ERROR);
+      this.resumeSessions = undefined;
     }
   }
 
@@ -767,7 +850,13 @@ export class TerminalApp {
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
 
     let availableSuggestions: any[] = [];
-    if (!this.running) {
+    if (this.resumeSessions) {
+      availableSuggestions = this.resumeSessions.map(session => ({
+        name: `${new Date(session.createdAt).toLocaleString()} · ${session.commandCount} commands · ${session.finalCwd}`,
+        insertion: '',
+        description: session.preview || session.startCwd,
+      }));
+    } else if (!this.running) {
       if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
         const q = this.editor.text.substring(9).toLowerCase();
         const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
