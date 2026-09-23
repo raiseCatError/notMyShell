@@ -122,6 +122,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     segments,
     endStyle: configuration.nmsh.endStyle,
     gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
+    gapEnabled: configuration.nmsh.gapEnabled,
     spacing: configuration.spacing,
     cwd: context.cwd,
     ...(context.branch ? {branch: context.branch} : {}),
@@ -144,7 +145,7 @@ export function buildContextLine(
 
   const lineEndStyle = configuration.nmsh.endStyle;
   const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
-    configuration.spacing, width, lineEndStyle);
+    configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled);
 
   if (placement === 'composer') return `${content}${RESET}`;
 

@@ -15,6 +15,7 @@ export interface PromptSnapshot {
   segments: PromptSegmentSnapshot[];
   endStyle?: NativeEndStyle;
   gap?: number;
+  gapEnabled?: boolean;
   spacing?: number;
   cwd: string;
   branch?: string;
@@ -50,6 +51,15 @@ function fromOklab(l: number, a: number, b: number): RgbColor {
     green: gamma(-1.2684380046 * lc + 2.6097574011 * mc - 0.3413193965 * sc),
     blue: gamma(-0.0041960863 * lc - 0.7034186147 * mc + 1.707614701 * sc),
   };
+}
+
+/** Lower prompt emphasis while keeping a color's OKLab hue angle stable. */
+export function fadePromptColor(color: RgbColor, step: number): RgbColor {
+  const [lightness, a, b] = toOklab(color);
+  const lightnessFactors = [0.88, 0.76, 0.64];
+  const chromaFactors = [0.88, 0.74, 0.60];
+  const index = Math.max(0, Math.min(lightnessFactors.length - 1, Math.trunc(step)));
+  return fromOklab(lightness * lightnessFactors[index]!, a * chromaFactors[index]!, b * chromaFactors[index]!);
 }
 
 export function archiveColor(color: RgbColor, role: 'foreground' | 'background' = 'foreground'): RgbColor {

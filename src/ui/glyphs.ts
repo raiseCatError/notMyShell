@@ -27,12 +27,10 @@ export const GLYPHS = {
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : '↓'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '─'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
-  // The leading edge points into the following segment; the trailing edge
-  // points out of the segment that precedes it.
-  get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
+  // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.
+  get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
   get powerlineTrailing() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
-  get powerlineFadeWedge() { return getCurrentGlyphMode() === 'nerd' ? ['▶', '▸', '›'] : ['>', '>', '>']; },
 };
 
 export const SPINNER_FRAMES = {
