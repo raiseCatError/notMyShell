@@ -15,22 +15,8 @@ import type {PromptSnapshot, PromptSegmentSnapshot} from './snapshot.js';
 const RESET = '\u001B[0m';
 const LINE = foreground(UI_COLORS.separator);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
-export const NATIVE_LAVENDER_RAMP: readonly RgbColor[] = [
-  {red: 166, green: 124, blue: 243},
-  {red: 157, green: 115, blue: 231},
-  {red: 148, green: 106, blue: 219},
-  {red: 139, green: 97, blue: 207},
-  {red: 130, green: 88, blue: 195},
-  {red: 121, green: 79, blue: 183},
-  {red: 112, green: 70, blue: 171},
-  {red: 103, green: 61, blue: 159},
-];
-const NATIVE_FOREGROUND: RgbColor = {red: 249, green: 245, blue: 255};
-
-export function nativePaletteColor(visibleIndex: number): RgbColor {
-  const index = ((Math.trunc(visibleIndex) % NATIVE_LAVENDER_RAMP.length) + NATIVE_LAVENDER_RAMP.length) % NATIVE_LAVENDER_RAMP.length;
-  return {...NATIVE_LAVENDER_RAMP[index]!};
-}
+/** NMSh brand/project lavender. */
+export const NMSH_BRAND_LAVENDER: RgbColor = {red: 166, green: 124, blue: 243};
 
 export const FADE_TAIL_GLYPHS = GLYPHS.powerlineFade;
 
@@ -50,64 +36,92 @@ export type PromptRole = 'project' | 'cwd' | 'gitBranch' | ToolchainId | 'succes
 type SegmentColors = {foreground: RgbColor; background: RgbColor};
 
 const hex = (value: string): RgbColor => colorFromHex(value, {red: 0, green: 0, blue: 0});
-const LIGHT_TEXT = hex('#f5f5f7');
-const DARK_TEXT = hex('#1b2412');
-const TOOLCHAIN_COLORS: Record<ToolchainId, SegmentColors> = {
-  docker: {background: hex('#2f8ee0'), foreground: LIGHT_TEXT},
-  node: {background: hex('#5fa04e'), foreground: hex('#0f2410')},
-  go: {background: hex('#29aed6'), foreground: hex('#0b2530')},
-  python: {background: hex('#f2cf4a'), foreground: hex('#2b240a')},
-};
+const pair = (backgroundHex: string, foregroundHex: string): SegmentColors => ({background: hex(backgroundHex), foreground: hex(foregroundHex)});
 const STATUS_COLORS = {
   success: {background: UI_COLORS.success, foreground: hex('#10231b')},
-  failure: {background: UI_COLORS.failure, foreground: LIGHT_TEXT},
+  failure: {background: UI_COLORS.failure, foreground: hex('#f5f5f7')},
 } as const;
 
 export interface NativePromptTheme {
   id: NativePaletteId;
   label: string;
   description: string;
-  /** Colors one segment from its semantic role and visible position. */
-  colors(role: PromptRole, visibleIndex: number): SegmentColors;
+  /** Colors one segment from its semantic role. */
+  colors(role: PromptRole): SegmentColors;
 }
 
-function roleTheme(project: SegmentColors, cwd: SegmentColors, gitBranch: SegmentColors) {
-  return (role: PromptRole): SegmentColors => {
-    if (role === 'project') return project;
-    if (role === 'cwd') return cwd;
-    if (role === 'gitBranch') return gitBranch;
-    if (role === 'success' || role === 'failure') return STATUS_COLORS[role];
-    return TOOLCHAIN_COLORS[role];
-  };
+function theme(id: NativePaletteId, label: string, description: string, roles: Record<PromptRole, SegmentColors>): NativePromptTheme {
+  return {id, label, description, colors: role => roles[role]};
 }
 
+/*
+ * Every theme is a complete role map so adjacent segments stay distinct in
+ * any module order. Toolchain segments keep recognizable identities in the
+ * semantic themes; Lavender Native and Grayscale stay within their family.
+ */
 export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = {
-  lavender: {
-    id: 'lavender',
-    label: 'Lavender Native',
-    description: 'calm monotone lavender ramp',
-    colors: (_role, index) => ({foreground: NATIVE_FOREGROUND, background: nativePaletteColor(index)}),
-  },
-  semantic: {
-    id: 'semantic',
-    label: 'Soft Semantic',
-    description: 'lime project, muted path, charcoal git, tool colors',
-    colors: roleTheme(
-      {background: hex('#acfc73'), foreground: DARK_TEXT},
-      {background: hex('#5e626c'), foreground: hex('#e2e4e9')},
-      {background: hex('#3a3d46'), foreground: LIGHT_TEXT},
-    ),
-  },
-  cool: {
-    id: 'cool',
-    label: 'Cool First',
-    description: 'periwinkle, slate and teal with tool colors',
-    colors: roleTheme(
-      {background: hex('#6f7fd8'), foreground: LIGHT_TEXT},
-      {background: hex('#4a5878'), foreground: hex('#dde3f0')},
-      {background: hex('#2f6e6c'), foreground: hex('#e8f8f6')},
-    ),
-  },
+  lavender: theme('lavender', 'Lavender Native', 'lavender, violet and iris family', {
+    project: pair('#a67cf3', '#faf6ff'),
+    cwd: pair('#7a68b8', '#f3eeff'),
+    gitBranch: pair('#5e45a6', '#f3eeff'),
+    node: pair('#9a6fd6', '#faf6ff'),
+    go: pair('#5d56c2', '#f5f6ff'),
+    python: pair('#b08bcb', '#26173d'),
+    docker: pair('#544ca8', '#f2f3ff'),
+    success: pair('#7c84cf', '#f5f6ff'),
+    failure: pair('#b85c8f', '#fff3f8'),
+  }),
+  brand: theme('brand', 'Brand / Semantic', 'NMSh lavender with full tool brand colors', {
+    project: pair('#a67cf3', '#faf6ff'),
+    cwd: pair('#667085', '#f4f5f8'),
+    gitBranch: pair('#3a3d46', '#ffffff'),
+    node: pair('#3c873a', '#ffffff'),
+    go: pair('#00add8', '#04222b'),
+    python: pair('#ffd43b', '#2b2300'),
+    docker: pair('#1d63ed', '#ffffff'),
+    ...STATUS_COLORS,
+  }),
+  semantic: theme('semantic', 'Soft Semantic', 'pastel roles with dark text', {
+    project: pair('#bba3f0', '#241a3d'),
+    cwd: pair('#5e626c', '#e2e4e9'),
+    gitBranch: pair('#3a3d46', '#f5f5f7'),
+    node: pair('#8dbb7e', '#13240f'),
+    go: pair('#7cc6db', '#0b2530'),
+    python: pair('#e8d38a', '#2b240a'),
+    docker: pair('#82aedc', '#0d2036'),
+    ...STATUS_COLORS,
+  }),
+  cool: theme('cool', 'Cool First', 'periwinkle, slate and teal with tool colors', {
+    project: pair('#6f7fd8', '#f5f5f7'),
+    cwd: pair('#4a5878', '#dde3f0'),
+    gitBranch: pair('#2f6e6c', '#e8f8f6'),
+    node: pair('#5fa04e', '#0f2410'),
+    go: pair('#29aed6', '#0b2530'),
+    python: pair('#f2cf4a', '#2b240a'),
+    docker: pair('#2f8ee0', '#f5f5f7'),
+    ...STATUS_COLORS,
+  }),
+  warm: theme('warm', 'Warm First', 'amber, sand, rust and olive', {
+    project: pair('#d39b55', '#2a1a08'),
+    cwd: pair('#7a6a58', '#f4ece2'),
+    gitBranch: pair('#8f4b35', '#fbefe9'),
+    node: pair('#8a9450', '#1c1f0a'),
+    go: pair('#4a8585', '#f0f8f8'),
+    python: pair('#d8b04c', '#2a2008'),
+    docker: pair('#5c7fa3', '#f0f4f8'),
+    ...STATUS_COLORS,
+  }),
+  grayscale: theme('grayscale', 'Grayscale', 'graphite to silver, no hue', {
+    project: pair('#d0d2d6', '#16171a'),
+    cwd: pair('#62656b', '#f0f1f3'),
+    gitBranch: pair('#3e4045', '#f5f5f6'),
+    node: pair('#a3a6ab', '#16171a'),
+    go: pair('#74777d', '#f3f4f5'),
+    python: pair('#bdbfc3', '#16171a'),
+    docker: pair('#585b61', '#f0f1f3'),
+    success: pair('#8e9196', '#111214'),
+    failure: pair('#e4e5e7', '#111214'),
+  }),
 };
 
 function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
@@ -153,9 +167,9 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
   // modules say the same thing (notably "~" at HOME).
   const project = eligible.find(segment => segment.role === 'project');
   const visible = eligible.filter(segment => !(segment.role === 'cwd' && project?.text === segment.text));
-  const theme = NATIVE_PROMPT_THEMES[configuration.nmsh.palette] ?? NATIVE_PROMPT_THEMES.lavender;
-  return visible.map((segment, index) => {
-    const colors = theme.colors(segment.role, index);
+  const palette = NATIVE_PROMPT_THEMES[configuration.nmsh.palette] ?? NATIVE_PROMPT_THEMES.lavender;
+  return visible.map(segment => {
+    const colors = palette.colors(segment.role);
     return {
       id: segment.module.id,
       text: segment.text,
@@ -210,6 +224,28 @@ export function buildContextLine(
 
   const separatorWidth = Math.max(0, width - displayWidth(content));
   return `${content}${LINE}${repeatToWidth('─', separatorWidth)}${RESET}`;
+}
+
+/**
+ * Preview-only context: every module type, independent of the real cwd.
+ * Never used for the live prompt, which shows only detected modules.
+ */
+export function themePreviewContext(home = homedir()): PromptContext {
+  return {
+    cwd: `${home.replace(/\/$/u, '')}/src`,
+    project: 'notMyShell',
+    branch: 'main',
+    toolchains: ['node', 'go', 'python', 'docker'],
+    exitStatus: 0,
+  };
+}
+
+/** One theme row for /prompt: real geometry from the draft, synthetic modules, all visible. */
+export function buildThemePreviewLine(configuration: PromptConfiguration, palette: NativePaletteId, width: number): string {
+  const preview = structuredClone(configuration);
+  preview.nmsh.palette = palette;
+  preview.modules = DEFAULT_PROMPT_CONFIGURATION.modules.map(module => ({...module, visible: true}));
+  return buildContextLine(themePreviewContext(), width, preview, 'composer');
 }
 
 /** Context plus the editable input prompt, sized to leave at least one input cell. */

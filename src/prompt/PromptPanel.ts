@@ -44,16 +44,39 @@ function startStyleLabel(value: PromptConfiguration['nmsh']['startStyle']): stri
   return value === 'flat' ? 'Flat' : 'Pointed';
 }
 
-function layoutLabel(value: PromptConfiguration['composerLayout']): string {
-  return value === 'oneLine' ? 'one-line' : 'two-line';
+/**
+ * Layout choices write the existing `composerLayout` and `placement` keys.
+ * `placement` only matters in two-line mode: `header` draws the prompt row as
+ * the composer's divider, `composer` adds a border and places it inside.
+ * One-line leaves the stored placement untouched.
+ */
+export const LAYOUT_CHOICES = [
+  {label: 'Two-line · prompt row is the divider', summary: 'two-line divider', composerLayout: 'twoLine', placement: 'header'},
+  {label: 'Two-line · prompt inside bordered composer', summary: 'two-line inside', composerLayout: 'twoLine', placement: 'composer'},
+  {label: 'One-line · prompt inline with input', summary: 'one-line', composerLayout: 'oneLine', placement: undefined},
+] as const;
+
+export function layoutChoiceIndex(configuration: PromptConfiguration): number {
+  if (configuration.composerLayout === 'oneLine') return 2;
+  return configuration.placement === 'composer' ? 1 : 0;
+}
+
+export function applyLayoutChoice(configuration: PromptConfiguration, index: number): void {
+  const choice = LAYOUT_CHOICES[Math.max(0, Math.min(LAYOUT_CHOICES.length - 1, index))]!;
+  configuration.composerLayout = choice.composerLayout;
+  if (choice.placement) configuration.placement = choice.placement;
+}
+
+function layoutLabel(configuration: PromptConfiguration): string {
+  return LAYOUT_CHOICES[layoutChoiceIndex(configuration)]!.summary;
 }
 
 /** One-line summary of an effective configuration. */
 export function describePromptConfiguration(configuration: PromptConfiguration): string {
-  if (configuration.provider === 'starship') return `Starship · ${layoutLabel(configuration.composerLayout)}`;
+  if (configuration.provider === 'starship') return `Starship · ${layoutLabel(configuration)}`;
   return [
     NATIVE_PROMPT_THEMES[configuration.nmsh.palette].label,
-    layoutLabel(configuration.composerLayout),
+    layoutLabel(configuration),
     `${startStyleLabel(configuration.nmsh.startStyle).toLowerCase()} start`,
     `gap ${nativeGapChoice(configuration)}`,
     endStyleLabel(configuration.nmsh.endStyle).toLowerCase(),
@@ -77,7 +100,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
   switch (state.step) {
     case 'provider': return 2;
     case 'starship': return state.starshipStatus?.installed ? 4 : 3;
-    case 'layout': return 2;
+    case 'layout': return LAYOUT_CHOICES.length;
     case 'appearance': return 4;
     case 'installConfirm': return 2;
   }
@@ -89,7 +112,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
   else if (key.kind === 'left' || key.kind === 'right') {
     const delta = key.kind === 'left' ? -1 : 1;
     if (state.step === 'provider') state.selectedIndex = (state.selectedIndex + delta + 2) % 2;
-    else if (state.step === 'layout') state.selectedIndex = (state.selectedIndex + delta + 2) % 2;
+    else if (state.step === 'layout') state.selectedIndex = (state.selectedIndex + delta + LAYOUT_CHOICES.length) % LAYOUT_CHOICES.length;
     else if (state.step === 'appearance') {
       const nmsh = state.draft.nmsh;
       if (state.selectedIndex === 0) nmsh.palette = cycle(NATIVE_PALETTE_IDS, nmsh.palette, delta);
@@ -138,8 +161,10 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(item(1, 'Back'));
   } else if (state.step === 'layout') {
     rows.push(`${PRIMARY}Choose composer layout${RESET}`);
-    rows.push(item(0, `Two-line${state.draft.composerLayout === 'twoLine' ? '  ●' : ''}`));
-    rows.push(item(1, `One-line${state.draft.composerLayout === 'oneLine' ? '  ●' : ''}`));
+    const draftChoice = layoutChoiceIndex(state.draft);
+    const savedChoice = state.saved ? layoutChoiceIndex(state.saved) : -1;
+    LAYOUT_CHOICES.forEach((choice, index) => rows.push(item(index,
+      `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
   } else {
     const saved = state.saved?.nmsh;
     const value = (text: string, savedText: string | undefined) => savedText === undefined || savedText === text
@@ -158,7 +183,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
         const savedMark = saved?.palette === id ? '✓' : ' ';
-        const label = `${theme.label}${' '.repeat(Math.max(1, 16 - theme.label.length))}`;
+        const label = theme.label.padEnd(17);
         rows.push(`${marker} ${SECONDARY}${label}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }
@@ -167,7 +192,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   if (preview.length) {
     rows.push('');
     const selectedLayout = state.step === 'layout'
-      ? state.selectedIndex === 1 ? 'oneLine' : 'twoLine'
+      ? LAYOUT_CHOICES[state.selectedIndex]?.composerLayout ?? state.draft.composerLayout
       : state.draft.composerLayout;
     const status = promptDraftChanged(state) ? `${ACCENT}unsaved preview` : state.saved ? `${SUBTLE}matches current` : '';
     rows.push(`${PRIMARY}${selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}${status ? `  ${status}${RESET}` : ''}`);
