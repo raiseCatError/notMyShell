@@ -20,7 +20,7 @@ Before starting work, check:
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
 - **[v0.2.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/1)** — current release target
-- **GitHub Project** — live status board (requires `project` scope: `gh auth refresh -s project`)
+- **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model
 

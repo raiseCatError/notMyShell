@@ -33,7 +33,7 @@ Making ordinary shell execution structured, readable, compact, and recoverable w
 |---|---|
 | [#1](https://github.com/raiseCatError/notMyShell/issues/1) | Visual hierarchy: distinguish submitted commands, NMSh metadata, and shell output |
 | [#2](https://github.com/raiseCatError/notMyShell/issues/2) | Output folding: preserve raw PTY output with per-command presentation state |
-| [#3](https://github.com/raiseCatError/notMyShell/issues/3) | Ctrl+O: expand and collapse raw command output |
+| [#3](https://github.com/raiseCatError/notMyShell/issues/3) | Ctrl+O: toggle compact and detailed execution views |
 | [#4](https://github.com/raiseCatError/notMyShell/issues/4) | Automatic execution presentation: inline, folded, live, passthrough |
 | [#5](https://github.com/raiseCatError/notMyShell/issues/5) | Execution timeline: factual command milestones and summaries |
 | [#6](https://github.com/raiseCatError/notMyShell/issues/6) | Deterministic summaries for common CLI tools |
