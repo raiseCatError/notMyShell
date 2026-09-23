@@ -51,6 +51,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
         && record.historicalContext.prompt !== null
         && (record.historicalContext.prompt.provider === 'nmsh' || record.historicalContext.prompt.provider === 'starship')
         && Array.isArray(record.historicalContext.prompt.segments)
+        && (record.historicalContext.prompt.gapEnabled === undefined || typeof record.historicalContext.prompt.gapEnabled === 'boolean')
         && record.historicalContext.prompt.segments.every(segment => segment && typeof segment.text === 'string'
           && (segment.geometry === 'powerline' || segment.geometry === 'plain')
           && (segment.foreground === undefined || validRgb(segment.foreground))

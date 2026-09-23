@@ -22,12 +22,12 @@ test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and on
     assert.equal(transcript.welcome?.shell, 'zsh');
     assert.equal(transcript.lines.length, 0, 'welcome is not raw PTY output');
     const rows = app['output'].wrapped(80);
-    assert.equal(rows.length, 6);
+    assert.equal(rows.length, 5);
     assert.ok(rows[0]!.plain.includes(`NMSh ${readBuildIdentity().version}`));
     assert.match(rows[1]!.plain, /build /u);
     assert.match(rows[3]!.plain, /zsh/u);
     assert.match(rows[2]!.plain, /~\/Projects\/notMyShell|\/notMyShell/u);
-    assert.equal(rows[5]!.plain, '─'.repeat(80));
+    assert.equal(rows[4]!.plain, '─'.repeat(80));
     assert.ok(rows.every(row => row.lineIndex === undefined && !row.isLiveActivity));
   } finally {
     app['stop'](0);
@@ -45,7 +45,7 @@ test('welcome snapshots cwd and renders a compact pixel cat head with square eye
   assert.match(rows[0]!.plain, /▄██▄/u, 'ears are visible');
   assert.match(rows[2]!.plain, /─.*─/u, 'whiskers are visible');
   assert.doesNotMatch(rows.map(row => row.plain).join(''), /▝▀|▗██/u, 'the icon contains no body or tail');
-  assert.match(rows[5]!.ansi, /38;2;105;98;130m/u);
+  assert.match(rows[4]!.ansi, /38;2;105;98;130m/u);
   snapshot.cwd = '/tmp/changed';
   assert.match(rows[2]!.plain, /~\/Projects\/work/u);
 });
@@ -54,7 +54,7 @@ test('welcome keeps every row inside narrow and wide viewports', () => {
   const snapshot = createWelcomeSnapshot(identity, '/a/very/long/directory/name');
   for (let width = 1; width <= 100; width += 1) {
     const rows = renderWelcome(snapshot, width);
-    assert.equal(rows.length, width >= 42 ? 6 : 5, `width ${width}`);
+    assert.equal(rows.length, 5, `width ${width}`);
     assert.ok(rows.every(row => displayWidth(row.plain) <= width), `width ${width}`);
     assert.ok(rows.every(row => !row.plain.includes('\n')), `width ${width}`);
   }
@@ -87,8 +87,8 @@ test('fresh welcome starts at transcript row zero and the first command follows 
   const viewport = new HistoryViewport();
   assert.equal(viewport.resolve(rows.length, 20), 0);
   assert.match(rows[0]!.plain, /NMSh/u);
-  assert.equal(rows[5]!.plain, '─'.repeat(80));
-  assert.equal(rows[6]!.plain, '❯ echo first');
+  assert.equal(rows[4]!.plain, '─'.repeat(80));
+  assert.equal(rows[5]!.plain, '❯ echo first');
 });
 
 test('/clear begins a new welcome at live cwd; /resume restores the archived one without duplication', async () => {

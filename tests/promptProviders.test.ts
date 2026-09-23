@@ -4,7 +4,7 @@ import {mkdtemp, chmod, mkdir, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {archiveColor} from '../src/prompt/snapshot.js';
-import {NATIVE_LAVENDER_RAMP, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
+import {buildContextLine, NATIVE_LAVENDER_RAMP, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
 import {normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -123,6 +123,10 @@ test('onboarding preview uses a dedicated panel and hides the live composer curs
     assert.ok(frame?.rows.some(row => row.includes('Two-line preview')));
     assert.ok(frame?.rows.some(row => row.includes('Fading wedge')));
     assert.ok(frame?.rows.at(-1)?.includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
+    const previewRows = app['promptPanelPreview'](80);
+    const runtimeRow = buildContextLine(app['context'], 76, app['promptPanelState']!.draft,
+      app['promptPanelState']!.draft.placement);
+    assert.ok(previewRows.includes(runtimeRow), 'Native onboarding preview uses the runtime segment renderer');
     const panel = renderPromptPanel(app['promptPanelState']!, 80, ['sample preview']);
     assert.ok(panel.some(row => row.includes('Fading wedge')));
   } finally {

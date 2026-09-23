@@ -471,7 +471,9 @@ function renderPromptSnapshot(context: HistoricalContextSnapshot, width: number)
       foreground: segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,
       background: segment.background ? archiveColor(segment.background, 'background') : ARCHIVE_BLOCK_COLOR,
     }));
-    prompt = fitPowerlineBlocks(blocks, snapshot.gap ?? 1, snapshot.spacing ?? 1, Math.max(0, width - 1), snapshot.endStyle ?? false);
+    const gap = snapshot.gap ?? 1;
+    prompt = fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, Math.max(0, width - 1),
+      snapshot.endStyle ?? false, snapshot.gapEnabled ?? gap > 0);
   } else {
     prompt = snapshot.segments.map(segment => `${rgbStyle(
       segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,

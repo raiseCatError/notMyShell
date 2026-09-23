@@ -1,9 +1,11 @@
 import {background, foreground, type RgbColor} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
+import {fadePromptColor} from './snapshot.js';
 import {displayWidth, truncateText} from '../util/text.js';
 
 const RESET = '\u001B[0m';
 const NEUTRAL_BACKGROUND = '\u001B[49m';
+const FADE_WEDGE_COUNT = 4;
 
 export type PowerlineEndStyle = 'fadeWedge' | 'wedge' | 'fadeFlat' | 'flat';
 
@@ -13,74 +15,98 @@ export interface PowerlineBlock {
   background: RgbColor;
 }
 
-/** Render module bodies and the neutral-background Powerline edges between them. */
+function normalizeEndStyle(endStyle: PowerlineEndStyle | boolean): PowerlineEndStyle | undefined {
+  if (typeof endStyle === 'string') return endStyle;
+  return endStyle ? 'fadeFlat' : undefined;
+}
+
+function transition(from: RgbColor, to: RgbColor): string {
+  return `${RESET}${foreground(from)}${background(to)}${GLYPHS.powerlineTrailing}`;
+}
+
+function fadeColors(color: RgbColor): RgbColor[] {
+  return Array.from({length: FADE_WEDGE_COUNT - 1}, (_, index) => fadePromptColor(color, index));
+}
+
+/** Render native/archived segments with either connected or neutral-gap geometry. */
 export function renderPowerlineBlocks(
   modules: readonly PowerlineBlock[],
   gap: number,
   spacing: number,
   endStyle: PowerlineEndStyle | boolean = false,
+  gapEnabled = gap > 0,
 ): string {
-  const style: PowerlineEndStyle | undefined = typeof endStyle === 'string' ? endStyle : endStyle ? 'fadeFlat' : undefined;
+  if (modules.length === 0) return `${RESET}${NEUTRAL_BACKGROUND}`;
+  const style = normalizeEndStyle(endStyle);
+  const gapWidth = gapEnabled ? Math.max(0, Math.trunc(gap)) : 0;
   let content = '';
+
   for (let index = 0; index < modules.length; index += 1) {
     const current = modules[index]!;
-    // Leading edge points into this segment; both edges sit on neutral
-    // background so the terminal background remains visible through gaps.
-    content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(index > 0 ? gap : 0)}${foreground(current.background)}${GLYPHS.powerlineLeading}`;
-    content += `${foreground(current.foreground)}${background(current.background)}${' '.repeat(spacing)}${current.text}${' '.repeat(spacing)}`;
     const isLast = index === modules.length - 1;
-    if (!isLast || style === 'wedge' || style === 'fadeWedge') {
+
+    if (index === 0 || gapEnabled) {
+      content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${GLYPHS.powerlineLeading}`;
+    }
+
+    content += `${foreground(current.foreground)}${background(current.background)}${' '.repeat(spacing)}${current.text}${' '.repeat(spacing)}`;
+
+    if (!isLast) {
+      if (gapEnabled) {
+        content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${GLYPHS.powerlineTrailing}`;
+        content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth)}`;
+      } else {
+        // One transition cell paints the old segment on the left and the next
+        // segment on the right. The next block therefore has no opening cap.
+        content += transition(current.background, modules[index + 1]!.background);
+      }
+      continue;
+    }
+
+    if (style === 'wedge') {
       content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${GLYPHS.powerlineTrailing}`;
+    } else if (style === 'fadeFlat') {
+      content += `${RESET}${NEUTRAL_BACKGROUND}`;
+      const stops = fadeColors(current.background);
+      content += `${foreground(stops[0]!)}${GLYPHS.powerlineFade[0]}`;
+      content += `${foreground(stops[1]!)}${GLYPHS.powerlineFade[1]}`;
+      content += `${foreground(stops[2]!)}${GLYPHS.powerlineFade[2]} `;
+    } else if (style === 'fadeWedge') {
+      const stops = [current.background, ...fadeColors(current.background)];
+      content += transition(stops[0]!, stops[1]!);
+      content += transition(stops[1]!, stops[2]!);
+      content += transition(stops[2]!, stops[3]!);
+      content += `${RESET}${foreground(stops[3]!)}${NEUTRAL_BACKGROUND}${GLYPHS.powerlineTrailing}`;
     }
   }
-  if (style === 'fadeFlat' && modules.length > 0) {
-    const last = modules[modules.length - 1]!;
-    content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(last.background)}${GLYPHS.powerlineFade} `;
-  } else if (style === 'fadeWedge' && modules.length > 0) {
-    // Decreasing chevrons keep the fade pointed and taper toward the neutral
-    // terminal background instead of switching to rectangular shade blocks.
-    const last = modules[modules.length - 1]!;
-    const factors = [0.68, 0.42, 0.2];
-    content += GLYPHS.powerlineFadeWedge.map((glyph, index) => {
-      const factor = factors[index] ?? 0.2;
-      const faded = {
-        red: Math.round(last.background.red * factor),
-        green: Math.round(last.background.green * factor),
-        blue: Math.round(last.background.blue * factor),
-      };
-      return `${RESET}${NEUTRAL_BACKGROUND}${foreground(faded)}${glyph}`;
-    }).join('');
-  }
+
   return `${content}${RESET}${NEUTRAL_BACKGROUND}`;
 }
 
-/** Fit complete module edges to a cell budget, omitting rather than orphaning a cap. */
+/** Fit complete segment transitions to the cell budget, omitting decorations first. */
 export function fitPowerlineBlocks(
   modules: readonly PowerlineBlock[],
   gap: number,
   spacing: number,
   width: number,
   endStyle: PowerlineEndStyle | boolean = false,
+  gapEnabled = gap > 0,
 ): string {
   if (width <= 0 || modules.length === 0) return '';
-  const style: PowerlineEndStyle | undefined = typeof endStyle === 'string' ? endStyle : endStyle ? 'fadeFlat' : undefined;
+  const style = normalizeEndStyle(endStyle);
   if (width < 3) {
     const first = modules[0]!;
     return `${foreground(first.foreground)}${truncateText(first.text, width)}${RESET}${NEUTRAL_BACKGROUND}`;
   }
-  const tail = style === 'fadeFlat' ? `${GLYPHS.powerlineFade} ` : style === 'fadeWedge' ? `${GLYPHS.powerlineTrailing}${GLYPHS.powerlineFadeWedge.join('')}` : style === 'wedge' ? GLYPHS.powerlineTrailing : '';
-  const renderTail = Boolean(tail) && width > displayWidth(tail);
-  const tailWidth = renderTail ? displayWidth(tail) : 0;
-  const bodyWidth = Math.max(0, width - tailWidth);
 
   for (let count = modules.length; count >= 1; count -= 1) {
     const visible = modules.slice(0, count);
-    const full = renderPowerlineBlocks(visible, gap, spacing, renderTail ? style! : false);
+    const full = renderPowerlineBlocks(visible, gap, spacing, style ?? false, gapEnabled);
     if (displayWidth(full) <= width) {
       if (count < modules.length && displayWidth(full) < width) {
         const last = visible[visible.length - 1]!;
         const withEllipsis = [...visible.slice(0, -1), {...last, text: `${last.text}…`}];
-        const marked = renderPowerlineBlocks(withEllipsis, gap, spacing, renderTail ? style! : false);
+        const marked = renderPowerlineBlocks(withEllipsis, gap, spacing, style ?? false, gapEnabled);
         if (displayWidth(marked) <= width) return marked;
       }
       return full;
@@ -88,8 +114,11 @@ export function fitPowerlineBlocks(
   }
 
   const first = modules[0]!;
-  const innerSpacing = Math.min(spacing, Math.floor(Math.max(0, bodyWidth - 3) / 2));
-  const textRoom = Math.max(0, bodyWidth - 2 - innerSpacing * 2);
-  const text = truncateText(first.text, textRoom);
-  return renderPowerlineBlocks([{...first, text}], 0, innerSpacing, renderTail ? style! : false);
+  for (let textWidth = Math.min(width, displayWidth(first.text)); textWidth >= 0; textWidth -= 1) {
+    const text = truncateText(first.text, textWidth);
+    const candidate = renderPowerlineBlocks([{...first, text}], 0, Math.min(spacing, textWidth), style ?? false, true);
+    if (displayWidth(candidate) <= width) return candidate;
+  }
+
+  return `${foreground(first.foreground)}${truncateText(first.text, width)}${RESET}${NEUTRAL_BACKGROUND}`;
 }

@@ -4,6 +4,15 @@ import {buildContextLine, buildInlineContextPrefix, buildPromptLine, NATIVE_LAVE
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {homedir} from 'node:os';
+import {renderPowerlineBlocks} from '../src/prompt/powerline.js';
+import {fadePromptColor} from '../src/prompt/snapshot.js';
+
+const A = {red: 100, green: 60, blue: 180};
+const B = {red: 40, green: 120, blue: 80};
+const blocks = [
+  {text: 'A', foreground: {red: 250, green: 250, blue: 250}, background: A},
+  {text: 'B', foreground: {red: 250, green: 250, blue: 250}, background: B},
+];
 
 test('NMSh is the default provider with an eight-step darker lavender ramp that wraps', () => {
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.provider, 'nmsh');
@@ -29,45 +38,53 @@ test('conditional modules receive a continuous ramp by visible order', () => {
   assert.deepEqual(modules.map(module => module.background), NATIVE_LAVENDER_RAMP.slice(0, 2));
 });
 
-test('Powerline segment edges belong to their segment and keep every cap on neutral background', () => {
+test('native open uses U+E0D7 and gap-enabled segments close and reopen over neutral background', () => {
   const rendered = buildPromptLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60);
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
-  assert.match(plain, /^ repo   \/tmp\/work    main ▶▸›/u);
-  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;166;124;243m/u);
+  assert.match(plain, /^ repo   \/tmp\/work    main /u);
+  assert.ok(rendered.startsWith('\u001B[0m\u001B[49m\u001B[38;2;166;124;243m'));
   assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;166;124;243m/u);
-  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;101;72;149m▶/u);
 });
 
-test('NMSh native gap On and Off are independent from internal spacing', () => {
-  const context = {cwd: '/tmp/work', project: 'repo', branch: 'main'};
-  const config = normalizePromptConfiguration({gap: 2, spacing: 0, nmsh: {gapEnabled: true}});
-  const withGap = stripAnsi(buildContextLine(context, 80, config, 'composer'));
-  assert.ok(withGap.includes('  '), withGap);
-  config.nmsh.gapEnabled = false;
-  const touching = stripAnsi(buildContextLine(context, 80, config, 'composer'));
-  assert.ok(touching.includes(''), touching);
-  assert.ok(!touching.includes(' '));
+test('gap Off joins segments with one E0B0 carrying old FG and new BG', () => {
+  const rendered = renderPowerlineBlocks(blocks, 0, 0, 'flat', false);
+  assert.equal(stripAnsi(rendered), 'AB');
+  assert.equal([...stripAnsi(rendered)].filter(glyph => glyph === '').length, 1);
+  assert.equal([...stripAnsi(rendered)].filter(glyph => glyph === '').length, 1);
+  assert.ok(rendered.includes('\u001B[0m\u001B[38;2;100;60;180m\u001B[48;2;40;120;80m'));
 });
 
-test('all four end styles have their semantic two-line treatment', () => {
-  const context = {cwd: '/tmp/work', project: 'work', branch: 'main'};
-  const render = (endStyle: 'fadeWedge' | 'wedge' | 'fadeFlat' | 'flat') => buildContextLine(context, 80,
-    normalizePromptConfiguration({nmsh: {endStyle}}), 'header');
-  const fadeWedge = stripAnsi(render('fadeWedge'));
-  const wedge = stripAnsi(render('wedge'));
-  const fadeFlat = stripAnsi(render('fadeFlat'));
-  const flat = stripAnsi(render('flat'));
-  assert.ok(fadeWedge.includes('▶▸›'), fadeWedge);
-  assert.ok(wedge.includes('─'), wedge);
-  assert.match(fadeFlat, /main ▓▒░ ─/u, fadeFlat);
-  assert.ok(flat.includes('main ─'), flat);
-  assert.doesNotMatch(wedge, /[▓▒░]/u);
-  assert.doesNotMatch(flat, /[▓▒░]/u);
-  assert.doesNotMatch(flat, /main /u, 'flat has no pointed closing cap');
-  assert.doesNotMatch(fadeFlat, /main /u, 'fading flat has no pointed closing cap');
-  assert.doesNotMatch(fadeWedge, /▓▒░/u, 'fading wedge does not use rectangular fade blocks');
-  assert.match(render('fadeFlat'), /\u001B\[49m\u001B\[38;2;148;106;219m▓▒░/u, 'density fade uses terminal-neutral background');
+test('gap On closes and opens independently with a genuinely neutral gap', () => {
+  const rendered = renderPowerlineBlocks(blocks, 3, 0, 'flat', true);
+  assert.equal(stripAnsi(rendered), 'A   B');
+  assert.ok(rendered.includes('\u001B[0m\u001B[49m\u001B[38;2;100;60;180m\u001B[0m\u001B[49m   \u001B[0m\u001B[49m\u001B[38;2;40;120;80m'));
+});
+
+test('all four endings use their exact terminal shapes', () => {
+  const single = blocks.slice(0, 1);
+  const flat = renderPowerlineBlocks(single, 0, 0, 'flat', true);
+  const wedge = renderPowerlineBlocks(single, 0, 0, 'wedge', true);
+  const fadeFlat = renderPowerlineBlocks(single, 0, 0, 'fadeFlat', true);
+  const fadeWedge = renderPowerlineBlocks(single, 0, 0, 'fadeWedge', true);
+  assert.equal(stripAnsi(flat), 'A');
+  assert.equal(stripAnsi(wedge), 'A');
+  assert.equal(stripAnsi(fadeFlat), 'A▓▒░ ');
+  assert.equal(stripAnsi(fadeWedge), 'A');
+  assert.equal([...stripAnsi(wedge)].filter(glyph => glyph === '').length, 1);
+  assert.equal([...stripAnsi(fadeWedge)].filter(glyph => glyph === '').length, 4);
+  assert.doesNotMatch(stripAnsi(fadeWedge), /[▓▒░▶▸›]/u);
+  assert.match(fadeFlat, /\u001B\[0m\u001B\[49m/u, 'density fade is on neutral background');
+  const faded = [fadePromptColor(A, 0), fadePromptColor(A, 1), fadePromptColor(A, 2)];
+  const chain = [A, ...faded];
+  for (let index = 0; index < 3; index += 1) {
+    const from = chain[index]!;
+    const to = chain[index + 1]!;
+    assert.ok(fadeWedge.includes(`\u001B[0m\u001B[38;2;${from.red};${from.green};${from.blue}m\u001B[48;2;${to.red};${to.green};${to.blue}m`));
+  }
+  const last = faded[2]!;
+  assert.ok(fadeWedge.includes(`\u001B[0m\u001B[38;2;${last.red};${last.green};${last.blue}m\u001B[49m`));
+  assert.ok(faded.every(color => color.blue > color.green), 'the fade retains its blue-violet pigment');
 });
 
 test('one-line Native renders its selected ending before the editor prompt without a header divider', () => {

@@ -34,8 +34,7 @@ const CAT = [
   '  ▄██▄  ',
   ' ▟████▙ ',
   '─▐██■██■██▌─',
-  ' ▐██████▌ ',
-  '  ▝████▘ ',
+  ' ▝████▘ ',
 ];
 
 function catRow(index: number): {ansi: string; plain: string} {
