@@ -24,20 +24,32 @@ export function renderPowerlineBlocks(
   let content = '';
   for (let index = 0; index < modules.length; index += 1) {
     const current = modules[index]!;
-    // Leading edge: its foreground is the module color, over neutral terminal
-    // background. U+E0D6 is the explicit opening edge paired with U+E0B0.
+    // Leading edge points into this segment; both edges sit on neutral
+    // background so the terminal background remains visible through gaps.
     content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(index > 0 ? gap : 0)}${foreground(current.background)}${GLYPHS.powerlineLeading}`;
     content += `${foreground(current.foreground)}${background(current.background)}${' '.repeat(spacing)}${current.text}${' '.repeat(spacing)}`;
-    content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${GLYPHS.powerlineTrailing}`;
+    const isLast = index === modules.length - 1;
+    if (!isLast || style === 'wedge' || style === 'fadeWedge') {
+      content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${GLYPHS.powerlineTrailing}`;
+    }
   }
   if (style === 'fadeFlat' && modules.length > 0) {
     const last = modules[modules.length - 1]!;
     content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(last.background)}${GLYPHS.powerlineFade} `;
-  } else if ((style === 'wedge' || style === 'fadeWedge') && modules.length > 0) {
-    // A short density taper after the true Powerline closing edge gives the
-    // default a fade without inventing non-Powerline triangle glyphs.
+  } else if (style === 'fadeWedge' && modules.length > 0) {
+    // Decreasing chevrons keep the fade pointed and taper toward the neutral
+    // terminal background instead of switching to rectangular shade blocks.
     const last = modules[modules.length - 1]!;
-    content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(last.background)}${style === 'fadeWedge' ? '▒░' : ''}`;
+    const factors = [0.68, 0.42, 0.2];
+    content += GLYPHS.powerlineFadeWedge.map((glyph, index) => {
+      const factor = factors[index] ?? 0.2;
+      const faded = {
+        red: Math.round(last.background.red * factor),
+        green: Math.round(last.background.green * factor),
+        blue: Math.round(last.background.blue * factor),
+      };
+      return `${RESET}${NEUTRAL_BACKGROUND}${foreground(faded)}${glyph}`;
+    }).join('');
   }
   return `${content}${RESET}${NEUTRAL_BACKGROUND}`;
 }
@@ -56,7 +68,7 @@ export function fitPowerlineBlocks(
     const first = modules[0]!;
     return `${foreground(first.foreground)}${truncateText(first.text, width)}${RESET}${NEUTRAL_BACKGROUND}`;
   }
-  const tail = style === 'fadeFlat' ? `${GLYPHS.powerlineFade} ` : style === 'fadeWedge' ? '▒░' : '';
+  const tail = style === 'fadeFlat' ? `${GLYPHS.powerlineFade} ` : style === 'fadeWedge' ? `${GLYPHS.powerlineTrailing}${GLYPHS.powerlineFadeWedge.join('')}` : style === 'wedge' ? GLYPHS.powerlineTrailing : '';
   const renderTail = Boolean(tail) && width > displayWidth(tail);
   const tailWidth = renderTail ? displayWidth(tail) : 0;
   const bodyWidth = Math.max(0, width - tailWidth);

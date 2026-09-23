@@ -31,20 +31,18 @@ function shortCwd(cwd: string): string {
 }
 
 const CAT = [
-  '  ▄██▄   ▄██▄  ',
-  ' ▟███████████▙ ',
-  '▐███▪████▪███▌',
-  '▐████████████▌',
-  ' ▐██████████▌ ',
-  ' ▐██▌ ▐██▌▗██▘',
-  ' ▝██▘ ▝██▘▝▀  ',
+  '  ▄██▄  ',
+  ' ▟████▙ ',
+  '─▐██■██■██▌─',
+  ' ▐██████▌ ',
+  '  ▝████▘ ',
 ];
 
 function catRow(index: number): {ansi: string; plain: string} {
   const plain = CAT[index] ?? '';
-  // Square eyes use the dark detail color; the body remains one lavender tone.
-  const ansi = plain.split('').map(character => character === '▪'
-    ? `${foreground(EYE)}▪${foreground(BODY)}`
+  // Rectangular eyes use the dark detail color; the head remains lavender.
+  const ansi = plain.split('').map(character => character === '■'
+    ? `${foreground(EYE)}■${foreground(BODY)}`
     : `${foreground(BODY)}${character}`).join('');
   return {ansi: `${ansi}${RESET}`, plain};
 }
@@ -61,7 +59,7 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number): Wrapped
   ];
   const colors = [UI_COLORS.primary, UI_COLORS.secondary, UI_COLORS.secondary, UI_COLORS.subtle];
   const cat = width >= 42;
-  const catWidth = 15;
+  const catWidth = 12;
   const metadataWidth = cat ? Math.max(1, width - catWidth - 3) : width;
   const rows: WrappedRow[] = metadata.map((value, index) => {
     const label = truncateText(value, metadataWidth);

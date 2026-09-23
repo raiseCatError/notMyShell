@@ -33,21 +33,20 @@ test('Powerline segment edges belong to their segment and keep every cap on neut
   const rendered = buildPromptLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60);
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
-  assert.match(plain, /^ repo   \/tmp\/work    main ▒░/u);
-  assert.doesNotMatch(plain, //u);
-  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;127;94;187m/u);
-  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;127;94;187m/u);
-  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;110;77;164m▒░/u);
+  assert.match(plain, /^ repo   \/tmp\/work    main ▶▸›/u);
+  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;166;124;243m/u);
+  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;166;124;243m/u);
+  assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;101;72;149m▶/u);
 });
 
 test('NMSh native gap On and Off are independent from internal spacing', () => {
   const context = {cwd: '/tmp/work', project: 'repo', branch: 'main'};
   const config = normalizePromptConfiguration({gap: 2, spacing: 0, nmsh: {gapEnabled: true}});
   const withGap = stripAnsi(buildContextLine(context, 80, config, 'composer'));
-  assert.ok(withGap.includes('  '), withGap);
+  assert.ok(withGap.includes('  '), withGap);
   config.nmsh.gapEnabled = false;
   const touching = stripAnsi(buildContextLine(context, 80, config, 'composer'));
-  assert.ok(touching.includes(''), touching);
+  assert.ok(touching.includes(''), touching);
   assert.ok(!touching.includes(' '));
 });
 
@@ -59,20 +58,23 @@ test('all four end styles have their semantic two-line treatment', () => {
   const wedge = stripAnsi(render('wedge'));
   const fadeFlat = stripAnsi(render('fadeFlat'));
   const flat = stripAnsi(render('flat'));
-  assert.ok(fadeWedge.includes('▒░'), fadeWedge);
+  assert.ok(fadeWedge.includes('▶▸›'), fadeWedge);
   assert.ok(wedge.includes('─'), wedge);
-  assert.ok(fadeFlat.includes('▓▒░'), fadeFlat);
-  assert.ok(flat.includes('─'), flat);
+  assert.match(fadeFlat, /main ▓▒░ ─/u, fadeFlat);
+  assert.ok(flat.includes('main ─'), flat);
   assert.doesNotMatch(wedge, /[▓▒░]/u);
   assert.doesNotMatch(flat, /[▓▒░]/u);
-  assert.match(render('fadeFlat'), /\u001B\[49m\u001B\[38;2;110;77;164m▓▒░/u, 'density fade uses terminal-neutral background');
+  assert.doesNotMatch(flat, /main /u, 'flat has no pointed closing cap');
+  assert.doesNotMatch(fadeFlat, /main /u, 'fading flat has no pointed closing cap');
+  assert.doesNotMatch(fadeWedge, /▓▒░/u, 'fading wedge does not use rectangular fade blocks');
+  assert.match(render('fadeFlat'), /\u001B\[49m\u001B\[38;2;148;106;219m▓▒░/u, 'density fade uses terminal-neutral background');
 });
 
-test('one-line Native keeps the selected composer row free of header divider and fade tail', () => {
+test('one-line Native renders its selected ending before the editor prompt without a header divider', () => {
   const configuration = normalizePromptConfiguration({composerLayout: 'oneLine', nmsh: {endStyle: 'fadeFlat'}});
   const prefix = buildInlineContextPrefix({cwd: '/tmp/work', project: 'work', branch: 'dev'}, 80, configuration);
   assert.ok(displayWidth(prefix) <= 79);
-  assert.ok(!stripAnsi(prefix).includes('▓▒░'));
+  assert.ok(stripAnsi(prefix).includes('▓▒░'));
   assert.ok(!stripAnsi(prefix).includes('─'));
   assert.ok(stripAnsi(prefix).endsWith('❯ '));
 });

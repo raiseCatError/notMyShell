@@ -15,14 +15,14 @@ const RESET = '\u001B[0m';
 const LINE = foreground(UI_COLORS.separator);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 export const NATIVE_LAVENDER_RAMP: readonly RgbColor[] = [
-  {red: 127, green: 94, blue: 187},
-  {red: 118, green: 85, blue: 175},
-  {red: 110, green: 77, blue: 164},
-  {red: 102, green: 69, blue: 152},
-  {red: 94, green: 62, blue: 141},
-  {red: 86, green: 55, blue: 129},
-  {red: 78, green: 48, blue: 118},
-  {red: 70, green: 41, blue: 107},
+  {red: 166, green: 124, blue: 243},
+  {red: 157, green: 115, blue: 231},
+  {red: 148, green: 106, blue: 219},
+  {red: 139, green: 97, blue: 207},
+  {red: 130, green: 88, blue: 195},
+  {red: 121, green: 79, blue: 183},
+  {red: 112, green: 70, blue: 171},
+  {red: 103, green: 61, blue: 159},
 ];
 const NATIVE_FOREGROUND: RgbColor = {red: 249, green: 245, blue: 255};
 
@@ -142,9 +142,7 @@ export function buildContextLine(
     return placement === 'header' ? `${LINE}${repeatToWidth('─', width)}${RESET}` : '';
   }
 
-  const lineEndStyle = placement === 'composer' && configuration.composerLayout === 'oneLine'
-    ? 'flat'
-    : configuration.nmsh.endStyle;
+  const lineEndStyle = configuration.nmsh.endStyle;
   const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
     configuration.spacing, width, lineEndStyle);
 
