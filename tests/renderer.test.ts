@@ -35,5 +35,5 @@ test('passthrough restores cursor and bracketed-paste modes in both directions',
   renderer.resumeAfterPassthrough();
   assert.match(writes.at(-1) ?? '', /\?2004h.*\?25l/u);
   renderer.leave();
-  assert.match(writes.at(-1) ?? '', /\?2004l.*\?25h.*\?1049l/u);
+  assert.match(writes.at(-1) ?? '', /\?1006l.*\?1000l.*\?2004l.*\?25h.*<u.*\?1049l/u);
 });
