@@ -25,11 +25,13 @@ export class OutputBuffer {
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
+  public readonly lineTypes = new Map<number, 'command' | 'metadata'>();
   private active?: {command: string; start: number};
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
       this.visualGaps.clear();
+      this.lineTypes.clear();
       this.onClear?.();
     });
   }
@@ -40,8 +42,9 @@ export class OutputBuffer {
       this.visualGaps.add(this.parser.completedCount());
     }
     const startId = this.parser.completedCount();
-    for (const line of formattedLines) {
-      this.parser.addLine(line);
+    for (let i = 0; i < formattedLines.length; i++) {
+      this.lineTypes.set(startId + i, 'command');
+      this.parser.addLine(formattedLines[i]);
     }
     this.active = {command, start: this.parser.completedCount()};
     return startId;
@@ -87,6 +90,7 @@ export class OutputBuffer {
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
     }
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(text, style);
   }
 
@@ -95,7 +99,9 @@ export class OutputBuffer {
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
     }
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
   }
 
@@ -108,9 +114,13 @@ export class OutputBuffer {
     const result: WrappedRow[] = [];
     for (let i = 0; i < lines.length; i++) {
       if (this.visualGaps.has(i)) {
-        result.push({ansi: '\u001B[0m', plain: ''});
+        result.push({ansi: '\u001B[0m', plain: '', lineIndex: -1});
       }
-      result.push(...wrapStyledLine(lines[i], width));
+      const wrappedRows = wrapStyledLine(lines[i], width);
+      for (const row of wrappedRows) {
+        row.lineIndex = i;
+        result.push(row);
+      }
     }
     return result;
   }

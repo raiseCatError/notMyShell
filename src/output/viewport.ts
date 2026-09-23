@@ -5,6 +5,7 @@ const RESET = '\u001B[0m';
 export interface WrappedRow {
   ansi: string;
   plain: string;
+  lineIndex?: number;
 }
 
 export function wrapStyledLine(line: StyledLine, width: number): WrappedRow[] {

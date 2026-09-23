@@ -58,6 +58,8 @@ export class TerminalApp {
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…'};
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; activity: ActivityVerbPair; startId: number};
+  private hoveredLineIndex?: number;
+  private focusedLineIndex?: number;
   private passthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
@@ -140,6 +142,25 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (key.kind === 'mouseMove') {
+      const {columns, rows} = this.dimensions();
+      const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
+      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
+      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0);
+      if (key.y && key.y <= layout.outputHeight) {
+        const wrapped = this.output.wrapped(columns);
+        const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
+        const row = wrapped[viewStart + key.y - 1];
+        if (row && row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
+          this.hoveredLineIndex = row.lineIndex;
+          this.render();
+        }
+      } else if (this.hoveredLineIndex !== undefined) {
+        this.hoveredLineIndex = undefined;
+        this.render();
+      }
+      return;
+    }
     if (this.appearanceState) {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.appearanceState = undefined;
@@ -223,15 +244,55 @@ export class TerminalApp {
     }
 
     const suggestions = slashSuggestions(this.editor.text);
+    const isSlash = this.editor.text.startsWith('/');
     if (key.kind === 'up' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
     } else if (key.kind === 'down' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
-    } else if (key.kind === 'complete' && suggestions.length > 0) {
-      this.applySuggestion(suggestions[this.selectedSuggestion] ?? suggestions[0]);
+    } else if (key.kind === 'complete') {
+      if (this.shellSuggestions.length > 0) this.applySuggestion(this.shellSuggestions[this.selectedSuggestion]);
+      else if (isSlash) this.applySuggestion({insertion: slashCommands[this.selectedSuggestion].name});
+      else this.handleKey({kind: 'focusNext'} as Key);
+      return;
     } else if (key.kind === 'text') {
       this.editor.insert(key.value);
       this.selectedSuggestion = 0;
+    } else if (key.kind === 'focusNext' || key.kind === 'focusPrevious') {
+      const dir = key.kind === 'focusNext' ? 1 : -1;
+      const metadataRows = Array.from(this.output.lineTypes.entries())
+        .filter(([, type]) => type === 'metadata')
+        .map(([index]) => index)
+        .sort((a, b) => a - b);
+      if (metadataRows.length > 0) {
+        if (this.focusedLineIndex === undefined) {
+          this.focusedLineIndex = dir === 1 ? metadataRows[0] : metadataRows[metadataRows.length - 1];
+        } else {
+          const currentIndex = metadataRows.indexOf(this.focusedLineIndex);
+          if (currentIndex !== -1) {
+            const nextIndex = (currentIndex + dir + metadataRows.length) % metadataRows.length;
+            this.focusedLineIndex = metadataRows[nextIndex];
+          } else {
+            this.focusedLineIndex = metadataRows[0];
+          }
+        }
+
+        const {columns, rows} = this.dimensions();
+        const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
+        const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
+        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0);
+
+        const wrapped = this.output.wrapped(columns);
+        const wrappedIndex = wrapped.findIndex(r => r.lineIndex === this.focusedLineIndex);
+        if (wrappedIndex !== -1) {
+          this.historyViewport.resolve(wrapped.length, layout.outputHeight);
+          if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + layout.outputHeight) {
+             this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, wrappedIndex - this.historyViewport.start - Math.floor(layout.outputHeight / 2));
+          }
+        }
+
+        this.render();
+      }
+      return;
     }
     else if (key.kind === 'left') this.editor.moveLeft();
     else if (key.kind === 'right') this.editor.moveRight();
@@ -655,7 +716,27 @@ export class TerminalApp {
 
     const wrapped = this.output.wrapped(columns);
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.ansi);
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
+      let finalAnsi = row.ansi;
+      if (row.lineIndex !== undefined) {
+        const type = this.output.lineTypes.get(row.lineIndex);
+        if (type === 'command') {
+          // Subtle background for command
+          finalAnsi = `\u001B[48;2;38;38;48m${row.ansi}\u001B[K${RESET}`;
+        } else if (type === 'metadata') {
+          const isHovered = this.hoveredLineIndex === row.lineIndex;
+          const isFocused = this.focusedLineIndex === row.lineIndex;
+          if (isHovered || isFocused) {
+            // Brighten on hover/focus
+            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
+            // Optionally add a subtle hover background or underline
+            const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
+            finalAnsi = `${bg}${finalAnsi}\u001B[K${RESET}`;
+          }
+        }
+      }
+      return finalAnsi;
+    });
     const topPadding = this.historyViewport.detached ? 0 : Math.max(0, outputHeight - visible.length);
     const frameRows = [...Array<string>(topPadding).fill(''), ...visible];
     while (frameRows.length < outputHeight) frameRows.push('');
