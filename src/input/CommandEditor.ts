@@ -251,25 +251,25 @@ export class CommandEditor {
     if (this.selectionAnchor === this.cursor) this.selectionAnchor = undefined;
   }
 
-  moveUp(columns: number): void {
+  moveUp(columns: number, firstLinePrefix?: string): void {
     this.clearSelection();
-    this.moveVertical(columns, -1);
+    this.moveVertical(columns, -1, firstLinePrefix);
   }
 
-  selectUp(columns: number): void {
+  selectUp(columns: number, firstLinePrefix?: string): void {
     this.startSelectionIfNeeded();
-    this.moveVertical(columns, -1);
+    this.moveVertical(columns, -1, firstLinePrefix);
     if (this.selectionAnchor === this.cursor) this.selectionAnchor = undefined;
   }
 
-  moveDown(columns: number): void {
+  moveDown(columns: number, firstLinePrefix?: string): void {
     this.clearSelection();
-    this.moveVertical(columns, 1);
+    this.moveVertical(columns, 1, firstLinePrefix);
   }
 
-  selectDown(columns: number): void {
+  selectDown(columns: number, firstLinePrefix?: string): void {
     this.startSelectionIfNeeded();
-    this.moveVertical(columns, 1);
+    this.moveVertical(columns, 1, firstLinePrefix);
     if (this.selectionAnchor === this.cursor) this.selectionAnchor = undefined;
   }
 
@@ -404,14 +404,14 @@ export class CommandEditor {
     return total;
   }
 
-  private moveVertical(columns: number, direction: -1 | 1): void {
-    const current = layoutInput(this.displayText, this.displayCursorIndex, columns);
+  private moveVertical(columns: number, direction: -1 | 1, firstLinePrefix?: string): void {
+    const current = layoutInput(this.displayText, this.displayCursorIndex, columns, Number.POSITIVE_INFINITY, firstLinePrefix);
     const targetRow = current.caretRow + direction;
     if (targetRow < 0 || targetRow >= current.allRows.length) return;
     let bestIndex = this.cursor;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (let index = 0; index <= this.characters.length; index += 1) {
-      const candidate = layoutInput(this.displayText, this.displayIndexForTokenIndex(index), columns);
+      const candidate = layoutInput(this.displayText, this.displayIndexForTokenIndex(index), columns, Number.POSITIVE_INFINITY, firstLinePrefix);
       if (candidate.caretRow !== targetRow) continue;
       const distance = Math.abs(candidate.caretColumn - current.caretColumn);
       if (distance < bestDistance) {

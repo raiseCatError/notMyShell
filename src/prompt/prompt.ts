@@ -108,6 +108,21 @@ export function buildContextLine(
   return `${trimmedContent}${tail}${LINE}${repeatToWidth('─', separatorWidth)}${RESET}`;
 }
 
+/** Context plus the editable input prompt, sized to leave at least one input cell. */
+export function buildInlineContextPrefix(
+  context: PromptContext,
+  width: number,
+  configuration: PromptConfiguration,
+): string {
+  if (width <= 0) return '';
+  if (width <= displayWidth(GLYPHS.prompt) + 2) return `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET}`;
+  const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 1);
+  const modules = moduleWidth >= 8
+    ? buildContextLine(context, moduleWidth, configuration, 'composer')
+    : '';
+  return `${modules}${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET} `;
+}
+
 export function buildPromptLine(context: PromptContext, width: number): string {
   return buildContextLine(context, width, DEFAULT_PROMPT_CONFIGURATION, 'header');
 }

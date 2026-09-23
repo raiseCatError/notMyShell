@@ -30,11 +30,12 @@ export function layoutInput(
   cursorIndex: number,
   columns: number,
   maxVisibleRows = Number.POSITIVE_INFINITY,
+  firstLinePrefix?: string,
 ): InputLayout {
   const glyphs = graphemes(value);
   const safeCursor = Math.max(0, Math.min(glyphs.length, cursorIndex));
   const width = Math.max(1, columns);
-  const INPUT_PREFIX = `${GLYPHS.prompt} `;
+  const INPUT_PREFIX = firstLinePrefix ?? `${GLYPHS.prompt} `;
   const rows: InputRow[] = [{prefix: width >= 2 ? INPUT_PREFIX : GLYPHS.prompt, text: '', charStart: 0, charEnd: 0}];
   let rowIndex = 0;
   let contentWidth = 0;
@@ -50,7 +51,7 @@ export function layoutInput(
 
   const addRow = (nextCharStart: number): void => {
     rows[rowIndex].charEnd = nextCharStart;
-    rows.push({prefix: width >= 2 ? CONTINUATION_PREFIX : '', text: '', charStart: nextCharStart, charEnd: nextCharStart});
+    rows.push({prefix: width >= 4 ? CONTINUATION_PREFIX : '', text: '', charStart: nextCharStart, charEnd: nextCharStart});
     rowIndex += 1;
     contentWidth = 0;
   };
@@ -64,9 +65,14 @@ export function layoutInput(
       addRow(index + 1);
       continue;
     }
-    const prefixWidth = stringWidth(rows[rowIndex].prefix);
-    const available = Math.max(1, width - prefixWidth);
+    let prefixWidth = stringWidth(rows[rowIndex].prefix);
+    let available = Math.max(1, width - prefixWidth);
     const glyphWidth = Math.max(0, stringWidth(glyph));
+    if (contentWidth === 0 && prefixWidth > 0 && glyphWidth > available) {
+      addRow(index);
+      prefixWidth = stringWidth(rows[rowIndex].prefix);
+      available = Math.max(1, width - prefixWidth);
+    }
     if (contentWidth > 0 && contentWidth + glyphWidth > available) addRow(index);
     rows[rowIndex].text += glyph;
     rows[rowIndex].charEnd = index + 1;

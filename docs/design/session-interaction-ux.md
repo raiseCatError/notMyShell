@@ -12,7 +12,9 @@ Improve routine interaction with NMSh through a safe return to ordinary zsh, con
 
 ## Context modules and placement
 
-Implement context modules once and render the same ordered module list in configurable placements. Header separator placement is the default. The other primary placement puts context on its own line inside the composer, above the input line; a below-input placement may be supported where inexpensive. Configuration covers order, visibility, separators, internal `spacing` padding, a separate neutral `gap` between rendered blocks, colors, and conditions. The default gap is one subtle terminal-background cell; legacy configurations without `gap` use that default, while `gap: 0` removes it. Initial modules are cwd, git branch, and previous exit status. Preserve NMSh's Powerline-style visual identity; do not delegate this layer to Starship or Powerlevel10k.
+Implement context modules once and render the same ordered module list in configurable placements. Header separator placement is the default. The other primary placement puts context on its own line inside the composer, above the input line; a below-input placement may be supported where inexpensive. Configuration covers order, visibility, separators, internal `spacing` padding, a separate neutral `gap` between rendered blocks, colors, conditions, and placement. The default gap is one subtle terminal-background cell; legacy configurations without `gap` use that default, while `gap: 0` removes it. Initial modules are cwd, git branch, and previous exit status. Preserve NMSh's Powerline-style visual identity; do not delegate this layer to Starship or Powerlevel10k.
+
+The composer also has a presentation-only `composerLayout`, with `twoLine` as the default and `oneLine` as an option. Existing `placement` continues to control two-line mode: `header` uses the upper context/header row, and `composer` uses a separate context row inside the composer above the editor. One-line mode always places the same context modules, prompt glyph, and editable first input row together between the composer boundaries; `placement` cannot move context onto a boundary. At narrow widths context is truncated or omitted before reducing the editor's minimum available cell. Further input rows use the existing multiline continuation presentation. This preference does not change source text or shell submission.
 
 The first configurable implementation reads `config.json` from `~/Library/Application Support/notMyShell/` on macOS (or `$XDG_CONFIG_HOME/nmsh/` when set). Missing or invalid settings fall back to defaults. Settings are edited as JSON until onboarding adds a setup UI. The same local application directory is reserved for later transcript state.
 
@@ -21,6 +23,7 @@ The JSON configuration keeps ordered module definitions with `id`, `visible`, `c
 ```json
 {
   "placement": "header",
+  "composerLayout": "twoLine",
   "separator": "",
   "gap": 1,
   "spacing": 1,
@@ -49,12 +52,13 @@ Each submitted command captures its cwd and git branch (when available) as seman
 
 ## Onboarding
 
-Onboarding configures supported NMSh choices; it does not invent launcher mechanisms. It can be skipped, records completion persistently, and offers placement previews, basic module selection, host/setup guidance, keyboard forwarding help, appearance guidance, and an autostart preference where the established startup mechanism supports it. It does not run on every launch.
+Onboarding configures supported NMSh choices; it does not invent launcher mechanisms. It can be skipped, records completion persistently, and offers placement previews, basic module selection, host/setup guidance, keyboard forwarding help, appearance guidance, and an autostart preference where the established startup mechanism supports it. It also offers the composer layout choice, recommending two-line by default. Its two-line preview shows context/header above a separate editable row; its one-line preview shows context, prompt glyph, and editable command together between the composer boundaries. It does not run on every launch.
 
 ## Dependencies and non-goals
 
 - Safe shell/startup behavior precedes onboarding's autostart setting.
-- Onboarding's module and placement configuration depends on the context system.
+- Onboarding's module and placement configuration depends on the context system; its composer layout choice uses the `composerLayout` preference.
+- Composer layout changes only input presentation and does not change the primary live activity row or its existing breathing-space row. It is independent of the nested activity architecture in #47.
 - Rich paste and transcript persistence are otherwise independent interaction features.
 - TerminalHost architecture (#10–#13), platform support, ShellAdapter research, broad compatibility/polish (#20), and unrelated future work are outside this milestone unless a narrow implementation dependency proves necessary.
 - No shell-state time travel, chat-composer behavior, image paste, or replacement of NMSh presentation with Starship/Powerlevel10k.

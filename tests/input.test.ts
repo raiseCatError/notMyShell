@@ -4,6 +4,9 @@ import {CommandEditor} from '../src/input/CommandEditor.js';
 import {layoutInput} from '../src/input/inputLayout.js';
 import {KeyDecoder, decodeKeys} from '../src/terminal/keys.js';
 import {calculateScreenLayout, MAX_VISIBLE_INPUT_ROWS} from '../src/app/layout.js';
+import {buildInlineContextPrefix} from '../src/prompt/prompt.js';
+import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
+import {displayWidth, stripAnsi} from '../src/util/text.js';
 
 test('single-line caret includes the prompt prefix and supports middle positions', () => {
   assert.deepEqual(layoutInput('hello', 5, 80).caretColumn, 7);
@@ -23,6 +26,23 @@ test('distinguishes explicit newlines from visual wrapping and recomputes on res
   assert.equal(wide.allRows.length, 1);
   assert.ok(narrow.allRows.length > wide.allRows.length);
   assert.equal(narrow.caretRow, narrow.allRows.length - 1);
+});
+
+test('one-line composer keeps dynamic context in the first editable row and preserves multiline source', () => {
+  const configuration = normalizePromptConfiguration({composerLayout: 'oneLine', placement: 'header'});
+  const context = {cwd: '/tmp/work', project: 'work', branch: 'dev', exitStatus: 4};
+  const prefix = buildInlineContextPrefix(context, 80, configuration);
+  const source = 'printf "hello"\nnext-command';
+  const editor = new CommandEditor();
+  editor.insert(source);
+  const layout = layoutInput(editor.displayText, editor.displayCursorIndex, 80, Number.POSITIVE_INFINITY, prefix);
+
+  assert.match(stripAnsi(layout.allRows[0]?.prefix ?? ''), /work .*\/tmp\/work .* dev .*✘ 4 ❯ $/u);
+  assert.equal(layout.allRows[0]?.text, 'printf "hello"');
+  assert.equal(layout.allRows[1]?.prefix, '  ');
+  assert.equal(layout.allRows[1]?.text, 'next-command');
+  assert.equal(editor.text, source, 'prompt/context remain presentation chrome outside editor source');
+  assert.equal(displayWidth(prefix) + 1 <= 80, true, 'the prefix leaves editable command width');
 });
 
 test('editor inserts and edits across newline boundaries', () => {
@@ -174,6 +194,42 @@ test('composer context placement reserves a frame row and keeps the screen row b
     + Number(layout.showJump) + (layout.showLiveActivity ? 2 : 0)
     + Number(layout.showPrompt) + Number(layout.showComposerTopBorder)
     + Number(layout.showSeparator) + Number(layout.showGap), 24);
+});
+
+test('one-line composer keeps context off the upper boundary and preserves the live activity budget', () => {
+  const rows = 24;
+  const oneLine = calculateScreenLayout(rows, 3, 2, true, false, true, 'header', true, 'oneLine');
+  const twoLine = calculateScreenLayout(rows, 3, 2, true, false, true, 'header', true, 'twoLine');
+  assert.equal(oneLine.showPrompt, false, 'one-line context is part of the editable row, never a top/header row');
+  assert.equal(oneLine.showComposerTopBorder, true, 'one-line mode has an ordinary upper composer boundary');
+  assert.equal(oneLine.showSeparator, true, 'one-line mode keeps the lower composer boundary');
+  assert.equal(oneLine.showLiveActivity, true);
+  assert.equal(twoLine.showLiveActivity, true);
+  assert.equal(Number(oneLine.showLiveActivity) * 2, 2, 'primary activity retains its row and existing breathing-space row');
+
+  for (const [layout, height] of [[oneLine, rows], [twoLine, rows]] as const) {
+    assert.equal(layout.outputHeight + layout.inputHeight + layout.suggestionCount
+      + Number(layout.showJump) + (layout.showLiveActivity ? 2 : 0)
+      + Number(layout.showPrompt) + Number(layout.showComposerTopBorder)
+      + Number(layout.showSeparator) + Number(layout.showGap), height);
+  }
+
+  const smallestUsable = calculateScreenLayout(3, 1, 0, false, false, false, 'header', true, 'oneLine');
+  assert.equal(smallestUsable.showComposerTopBorder, true);
+  assert.equal(smallestUsable.showPrompt, false);
+  assert.equal(smallestUsable.showSeparator, true);
+  assert.equal(smallestUsable.outputHeight + smallestUsable.inputHeight
+    + Number(smallestUsable.showComposerTopBorder) + Number(smallestUsable.showSeparator), 3);
+});
+
+test('narrow one-line layouts omit context and keep double-width input visible', () => {
+  const configuration = normalizePromptConfiguration({composerLayout: 'oneLine'});
+  const prefix = buildInlineContextPrefix({cwd: '/tmp/work', project: 'work', branch: 'dev'}, 3, configuration);
+  assert.equal(stripAnsi(prefix), '❯');
+  const input = layoutInput('界\n界', 3, 3, Number.POSITIVE_INFINITY, prefix);
+  assert.equal(input.allRows[0]?.text, '界');
+  assert.equal(input.allRows[1]?.prefix, '');
+  assert.equal(input.allRows[1]?.text, '界');
 });
 
 test('decodes terminal paging aliases and Ctrl-End variants', () => {

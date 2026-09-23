@@ -2,6 +2,7 @@ import {readFileSync} from 'node:fs';
 import {promptConfigurationPath} from '../configuration/paths.js';
 
 export type ContextPlacement = 'header' | 'composer';
+export type ComposerLayout = 'oneLine' | 'twoLine';
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'exitStatus';
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
 
@@ -15,6 +16,7 @@ export interface ContextModuleConfig {
 
 export interface PromptConfiguration {
   placement: ContextPlacement;
+  composerLayout: ComposerLayout;
   modules: ContextModuleConfig[];
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
@@ -24,6 +26,7 @@ export interface PromptConfiguration {
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   placement: 'header',
+  composerLayout: 'twoLine',
   modules: [
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
@@ -54,6 +57,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!isRecord(value)) return structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
+  const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
     ? Math.max(0, Math.min(3, Math.round(value.spacing)))
     : DEFAULT_PROMPT_CONFIGURATION.spacing;
@@ -63,7 +67,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const separator = validSeparator(value.separator) ? value.separator : DEFAULT_PROMPT_CONFIGURATION.separator;
 
   if (!Array.isArray(value.modules)) {
-    return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), placement, spacing, gap, separator};
+    return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), placement, composerLayout, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -86,7 +90,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.push(module);
   }
 
-  return {placement, modules, separator, spacing, gap};
+  return {placement, composerLayout, modules, separator, spacing, gap};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {
