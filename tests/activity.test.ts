@@ -19,6 +19,15 @@ test('live activity duration changes while its selected phrase stays stable', ()
   assert.equal(parts2.duration, ' · 8.5s');
 });
 
+test('live and final lifecycle timing share millisecond formatting below one second', () => {
+  assert.equal(liveActivityParts('true', 37).duration, ' · 37 ms');
+  assert.equal(liveActivityParts('true', 0.4).duration, ' · <1 ms');
+  const completedAt = new Date(2026, 8, 21, 19, 35);
+  assert.equal(completedActivity('true', 37, completedAt, 0, false).main, `${GLYPHS.success} Completed · 37 ms`);
+  assert.equal(completedActivity('false', 999, completedAt, 1, false).main, `${GLYPHS.failure} Command failed · exit 1 · 999 ms`);
+  assert.equal(completedActivity('sleep', 1, completedAt, 130, true).main, `${GLYPHS.failure} Interrupted · 1 ms`);
+});
+
 test('activity glyph grows and shrinks independently with equal-width frames', () => {
   assert.ok(ACTIVITY_GLYPH_INTERVAL_MS >= 160 && ACTIVITY_GLYPH_INTERVAL_MS <= 170, 'star cadence must be roughly 165ms');
   assert.equal(activityGlyph(0), '·');
