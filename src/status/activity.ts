@@ -16,9 +16,28 @@ export function liveActivityParts(command: string, elapsedMs: number): {phrase: 
   };
 }
 
-export function completedActivity(command: string, elapsedMs: number, completedAt: Date, exitCode: number, interrupted: boolean): {main: string; detail: string} {
+export function completedActivity(command: string, elapsedMs: number, completedAt: Date, exitCode: number, interrupted: boolean, facts?: string[]): {main: string; detail: string} {
+  let statusText = 'Completed';
+  let icon = GLYPHS.success;
+
+  if (facts && facts.length > 0) {
+    statusText = facts.join(' · ');
+  }
+
+  if (interrupted) {
+    statusText = 'Interrupted';
+    icon = GLYPHS.failure;
+  } else if (exitCode !== 0) {
+    if (facts && facts.length > 0) {
+        statusText = `Command failed · ${facts.join(' · ')} · exit ${exitCode}`;
+    } else {
+        statusText = `Command failed · exit ${exitCode}`;
+    }
+    icon = GLYPHS.failure;
+  }
+
   return {
-    main: `${GLYPHS.success} Completed · ${formatDuration(elapsedMs)}`,
+    main: `${icon} ${statusText} · ${formatDuration(elapsedMs)}`,
     detail: ` · ${formatLocalTime(completedAt)}`,
   };
 }

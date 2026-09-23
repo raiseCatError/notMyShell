@@ -8,7 +8,6 @@ import {HistoryViewport} from '../output/viewport.js';
 import {buildPromptLine} from '../prompt/prompt.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
-import {completedStatus} from '../status/commandTiming.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {displayWidth, repeatToWidth, truncateAnsi, truncateText} from '../util/text.js';
@@ -18,6 +17,7 @@ import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {shimmerText} from '../status/shimmer.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
 import {calculateScreenLayout} from './layout.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
@@ -586,19 +586,14 @@ export class TerminalApp {
     const command = this.running;
     const completedAt = new Date();
     const elapsed = completedAt.getTime() - command.startedAt;
-    this.output.complete(exitCode);
-    if (command.interrupted || exitCode === 130) {
-      const parts = completedStatus('interrupted', elapsed, completedAt);
+    const completedRecord = this.output.complete(exitCode);
+    if (!command.cleared) {
+      const outputText = completedRecord?.output ?? '';
+      const facts = extractFacts(command.command, outputText);
+      const isInterrupted = command.interrupted || exitCode === 130;
+      const parts = completedActivity(command.command, elapsed, completedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      this.output.addHistoryLine(`${STOPPED}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
-    } else if (exitCode !== 0) {
-      const parts = completedStatus('failure', elapsed, completedAt, exitCode);
-      this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      this.output.addHistoryLine(`${ERROR}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
-    } else if (!command.cleared) {
-      const parts = completedActivity(command.command, elapsed, completedAt, exitCode, command.interrupted);
-      this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      const rowStyle = (command.interrupted || exitCode !== 0) ? ERROR : SUCCESS;
+      const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
