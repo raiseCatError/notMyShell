@@ -1,4 +1,11 @@
-import type {PromptConfiguration} from './configuration.js';
+import {
+  applyNativeGapChoice,
+  NATIVE_PALETTE_IDS,
+  nativeGapChoice,
+  type NativeGapChoice,
+  type PromptConfiguration,
+} from './configuration.js';
+import {NATIVE_PROMPT_THEMES} from './prompt.js';
 import type {StarshipStatus} from './starship.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -10,6 +17,8 @@ export interface PromptPanelState {
   step: PromptPanelStep;
   selectedIndex: number;
   draft: PromptConfiguration;
+  /** The configuration currently in effect; the draft is only a preview until saved. */
+  saved?: PromptConfiguration;
   starshipStatus?: StarshipStatus;
   message?: string;
 }
@@ -17,7 +26,43 @@ export interface PromptPanelState {
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
 const ACCENT = foreground(UI_COLORS.accent);
+const SUBTLE = foreground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
+const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal'];
+const END_STYLES = ['fadeWedge', 'wedge', 'fadeFlat', 'flat'] as const;
+
+function cycle<T>(values: readonly T[], current: T, delta: number): T {
+  const index = Math.max(0, values.indexOf(current));
+  return values[(index + delta + values.length) % values.length]!;
+}
+
+function gapLabel(value: NativeGapChoice): string {
+  return value === 'off' ? 'Off · connected' : value === 'compact' ? 'Compact' : 'Normal';
+}
+
+function startStyleLabel(value: PromptConfiguration['nmsh']['startStyle']): string {
+  return value === 'flat' ? 'Flat' : 'Pointed';
+}
+
+function layoutLabel(value: PromptConfiguration['composerLayout']): string {
+  return value === 'oneLine' ? 'one-line' : 'two-line';
+}
+
+/** One-line summary of an effective configuration. */
+export function describePromptConfiguration(configuration: PromptConfiguration): string {
+  if (configuration.provider === 'starship') return `Starship · ${layoutLabel(configuration.composerLayout)}`;
+  return [
+    NATIVE_PROMPT_THEMES[configuration.nmsh.palette].label,
+    layoutLabel(configuration.composerLayout),
+    `${startStyleLabel(configuration.nmsh.startStyle).toLowerCase()} start`,
+    `gap ${nativeGapChoice(configuration)}`,
+    endStyleLabel(configuration.nmsh.endStyle).toLowerCase(),
+  ].join(' · ');
+}
+
+export function promptDraftChanged(state: PromptPanelState): boolean {
+  return Boolean(state.saved) && describePromptConfiguration(state.draft) !== describePromptConfiguration(state.saved!);
+}
 
 function endStyleLabel(value: PromptConfiguration['nmsh']['endStyle']): string {
   switch (value) {
@@ -33,7 +78,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
     case 'provider': return 2;
     case 'starship': return state.starshipStatus?.installed ? 4 : 3;
     case 'layout': return 2;
-    case 'appearance': return 2;
+    case 'appearance': return 4;
     case 'installConfirm': return 2;
   }
 }
@@ -45,20 +90,27 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     const delta = key.kind === 'left' ? -1 : 1;
     if (state.step === 'provider') state.selectedIndex = (state.selectedIndex + delta + 2) % 2;
     else if (state.step === 'layout') state.selectedIndex = (state.selectedIndex + delta + 2) % 2;
-    else if (state.step === 'appearance' && state.selectedIndex === 0) state.draft.nmsh.gapEnabled = !state.draft.nmsh.gapEnabled;
-    else if (state.step === 'appearance' && state.selectedIndex === 1) {
-      const values = ['fadeWedge', 'wedge', 'fadeFlat', 'flat'] as const;
-      const current = values.indexOf(state.draft.nmsh.endStyle);
-      state.draft.nmsh.endStyle = values[(current + delta + values.length) % values.length]!;
+    else if (state.step === 'appearance') {
+      const nmsh = state.draft.nmsh;
+      if (state.selectedIndex === 0) nmsh.palette = cycle(NATIVE_PALETTE_IDS, nmsh.palette, delta);
+      else if (state.selectedIndex === 1) nmsh.startStyle = nmsh.startStyle === 'flat' ? 'pointed' : 'flat';
+      else if (state.selectedIndex === 2) applyNativeGapChoice(state.draft, cycle(GAP_CHOICES, nativeGapChoice(state.draft), delta));
+      else nmsh.endStyle = cycle(END_STYLES, nmsh.endStyle, delta);
     }
   } else return false;
   state.message = undefined;
   return true;
 }
 
-export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[]): string[] {
+/**
+ * `themePreviews` holds one live native prompt per palette, in
+ * NATIVE_PALETTE_IDS order; it is shown only while editing appearance.
+ */
+export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = []): string[] {
   const title = state.onboarding ? 'Prompt setup' : 'Prompt settings';
-  const rows = [`${PRIMARY}  ${title}${RESET}`, ''];
+  const rows = [`${PRIMARY}  ${title}${RESET}`];
+  if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
+  rows.push('');
   const item = (index: number, text: string) => `${index === state.selectedIndex ? ACCENT : SECONDARY}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
   if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
@@ -89,9 +141,27 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(item(0, `Two-line${state.draft.composerLayout === 'twoLine' ? '  ●' : ''}`));
     rows.push(item(1, `One-line${state.draft.composerLayout === 'oneLine' ? '  ●' : ''}`));
   } else {
+    const saved = state.saved?.nmsh;
+    const value = (text: string, savedText: string | undefined) => savedText === undefined || savedText === text
+      ? `‹ ${text} ›`
+      : `‹ ${text} ›  ${SUBTLE}saved: ${savedText}`;
+    const savedGap = state.saved ? gapLabel(nativeGapChoice(state.saved)) : undefined;
     rows.push(`${PRIMARY}NMSh appearance${RESET}`);
-    rows.push(item(0, `Gap · ${state.draft.nmsh.gapEnabled ? 'On' : 'Off'}`));
-    rows.push(item(1, `Ending · ${endStyleLabel(state.draft.nmsh.endStyle)}`));
+    rows.push(item(0, `Theme   ${value(NATIVE_PROMPT_THEMES[state.draft.nmsh.palette].label, saved && NATIVE_PROMPT_THEMES[saved.palette].label)}`));
+    rows.push(item(1, `Start   ${value(startStyleLabel(state.draft.nmsh.startStyle), saved && startStyleLabel(saved.startStyle))}`));
+    rows.push(item(2, `Gap     ${value(gapLabel(nativeGapChoice(state.draft)), savedGap)}`));
+    rows.push(item(3, `Ending  ${value(endStyleLabel(state.draft.nmsh.endStyle), saved && endStyleLabel(saved.endStyle))}`));
+    if (themePreviews.length) {
+      rows.push('');
+      rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
+      NATIVE_PALETTE_IDS.forEach((id, index) => {
+        const theme = NATIVE_PROMPT_THEMES[id];
+        const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
+        const savedMark = saved?.palette === id ? '✓' : ' ';
+        const label = `${theme.label}${' '.repeat(Math.max(1, 16 - theme.label.length))}`;
+        rows.push(`${marker} ${SECONDARY}${label}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
+      });
+    }
   }
   if (state.message) rows.push(`${SECONDARY}${state.message}${RESET}`);
   if (preview.length) {
@@ -99,10 +169,12 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     const selectedLayout = state.step === 'layout'
       ? state.selectedIndex === 1 ? 'oneLine' : 'twoLine'
       : state.draft.composerLayout;
-    rows.push(`${PRIMARY}${selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}`);
+    const status = promptDraftChanged(state) ? `${ACCENT}unsaved preview` : state.saved ? `${SUBTLE}matches current` : '';
+    rows.push(`${PRIMARY}${selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}${status ? `  ${status}${RESET}` : ''}`);
     rows.push(...preview);
   }
   rows.push('');
-  rows.push(`${SECONDARY}↑↓ select · ←→ adjust · Enter choose · Esc ${state.onboarding ? 'skip' : 'cancel'}${RESET}`);
+  const enter = state.step === 'appearance' ? 'Enter save' : 'Enter choose';
+  rows.push(`${SECONDARY}↑↓ select · ←→ adjust · ${enter} · Esc ${state.onboarding ? 'skip' : 'cancel'}${RESET}`);
   return rows.map(row => truncateAnsi(row, columns));
 }

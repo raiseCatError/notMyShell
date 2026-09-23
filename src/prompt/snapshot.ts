@@ -1,5 +1,5 @@
 import type {RgbColor} from '../ui/palette.js';
-import type {ComposerLayout, NativeEndStyle, PromptProviderId} from './configuration.js';
+import type {ComposerLayout, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
   text: string;
@@ -14,6 +14,8 @@ export interface PromptSnapshot {
   layout: ComposerLayout;
   segments: PromptSegmentSnapshot[];
   endStyle?: NativeEndStyle;
+  startStyle?: NativeStartStyle;
+  palette?: NativePaletteId;
   gap?: number;
   gapEnabled?: boolean;
   spacing?: number;
@@ -62,16 +64,26 @@ export function fadePromptColor(color: RgbColor, step: number): RgbColor {
   return fromOklab(lightness * lightnessFactors[index]!, a * chromaFactors[index]!, b * chromaFactors[index]!);
 }
 
+/** Light live segments (e.g. the lime project block) must not stay bright in history. */
+const ARCHIVE_BACKGROUND_CEILING = 0.56;
+
+/** Dark text on a light live segment becomes light muted text over the darkened archive block. */
+function archiveForegroundLightness(l: number, factor: number): number {
+  return l < 0.5 ? 0.8 : Math.max(0.54, Math.min(0.84, l * factor));
+}
+
 export function archiveColor(color: RgbColor, role: 'foreground' | 'background' = 'foreground'): RgbColor {
   const [l, a, b] = toOklab(color);
   const chroma = Math.hypot(a, b);
   if (chroma < 0.025) {
-    const dimmed = role === 'foreground' ? Math.max(0.54, Math.min(0.82, l * 0.82)) : Math.max(0.15, l * 0.8);
+    const dimmed = role === 'foreground' ? archiveForegroundLightness(l, 0.82) : Math.min(ARCHIVE_BACKGROUND_CEILING, Math.max(0.15, l * 0.8));
     return fromOklab(dimmed, 0, 0);
   }
   // Keep the pigment angle while quieting saturation. Raise very dark module
   // backgrounds to a visible floor so the archive remains readable.
-  const lightness = role === 'background' ? Math.max(0.36, l * 0.82) : Math.max(0.58, Math.min(0.84, l * 0.84));
+  const lightness = role === 'background'
+    ? Math.min(ARCHIVE_BACKGROUND_CEILING, Math.max(0.36, l * 0.82))
+    : Math.max(0.58, archiveForegroundLightness(l, 0.84));
   const reducedChroma = chroma * (role === 'background' ? 0.68 : 0.72);
   return fromOklab(lightness, (a / chroma) * reducedChroma, (b / chroma) * reducedChroma);
 }

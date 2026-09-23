@@ -30,6 +30,10 @@ export const GLYPHS = {
   // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.
   get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
   get powerlineTrailing() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
+  get node() { return getCurrentGlyphMode() === 'nerd' ? '\ue718 node' : 'node'; },
+  get go() { return getCurrentGlyphMode() === 'nerd' ? '\ue627 go' : 'go'; },
+  get python() { return getCurrentGlyphMode() === 'nerd' ? '\ue606 python' : 'python'; },
+  get docker() { return getCurrentGlyphMode() === 'nerd' ? '\uf308 docker' : 'docker'; },
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
 };
 

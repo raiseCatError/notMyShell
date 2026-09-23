@@ -5,10 +5,13 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {archiveColor} from '../src/prompt/snapshot.js';
 import {buildContextLine, NATIVE_LAVENDER_RAMP, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
-import {normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
+import {applyNativeGapChoice, nativeGapChoice, normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
-import {renderPromptPanel} from '../src/prompt/PromptPanel.js';
+import {describePromptConfiguration, handlePromptPanelKey, renderPromptPanel} from '../src/prompt/PromptPanel.js';
+import {detectToolchains} from '../src/shell/ShellContext.js';
+import {stripAnsi} from '../src/util/text.js';
+import type {Key} from '../src/terminal/keys.js';
 import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 
 test('NMSh Native defaults to eight contrast-safe lavender shades and cycles by visible order', () => {
@@ -133,4 +136,99 @@ test('onboarding preview uses a dedicated panel and hides the live composer curs
     app['stop'](0);
     app['session'].kill();
   }
+});
+
+test('native themes color by semantic role and flow into archived snapshots', () => {
+  const context = {cwd: '/tmp/work', project: 'repo', branch: 'dev', toolchains: ['node' as const, 'go' as const, 'python' as const, 'docker' as const], exitStatus: 2};
+  const semantic = normalizePromptConfiguration({nmsh: {palette: 'semantic'}});
+  const modules = renderedModules(context, semantic);
+  const byText = (text: string) => modules.find(module => module.text.endsWith(text))!;
+  assert.deepEqual(byText('repo').background, {red: 172, green: 252, blue: 115}, 'project is #ACFC73');
+  assert.deepEqual(byText('node').background, {red: 95, green: 160, blue: 78});
+  assert.deepEqual(byText('docker').background, {red: 47, green: 142, blue: 224});
+  assert.ok(byText('go').background.blue > byText('go').background.red * 3, 'go stays cyan');
+  assert.ok(byText('python').background.red > 200 && byText('python').background.blue < 100, 'python stays yellow');
+  assert.ok(Math.max(...Object.values(byText('dev').background)) < 80, 'git is a charcoal segment');
+  assert.deepEqual(byText('2').background, {red: 205, green: 115, blue: 123}, 'existing failure color is kept');
+  assert.deepEqual(modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'toolchain', 'toolchain', 'toolchain', 'toolchain', 'exitStatus']);
+
+  const lavender = renderedModules(context, DEFAULT_PROMPT_CONFIGURATION);
+  assert.deepEqual(lavender.map(module => module.background), NATIVE_LAVENDER_RAMP.slice(0, 8), 'lavender stays a monotone ramp');
+  const cool = renderedModules(context, normalizePromptConfiguration({nmsh: {palette: 'cool'}}));
+  assert.notDeepEqual(cool[0]!.background, modules[0]!.background);
+
+  const snapshot = nativePromptSnapshot(context, semantic);
+  assert.equal(snapshot.palette, 'semantic');
+  assert.deepEqual(snapshot.segments[0]!.background, {red: 172, green: 252, blue: 115});
+  const archivedProject = archiveColor(snapshot.segments[0]!.background!, 'background');
+  const archivedText = archiveColor(snapshot.segments[0]!.foreground!);
+  assert.ok(archivedProject.green > archivedProject.red && archivedProject.green < 160, 'archived lime is a muted green');
+  assert.ok(archivedText.red > 150, 'dark live text becomes light muted text in history');
+});
+
+test('start style and gap presets change native geometry for live and archived prompts', () => {
+  const context = {cwd: '/tmp/work', project: 'repo', exitStatus: 0};
+  const pointed = stripAnsi(buildContextLine(context, 40, DEFAULT_PROMPT_CONFIGURATION, 'composer'));
+  const flatConfig = normalizePromptConfiguration({nmsh: {startStyle: 'flat'}});
+  const flat = stripAnsi(buildContextLine(context, 40, flatConfig, 'composer'));
+  assert.ok(pointed.startsWith(''));
+  assert.ok(flat.startsWith(' repo'));
+  assert.equal([...flat].filter(glyph => glyph === '').length, 0, 'flat start opens every independent segment square');
+  assert.equal(nativePromptSnapshot(context, flatConfig).startStyle, 'flat');
+
+  const config = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  assert.equal(nativeGapChoice(config), 'normal');
+  applyNativeGapChoice(config, 'compact');
+  assert.equal(nativeGapChoice(config), 'compact');
+  const compact = stripAnsi(buildContextLine(context, 40, config, 'composer'));
+  assert.match(compact, /repo  \/tmp/u, 'compact keeps caps without the neutral space');
+  applyNativeGapChoice(config, 'off');
+  assert.equal(config.nmsh.gapEnabled, false);
+  applyNativeGapChoice(config, 'normal');
+  assert.deepEqual([config.nmsh.gapEnabled, config.gap], [true, 1]);
+});
+
+test('saved configurations gain new modules at their default position', () => {
+  const config = normalizePromptConfiguration({modules: [
+    {id: 'project', visible: true, condition: 'always'},
+    {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
+  ]});
+  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus']);
+  assert.equal(config.modules.at(-1)!.visible, false);
+  assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
+  assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'pointed');
+});
+
+test('toolchains are detected from marker files in cwd and repository root', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-toolchain-'));
+  try {
+    await mkdir(join(directory, 'sub'));
+    await writeFile(join(directory, 'go.mod'), 'module x\n');
+    await writeFile(join(directory, 'sub', 'Dockerfile'), 'FROM scratch\n');
+    assert.deepEqual(await detectToolchains([join(directory, 'sub'), directory]), ['go', 'docker']);
+    assert.deepEqual(await detectToolchains([join(directory, 'missing')]), []);
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+});
+
+test('/prompt appearance shows saved values, unsaved changes, and live theme previews', () => {
+  const saved = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  const state = {onboarding: false, step: 'appearance' as const, selectedIndex: 0, draft: structuredClone(saved), saved};
+  const unchanged = renderPromptPanel(state, 120, ['live preview'], ['L', 'S', 'C']).map(stripAnsi);
+  assert.ok(unchanged.some(row => row.includes('Current  Lavender Native · two-line · pointed start · gap normal · fading wedge')));
+  assert.ok(unchanged.some(row => row.includes('matches current')));
+  assert.ok(unchanged.some(row => /● Lavender Native +✓ L/u.test(row)));
+
+  handlePromptPanelKey({kind: 'right'} as Key, state);
+  state.selectedIndex = 1; handlePromptPanelKey({kind: 'right'} as Key, state);
+  state.selectedIndex = 2; handlePromptPanelKey({kind: 'left'} as Key, state);
+  assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, nativeGapChoice(state.draft)], ['semantic', 'flat', 'compact']);
+  const changed = renderPromptPanel(state, 120, ['live preview'], ['L', 'S', 'C']).map(stripAnsi);
+  assert.ok(changed.some(row => row.includes('Theme   ‹ Soft Semantic ›  saved: Lavender Native')));
+  assert.ok(changed.some(row => row.includes('Start   ‹ Flat ›  saved: Pointed')));
+  assert.ok(changed.some(row => row.includes('Gap     ‹ Compact ›  saved: Normal')));
+  assert.ok(changed.some(row => row.includes('unsaved preview')));
+  assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Soft Semantic +S/u.test(row)));
+  assert.equal(describePromptConfiguration(saved), 'Lavender Native · two-line · pointed start · gap normal · fading wedge');
 });

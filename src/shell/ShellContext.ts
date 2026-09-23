@@ -1,4 +1,5 @@
 import {execFile} from 'node:child_process';
+import {readdir} from 'node:fs/promises';
 import {basename, normalize} from 'node:path';
 import {homedir} from 'node:os';
 import {promisify} from 'node:util';
@@ -10,6 +11,33 @@ export interface PromptContext {
   project: string;
   branch?: string;
   exitStatus?: number;
+  /** Toolchains detected from marker files in cwd or the repository root. */
+  toolchains?: ToolchainId[];
+}
+
+export type ToolchainId = 'node' | 'go' | 'python' | 'docker';
+
+const TOOLCHAIN_MARKERS: ReadonlyArray<[ToolchainId, readonly string[]]> = [
+  ['node', ['package.json']],
+  ['go', ['go.mod']],
+  ['python', ['pyproject.toml', 'requirements.txt', 'setup.py', 'Pipfile', '.python-version']],
+  ['docker', ['Dockerfile', 'compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml']],
+];
+
+export async function detectToolchains(directories: readonly string[]): Promise<ToolchainId[]> {
+  const names = new Set<string>();
+  for (const directory of new Set(directories)) {
+    try {
+      for (const name of await readdir(directory)) names.add(name);
+    } catch {
+      // Unreadable directories simply contribute no markers.
+    }
+  }
+  return TOOLCHAIN_MARKERS.filter(([, markers]) => markers.some(marker => names.has(marker))).map(([id]) => id);
+}
+
+function withToolchains(context: PromptContext, toolchains: ToolchainId[]): PromptContext {
+  return toolchains.length > 0 ? {...context, toolchains} : context;
 }
 
 export interface GitProbe {
@@ -44,8 +72,9 @@ export async function resolvePromptContext(
       const commit = await probe.run(cwd, ['rev-parse', '--short', 'HEAD']);
       branch = commit ? `detached:${commit}` : undefined;
     }
-    return {cwd, project: basename(root) || basename(cwd), branch: branch || undefined};
+    return withToolchains({cwd, project: basename(root) || basename(cwd), branch: branch || undefined},
+      await detectToolchains([cwd, root]));
   } catch {
-    return {cwd, project: basename(cwd) || cwd};
+    return withToolchains({cwd, project: basename(cwd) || cwd}, await detectToolchains([cwd]));
   }
 }

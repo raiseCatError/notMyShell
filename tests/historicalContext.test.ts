@@ -1,9 +1,12 @@
+import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 
 test('TerminalApp captures cwd at command submission for its historical header', async () => {
   const app = new TerminalApp();
+  // Independent of the developer's saved prompt settings.
+  app['promptConfiguration'] = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   app['shellCwd'] = '/tmp';
   app['context'] = {...app['context'], cwd: '/tmp', project: 'tmp'};
   app['editor'].insert('pwd');
