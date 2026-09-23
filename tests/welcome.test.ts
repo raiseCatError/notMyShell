@@ -23,7 +23,8 @@ test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and on
     assert.equal(transcript.lines.length, 0, 'welcome is not raw PTY output');
     const rows = app['output'].wrapped(80);
     assert.equal(rows.length, 5);
-    assert.ok(rows[0]!.plain.includes(`NMSh ${readBuildIdentity().version}`));
+    const version = readBuildIdentity().version;
+    assert.ok(rows[0]!.plain.includes(`notMyShell ${/^\d/u.test(version) ? 'v' : ''}${version}`));
     assert.match(rows[1]!.plain, /build /u);
     assert.match(rows[3]!.plain, /zsh/u);
     assert.match(rows[2]!.plain, /~\/Projects\/notMyShell|\/notMyShell/u);
@@ -35,19 +36,32 @@ test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and on
   }
 });
 
-test('welcome snapshots cwd and renders a compact pixel cat head with square eyes and whiskers', () => {
+test('welcome snapshots cwd and renders a compact full-body cat with square eyes and whiskers', () => {
   const snapshot = createWelcomeSnapshot(identity, `${homedir()}/Projects/work`);
   const rows = renderWelcome(snapshot, 80);
   assert.match(rows[2]!.plain, /~\/Projects\/work/u);
-  assert.match(rows[2]!.plain, /■/u);
-  assert.doesNotMatch(rows[2]!.plain, /●|•/u);
-  assert.match(rows[2]!.ansi, /38;2;27;24;37m■/u);
-  assert.match(rows[0]!.plain, /▄██▄/u, 'ears are visible');
-  assert.match(rows[2]!.plain, /─.*─/u, 'whiskers are visible');
-  assert.doesNotMatch(rows.map(row => row.plain).join(''), /▝▀|▗██/u, 'the icon contains no body or tail');
+  assert.match(rows[0]!.plain, /^ █▄▄▄█ /u, 'ears frame the head');
+  assert.match(rows[1]!.plain, /^=█████=/u, 'whiskers flank the face');
+  assert.match(rows[1]!.ansi, /38;2;22;18;32m█/u, 'dark rectangular eyes');
+  assert.match(rows[1]!.plain, /▄▀/u, 'raised tail');
+  assert.match(rows[3]!.plain, /^  █▀█▀▀▀▀█▀█/u, 'four legs under the body');
+  for (const row of rows.slice(0, 4)) {
+    assert.equal(displayWidth(row.plain.slice(0, 14)), 14);
+    assert.match(row.plain.slice(14), /^ {2}\S/u, 'metadata column aligns two cells right of the cat');
+  }
   assert.match(rows[4]!.ansi, /38;2;105;98;130m/u);
   snapshot.cwd = '/tmp/changed';
   assert.match(rows[2]!.plain, /~\/Projects\/work/u);
+});
+
+test('welcome wordmark spells notMyShell with only My in the project accent and a gray version', () => {
+  const rows = renderWelcome(createWelcomeSnapshot(identity, '/tmp'), 80);
+  assert.match(rows[0]!.plain, / {2}notMyShell v0\.2\.0$/u);
+  assert.doesNotMatch(rows.map(row => row.plain).join('\n'), /NMSh|NMSH|nmsh/u);
+  const primary = '38;2;242;240;236m';
+  assert.ok(rows[0]!.ansi.includes(`${primary}not\u001B[38;2;172;252;115mMy\u001B[${primary}Shell`));
+  assert.match(rows[0]!.ansi, /38;2;125;133;144m v0\.2\.0/u);
+  assert.match(rows[1]!.plain, /build abcdef0 · dev$/u);
 });
 
 test('welcome keeps every row inside narrow and wide viewports', () => {
@@ -58,8 +72,9 @@ test('welcome keeps every row inside narrow and wide viewports', () => {
     assert.ok(rows.every(row => displayWidth(row.plain) <= width), `width ${width}`);
     assert.ok(rows.every(row => !row.plain.includes('\n')), `width ${width}`);
   }
-  assert.match(renderWelcome(snapshot, 20)[0]!.plain, /^NMSh 0\.2\.0/u);
+  assert.match(renderWelcome(snapshot, 20)[0]!.plain, /^notMyShell v0\.2\.0/u);
   assert.doesNotMatch(renderWelcome(snapshot, 20)[0]!.plain, /▄/u);
+  assert.equal(renderWelcome(snapshot, 8)[0]!.plain, 'notMySh…');
 });
 
 test('welcome scrolls with ordinary history and stays outside command copy', () => {
@@ -72,9 +87,9 @@ test('welcome scrolls with ordinary history and stays outside command copy', () 
   const rows = output.wrapped(60);
   const viewport = new HistoryViewport();
   assert.ok(viewport.resolve(rows.length, 3) > 0);
-  assert.ok(!rows.slice(viewport.start, viewport.start + 3).some(row => row.plain.includes('NMSh')));
+  assert.ok(!rows.slice(viewport.start, viewport.start + 3).some(row => row.plain.includes('notMyShell')));
   assert.equal(serializeCopyPayload(output.recent(1)!), 'hello\nCompleted');
-  assert.ok(!output.transcript().lines.flat().some(cell => cell && 'text' in cell && cell.text.includes('NMSh')));
+  assert.ok(!output.transcript().lines.flat().some(cell => cell && 'text' in cell && cell.text.includes('notMyShell')));
 });
 
 test('fresh welcome starts at transcript row zero and the first command follows its divider without a spacer', () => {
@@ -86,7 +101,7 @@ test('fresh welcome starts at transcript row zero and the first command follows 
   const rows = output.wrapped(80);
   const viewport = new HistoryViewport();
   assert.equal(viewport.resolve(rows.length, 20), 0);
-  assert.match(rows[0]!.plain, /NMSh/u);
+  assert.match(rows[0]!.plain, /notMyShell/u);
   assert.equal(rows[4]!.plain, '─'.repeat(80));
   assert.equal(rows[5]!.plain, '❯ echo first');
 });
@@ -115,7 +130,7 @@ test('/clear begins a new welcome at live cwd; /resume restores the archived one
     Object.defineProperty(app, 'render', {value: () => {}});
     await app['resumeSelectedSession']();
     assert.deepEqual(app['output'].transcript().welcome, first);
-    assert.equal(app['output'].wrapped(80).filter(row => row.plain.includes('NMSh')).length, 1);
+    assert.equal(app['output'].wrapped(80).filter(row => row.plain.includes('notMyShell ')).length, 1);
     assert.equal((await new TranscriptStore(directory).list()).length, 2, 'welcome-only current session is archived before resume');
   } finally {
     app['stop'](0);
