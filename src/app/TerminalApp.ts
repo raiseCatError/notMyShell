@@ -142,7 +142,7 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
-    if (key.kind === 'mouseMove') {
+    if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
       const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
       const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
@@ -151,9 +151,19 @@ export class TerminalApp {
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
         const row = wrapped[viewStart + key.y - 1];
-        if (row && row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
-          this.hoveredLineIndex = row.lineIndex;
-          this.render();
+        if (row) {
+          if (key.kind === 'mouseClick' && row.commandIndex !== undefined) {
+            const type = row.lineIndex !== undefined ? this.output.lineTypes.get(row.lineIndex) : undefined;
+            // Only toggle if we click on a fold hint, metadata row, or the command itself
+            if (row.isFoldHint || type === 'command' || type === 'metadata') {
+              this.output.toggleExpanded(row.commandIndex);
+              this.render();
+            }
+          }
+          if (row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
+            this.hoveredLineIndex = row.lineIndex;
+            this.render();
+          }
         }
       } else if (this.hoveredLineIndex !== undefined) {
         this.hoveredLineIndex = undefined;
@@ -718,7 +728,13 @@ export class TerminalApp {
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
       let finalAnsi = row.ansi;
-      if (row.lineIndex !== undefined) {
+      if (row.isFoldHint) {
+        const isHovered = this.hoveredLineIndex === row.lineIndex;
+        if (isHovered) {
+          finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
+          finalAnsi = `\u001B[48;2;45;45;55m${finalAnsi}\u001B[K${RESET}`;
+        }
+      } else if (row.lineIndex !== undefined) {
         const type = this.output.lineTypes.get(row.lineIndex);
         if (type === 'command') {
           // Subtle background for command

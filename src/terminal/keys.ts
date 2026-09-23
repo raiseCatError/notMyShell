@@ -4,7 +4,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'focusPrevious' | 'focusNext'} & {x?: number; y?: number};
+  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -95,8 +95,10 @@ export function decodeKeys(input: string): Key[] {
       const button = Number(sgrMatch[1]);
       const x = Number(sgrMatch[2]);
       const y = Number(sgrMatch[3]);
+      const isPress = sgrMatch[4] === 'M';
       if (button === 64) keys.push({kind: 'wheelUp'});
       else if (button === 65) keys.push({kind: 'wheelDown'});
+      else if (button === 0 && isPress) keys.push({kind: 'mouseClick', x, y});
       else if (button === 35 || button === 32) keys.push({kind: 'mouseMove', x, y});
       index += sgrMatch[0].length;
       continue;

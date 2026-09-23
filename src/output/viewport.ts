@@ -6,6 +6,8 @@ export interface WrappedRow {
   ansi: string;
   plain: string;
   lineIndex?: number;
+  isFoldHint?: boolean;
+  commandIndex?: number;
 }
 
 export function wrapStyledLine(line: StyledLine, width: number): WrappedRow[] {

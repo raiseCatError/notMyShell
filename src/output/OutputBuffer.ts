@@ -5,12 +5,13 @@ import {GLYPHS} from '../ui/glyphs.js';
 
 export interface CompletedCommand {
   command: string;
-  /** Plain PTY output lines (no ANSI codes). Empty string if no output was produced. */
   output: string;
-  /** Plain-text lifecycle/completion row, e.g. "✘ Failed after 0.0s · exit 127 · done 04:12" */
   lifecycleText: string;
   exitCode: number;
   startId: number;
+  outputStartId: number;
+  endId?: number;
+  expanded?: boolean;
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -26,7 +27,7 @@ export class OutputBuffer {
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
   public readonly lineTypes = new Map<number, 'command' | 'metadata'>();
-  private active?: {command: string; start: number};
+  private active?: {command: string; start: number; outputStart: number};
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
@@ -46,7 +47,7 @@ export class OutputBuffer {
       this.lineTypes.set(startId + i, 'command');
       this.parser.addLine(formattedLines[i]);
     }
-    this.active = {command, start: this.parser.completedCount()};
+    this.active = {command, start: startId, outputStart: startId + formattedLines.length};
     return startId;
   }
 
@@ -63,12 +64,16 @@ export class OutputBuffer {
   complete(exitCode: number): CompletedCommand | undefined {
     this.parser.ensureLineBoundary();
     if (!this.active) return undefined;
+    const endId = this.parser.completedCount();
     const record: CompletedCommand = {
       command: this.active.command,
-      output: this.parser.snapshotPlain(this.active.start),
+      output: this.parser.snapshotPlain(this.active.outputStart),
       lifecycleText: '',
       exitCode,
       startId: this.active.start,
+      outputStartId: this.active.outputStart,
+      endId,
+      expanded: endId - this.active.outputStart <= 10,
     };
     this.completed.unshift(record);
     this.active = undefined;
@@ -112,16 +117,45 @@ export class OutputBuffer {
   wrapped(width: number): WrappedRow[] {
     const lines = this.parser.allLines();
     const result: WrappedRow[] = [];
+    let skipUntil = -1;
+    
     for (let i = 0; i < lines.length; i++) {
+      if (i < skipUntil) continue;
+      
+      const cmd = this.completed.find(c => c.outputStartId === i);
+      if (cmd && !cmd.expanded && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
+        const hiddenLines = cmd.endId - cmd.outputStartId;
+        const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
+        const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+        result.push({
+          ansi,
+          plain,
+          lineIndex: cmd.outputStartId,
+          isFoldHint: true,
+          commandIndex: this.completed.indexOf(cmd)
+        });
+        skipUntil = cmd.endId;
+        continue;
+      }
+
       if (this.visualGaps.has(i)) {
         result.push({ansi: '\u001B[0m', plain: '', lineIndex: -1});
       }
       const wrappedRows = wrapStyledLine(lines[i], width);
+      const cmdIndex = this.completed.findIndex(c => c.startId <= i);
       for (const row of wrappedRows) {
         row.lineIndex = i;
+        if (cmdIndex !== -1) row.commandIndex = cmdIndex;
         result.push(row);
       }
     }
     return result;
+  }
+  
+  toggleExpanded(commandIndex: number): void {
+    const cmd = this.completed[commandIndex];
+    if (cmd) {
+      cmd.expanded = !cmd.expanded;
+    }
   }
 }
