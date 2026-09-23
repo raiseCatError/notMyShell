@@ -51,10 +51,13 @@ Configuration will allow ordering, visibility, separators, colors, and condition
 
 Includes first-run onboarding to guide new users through basic NMSh configuration and terminal host setup.
 
+Also in this phase: editor quality improvements including rich paste atom support for large multiline pastes.
+
 | Issue | Title |
 |---|---|
 | [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Modular NMSh prompt/context system |
 | [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run onboarding and appearance configuration |
+| [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
 
 ---
 

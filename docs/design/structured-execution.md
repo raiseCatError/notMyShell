@@ -122,23 +122,48 @@ Interactive or fullscreen applications that take over the terminal. NMSh routes 
 
 ---
 
-## Ctrl+O — Raw Output Toggle
+## Per-Entry Click vs. Ctrl+O — Two Distinct Actions
 
-Planned keyboard behavior: **Ctrl+O** toggles raw output expansion for the most relevant command entry.
+These are separate features and must not be conflated.
 
-**Collapsed state:**
+| Action | Scope | Mechanism |
+|---|---|---|
+| **Click / local action** | One execution entry | Toggles that single entry's expanded/collapsed state |
+| **Ctrl+O** | Broader transcript mode | Toggles compact vs. detailed view for the relevant command |
+
+On hosts where mouse is supported, clicking a collapsed entry (or its expand hint) expands that individual entry locally. This is a per-entry action.
+
+**Ctrl+O** is a broader global toggle — a compact/details transcript mode switch.
+
+---
+
+## Ctrl+O — Compact / Details Mode
+
+**Ctrl+O** toggles between compact and detailed execution views.
+
+**COMPACT MODE:**
 ```
-● Build failed · 4 errors · 5 warnings · 18.4s
-  284 lines hidden  (Ctrl+O to expand)
+❯ npm test
+
+● Tests completed · 136 passed · 2.9s
+  297 lines hidden  (Ctrl+O for details)
 ```
 
-**After Ctrl+O (expanded):** the full original PTY output is visible.
+**DETAILS MODE (after Ctrl+O):**
+```
+❯ npm test
 
-**Ctrl+O again:** collapses back to the summary row.
+● Tests completed · 136 passed · 2.9s
+  $ npm test
 
-The `(Ctrl+O to expand)` text uses neutral/dim styling to avoid visual noise. Safe behavior applies when no foldable entry exists — no error, no crash.
+  TAP version 13
+  ...
+  136 tests passed
+```
 
-Exact semantics for "most relevant" entry (active command vs. most recent vs. history-selected) may evolve during implementation.
+The `(Ctrl+O for details)` hint uses neutral/dim styling to avoid visual noise. Safe behavior applies when no applicable entry exists — no error, no crash.
+
+Exact semantics for "most relevant" entry (active command vs. most recent vs. history-selected) may evolve during implementation after OutputBuffer/history architecture is reviewed.
 
 ---
 
@@ -187,12 +212,77 @@ After the generic heuristics are working, opt-in deterministic adapters may impr
 
 ---
 
+## Interaction Feedback — Interactive Rows Must Never Look Dead
+
+Interactive rows (collapsed output hints, timeline rows, expandable metadata) must have clearly distinct visual states. A row that can be interacted with must never appear static or inert.
+
+**Required visual states:**
+
+| State | Appearance |
+|---|---|
+| **DEFAULT** | SECONDARY / muted — present but not dominant |
+| **HOVER** | Brightens toward PRIMARY / off-white |
+| **FOCUSED** | Clearly visible keyboard focus indicator (never invisible) |
+| **EXPANDED** | Clearly distinguished from collapsed state |
+
+**Examples of interactive rows:**
+
+- `297 lines hidden  (Ctrl+O for details)`
+- `Running xcodebuild · 35s`
+- Execution summary rows
+- Collapsed raw output metadata
+
+**Rules:**
+- Mouse hover must brighten interactive rows toward PRIMARY/off-white
+- Keyboard focus must be visibly indicated — never use invisible or near-invisible focus styling
+- Every mouse action must have a keyboard alternative
+- Expanded state must be visually distinct from collapsed state — not just a content change
+
+---
+
+## LIVE vs. FOLDED — Output Volume Does Not Determine Mode
+
+**Large output does NOT automatically mean folded output.**
+
+The distinction:
+
+| Mode | Trigger |
+|---|---|
+| **FOLDED** | Output is *finite and complete* — a burst that ends |
+| **LIVE** | Output is *continuous and ongoing* — sustained stream |
+
+Streaming commands (`ping`, `tail -f`, `vite`, `npm run dev`, servers, continuously updating tools) belong in **LIVE** mode even when they produce many lines. They are never automatically folded.
+
+Classification signals that indicate LIVE over FOLDED:
+- Sustained output rate with no sign of termination
+- Carriage-return rewrites (progress bars updating in place)
+- Continuous heartbeat-style output
+
+---
+
+## FOLLOW / DETACHED Mode — Preserved by Structured Execution
+
+Structured execution integrates with the existing FOLLOW/DETACHED viewport model and does not replace it.
+
+- **FOLLOW mode:** during execution, the viewport is pinned to the bottom — new output scrolls into view
+- **DETACHED mode:** scrolling away during execution switches to DETACHED — new output no longer drags the viewport back down
+- **Jump to bottom:** an affordance to return from DETACHED to FOLLOW mode
+
+These invariants hold for all presentation modes (INLINE, FOLDED, LIVE, PASSTHROUGH). Structured execution must not introduce any path that overrides the user's explicit scroll position.
+
+---
+
 ## Design Principles (Summary)
+
 
 1. Raw PTY output is never discarded
 2. Presentation state is separate from storage
 3. Classification is generic-first, deterministic-only
-4. Timeline rows are facts, never fabricated
+4. Timeline rows are facts, never fabricated — no AI-generated prose
 5. The composer remains the primary interaction model
 6. NMSh does not recolor or semantically transform raw process output
 7. Passthrough programs own their screen completely
+8. Interactive rows must never look dead — default, hover, focused, and expanded states are all required
+9. Every mouse action must have a keyboard alternative
+10. Large output volume does not automatically mean FOLDED — streaming output is LIVE
+11. FOLLOW/DETACHED viewport behavior is preserved by structured execution, never overridden
