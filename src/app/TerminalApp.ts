@@ -83,6 +83,7 @@ export class TerminalApp {
   private shellHandoffRequested = false;
   private presentationStartCwd = process.cwd();
   private resumeSessions?: TranscriptSession[];
+  private preparingCommand = false;
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
 
@@ -406,6 +407,7 @@ export class TerminalApp {
         }
         this.editor.clear();
       } else {
+        if (this.preparingCommand) return;
         void this.submit();
       }
     }
@@ -460,6 +462,7 @@ export class TerminalApp {
       return;
     }
 
+    const contextAtSubmission = this.context;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
         this.passthrough = true;
@@ -468,7 +471,7 @@ export class TerminalApp {
         this.session.resize(dimensions.columns, dimensions.rows);
       }
       this.render();
-    });
+    }, {cwd: this.shellCwd, branch: contextAtSubmission.branch});
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
     this.running = {command, startedAt, interrupted: false, cleared: false, startId};

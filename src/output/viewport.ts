@@ -7,6 +7,7 @@ export interface WrappedRow {
   plain: string;
   lineIndex?: number;
   isFoldHint?: boolean;
+  isHistoricalHeader?: boolean;
   commandIndex?: number;
 }
 

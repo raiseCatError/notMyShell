@@ -1,0 +1,18 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {TerminalApp} from '../src/app/TerminalApp.js';
+
+test('TerminalApp captures cwd at command submission for its historical header', async () => {
+  const app = new TerminalApp();
+  app['shellCwd'] = '/tmp';
+  app['editor'].insert('pwd');
+  app['session'].submit = () => {};
+  try {
+    await app['submit']();
+    const header = app['output'].wrapped(80).find(row => row.isHistoricalHeader);
+    assert.match(header?.plain ?? '', /^\/tmp /u);
+  } finally {
+    app['stop'](0);
+    app['session'].kill();
+  }
+});

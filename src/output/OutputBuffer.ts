@@ -4,6 +4,15 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
+import {displayWidth, repeatToWidth, truncateText} from '../util/text.js';
+
+const ARCHIVED_CONTEXT = foreground({red: 139, green: 141, blue: 157});
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
+
+export interface HistoricalContextSnapshot {
+  cwd: string;
+  branch?: string;
+}
 
 export interface CompletedCommand {
   command: string;
@@ -15,6 +24,7 @@ export interface CompletedCommand {
   endId?: number;
   expanded?: boolean;
   mode?: PresentationMode;
+  historicalContext?: HistoricalContextSnapshot;
 }
 
 export interface OutputTranscript {
@@ -37,20 +47,31 @@ export class OutputBuffer {
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
   public readonly lineTypes = new Map<number, 'command' | 'metadata'>();
-  private active?: {command: string; start: number; outputStart: number};
+  private active?: {
+    command: string;
+    start: number;
+    outputStart: number;
+    historicalContext?: HistoricalContextSnapshot;
+  };
   private classifier?: CommandClassifier;
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
       this.visualGaps.clear();
       this.lineTypes.clear();
+      this.historicalContexts.clear();
       this.onClear?.();
     });
   }
 
+  private readonly historicalContexts = new Map<number, HistoricalContextSnapshot>();
+
   transcript(): OutputTranscript {
     return {
-      records: this.completed.map(record => ({...record})),
+      records: this.completed.map(record => ({
+        ...record,
+        historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
+      })),
       lines: this.parser.snapshot(),
       visualGaps: [...this.visualGaps],
       lineTypes: [...this.lineTypes.entries()],
@@ -59,11 +80,20 @@ export class OutputBuffer {
 
   restoreTranscript(transcript: OutputTranscript): void {
     this.parser.restore(transcript.lines);
-    this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({...record})));
+    this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({
+      ...record,
+      historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
+    })));
     this.visualGaps.clear();
     transcript.visualGaps.forEach(index => this.visualGaps.add(index));
     this.lineTypes.clear();
     transcript.lineTypes.forEach(([index, type]) => this.lineTypes.set(index, type));
+    this.historicalContexts.clear();
+    for (const record of this.completed) {
+      if (record.historicalContext && this.lineTypes.get(record.startId) === 'command') {
+        this.historicalContexts.set(record.startId, {...record.historicalContext});
+      }
+    }
     this.active = undefined;
     this.classifier = undefined;
   }
@@ -73,11 +103,17 @@ export class OutputBuffer {
     this.completed.length = 0;
     this.visualGaps.clear();
     this.lineTypes.clear();
+    this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
   }
 
-  beginCommand(command: string, formattedLines: string[], onModeChange?: (mode: PresentationMode) => void): number {
+  beginCommand(
+    command: string,
+    formattedLines: string[],
+    onModeChange?: (mode: PresentationMode) => void,
+    historicalContext?: HistoricalContextSnapshot,
+  ): number {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
@@ -87,7 +123,8 @@ export class OutputBuffer {
       this.lineTypes.set(startId + i, 'command');
       this.parser.addLine(formattedLines[i]);
     }
-    this.active = {command, start: startId, outputStart: startId + formattedLines.length};
+    if (historicalContext) this.historicalContexts.set(startId, {...historicalContext});
+    this.active = {command, start: startId, outputStart: startId + formattedLines.length, historicalContext};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
     return startId;
   }
@@ -127,6 +164,7 @@ export class OutputBuffer {
       endId,
       expanded,
       mode,
+      historicalContext: this.active.historicalContext ? {...this.active.historicalContext} : undefined,
     };
     this.completed.unshift(record);
     this.active = undefined;
@@ -176,6 +214,13 @@ export class OutputBuffer {
     for (let i = 0; i < lines.length; i++) {
       if (i < skipUntil) continue;
 
+      if (this.visualGaps.has(i)) {
+        result.push({ansi: '\u001B[0m', plain: '', lineIndex: -1});
+      }
+
+      const historicalContext = this.historicalContexts.get(i);
+      if (historicalContext) result.push(renderHistoricalContext(historicalContext, width));
+
       const cmd = this.completed.find(c => c.outputStartId === i);
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
         const hiddenLines = cmd.endId - cmd.outputStartId;
@@ -201,9 +246,6 @@ export class OutputBuffer {
         }
       }
 
-      if (this.visualGaps.has(i)) {
-        result.push({ansi: '\u001B[0m', plain: '', lineIndex: -1});
-      }
       const wrappedRows = wrapStyledLine(lines[i], width);
       const cmdIndex = this.completed.findIndex(c => c.startId <= i);
       for (const row of wrappedRows) {
@@ -233,4 +275,14 @@ export class OutputBuffer {
       this.toggleExpanded(cmdIndex);
     }
   }
+}
+
+function renderHistoricalContext(context: HistoricalContextSnapshot, width: number): WrappedRow {
+  const cwd = context.cwd.replace(CONTROL_CHARACTERS, '�');
+  const branch = context.branch?.replace(CONTROL_CHARACTERS, '�');
+  const label = branch ? `${cwd}  ${GLYPHS.branch} ${branch}` : cwd;
+  const visibleLabel = truncateText(label, Math.max(0, width - 1));
+  const remaining = Math.max(0, width - displayWidth(visibleLabel) - 1);
+  const plain = `${visibleLabel} ${repeatToWidth('─', remaining)}`;
+  return {ansi: `${ARCHIVED_CONTEXT}${plain}\u001B[0m`, plain, isHistoricalHeader: true};
 }
