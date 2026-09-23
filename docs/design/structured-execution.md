@@ -221,7 +221,7 @@ Interactive rows (collapsed output hints, timeline rows, expandable metadata) mu
 | State | Appearance |
 |---|---|
 | **DEFAULT** | SECONDARY / muted — present but not dominant |
-| **HOVER** | Brightens toward PRIMARY / off-white |
+| **HOVER** | (Optional) Brightens toward PRIMARY if supported safely |
 | **FOCUSED** | Clearly visible keyboard focus indicator (never invisible) |
 | **EXPANDED** | Clearly distinguished from collapsed state |
 
@@ -233,9 +233,11 @@ Interactive rows (collapsed output hints, timeline rows, expandable metadata) mu
 - Collapsed raw output metadata
 
 **Rules:**
-- Mouse hover must brighten interactive rows toward PRIMARY/off-white
-- Keyboard focus must be visibly indicated — never use invisible or near-invisible focus styling
-- Every mouse action must have a keyboard alternative
+- Visible keyboard focus is REQUIRED
+- Precise click interaction is REQUIRED where mouse reporting is supported
+- Keyboard alternative is REQUIRED for every mouse action
+- Usable native terminal text selection is REQUIRED (Shift+drag accepted when mouse reporting owns ordinary clicks/drags)
+- Passive hover feedback is OPTIONAL / capability-dependent. Do not degrade terminal text selection merely to force hover support.
 - Expanded state must be visually distinct from collapsed state — not just a content change
 
 ---
@@ -282,7 +284,7 @@ These invariants hold for all presentation modes (INLINE, FOLDED, LIVE, PASSTHRO
 5. The composer remains the primary interaction model
 6. NMSh does not recolor or semantically transform raw process output
 7. Passthrough programs own their screen completely
-8. Interactive rows must never look dead — default, hover, focused, and expanded states are all required
+8. Interactive rows must never look dead — default, focused, and expanded states are required. Hover is optional based on safe capabilities.
 9. Every mouse action must have a keyboard alternative
 10. Large output volume does not automatically mean FOLDED — streaming output is LIVE
 11. FOLLOW/DETACHED viewport behavior is preserved by structured execution, never overridden
