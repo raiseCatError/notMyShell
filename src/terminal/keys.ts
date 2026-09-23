@@ -4,7 +4,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext'} & {x?: number; y?: number};
+  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -133,6 +133,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0005') keys.push({kind: 'lineEnd'} as Key); // Ctrl+E
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
+    else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (codePoint >= 0x20 && codePoint !== 0x7f) keys.push({kind: 'text', value} as Key);
   }
   return keys;
