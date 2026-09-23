@@ -198,18 +198,66 @@ Refs #N
 
 ## Multi-issue / autopilot behavior
 
-When explicitly told "Continue developing NMSh", "Work through Ready issues", or equivalent:
+When explicitly told "Continue developing NMSh", "Work through Ready issues", "Continue autopilot", or equivalent, that instruction is **STANDING AUTHORIZATION** to continue through safe work.
 
-- Work one primary implementation issue at a time
-- Prefer the lowest-numbered / clearly highest-priority Ready issue
-- **Integrate completed green work into `dev` before starting dependent work** — do not accumulate a queue of unmerged PRs
-- After every merge, refresh latest `dev` (`git pull --ff-only origin dev`), then create the next feature branch from updated dev
-- Independent Ready work may continue while earlier issues wait in Needs Human Test
-- Never silently begin a Backlog item merely because no Ready item exists
-- Do not invent new work just to remain busy
-- Stop if no Ready work remains
-- Stop if a human decision is required before safe continuation
-- Stop if an unvalidated dependency makes further work unsafe
+You MUST NOT ask "Would you like me to start the next Ready issue?" or "Should I open the PR?" after completing a step. Instead, follow this continuous loop until a documented stop condition occurs:
+
+issue completed → PR green → merge into dev → delete merged branch → manual-test handoff if required → refresh dev → immediately begin next safe issue.
+
+**Standing Authorization / Do Not Ask for Routine Permission:**
+Once authorized, do NOT pause merely to ask for permission for routine steps (opening PRs, merging green PRs, starting the next issue). Ask/stop ONLY when there is a MATERIAL user decision required:
+- Conflicting product/design choices
+- Destructive operations or security-sensitive uncertainty
+- Unclear issue scope that materially changes implementation
+- Failing CI that cannot be resolved safely
+- Hard dependency on unperformed human validation
+- Resource/quota exhaustion warning
+- No appropriate current-milestone work remains
+
+**Project Board Access is Best-Effort:**
+GitHub Project status updates are DESIRED but MUST NOT block development. For each transition, try the Project update. If it fails or access is denied, do NOT repeatedly retry, do NOT stop development, and never claim it succeeded if it didn't.
+- **IN PROGRESS:** An active feature branch, PR, or issue activity is sufficient durable evidence.
+- **NEEDS HUMAN TEST:** Add the existing `needs-human-test` issue label, leave the normal testing handoff, and keep the issue open.
+- **DONE:** Issue closure remains authoritative. Project automation may catch up separately.
+
+**DO NOT mirror Project Status with Labels:**
+Do NOT create duplicate labels for every Project column (e.g., `status:ready`, `status:in-progress`, `status:done`). The existing `needs-human-test` label is useful because it represents an important manual-validation gate. Keep the system simple.
+
+**Autopilot Fallback when Project Status cannot be read:**
+If GitHub Project Ready/Backlog fields cannot be reliably read, use this fallback hierarchy to proceed safely:
+1. Current milestone
+2. ROADMAP ordering
+3. Open issue acceptance criteria
+4. Explicit dependencies between issues
+5. `needs-human-test` label / open PR state
+6. Current dev state
+
+**Allow Safe Current-Milestone Progression:**
+If no readable Ready status remains, you MAY advance to the next open issue in the CURRENT ACTIVE MILESTONE when ALL of these are true:
+- Acceptance criteria are sufficiently defined
+- Dependencies are satisfied enough for safe implementation
+- Follows the current milestone/ROADMAP order
+- No human decision is required first
+- No unvalidated dependency makes proceeding unsafe
+- Does not require changing product direction
+
+This exception applies to the CURRENT ACTIVE MILESTONE only. Do NOT automatically wander into Next, Later, Future, or arbitrary backlog issues. At the end of the current milestone, stop and report.
+
+**Dependency Safety:**
+Do not interpret continuous autopilot as "code everything regardless of risk." Before starting the next milestone issue, check whether work currently in Needs Human Test is a HARD dependency. If later work depends on a physical behavior whose correctness is unknown until the user validates it, stop at that dependency. Prefer useful throughput, not reckless throughput.
+
+**Merge / Branch Cleanup Workflow:**
+For each issue:
+latest dev → focused feature branch → implementation → tests → PR targeting dev → required CI green → merge into dev → **delete merged feature branch** when safe → switch/fetch/pull latest dev → continue.
+Do not accumulate a pile of stale completed PRs.
+
+**Needs Human Test Workflow:**
+After safe integration into dev, if physical/manual validation remains:
+- Keep issue OPEN
+- Add `needs-human-test` label
+- Leave a useful testing handoff (including what changed, exact things to try, commands/actions, expected behavior, relevant terminal hosts, automated verification completed)
+- Do not close the issue
+- Do not wait for the human unless that validation blocks subsequent work. Then continue to the next safe milestone issue.
 
 **Human test result flow:**
 
