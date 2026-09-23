@@ -1,5 +1,3 @@
-import {GLYPHS} from '../ui/glyphs.js';
-
 export type CommandOutcome = 'failure' | 'interrupted';
 
 export function formatDuration(milliseconds: number): string {
@@ -23,19 +21,4 @@ export function formatLocalTime(date: Date): string {
   const hour = String(date.getHours()).padStart(2, '0');
   const minute = String(date.getMinutes()).padStart(2, '0');
   return `${hour}:${minute}`;
-}
-
-export function completedStatus(
-  outcome: CommandOutcome,
-  milliseconds: number,
-  completedAt: Date,
-  exitCode?: number,
-): {main: string; detail: string} {
-  const duration = formatDuration(milliseconds);
-  const time = ` · done ${formatLocalTime(completedAt)}`;
-  if (outcome === 'interrupted') return {main: `${GLYPHS.failure} Stopped after ${duration}`, detail: time};
-  if (outcome === 'failure') {
-    return {main: `${GLYPHS.failure} Failed after ${duration} · exit ${exitCode ?? 1}`, detail: time};
-  }
-  return {main: `${GLYPHS.info} Stopped after ${duration}`, detail: time};
 }
