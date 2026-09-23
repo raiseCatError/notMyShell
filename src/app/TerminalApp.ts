@@ -7,6 +7,8 @@ import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
 import {buildContextLine, buildInlineContextPrefix} from '../prompt/prompt.js';
+import {tabCompletionAction} from '../input/tabBehavior.js';
+import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration} from '../prompt/configuration.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -317,9 +319,14 @@ export class TerminalApp {
     } else if (key.kind === 'down' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
     } else if (key.kind === 'complete') {
-      if (this.shellSuggestions.length > 0) this.applySuggestion(this.shellSuggestions[this.selectedSuggestion]);
-      else if (isSlash) this.applySuggestion({insertion: slashCommands[this.selectedSuggestion].name});
-      else this.handleKey({kind: 'focusNext'} as Key);
+      const action = tabCompletionAction(this.shellSuggestions.length, isSlash ? suggestions.length : 0);
+      if (action === 'shell-suggestion') {
+        const suggestion = this.shellSuggestions[Math.min(this.selectedSuggestion, this.shellSuggestions.length - 1)];
+        if (suggestion) this.applySuggestion(suggestion);
+      } else if (action === 'slash-suggestion') {
+        const slash = suggestions[Math.min(this.selectedSuggestion, suggestions.length - 1)];
+        if (slash) this.applySuggestion({insertion: slash.name});
+      }
       return;
     } else if (key.kind === 'text') {
       this.editor.insert(key.value);
@@ -489,6 +496,7 @@ export class TerminalApp {
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
+      else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(readBuildIdentity()), INFO);
       else if (slash.kind === 'clear') await this.startFreshPresentation();
       else if (slash.kind === 'resume') await this.openResumePicker();
       else if (slash.kind === 'help') this.showHelp(command);
@@ -506,7 +514,7 @@ export class TerminalApp {
         this.session.resize(dimensions.columns, dimensions.rows);
       }
       this.render();
-    }, {cwd: this.shellCwd, branch: contextAtSubmission.branch});
+    }, {cwd: this.shellCwd, project: contextAtSubmission.project, branch: contextAtSubmission.branch});
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
@@ -933,7 +941,7 @@ export class TerminalApp {
       let finalAnsi = row.ansi;
       if (row.isLiveActivity && row.activityStartedAt !== undefined) {
         finalAnsi = `${shimmerTextWithColors(row.plain, Date.now() - row.activityStartedAt, false,
-          {red: 112, green: 120, blue: 132}, {red: 218, green: 222, blue: 228})}${RESET}`;
+          {red: 148, green: 155, blue: 166}, {red: 248, green: 250, blue: 252})}${RESET}`;
       }
       const applyBg = (bg: string) => {
         return `${bg}${finalAnsi.replaceAll('\u001B[0m', '\u001B[0m' + bg)}${bg}\u001B[K${RESET}`;
@@ -947,8 +955,10 @@ export class TerminalApp {
             ? this.focusedCommandIndex === row.commandIndex
             : this.focusedLineIndex === row.lineIndex;
         if (isHovered || isFocused) {
-          finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
           const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
+          if (!row.isLiveActivity) {
+            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
+          }
           finalAnsi = applyBg(bg);
         }
       } else if (row.lineIndex !== undefined) {

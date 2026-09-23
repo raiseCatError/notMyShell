@@ -5,16 +5,15 @@ import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {homedir} from 'node:os';
 
-test('renders sharp, distinct Powerline segments with a right-only fade', () => {
+test('renders neutral-gap Powerline blocks with owned caps and a right-only fade', () => {
   const rendered = buildPromptLine({cwd: '/tmp/project', project: 'project', branch: 'main'}, 60);
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
-  assert.match(plain, /^ project   \/tmp\/project    main ▓▒░ /u);
+  assert.match(plain, /^ project   \/tmp\/project    main ▓▒░ /u);
   assert.equal((plain.match(/[░▒▓]/gu) ?? []).join(''), FADE_TAIL_GLYPHS);
   assert.ok(plain.indexOf(FADE_TAIL_GLYPHS) > plain.indexOf('main'));
   assert.ok(!plain.startsWith('░'));
-  assert.ok(!plain.includes(''));
-  assert.ok(!plain.includes(''));
+  assert.ok(plain.includes(''));
   assert.match(rendered, /48;2;84;82;132/u);
   assert.match(rendered, /48;2;52;105;98/u);
 });
@@ -36,8 +35,8 @@ test('shared context modules render in header and composer placements', () => {
   const header = stripAnsi(buildContextLine(context, 100, configuration, 'header'));
   const composer = stripAnsi(buildContextLine(context, 100, configuration, 'composer'));
 
-  assert.match(header, /notMyShell  \|  ~\/Projects\/notMyShell  \|   dev  \|  ✘ 3 ▓▒░/u);
-  assert.match(composer, /notMyShell  \|  ~\/Projects\/notMyShell  \|   dev  \|  ✘ 3/u);
+  assert.match(header, /  notMyShell     ~\/Projects\/notMyShell      dev     ✘ 3  ▓▒░/u);
+  assert.match(composer, /  notMyShell     ~\/Projects\/notMyShell      dev     ✘ 3/u);
   assert.ok(!composer.includes(FADE_TAIL_GLYPHS));
   assert.equal(displayWidth(buildContextLine(context, 100, configuration, 'composer')), displayWidth(stripAnsi(buildContextLine(context, 100, configuration, 'composer'))));
 });
@@ -97,7 +96,7 @@ test('inline context prefix combines shared modules and prompt while yielding wi
   const context = {cwd: '/tmp/work', project: 'work', branch: 'dev', exitStatus: 7};
   const prefix = buildInlineContextPrefix(context, 80, configuration);
   const plain = stripAnsi(prefix);
-  assert.match(plain, /work .*\/tmp\/work .* dev .*✘ 7 ❯ $/u);
+  assert.match(plain, /work .*\/tmp\/work .* dev .*✘ 7  ❯ $/u);
   assert.ok(displayWidth(prefix) <= 79);
   assert.equal(plain.split('\n').length, 1);
 
@@ -116,7 +115,7 @@ test('inline context prefix combines shared modules and prompt while yielding wi
   });
   const reorderedPlain = stripAnsi(buildInlineContextPrefix(context, 80, reordered));
   assert.ok(reorderedPlain.indexOf(' dev') < reorderedPlain.indexOf('/tmp/work'));
-  assert.ok(reorderedPlain.includes('dev   |/tmp/work'), reorderedPlain);
+  assert.ok(reorderedPlain.includes('dev  /tmp/work'), reorderedPlain);
   assert.ok(reorderedPlain.includes('✘ 7 ❯'), reorderedPlain);
   for (let width = 4; width <= 30; width += 1) {
     const narrow = buildInlineContextPrefix({
@@ -126,14 +125,14 @@ test('inline context prefix combines shared modules and prompt while yielding wi
     }, width, configuration);
     assert.ok(displayWidth(narrow) <= width - 1, `width ${width}`);
     assert.ok(stripAnsi(narrow).endsWith('❯ '), `width ${width}`);
+    assert.doesNotMatch(stripAnsi(narrow), /(?:||>|<)…/u, `width ${width} must not leave a dangling Powerline cap`);
   }
 });
 
-test('gap separates differently and same-colored blocks independently from internal padding', () => {
+test('neutral gap separates pointed blocks independently from internal padding', () => {
   const context = {cwd: '/tmp/work', project: 'repo', branch: 'main', exitStatus: 2};
   const config = normalizePromptConfiguration({
     placement: 'header',
-    separator: '|',
     gap: 2,
     spacing: 0,
     modules: [
@@ -144,8 +143,8 @@ test('gap separates differently and same-colored blocks independently from inter
   });
   const header = buildContextLine(context, 100, config, 'header');
   const plain = stripAnsi(header);
-  assert.ok(plain.includes('repo   |/tmp/work   |✘ 2'), plain);
-  assert.match(header, /\u001B\[0m  \u001B\[38;2;84;82;132m\u001B\[48;2;52;105;98m\|/u);
+  assert.ok(plain.includes('repo  /tmp/work  ✘ 2'), plain);
+  assert.match(header, /\u001B\[0m  \u001B\[38;2;52;105;98m\u001B\[38;2;245;244;250m\u001B\[48;2;52;105;98m/u);
   assert.equal(displayWidth(header), 100);
   const composer = buildContextLine(context, 100, config, 'composer');
   assert.ok(displayWidth(composer) <= 100);
@@ -153,7 +152,20 @@ test('gap separates differently and same-colored blocks independently from inter
 
   const noBranch = {...context, branch: undefined, exitStatus: 0};
   const hidden = stripAnsi(buildContextLine(noBranch, 100, config, 'composer'));
-  assert.equal((hidden.match(/\|/gu) ?? []).length, 1, 'hidden conditional modules do not leave phantom gaps or separators');
+  assert.equal((hidden.match(//gu) ?? []).length, 1, 'hidden conditional modules do not leave phantom gaps or caps');
+});
+
+test('safe glyph mode uses simple reverse/forward caps and home does not repeat project and cwd', () => {
+  process.env.NMSH_ICONS = 'safe';
+  try {
+    const home = homedir();
+    const rendered = stripAnsi(buildContextLine({cwd: home, project: '~'}, 40, DEFAULT_PROMPT_CONFIGURATION, 'composer'));
+    assert.equal(rendered, ' ~ ');
+    const blocks = stripAnsi(buildContextLine({cwd: '/tmp/work', project: 'work', branch: 'dev'}, 80, DEFAULT_PROMPT_CONFIGURATION, 'composer'));
+    assert.match(blocks, /^ work > < \/tmp\/work > < git: dev $/u);
+  } finally {
+    delete process.env.NMSH_ICONS;
+  }
 });
 
 test('prompt context replaces terminal control characters before rendering', () => {
@@ -175,5 +187,6 @@ test('never wraps or duplicates metadata at narrow widths', () => {
     );
     assert.equal(displayWidth(rendered), width, `width ${width}`);
     assert.equal(stripAnsi(rendered).split('\n').length, 1);
+    assert.doesNotMatch(stripAnsi(rendered), /(?:||>|<)…/u, `width ${width} must not leave a dangling Powerline cap`);
   }
 });

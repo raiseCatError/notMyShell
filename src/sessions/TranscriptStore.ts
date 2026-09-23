@@ -30,6 +30,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
       && typeof record.outputStartId === 'number'
       && (record.historicalContext === undefined
         || (typeof record.historicalContext.cwd === 'string'
+          && (record.historicalContext.project === undefined || typeof record.historicalContext.project === 'string')
           && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')))
       && (record.activities === undefined || (Array.isArray(record.activities)
         && record.activities.every(activity => activity && typeof activity.id === 'string'

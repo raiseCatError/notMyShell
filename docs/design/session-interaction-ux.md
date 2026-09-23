@@ -18,7 +18,7 @@ The composer also has a presentation-only `composerLayout`, with `twoLine` as th
 
 The first configurable implementation reads `config.json` from `~/Library/Application Support/notMyShell/` on macOS (or `$XDG_CONFIG_HOME/nmsh/` when set). Missing or invalid settings fall back to defaults. Settings are edited as JSON until onboarding adds a setup UI. The same local application directory is reserved for later transcript state.
 
-The JSON configuration keeps ordered module definitions with `id`, `visible`, `condition`, and optional six-digit hex foreground/background colors. Top-level `placement`, `separator`, `spacing`, and `gap` control the shared layout. `spacing` pads text inside a colored block; `gap` adds neutral space between visible blocks after conditional filtering. For example:
+The JSON configuration keeps ordered module definitions with `id`, `visible`, `condition`, and optional six-digit hex foreground/background colors. Top-level `placement`, `separator`, `spacing`, and `gap` control the shared layout. `spacing` pads text inside a colored block; `gap` adds neutral space between visible blocks after conditional filtering. The edge shape is fixed by icon mode: Nerd Font uses `` before each following block and `` after the preceding block, while safe mode uses `<` and `>`. Both caps are drawn against the neutral terminal background; they are not standalone separator tiles. The legacy `separator` value remains accepted in config for compatibility, while edge geometry follows the selected glyph mode. Header rows keep the existing `▓▒░` ending before their divider; one-line composer rows have no header tail. For example:
 
 ```json
 {
@@ -53,6 +53,8 @@ Each submitted command captures its cwd and git branch (when available) as seman
 ## Nested execution activities
 
 The persistent shell PTY currently reports aggregate output and root command boundaries; it does not expose a reliable generic child-process tree or per-child PTY output attribution. NMSh therefore reports a narrow deterministic subset: a complete Node TAP v13 stream observed in actual PTY output. It does not infer `npm`, shell, compiler, or other subprocesses from the submitted command or customary tool behavior. Incomplete TAP streams keep their output in the parent transcript but do not create a persisted child range. Arbitrary child processes and individual nested TAP subtests are not currently exposed as separate activities.
+
+For manual shimmer and folding checks after rebuilding, run `node --test scripts/slow-tap-fixture.mjs` inside NMSh. The fixture emits a real delayed Node TAP stream so the secondary row remains active long enough to inspect, then completes and folds its retained details.
 
 An observed activity stores semantic identity/kind, label, start/completion time, status, expansion state, and a range into the parent's retained parsed output lines. The parent remains the source of truth for raw PTY presentation data; activity chrome and labels are not copied to `/copy`. The optional activity field is backward-compatible with transcript schema version 1. No ANSI presentation strings are stored for the activity itself.
 

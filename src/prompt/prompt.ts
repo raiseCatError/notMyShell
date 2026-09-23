@@ -1,6 +1,6 @@
-import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi} from '../util/text.js';
+import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext} from '../shell/ShellContext.js';
-import {background, foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
@@ -8,6 +8,7 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
+import {fitPowerlineBlocks} from './powerline.js';
 
 const RESET = '\u001B[0m';
 const LINE = foreground(UI_COLORS.separator);
@@ -20,10 +21,10 @@ function safePromptText(value: string): string {
 }
 
 interface RenderedModule {
+  id: ContextModuleConfig['id'];
   text: string;
-  foreground: string;
-  background: string;
-  transitionForeground: string;
+  foreground: RgbColor;
+  background: RgbColor;
 }
 
 function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
@@ -54,7 +55,7 @@ function moduleText(config: ContextModuleConfig, context: PromptContext): string
 }
 
 function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
-  return configuration.modules.flatMap(module => {
+  const rendered = configuration.modules.flatMap(module => {
     const text = moduleText(module, context);
     if (!text) return [];
 
@@ -68,12 +69,17 @@ function renderedModules(context: PromptContext, configuration: PromptConfigurat
     const moduleBackground = colorFromHex(module.background, fallbackBackground);
     const fallbackForeground = module.id === 'gitBranch' ? UI_COLORS.gitForeground : UI_COLORS.projectForeground;
     return [{
+      id: module.id,
       text,
-      foreground: foreground(colorFromHex(module.foreground, fallbackForeground)),
-      background: background(moduleBackground),
-      transitionForeground: foreground(moduleBackground),
+      foreground: colorFromHex(module.foreground, fallbackForeground),
+      background: moduleBackground,
     }];
   });
+
+  // At home the project and cwd modules both reduce to "~" and carry no
+  // distinct information. Keep pairs such as Projects + ~/Projects intact.
+  const cwd = moduleText({id: 'cwd', visible: true, condition: 'always'}, context);
+  return rendered.filter(module => !(module.id === 'project' && module.text === cwd));
 }
 
 export function buildContextLine(
@@ -90,22 +96,14 @@ export function buildContextLine(
     return placement === 'header' ? `${LINE}${repeatToWidth('─', width)}${RESET}` : '';
   }
 
-  let content = `${modules[0].foreground}${modules[0].background} ${modules[0].text} `;
-  for (let index = 1; index < modules.length; index += 1) {
-    const current = modules[index];
-    content += `${RESET}${' '.repeat(configuration.gap)}`;
-    content += modules[index - 1].transitionForeground;
-    content += `${current.background}${configuration.separator}`;
-    content += `${current.foreground}${current.background}${' '.repeat(configuration.spacing)}${current.text} `;
-  }
+  const content = placement === 'header'
+    ? fitPowerlineBlocks(modules, configuration.gap, configuration.spacing, width, true)
+    : fitPowerlineBlocks(modules, configuration.gap, configuration.spacing, width);
 
-  if (placement === 'composer') return `${truncateAnsi(content, width)}${RESET}`;
+  if (placement === 'composer') return `${content}${RESET}`;
 
-  const tail = `${RESET}${modules[modules.length - 1].transitionForeground}${FADE_TAIL_GLYPHS} `;
-  const maximumContentWidth = Math.max(0, width - displayWidth(tail));
-  const trimmedContent = truncateAnsi(content, maximumContentWidth);
-  const separatorWidth = Math.max(0, width - displayWidth(trimmedContent) - displayWidth(tail));
-  return `${trimmedContent}${tail}${LINE}${repeatToWidth('─', separatorWidth)}${RESET}`;
+  const separatorWidth = Math.max(0, width - displayWidth(content));
+  return `${content}${LINE}${repeatToWidth('─', separatorWidth)}${RESET}`;
 }
 
 /** Context plus the editable input prompt, sized to leave at least one input cell. */
@@ -116,11 +114,11 @@ export function buildInlineContextPrefix(
 ): string {
   if (width <= 0) return '';
   if (width <= displayWidth(GLYPHS.prompt) + 2) return `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET}`;
-  const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 1);
+  const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 2);
   const modules = moduleWidth >= 8
     ? buildContextLine(context, moduleWidth, configuration, 'composer')
     : '';
-  return `${modules}${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET} `;
+  return `${modules}${modules ? ' ' : ''}${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET} `;
 }
 
 export function buildPromptLine(context: PromptContext, width: number): string {

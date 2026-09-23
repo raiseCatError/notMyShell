@@ -5,6 +5,7 @@ import {layoutInput} from '../src/input/inputLayout.js';
 import {KeyDecoder, decodeKeys} from '../src/terminal/keys.js';
 import {calculateScreenLayout, MAX_VISIBLE_INPUT_ROWS} from '../src/app/layout.js';
 import {buildInlineContextPrefix} from '../src/prompt/prompt.js';
+import {tabCompletionAction} from '../src/input/tabBehavior.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 
@@ -37,7 +38,7 @@ test('one-line composer keeps dynamic context in the first editable row and pres
   editor.insert(source);
   const layout = layoutInput(editor.displayText, editor.displayCursorIndex, 80, Number.POSITIVE_INFINITY, prefix);
 
-  assert.match(stripAnsi(layout.allRows[0]?.prefix ?? ''), /work .*\/tmp\/work .* dev .*✘ 4 ❯ $/u);
+  assert.match(stripAnsi(layout.allRows[0]?.prefix ?? ''), /work .*\/tmp\/work .* dev .*✘ 4  ❯ $/u);
   assert.equal(layout.allRows[0]?.text, 'printf "hello"');
   assert.equal(layout.allRows[1]?.prefix, '  ');
   assert.equal(layout.allRows[1]?.text, 'next-command');
@@ -247,6 +248,12 @@ test('key decoder preserves paging sequences split across input chunks', () => {
   assert.deepEqual(decoder.push('5~'), [{kind: 'pageUp'}]);
   assert.deepEqual(decoder.push('\u001B[1;'), []);
   assert.deepEqual(decoder.push('5F'), [{kind: 'latest'}]);
+});
+
+test('Tab selects NMSh completions when available and never falls through to history focus', () => {
+  assert.equal(tabCompletionAction(1, 0), 'shell-suggestion');
+  assert.equal(tabCompletionAction(0, 2), 'slash-suggestion');
+  assert.equal(tabCompletionAction(0, 0), 'ignore');
 });
 
 test('select all and backspace clears the editor', () => {
