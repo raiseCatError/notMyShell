@@ -1,10 +1,11 @@
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
-import type {PromptContext} from '../shell/ShellContext.js';
+import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
   type ContextModuleConfig,
+  type NativePaletteId,
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
@@ -44,6 +45,71 @@ interface RenderedModule {
   background: RgbColor;
 }
 
+/** Semantic identity of one rendered segment; themes color roles, not positions. */
+export type PromptRole = 'project' | 'cwd' | 'gitBranch' | ToolchainId | 'success' | 'failure';
+type SegmentColors = {foreground: RgbColor; background: RgbColor};
+
+const hex = (value: string): RgbColor => colorFromHex(value, {red: 0, green: 0, blue: 0});
+const LIGHT_TEXT = hex('#f5f5f7');
+const DARK_TEXT = hex('#1b2412');
+const TOOLCHAIN_COLORS: Record<ToolchainId, SegmentColors> = {
+  docker: {background: hex('#2f8ee0'), foreground: LIGHT_TEXT},
+  node: {background: hex('#5fa04e'), foreground: hex('#0f2410')},
+  go: {background: hex('#29aed6'), foreground: hex('#0b2530')},
+  python: {background: hex('#f2cf4a'), foreground: hex('#2b240a')},
+};
+const STATUS_COLORS = {
+  success: {background: UI_COLORS.success, foreground: hex('#10231b')},
+  failure: {background: UI_COLORS.failure, foreground: LIGHT_TEXT},
+} as const;
+
+export interface NativePromptTheme {
+  id: NativePaletteId;
+  label: string;
+  description: string;
+  /** Colors one segment from its semantic role and visible position. */
+  colors(role: PromptRole, visibleIndex: number): SegmentColors;
+}
+
+function roleTheme(project: SegmentColors, cwd: SegmentColors, gitBranch: SegmentColors) {
+  return (role: PromptRole): SegmentColors => {
+    if (role === 'project') return project;
+    if (role === 'cwd') return cwd;
+    if (role === 'gitBranch') return gitBranch;
+    if (role === 'success' || role === 'failure') return STATUS_COLORS[role];
+    return TOOLCHAIN_COLORS[role];
+  };
+}
+
+export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = {
+  lavender: {
+    id: 'lavender',
+    label: 'Lavender Native',
+    description: 'calm monotone lavender ramp',
+    colors: (_role, index) => ({foreground: NATIVE_FOREGROUND, background: nativePaletteColor(index)}),
+  },
+  semantic: {
+    id: 'semantic',
+    label: 'Soft Semantic',
+    description: 'lime project, muted path, charcoal git, tool colors',
+    colors: roleTheme(
+      {background: hex('#acfc73'), foreground: DARK_TEXT},
+      {background: hex('#5e626c'), foreground: hex('#e2e4e9')},
+      {background: hex('#3a3d46'), foreground: LIGHT_TEXT},
+    ),
+  },
+  cool: {
+    id: 'cool',
+    label: 'Cool First',
+    description: 'periwinkle, slate and teal with tool colors',
+    colors: roleTheme(
+      {background: hex('#6f7fd8'), foreground: LIGHT_TEXT},
+      {background: hex('#4a5878'), foreground: hex('#dde3f0')},
+      {background: hex('#2f6e6c'), foreground: hex('#e8f8f6')},
+    ),
+  },
+};
+
 function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
   if (!color || !/^#[0-9a-f]{6}$/iu.test(color)) return fallback;
   return {
@@ -53,59 +119,50 @@ function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
   };
 }
 
-function moduleText(config: ContextModuleConfig, context: PromptContext): string | undefined {
+function relativeCwd(value: string): string {
+  const home = homedir().replace(/\/$/u, '');
+  const cwd = safePromptText(value);
+  return cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
+}
+
+function moduleSegments(config: ContextModuleConfig, context: PromptContext): Array<{text: string; role: PromptRole}> {
   const status = context.exitStatus ?? 0;
-  if (!config.visible) return undefined;
-  if (config.condition === 'inRepository' && !context.branch) return undefined;
-  if (config.condition === 'nonzeroExit' && status === 0) return undefined;
+  if (!config.visible) return [];
+  if (config.condition === 'inRepository' && !context.branch) return [];
+  if (config.condition === 'nonzeroExit' && status === 0) return [];
 
   switch (config.id) {
-    case 'project': return safePromptText(context.project);
-    case 'cwd': {
-      const home = homedir().replace(/\/$/u, '');
-      const cwd = safePromptText(context.cwd);
-      return cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
-    }
-    case 'gitBranch': return context.branch ? `${GLYPHS.branch} ${safePromptText(context.branch)}` : undefined;
-    case 'exitStatus': return `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`;
+    case 'project': return [{text: safePromptText(context.project), role: 'project'}];
+    case 'cwd': return [{text: relativeCwd(context.cwd), role: 'cwd'}];
+    case 'gitBranch': return context.branch
+      ? [{text: `${GLYPHS.branch} ${safePromptText(context.branch)}`, role: 'gitBranch'}]
+      : [];
+    case 'toolchain': return (context.toolchains ?? []).map(id => ({text: GLYPHS[id], role: id}));
+    case 'exitStatus': return [{
+      text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,
+      role: status === 0 ? 'success' : 'failure',
+    }];
   }
 }
 
 export function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
-  const eligible = configuration.modules.flatMap(module => {
-    const text = moduleText(module, context);
-    if (!text) return [];
-
-    const fallbackBackground = module.id === 'project'
-      ? UI_COLORS.projectBackground
-      : module.id === 'cwd'
-        ? UI_COLORS.cwdBackground
-        : module.id === 'gitBranch'
-          ? UI_COLORS.gitBackground
-          : (context.exitStatus ?? 0) === 0 ? UI_COLORS.success : UI_COLORS.failure;
-    const moduleBackground = colorFromHex(module.background, fallbackBackground);
-    const fallbackForeground = module.id === 'gitBranch' ? UI_COLORS.gitForeground : UI_COLORS.projectForeground;
-    return [{
-      id: module.id,
-      text,
-      foreground: colorFromHex(module.foreground, fallbackForeground),
-      background: moduleBackground,
-    }];
-  });
+  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context)
+    .map(segment => ({...segment, module})));
 
   // The project block owns the brighter live identity when both location
   // modules say the same thing (notably "~" at HOME).
-  const project = eligible.find(module => module.id === 'project');
-  const visible = eligible.filter(module => !(module.id === 'cwd' && project?.text === module.text));
-  return visible.map((module, index) => ({
-    ...module,
-    foreground: configuration.modules.find(item => item.id === module.id)?.foreground
-      ? module.foreground
-      : NATIVE_FOREGROUND,
-    background: configuration.modules.find(item => item.id === module.id)?.background
-      ? module.background
-      : nativePaletteColor(index),
-  }));
+  const project = eligible.find(segment => segment.role === 'project');
+  const visible = eligible.filter(segment => !(segment.role === 'cwd' && project?.text === segment.text));
+  const theme = NATIVE_PROMPT_THEMES[configuration.nmsh.palette] ?? NATIVE_PROMPT_THEMES.lavender;
+  return visible.map((segment, index) => {
+    const colors = theme.colors(segment.role, index);
+    return {
+      id: segment.module.id,
+      text: segment.text,
+      foreground: colorFromHex(segment.module.foreground, colors.foreground),
+      background: colorFromHex(segment.module.background, colors.background),
+    };
+  });
 }
 
 export function nativePromptSnapshot(context: PromptContext, configuration: PromptConfiguration): PromptSnapshot {
@@ -121,6 +178,8 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     layout: configuration.composerLayout,
     segments,
     endStyle: configuration.nmsh.endStyle,
+    startStyle: configuration.nmsh.startStyle,
+    palette: configuration.nmsh.palette,
     gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
     gapEnabled: configuration.nmsh.gapEnabled,
     spacing: configuration.spacing,
@@ -145,7 +204,7 @@ export function buildContextLine(
 
   const lineEndStyle = configuration.nmsh.endStyle;
   const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
-    configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled);
+    configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled, configuration.nmsh.startStyle);
 
   if (placement === 'composer') return `${content}${RESET}`;
 

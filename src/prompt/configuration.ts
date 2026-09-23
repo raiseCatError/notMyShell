@@ -4,10 +4,15 @@ import {promptConfigurationPath} from '../configuration/paths.js';
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'exitStatus';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus';
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
 export type PromptProviderId = 'nmsh' | 'starship';
 export type NativeEndStyle = 'fadeWedge' | 'wedge' | 'fadeFlat' | 'flat';
+export type NativeStartStyle = 'pointed' | 'flat';
+export type NativePaletteId = 'lavender' | 'semantic' | 'cool';
+export type NativeGapChoice = 'off' | 'compact' | 'normal';
+
+export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'semantic', 'cool'];
 
 export interface ContextModuleConfig {
   id: ContextModuleId;
@@ -20,7 +25,7 @@ export interface ContextModuleConfig {
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
-  nmsh: {gapEnabled: boolean; endStyle: NativeEndStyle; palette: 'lavender'};
+  nmsh: {gapEnabled: boolean; endStyle: NativeEndStyle; startStyle: NativeStartStyle; palette: NativePaletteId};
   starship: {configPath: string | null};
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
@@ -34,7 +39,7 @@ export interface PromptConfiguration {
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   provider: 'nmsh',
   onboardingComplete: false,
-  nmsh: {gapEnabled: true, endStyle: 'fadeWedge', palette: 'lavender'},
+  nmsh: {gapEnabled: true, endStyle: 'fadeWedge', startStyle: 'pointed', palette: 'lavender'},
   starship: {configPath: null},
   placement: 'header',
   composerLayout: 'twoLine',
@@ -42,6 +47,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
+    {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
   ],
   separator: '',
@@ -49,7 +55,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'exitStatus']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus']);
 const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -74,6 +80,11 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const endStyle: NativeEndStyle = nativeValue.endStyle === 'wedge' || nativeValue.endStyle === 'fadeFlat' || nativeValue.endStyle === 'flat'
     ? nativeValue.endStyle
     : 'fadeWedge';
+  const startStyle: NativeStartStyle = nativeValue.startStyle === 'flat' ? 'flat' : 'pointed';
+  const palette: NativePaletteId = NATIVE_PALETTE_IDS.includes(nativeValue.palette as NativePaletteId)
+    ? nativeValue.palette as NativePaletteId
+    : 'lavender';
+  const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true, endStyle, startStyle, palette};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;
@@ -90,8 +101,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      nmsh: {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true, endStyle, palette: 'lavender'},
-      starship: {configPath: starshipConfigPath}, placement, composerLayout, spacing, gap, separator};
+      nmsh, starship: {configPath: starshipConfigPath}, placement, composerLayout, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -113,9 +123,16 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     if (validColor(item.background)) module.background = item.background;
     modules.push(module);
   }
+  // Modules added in later releases join saved configurations at their
+  // default position instead of silently staying absent.
+  DEFAULT_PROMPT_CONFIGURATION.modules.forEach((fallback, defaultIndex) => {
+    if (seen.has(fallback.id)) return;
+    const later = DEFAULT_PROMPT_CONFIGURATION.modules.slice(defaultIndex + 1).map(module => module.id);
+    const before = modules.findIndex(module => later.includes(module.id));
+    modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
+  });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true,
-    nmsh: {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true, endStyle, palette: 'lavender'},
+  return {provider, onboardingComplete: value.onboardingComplete === true, nmsh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 
@@ -142,4 +159,16 @@ export function hasVisibleContextModule(
   return configuration.modules.some(module => module.visible
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0));
+}
+
+/** Gap presets map onto the stored gap width: compact keeps caps but no space. */
+export function nativeGapChoice(configuration: PromptConfiguration): NativeGapChoice {
+  if (!configuration.nmsh.gapEnabled) return 'off';
+  return configuration.gap === 0 ? 'compact' : 'normal';
+}
+
+export function applyNativeGapChoice(configuration: PromptConfiguration, choice: NativeGapChoice): void {
+  configuration.nmsh.gapEnabled = choice !== 'off';
+  if (choice === 'compact') configuration.gap = 0;
+  else if (choice === 'normal' && configuration.gap === 0) configuration.gap = 1;
 }
