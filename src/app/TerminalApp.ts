@@ -153,9 +153,8 @@ export class TerminalApp {
         const row = wrapped[viewStart + key.y - 1];
         if (row) {
           if (key.kind === 'mouseClick' && row.commandIndex !== undefined) {
-            const type = row.lineIndex !== undefined ? this.output.lineTypes.get(row.lineIndex) : undefined;
-            // Only toggle if we click on a fold hint, metadata row, or the command itself
-            if (row.isFoldHint || type === 'command' || type === 'metadata') {
+            // Only toggle if we click specifically on a fold hint
+            if (row.isFoldHint) {
               this.output.toggleExpanded(row.commandIndex);
               this.render();
             }
@@ -274,20 +273,28 @@ export class TerminalApp {
       this.selectedSuggestion = 0;
     } else if (key.kind === 'focusNext' || key.kind === 'focusPrevious') {
       const dir = key.kind === 'focusNext' ? 1 : -1;
+      const {columns} = this.dimensions();
       const metadataRows = Array.from(this.output.lineTypes.entries())
         .filter(([, type]) => type === 'metadata')
-        .map(([index]) => index)
+        .map(([index]) => index);
+
+      const foldHintRows = this.output.wrapped(columns)
+        .filter(r => r.isFoldHint && r.lineIndex !== undefined)
+        .map(r => r.lineIndex as number);
+
+      const focusableRows = Array.from(new Set([...metadataRows, ...foldHintRows]))
         .sort((a, b) => a - b);
-      if (metadataRows.length > 0) {
+
+      if (focusableRows.length > 0) {
         if (this.focusedLineIndex === undefined) {
-          this.focusedLineIndex = dir === 1 ? metadataRows[0] : metadataRows[metadataRows.length - 1];
+          this.focusedLineIndex = dir === 1 ? focusableRows[0] : focusableRows[focusableRows.length - 1];
         } else {
-          const currentIndex = metadataRows.indexOf(this.focusedLineIndex);
+          const currentIndex = focusableRows.indexOf(this.focusedLineIndex);
           if (currentIndex !== -1) {
-            const nextIndex = (currentIndex + dir + metadataRows.length) % metadataRows.length;
-            this.focusedLineIndex = metadataRows[nextIndex];
+            const nextIndex = (currentIndex + dir + focusableRows.length) % focusableRows.length;
+            this.focusedLineIndex = focusableRows[nextIndex];
           } else {
-            this.focusedLineIndex = metadataRows[0];
+            this.focusedLineIndex = focusableRows[0];
           }
         }
 
@@ -733,26 +740,31 @@ export class TerminalApp {
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
       let finalAnsi = row.ansi;
+      const applyBg = (bg: string) => {
+        return `${bg}${finalAnsi.replaceAll('\u001B[0m', '\u001B[0m' + bg)}${bg}\u001B[K${RESET}`;
+      };
+
       if (row.isFoldHint) {
         const isHovered = this.hoveredLineIndex === row.lineIndex;
-        if (isHovered) {
+        const isFocused = this.focusedLineIndex === row.lineIndex;
+        if (isHovered || isFocused) {
           finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
-          finalAnsi = `\u001B[48;2;45;45;55m${finalAnsi}\u001B[K${RESET}`;
+          const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
+          finalAnsi = applyBg(bg);
         }
       } else if (row.lineIndex !== undefined) {
         const type = this.output.lineTypes.get(row.lineIndex);
         if (type === 'command') {
           // Subtle background for command
-          finalAnsi = `\u001B[48;2;38;38;48m${row.ansi}\u001B[K${RESET}`;
+          finalAnsi = applyBg(`\u001B[48;2;38;38;48m`);
         } else if (type === 'metadata') {
           const isHovered = this.hoveredLineIndex === row.lineIndex;
           const isFocused = this.focusedLineIndex === row.lineIndex;
           if (isHovered || isFocused) {
             // Brighten on hover/focus
             finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
-            // Optionally add a subtle hover background or underline
             const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
-            finalAnsi = `${bg}${finalAnsi}\u001B[K${RESET}`;
+            finalAnsi = applyBg(bg);
           }
         }
       }

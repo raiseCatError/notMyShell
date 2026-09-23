@@ -76,6 +76,8 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
   ['\u001B[99;5u', 'interrupt'], // Kitty Ctrl+C
   ['\u001B[100;5u', 'eof'], // Kitty Ctrl+D
+  ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)
+  ['\u001B[79;5u', 'toggleDetails'], // Kitty Ctrl+O (uppercase O)
 ];
 
 export function decodeKeys(input: string): Key[] {

@@ -123,19 +123,28 @@ export class OutputBuffer {
       if (i < skipUntil) continue;
       
       const cmd = this.completed.find(c => c.outputStartId === i);
-      if (cmd && !cmd.expanded && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
+      if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
         const hiddenLines = cmd.endId - cmd.outputStartId;
-        const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
-        const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
-        result.push({
-          ansi,
-          plain,
-          lineIndex: cmd.outputStartId,
-          isFoldHint: true,
-          commandIndex: this.completed.indexOf(cmd)
-        });
-        skipUntil = cmd.endId;
-        continue;
+        // Commands are foldable if they have more than 10 lines, or were explicitly collapsed
+        const isFoldable = hiddenLines > 10 || !cmd.expanded;
+        if (isFoldable) {
+          if (!cmd.expanded) {
+            const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
+            const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+            result.push({
+              ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
+            });
+            skipUntil = cmd.endId;
+            continue;
+          } else {
+            const plain = `  ⇣ Collapse output  (Ctrl+O to hide ${hiddenLines} lines)`;
+            const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+            result.push({
+              ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
+            });
+            // Don't skip, let the output render below this hint
+          }
+        }
       }
 
       if (this.visualGaps.has(i)) {
