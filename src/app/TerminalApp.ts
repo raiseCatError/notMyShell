@@ -232,6 +232,11 @@ export class TerminalApp {
       }
       return;
     }
+    if (key.kind === 'toggleDetails') {
+      this.output.toggleMostRelevant(this.focusedLineIndex);
+      this.render();
+      return;
+    }
     if (key.kind === 'interrupt') {
       if (this.running) {
         this.running.interrupted = true;

@@ -158,4 +158,16 @@ export class OutputBuffer {
       cmd.expanded = !cmd.expanded;
     }
   }
+
+  toggleMostRelevant(focusedLineIndex?: number): void {
+    let cmdIndex = -1;
+    if (focusedLineIndex !== undefined) {
+      cmdIndex = this.completed.findIndex(c => c.startId <= focusedLineIndex);
+    } else if (this.completed.length > 0) {
+      cmdIndex = 0;
+    }
+    if (cmdIndex !== -1) {
+      this.toggleExpanded(cmdIndex);
+    }
+  }
 }
