@@ -137,15 +137,33 @@ When given a task such as "work on the next Ready NMSh issue", follow this workf
 
 13. **Link the PR to the issue.**
 
-14. **If physical/manual terminal validation is still required:**
-    - Move issue: In Progress → **Needs Human Test**
-    - Use `Refs #N` in the PR body — **NOT** `Closes #N` or `Fixes #N`
-    - Do NOT close the issue
-    - Do NOT claim manual validation occurred
+14. **Merge the PR into `dev` when all conditions are met:**
+    - Implementation is coherent and complete
+    - Canonical local verification passes
+    - Required GitHub CI checks pass
+    - PR is mergeable with no conflicts
+    - No unresolved review concern exists
+    - Issue does not explicitly require human validation before merge
+    - No material architectural uncertainty requiring user review
+
+    Do NOT merge if CI is failing, tests are failing, conflicts remain, implementation is incomplete, or the issue explicitly requires pre-merge human review.
+
+    **NEVER apply this rule to `master`.** Agents must never promote dev work to master merely because CI is green.
 
 15. **If the task requires no human runtime validation** (e.g. certain documentation or research tasks), it may be closed with normal closing keywords where appropriate.
 
-16. **Do not merge your own implementation PR by default.** Leave review and merge to the user unless the current task explicitly authorizes self-merge.
+16. **After merging into `dev`:** if physical/manual terminal validation is still required:
+    - Move issue: In Progress → **Needs Human Test**
+    - Leave a concise testing handoff containing:
+      - what changed
+      - exact thing to test
+      - useful commands/actions
+      - expected behavior
+      - relevant terminal hosts
+      - automated verification completed
+    - Issue remains **open**
+    - Do NOT claim the user performed the test
+    - Independent Ready work may then continue
 
 17. **After merge + required human validation**, the issue may be closed; the Project's closed-item automation will move it to Done.
 
@@ -156,7 +174,7 @@ When given a task such as "work on the next Ready NMSh issue", follow this workf
 | **Backlog** | Tracked but not currently selected for work |
 | **Ready** | Sufficiently defined and available to start |
 | **In Progress** | An agent or person is actively implementing it |
-| **Needs Human Test** | Automated work is complete; real terminal/manual validation remains |
+| **Needs Human Test** | Implementation merged into dev; automated checks passed; physical/manual terminal validation pending |
 | **Done** | Issue is closed and fully verified |
 
 > **Important:** "All tests passed" is NOT equivalent to "human terminal validation passed." These are distinct. Do not close or move to Done based on automated test results alone if the issue requires physical terminal testing.
@@ -180,16 +198,28 @@ Refs #N
 
 ## Multi-issue / autopilot behavior
 
-When explicitly told to continue working through the project:
+When explicitly told "Continue developing NMSh", "Work through Ready issues", or equivalent:
 
-- Work one issue at a time by default
-- Prefer the lowest-numbered / clearly highest-priority Ready issue unless dependencies suggest otherwise
+- Work one primary implementation issue at a time
+- Prefer the lowest-numbered / clearly highest-priority Ready issue
+- **Integrate completed green work into `dev` before starting dependent work** — do not accumulate a queue of unmerged PRs
+- After every merge, refresh latest `dev` (`git pull --ff-only origin dev`), then create the next feature branch from updated dev
+- Independent Ready work may continue while earlier issues wait in Needs Human Test
 - Never silently begin a Backlog item merely because no Ready item exists
-- Do not create stacked PRs unless explicitly necessary
-- If the next issue depends on an unmerged PR, stop and report it rather than building a fragile stack
-- If a human decision or terminal validation blocks further safe work, stop and report it
-- If there are no Ready issues, stop
 - Do not invent new work just to remain busy
+- Stop if no Ready work remains
+- Stop if a human decision is required before safe continuation
+- Stop if an unvalidated dependency makes further work unsafe
+
+**Human test result flow:**
+
+| Result | Action |
+|---|---|
+| **PASS** | Close issue → Done |
+| **FAIL** | Move In Progress → create focused fix branch from current dev → fix → verify → PR → merge when green → Needs Human Test again |
+
+Do not rewrite dev history merely because later human testing discovers a bug.
+
 
 ## Subagent / resource discipline
 
@@ -211,3 +241,73 @@ Do NOT use subagents for:
 - Any task the primary agent can reasonably perform itself
 
 Avoid worktrees unless a task genuinely requires isolated parallel branches.
+
+## Cloud agent sessions
+
+NMSh development may be performed from cloud coding agents launched from web or mobile.
+
+GitHub is the durable source of truth.
+
+Cloud sessions must NOT depend on:
+- the user's local checkout
+- uncommitted local-only files
+- old hidden chat context
+- local-only shell state
+- personal filesystem paths
+- local-only MCP servers
+- credentials not available in the cloud environment
+
+A fresh session should reconstruct project state from `AGENTS.md`, GitHub Issues, GitHub Project, `ROADMAP.md`, `docs/design/`, `docs/architecture/`, git history, branches, and PRs.
+
+### Critical cloud branch rule
+
+GitHub's default branch is `master`. Normal development must NOT accidentally begin from `master` merely because a cloud environment opens the default branch.
+
+Before implementation, cloud agents must establish current `dev` as base:
+```bash
+git fetch origin
+git switch dev
+git pull --ff-only origin dev
+```
+
+Then create/use a working branch based on current `origin/dev`. Provider-generated names (e.g., `claude/*`, `codex/*`) are fine. The NAME does not matter. The BASE must be current `dev`. The PR target must be `dev`. Do not direct-push feature implementation to `dev` merely to skip the PR process.
+
+### Cloud verification limits
+
+Cloud agents must detect their actual environment. Do not assume a cloud VM is macOS, Ghostty, Terminal.app, or the user's physical terminal setup.
+
+The project requires Node >=22. Prefer `npm ci` then run supported canonical verification:
+```bash
+npm run build
+npm run typecheck
+npm test
+git diff --check
+```
+
+GitHub CI remains an integration gate.
+
+Cloud testing must NEVER be described as physical terminal validation. Examples still requiring real/manual testing when relevant: Ghostty visuals, Terminal.app visuals, mouse/hover behavior, keyboard behavior, terminal selection, resize behavior, fullscreen passthrough, actual TUI interaction. Such work may still merge into `dev` when automated gates are green, but the issue remains Needs Human Test.
+
+## Resource-limit checkpointing
+
+If Claude, Gemini, Codex, or another runtime exposes an approaching usage limit, quota limit, or context/session limit, then:
+1. Do NOT start another issue.
+2. Finish only the current small coherent step if safe.
+3. Run the most relevant verification possible.
+4. Commit coherent work.
+5. Push current branch/state.
+6. Update issue/PR/Project accurately.
+7. Leave a concise handoff.
+8. Stop cleanly.
+
+The handoff should include:
+- current issue
+- branch
+- latest commit
+- completed work
+- incomplete work
+- verification already run
+- verification still needed
+- exact next step
+
+Do NOT invent quota percentages. Only react to capacity information actually exposed by the runtime. Session/chat history is NOT durable project state. GitHub, commits, branches, and repo docs are.

@@ -138,6 +138,14 @@ Mouse behavior, Unicode, completion quality, history, performance, installation,
 
 ---
 
+## Future — Session & Editor UX
+
+| Issue | Title |
+|---|---|
+| [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive /clear history and resume with /resume |
+
+---
+
 ## Design Principles
 
 - **Real persistent shell underneath** — NMSh is a frontend over a persistent real shell; it never replaces the shell with command-by-command subprocess spawning
