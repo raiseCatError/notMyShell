@@ -50,6 +50,14 @@ Both `/clear` and `/resume` wait until the foreground command has finished or be
 
 Each submitted command captures its cwd and git branch (when available) as semantic historical metadata. History renders a one-row muted context/divider header before that command; it uses a dedicated archive palette distinct from the active prompt and truncates to the viewport width. The header is presentation metadata, not PTY output, and is excluded from `/copy`. Context snapshots live on structured command records and persist through `/clear`, `/resume`, and restart in transcript schema version 1. Older archives without snapshots remain valid and restore without historical headers.
 
+## Nested execution activities
+
+The persistent shell PTY currently reports aggregate output and root command boundaries; it does not expose a reliable generic child-process tree or per-child PTY output attribution. NMSh therefore reports a narrow deterministic subset: a complete Node TAP v13 stream observed in actual PTY output. It does not infer `npm`, shell, compiler, or other subprocesses from the submitted command or customary tool behavior. Incomplete TAP streams keep their output in the parent transcript but do not create a persisted child range. Arbitrary child processes and individual nested TAP subtests are not currently exposed as separate activities.
+
+An observed activity stores semantic identity/kind, label, start/completion time, status, expansion state, and a range into the parent's retained parsed output lines. The parent remains the source of truth for raw PTY presentation data; activity chrome and labels are not copied to `/copy`. The optional activity field is backward-compatible with transcript schema version 1. No ANSI presentation strings are stored for the activity itself.
+
+While a parent is running, its activity timeline is rendered at the end of the active history viewport so chronological child status remains visible; observed child output is indented beneath its activity row. The existing primary activity and blank breathing row above the composer are unchanged. A running TAP activity shows its observed raw stream. When the protocol summary closes, its output folds by default and the completed activity is static and muted; its inline disclosure can reveal the retained lines. After the parent completes, activity rows render inside the parent's expandable output details and are hidden when the parent is collapsed. No process-tree polling, guessed output attribution, AI, model, or cloud service is used.
+
 ## Onboarding
 
 Onboarding configures supported NMSh choices; it does not invent launcher mechanisms. It can be skipped, records completion persistently, and offers placement previews, basic module selection, host/setup guidance, keyboard forwarding help, appearance guidance, and an autostart preference where the established startup mechanism supports it. It also offers the composer layout choice, recommending two-line by default. Its two-line preview shows context/header above a separate editable row; its one-line preview shows context, prompt glyph, and editable command together between the composer boundaries. It does not run on every launch.
@@ -59,6 +67,7 @@ Onboarding configures supported NMSh choices; it does not invent launcher mechan
 - Safe shell/startup behavior precedes onboarding's autostart setting.
 - Onboarding's module and placement configuration depends on the context system; its composer layout choice uses the `composerLayout` preference.
 - Composer layout changes only input presentation and does not change the primary live activity row or its existing breathing-space row. It is independent of the nested activity architecture in #47.
+- Nested activity reporting is limited to completed, directly observed Node TAP v13 streams until the shell/PTy architecture provides stronger per-child boundaries and output attribution.
 - Rich paste and transcript persistence are otherwise independent interaction features.
 - TerminalHost architecture (#10–#13), platform support, ShellAdapter research, broad compatibility/polish (#20), and unrelated future work are outside this milestone unless a narrow implementation dependency proves necessary.
 - No shell-state time travel, chat-composer behavior, image paste, or replacement of NMSh presentation with Starship/Powerlevel10k.

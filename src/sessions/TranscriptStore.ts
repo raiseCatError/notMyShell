@@ -30,7 +30,18 @@ function isTranscript(value: unknown): value is OutputTranscript {
       && typeof record.outputStartId === 'number'
       && (record.historicalContext === undefined
         || (typeof record.historicalContext.cwd === 'string'
-          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string'))))
+          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')))
+      && (record.activities === undefined || (Array.isArray(record.activities)
+        && record.activities.every(activity => activity && typeof activity.id === 'string'
+          && activity.kind === 'tap-stream' && typeof activity.label === 'string'
+          && typeof activity.startedAt === 'number' && Number.isFinite(activity.startedAt)
+          && (activity.completedAt === undefined || (typeof activity.completedAt === 'number' && Number.isFinite(activity.completedAt)))
+          && (activity.status === 'running' || activity.status === 'completed' || activity.status === 'failed')
+          && Number.isInteger(activity.outputStartId) && activity.outputStartId >= 0
+          && Number.isInteger(activity.outputEndId) && activity.outputEndId >= activity.outputStartId
+          && activity.outputStartId >= record.outputStartId
+          && activity.outputEndId <= (record.endId ?? transcript.lines?.length ?? 0)
+          && typeof activity.expanded === 'boolean'))))
     && Array.isArray(transcript.lines)
     && transcript.lines.every(line => Array.isArray(line) && line.every(cell => cell === null
       || (cell !== undefined && typeof cell === 'object' && ('empty' in cell

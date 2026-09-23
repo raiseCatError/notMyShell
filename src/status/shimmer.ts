@@ -34,12 +34,16 @@ export function interpolateRgb(from: RgbColor, to: RgbColor, amount: number): Rg
 }
 
 export function shimmerText(text: string, elapsedMs: number, isActive: boolean): string {
+  return shimmerTextWithColors(text, elapsedMs, isActive, UI_COLORS.workingBase, UI_COLORS.workingPeak);
+}
+
+export function shimmerTextWithColors(text: string, elapsedMs: number, isActive: boolean, base: RgbColor, peak: RgbColor): string {
   const chars = graphemes(text);
   const len = chars.length;
   return chars.map((glyph, index) => {
     const color = interpolateRgb(
-      UI_COLORS.workingBase,
-      UI_COLORS.workingPeak,
+      base,
+      peak,
       shimmerIntensity(elapsedMs, index, len, isActive),
     );
     return `${foreground(color)}${glyph}`;

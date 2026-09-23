@@ -5,6 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TranscriptStore, TRANSCRIPT_SCHEMA_VERSION} from '../src/sessions/TranscriptStore.js';
 import {OutputBuffer} from '../src/output/OutputBuffer.js';
+import {TapActivityObserver} from '../src/output/TapActivityObserver.js';
 
 test('transcript store writes private, versioned local archives with deterministic metadata', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nmsh-session-test-'));
@@ -49,6 +50,36 @@ test('transcript picker ignores corrupt and unsupported archives without pruning
     assert.deepEqual(await store.list(), []);
     assert.equal(await readFile(join(directory, 'corrupt.json'), 'utf8'), '{');
     assert.equal(JSON.parse(await readFile(join(directory, 'future.json'), 'utf8')).schemaVersion, 99);
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+});
+
+test('local transcript persistence stores semantic activity ranges without ANSI activity presentation', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-session-test-'));
+  try {
+    const output = new OutputBuffer();
+    const observer = new TapActivityObserver();
+    output.beginCommand('npm test', ['❯ npm test']);
+    observer.reset(output.activeOutputStartId!);
+    const first = 'TAP version 13\n# tests 1\n# pass 1\n# fail 0\n';
+    output.write(first);
+    output.setActiveActivities(observer.push(first, 1000));
+    const last = '# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 8\n';
+    output.write(last);
+    output.setActiveActivities(observer.push(last, 1100));
+    output.setActiveActivities(observer.finish(1200));
+    output.complete(0);
+
+    const store = new TranscriptStore(directory);
+    const archive = await store.archive({startCwd: '/tmp', finalCwd: '/tmp', transcript: output.transcript()});
+    const restored = (await store.list())[0];
+    assert.deepEqual(restored?.transcript.records[0]?.activities, archive.transcript.records[0]?.activities);
+    const raw = JSON.parse(await readFile(join(directory, `${archive.id}.json`), 'utf8')) as {
+      transcript: {records: Array<{activities?: Array<Record<string, unknown>>}>};
+    };
+    assert.ok(raw.transcript.records[0]?.activities?.length);
+    assert.equal('ansi' in (raw.transcript.records[0]?.activities?.[0] ?? {}), false);
   } finally {
     await rm(directory, {recursive: true, force: true});
   }

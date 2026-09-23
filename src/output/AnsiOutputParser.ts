@@ -126,6 +126,19 @@ export class AnsiOutputParser {
     return selected.join('\n');
   }
 
+  plainLineAt(index: number): string | undefined {
+    const line = this.lines[index];
+    return line ? plainLine(line) : undefined;
+  }
+
+  plainCurrentLine(): string {
+    return plainLine(this.current);
+  }
+
+  hasCurrentContent(): boolean {
+    return this.current.some(cell => cell !== undefined && cell !== null);
+  }
+
   allLines(): StyledLine[] {
     const hasContent = this.current.some(cell => cell !== undefined && cell !== null);
     if (!hasContent) return [...this.lines];
