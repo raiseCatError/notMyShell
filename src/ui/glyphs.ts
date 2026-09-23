@@ -27,8 +27,10 @@ export const GLYPHS = {
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : '↓'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '─'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
-  get powerlineTransition() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
-  get powerlineReverse() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
+  // Model each block like Oh My Posh: a leading edge belongs to the block
+  // that follows it, and the trailing edge belongs to the block before it.
+  get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
+  get powerlineTrailing() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
 };
 

@@ -9,6 +9,7 @@ import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, type PowerlineBlock} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeSnapshot} from './Welcome.js';
+import {archiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
@@ -17,6 +18,7 @@ export interface HistoricalContextSnapshot {
   cwd: string;
   project?: string;
   branch?: string;
+  prompt?: PromptSnapshot;
 }
 
 export interface SecondaryActivity {
@@ -92,7 +94,7 @@ export class OutputBuffer {
       ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}}} : {}),
       records: this.completed.map(record => ({
         ...record,
-        historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
+        historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
         activities: record.activities?.map(activity => ({...activity})),
       })),
       lines: this.parser.snapshot(),
@@ -106,7 +108,7 @@ export class OutputBuffer {
     this.parser.restore(transcript.lines);
     this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({
       ...record,
-      historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
+      historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
       activities: record.activities?.map(activity => ({...activity})),
     })));
     this.visualGaps.clear();
@@ -116,7 +118,7 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     for (const record of this.completed) {
       if (record.historicalContext && this.lineTypes.get(record.startId) === 'command') {
-        this.historicalContexts.set(record.startId, {...record.historicalContext});
+        this.historicalContexts.set(record.startId, structuredClone(record.historicalContext));
       }
     }
     this.active = undefined;
@@ -153,8 +155,9 @@ export class OutputBuffer {
       this.lineTypes.set(startId + i, 'command');
       this.parser.addLine(formattedLines[i]);
     }
-    if (historicalContext) this.historicalContexts.set(startId, {...historicalContext});
-    this.active = {command, start: startId, outputStart: startId + formattedLines.length, historicalContext, activities: []};
+    if (historicalContext) this.historicalContexts.set(startId, structuredClone(historicalContext));
+    this.active = {command, start: startId, outputStart: startId + formattedLines.length,
+      historicalContext: historicalContext ? structuredClone(historicalContext) : undefined, activities: []};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
     return startId;
   }
@@ -212,7 +215,7 @@ export class OutputBuffer {
       endId,
       expanded,
       mode,
-      historicalContext: this.active.historicalContext ? {...this.active.historicalContext} : undefined,
+      historicalContext: this.active.historicalContext ? structuredClone(this.active.historicalContext) : undefined,
       activities: this.active.activities.length > 0
         ? this.active.activities.map(activity => ({...activity}))
         : undefined,
@@ -424,6 +427,7 @@ function appendActivityOutput(result: WrappedRow[], lines: ReturnType<AnsiOutput
 }
 
 function renderHistoricalContext(context: HistoricalContextSnapshot, width: number): WrappedRow {
+  if (context.prompt) return renderPromptSnapshot(context, width);
   const cwd = context.cwd.replace(CONTROL_CHARACTERS, '�');
   const home = homedir().replace(/\/$/u, '');
   const cwdLabel = cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
@@ -447,4 +451,34 @@ function renderHistoricalContext(context: HistoricalContextSnapshot, width: numb
     plain,
     isHistoricalHeader: true,
   };
+}
+
+const ARCHIVE_DIVIDER_COLOR = {red: 185, green: 176, blue: 197};
+const ARCHIVE_BLOCK_COLOR = {red: 75, green: 67, blue: 86};
+
+function rgbStyle(foregroundColor?: {red: number; green: number; blue: number}, backgroundColor?: {red: number; green: number; blue: number}): string {
+  const fg = foregroundColor ? `\u001B[38;2;${foregroundColor.red};${foregroundColor.green};${foregroundColor.blue}m` : '';
+  const bg = backgroundColor ? `\u001B[48;2;${backgroundColor.red};${backgroundColor.green};${backgroundColor.blue}m` : '\u001B[49m';
+  return `${fg}${bg}`;
+}
+
+function renderPromptSnapshot(context: HistoricalContextSnapshot, width: number): WrappedRow {
+  const snapshot = context.prompt!;
+  let prompt = '';
+  if (snapshot.segments.every(segment => segment.geometry === 'powerline')) {
+    const blocks = snapshot.segments.map(segment => ({
+      text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' '),
+      foreground: segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,
+      background: segment.background ? archiveColor(segment.background, 'background') : ARCHIVE_BLOCK_COLOR,
+    }));
+    prompt = fitPowerlineBlocks(blocks, snapshot.gap ?? 1, snapshot.spacing ?? 1, Math.max(0, width - 1), snapshot.endStyle ?? false);
+  } else {
+    prompt = snapshot.segments.map(segment => `${rgbStyle(
+      segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,
+      segment.background ? archiveColor(segment.background, 'background') : undefined,
+    )}${segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}`).join('');
+  }
+  const remaining = Math.max(0, width - displayWidth(prompt) - 1);
+  const plain = `${stripAnsi(prompt)} ${repeatToWidth('─', remaining)}`;
+  return {ansi: `${prompt}\u001B[0m ${ARCHIVE_DIVIDER}${repeatToWidth('─', remaining)}\u001B[0m`, plain, isHistoricalHeader: true};
 }

@@ -11,7 +11,8 @@ test('TerminalApp captures cwd at command submission for its historical header',
   try {
     await app['submit']();
     const header = app['output'].wrapped(80).find(row => row.isHistoricalHeader);
-    assert.match(header?.plain ?? '', /^ tmp   \/tmp ▓▒░/u);
+    assert.match(header?.plain ?? '', /^ tmp   \/tmp/u);
+    assert.ok(header?.ansi.includes('49m'), 'archived prompt edges reset to terminal-neutral background');
   } finally {
     app['stop'](0);
     app['session'].kill();

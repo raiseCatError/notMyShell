@@ -24,16 +24,18 @@ Improve NMSh's day-to-day interaction model: safe movement between NMSh and ordi
 | Order | Issue | Title |
 |---:|---|---|
 | 1 | [#36](https://github.com/raiseCatError/notMyShell/issues/36) | Safe `/zsh` escape and nested-NMSh prevention |
-| 2 | [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Modular NMSh prompt/context system |
+| 2 | [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Modular NMSh native prompt/context system |
 | 3 | [#49](https://github.com/raiseCatError/notMyShell/issues/49) | Configurable one-line and two-line composer layouts |
-| 4 | [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
-| 5 | [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive `/clear` history and resume with `/resume` |
-| 6 | [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run onboarding and appearance configuration |
-| 7 | [#42](https://github.com/raiseCatError/notMyShell/issues/42) | Display sub-second command durations in milliseconds |
-| 8 | [#43](https://github.com/raiseCatError/notMyShell/issues/43) | Muted command block dividers with historical context snapshots |
-| 9 | [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested execution activity rows and hierarchical command details |
+| 4 | [#58](https://github.com/raiseCatError/notMyShell/issues/58) | Prompt providers, Starship integration, and semantic prompt snapshots |
+| 5 | [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
+| 6 | [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive `/clear` history and resume with `/resume` |
+| 7 | [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run prompt and composer onboarding |
+| 8 | [#42](https://github.com/raiseCatError/notMyShell/issues/42) | Display sub-second command durations in milliseconds |
+| 9 | [#43](https://github.com/raiseCatError/notMyShell/issues/43) | Historical prompt snapshots and archive color treatment |
+| 10 | [#56](https://github.com/raiseCatError/notMyShell/issues/56) | Top-anchored fresh welcome and sitting NMSh cat |
+| 11 | [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested execution activity rows and hierarchical command details |
 
-Issue #9 depends on #8, #36, and #49, including completion of the required physical validation for #8 and #36 before onboarding work starts. Issue #49 reuses #8's shared context modules and does not depend on #47. Issues #21, #22, and #42 can proceed independently when their implementation prerequisites are met. Issue #43 builds on local transcript persistence from #22 and records cwd/branch snapshots as presentation metadata, not copied shell output. Issue #47 keeps primary activity above the composer with its existing breathing-space row; composer layout does not change that boundary.
+Issue #9 now covers only prompt-provider and composer setup. It can be implemented while earlier visual issues remain open for physical validation; those issues stay open until their human tests pass. Issue #49 keeps composer layout independent from provider choice and does not depend on #47. Issues #21, #22, and #42 can proceed independently when their implementation prerequisites are met. Issue #43 builds on local transcript persistence from #22 and captures the actual semantic prompt at submission, not copied shell output. Issue #47 keeps primary activity above the composer with its existing breathing-space row; composer layout does not change that boundary.
 
 ## Later — Terminal Host Independence
 

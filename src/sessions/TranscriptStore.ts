@@ -4,6 +4,13 @@ import {randomUUID} from 'node:crypto';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {OutputTranscript} from '../output/OutputBuffer.js';
 
+function validRgb(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const color = value as Record<string, unknown>;
+  return ['red', 'green', 'blue'].every(channel => typeof color[channel] === 'number'
+    && Number.isInteger(color[channel]) && (color[channel] as number) >= 0 && (color[channel] as number) <= 255);
+}
+
 export const TRANSCRIPT_SCHEMA_VERSION = 1;
 
 export interface TranscriptSession {
@@ -40,6 +47,14 @@ function isTranscript(value: unknown): value is OutputTranscript {
         || (typeof record.historicalContext.cwd === 'string'
           && (record.historicalContext.project === undefined || typeof record.historicalContext.project === 'string')
           && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')))
+      && (record.historicalContext?.prompt === undefined || (typeof record.historicalContext.prompt === 'object'
+        && record.historicalContext.prompt !== null
+        && (record.historicalContext.prompt.provider === 'nmsh' || record.historicalContext.prompt.provider === 'starship')
+        && Array.isArray(record.historicalContext.prompt.segments)
+        && record.historicalContext.prompt.segments.every(segment => segment && typeof segment.text === 'string'
+          && (segment.geometry === 'powerline' || segment.geometry === 'plain')
+          && (segment.foreground === undefined || validRgb(segment.foreground))
+          && (segment.background === undefined || validRgb(segment.background)))))
       && (record.activities === undefined || (Array.isArray(record.activities)
         && record.activities.every(activity => activity && typeof activity.id === 'string'
           && activity.kind === 'tap-stream' && typeof activity.label === 'string'

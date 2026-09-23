@@ -9,10 +9,27 @@ import {
 } from './configuration.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks} from './powerline.js';
+import type {PromptSnapshot, PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
 const LINE = foreground(UI_COLORS.separator);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
+export const NATIVE_LAVENDER_RAMP: readonly RgbColor[] = [
+  {red: 127, green: 94, blue: 187},
+  {red: 118, green: 85, blue: 175},
+  {red: 110, green: 77, blue: 164},
+  {red: 102, green: 69, blue: 152},
+  {red: 94, green: 62, blue: 141},
+  {red: 86, green: 55, blue: 129},
+  {red: 78, green: 48, blue: 118},
+  {red: 70, green: 41, blue: 107},
+];
+const NATIVE_FOREGROUND: RgbColor = {red: 249, green: 245, blue: 255};
+
+export function nativePaletteColor(visibleIndex: number): RgbColor {
+  const index = ((Math.trunc(visibleIndex) % NATIVE_LAVENDER_RAMP.length) + NATIVE_LAVENDER_RAMP.length) % NATIVE_LAVENDER_RAMP.length;
+  return {...NATIVE_LAVENDER_RAMP[index]!};
+}
 
 export const FADE_TAIL_GLYPHS = GLYPHS.powerlineFade;
 
@@ -54,8 +71,8 @@ function moduleText(config: ContextModuleConfig, context: PromptContext): string
   }
 }
 
-function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
-  const rendered = configuration.modules.flatMap(module => {
+export function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
+  const eligible = configuration.modules.flatMap(module => {
     const text = moduleText(module, context);
     if (!text) return [];
 
@@ -78,8 +95,37 @@ function renderedModules(context: PromptContext, configuration: PromptConfigurat
 
   // The project block owns the brighter live identity when both location
   // modules say the same thing (notably "~" at HOME).
-  const project = rendered.find(module => module.id === 'project');
-  return rendered.filter(module => !(module.id === 'cwd' && project?.text === module.text));
+  const project = eligible.find(module => module.id === 'project');
+  const visible = eligible.filter(module => !(module.id === 'cwd' && project?.text === module.text));
+  return visible.map((module, index) => ({
+    ...module,
+    foreground: configuration.modules.find(item => item.id === module.id)?.foreground
+      ? module.foreground
+      : NATIVE_FOREGROUND,
+    background: configuration.modules.find(item => item.id === module.id)?.background
+      ? module.background
+      : nativePaletteColor(index),
+  }));
+}
+
+export function nativePromptSnapshot(context: PromptContext, configuration: PromptConfiguration): PromptSnapshot {
+  const modules = renderedModules(context, configuration);
+  const segments: PromptSegmentSnapshot[] = modules.map(module => ({
+    text: module.text,
+    foreground: module.foreground,
+    background: module.background,
+    geometry: 'powerline',
+  }));
+  return {
+    provider: 'nmsh',
+    layout: configuration.composerLayout,
+    segments,
+    endStyle: configuration.nmsh.endStyle,
+    gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
+    spacing: configuration.spacing,
+    cwd: context.cwd,
+    ...(context.branch ? {branch: context.branch} : {}),
+  };
 }
 
 export function buildContextLine(
@@ -96,9 +142,11 @@ export function buildContextLine(
     return placement === 'header' ? `${LINE}${repeatToWidth('─', width)}${RESET}` : '';
   }
 
-  const content = placement === 'header'
-    ? fitPowerlineBlocks(modules, configuration.gap, configuration.spacing, width, true)
-    : fitPowerlineBlocks(modules, configuration.gap, configuration.spacing, width);
+  const lineEndStyle = placement === 'composer' && configuration.composerLayout === 'oneLine'
+    ? 'flat'
+    : configuration.nmsh.endStyle;
+  const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
+    configuration.spacing, width, lineEndStyle);
 
   if (placement === 'composer') return `${content}${RESET}`;
 
@@ -114,7 +162,7 @@ export function buildInlineContextPrefix(
 ): string {
   if (width <= 0) return '';
   if (width <= displayWidth(GLYPHS.prompt) + 2) return `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET}`;
-  const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 2);
+  const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 1);
   const modules = moduleWidth >= 8
     ? buildContextLine(context, moduleWidth, configuration, 'composer')
     : '';

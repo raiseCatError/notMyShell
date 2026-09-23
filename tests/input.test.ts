@@ -38,7 +38,7 @@ test('one-line composer keeps dynamic context in the first editable row and pres
   editor.insert(source);
   const layout = layoutInput(editor.displayText, editor.displayCursorIndex, 80, Number.POSITIVE_INFINITY, prefix);
 
-  assert.match(stripAnsi(layout.allRows[0]?.prefix ?? ''), /work .*\/tmp\/work .* dev .*✘ 4  ❯ $/u);
+  assert.match(stripAnsi(layout.allRows[0]?.prefix ?? ''), /work .*\/tmp\/work .* dev .*✘ 4  ❯ $/u);
   assert.equal(layout.allRows[0]?.text, 'printf "hello"');
   assert.equal(layout.allRows[1]?.prefix, '  ');
   assert.equal(layout.allRows[1]?.text, 'next-command');

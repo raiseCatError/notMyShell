@@ -1,6 +1,6 @@
 import {homedir} from 'node:os';
 import type {BuildIdentity} from '../buildInfo.js';
-import {foreground, background, UI_COLORS} from '../ui/palette.js';
+import {foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, repeatToWidth, truncateText} from '../util/text.js';
 import type {WrappedRow} from './viewport.js';
 
@@ -30,17 +30,23 @@ function shortCwd(cwd: string): string {
   return path === home ? '~' : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
 }
 
+const CAT = [
+  '  ▄██▄   ▄██▄  ',
+  ' ▟███████████▙ ',
+  '▐███▪████▪███▌',
+  '▐████████████▌',
+  ' ▐██████████▌ ',
+  ' ▐██▌ ▐██▌▗██▘',
+  ' ▝██▘ ▝██▘▝▀  ',
+];
+
 function catRow(index: number): {ansi: string; plain: string} {
-  const purple = foreground(BODY);
-  if (index === 0) return {ansi: `${purple} ▄▄  ▄▄ ${RESET}`, plain: ' ▄▄  ▄▄ '};
-  if (index === 1) return {ansi: `${purple}████████${RESET}`, plain: '████████'};
-  if (index === 2) {
-    return {
-      ansi: `${purple}██${foreground(EYE)}${background(BODY)}●${RESET}${purple}██${foreground(EYE)}${background(BODY)}●${RESET}${purple}██${RESET}`,
-      plain: '██●██●██',
-    };
-  }
-  return {ansi: `${purple} ▀████▀ ${RESET}`, plain: ' ▀████▀ '};
+  const plain = CAT[index] ?? '';
+  // Square eyes use the dark detail color; the body remains one lavender tone.
+  const ansi = plain.split('').map(character => character === '▪'
+    ? `${foreground(EYE)}▪${foreground(BODY)}`
+    : `${foreground(BODY)}${character}`).join('');
+  return {ansi: `${ansi}${RESET}`, plain};
 }
 
 /** Presentation-only rows, generated from a semantic snapshot on every width change. */
@@ -54,14 +60,21 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number): Wrapped
     snapshot.shell,
   ];
   const colors = [UI_COLORS.primary, UI_COLORS.secondary, UI_COLORS.secondary, UI_COLORS.subtle];
-  const cat = width >= 34;
-  const prefixWidth = cat ? 11 : 0;
+  const cat = width >= 42;
+  const catWidth = 15;
+  const metadataWidth = cat ? Math.max(1, width - catWidth - 3) : width;
   const rows: WrappedRow[] = metadata.map((value, index) => {
-    const label = truncateText(value, Math.max(1, width - prefixWidth));
-    const prefix = cat ? catRow(index) : undefined;
-    const plain = `${prefix ? `${prefix.plain}   ` : ''}${label}`;
-    return {plain, ansi: `${prefix ? `${prefix.ansi}   ` : ''}${foreground(colors[index]!)}${label}${RESET}`};
+    const label = truncateText(value, metadataWidth);
+    const prefix = catRow(index);
+    const plain = cat ? `${prefix.plain}   ${label}` : label;
+    return {plain, ansi: `${cat ? `${prefix.ansi}   ` : ''}${foreground(colors[index]!)}${label}${RESET}`};
   });
+  if (cat) {
+    for (let index = metadata.length; index < CAT.length; index += 1) {
+      const prefix = catRow(index);
+      rows.push({plain: prefix.plain, ansi: prefix.ansi});
+    }
+  }
   const line = repeatToWidth('─', width);
   rows.push({plain: line, ansi: `${foreground(DIVIDER)}${line}${RESET}`});
   // All rows belong to ordinary scrollback; none have a PTY line index.

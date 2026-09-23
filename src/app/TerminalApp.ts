@@ -1,5 +1,8 @@
 import {GLYPHS} from '../ui/glyphs.js';
-import {appendFileSync} from 'node:fs';
+import {appendFileSync, existsSync} from 'node:fs';
+import {execFile} from 'node:child_process';
+import {promisify} from 'node:util';
+import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
@@ -7,10 +10,13 @@ import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, nativePromptSnapshot} from '../prompt/prompt.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
-import {hasVisibleContextModule, loadPromptConfiguration} from '../prompt/configuration.js';
+import {hasVisibleContextModule, loadPromptConfiguration, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
+import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
+import {handlePromptPanelKey, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
@@ -46,6 +52,7 @@ const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = '\u001B[48;2;63;65;82m';
 const STATUS_REFRESH_MS = 100;
+const execFileAsync = promisify(execFile);
 
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
@@ -69,7 +76,12 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
-  private readonly promptConfiguration = loadPromptConfiguration();
+  private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
+  private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
+  private starshipStatus?: StarshipStatus;
+  private starshipPrompt?: StarshipPromptResult;
+  private starshipPromptError?: string;
+  private promptPanelState?: PromptPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
@@ -109,6 +121,10 @@ export class TerminalApp {
   }
 
   async run(): Promise<number> {
+    if (!this.promptConfiguration.onboardingComplete) {
+      this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: this.promptConfiguration.provider === 'starship' ? 1 : 0,
+        draft: structuredClone(this.promptConfiguration)};
+    }
     this.renderer.enter();
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
@@ -168,6 +184,15 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.promptPanelState) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        if (this.promptPanelState.onboarding) void this.savePromptSettings();
+        else { this.promptPanelState = undefined; this.render(); }
+      } else if (key.kind === 'enter') {
+        void this.advancePromptPanel();
+      } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
+      return;
+    }
     if (this.resumeSessions) {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.resumeSessions = undefined;
@@ -184,15 +209,14 @@ export class TerminalApp {
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
       const fullInput = this.layoutEditorInput(columns);
-      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context), this.promptConfiguration.composerLayout);
+      const overlayRows = this.promptPanelState ? 12 : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
+      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
       if (key.y && key.y <= layout.outputHeight) {
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
 
-        // Exact same calculation as render()
-        const visibleLength = Math.min(wrapped.length - viewStart, layout.outputHeight);
-        const topPadding = this.historyViewport.detached ? 0 : Math.max(0, layout.outputHeight - visibleLength);
+        // Exact same top-aligned calculation as render().
+        const topPadding = 0;
 
         const localVisibleIndex = key.y - 1 - topPadding;
 
@@ -381,8 +405,8 @@ export class TerminalApp {
 
         const {columns, rows} = this.dimensions();
         const fullInput = this.layoutEditorInput(columns);
-        const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context), this.promptConfiguration.composerLayout);
+        const overlayRows = this.promptPanelState ? 12 : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
+        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
@@ -497,6 +521,7 @@ export class TerminalApp {
     if (slash) {
       if (slash.kind === 'copy') await this.copyRecent(slash.index);
       else if (slash.kind === 'appearance') await this.startAppearance();
+      else if (slash.kind === 'prompt') await this.startPromptSettings(false);
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
@@ -517,7 +542,8 @@ export class TerminalApp {
         this.session.resize(dimensions.columns, dimensions.rows);
       }
       this.render();
-    }, {cwd: this.shellCwd, project: contextAtSubmission.project, branch: contextAtSubmission.branch});
+    }, {cwd: this.shellCwd, project: contextAtSubmission.project, branch: contextAtSubmission.branch,
+      prompt: this.currentPromptSnapshot()});
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
@@ -778,13 +804,221 @@ export class TerminalApp {
     const context = await resolvePromptContext(cwd);
     if (generation !== this.contextGeneration || this.stopped) return;
     this.context = {...context, exitStatus: this.context.exitStatus ?? 0};
+    await this.refreshProviderPrompt();
     this.render();
+  }
+
+  private currentPromptSnapshot(): PromptSnapshot {
+    if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
+      return {provider: 'starship', layout: this.promptConfiguration.composerLayout,
+        segments: structuredClone(this.starshipPrompt.segments), cwd: this.context.cwd,
+        ...(this.context.branch ? {branch: this.context.branch} : {})};
+    }
+    return nativePromptSnapshot(this.context, this.promptConfiguration);
+  }
+
+  private async refreshProviderPrompt(): Promise<void> {
+    if (this.promptConfiguration.provider !== 'starship') {
+      this.effectivePromptProvider = 'nmsh';
+      this.starshipPrompt = undefined;
+      this.starshipPromptError = undefined;
+      return;
+    }
+    try {
+      const starshipEnv = this.promptConfiguration.starship.configPath
+        ? {...process.env, STARSHIP_CONFIG: this.promptConfiguration.starship.configPath}
+        : process.env;
+      this.starshipStatus ??= await detectStarship(starshipEnv);
+      if (!this.starshipStatus.installed) throw new Error('Starship is not installed or not available on PATH.');
+      const rendered = await renderStarshipPrompt(this.context, this.starshipStatus, starshipEnv);
+      this.starshipPrompt = rendered;
+      this.starshipPromptError = undefined;
+      this.effectivePromptProvider = 'starship';
+    } catch (error) {
+      this.starshipPromptError = error instanceof Error ? error.message : String(error);
+      this.starshipPrompt = undefined;
+      this.effectivePromptProvider = 'nmsh';
+      this.promptConfiguration.provider = 'nmsh';
+      try { savePromptConfiguration(this.promptConfiguration); } catch { /* Runtime fallback remains in effect. */ }
+    }
+  }
+
+  private async startPromptSettings(onboarding: boolean): Promise<void> {
+    this.promptPanelState = {onboarding, step: 'provider', selectedIndex: this.promptConfiguration.provider === 'starship' ? 1 : 0,
+      draft: structuredClone(this.promptConfiguration)};
+    if (this.promptConfiguration.provider === 'starship') {
+      const starshipEnv = this.promptConfiguration.starship.configPath
+        ? {...process.env, STARSHIP_CONFIG: this.promptConfiguration.starship.configPath}
+        : process.env;
+      this.starshipStatus = await detectStarship(starshipEnv);
+      this.promptPanelState.starshipStatus = this.starshipStatus;
+      await this.refreshProviderPrompt();
+    }
+    this.render();
+  }
+
+  private async advancePromptPanel(): Promise<void> {
+    const state = this.promptPanelState;
+    if (!state) return;
+    if (state.step === 'provider') {
+      state.draft.provider = state.selectedIndex === 1 ? 'starship' : 'nmsh';
+      if (state.draft.provider === 'starship') {
+        const starshipEnv = state.draft.starship.configPath
+          ? {...process.env, STARSHIP_CONFIG: state.draft.starship.configPath}
+          : process.env;
+        state.starshipStatus = await detectStarship(starshipEnv);
+        this.starshipStatus = state.starshipStatus;
+        state.step = 'starship';
+        state.selectedIndex = 0;
+        if (state.starshipStatus.installed) {
+          try { this.starshipPrompt = await renderStarshipPrompt(this.context, state.starshipStatus, starshipEnv); }
+          catch (error) { state.message = `Starship preview failed: ${error instanceof Error ? error.message : String(error)}`; }
+        }
+      } else {
+        state.step = 'layout';
+        state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+      }
+    } else if (state.step === 'starship') {
+      if (state.starshipStatus?.installed) {
+        if (state.selectedIndex === 0) {
+          state.draft.provider = 'starship';
+          state.step = 'layout';
+          state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+          try {
+            const starshipEnv = state.draft.starship.configPath
+              ? {...process.env, STARSHIP_CONFIG: state.draft.starship.configPath}
+              : process.env;
+            this.starshipPrompt = await renderStarshipPrompt(this.context, state.starshipStatus, starshipEnv);
+            this.effectivePromptProvider = 'starship';
+          } catch (error) {
+            state.message = `Starship preview failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        } else if (state.selectedIndex === 1) {
+          state.message = 'Starship presets use `starship preset <name> -o <new-path>`. Choose a new path to preserve existing files, then use STARSHIP_CONFIG or configure it in NMSh.';
+        } else if (state.selectedIndex === 2) {
+          state.draft.provider = 'nmsh';
+          state.step = 'layout';
+          state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+        } else {
+          state.step = 'provider'; state.selectedIndex = 1;
+        }
+      } else if (state.selectedIndex === 0) {
+        const hasHomebrew = (process.env.PATH ?? '').split(delimiter).some(directory => existsSync(join(directory, 'brew')));
+        if (process.platform !== 'darwin' || !hasHomebrew) {
+          state.message = 'Homebrew was not found. Install Starship using the official guide, then reopen /prompt.';
+        } else {
+          state.step = 'installConfirm'; state.selectedIndex = 0;
+        }
+      } else if (state.selectedIndex === 1) {
+        state.draft.provider = 'nmsh';
+        state.step = 'layout';
+        state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+      } else {
+        state.step = 'provider'; state.selectedIndex = 1;
+      }
+    } else if (state.step === 'installConfirm') {
+      if (state.selectedIndex === 1) {
+        state.step = 'starship'; state.selectedIndex = 0;
+      } else {
+        state.message = 'Installing Starship with Homebrew…'; this.render();
+        try {
+          await execFileAsync('brew', ['install', 'starship'], {timeout: 10 * 60_000, maxBuffer: 64 * 1024});
+          this.starshipStatus = await detectStarship(process.env);
+          state.starshipStatus = this.starshipStatus;
+          if (!this.starshipStatus.installed) throw new Error('Homebrew completed, but starship was not found on PATH.');
+          state.step = 'starship'; state.selectedIndex = 0;
+          state.message = 'Starship installed and detected.';
+        } catch (error) {
+          state.step = 'starship'; state.selectedIndex = 0;
+          state.message = `Installation failed: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    } else if (state.step === 'layout') {
+      state.draft.composerLayout = state.selectedIndex === 1 ? 'oneLine' : 'twoLine';
+      if (state.draft.provider === 'nmsh') { state.step = 'appearance'; state.selectedIndex = 0; }
+      else await this.savePromptSettings();
+    } else {
+      await this.savePromptSettings();
+    }
+    this.render();
+  }
+
+  private async savePromptSettings(): Promise<void> {
+    const state = this.promptPanelState;
+    if (!state) return;
+    state.draft.onboardingComplete = true;
+    try {
+      savePromptConfiguration(state.draft);
+      this.promptConfiguration = structuredClone(state.draft);
+      this.promptPanelState = undefined;
+      await this.refreshProviderPrompt();
+      if (this.starshipPromptError && this.promptConfiguration.provider === 'starship') {
+        this.promptConfiguration.provider = 'nmsh';
+        savePromptConfiguration(this.promptConfiguration);
+        this.output.addHistoryLine(`${ERROR}Starship prompt failed; NMSh is active. ${this.starshipPromptError}${RESET}`);
+      } else {
+        this.output.addHistoryLine(`${SUCCESS}Prompt settings saved (${this.promptConfiguration.provider}, ${this.promptConfiguration.composerLayout}).${RESET}`);
+      }
+    } catch (error) {
+      state.message = `Could not save prompt settings: ${error instanceof Error ? error.message : String(error)}`;
+      if (state.onboarding) state.draft.onboardingComplete = false;
+    }
+    this.render();
+  }
+
+  private promptPanelPreview(columns: number): string[] {
+    const state = this.promptPanelState;
+    if (!state) return [];
+    const width = Math.max(1, columns - 4);
+    const previewConfig = structuredClone(state.draft);
+    if (state.step === 'provider') previewConfig.provider = state.selectedIndex === 1 ? 'starship' : 'nmsh';
+    if (state.step === 'starship') previewConfig.provider = 'starship';
+    if (state.step === 'layout') previewConfig.composerLayout = state.selectedIndex === 1 ? 'oneLine' : 'twoLine';
+    const boundary = `${SEPARATOR}${repeatToWidth('─', width)}${RESET}`;
+    let providerRow: string;
+    if (previewConfig.provider === 'starship') {
+      if (!this.starshipPrompt) return [this.starshipPanelStatusText(state, width)];
+      providerRow = truncateAnsi(this.starshipPrompt.ansi, Math.max(0, width - 1));
+    } else if (previewConfig.composerLayout === 'oneLine') {
+      const prefix = buildInlineContextPrefix(this.context, width, previewConfig);
+      return [boundary, `${prefix}command`, boundary];
+    } else {
+      providerRow = buildContextLine(this.context, width, previewConfig, previewConfig.placement);
+    }
+    if (previewConfig.composerLayout === 'oneLine') {
+      const prefix = previewConfig.provider === 'starship'
+        ? `${providerRow}${RESET} `
+        : buildInlineContextPrefix(this.context, width, previewConfig);
+      return [boundary, `${prefix}command`, boundary];
+    }
+    const input = `${ACCENT}${GLYPHS.prompt}${RESET} command`;
+    return previewConfig.placement === 'composer'
+      ? [boundary, providerRow, input, boundary]
+      : [providerRow, input];
+  }
+
+  private starshipPanelStatusText(state: PromptPanelState, width: number): string {
+    if (state.starshipStatus?.installed) return truncateText(state.message ?? 'Starship preview is unavailable.', width);
+    return truncateText('Starship is not installed; choose install or NMSh.', width);
+  }
+
+  private hasVisibleProviderPrompt(): boolean {
+    if (this.effectivePromptProvider === 'starship') return Boolean(this.starshipPrompt?.text.trim());
+    return hasVisibleContextModule(this.promptConfiguration, this.context);
+  }
+
+  private currentPromptLine(width: number): string {
+    if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
+      const content = truncateAnsi(this.starshipPrompt.ansi, Math.max(0, width - 1));
+      return `${content}${RESET}${SEPARATOR}${repeatToWidth('─', Math.max(0, width - displayWidth(content)))}${RESET}`;
+    }
+    return buildContextLine(this.context, width, this.promptConfiguration);
   }
 
   private scroll(direction: -1 | 1): void {
     const {columns, rows} = this.dimensions();
     const input = this.layoutEditorInput(columns);
-    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
+    const overlayRows = this.promptPanelState ? 12 : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
       input.allRows.length,
@@ -793,7 +1027,7 @@ export class TerminalApp {
       this.historyViewport.detached,
       this.output.wrapped(columns).length > 0,
       this.promptConfiguration.placement,
-      hasVisibleContextModule(this.promptConfiguration, this.context),
+      this.hasVisibleProviderPrompt(),
       this.promptConfiguration.composerLayout,
     ).outputHeight);
     const total = this.output.wrapped(columns).length;
@@ -804,7 +1038,7 @@ export class TerminalApp {
   private scrollLines(amount: number): void {
     const {columns, rows} = this.dimensions();
     const input = this.layoutEditorInput(columns);
-    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
+    const overlayRows = this.promptPanelState ? 12 : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
       input.allRows.length,
@@ -813,7 +1047,7 @@ export class TerminalApp {
       this.historyViewport.detached,
       this.output.wrapped(columns).length > 0,
       this.promptConfiguration.placement,
-      hasVisibleContextModule(this.promptConfiguration, this.context),
+      this.hasVisibleProviderPrompt(),
       this.promptConfiguration.composerLayout,
     ).outputHeight);
     const total = this.output.wrapped(columns).length;
@@ -914,8 +1148,10 @@ export class TerminalApp {
       }
     }
 
-    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
-    const promptLine = buildContextLine(this.context, columns, this.promptConfiguration);
+    if (this.promptPanelState) availableSuggestions = [];
+    const promptPanelRows = this.promptPanelState ? renderPromptPanel(this.promptPanelState, columns, this.promptPanelPreview(columns)).length : 0;
+    const overlayRows = this.promptPanelState ? promptPanelRows : this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
+    const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
     const fullInput = this.layoutEditorInput(columns);
     const layout = calculateScreenLayout(
@@ -926,7 +1162,7 @@ export class TerminalApp {
       this.historyViewport.detached,
       this.output.wrapped(columns).length > 0,
       this.promptConfiguration.placement,
-      hasVisibleContextModule(this.promptConfiguration, this.context),
+      this.hasVisibleProviderPrompt(),
       this.promptConfiguration.composerLayout,
     );
     const input = this.layoutEditorInput(columns, layout.inputHeight);
@@ -983,13 +1219,14 @@ export class TerminalApp {
       }
       return finalAnsi;
     });
-    const topPadding = this.historyViewport.detached ? 0 : Math.max(0, outputHeight - visible.length);
-    const frameRows = [...Array<string>(topPadding).fill(''), ...visible];
+    const frameRows = [...visible];
     while (frameRows.length < outputHeight) frameRows.push('');
     if (layout.showGap) frameRows.push('');
 
     if (layout.showJump) frameRows.push(this.jumpAffordance(columns));
-    if (this.appearanceState) {
+    if (this.promptPanelState) {
+      frameRows.push(...renderPromptPanel(this.promptPanelState, columns, this.promptPanelPreview(columns)));
+    } else if (this.appearanceState) {
       for (const row of renderAppearancePanel(this.appearanceState, columns)) {
         frameRows.push(row);
       }
@@ -1108,9 +1345,12 @@ export class TerminalApp {
   }
 
   private inputFirstLinePrefix(columns: number): string | undefined {
-    return this.promptConfiguration.composerLayout === 'oneLine'
-      ? buildInlineContextPrefix(this.context, columns, this.promptConfiguration)
-      : undefined;
+    if (this.promptConfiguration.composerLayout !== 'oneLine') return undefined;
+    if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
+      const maxWidth = Math.max(0, columns - 1);
+      return `${truncateAnsi(this.starshipPrompt.ansi, maxWidth)}${RESET} `;
+    }
+    return buildInlineContextPrefix(this.context, columns, this.promptConfiguration);
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
