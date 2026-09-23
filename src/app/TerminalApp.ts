@@ -5,7 +5,7 @@ import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
 import {HistoryViewport} from '../output/viewport.js';
-import {buildContextLine} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix} from '../prompt/prompt.js';
 import {hasVisibleContextModule, loadPromptConfiguration} from '../prompt/configuration.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -174,9 +174,9 @@ export class TerminalApp {
     }
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
-      const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+      const fullInput = this.layoutEditorInput(columns);
       const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context));
+      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context), this.promptConfiguration.composerLayout);
       if (key.y && key.y <= layout.outputHeight) {
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
@@ -348,9 +348,9 @@ export class TerminalApp {
         }
 
         const {columns, rows} = this.dimensions();
-        const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
-      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context));
+        const fullInput = this.layoutEditorInput(columns);
+        const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
+        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context), this.promptConfiguration.composerLayout);
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => r.lineIndex === this.focusedLineIndex);
@@ -373,10 +373,19 @@ export class TerminalApp {
     else if (key.kind === 'wordRight') this.editor.wordRight();
     else if (key.kind === 'selectWordLeft') this.editor.selectWordLeft();
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
-    else if (key.kind === 'up') this.editor.moveUp(this.dimensions().columns);
-    else if (key.kind === 'selectUp') this.editor.selectUp(this.dimensions().columns);
-    else if (key.kind === 'down') this.editor.moveDown(this.dimensions().columns);
-    else if (key.kind === 'selectDown') this.editor.selectDown(this.dimensions().columns);
+    else if (key.kind === 'up') {
+      const {columns} = this.dimensions();
+      this.editor.moveUp(columns, this.inputFirstLinePrefix(columns));
+    } else if (key.kind === 'selectUp') {
+      const {columns} = this.dimensions();
+      this.editor.selectUp(columns, this.inputFirstLinePrefix(columns));
+    } else if (key.kind === 'down') {
+      const {columns} = this.dimensions();
+      this.editor.moveDown(columns, this.inputFirstLinePrefix(columns));
+    } else if (key.kind === 'selectDown') {
+      const {columns} = this.dimensions();
+      this.editor.selectDown(columns, this.inputFirstLinePrefix(columns));
+    }
     else if (key.kind === 'lineHome') this.editor.lineHome();
     else if (key.kind === 'selectLineHome') this.editor.selectLineHome();
     else if (key.kind === 'lineEnd') this.editor.lineEnd();
@@ -732,7 +741,7 @@ export class TerminalApp {
 
   private scroll(direction: -1 | 1): void {
     const {columns, rows} = this.dimensions();
-    const input = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+    const input = this.layoutEditorInput(columns);
     const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
@@ -743,6 +752,7 @@ export class TerminalApp {
       this.output.wrapped(columns).length > 0,
       this.promptConfiguration.placement,
       hasVisibleContextModule(this.promptConfiguration, this.context),
+      this.promptConfiguration.composerLayout,
     ).outputHeight);
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
@@ -751,7 +761,7 @@ export class TerminalApp {
 
   private scrollLines(amount: number): void {
     const {columns, rows} = this.dimensions();
-    const input = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+    const input = this.layoutEditorInput(columns);
     const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
@@ -762,6 +772,7 @@ export class TerminalApp {
       this.output.wrapped(columns).length > 0,
       this.promptConfiguration.placement,
       hasVisibleContextModule(this.promptConfiguration, this.context),
+      this.promptConfiguration.composerLayout,
     ).outputHeight);
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
@@ -864,7 +875,7 @@ export class TerminalApp {
     const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
     const promptLine = buildContextLine(this.context, columns, this.promptConfiguration);
     this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
-    const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+    const fullInput = this.layoutEditorInput(columns);
     const layout = calculateScreenLayout(
       rows,
       fullInput.allRows.length,
@@ -874,8 +885,9 @@ export class TerminalApp {
       this.output.wrapped(columns).length > 0,
       this.promptConfiguration.placement,
       hasVisibleContextModule(this.promptConfiguration, this.context),
+      this.promptConfiguration.composerLayout,
     );
-    const input = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns, layout.inputHeight);
+    const input = this.layoutEditorInput(columns, layout.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
     const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, layout.suggestionCount);
     const outputHeight = layout.outputHeight;
@@ -1041,6 +1053,22 @@ export class TerminalApp {
       return `${' '.repeat(Math.max(0, columns - displayWidth(visible)))}${ACCENT}${visible}${RESET}`;
     }
     return `${' '.repeat(columns - totalLength)}${ACCENT}${main}${SECONDARY}${detail}${RESET}`;
+  }
+
+  private inputFirstLinePrefix(columns: number): string | undefined {
+    return this.promptConfiguration.composerLayout === 'oneLine'
+      ? buildInlineContextPrefix(this.context, columns, this.promptConfiguration)
+      : undefined;
+  }
+
+  private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
+    return layoutInput(
+      this.editor.displayText,
+      this.editor.displayCursorIndex,
+      columns,
+      maxVisibleRows,
+      this.inputFirstLinePrefix(columns),
+    );
   }
 
   private dimensions(): {columns: number; rows: number} {

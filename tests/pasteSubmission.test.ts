@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
+import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 
-test('Enter submits exact sources of multiple folded atoms with prefix, interstitial, and suffix text', () => {
+test('one-line presentation does not alter exact submission of multiple folded paste atoms', () => {
   const app = new TerminalApp();
   const originalSubmit = app['session'].submit.bind(app['session']);
   const submitted: string[] = [];
+  app['promptConfiguration'] = normalizePromptConfiguration({composerLayout: 'oneLine'});
   app['session'].submit = command => submitted.push(command);
   try {
     const first = 'alpha\nbeta\ngamma\ndelta';

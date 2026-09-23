@@ -25,13 +25,15 @@ Improve NMSh's day-to-day interaction model: safe movement between NMSh and ordi
 |---:|---|---|
 | 1 | [#36](https://github.com/raiseCatError/notMyShell/issues/36) | Safe `/zsh` escape and nested-NMSh prevention |
 | 2 | [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Modular NMSh prompt/context system |
-| 3 | [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
-| 4 | [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive `/clear` history and resume with `/resume` |
-| 5 | [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run onboarding and appearance configuration |
-| 6 | [#42](https://github.com/raiseCatError/notMyShell/issues/42) | Display sub-second command durations in milliseconds |
-| 7 | [#43](https://github.com/raiseCatError/notMyShell/issues/43) | Muted command block dividers with historical context snapshots |
+| 3 | [#49](https://github.com/raiseCatError/notMyShell/issues/49) | Configurable one-line and two-line composer layouts |
+| 4 | [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
+| 5 | [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive `/clear` history and resume with `/resume` |
+| 6 | [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run onboarding and appearance configuration |
+| 7 | [#42](https://github.com/raiseCatError/notMyShell/issues/42) | Display sub-second command durations in milliseconds |
+| 8 | [#43](https://github.com/raiseCatError/notMyShell/issues/43) | Muted command block dividers with historical context snapshots |
+| 9 | [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested execution activity rows and hierarchical command details |
 
-Issue #9 depends on #8 and the safe-shell/startup foundation. Issues #21, #22, and #42 can proceed independently when their implementation prerequisites are met. Issue #43 builds on local transcript persistence from #22 and records cwd/branch snapshots as presentation metadata, not copied shell output.
+Issue #9 depends on #8, #36, and #49, including completion of the required physical validation for #8 and #36 before onboarding work starts. Issue #49 reuses #8's shared context modules and does not depend on #47. Issues #21, #22, and #42 can proceed independently when their implementation prerequisites are met. Issue #43 builds on local transcript persistence from #22 and records cwd/branch snapshots as presentation metadata, not copied shell output. Issue #47 keeps primary activity above the composer with its existing breathing-space row; composer layout does not change that boundary.
 
 ## Later — Terminal Host Independence
 
