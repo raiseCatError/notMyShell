@@ -9,6 +9,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
+  {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/history', insertion: '/history ', description: 'Search history'},
 ];
@@ -17,6 +18,7 @@ export type ParsedSlashCommand =
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
   | {kind: 'keyboard'}
+  | {kind: 'zsh'}
   | {kind: 'help'}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
@@ -27,6 +29,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
+  if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (input.startsWith('/history ')) return {kind: 'history', query: input.substring(9).trim()};
   return {kind: 'unknown', input};

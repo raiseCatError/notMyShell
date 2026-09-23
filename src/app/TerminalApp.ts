@@ -26,6 +26,7 @@ import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
 import {Highlighter, type TokenType} from '../input/Highlighter.js';
 import {SemanticService} from '../shell/SemanticService.js';
+import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -40,6 +41,8 @@ const RESET = '\u001B[0m';
 const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
+  private readonly initialCwd = process.cwd();
+  private shellCwd = this.initialCwd;
   private readonly renderer = new TerminalRenderer();
   private readonly editor = new CommandEditor();
   private readonly highlighter = new Highlighter();
@@ -70,13 +73,16 @@ export class TerminalApp {
   private lastPtyRows = 0;
   private lastPtyColumns = 0;
   private stopped = false;
+  private originalRawMode = false;
+  private shellHandoffCwd?: string;
+  private shellHandoffRequested = false;
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
 
   constructor() {
     const dimensions = this.dimensions();
-    this.session = new ShellSession(process.cwd(), dimensions.columns, Math.max(2, dimensions.rows - 4));
-    this.semanticService = new SemanticService(process.cwd());
+    this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
+    this.semanticService = new SemanticService(this.initialCwd);
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
@@ -87,7 +93,10 @@ export class TerminalApp {
 
   async run(): Promise<number> {
     this.renderer.enter();
-    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    if (process.stdin.isTTY) {
+      this.originalRawMode = process.stdin.isRaw;
+      process.stdin.setRawMode(true);
+    }
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
@@ -96,7 +105,7 @@ export class TerminalApp {
     process.once('SIGHUP', this.onTerminate);
     process.on('exit', () => {
       if (!this.stopped) {
-        if (process.stdin.isTTY) process.stdin.setRawMode(false);
+        if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
         this.renderer.leave();
       }
     });
@@ -356,7 +365,12 @@ export class TerminalApp {
     else if (key.kind === 'newline') this.editor.insert('\n');
     else if (key.kind === 'enter') {
       if (this.running) {
-        this.session.write(`${this.editor.text}\r`);
+        if (this.editor.text.trim() === '/zsh') {
+          this.editor.clear();
+          this.output.addFrontendInteraction('/zsh', 'Wait for the foreground command to finish or interrupt it, then run /zsh.', INFO);
+        } else {
+          this.session.write(`${this.editor.text}\r`);
+        }
         this.editor.clear();
       } else {
         void this.submit();
@@ -404,6 +418,7 @@ export class TerminalApp {
       if (slash.kind === 'copy') await this.copyRecent(slash.index);
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
+      else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'help') this.showHelp(command);
       else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
       this.render();
@@ -577,6 +592,7 @@ export class TerminalApp {
   }
 
   private onShellPrompt(exitCode: number, cwd: string): void {
+    this.shellCwd = cwd;
     if (!this.running) {
       void this.refreshContext(cwd);
       this.render();
@@ -919,6 +935,28 @@ export class TerminalApp {
     };
   }
 
+  get ordinaryZshHandoffCwd(): string | undefined {
+    return this.shellHandoffCwd;
+  }
+
+  get isOrdinaryZshHandoffRequested(): boolean {
+    return this.shellHandoffRequested;
+  }
+
+  private leaveForOrdinaryZsh(): void {
+    const decision: ShellHandoffDecision = chooseShellHandoff(Boolean(this.running), this.shellCwd, this.initialCwd);
+    if (decision.kind === 'busy') {
+      this.output.addFrontendInteraction('/zsh', 'Wait for the foreground command to finish or interrupt it, then run /zsh.', INFO);
+      this.render();
+      return;
+    }
+
+    this.shellHandoffCwd = decision.cwd;
+    this.shellHandoffRequested = true;
+    this.session.kill();
+    this.stop(0);
+  }
+
   private stop(exitCode: number): void {
     if (this.stopped) return;
     this.stopped = true;
@@ -927,7 +965,7 @@ export class TerminalApp {
     process.stdout.off('resize', this.onResize);
     process.off('SIGTERM', this.onTerminate);
     process.off('SIGHUP', this.onTerminate);
-    if (process.stdin.isTTY) process.stdin.setRawMode(false);
+    if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
     process.stdin.pause();
     this.renderer.leave();
     this.semanticService.kill();
