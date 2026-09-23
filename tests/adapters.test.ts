@@ -57,3 +57,33 @@ pass 135
   const facts = extractFacts('npm test', output);
   assert.equal(facts, undefined);
 });
+
+test('Node TAP summary (info variant): all passing', () => {
+  const output = `
+ℹ tests 139
+ℹ suites 0
+ℹ pass 139
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1306.500417
+`;
+  const facts = extractFacts('npm test', output);
+  assert.deepEqual(facts, ['139 passed']);
+});
+
+test('Node TAP summary (info variant): failures, skipped, cancelled, todo', () => {
+  const output = `
+ℹ tests 139
+ℹ suites 0
+ℹ pass 130
+ℹ fail 2
+ℹ cancelled 1
+ℹ skipped 4
+ℹ todo 2
+ℹ duration_ms 1306.500417
+`;
+  const facts = extractFacts('npm test', output);
+  assert.deepEqual(facts, ['130 passed', '2 failed', '4 skipped', '1 cancelled', '2 todo']);
+});

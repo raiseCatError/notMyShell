@@ -34,20 +34,26 @@ adapters.push({
       return [summary];
     }
 
-    const tapPass = output.match(/^#\s+pass\s+(\d+)/m);
-    const tapFail = output.match(/^#\s+fail\s+(\d+)/m);
-    const tapSkipped = output.match(/^#\s+skipped\s+(\d+)/m);
-    const tapTests = output.match(/^#\s+tests\s+(\d+)/m);
+    const tapPass = output.match(/^[#ℹ]\s+pass\s+(\d+)/m);
+    const tapFail = output.match(/^[#ℹ]\s+fail\s+(\d+)/m);
+    const tapSkipped = output.match(/^[#ℹ]\s+skipped\s+(\d+)/m);
+    const tapCancelled = output.match(/^[#ℹ]\s+cancelled\s+(\d+)/m);
+    const tapTodo = output.match(/^[#ℹ]\s+todo\s+(\d+)/m);
+    const tapTests = output.match(/^[#ℹ]\s+tests\s+(\d+)/m);
 
     if (tapTests || tapPass || tapFail) {
       const facts = [];
       const passCount = tapPass ? parseInt(tapPass[1], 10) : 0;
       const failCount = tapFail ? parseInt(tapFail[1], 10) : 0;
       const skipCount = tapSkipped ? parseInt(tapSkipped[1], 10) : 0;
+      const cancelCount = tapCancelled ? parseInt(tapCancelled[1], 10) : 0;
+      const todoCount = tapTodo ? parseInt(tapTodo[1], 10) : 0;
 
       if (passCount > 0) facts.push(`${passCount} passed`);
       if (failCount > 0) facts.push(`${failCount} failed`);
       if (skipCount > 0) facts.push(`${skipCount} skipped`);
+      if (cancelCount > 0) facts.push(`${cancelCount} cancelled`);
+      if (todoCount > 0) facts.push(`${todoCount} todo`);
 
       if (facts.length > 0) return facts;
       if (tapTests) return [`${tapTests[1]} tests`];

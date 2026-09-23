@@ -10,8 +10,12 @@ export function activityGlyph(elapsedMs: number): string {
 }
 
 export function liveActivityParts(command: string, elapsedMs: number): {phrase: string; duration: string} {
+  let flattenedCommand = command.trim().replace(/\r?\n/g, ' ⏎ ');
+  if (flattenedCommand.length > 50) {
+    flattenedCommand = flattenedCommand.slice(0, 49) + '…';
+  }
   return {
-    phrase: `${activityGlyph(elapsedMs)} Running ${command}`,
+    phrase: `${activityGlyph(elapsedMs)} Running ${flattenedCommand}`,
     duration: ` · ${formatDuration(elapsedMs)}`,
   };
 }
