@@ -9,7 +9,7 @@ test('renders sharp, distinct Powerline segments with a right-only fade', () => 
   const rendered = buildPromptLine({cwd: '/tmp/project', project: 'project', branch: 'main'}, 60);
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
-  assert.match(plain, /^ project  \/tmp\/project   main ▓▒░ /u);
+  assert.match(plain, /^ project   \/tmp\/project    main ▓▒░ /u);
   assert.equal((plain.match(/[░▒▓]/gu) ?? []).join(''), FADE_TAIL_GLYPHS);
   assert.ok(plain.indexOf(FADE_TAIL_GLYPHS) > plain.indexOf('main'));
   assert.ok(!plain.startsWith('░'));
@@ -24,6 +24,7 @@ test('shared context modules render in header and composer placements', () => {
     placement: 'composer',
     separator: '|',
     spacing: 2,
+    gap: 1,
     modules: [
       {id: 'project', visible: true},
       {id: 'cwd', visible: true},
@@ -35,17 +36,18 @@ test('shared context modules render in header and composer placements', () => {
   const header = stripAnsi(buildContextLine(context, 100, configuration, 'header'));
   const composer = stripAnsi(buildContextLine(context, 100, configuration, 'composer'));
 
-  assert.match(header, /notMyShell \|  ~\/Projects\/notMyShell \|   dev \|  ✘ 3 ▓▒░/u);
-  assert.match(composer, /notMyShell \|  ~\/Projects\/notMyShell \|   dev \|  ✘ 3/u);
+  assert.match(header, /notMyShell  \|  ~\/Projects\/notMyShell  \|   dev  \|  ✘ 3 ▓▒░/u);
+  assert.match(composer, /notMyShell  \|  ~\/Projects\/notMyShell  \|   dev  \|  ✘ 3/u);
   assert.ok(!composer.includes(FADE_TAIL_GLYPHS));
   assert.equal(displayWidth(buildContextLine(context, 100, configuration, 'composer')), displayWidth(stripAnsi(buildContextLine(context, 100, configuration, 'composer'))));
 });
 
-test('prompt configuration validates order, conditions, placement, spacing, separators, and colors', () => {
+test('prompt configuration validates order, conditions, placement, spacing, gap, separators, and colors', () => {
   const configuration = normalizePromptConfiguration({
     placement: 'composer',
     separator: '::',
     spacing: 8,
+    gap: 8,
     modules: [
       {id: 'gitBranch', visible: false, condition: 'always', foreground: '#abcdef'},
       {id: 'cwd', visible: true, condition: 'inRepository', background: '#012345'},
@@ -55,12 +57,14 @@ test('prompt configuration validates order, conditions, placement, spacing, sepa
   });
   assert.equal(configuration.placement, 'composer');
   assert.equal(configuration.spacing, 3);
+  assert.equal(configuration.gap, 3);
   assert.equal(configuration.separator, '::');
   assert.deepEqual(configuration.modules, [
     {id: 'gitBranch', visible: false, condition: 'always', foreground: '#abcdef'},
     {id: 'cwd', visible: true, condition: 'inRepository', background: '#012345'},
   ]);
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.placement, 'header');
+  assert.equal(normalizePromptConfiguration({spacing: 2}).gap, 1, 'legacy configs use the subtle default gap');
   const customColor = buildContextLine(
     {cwd: `${homedir()}/project`, project: 'repo', branch: 'main'},
     60,
@@ -68,6 +72,33 @@ test('prompt configuration validates order, conditions, placement, spacing, sepa
     'composer',
   );
   assert.match(customColor, /48;2;1;35;69m/u);
+});
+
+test('gap separates differently and same-colored blocks independently from internal padding', () => {
+  const context = {cwd: '/tmp/work', project: 'repo', branch: 'main', exitStatus: 2};
+  const config = normalizePromptConfiguration({
+    placement: 'header',
+    separator: '|',
+    gap: 2,
+    spacing: 0,
+    modules: [
+      {id: 'project', visible: true},
+      {id: 'cwd', visible: true, background: '#346962'},
+      {id: 'exitStatus', visible: true, condition: 'nonzeroExit', background: '#346962'},
+    ],
+  });
+  const header = buildContextLine(context, 100, config, 'header');
+  const plain = stripAnsi(header);
+  assert.ok(plain.includes('repo   |/tmp/work   |✘ 2'), plain);
+  assert.match(header, /\u001B\[0m  \u001B\[38;2;84;82;132m\u001B\[48;2;52;105;98m\|/u);
+  assert.equal(displayWidth(header), 100);
+  const composer = buildContextLine(context, 100, config, 'composer');
+  assert.ok(displayWidth(composer) <= 100);
+  assert.equal(stripAnsi(composer).split('\n').length, 1);
+
+  const noBranch = {...context, branch: undefined, exitStatus: 0};
+  const hidden = stripAnsi(buildContextLine(noBranch, 100, config, 'composer'));
+  assert.equal((hidden.match(/\|/gu) ?? []).length, 1, 'hidden conditional modules do not leave phantom gaps or separators');
 });
 
 test('prompt context replaces terminal control characters before rendering', () => {

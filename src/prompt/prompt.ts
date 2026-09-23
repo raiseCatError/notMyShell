@@ -93,6 +93,7 @@ export function buildContextLine(
   let content = `${modules[0].foreground}${modules[0].background} ${modules[0].text} `;
   for (let index = 1; index < modules.length; index += 1) {
     const current = modules[index];
+    content += `${RESET}${' '.repeat(configuration.gap)}`;
     content += modules[index - 1].transitionForeground;
     content += `${current.background}${configuration.separator}`;
     content += `${current.foreground}${current.background}${' '.repeat(configuration.spacing)}${current.text} `;
