@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {OutputBuffer} from '../src/output/OutputBuffer.js';
+import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js';
 import {pageViewport, viewportStart} from '../src/output/viewport.js';
 
 test('carriage returns update one line instead of appending progress frames', () => {
@@ -17,6 +17,26 @@ test('wraps long output to the viewport width', () => {
   output.beginCommand('print', ['❯ print']);
   output.write('abcdefgh');
   assert.deepEqual(output.wrapped(4).map(row => row.plain), ['❯ pr', 'int', 'abcd', 'efgh']);
+});
+
+test('transcript snapshot restores command details, fold state, and plain-text copy data', () => {
+  const output = new OutputBuffer();
+  output.beginCommand('printf hello', ['❯ printf hello']);
+  output.write('\u001B[31mhello\u001B[0m\n');
+  output.complete(0);
+  output.setCompletionLifecycle('Completed · 0s');
+  output.addHistoryLine('Completed · 0s');
+  output.toggleExpanded(0);
+
+  const snapshot = output.transcript();
+  const restored = new OutputBuffer();
+  restored.restoreTranscript(snapshot);
+  assert.equal(restored.recent(1)?.command, 'printf hello');
+  assert.equal(restored.recent(1)?.output, 'hello');
+  assert.equal(restored.recent(1)?.expanded, false);
+  assert.equal(restored.recent(1)?.lifecycleText, 'Completed · 0s');
+  assert.equal(serializeCopyPayload(restored.recent(1)!), 'hello\nCompleted · 0s');
+  assert.ok(restored.wrapped(80).some(row => row.isFoldHint));
 });
 
 test('viewport follows latest until paged upward', () => {
@@ -49,4 +69,3 @@ test('clear sequence (2J/3J) triggers onClear callback, 0J/1J do not', () => {
   output.write('\u001B[3J');
   assert.equal(clears, 2);
 });
-
