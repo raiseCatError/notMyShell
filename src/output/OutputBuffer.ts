@@ -420,10 +420,12 @@ function renderHistoricalContext(context: HistoricalContextSnapshot, width: numb
   const modules: PowerlineBlock[] = [];
   const project = context.project?.replace(CONTROL_CHARACTERS, '�');
   const archiveForeground = {red: 220, green: 211, blue: 237};
-  if (project && !(project === cwdLabel || (project === '~' && cwdLabel === '~'))) {
+  if (project) {
     modules.push({text: project, foreground: archiveForeground, background: {red: 82, green: 73, blue: 111}});
   }
-  modules.push({text: cwdLabel, foreground: archiveForeground, background: {red: 70, green: 65, blue: 98}});
+  if (!project || project !== cwdLabel) {
+    modules.push({text: cwdLabel, foreground: archiveForeground, background: {red: 70, green: 65, blue: 98}});
+  }
   const branch = context.branch?.replace(CONTROL_CHARACTERS, '�');
   if (branch) modules.push({text: `${GLYPHS.branch} ${branch}`, foreground: archiveForeground, background: {red: 91, green: 80, blue: 119}});
 
