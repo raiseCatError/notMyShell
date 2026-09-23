@@ -2,6 +2,8 @@ import {AnsiOutputParser} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
+import {PresentationMode} from './PresentationMode.js';
+import {CommandClassifier} from './Classifier.js';
 
 export interface CompletedCommand {
   command: string;
@@ -12,6 +14,7 @@ export interface CompletedCommand {
   outputStartId: number;
   endId?: number;
   expanded?: boolean;
+  mode?: PresentationMode;
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -28,6 +31,7 @@ export class OutputBuffer {
   private readonly visualGaps = new Set<number>();
   public readonly lineTypes = new Map<number, 'command' | 'metadata'>();
   private active?: {command: string; start: number; outputStart: number};
+  private classifier?: CommandClassifier;
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
@@ -37,7 +41,7 @@ export class OutputBuffer {
     });
   }
 
-  beginCommand(command: string, formattedLines: string[]): number {
+  beginCommand(command: string, formattedLines: string[], onModeChange?: (mode: PresentationMode) => void): number {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
@@ -48,6 +52,7 @@ export class OutputBuffer {
       this.parser.addLine(formattedLines[i]);
     }
     this.active = {command, start: startId, outputStart: startId + formattedLines.length};
+    this.classifier = new CommandClassifier(Date.now(), onModeChange);
     return startId;
   }
 
@@ -58,13 +63,24 @@ export class OutputBuffer {
   }
 
   write(data: string): void {
+    this.classifier?.pushChunk(data);
     this.parser.write(data);
+  }
+
+  tickActiveCommand(): void {
+    this.classifier?.tick();
   }
 
   complete(exitCode: number): CompletedCommand | undefined {
     this.parser.ensureLineBoundary();
     if (!this.active) return undefined;
     const endId = this.parser.completedCount();
+
+    this.classifier?.finalize(exitCode);
+    const mode = this.classifier?.mode ?? 'INLINE';
+    let expanded = true;
+    if (mode === 'FOLDED') expanded = false;
+
     const record: CompletedCommand = {
       command: this.active.command,
       output: this.parser.snapshotPlain(this.active.outputStart),
@@ -73,10 +89,12 @@ export class OutputBuffer {
       startId: this.active.start,
       outputStartId: this.active.outputStart,
       endId,
-      expanded: endId - this.active.outputStart <= 10,
+      expanded,
+      mode,
     };
     this.completed.unshift(record);
     this.active = undefined;
+    this.classifier = undefined;
     return record;
   }
 
@@ -118,10 +136,10 @@ export class OutputBuffer {
     const lines = this.parser.allLines();
     const result: WrappedRow[] = [];
     let skipUntil = -1;
-    
+
     for (let i = 0; i < lines.length; i++) {
       if (i < skipUntil) continue;
-      
+
       const cmd = this.completed.find(c => c.outputStartId === i);
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
         const hiddenLines = cmd.endId - cmd.outputStartId;
@@ -160,7 +178,7 @@ export class OutputBuffer {
     }
     return result;
   }
-  
+
   toggleExpanded(commandIndex: number): void {
     const cmd = this.completed[commandIndex];
     if (cmd) {

@@ -104,6 +104,7 @@ export class TerminalApp {
     this.activityTimer = setInterval(() => {
       if (!this.running) return;
       this.activityAnimationNow = Date.now();
+      this.output.tickActiveCommand();
       this.render();
     }, STATUS_REFRESH_MS);
     this.render();
@@ -410,11 +411,21 @@ export class TerminalApp {
       return;
     }
 
-    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null));
+    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
+      if (mode === 'PASSTHROUGH' && !this.passthrough) {
+        this.passthrough = true;
+        this.renderer.suspendForPassthrough();
+        const dimensions = this.dimensions();
+        this.session.resize(dimensions.columns, dimensions.rows);
+      }
+      this.render();
+    });
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
     this.running = {command, startedAt, interrupted: false, cleared: false, activity: this.activitySelector.next(), startId};
     this.activityAnimationNow = startedAt;
+
+    // Initial static heuristic, but dynamic can override
     this.passthrough = shouldPassthrough(command);
     if (this.passthrough) {
       this.renderer.suspendForPassthrough();
@@ -552,11 +563,17 @@ export class TerminalApp {
   }
 
   private onShellData(data: string): void {
-    if (this.passthrough) process.stdout.write(data);
-    else {
+    if (this.passthrough) {
+      process.stdout.write(data);
+    } else {
       this.lastOutputTime = Date.now();
+      const wasPassthrough = this.passthrough;
       this.output.write(data);
-      this.render();
+      if (!wasPassthrough && this.passthrough) {
+        process.stdout.write(data);
+      } else {
+        this.render();
+      }
     }
   }
 
