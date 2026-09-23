@@ -2,15 +2,19 @@ import {AnsiOutputParser} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
+import {PresentationMode} from './PresentationMode.js';
+import {CommandClassifier} from './Classifier.js';
 
 export interface CompletedCommand {
   command: string;
-  /** Plain PTY output lines (no ANSI codes). Empty string if no output was produced. */
   output: string;
-  /** Plain-text lifecycle/completion row, e.g. "✘ Failed after 0.0s · exit 127 · done 04:12" */
   lifecycleText: string;
   exitCode: number;
   startId: number;
+  outputStartId: number;
+  endId?: number;
+  expanded?: boolean;
+  mode?: PresentationMode;
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -25,25 +29,30 @@ export class OutputBuffer {
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
-  private active?: {command: string; start: number};
+  public readonly lineTypes = new Map<number, 'command' | 'metadata'>();
+  private active?: {command: string; start: number; outputStart: number};
+  private classifier?: CommandClassifier;
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
       this.visualGaps.clear();
+      this.lineTypes.clear();
       this.onClear?.();
     });
   }
 
-  beginCommand(command: string, formattedLines: string[]): number {
+  beginCommand(command: string, formattedLines: string[], onModeChange?: (mode: PresentationMode) => void): number {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
     }
     const startId = this.parser.completedCount();
-    for (const line of formattedLines) {
-      this.parser.addLine(line);
+    for (let i = 0; i < formattedLines.length; i++) {
+      this.lineTypes.set(startId + i, 'command');
+      this.parser.addLine(formattedLines[i]);
     }
-    this.active = {command, start: this.parser.completedCount()};
+    this.active = {command, start: startId, outputStart: startId + formattedLines.length};
+    this.classifier = new CommandClassifier(Date.now(), onModeChange);
     return startId;
   }
 
@@ -54,21 +63,38 @@ export class OutputBuffer {
   }
 
   write(data: string): void {
+    this.classifier?.pushChunk(data);
     this.parser.write(data);
+  }
+
+  tickActiveCommand(): void {
+    this.classifier?.tick();
   }
 
   complete(exitCode: number): CompletedCommand | undefined {
     this.parser.ensureLineBoundary();
     if (!this.active) return undefined;
+    const endId = this.parser.completedCount();
+
+    this.classifier?.finalize(exitCode);
+    const mode = this.classifier?.mode ?? 'INLINE';
+    let expanded = true;
+    if (mode === 'FOLDED') expanded = false;
+
     const record: CompletedCommand = {
       command: this.active.command,
-      output: this.parser.snapshotPlain(this.active.start),
+      output: this.parser.snapshotPlain(this.active.outputStart),
       lifecycleText: '',
       exitCode,
       startId: this.active.start,
+      outputStartId: this.active.outputStart,
+      endId,
+      expanded,
+      mode,
     };
     this.completed.unshift(record);
     this.active = undefined;
+    this.classifier = undefined;
     return record;
   }
 
@@ -87,6 +113,7 @@ export class OutputBuffer {
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
     }
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(text, style);
   }
 
@@ -95,7 +122,9 @@ export class OutputBuffer {
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
     }
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
   }
 
@@ -106,12 +135,66 @@ export class OutputBuffer {
   wrapped(width: number): WrappedRow[] {
     const lines = this.parser.allLines();
     const result: WrappedRow[] = [];
+    let skipUntil = -1;
+
     for (let i = 0; i < lines.length; i++) {
-      if (this.visualGaps.has(i)) {
-        result.push({ansi: '\u001B[0m', plain: ''});
+      if (i < skipUntil) continue;
+
+      const cmd = this.completed.find(c => c.outputStartId === i);
+      if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
+        const hiddenLines = cmd.endId - cmd.outputStartId;
+        // Commands are foldable if they have more than 10 lines, or were explicitly collapsed
+        const isFoldable = hiddenLines > 10 || !cmd.expanded;
+        if (isFoldable) {
+          if (!cmd.expanded) {
+            const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
+            const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+            result.push({
+              ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
+            });
+            skipUntil = cmd.endId;
+            continue;
+          } else {
+            const plain = `  ⇣ Collapse output  (Ctrl+O to hide ${hiddenLines} lines)`;
+            const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+            result.push({
+              ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
+            });
+            // Don't skip, let the output render below this hint
+          }
+        }
       }
-      result.push(...wrapStyledLine(lines[i], width));
+
+      if (this.visualGaps.has(i)) {
+        result.push({ansi: '\u001B[0m', plain: '', lineIndex: -1});
+      }
+      const wrappedRows = wrapStyledLine(lines[i], width);
+      const cmdIndex = this.completed.findIndex(c => c.startId <= i);
+      for (const row of wrappedRows) {
+        row.lineIndex = i;
+        if (cmdIndex !== -1) row.commandIndex = cmdIndex;
+        result.push(row);
+      }
     }
     return result;
+  }
+
+  toggleExpanded(commandIndex: number): void {
+    const cmd = this.completed[commandIndex];
+    if (cmd) {
+      cmd.expanded = !cmd.expanded;
+    }
+  }
+
+  toggleMostRelevant(focusedLineIndex?: number): void {
+    let cmdIndex = -1;
+    if (focusedLineIndex !== undefined) {
+      cmdIndex = this.completed.findIndex(c => c.startId <= focusedLineIndex);
+    } else if (this.completed.length > 0) {
+      cmdIndex = 0;
+    }
+    if (cmdIndex !== -1) {
+      this.toggleExpanded(cmdIndex);
+    }
   }
 }

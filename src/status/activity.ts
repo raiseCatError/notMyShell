@@ -1,45 +1,48 @@
 import stringWidth from 'string-width';
 import {formatDuration, formatLocalTime} from './commandTiming.js';
-import {ACTIVITY_VERBS, type ActivityVerbPair} from './activityVerbs.js';
-
-export {ACTIVITY_VERBS, type ActivityVerbPair} from './activityVerbs.js';
-
 import {GLYPHS, SPINNER_FRAMES} from '../ui/glyphs.js';
 
 export const ACTIVITY_GLYPH_INTERVAL_MS = 165;
-
-export class ActivitySelector {
-  private previous = -1;
-  constructor(private readonly random: () => number = Math.random) {}
-
-  next(): ActivityVerbPair {
-    let index = Math.min(ACTIVITY_VERBS.length - 1, Math.floor(this.random() * ACTIVITY_VERBS.length));
-    if (ACTIVITY_VERBS.length > 1 && index === this.previous) index = (index + 1) % ACTIVITY_VERBS.length;
-    this.previous = index;
-    return ACTIVITY_VERBS[index];
-  }
-}
 
 export function activityGlyph(elapsedMs: number): string {
   const frames = SPINNER_FRAMES.frames;
   return frames[Math.floor(Math.max(0, elapsedMs) / ACTIVITY_GLYPH_INTERVAL_MS) % frames.length];
 }
 
-export function liveActivity(pair: ActivityVerbPair, elapsedMs: number): string {
-  return `${activityGlyph(elapsedMs)} ${pair.active}… (${formatDuration(elapsedMs)})`;
-}
-
-export function liveActivityParts(pair: ActivityVerbPair, elapsedMs: number): {phrase: string; duration: string} {
+export function liveActivityParts(command: string, elapsedMs: number): {phrase: string; duration: string} {
+  let flattenedCommand = command.trim().replace(/\r?\n/g, ' ⏎ ');
+  if (flattenedCommand.length > 50) {
+    flattenedCommand = flattenedCommand.slice(0, 49) + '…';
+  }
   return {
-    phrase: `${activityGlyph(elapsedMs)} ${pair.active}…`,
-    duration: ` (${formatDuration(elapsedMs)})`,
+    phrase: `${activityGlyph(elapsedMs)} Running ${flattenedCommand}`,
+    duration: ` · ${formatDuration(elapsedMs)}`,
   };
 }
 
-export function completedActivity(pair: ActivityVerbPair, elapsedMs: number, completedAt: Date): {main: string; detail: string} {
+export function completedActivity(command: string, elapsedMs: number, completedAt: Date, exitCode: number, interrupted: boolean, facts?: string[]): {main: string; detail: string} {
+  let statusText = 'Completed';
+  let icon = GLYPHS.success;
+
+  if (facts && facts.length > 0) {
+    statusText = facts.join(' · ');
+  }
+
+  if (interrupted) {
+    statusText = 'Interrupted';
+    icon = GLYPHS.failure;
+  } else if (exitCode !== 0) {
+    if (facts && facts.length > 0) {
+        statusText = `Command failed · ${facts.join(' · ')} · exit ${exitCode}`;
+    } else {
+        statusText = `Command failed · exit ${exitCode}`;
+    }
+    icon = GLYPHS.failure;
+  }
+
   return {
-    main: `${GLYPHS.success} ${pair.complete} for ${formatDuration(elapsedMs)}`,
-    detail: ` · done ${formatLocalTime(completedAt)}`,
+    main: `${icon} ${statusText} · ${formatDuration(elapsedMs)}`,
+    detail: ` · ${formatLocalTime(completedAt)}`,
   };
 }
 

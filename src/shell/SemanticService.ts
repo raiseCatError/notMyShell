@@ -49,16 +49,31 @@ RPROMPT=""
 PS1=""
 `);
 
+    const env: NodeJS.ProcessEnv = { ...process.env, ZDOTDIR: this.zdotdir, TERM: 'dumb' };
+    delete env.TERM_PROGRAM;
+    delete env.TERM_PROGRAM_VERSION;
+
     // Use detached: true for setsid-style isolation to prevent TTIN/TTOU and controlling terminal access
     this.child = spawn('zsh', ['-i'], {
       cwd,
-      env: {
-        ...process.env,
-        ZDOTDIR: this.zdotdir,
-      },
+      env,
       stdio: ['pipe', 'pipe', 'ignore'],
       detached: true
     });
+
+    const handleDead = () => {
+      this.isDead = true;
+      for (const resolve of this.pending.values()) {
+        resolve('unknown');
+      }
+      this.pending.clear();
+    };
+
+    this.child.on('error', handleDead);
+    this.child.on('exit', handleDead);
+    this.child.on('close', handleDead);
+
+    this.child.stdin!.on('error', () => { /* ignore EPIPE */ });
 
     this.child.stdin!.write(`
 while read -r id cmd; do
@@ -100,7 +115,10 @@ done\n`);
     });
   }
 
+  private isDead = false;
+
   async classifyCommand(cmd: string): Promise<CommandType> {
+    if (this.isDead || !this.child.stdin?.writable) return 'unknown';
     if (!cmd || cmd.trim().length === 0) return 'unknown';
     // Only classify the first word if it has spaces
     cmd = cmd.split(' ')[0];
@@ -117,13 +135,25 @@ done\n`);
       });
       // Safety: cmd should not contain newlines or null bytes
       const safeCmd = cmd.replace(/[\r\n\0]/g, '');
-      this.child.stdin!.write(`${id} ${safeCmd}\n`);
+      try {
+        this.child.stdin!.write(`${id} ${safeCmd}\n`);
+      } catch (e) {
+        resolve('unknown');
+      }
     });
   }
   
   kill() {
-    this.child.stdin?.end();
+    this.isDead = true;
+    try {
+      this.child.stdin?.end();
+    } catch (e) { /* ignore */ }
     this.child.kill('SIGKILL');
+    for (const resolve of this.pending.values()) {
+      resolve('unknown');
+    }
+    this.pending.clear();
+    
     if (this.zdotdir) {
       try {
         rmSync(this.zdotdir, { recursive: true, force: true });

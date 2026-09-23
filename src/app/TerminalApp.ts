@@ -8,7 +8,6 @@ import {HistoryViewport} from '../output/viewport.js';
 import {buildPromptLine} from '../prompt/prompt.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
-import {completedStatus} from '../status/commandTiming.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {displayWidth, repeatToWidth, truncateAnsi, truncateText} from '../util/text.js';
@@ -17,7 +16,8 @@ import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {shimmerText} from '../status/shimmer.js';
-import {ActivitySelector, completedActivity, liveActivityParts, type ActivityVerbPair} from '../status/activity.js';
+import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
 import {calculateScreenLayout} from './layout.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
@@ -50,14 +50,15 @@ export class TerminalApp {
     if (this.running) this.running.cleared = true;
   });
   private readonly historyViewport = new HistoryViewport();
-  private readonly activitySelector = new ActivitySelector();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…'};
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; activity: ActivityVerbPair; startId: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
+  private hoveredLineIndex?: number;
+  private focusedLineIndex?: number;
   private passthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
@@ -102,6 +103,7 @@ export class TerminalApp {
     this.activityTimer = setInterval(() => {
       if (!this.running) return;
       this.activityAnimationNow = Date.now();
+      this.output.tickActiveCommand();
       this.render();
     }, STATUS_REFRESH_MS);
     this.render();
@@ -140,6 +142,46 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
+      const {columns, rows} = this.dimensions();
+      const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
+      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
+      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0);
+      if (key.y && key.y <= layout.outputHeight) {
+        const wrapped = this.output.wrapped(columns);
+        const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
+
+        // Exact same calculation as render()
+        const visibleLength = Math.min(wrapped.length - viewStart, layout.outputHeight);
+        const topPadding = this.historyViewport.detached ? 0 : Math.max(0, layout.outputHeight - visibleLength);
+
+        const localVisibleIndex = key.y - 1 - topPadding;
+
+        if (localVisibleIndex >= 0) {
+          const row = wrapped[viewStart + localVisibleIndex];
+          if (row) {
+            if (key.kind === 'mouseClick' && row.commandIndex !== undefined) {
+              // Only toggle if we click specifically on a fold hint
+              if (row.isFoldHint) {
+                this.output.toggleExpanded(row.commandIndex);
+                this.render();
+              }
+            }
+            if (row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
+              this.hoveredLineIndex = row.lineIndex;
+              this.render();
+            }
+          }
+        } else if (this.hoveredLineIndex !== undefined) {
+          this.hoveredLineIndex = undefined;
+          this.render();
+        }
+      } else if (this.hoveredLineIndex !== undefined) {
+        this.hoveredLineIndex = undefined;
+        this.render();
+      }
+      return;
+    }
     if (this.appearanceState) {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.appearanceState = undefined;
@@ -201,6 +243,11 @@ export class TerminalApp {
       }
       return;
     }
+    if (key.kind === 'toggleDetails') {
+      this.output.toggleMostRelevant(this.focusedLineIndex);
+      this.render();
+      return;
+    }
     if (key.kind === 'interrupt') {
       if (this.running) {
         this.running.interrupted = true;
@@ -223,15 +270,63 @@ export class TerminalApp {
     }
 
     const suggestions = slashSuggestions(this.editor.text);
+    const isSlash = this.editor.text.startsWith('/');
     if (key.kind === 'up' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
     } else if (key.kind === 'down' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
-    } else if (key.kind === 'complete' && suggestions.length > 0) {
-      this.applySuggestion(suggestions[this.selectedSuggestion] ?? suggestions[0]);
+    } else if (key.kind === 'complete') {
+      if (this.shellSuggestions.length > 0) this.applySuggestion(this.shellSuggestions[this.selectedSuggestion]);
+      else if (isSlash) this.applySuggestion({insertion: slashCommands[this.selectedSuggestion].name});
+      else this.handleKey({kind: 'focusNext'} as Key);
+      return;
     } else if (key.kind === 'text') {
       this.editor.insert(key.value);
       this.selectedSuggestion = 0;
+    } else if (key.kind === 'focusNext' || key.kind === 'focusPrevious') {
+      const dir = key.kind === 'focusNext' ? 1 : -1;
+      const {columns} = this.dimensions();
+      const metadataRows = Array.from(this.output.lineTypes.entries())
+        .filter(([, type]) => type === 'metadata')
+        .map(([index]) => index);
+
+      const foldHintRows = this.output.wrapped(columns)
+        .filter(r => r.isFoldHint && r.lineIndex !== undefined)
+        .map(r => r.lineIndex as number);
+
+      const focusableRows = Array.from(new Set([...metadataRows, ...foldHintRows]))
+        .sort((a, b) => a - b);
+
+      if (focusableRows.length > 0) {
+        if (this.focusedLineIndex === undefined) {
+          this.focusedLineIndex = dir === 1 ? focusableRows[0] : focusableRows[focusableRows.length - 1];
+        } else {
+          const currentIndex = focusableRows.indexOf(this.focusedLineIndex);
+          if (currentIndex !== -1) {
+            const nextIndex = (currentIndex + dir + focusableRows.length) % focusableRows.length;
+            this.focusedLineIndex = focusableRows[nextIndex];
+          } else {
+            this.focusedLineIndex = focusableRows[0];
+          }
+        }
+
+        const {columns, rows} = this.dimensions();
+        const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
+        const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
+        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0);
+
+        const wrapped = this.output.wrapped(columns);
+        const wrappedIndex = wrapped.findIndex(r => r.lineIndex === this.focusedLineIndex);
+        if (wrappedIndex !== -1) {
+          this.historyViewport.resolve(wrapped.length, layout.outputHeight);
+          if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + layout.outputHeight) {
+             this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, wrappedIndex - this.historyViewport.start - Math.floor(layout.outputHeight / 2));
+          }
+        }
+
+        this.render();
+      }
+      return;
     }
     else if (key.kind === 'left') this.editor.moveLeft();
     else if (key.kind === 'right') this.editor.moveRight();
@@ -315,11 +410,21 @@ export class TerminalApp {
       return;
     }
 
-    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null));
+    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
+      if (mode === 'PASSTHROUGH' && !this.passthrough) {
+        this.passthrough = true;
+        this.renderer.suspendForPassthrough();
+        const dimensions = this.dimensions();
+        this.session.resize(dimensions.columns, dimensions.rows);
+      }
+      this.render();
+    });
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, activity: this.activitySelector.next(), startId};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId};
     this.activityAnimationNow = startedAt;
+
+    // Initial static heuristic, but dynamic can override
     this.passthrough = shouldPassthrough(command);
     if (this.passthrough) {
       this.renderer.suspendForPassthrough();
@@ -457,11 +562,17 @@ export class TerminalApp {
   }
 
   private onShellData(data: string): void {
-    if (this.passthrough) process.stdout.write(data);
-    else {
+    if (this.passthrough) {
+      process.stdout.write(data);
+    } else {
       this.lastOutputTime = Date.now();
+      const wasPassthrough = this.passthrough;
       this.output.write(data);
-      this.render();
+      if (!wasPassthrough && this.passthrough) {
+        process.stdout.write(data);
+      } else {
+        this.render();
+      }
     }
   }
 
@@ -475,19 +586,15 @@ export class TerminalApp {
     const command = this.running;
     const completedAt = new Date();
     const elapsed = completedAt.getTime() - command.startedAt;
-    this.output.complete(exitCode);
-    if (command.interrupted || exitCode === 130) {
-      const parts = completedStatus('interrupted', elapsed, completedAt);
+    const completedRecord = this.output.complete(exitCode);
+    if (!command.cleared) {
+      const outputText = completedRecord?.output ?? '';
+      const facts = extractFacts(command.command, outputText);
+      const isInterrupted = command.interrupted || exitCode === 130;
+      const parts = completedActivity(command.command, elapsed, completedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      this.output.addHistoryLine(`${STOPPED}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
-    } else if (exitCode !== 0) {
-      const parts = completedStatus('failure', elapsed, completedAt, exitCode);
-      this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      this.output.addHistoryLine(`${ERROR}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
-    } else if (!command.cleared) {
-      const parts = completedActivity(command.activity, elapsed, completedAt);
-      this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      this.output.addHistoryLine(`${SUCCESS}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
+      const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
+      this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
     if (this.passthrough) {
@@ -655,7 +762,38 @@ export class TerminalApp {
 
     const wrapped = this.output.wrapped(columns);
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.ansi);
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
+      let finalAnsi = row.ansi;
+      const applyBg = (bg: string) => {
+        return `${bg}${finalAnsi.replaceAll('\u001B[0m', '\u001B[0m' + bg)}${bg}\u001B[K${RESET}`;
+      };
+
+      if (row.isFoldHint) {
+        const isHovered = this.hoveredLineIndex === row.lineIndex;
+        const isFocused = this.focusedLineIndex === row.lineIndex;
+        if (isHovered || isFocused) {
+          finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
+          const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
+          finalAnsi = applyBg(bg);
+        }
+      } else if (row.lineIndex !== undefined) {
+        const type = this.output.lineTypes.get(row.lineIndex);
+        if (type === 'command') {
+          // Subtle background for command
+          finalAnsi = applyBg(`\u001B[48;2;38;38;48m`);
+        } else if (type === 'metadata') {
+          const isHovered = this.hoveredLineIndex === row.lineIndex;
+          const isFocused = this.focusedLineIndex === row.lineIndex;
+          if (isHovered || isFocused) {
+            // Brighten on hover/focus
+            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
+            const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
+            finalAnsi = applyBg(bg);
+          }
+        }
+      }
+      return finalAnsi;
+    });
     const topPadding = this.historyViewport.detached ? 0 : Math.max(0, outputHeight - visible.length);
     const frameRows = [...Array<string>(topPadding).fill(''), ...visible];
     while (frameRows.length < outputHeight) frameRows.push('');
@@ -759,7 +897,7 @@ export class TerminalApp {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
-    const parts = liveActivityParts(this.running.activity, elapsed);
+    const parts = liveActivityParts(this.running.command, elapsed);
     return `${shimmerText(parts.phrase, elapsed, isActive)}${SECONDARY}${parts.duration}${RESET}`;
   }
 

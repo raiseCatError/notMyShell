@@ -4,10 +4,11 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown'};
+  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  ['\u001B[Z', 'focusPrevious'],
   ['\u001B[27;2;13~', 'newline'],
   ['\u001B[13;2u', 'newline'],
   ['\u001B\r', 'newline'], // macOS Terminal Shift+Enter
@@ -75,6 +76,8 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
   ['\u001B[99;5u', 'interrupt'], // Kitty Ctrl+C
   ['\u001B[100;5u', 'eof'], // Kitty Ctrl+D
+  ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)
+  ['\u001B[79;5u', 'toggleDetails'], // Kitty Ctrl+O (uppercase O)
 ];
 
 export function decodeKeys(input: string): Key[] {
@@ -92,8 +95,13 @@ export function decodeKeys(input: string): Key[] {
     const sgrMatch = /^\u001B\[<(\d+);(\d+);(\d+)([mM])/.exec(input.slice(index));
     if (sgrMatch) {
       const button = Number(sgrMatch[1]);
-      if (button === 64) keys.push({kind: 'wheelUp'} as Key);
-      else if (button === 65) keys.push({kind: 'wheelDown'} as Key);
+      const x = Number(sgrMatch[2]);
+      const y = Number(sgrMatch[3]);
+      const isPress = sgrMatch[4] === 'M';
+      if (button === 64) keys.push({kind: 'wheelUp'});
+      else if (button === 65) keys.push({kind: 'wheelDown'});
+      else if (button === 0 && isPress) keys.push({kind: 'mouseClick', x, y});
+      else if (button === 35 || button === 32) keys.push({kind: 'mouseMove', x, y});
       index += sgrMatch[0].length;
       continue;
     }
@@ -127,6 +135,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0005') keys.push({kind: 'lineEnd'} as Key); // Ctrl+E
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
+    else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (codePoint >= 0x20 && codePoint !== 0x7f) keys.push({kind: 'text', value} as Key);
   }
   return keys;
