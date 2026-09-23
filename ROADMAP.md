@@ -7,7 +7,7 @@
 | **Current release** | [v0.1.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.1.0) |
 | **Development branch** | `dev` |
 | **Next milestone** | [v0.2.0 — Structured Execution](https://github.com/raiseCatError/notMyShell/milestone/1) |
-| **Project board** | GitHub Project scope requires `project` auth — see [setup note](#github-project) |
+| **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 **How the tracking system works:**
 
@@ -153,16 +153,6 @@ Mouse behavior, Unicode, completion quality, history, performance, installation,
 
 ## GitHub Project
 
-To create and manage the GitHub Project board, run:
+**[NMSh Development →](https://github.com/users/raiseCatError/projects/1)**
 
-```bash
-gh auth refresh -s project
-```
-
-Then:
-
-```bash
-gh project create --owner raiseCatError --title "NMSh Development"
-```
-
-Preferred status columns: **Backlog → Ready → In Progress → Needs Human Test → Done**
+Status columns: **Backlog → Ready → In Progress → Needs Human Test → Done**
