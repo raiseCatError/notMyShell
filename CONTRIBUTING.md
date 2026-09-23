@@ -13,6 +13,15 @@ npm install
 npm run build
 ```
 
+## Tracking
+
+Before starting work, check:
+
+- **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
+- **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
+- **[v0.2.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/1)** — current release target
+- **GitHub Project** — live status board (requires `project` scope: `gh auth refresh -s project`)
+
 ## Branch Model
 
 Normal development and feature branches should target `dev`. `master` is reserved for stable/release-ready code.
@@ -43,7 +52,7 @@ git diff --check
 
 - **Read the docs**: Please read `README.md` first.
 - **Understand the architecture**: Read `AGENTS.md` before making architectural changes.
-- **Check the roadmap**: Review `ROADMAP.md` before starting large features.
+- **Check the roadmap**: Review `ROADMAP.md` and the relevant [GitHub Issue](https://github.com/raiseCatError/notMyShell/issues) before starting large features. Acceptance criteria in the issue are authoritative.
 - **Discuss first**: Open an issue to discuss large architectural changes before implementing them to ensure alignment.
 
 ## Architectural Contribution Rules

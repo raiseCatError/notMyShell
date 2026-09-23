@@ -71,3 +71,22 @@ app['session'].kill();
 - do not casually rewrite the renderer or PTY architecture
 - no fabricated manual verification
 - distinguish automated verification from human GUI/runtime validation
+
+## Planning and GitHub tracking
+
+GitHub is the durable source of truth for what NMSh is building, what comes next, and why.
+
+For substantial implementation work:
+
+1. **Check the relevant GitHub issue** — acceptance criteria in the issue are authoritative; do not invent scope
+2. **Work from `dev`** — always branch from and target `dev`
+3. **Update issue/Project status** during work (In Progress when started, Needs Human Test when automated work is done but terminal validation remains)
+4. **Automated verification and human terminal validation are distinct** — do not close issues requiring human terminal validation until that validation has occurred
+5. **Only close work requiring human validation after that validation occurs**
+
+Key references:
+- [ROADMAP.md](ROADMAP.md) — product direction and issue index
+- [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
+- [v0.2.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/1) — current release target
+- [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
+- [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions
