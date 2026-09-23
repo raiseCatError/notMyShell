@@ -1,10 +1,13 @@
-import {readFileSync} from 'node:fs';
+import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
+import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'exitStatus';
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
+export type PromptProviderId = 'nmsh' | 'starship';
+export type NativeEndStyle = 'fadeWedge' | 'wedge' | 'fadeFlat' | 'flat';
 
 export interface ContextModuleConfig {
   id: ContextModuleId;
@@ -15,6 +18,10 @@ export interface ContextModuleConfig {
 }
 
 export interface PromptConfiguration {
+  provider: PromptProviderId;
+  onboardingComplete: boolean;
+  nmsh: {gapEnabled: boolean; endStyle: NativeEndStyle; palette: 'lavender'};
+  starship: {configPath: string | null};
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
   modules: ContextModuleConfig[];
@@ -25,6 +32,10 @@ export interface PromptConfiguration {
 }
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
+  provider: 'nmsh',
+  onboardingComplete: false,
+  nmsh: {gapEnabled: true, endStyle: 'fadeWedge', palette: 'lavender'},
+  starship: {configPath: null},
   placement: 'header',
   composerLayout: 'twoLine',
   modules: [
@@ -56,6 +67,17 @@ function validSeparator(value: unknown): value is string {
 export function normalizePromptConfiguration(value: unknown): PromptConfiguration {
   if (!isRecord(value)) return structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 
+  const promptValue = isRecord(value.prompt) ? value.prompt : value;
+  const provider: PromptProviderId = promptValue.provider === 'starship' ? 'starship' : 'nmsh';
+  const nativeValue = isRecord(promptValue.nmsh) ? promptValue.nmsh : promptValue;
+  const starshipValue = isRecord(promptValue.starship) ? promptValue.starship : {};
+  const endStyle: NativeEndStyle = nativeValue.endStyle === 'wedge' || nativeValue.endStyle === 'fadeFlat' || nativeValue.endStyle === 'flat'
+    ? nativeValue.endStyle
+    : 'fadeWedge';
+  const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
+    ? starshipValue.configPath
+    : null;
+
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
   const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
@@ -67,7 +89,9 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const separator = validSeparator(value.separator) ? value.separator : DEFAULT_PROMPT_CONFIGURATION.separator;
 
   if (!Array.isArray(value.modules)) {
-    return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), placement, composerLayout, spacing, gap, separator};
+    return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
+      nmsh: {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true, endStyle, palette: 'lavender'},
+      starship: {configPath: starshipConfigPath}, placement, composerLayout, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -90,7 +114,9 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.push(module);
   }
 
-  return {placement, composerLayout, modules, separator, spacing, gap};
+  return {provider, onboardingComplete: value.onboardingComplete === true,
+    nmsh: {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true, endStyle, palette: 'lavender'},
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {
@@ -99,6 +125,14 @@ export function loadPromptConfiguration(path = promptConfigurationPath()): Promp
   } catch {
     return structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   }
+}
+
+export function savePromptConfiguration(configuration: PromptConfiguration, path = promptConfigurationPath()): void {
+  mkdirSync(dirname(path), {recursive: true, mode: 0o700});
+  const normalized = normalizePromptConfiguration(configuration);
+  const temporary = `${path}.${process.pid}.tmp`;
+  writeFileSync(temporary, `${JSON.stringify(normalized, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
+  renameSync(temporary, path);
 }
 
 export function hasVisibleContextModule(

@@ -8,6 +8,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
+  {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
@@ -20,6 +21,7 @@ export const slashCommands: readonly SlashCommand[] = [
 export type ParsedSlashCommand =
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
+  | {kind: 'prompt'}
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
   | {kind: 'version'}
@@ -34,6 +36,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
+  if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
