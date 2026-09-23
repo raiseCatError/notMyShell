@@ -6,7 +6,6 @@ export const PASTE_ATOM_MIN_CHARACTERS = 512;
 interface PasteAtom {
   kind: 'pasteAtom';
   source: string;
-  label: string;
 }
 
 type EditorToken = string | PasteAtom;
@@ -20,8 +19,10 @@ function tokenSource(token: EditorToken): string {
   return typeof token === 'string' ? token : token.source;
 }
 
-function tokenDisplay(token: EditorToken): string {
-  return typeof token === 'string' ? token : token.label;
+function atomLabel(atom: PasteAtom, number: number): string {
+  const lineCount = normalizedText(atom.source).split('\n').length;
+  const lines = `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`;
+  return `[Text #${number} · ${lines}]`;
 }
 
 function normalizedText(value: string): string {
@@ -39,7 +40,8 @@ export class CommandEditor {
   }
 
   get displayText(): string {
-    return this.characters.map(tokenDisplay).join('');
+    let atomNumber = 0;
+    return this.characters.map(token => typeof token === 'string' ? token : atomLabel(token, ++atomNumber)).join('');
   }
 
   get cursorIndex(): number {
@@ -57,8 +59,10 @@ export class CommandEditor {
   get displayPasteAtoms(): DisplayPasteAtom[] {
     const atoms: DisplayPasteAtom[] = [];
     let displayIndex = 0;
+    let atomNumber = 0;
     for (const token of this.characters) {
-      const length = graphemes(tokenDisplay(token)).length;
+      const display = typeof token === 'string' ? token : atomLabel(token, ++atomNumber);
+      const length = graphemes(display).length;
       if (typeof token !== 'string') atoms.push({start: displayIndex, end: displayIndex + length});
       displayIndex += length;
     }
@@ -127,8 +131,7 @@ export class CommandEditor {
       return;
     }
 
-    const lineLabel = `${lineCount} ${lineCount === 1 ? 'line' : 'lines'}`;
-    const atom: PasteAtom = {kind: 'pasteAtom', source: value, label: `[paste · ${lineLabel}]`};
+    const atom: PasteAtom = {kind: 'pasteAtom', source: value};
     this.characters.splice(this.cursor, 0, atom);
     this.cursor += 1;
     this.ghost = undefined;
@@ -392,7 +395,13 @@ export class CommandEditor {
   }
 
   private displayIndexForTokenIndex(tokenIndex: number): number {
-    return this.characters.slice(0, tokenIndex).reduce((total, token) => total + graphemes(tokenDisplay(token)).length, 0);
+    let total = 0;
+    let atomNumber = 0;
+    for (const token of this.characters.slice(0, tokenIndex)) {
+      const display = typeof token === 'string' ? token : atomLabel(token, ++atomNumber);
+      total += graphemes(display).length;
+    }
+    return total;
   }
 
   private moveVertical(columns: number, direction: -1 | 1): void {

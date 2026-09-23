@@ -34,7 +34,7 @@ The JSON configuration keeps ordered module definitions with `id`, `visible`, `c
 
 ## Rich text paste
 
-Large multiline text-only pastes appear as one editable logical atom. Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O unwraps the atom beside the caret back into editable source. NMSh blocks submission while any atom is folded, so the visual label can never be mistaken for executable input. Once unwrapped, submission uses the original pasted source. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
+Large multiline text-only pastes appear as one editable logical atom, labeled in current editor order (for example, `[Text #1 · 7 lines]`). Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O optionally unwraps the atom beside the caret back into editable source. Enter submits the exact underlying source of every atom in place, together with typed prefix, interstitial, and suffix text; visual labels are presentation-only and never reach zsh. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
 
 ## Local transcript sessions
 
