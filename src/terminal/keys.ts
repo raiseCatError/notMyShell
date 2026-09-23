@@ -1,5 +1,6 @@
 export type Key =
   | {kind: 'text'; value: string}
+  | {kind: 'paste'; value: string}
   | {kind: 'deleteWord' | 'deleteLineBefore' | 'deleteLineAfter' | 'wordLeft' | 'wordRight' | 'selectWordLeft' | 'selectWordRight'} 
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
@@ -88,7 +89,7 @@ export function decodeKeys(input: string): Key[] {
       const contentStart = index + 6;
       const contentEnd = input.indexOf('\u001B[201~', contentStart);
       const end = contentEnd === -1 ? input.length : contentEnd;
-      keys.push({kind: 'text', value: input.slice(contentStart, end).replace(/\r\n?/gu, '\n')});
+      keys.push({kind: 'paste', value: input.slice(contentStart, end)});
       index = contentEnd === -1 ? input.length : contentEnd + 6;
       continue;
     }
@@ -162,7 +163,7 @@ export class KeyDecoder {
           break;
         }
         const pasted = this.pasteBuffer + remaining.slice(0, end);
-        keys.push({kind: 'text', value: pasted.replace(/\r\n?/gu, '\n')});
+        keys.push({kind: 'paste', value: pasted});
         this.pasteBuffer = undefined;
         remaining = remaining.slice(end + 6);
         continue;
