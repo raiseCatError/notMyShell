@@ -27,7 +27,10 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && transcript.records.every(record => record && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
-      && typeof record.outputStartId === 'number')
+      && typeof record.outputStartId === 'number'
+      && (record.historicalContext === undefined
+        || (typeof record.historicalContext.cwd === 'string'
+          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string'))))
     && Array.isArray(transcript.lines)
     && transcript.lines.every(line => Array.isArray(line) && line.every(cell => cell === null
       || (cell !== undefined && typeof cell === 'object' && ('empty' in cell

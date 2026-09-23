@@ -10,7 +10,7 @@ test('transcript store writes private, versioned local archives with determinist
   const directory = await mkdtemp(join(tmpdir(), 'nmsh-session-test-'));
   try {
     const output = new OutputBuffer();
-    output.beginCommand('pwd', ['❯ pwd']);
+    output.beginCommand('pwd', ['❯ pwd'], undefined, {cwd: '/tmp', branch: 'dev'});
     output.write('/tmp/project\n');
     output.complete(0);
     const store = new TranscriptStore(directory);
@@ -30,6 +30,7 @@ test('transcript store writes private, versioned local archives with determinist
     assert.equal(files.length, 1);
     assert.equal(files[0]?.id, archived.id);
     assert.equal(files[0]?.transcript.records[0]?.output, '/tmp/project');
+    assert.deepEqual(files[0]?.transcript.records[0]?.historicalContext, {cwd: '/tmp', branch: 'dev'});
     const raw = JSON.parse(await readFile(join(directory, `${archived.id}.json`), 'utf8')) as {schemaVersion: number};
     assert.equal(raw.schemaVersion, TRANSCRIPT_SCHEMA_VERSION);
     assert.equal((await stat(directory)).mode & 0o777, 0o700);

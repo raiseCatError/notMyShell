@@ -43,6 +43,10 @@ Large multiline text-only pastes appear as one editable logical atom, labeled in
 
 Both `/clear` and `/resume` wait until the foreground command has finished or been interrupted; neither is sent as input to a running command.
 
+## Historical command context
+
+Each submitted command captures its cwd and git branch (when available) as semantic historical metadata. History renders a one-row muted context/divider header before that command; it uses a dedicated archive palette distinct from the active prompt and truncates to the viewport width. The header is presentation metadata, not PTY output, and is excluded from `/copy`. Context snapshots live on structured command records and persist through `/clear`, `/resume`, and restart in transcript schema version 1. Older archives without snapshots remain valid and restore without historical headers.
+
 ## Onboarding
 
 Onboarding configures supported NMSh choices; it does not invent launcher mechanisms. It can be skipped, records completion persistently, and offers placement previews, basic module selection, host/setup guidance, keyboard forwarding help, appearance guidance, and an autostart preference where the established startup mechanism supports it. It does not run on every launch.
