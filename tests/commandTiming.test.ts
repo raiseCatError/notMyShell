@@ -3,6 +3,13 @@ import {formatDuration, formatLocalTime} from "../src/status/commandTiming.js";
 import assert from 'node:assert/strict';
 
 test('formats short and long durations', () => {
+  assert.equal(formatDuration(0), '<1 ms');
+  assert.equal(formatDuration(0.4), '<1 ms');
+  assert.equal(formatDuration(1), '1 ms');
+  assert.equal(formatDuration(37), '37 ms');
+  assert.equal(formatDuration(999), '999 ms');
+  assert.equal(formatDuration(1000), '1.0s');
+  assert.equal(formatDuration(1240), '1.2s');
   assert.equal(formatDuration(18_440), '18.4s');
   assert.equal(formatDuration(458_000), '7m 38s');
 });

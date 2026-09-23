@@ -28,8 +28,10 @@ Improve NMSh's day-to-day interaction model: safe movement between NMSh and ordi
 | 3 | [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
 | 4 | [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive `/clear` history and resume with `/resume` |
 | 5 | [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run onboarding and appearance configuration |
+| 6 | [#42](https://github.com/raiseCatError/notMyShell/issues/42) | Display sub-second command durations in milliseconds |
+| 7 | [#43](https://github.com/raiseCatError/notMyShell/issues/43) | Muted command block dividers with historical context snapshots |
 
-Issue #9 depends on #8 and the safe-shell/startup foundation. Issues #21 and #22 can proceed independently when their implementation prerequisites are met. A combined human validation issue may be added if useful after implementation.
+Issue #9 depends on #8 and the safe-shell/startup foundation. Issues #21, #22, and #42 can proceed independently when their implementation prerequisites are met. Issue #43 builds on local transcript persistence from #22 and records cwd/branch snapshots as presentation metadata, not copied shell output.
 
 ## Later — Terminal Host Independence
 
