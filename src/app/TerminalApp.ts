@@ -4,6 +4,7 @@ import {CompletionService, type CompletionCandidate} from '../shell/CompletionSe
 import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
+import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
 import {buildContextLine, buildInlineContextPrefix} from '../prompt/prompt.js';
 import {hasVisibleContextModule, loadPromptConfiguration} from '../prompt/configuration.js';
@@ -16,7 +17,7 @@ import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} fr
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
-import {shimmerText} from '../status/shimmer.js';
+import {shimmerText, shimmerTextWithColors} from '../status/shimmer.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
@@ -55,6 +56,7 @@ export class TerminalApp {
     this.historyViewport.latest();
     if (this.running) this.running.cleared = true;
   });
+  private readonly tapActivityObserver = new TapActivityObserver();
   private readonly historyViewport = new HistoryViewport();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
@@ -67,6 +69,8 @@ export class TerminalApp {
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
+  private focusedActivityId?: string;
+  private focusedCommandIndex?: number;
   private passthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
@@ -190,12 +194,13 @@ export class TerminalApp {
         if (localVisibleIndex >= 0) {
           const row = wrapped[viewStart + localVisibleIndex];
           if (row) {
-            if (key.kind === 'mouseClick' && row.commandIndex !== undefined) {
-              // Only toggle if we click specifically on a fold hint
-              if (row.isFoldHint) {
-                this.output.toggleExpanded(row.commandIndex);
-                this.render();
-              }
+            if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
+              this.output.toggleExpanded(row.commandIndex);
+              this.render();
+            }
+            if (key.kind === 'mouseClick' && row.isFoldHint && row.activityId) {
+              this.output.toggleActivityExpanded(row.activityId);
+              this.render();
             }
             if (row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
               this.hoveredLineIndex = row.lineIndex;
@@ -278,7 +283,9 @@ export class TerminalApp {
         this.render();
         return;
       }
-      this.output.toggleMostRelevant(this.focusedLineIndex);
+      if (this.focusedActivityId) this.output.toggleActivityExpanded(this.focusedActivityId);
+      else if (this.focusedCommandIndex !== undefined) this.output.toggleExpanded(this.focusedCommandIndex);
+      else this.output.toggleMostRelevant(this.focusedLineIndex);
       this.render();
       return;
     }
@@ -323,28 +330,43 @@ export class TerminalApp {
     } else if (key.kind === 'focusNext' || key.kind === 'focusPrevious') {
       const dir = key.kind === 'focusNext' ? 1 : -1;
       const {columns} = this.dimensions();
-      const metadataRows = Array.from(this.output.lineTypes.entries())
+      const metadataRows: Array<{lineIndex: number; activityId?: string; commandIndex?: number}> = Array.from(this.output.lineTypes.entries())
         .filter(([, type]) => type === 'metadata')
-        .map(([index]) => index);
+        .map(([lineIndex]) => ({lineIndex}));
 
-      const foldHintRows = this.output.wrapped(columns)
+      const foldHintRows: Array<{lineIndex: number; activityId?: string; commandIndex?: number}> = this.output.wrapped(columns)
         .filter(r => r.isFoldHint && r.lineIndex !== undefined)
-        .map(r => r.lineIndex as number);
+        .map(r => ({lineIndex: r.lineIndex as number, activityId: r.activityId, commandIndex: r.commandIndex}));
 
-      const focusableRows = Array.from(new Set([...metadataRows, ...foldHintRows]))
-        .sort((a, b) => a - b);
+      const seenTargets = new Set<string>();
+      const focusableRows = [...metadataRows, ...foldHintRows]
+        .filter(target => {
+          const key = target.activityId ? `activity:${target.activityId}`
+            : target.commandIndex !== undefined ? `command:${target.commandIndex}` : `line:${target.lineIndex}`;
+          if (seenTargets.has(key)) return false;
+          seenTargets.add(key);
+          return true;
+        })
+        .sort((a, b) => a.lineIndex - b.lineIndex);
 
       if (focusableRows.length > 0) {
-        if (this.focusedLineIndex === undefined) {
-          this.focusedLineIndex = dir === 1 ? focusableRows[0] : focusableRows[focusableRows.length - 1];
+        const matchesFocus = (target: typeof focusableRows[number]) => target.activityId
+          ? target.activityId === this.focusedActivityId
+          : target.commandIndex !== undefined
+            ? target.commandIndex === this.focusedCommandIndex
+            : target.lineIndex === this.focusedLineIndex && this.focusedActivityId === undefined && this.focusedCommandIndex === undefined;
+        const currentIndex = focusableRows.findIndex(matchesFocus);
+        if (currentIndex === -1) {
+          const target = dir === 1 ? focusableRows[0] : focusableRows[focusableRows.length - 1];
+          this.focusedLineIndex = target?.lineIndex;
+          this.focusedActivityId = target?.activityId;
+          this.focusedCommandIndex = target?.commandIndex;
         } else {
-          const currentIndex = focusableRows.indexOf(this.focusedLineIndex);
-          if (currentIndex !== -1) {
-            const nextIndex = (currentIndex + dir + focusableRows.length) % focusableRows.length;
-            this.focusedLineIndex = focusableRows[nextIndex];
-          } else {
-            this.focusedLineIndex = focusableRows[0];
-          }
+          const nextIndex = (currentIndex + dir + focusableRows.length) % focusableRows.length;
+          const target = focusableRows[nextIndex];
+          this.focusedLineIndex = target?.lineIndex;
+          this.focusedActivityId = target?.activityId;
+          this.focusedCommandIndex = target?.commandIndex;
         }
 
         const {columns, rows} = this.dimensions();
@@ -353,7 +375,11 @@ export class TerminalApp {
         const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context), this.promptConfiguration.composerLayout);
 
         const wrapped = this.output.wrapped(columns);
-        const wrappedIndex = wrapped.findIndex(r => r.lineIndex === this.focusedLineIndex);
+        const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
+          ? r.activityId === this.focusedActivityId && r.isFoldHint
+          : this.focusedCommandIndex !== undefined
+            ? r.commandIndex === this.focusedCommandIndex && r.isFoldHint
+            : r.lineIndex === this.focusedLineIndex);
         if (wrappedIndex !== -1) {
           this.historyViewport.resolve(wrapped.length, layout.outputHeight);
           if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + layout.outputHeight) {
@@ -481,6 +507,8 @@ export class TerminalApp {
       }
       this.render();
     }, {cwd: this.shellCwd, branch: contextAtSubmission.branch});
+    this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
+    this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
     this.running = {command, startedAt, interrupted: false, cleared: false, startId};
@@ -688,6 +716,7 @@ export class TerminalApp {
       this.lastOutputTime = Date.now();
       const wasPassthrough = this.passthrough;
       this.output.write(data);
+      this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
         process.stdout.write(data);
       } else {
@@ -708,6 +737,7 @@ export class TerminalApp {
     const command = this.running;
     const completedAt = new Date();
     const elapsed = completedAt.getTime() - command.startedAt;
+    this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     const completedRecord = this.output.complete(exitCode);
     if (!command.cleared) {
       const outputText = completedRecord?.output ?? '';
@@ -901,13 +931,21 @@ export class TerminalApp {
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
       let finalAnsi = row.ansi;
+      if (row.isLiveActivity && row.activityStartedAt !== undefined) {
+        finalAnsi = `${shimmerTextWithColors(row.plain, Date.now() - row.activityStartedAt, false,
+          {red: 112, green: 120, blue: 132}, {red: 218, green: 222, blue: 228})}${RESET}`;
+      }
       const applyBg = (bg: string) => {
         return `${bg}${finalAnsi.replaceAll('\u001B[0m', '\u001B[0m' + bg)}${bg}\u001B[K${RESET}`;
       };
 
       if (row.isFoldHint) {
         const isHovered = this.hoveredLineIndex === row.lineIndex;
-        const isFocused = this.focusedLineIndex === row.lineIndex;
+        const isFocused = row.activityId
+          ? this.focusedActivityId === row.activityId
+          : row.commandIndex !== undefined
+            ? this.focusedCommandIndex === row.commandIndex
+            : this.focusedLineIndex === row.lineIndex;
         if (isHovered || isFocused) {
           finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
           const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;

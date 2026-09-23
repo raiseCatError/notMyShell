@@ -5,6 +5,7 @@ import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, truncateText} from '../util/text.js';
+import {formatDuration} from '../status/commandTiming.js';
 
 const ARCHIVED_CONTEXT = foreground({red: 139, green: 141, blue: 157});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
@@ -12,6 +13,18 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 export interface HistoricalContextSnapshot {
   cwd: string;
   branch?: string;
+}
+
+export interface SecondaryActivity {
+  id: string;
+  kind: 'tap-stream';
+  label: string;
+  startedAt: number;
+  completedAt?: number;
+  status: 'running' | 'completed' | 'failed';
+  outputStartId: number;
+  outputEndId: number;
+  expanded: boolean;
 }
 
 export interface CompletedCommand {
@@ -25,6 +38,7 @@ export interface CompletedCommand {
   expanded?: boolean;
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
+  activities?: SecondaryActivity[];
 }
 
 export interface OutputTranscript {
@@ -52,6 +66,7 @@ export class OutputBuffer {
     start: number;
     outputStart: number;
     historicalContext?: HistoricalContextSnapshot;
+    activities: SecondaryActivity[];
   };
   private classifier?: CommandClassifier;
 
@@ -71,6 +86,7 @@ export class OutputBuffer {
       records: this.completed.map(record => ({
         ...record,
         historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
+        activities: record.activities?.map(activity => ({...activity})),
       })),
       lines: this.parser.snapshot(),
       visualGaps: [...this.visualGaps],
@@ -83,6 +99,7 @@ export class OutputBuffer {
     this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({
       ...record,
       historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
+      activities: record.activities?.map(activity => ({...activity})),
     })));
     this.visualGaps.clear();
     transcript.visualGaps.forEach(index => this.visualGaps.add(index));
@@ -124,7 +141,7 @@ export class OutputBuffer {
       this.parser.addLine(formattedLines[i]);
     }
     if (historicalContext) this.historicalContexts.set(startId, {...historicalContext});
-    this.active = {command, start: startId, outputStart: startId + formattedLines.length, historicalContext};
+    this.active = {command, start: startId, outputStart: startId + formattedLines.length, historicalContext, activities: []};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
     return startId;
   }
@@ -133,6 +150,24 @@ export class OutputBuffer {
     for (let i = 0; i < formattedLines.length; i++) {
       this.parser.replaceLine(startId + i, formattedLines[i] ?? '');
     }
+  }
+
+  get activeOutputStartId(): number | undefined {
+    return this.active?.outputStart;
+  }
+
+  setActiveActivities(activities: SecondaryActivity[]): void {
+    if (!this.active) return;
+    const previous = new Map(this.active.activities.map(activity => [activity.id, activity]));
+    this.active.activities = activities.map(activity => {
+      const prior = previous.get(activity.id);
+      return {
+        ...activity,
+        expanded: prior && !(prior.status === 'running' && activity.status !== 'running')
+          ? prior.expanded
+          : activity.expanded,
+      };
+    });
   }
 
   write(data: string): void {
@@ -152,7 +187,7 @@ export class OutputBuffer {
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
     let expanded = true;
-    if (mode === 'FOLDED') expanded = false;
+    if (mode === 'FOLDED' || this.active.activities.length > 0) expanded = false;
 
     const record: CompletedCommand = {
       command: this.active.command,
@@ -165,6 +200,9 @@ export class OutputBuffer {
       expanded,
       mode,
       historicalContext: this.active.historicalContext ? {...this.active.historicalContext} : undefined,
+      activities: this.active.activities.length > 0
+        ? this.active.activities.map(activity => ({...activity}))
+        : undefined,
     };
     this.completed.unshift(record);
     this.active = undefined;
@@ -210,6 +248,11 @@ export class OutputBuffer {
     const lines = this.parser.allLines();
     const result: WrappedRow[] = [];
     let skipUntil = -1;
+    const activitiesByStart = new Map<number, SecondaryActivity>();
+    for (const activity of [
+      ...this.completed.flatMap(command => command.activities ?? []),
+      ...(this.active?.activities ?? []),
+    ]) activitiesByStart.set(activity.outputStartId, activity);
 
     for (let i = 0; i < lines.length; i++) {
       if (i < skipUntil) continue;
@@ -224,34 +267,75 @@ export class OutputBuffer {
       const cmd = this.completed.find(c => c.outputStartId === i);
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
         const hiddenLines = cmd.endId - cmd.outputStartId;
-        // Commands are foldable if they have more than 10 lines, or were explicitly collapsed
-        const isFoldable = hiddenLines > 10 || !cmd.expanded;
-        if (isFoldable) {
+        // Activity-bearing parents use their lifecycle row as the disclosure control below.
+        const hasActivities = Boolean(cmd.activities?.length);
+        if (hasActivities) {
           if (!cmd.expanded) {
-            const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
-            const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
-            result.push({
-              ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
-            });
             skipUntil = cmd.endId;
             continue;
-          } else {
-            const plain = `  ⇣ Collapse output  (Ctrl+O to hide ${hiddenLines} lines)`;
-            const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
-            result.push({
-              ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
-            });
-            // Don't skip, let the output render below this hint
+          }
+        } else {
+          const isFoldable = hiddenLines > 10 || !cmd.expanded;
+          if (isFoldable) {
+            if (!cmd.expanded) {
+              const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
+              const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+              result.push({
+                ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
+              });
+              skipUntil = cmd.endId;
+              continue;
+            } else {
+              const plain = `  ⇣ Collapse output  (Ctrl+O to hide ${hiddenLines} lines)`;
+              const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
+              result.push({
+                ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
+              });
+              // Don't skip, let the output render below this hint
+            }
           }
         }
       }
 
-      const wrappedRows = wrapStyledLine(lines[i], width);
+      const activity = activitiesByStart.get(i);
+      if (activity) {
+        if (this.active) {
+          // During execution the activity owns this source range; render it in
+          // the live chronological timeline below instead of duplicating it.
+          skipUntil = Math.max(skipUntil, activity.outputEndId);
+          continue;
+        } else {
+          result.push(renderActivityRow(activity, width));
+          if (activity.expanded) appendActivityOutput(result, lines, activity, width);
+          skipUntil = Math.max(skipUntil, activity.outputEndId);
+          continue;
+        }
+      }
+
+      const parentDisclosure = this.completed.find(command => command.activities?.length && command.endId === i);
+      const wrappedRows = wrapStyledLine(lines[i], parentDisclosure ? Math.max(1, width - 2) : width);
       const cmdIndex = this.completed.findIndex(c => c.startId <= i);
+      if (parentDisclosure && wrappedRows.length > 0) {
+        const finalRow = wrappedRows[wrappedRows.length - 1];
+        if (finalRow) {
+          const disclosure = parentDisclosure.expanded ? '⌄' : '›';
+          finalRow.ansi = `${finalRow.ansi.replace(/\u001B\[0m$/u, '')}${foreground(UI_COLORS.secondary)} ${disclosure}\u001B[0m`;
+          finalRow.plain += ` ${disclosure}`;
+          finalRow.isFoldHint = true;
+          finalRow.commandIndex = this.completed.indexOf(parentDisclosure);
+        }
+      }
       for (const row of wrappedRows) {
         row.lineIndex = i;
-        if (cmdIndex !== -1) row.commandIndex = cmdIndex;
+        if (parentDisclosure) row.commandIndex = this.completed.indexOf(parentDisclosure);
+        else if (cmdIndex !== -1) row.commandIndex = cmdIndex;
         result.push(row);
+      }
+    }
+    if (this.active) {
+      for (const activity of this.active.activities) {
+        result.push(renderActivityRow(activity, width));
+        if (activity.expanded) appendActivityOutput(result, lines, activity, width);
       }
     }
     return result;
@@ -264,6 +348,15 @@ export class OutputBuffer {
     }
   }
 
+  toggleActivityExpanded(activityId: string): void {
+    const activities = [
+      ...this.completed.flatMap(command => command.activities ?? []),
+      ...(this.active?.activities ?? []),
+    ];
+    const activity = activities.find(candidate => candidate.id === activityId);
+    if (activity) activity.expanded = !activity.expanded;
+  }
+
   toggleMostRelevant(focusedLineIndex?: number): void {
     let cmdIndex = -1;
     if (focusedLineIndex !== undefined) {
@@ -273,6 +366,40 @@ export class OutputBuffer {
     }
     if (cmdIndex !== -1) {
       this.toggleExpanded(cmdIndex);
+    }
+  }
+}
+
+function renderActivityRow(activity: SecondaryActivity, width: number): WrappedRow {
+  const running = activity.status === 'running';
+  const elapsed = Math.max(0, (activity.completedAt ?? Date.now()) - activity.startedAt);
+  const duration = formatDuration(elapsed);
+  const disclosure = activity.expanded ? '⌄' : '›';
+  const status = activity.status === 'failed' ? 'Failed' : 'Completed';
+  const summary = running
+    ? `  ◌ ${activity.label} · ${duration}`
+    : `  ${activity.status === 'failed' ? '✗' : '✓'} ${activity.label} · ${status} · ${duration}`;
+  const text = `${truncateText(summary, Math.max(0, width - displayWidth(` ${disclosure}`)))} ${disclosure}`;
+  return {
+    ansi: `${foreground(running ? UI_COLORS.secondary : UI_COLORS.subtle)}${text}\u001B[0m`,
+    plain: text,
+    lineIndex: activity.outputStartId,
+    activityId: activity.id,
+    activityStartedAt: activity.startedAt,
+    isLiveActivity: running,
+    isFoldHint: true,
+  };
+}
+
+function appendActivityOutput(result: WrappedRow[], lines: ReturnType<AnsiOutputParser['allLines']>, activity: SecondaryActivity, width: number): void {
+  for (let lineIndex = activity.outputStartId; lineIndex < Math.min(activity.outputEndId, lines.length); lineIndex += 1) {
+    for (const row of wrapStyledLine(lines[lineIndex] ?? [], Math.max(1, width - 4))) {
+      result.push({
+        ansi: `    ${row.ansi}`,
+        plain: `    ${row.plain}`,
+        lineIndex,
+        activityId: activity.id,
+      });
     }
   }
 }
