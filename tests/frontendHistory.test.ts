@@ -8,9 +8,9 @@ test('completed activity becomes history without contaminating copy payload', ()
   output.beginCommand('printf hello', ['printf hello']);
   output.write('hello\n');
   const record = output.complete(0);
-  output.addHistoryLine('✻ Meowed for 1.0s · done 23:48');
+  output.addHistoryLine('✻ Completed · 1.0s · 23:48');
   assert.equal(record?.output, 'hello');
-  assert.ok(output.wrapped(80).some(row => row.plain.includes('✻ Meowed')));
+  assert.ok(output.wrapped(80).some(row => row.plain.includes('Completed')));
 });
 
 test('frontend copy command and result are permanent history but not shell records', () => {

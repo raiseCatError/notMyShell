@@ -17,7 +17,7 @@ import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {shimmerText} from '../status/shimmer.js';
-import {ActivitySelector, completedActivity, liveActivityParts, type ActivityVerbPair} from '../status/activity.js';
+import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
 import {calculateScreenLayout} from './layout.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
@@ -50,14 +50,13 @@ export class TerminalApp {
     if (this.running) this.running.cleared = true;
   });
   private readonly historyViewport = new HistoryViewport();
-  private readonly activitySelector = new ActivitySelector();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…'};
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; activity: ActivityVerbPair; startId: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private passthrough = false;
@@ -422,7 +421,7 @@ export class TerminalApp {
     });
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, activity: this.activitySelector.next(), startId};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId};
     this.activityAnimationNow = startedAt;
 
     // Initial static heuristic, but dynamic can override
@@ -597,9 +596,10 @@ export class TerminalApp {
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       this.output.addHistoryLine(`${ERROR}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     } else if (!command.cleared) {
-      const parts = completedActivity(command.activity, elapsed, completedAt);
+      const parts = completedActivity(command.command, elapsed, completedAt, exitCode, command.interrupted);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
-      this.output.addHistoryLine(`${SUCCESS}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
+      const rowStyle = (command.interrupted || exitCode !== 0) ? ERROR : SUCCESS;
+      this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
     if (this.passthrough) {
@@ -902,7 +902,7 @@ export class TerminalApp {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
-    const parts = liveActivityParts(this.running.activity, elapsed);
+    const parts = liveActivityParts(this.running.command, elapsed);
     return `${shimmerText(parts.phrase, elapsed, isActive)}${SECONDARY}${parts.duration}${RESET}`;
   }
 

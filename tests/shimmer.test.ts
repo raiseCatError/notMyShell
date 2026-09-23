@@ -29,9 +29,9 @@ test('shimmer interpolates RGB without changing string width', () => {
 
 test('completed status text is static and retains completion time', () => {
   const completedAt = new Date(2026, 8, 21, 22, 51);
-  assert.deepEqual(completedActivity({active: 'Meowing', complete: 'Meowed'}, 18_700, completedAt), {
-    main: `${GLYPHS.success} Meowed for 18.7s`,
-    detail: ' · done 22:51',
+  assert.deepEqual(completedActivity('npm test', 18_700, completedAt, 0, false), {
+    main: `${GLYPHS.success} Completed · 18.7s`,
+    detail: ' · 22:51',
   });
   assert.ok(!completedStatus('failure', 18_700, completedAt, 1).main.includes('\u001B'));
 });
