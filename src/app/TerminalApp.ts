@@ -39,6 +39,7 @@ const ERROR = foreground(UI_COLORS.failure);
 const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
+const PASTE_ATOM_BACKGROUND = '\u001B[48;2;63;65;82m';
 const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
@@ -155,8 +156,8 @@ export class TerminalApp {
   private handleKey(key: Key): void {
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
-      const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
-      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
+      const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
       const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context));
       if (key.y && key.y <= layout.outputHeight) {
         const wrapped = this.output.wrapped(columns);
@@ -255,6 +256,10 @@ export class TerminalApp {
       return;
     }
     if (key.kind === 'toggleDetails') {
+      if (!this.running && this.editor.unwrapAdjacentPasteAtom()) {
+        this.render();
+        return;
+      }
       this.output.toggleMostRelevant(this.focusedLineIndex);
       this.render();
       return;
@@ -280,8 +285,8 @@ export class TerminalApp {
       return;
     }
 
-    const suggestions = slashSuggestions(this.editor.text);
-    const isSlash = this.editor.text.startsWith('/');
+    const suggestions = this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
+    const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
     if (key.kind === 'up' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
     } else if (key.kind === 'down' && suggestions.length > 0) {
@@ -293,6 +298,9 @@ export class TerminalApp {
       return;
     } else if (key.kind === 'text') {
       this.editor.insert(key.value);
+      this.selectedSuggestion = 0;
+    } else if (key.kind === 'paste') {
+      this.editor.insertPaste(key.value);
       this.selectedSuggestion = 0;
     } else if (key.kind === 'focusNext' || key.kind === 'focusPrevious') {
       const dir = key.kind === 'focusNext' ? 1 : -1;
@@ -322,8 +330,8 @@ export class TerminalApp {
         }
 
         const {columns, rows} = this.dimensions();
-        const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
-        const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
+        const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+      const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
         const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context));
 
         const wrapped = this.output.wrapped(columns);
@@ -375,14 +383,19 @@ export class TerminalApp {
         }
         this.editor.clear();
       } else {
-        void this.submit();
+        if (this.editor.hasPasteAtoms) {
+          this.output.addFrontendInteraction(this.editor.text, 'Unwrap the large paste with Ctrl+O before submitting it.', INFO);
+          this.render();
+        } else {
+          void this.submit();
+        }
       }
     }
   }
 
 
   private async fetchSuggestions(): Promise<void> {
-    if (this.running || this.editor.text.startsWith('/')) {
+    if (this.running || this.editor.hasPasteAtoms || this.editor.text.startsWith('/')) {
       this.shellSuggestions = [];
       return;
     }
@@ -411,6 +424,11 @@ export class TerminalApp {
   }
 
   private async submit(): Promise<void> {
+    if (this.editor.hasPasteAtoms) {
+      this.output.addFrontendInteraction(this.editor.text, 'Unwrap the large paste with Ctrl+O before submitting it.', INFO);
+      this.render();
+      return;
+    }
     const command = this.editor.text;
     this.editor.clear();
     if (!command.trim()) return;
@@ -574,7 +592,7 @@ export class TerminalApp {
 
   private showHelp(command: string): void {
     const summary = slashCommands.map(item => `${item.name} — ${item.description}`).join(' · ');
-    const helpText = `${summary}\n\n${INFO}✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
+    const helpText = `${summary}\n\n${INFO}✻ Large multiline paste is one editable atom. Press Ctrl+O beside it to unwrap the original text.\n✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
     this.output.addFrontendInteraction(command, helpText, ACCENT);
   }
 
@@ -638,8 +656,8 @@ export class TerminalApp {
 
   private scroll(direction: -1 | 1): void {
     const {columns, rows} = this.dimensions();
-    const input = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
-    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : slashSuggestions(this.editor.text).length);
+    const input = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
       input.allRows.length,
@@ -657,8 +675,8 @@ export class TerminalApp {
 
   private scrollLines(amount: number): void {
     const {columns, rows} = this.dimensions();
-    const input = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
-    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : slashSuggestions(this.editor.text).length);
+    const input = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
+    const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
       input.allRows.length,
@@ -746,16 +764,16 @@ export class TerminalApp {
     void this.fetchSuggestions();
     if (this.stopped || this.passthrough) return;
     const {columns, rows} = this.dimensions();
-    const isSlash = this.editor.text.startsWith('/');
+    const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
 
     let availableSuggestions: any[] = [];
     if (!this.running) {
-      if (this.editor.text.startsWith('/history ')) {
+      if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
         const q = this.editor.text.substring(9).toLowerCase();
         const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
         availableSuggestions = matches.slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
       } else if (isSlash) {
-        availableSuggestions = slashSuggestions(this.editor.text);
+        availableSuggestions = this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
       } else {
         availableSuggestions = this.shellSuggestions;
       }
@@ -763,8 +781,8 @@ export class TerminalApp {
 
     const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
     const promptLine = buildContextLine(this.context, columns, this.promptConfiguration);
-    this.editor.ghost = this.historyService.suggest(this.editor.text);
-    const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
+    this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
+    const fullInput = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns);
     const layout = calculateScreenLayout(
       rows,
       fullInput.allRows.length,
@@ -775,7 +793,7 @@ export class TerminalApp {
       this.promptConfiguration.placement,
       hasVisibleContextModule(this.promptConfiguration, this.context),
     );
-    const input = layoutInput(this.editor.text, this.editor.cursorIndex, columns, layout.inputHeight);
+    const input = layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns, layout.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
     const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, layout.suggestionCount);
     const outputHeight = layout.outputHeight;
@@ -849,9 +867,10 @@ export class TerminalApp {
     if (layout.showComposerTopBorder) frameRows.push(`${SEPARATOR}${repeatToWidth('─', columns)}${RESET}`);
     if (layout.showPrompt) frameRows.push(promptLine);
     const SELECTION_BG = background(UI_COLORS.selection);
-    const sel = this.editor.selection;
+    const sel = this.editor.displaySelection;
 
-    const inputChars = graphemes(this.editor.text);
+    const inputChars = graphemes(this.editor.displayText);
+    const pasteAtoms = this.editor.displayPasteAtoms;
     const tokens = this.highlighter.tokenize(inputChars, this.semanticService.cache);
     const charColors = new Array(inputChars.length).fill(PRIMARY);
 
@@ -886,15 +905,18 @@ export class TerminalApp {
       for (let i = 0; i < glyphsInRow.length; i++) {
         const globalIndex = row.charStart + i;
         const isSelected = sel && globalIndex >= sel.start && globalIndex < sel.end;
+        const isPasteAtom = pasteAtoms.some(atom => globalIndex >= atom.start && globalIndex < atom.end);
         const color = charColors[globalIndex] ?? PRIMARY;
         if (isSelected) {
           textStyled += `${SELECTION_BG}${color}${glyphsInRow[i]}${RESET}`;
+        } else if (isPasteAtom) {
+          textStyled += `${PASTE_ATOM_BACKGROUND}${SECONDARY}${glyphsInRow[i]}${RESET}`;
         } else {
           textStyled += `${color}${glyphsInRow[i]}${RESET}`;
         }
       }
       let suffix = '';
-      if (this.editor.ghost && this.editor.cursorIndex === this.editor.text.length && row === input.rows[input.rows.length - 1]) {
+      if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
       frameRows.push(truncateAnsi(`${prefix}${textStyled}${suffix}`, columns));

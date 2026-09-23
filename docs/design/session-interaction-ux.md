@@ -34,7 +34,7 @@ The JSON configuration keeps ordered module definitions with `id`, `visible`, `c
 
 ## Rich text paste
 
-Large multiline text-only pastes may appear as one editable logical atom. Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; unwrap restores its original editable source. Submission uses the exact pasted source, never the visual label. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
+Large multiline text-only pastes appear as one editable logical atom. Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O unwraps the atom beside the caret back into editable source. NMSh blocks submission while any atom is folded, so the visual label can never be mistaken for executable input. Once unwrapped, submission uses the original pasted source. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
 
 ## Local transcript sessions
 

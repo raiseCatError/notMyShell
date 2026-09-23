@@ -48,15 +48,81 @@ test('Ctrl-J and reported Shift-Enter insert newlines while carriage return subm
 });
 
 test('bracketed multiline paste is one insertion and survives split input chunks', () => {
-  assert.deepEqual(decodeKeys('\u001B[200~one\r\ntwo\u001B[201~'), [{kind: 'text', value: 'one\ntwo'}]);
+  assert.deepEqual(decodeKeys('\u001B[200~one\r\ntwo\u001B[201~'), [{kind: 'paste', value: 'one\r\ntwo'}]);
   const decoder = new KeyDecoder();
   assert.deepEqual(decoder.push('\u001B[200~one\n'), []);
-  assert.deepEqual(decoder.push('two\u001B[201~'), [{kind: 'text', value: 'one\ntwo'}]);
+  assert.deepEqual(decoder.push('two\u001B[201~'), [{kind: 'paste', value: 'one\ntwo'}]);
   assert.deepEqual(decoder.push('x\u001B[200~a\nb\u001B[201~y'), [
     {kind: 'text', value: 'x'},
-    {kind: 'text', value: 'a\nb'},
+    {kind: 'paste', value: 'a\nb'},
     {kind: 'text', value: 'y'},
   ]);
+});
+
+test('small pasted text stays editable and normalizes line endings', () => {
+  const editor = new CommandEditor();
+  editor.insert('prefix ');
+  editor.insertPaste('one\r\ntwo');
+  assert.equal(editor.hasPasteAtoms, false);
+  assert.equal(editor.text, 'prefix one\ntwo');
+  editor.moveLeft();
+  editor.backspace();
+  assert.equal(editor.text, 'prefix one\nto');
+});
+
+test('large multiline paste is displayed as one atomic label and preserves exact source', () => {
+  const editor = new CommandEditor();
+  const source = 'alpha\r\nbeta\ngamma\rdelta';
+  editor.insert('run ');
+  editor.insertPaste(source);
+  editor.insert(' tail');
+  assert.equal(editor.hasPasteAtoms, true);
+  assert.equal(editor.text, `run ${source} tail`);
+  assert.equal(editor.displayText, 'run [paste · 4 lines] tail');
+  assert.deepEqual(editor.displayPasteAtoms, [{start: 4, end: 21}]);
+  editor.moveLeft();
+  assert.equal(editor.cursorIndex, 9);
+  editor.moveRight();
+  assert.equal(editor.cursorIndex, 10);
+  const adjacent = new CommandEditor();
+  adjacent.insertPaste(source);
+  adjacent.backspace();
+  assert.equal(adjacent.text, '');
+  const deleteAdjacent = new CommandEditor();
+  deleteAdjacent.insertPaste(source);
+  deleteAdjacent.moveBufferHome();
+  deleteAdjacent.delete();
+  assert.equal(deleteAdjacent.text, '');
+});
+
+test('delete removes a paste atom whole and Ctrl+O unwraps the original editable source', () => {
+  const source = 'one\r\ntwo\nthree\nfour';
+  const deleted = new CommandEditor();
+  deleted.insertPaste(source);
+  deleted.moveBufferHome();
+  deleted.delete();
+  assert.equal(deleted.text, '');
+
+  const editor = new CommandEditor();
+  editor.insertPaste(source);
+  assert.equal(editor.unwrapAdjacentPasteAtom(), true);
+  assert.equal(editor.hasPasteAtoms, false);
+  assert.equal(editor.text, source);
+  editor.backspace();
+  assert.equal(editor.text, 'one\r\ntwo\nthree\nfou');
+});
+
+test('word movement and deletion do not split a large paste atom', () => {
+  const source = 'one\ntwo\nthree\nfour';
+  const editor = new CommandEditor();
+  editor.insertPaste(source);
+  editor.wordLeft();
+  assert.equal(editor.cursorIndex, 0);
+  editor.wordRight();
+  assert.equal(editor.cursorIndex, 1);
+  editor.moveBufferEnd();
+  editor.deleteWord();
+  assert.equal(editor.text, '');
 });
 
 test('input grows upward, caps at eight rows, and preserves output space', () => {

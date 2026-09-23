@@ -21,6 +21,7 @@ import {copyStats, copyFeedback} from '../src/clipboard/clipboard.js';
 // ---------------------------------------------------------------------------
 function dispatch(editor: CommandEditor, key: ReturnType<typeof decodeKeys>[number]): void {
   if (key.kind === 'text') editor.insert(key.value);
+  else if (key.kind === 'paste') editor.insertPaste(key.value);
   else if (key.kind === 'left') editor.moveLeft();
   else if (key.kind === 'right') editor.moveRight();
   else if (key.kind === 'selectLeft') editor.selectLeft();
