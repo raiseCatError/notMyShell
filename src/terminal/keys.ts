@@ -4,10 +4,11 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown'};
+  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'focusPrevious' | 'focusNext'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  ['\u001B[Z', 'focusPrevious'],
   ['\u001B[27;2;13~', 'newline'],
   ['\u001B[13;2u', 'newline'],
   ['\u001B\r', 'newline'], // macOS Terminal Shift+Enter
@@ -92,8 +93,11 @@ export function decodeKeys(input: string): Key[] {
     const sgrMatch = /^\u001B\[<(\d+);(\d+);(\d+)([mM])/.exec(input.slice(index));
     if (sgrMatch) {
       const button = Number(sgrMatch[1]);
-      if (button === 64) keys.push({kind: 'wheelUp'} as Key);
-      else if (button === 65) keys.push({kind: 'wheelDown'} as Key);
+      const x = Number(sgrMatch[2]);
+      const y = Number(sgrMatch[3]);
+      if (button === 64) keys.push({kind: 'wheelUp'});
+      else if (button === 65) keys.push({kind: 'wheelDown'});
+      else if (button === 35 || button === 32) keys.push({kind: 'mouseMove', x, y});
       index += sgrMatch[0].length;
       continue;
     }
