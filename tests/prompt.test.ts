@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildContextLine, buildInlineContextPrefix, buildPromptLine, NATIVE_LAVENDER_RAMP, nativePaletteColor, renderedModules} from '../src/prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildPromptLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, renderedModules} from '../src/prompt/prompt.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {homedir} from 'node:os';
@@ -14,19 +14,21 @@ const blocks = [
   {text: 'B', foreground: {red: 250, green: 250, blue: 250}, background: B},
 ];
 
-test('NMSh is the default provider with an eight-step darker lavender ramp that wraps', () => {
+test('NMSh is the default provider and Lavender Native is a role-based lavender/violet family', () => {
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.provider, 'nmsh');
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.gapEnabled, true);
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.endStyle, 'fadeWedge');
-  assert.equal(NATIVE_LAVENDER_RAMP.length, 8);
-  assert.deepEqual(nativePaletteColor(8), NATIVE_LAVENDER_RAMP[0]);
-  assert.deepEqual(nativePaletteColor(9), NATIVE_LAVENDER_RAMP[1]);
-  assert.ok(NATIVE_LAVENDER_RAMP[0]!.red > NATIVE_LAVENDER_RAMP[7]!.red);
-  assert.ok(NATIVE_LAVENDER_RAMP[7]!.blue > NATIVE_LAVENDER_RAMP[7]!.red, 'darkest shade retains violet pigment');
-  assert.ok(NATIVE_LAVENDER_RAMP.every(color => color.red + color.green + color.blue > 150));
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.palette, 'lavender');
+  assert.deepEqual(NMSH_BRAND_LAVENDER, {red: 166, green: 124, blue: 243}, '#A67CF3');
+  const lavender = NATIVE_PROMPT_THEMES.lavender;
+  assert.deepEqual(lavender.colors('project').background, NMSH_BRAND_LAVENDER);
+  const roles = ['project', 'cwd', 'gitBranch', 'node', 'go', 'python', 'docker'] as const;
+  const backgrounds = roles.map(role => lavender.colors(role).background);
+  assert.equal(new Set(backgrounds.map(color => JSON.stringify(color))).size, roles.length, 'modules use related shades, not one repeated color');
+  assert.ok(backgrounds.every(color => color.blue > color.green && color.red > color.green), 'every shade stays in the violet family');
 });
 
-test('conditional modules receive a continuous ramp by visible order', () => {
+test('conditional modules take their role colors in visible order', () => {
   const config = normalizePromptConfiguration({modules: [
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
@@ -35,7 +37,10 @@ test('conditional modules receive a continuous ramp by visible order', () => {
   ]});
   const modules = renderedModules({cwd: '/tmp/work', project: 'repo', exitStatus: 0}, config);
   assert.equal(modules.length, 2);
-  assert.deepEqual(modules.map(module => module.background), NATIVE_LAVENDER_RAMP.slice(0, 2));
+  assert.deepEqual(modules.map(module => module.background), [
+    NATIVE_PROMPT_THEMES.lavender.colors('project').background,
+    NATIVE_PROMPT_THEMES.lavender.colors('cwd').background,
+  ]);
 });
 
 test('native open uses U+E0D7 and gap-enabled segments close and reopen over neutral background', () => {

@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {readBuildIdentity} from '../src/buildInfo.js';
 import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js';
-import {createWelcomeSnapshot, renderWelcome} from '../src/output/Welcome.js';
+import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, WELCOME_BLINK_GAPS_MS, welcomeBlinkDelay} from '../src/output/Welcome.js';
 import {HistoryViewport} from '../src/output/viewport.js';
 import {TranscriptStore} from '../src/sessions/TranscriptStore.js';
 import {displayWidth} from '../src/util/text.js';
@@ -54,12 +54,13 @@ test('welcome snapshots cwd and renders a compact full-body cat with square eyes
   assert.match(rows[2]!.plain, /~\/Projects\/work/u);
 });
 
-test('welcome wordmark spells notMyShell with only My in the project accent and a gray version', () => {
+test('welcome wordmark spells notMyShell with only My in brand lavender #A67CF3 and a gray version', () => {
   const rows = renderWelcome(createWelcomeSnapshot(identity, '/tmp'), 80);
   assert.match(rows[0]!.plain, / {2}notMyShell v0\.2\.0$/u);
   assert.doesNotMatch(rows.map(row => row.plain).join('\n'), /NMSh|NMSH|nmsh/u);
   const primary = '38;2;242;240;236m';
-  assert.ok(rows[0]!.ansi.includes(`${primary}not\u001B[38;2;172;252;115mMy\u001B[${primary}Shell`));
+  assert.ok(rows[0]!.ansi.includes(`${primary}not\u001B[38;2;166;124;243mMy\u001B[${primary}Shell`));
+  assert.doesNotMatch(rows[0]!.ansi, /172;252;115/u, 'the mistaken green is gone');
   assert.match(rows[0]!.ansi, /38;2;125;133;144m v0\.2\.0/u);
   assert.match(rows[1]!.plain, /build abcdef0 · dev$/u);
 });
@@ -137,4 +138,45 @@ test('/clear begins a new welcome at live cwd; /resume restores the archived one
     app['session'].kill();
     await rm(directory, {recursive: true, force: true});
   }
+});
+
+test('cat blink changes only the eye cells: same rows, widths, and metadata', () => {
+  const snapshot = createWelcomeSnapshot(identity, '/tmp');
+  const open = renderWelcome(snapshot, 80);
+  const blink = renderWelcome(snapshot, 80, 'blink');
+  assert.equal(blink.length, open.length);
+  for (let index = 0; index < open.length; index += 1) {
+    assert.equal(displayWidth(blink[index]!.plain), displayWidth(open[index]!.plain), `row ${index} width`);
+    if (index !== 1) assert.equal(blink[index]!.plain, open[index]!.plain, `row ${index} unchanged`);
+  }
+  const changed = [...open[1]!.plain].flatMap((glyph, column) => glyph === [...blink[1]!.plain][column] ? [] : [column]);
+  assert.deepEqual(changed, [2, 4], 'only the two eye cells change');
+  assert.equal([...blink[1]!.plain][2], '▂', 'closed lid');
+  assert.match(blink[1]!.ansi, /38;2;22;18;32m\u001B\[48;2;172;150;230m▂/u, 'dark slit on the lavender face');
+  assert.deepEqual(renderWelcome(snapshot, 30, 'blink'), renderWelcome(snapshot, 30), 'narrow widths hide the cat in every frame');
+});
+
+test('cat blinks are occasional and deterministic, and the frame is never persisted', () => {
+  assert.equal(welcomeBlinkDelay(0), welcomeBlinkDelay(WELCOME_BLINK_GAPS_MS.length));
+  assert.ok(WELCOME_BLINK_GAPS_MS.every(gap => gap >= 5000), 'calm, not a looping GIF');
+  assert.ok(WELCOME_BLINK_CLOSED_MS <= 200);
+  const output = new OutputBuffer();
+  output.setWelcome(createWelcomeSnapshot(identity, '/tmp'));
+  output.setWelcomeFrame('blink');
+  assert.match(output.wrapped(80)[1]!.plain, /▂/u);
+  assert.equal(JSON.stringify(output.transcript()).includes('blink'), false);
+  output.setWelcomeFrame('open');
+  assert.doesNotMatch(output.wrapped(80)[1]!.plain, /▂/u);
+});
+
+test('welcome blink timer is owned by the app and disposed on stop', () => {
+  const app = new TerminalApp();
+  try {
+    app['scheduleWelcomeBlink']();
+    assert.ok(app['welcomeBlinkTimer'], 'one pending blink');
+  } finally {
+    app['stop'](0);
+    app['session'].kill();
+  }
+  assert.equal(app['welcomeBlinkTimer'], undefined);
 });

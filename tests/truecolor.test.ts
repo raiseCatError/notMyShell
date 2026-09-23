@@ -10,7 +10,7 @@ test('NMSh palette emits deterministic truecolor sequences', () => {
   }
   const prompt = buildPromptLine({cwd: '/tmp/project', project: 'project', branch: 'main'}, 60);
   assert.match(prompt, /48;2;166;124;243/u);
-  assert.match(prompt, /48;2;148;106;219/u);
+  assert.match(prompt, /48;2;122;104;184/u, 'cwd uses the related muted violet');
   assert.match(prompt, //u);
   assert.match(prompt, /38;2;\d+;\d+;\d+m/u);
   assert.match(shimmerText('Meowing', 100), /38;2;\d+;\d+;\d+m/u);

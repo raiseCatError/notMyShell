@@ -8,7 +8,7 @@ import {displayWidth, repeatToWidth, stripAnsi, truncateText} from '../util/text
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, type PowerlineBlock} from '../prompt/powerline.js';
-import {renderWelcome, type WelcomeSnapshot} from './Welcome.js';
+import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {archiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
@@ -65,6 +65,8 @@ export function serializeCopyPayload(record: CompletedCommand): string {
 
 export class OutputBuffer {
   private welcome?: WelcomeSnapshot;
+  /** Presentation-only idle frame; never serialized into transcripts. */
+  private welcomeFrame: WelcomeCatFrame = 'open';
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
@@ -134,6 +136,14 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
+  }
+
+  get hasWelcome(): boolean {
+    return Boolean(this.welcome);
+  }
+
+  setWelcomeFrame(frame: WelcomeCatFrame): void {
+    this.welcomeFrame = frame;
   }
 
   setWelcome(snapshot: WelcomeSnapshot): void {
@@ -262,7 +272,7 @@ export class OutputBuffer {
 
   wrapped(width: number): WrappedRow[] {
     const lines = this.parser.allLines();
-    const result: WrappedRow[] = this.welcome ? renderWelcome(this.welcome, width) : [];
+    const result: WrappedRow[] = this.welcome ? renderWelcome(this.welcome, width, this.welcomeFrame) : [];
     let skipUntil = -1;
     const activitiesByStart = new Map<number, SecondaryActivity>();
     for (const activity of [

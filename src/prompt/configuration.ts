@@ -9,10 +9,10 @@ export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
 export type PromptProviderId = 'nmsh' | 'starship';
 export type NativeEndStyle = 'fadeWedge' | 'wedge' | 'fadeFlat' | 'flat';
 export type NativeStartStyle = 'pointed' | 'flat';
-export type NativePaletteId = 'lavender' | 'semantic' | 'cool';
+export type NativePaletteId = 'lavender' | 'brand' | 'semantic' | 'cool' | 'warm' | 'grayscale';
 export type NativeGapChoice = 'off' | 'compact' | 'normal';
 
-export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'semantic', 'cool'];
+export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'semantic', 'cool', 'warm', 'grayscale'];
 
 export interface ContextModuleConfig {
   id: ContextModuleId;

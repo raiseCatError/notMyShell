@@ -7,15 +7,15 @@ import {CompletionService, type CompletionCandidate} from '../shell/CompletionSe
 import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
-import {createWelcomeSnapshot} from '../output/Welcome.js';
+import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, nativePromptSnapshot} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildThemePreviewLine, nativePromptSnapshot} from '../prompt/prompt.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
-import {describePromptConfiguration, handlePromptPanelKey, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -92,6 +92,9 @@ export class TerminalApp {
   private selectedSuggestion = 0;
   private activityTimer?: NodeJS.Timeout;
   private activityAnimationNow = Date.now();
+  /** One pending timeout at a time drives the welcome cat's occasional blink. */
+  private welcomeBlinkTimer?: NodeJS.Timeout;
+  private welcomeBlinkCount = 0;
   private contextGeneration = 0;
   private appearanceState?: AppearanceState;
   private keyboardState?: KeyboardState;
@@ -148,6 +151,7 @@ export class TerminalApp {
       this.output.tickActiveCommand();
       this.render();
     }, STATUS_REFRESH_MS);
+    this.scheduleWelcomeBlink();
     this.render();
     return this.done;
   }
@@ -876,14 +880,14 @@ export class TerminalApp {
         }
       } else {
         state.step = 'layout';
-        state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+        state.selectedIndex = layoutChoiceIndex(state.draft);
       }
     } else if (state.step === 'starship') {
       if (state.starshipStatus?.installed) {
         if (state.selectedIndex === 0) {
           state.draft.provider = 'starship';
           state.step = 'layout';
-          state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+          state.selectedIndex = layoutChoiceIndex(state.draft);
           try {
             const starshipEnv = state.draft.starship.configPath
               ? {...process.env, STARSHIP_CONFIG: state.draft.starship.configPath}
@@ -898,7 +902,7 @@ export class TerminalApp {
         } else if (state.selectedIndex === 2) {
           state.draft.provider = 'nmsh';
           state.step = 'layout';
-          state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+          state.selectedIndex = layoutChoiceIndex(state.draft);
         } else {
           state.step = 'provider'; state.selectedIndex = 1;
         }
@@ -912,7 +916,7 @@ export class TerminalApp {
       } else if (state.selectedIndex === 1) {
         state.draft.provider = 'nmsh';
         state.step = 'layout';
-        state.selectedIndex = state.draft.composerLayout === 'oneLine' ? 1 : 0;
+        state.selectedIndex = layoutChoiceIndex(state.draft);
       } else {
         state.step = 'provider'; state.selectedIndex = 1;
       }
@@ -934,7 +938,7 @@ export class TerminalApp {
         }
       }
     } else if (state.step === 'layout') {
-      state.draft.composerLayout = state.selectedIndex === 1 ? 'oneLine' : 'twoLine';
+      applyLayoutChoice(state.draft, state.selectedIndex);
       if (state.draft.provider === 'nmsh') { state.step = 'appearance'; state.selectedIndex = 0; }
       else await this.savePromptSettings();
     } else {
@@ -973,12 +977,12 @@ export class TerminalApp {
     const previewConfig = structuredClone(state.draft);
     if (state.step === 'provider') previewConfig.provider = state.selectedIndex === 1 ? 'starship' : 'nmsh';
     if (state.step === 'starship') previewConfig.provider = 'starship';
-    if (state.step === 'layout') previewConfig.composerLayout = state.selectedIndex === 1 ? 'oneLine' : 'twoLine';
+    if (state.step === 'layout') applyLayoutChoice(previewConfig, state.selectedIndex);
     const boundary = `${SEPARATOR}${repeatToWidth('─', width)}${RESET}`;
     let providerRow: string;
     if (previewConfig.provider === 'starship') {
       if (!this.starshipPrompt) return [this.starshipPanelStatusText(state, width)];
-      providerRow = truncateAnsi(this.starshipPrompt.ansi, Math.max(0, width - 1));
+      providerRow = this.starshipPromptRow(width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
       const prefix = buildInlineContextPrefix(this.context, width, previewConfig);
       return [boundary, `${prefix}command`, boundary];
@@ -1005,16 +1009,12 @@ export class TerminalApp {
     return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(this.promptPanelState, columns, preview);
   }
 
-  /** Live native prompt per theme, using the draft's geometry and the real context. */
+  /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */
   private promptThemePreviews(columns: number): string[] {
     const state = this.promptPanelState;
     if (!state || state.step !== 'appearance') return [];
     const width = Math.max(1, columns - 22);
-    return NATIVE_PALETTE_IDS.map(palette => {
-      const config = structuredClone(state.draft);
-      config.nmsh.palette = palette;
-      return buildContextLine(this.context, width, config, 'composer');
-    });
+    return NATIVE_PALETTE_IDS.map(palette => buildThemePreviewLine(state.draft, palette, width));
   }
 
   private starshipPanelStatusText(state: PromptPanelState, width: number): string {
@@ -1029,10 +1029,42 @@ export class TerminalApp {
 
   private currentPromptLine(width: number): string {
     if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
-      const content = truncateAnsi(this.starshipPrompt.ansi, Math.max(0, width - 1));
-      return `${content}${RESET}${SEPARATOR}${repeatToWidth('─', Math.max(0, width - displayWidth(content)))}${RESET}`;
+      return this.starshipPromptRow(width, this.promptConfiguration.placement);
     }
     return buildContextLine(this.context, width, this.promptConfiguration);
+  }
+
+  /**
+   * Blink the welcome cat occasionally. The frame lives on OutputBuffer as
+   * presentation state, so transcript contents, row count, and width never
+   * change. Blinks are skipped (not queued) while no welcome is present.
+   */
+  private scheduleWelcomeBlink(): void {
+    if (this.stopped) return;
+    this.welcomeBlinkTimer = setTimeout(() => {
+      if (this.stopped) return;
+      if (!this.output.hasWelcome || this.passthrough) {
+        this.welcomeBlinkCount += 1;
+        this.scheduleWelcomeBlink();
+        return;
+      }
+      this.output.setWelcomeFrame('blink');
+      this.render();
+      this.welcomeBlinkTimer = setTimeout(() => {
+        this.output.setWelcomeFrame('open');
+        if (this.stopped) return;
+        this.render();
+        this.welcomeBlinkCount += 1;
+        this.scheduleWelcomeBlink();
+      }, WELCOME_BLINK_CLOSED_MS);
+    }, welcomeBlinkDelay(this.welcomeBlinkCount));
+  }
+
+  /** Starship content follows the same placement rule as native: the divider fill only in header placement. */
+  private starshipPromptRow(width: number, placement: PromptConfiguration['placement']): string {
+    const content = truncateAnsi(this.starshipPrompt?.ansi ?? '', Math.max(0, width - 1));
+    if (placement === 'composer') return `${content}${RESET}`;
+    return `${content}${RESET}${SEPARATOR}${repeatToWidth('─', Math.max(0, width - displayWidth(content)))}${RESET}`;
   }
 
   private scroll(direction: -1 | 1): void {
@@ -1430,6 +1462,8 @@ export class TerminalApp {
     if (this.stopped) return;
     this.stopped = true;
     if (this.activityTimer) clearInterval(this.activityTimer);
+    if (this.welcomeBlinkTimer) clearTimeout(this.welcomeBlinkTimer);
+    this.welcomeBlinkTimer = undefined;
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
     process.off('SIGTERM', this.onTerminate);

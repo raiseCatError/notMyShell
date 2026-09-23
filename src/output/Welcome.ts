@@ -8,7 +8,7 @@ const RESET = '\u001B[0m';
 const BODY = {red: 172, green: 150, blue: 230};
 const EYE = {red: 22, green: 18, blue: 32};
 const WHISKER = {red: 150, green: 142, blue: 172};
-const BRAND_ACCENT = {red: 172, green: 252, blue: 115};
+const BRAND_ACCENT = {red: 166, green: 124, blue: 243};
 const DIVIDER = {red: 105, green: 98, blue: 130};
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
@@ -53,7 +53,19 @@ const CAT_WIDTH = CAT_PIXELS[0]!.length;
 const CAT_ROWS = CAT_PIXELS.length / 2;
 const PIXEL_COLORS: Record<string, typeof BODY> = {L: BODY, E: EYE};
 
-function catRow(row: number): {ansi: string; plain: string} {
+/** `blink` draws each eye as a closed lid: a dark slit on the lavender face. */
+export type WelcomeCatFrame = 'open' | 'blink';
+
+/** Calm, occasional blinks: deterministic gaps between blinks and a short closed frame. */
+export const WELCOME_BLINK_GAPS_MS = [6200, 8400, 5600, 9800] as const;
+export const WELCOME_BLINK_CLOSED_MS = 150;
+
+export function welcomeBlinkDelay(blinkCount: number): number {
+  const gaps = WELCOME_BLINK_GAPS_MS;
+  return gaps[((Math.trunc(blinkCount) % gaps.length) + gaps.length) % gaps.length]!;
+}
+
+function catRow(row: number, frame: WelcomeCatFrame = 'open'): {ansi: string; plain: string} {
   const top = CAT_PIXELS[row * 2]!;
   const bottom = CAT_PIXELS[row * 2 + 1]!;
   let ansi = '';
@@ -62,7 +74,10 @@ function catRow(row: number): {ansi: string; plain: string} {
     const upper = PIXEL_COLORS[top[column]!];
     const lower = PIXEL_COLORS[bottom[column]!];
     let glyph: string;
-    if (!upper && !lower) {
+    if (frame === 'blink' && upper === EYE && lower === EYE) {
+      glyph = '▂';
+      ansi += `${foreground(EYE)}${background(BODY)}${glyph}${RESET}`;
+    } else if (!upper && !lower) {
       glyph = CAT_WHISKERS[row]?.[column] ?? ' ';
       ansi += glyph === ' ' ? ' ' : `${foreground(WHISKER)}${glyph}${RESET}`;
     } else if (upper === lower || !lower || !upper) {
@@ -101,7 +116,7 @@ function versionLabel(version: string): string {
 }
 
 /** Presentation-only rows, generated from a semantic snapshot on every width change. */
-export function renderWelcome(snapshot: WelcomeSnapshot, width: number): WrappedRow[] {
+export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: WelcomeCatFrame = 'open'): WrappedRow[] {
   if (width <= 0) return [];
   const identity = snapshot.identity;
   const metadata: Span[][] = [
@@ -125,7 +140,7 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number): Wrapped
       rows.push(text);
       continue;
     }
-    const prefix = catRow(index);
+    const prefix = catRow(index, frame);
     const spacer = ' '.repeat(gutter);
     rows.push({plain: `${prefix.plain}${spacer}${text.plain}`, ansi: `${prefix.ansi}${spacer}${text.ansi}`});
   }
