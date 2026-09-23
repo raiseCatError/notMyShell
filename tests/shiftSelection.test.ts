@@ -300,21 +300,21 @@ test('copy failure: PTY output + failure lifecycle row are both in payload', () 
   output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
-  output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:12');
-  output.addHistoryLine('\u001B[31m✘ Failed after 0.0s · exit 127\u001B[0m\u001B[2m · done 04:12\u001B[0m');
+  output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · 04:12');
+  output.addHistoryLine('\u001B[31m✘ Failed after 0.0s · exit 127\u001B[0m\u001B[2m · 04:12\u001B[0m');
 
   const record = output.recent(1);
   assert.ok(record, 'recent(1) must return the completed command');
   assert.equal(record.output, 'zsh: command not found: meow', 'output is PTY text only');
-  assert.equal(record.lifecycleText, '✘ Failed after 0.0s · exit 127 · done 04:12', 'lifecycleText is the completion row');
+  assert.equal(record.lifecycleText, '✘ Failed after 0.0s · exit 127 · 04:12', 'lifecycleText is the completion row');
 
   const payload = serializeCopyPayload(record);
   assert.ok(payload.includes('zsh: command not found: meow'), 'payload must include PTY output');
-  assert.ok(payload.includes('✘ Failed after 0.0s · exit 127 · done 04:12'), 'payload must include lifecycle row');
+  assert.ok(payload.includes('✘ Failed after 0.0s · exit 127 · 04:12'), 'payload must include lifecycle row');
   // Verify order: PTY first, then lifecycle
   const lines = payload.split('\n');
   assert.equal(lines[0], 'zsh: command not found: meow', 'PTY output is first line');
-  assert.equal(lines[1], '✘ Failed after 0.0s · exit 127 · done 04:12', 'lifecycle row is second line');
+  assert.equal(lines[1], '✘ Failed after 0.0s · exit 127 · 04:12', 'lifecycle row is second line');
 });
 
 test('copy success: hello + success lifecycle row are both in payload', () => {
@@ -322,14 +322,14 @@ test('copy success: hello + success lifecycle row are both in payload', () => {
   output.beginCommand('echo hello', ['echo hello']);
   output.write('hello\n');
   output.complete(0);
-  output.setCompletionLifecycle('✻ Meowed for 0.0s · done 04:12');
-  output.addHistoryLine('\u001B[32m✻ Meowed for 0.0s\u001B[0m\u001B[2m · done 04:12\u001B[0m');
+  output.setCompletionLifecycle('Completed · 0.0s · 04:12');
+  output.addHistoryLine('\u001B[32mCompleted · 0.0s\u001B[0m\u001B[2m · 04:12\u001B[0m');
 
   const record = output.recent(1);
   assert.ok(record);
   const payload = serializeCopyPayload(record);
   assert.ok(payload.includes('hello'), 'payload must include PTY output');
-  assert.ok(payload.includes('✻ Meowed for 0.0s · done 04:12'), 'payload must include lifecycle row');
+  assert.ok(payload.includes('Completed · 0.0s · 04:12'), 'payload must include lifecycle row');
 });
 
 test('copy empty PTY: no output command still copies lifecycle row', () => {
@@ -400,13 +400,13 @@ test('copy feedback counts reflect full payload (PTY + lifecycle row)', () => {
   output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
-  output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:12');
+  output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · 04:12');
 
   const record = output.recent(1)!;
   const payload = serializeCopyPayload(record);
   const stats = copyStats(payload);
 
-  // payload = "zsh: command not found: meow\n✘ Failed after 0.0s · exit 127 · done 04:12"
+  // payload = "zsh: command not found: meow\n✘ Failed after 0.0s · exit 127 · 04:12"
   // That is 2 lines
   assert.equal(stats.lines, 2, 'feedback must count 2 lines (PTY + lifecycle)');
   assert.ok(stats.characters > 0, 'feedback must count actual characters');
