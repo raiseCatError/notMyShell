@@ -20,6 +20,9 @@ notMyShell (NMSh) is a terminal frontend that operates over a persistent, real z
 - test-created TerminalApp instances must clean up ShellSession and SemanticService resources.
 - FOLLOW/DETACHED viewport behavior must not regress.
 - terminal-host-specific enhancements cannot become structural dependencies of NMSh core.
+- recursive NMSh instances are unsupported; `nmsh` launched from its managed shell must be rejected.
+- `/zsh` is the intentional escape to an ordinary interactive zsh, and NMSh must restore terminal modes before handoff.
+- package version stays at the last released version during milestone development; bump it only during explicitly authorized release preparation.
 - automated test passage is NOT equivalent to physical terminal validation.
 
 ## UI model
@@ -90,10 +93,11 @@ For substantial implementation work:
 Key references:
 - [ROADMAP.md](ROADMAP.md) — product direction and issue index
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
-- [v0.2.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/1) — current release target
+- [v0.3.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/2) — active milestone
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board
 - [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
 - [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions
+- [docs/design/session-interaction-ux.md](docs/design/session-interaction-ux.md) — v0.3.0 design decisions
 
 ## Agent work loop
 
