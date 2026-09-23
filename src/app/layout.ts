@@ -1,3 +1,5 @@
+import type {ContextPlacement} from '../prompt/configuration.js';
+
 export const MAX_VISIBLE_INPUT_ROWS = 8;
 
 export interface ScreenLayout {
@@ -7,6 +9,7 @@ export interface ScreenLayout {
   showJump: boolean;
   showLiveActivity: boolean;
   showPrompt: boolean;
+  showComposerTopBorder: boolean;
   showSeparator: boolean;
   showGap: boolean;
 }
@@ -18,11 +21,14 @@ export function calculateScreenLayout(
   requestedLiveActivity = false,
   requestedJump = false,
   hasOutput = false,
+  contextPlacement: ContextPlacement = 'header',
+  hasVisibleContext = true,
 ): ScreenLayout {
   const safeRows = Math.max(1, rows);
-  const showPrompt = safeRows >= 2;
+  const showPrompt = safeRows >= 2 && hasVisibleContext;
   const showSeparator = safeRows >= 3;
-  const fixedRows = Number(showPrompt) + Number(showSeparator);
+  const showComposerTopBorder = showPrompt && contextPlacement === 'composer' && safeRows >= 4;
+  const fixedRows = Number(showPrompt) + Number(showSeparator) + Number(showComposerTopBorder);
   const minimumOutput = safeRows >= 7 ? 2 : 0;
   const inputCapacity = Math.max(1, safeRows - fixedRows - minimumOutput);
   const inputHeight = Math.min(Math.max(1, requestedInputRows), MAX_VISIBLE_INPUT_ROWS, inputCapacity);
@@ -41,6 +47,7 @@ export function calculateScreenLayout(
     showJump,
     showLiveActivity,
     showPrompt,
+    showComposerTopBorder,
     showSeparator,
     showGap,
   };

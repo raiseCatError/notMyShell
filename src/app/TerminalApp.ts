@@ -5,7 +5,8 @@ import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
 import {HistoryViewport} from '../output/viewport.js';
-import {buildPromptLine} from '../prompt/prompt.js';
+import {buildContextLine} from '../prompt/prompt.js';
+import {hasVisibleContextModule, loadPromptConfiguration} from '../prompt/configuration.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
@@ -58,7 +59,8 @@ export class TerminalApp {
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
-  private context: PromptContext = {cwd: process.cwd(), project: '…'};
+  private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
+  private readonly promptConfiguration = loadPromptConfiguration();
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
@@ -155,7 +157,7 @@ export class TerminalApp {
       const {columns, rows} = this.dimensions();
       const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
       const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
-      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0);
+      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context));
       if (key.y && key.y <= layout.outputHeight) {
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
@@ -322,7 +324,7 @@ export class TerminalApp {
         const {columns, rows} = this.dimensions();
         const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
         const overlayRows = this.appearanceState ? 3 : this.keyboardState ? 6 : this.shellSuggestions.length;
-        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0);
+        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, hasVisibleContextModule(this.promptConfiguration, this.context));
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => r.lineIndex === this.focusedLineIndex);
@@ -593,6 +595,7 @@ export class TerminalApp {
 
   private onShellPrompt(exitCode: number, cwd: string): void {
     this.shellCwd = cwd;
+    this.context.exitStatus = exitCode;
     if (!this.running) {
       void this.refreshContext(cwd);
       this.render();
@@ -629,7 +632,7 @@ export class TerminalApp {
     const generation = ++this.contextGeneration;
     const context = await resolvePromptContext(cwd);
     if (generation !== this.contextGeneration || this.stopped) return;
-    this.context = context;
+    this.context = {...context, exitStatus: this.context.exitStatus ?? 0};
     this.render();
   }
 
@@ -644,6 +647,8 @@ export class TerminalApp {
       Boolean(this.running),
       this.historyViewport.detached,
       this.output.wrapped(columns).length > 0,
+      this.promptConfiguration.placement,
+      hasVisibleContextModule(this.promptConfiguration, this.context),
     ).outputHeight);
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
@@ -661,6 +666,8 @@ export class TerminalApp {
       Boolean(this.running),
       this.historyViewport.detached,
       this.output.wrapped(columns).length > 0,
+      this.promptConfiguration.placement,
+      hasVisibleContextModule(this.promptConfiguration, this.context),
     ).outputHeight);
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
@@ -755,7 +762,7 @@ export class TerminalApp {
     }
 
     const overlayRows = this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
-    const promptLine = buildPromptLine(this.context, columns);
+    const promptLine = buildContextLine(this.context, columns, this.promptConfiguration);
     this.editor.ghost = this.historyService.suggest(this.editor.text);
     const fullInput = layoutInput(this.editor.text, this.editor.cursorIndex, columns);
     const layout = calculateScreenLayout(
@@ -765,6 +772,8 @@ export class TerminalApp {
       Boolean(this.running),
       this.historyViewport.detached,
       this.output.wrapped(columns).length > 0,
+      this.promptConfiguration.placement,
+      hasVisibleContextModule(this.promptConfiguration, this.context),
     );
     const input = layoutInput(this.editor.text, this.editor.cursorIndex, columns, layout.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
@@ -837,6 +846,7 @@ export class TerminalApp {
       frameRows.push(truncateAnsi(this.currentActivity(), columns));
       frameRows.push('');
     }
+    if (layout.showComposerTopBorder) frameRows.push(`${SEPARATOR}${repeatToWidth('─', columns)}${RESET}`);
     if (layout.showPrompt) frameRows.push(promptLine);
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.selection;
@@ -900,6 +910,7 @@ export class TerminalApp {
           + Number(layout.showJump)
           + (this.appearanceState ? 7 : (this.keyboardState ? 6 : suggestionView.items.length))
           + (layout.showLiveActivity ? 2 : 0)
+          + Number(layout.showComposerTopBorder)
           + Number(layout.showPrompt)
           + input.caretRow
           + 1,
