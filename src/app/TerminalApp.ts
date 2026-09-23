@@ -406,12 +406,7 @@ export class TerminalApp {
         }
         this.editor.clear();
       } else {
-        if (this.editor.hasPasteAtoms) {
-          this.output.addFrontendInteraction(this.editor.text, 'Unwrap the large paste with Ctrl+O before submitting it.', INFO);
-          this.render();
-        } else {
-          void this.submit();
-        }
+        void this.submit();
       }
     }
   }
@@ -447,11 +442,6 @@ export class TerminalApp {
   }
 
   private async submit(): Promise<void> {
-    if (this.editor.hasPasteAtoms) {
-      this.output.addFrontendInteraction(this.editor.text, 'Unwrap the large paste with Ctrl+O before submitting it.', INFO);
-      this.render();
-      return;
-    }
     const command = this.editor.text;
     this.editor.clear();
     if (!command.trim()) return;
@@ -675,7 +665,7 @@ export class TerminalApp {
 
   private showHelp(command: string): void {
     const summary = slashCommands.map(item => `${item.name} — ${item.description}`).join(' · ');
-    const helpText = `${summary}\n\n${INFO}✻ Large multiline paste is one editable atom. Press Ctrl+O beside it to unwrap the original text.\n✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
+    const helpText = `${summary}\n\n${INFO}✻ Large multiline paste is one editable atom; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.\n✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
     this.output.addFrontendInteraction(command, helpText, ACCENT);
   }
 

@@ -78,8 +78,8 @@ test('large multiline paste is displayed as one atomic label and preserves exact
   editor.insert(' tail');
   assert.equal(editor.hasPasteAtoms, true);
   assert.equal(editor.text, `run ${source} tail`);
-  assert.equal(editor.displayText, 'run [paste · 4 lines] tail');
-  assert.deepEqual(editor.displayPasteAtoms, [{start: 4, end: 21}]);
+  assert.equal(editor.displayText, 'run [Text #1 · 4 lines] tail');
+  assert.deepEqual(editor.displayPasteAtoms, [{start: 4, end: 23}]);
   editor.moveLeft();
   assert.equal(editor.cursorIndex, 9);
   editor.moveRight();
@@ -93,6 +93,34 @@ test('large multiline paste is displayed as one atomic label and preserves exact
   deleteAdjacent.moveBufferHome();
   deleteAdjacent.delete();
   assert.equal(deleteAdjacent.text, '');
+});
+
+test('paste atom labels follow visual order and renumber after delete or unwrap', () => {
+  const first = 'one\ntwo\nthree\nfour';
+  const second = 'a\nb\nc\nd\ne\nf\ng';
+  const editor = new CommandEditor();
+  editor.insert('prefix ');
+  editor.insertPaste(first);
+  editor.insert(' between ');
+  editor.insertPaste(second);
+  editor.insert(' suffix');
+  assert.equal(editor.displayText, 'prefix [Text #1 · 4 lines] between [Text #2 · 7 lines] suffix');
+  assert.equal(editor.text, `prefix ${first} between ${second} suffix`);
+
+  editor.moveBufferHome();
+  for (let index = 0; index < 18; index += 1) editor.moveRight();
+  editor.backspace();
+  assert.equal(editor.displayText, 'prefix [Text #1 · 4 lines] between  suffix');
+
+  const unwrap = new CommandEditor();
+  unwrap.insertPaste(first);
+  unwrap.insert(' ');
+  unwrap.insertPaste(second);
+  assert.equal(unwrap.displayText, '[Text #1 · 4 lines] [Text #2 · 7 lines]');
+  unwrap.moveBufferHome();
+  unwrap.unwrapAdjacentPasteAtom();
+  assert.equal(unwrap.displayText, `${first} [Text #1 · 7 lines]`);
+  assert.equal(unwrap.text, `${first} ${second}`);
 });
 
 test('delete removes a paste atom whole and Ctrl+O unwraps the original editable source', () => {
