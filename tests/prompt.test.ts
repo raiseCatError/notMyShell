@@ -144,7 +144,7 @@ test('neutral gap separates pointed blocks independently from internal padding',
   const header = buildContextLine(context, 100, config, 'header');
   const plain = stripAnsi(header);
   assert.ok(plain.includes('repo  /tmp/work  ✘ 2'), plain);
-  assert.match(header, /\u001B\[0m  \u001B\[38;2;52;105;98m\u001B\[38;2;245;244;250m\u001B\[48;2;52;105;98m/u);
+  assert.match(header, /\u001B\[0m\u001B\[49m  \u001B\[38;2;52;105;98m\u001B\[38;2;245;244;250m\u001B\[48;2;52;105;98m/u);
   assert.equal(displayWidth(header), 100);
   const composer = buildContextLine(context, 100, config, 'composer');
   assert.ok(displayWidth(composer) <= 100);
@@ -166,6 +166,39 @@ test('safe glyph mode uses simple reverse/forward caps and home does not repeat 
   } finally {
     delete process.env.NMSH_ICONS;
   }
+});
+
+test('duplicate HOME location keeps the live project color and distinct locations keep their own colors', () => {
+  const home = buildContextLine({cwd: homedir(), project: '~'}, 50, DEFAULT_PROMPT_CONFIGURATION, 'composer');
+  assert.equal(stripAnsi(home), ' ~ ');
+  assert.match(home, /\u001B\[48;2;84;82;132m/u);
+  assert.doesNotMatch(home, /\u001B\[48;2;69;73;94m/u);
+
+  const distinct = buildPromptLine({cwd: `${homedir()}/Projects`, project: 'Projects', branch: 'dev'}, 80);
+  assert.match(distinct, /\u001B\[48;2;84;82;132m/u);
+  assert.match(distinct, /\u001B\[48;2;69;73;94m/u);
+  assert.match(distinct, /\u001B\[48;2;52;105;98m/u);
+  assert.doesNotMatch(distinct, /\u001B\[48;2;82;73;111m/u, 'archive palette must stay out of live prompt');
+});
+
+test('each edge and the density fade use terminal-neutral background', () => {
+  const context = {cwd: '/tmp/work', project: 'work', branch: 'dev'};
+  for (const placement of ['header', 'composer'] as const) {
+    const rendered = buildContextLine(context, 90, DEFAULT_PROMPT_CONFIGURATION, placement);
+    assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;84;82;132m\u001B\[0m\u001B\[49m \u001B\[38;2;69;73;94m/u);
+    assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;69;73;94m\u001B\[0m\u001B\[49m \u001B\[38;2;52;105;98m/u);
+    if (placement === 'header') {
+      assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;52;105;98m▓▒░ \u001B\[38;2;139;132;178m─/u);
+    } else {
+      assert.doesNotMatch(stripAnsi(rendered), /▓▒░|─/u);
+    }
+  }
+});
+
+test('header width fitting counts its fade once and keeps available modules', () => {
+  const rendered = buildPromptLine({cwd: '/cwd', project: 'p', branch: 'b'}, 25);
+  assert.equal(displayWidth(rendered), 25);
+  assert.match(stripAnsi(rendered), / p   \/cwd    b ▓▒░/u);
 });
 
 test('prompt context replaces terminal control characters before rendering', () => {

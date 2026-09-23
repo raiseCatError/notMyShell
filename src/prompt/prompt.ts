@@ -76,10 +76,10 @@ function renderedModules(context: PromptContext, configuration: PromptConfigurat
     }];
   });
 
-  // At home the project and cwd modules both reduce to "~" and carry no
-  // distinct information. Keep pairs such as Projects + ~/Projects intact.
-  const cwd = moduleText({id: 'cwd', visible: true, condition: 'always'}, context);
-  return rendered.filter(module => !(module.id === 'project' && module.text === cwd));
+  // The project block owns the brighter live identity when both location
+  // modules say the same thing (notably "~" at HOME).
+  const project = rendered.find(module => module.id === 'project');
+  return rendered.filter(module => !(module.id === 'cwd' && project?.text === module.text));
 }
 
 export function buildContextLine(

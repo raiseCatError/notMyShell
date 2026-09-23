@@ -136,6 +136,8 @@ test('historical context stays frozen per command, uses muted dividers, and surv
   assert.match(headers[1]?.plain ?? '', /^ \/tmp ▓▒░ /u);
   assert.match(headers[0]?.ansi ?? '', /48;2;82;73;111m/u, 'archived project uses the muted lavender palette');
   assert.match(headers[0]?.ansi ?? '', /38;2;162;151;190m─/u, 'divider is one solid pastel lavender color');
+  assert.match(headers[0]?.ansi ?? '', /\u001B\[0m\u001B\[49m\u001B\[38;2;91;80;119m▓▒░ \u001B\[0m \u001B\[38;2;162;151;190m─/u,
+    'archive fade uses neutral background before its solid divider');
   assert.doesNotMatch(headers[0]?.ansi ?? '', /48;2;(?:52;105;98|72;152;100|194;98;99)m/u);
   assert.equal(serializeCopyPayload(output.recent(2)!), '/Users/test/project\nCompleted · 7 ms');
   assert.equal(output.recent(2)?.historicalContext?.branch, 'dev');
@@ -145,6 +147,16 @@ test('historical context stays frozen per command, uses muted dividers, and surv
   const restoredHeaders = restored.wrapped(80).filter(row => row.isHistoricalHeader);
   assert.deepEqual(restoredHeaders.map(row => row.plain.split(' ─')[0]), headers.map(row => row.plain.split(' ─')[0]));
   assert.ok(restored.wrapped(12).filter(row => row.isHistoricalHeader).every(row => row.plain.length <= 12));
+});
+
+test('historical duplicate location keeps one project block with muted project styling', () => {
+  const output = new OutputBuffer();
+  output.beginCommand('pwd', ['❯ pwd'], undefined, {cwd: '/tmp', project: '/tmp'});
+  output.complete(0);
+  const header = output.wrapped(70).find(row => row.isHistoricalHeader);
+  assert.match(header?.plain ?? '', /^ \/tmp ▓▒░/u);
+  assert.match(header?.ansi ?? '', /48;2;82;73;111m/u);
+  assert.doesNotMatch(header?.ansi ?? '', /48;2;70;65;98m/u);
 });
 
 test('historical header stays visible for folded output and older transcript records remain compatible', () => {
