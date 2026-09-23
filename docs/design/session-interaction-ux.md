@@ -12,16 +12,17 @@ Improve routine interaction with NMSh through a safe return to ordinary zsh, con
 
 ## Context modules and placement
 
-Implement context modules once and render the same ordered module list in configurable placements. Header separator placement is the default. The other primary placement puts context on its own line inside the composer, above the input line; a below-input placement may be supported where inexpensive. Configuration covers order, visibility, separators, spacing, colors, and conditions. Initial modules are cwd, git branch, and previous exit status. Preserve NMSh's Powerline-style visual identity; do not delegate this layer to Starship or Powerlevel10k.
+Implement context modules once and render the same ordered module list in configurable placements. Header separator placement is the default. The other primary placement puts context on its own line inside the composer, above the input line; a below-input placement may be supported where inexpensive. Configuration covers order, visibility, separators, internal `spacing` padding, a separate neutral `gap` between rendered blocks, colors, and conditions. The default gap is one subtle terminal-background cell; legacy configurations without `gap` use that default, while `gap: 0` removes it. Initial modules are cwd, git branch, and previous exit status. Preserve NMSh's Powerline-style visual identity; do not delegate this layer to Starship or Powerlevel10k.
 
 The first configurable implementation reads `config.json` from `~/Library/Application Support/notMyShell/` on macOS (or `$XDG_CONFIG_HOME/nmsh/` when set). Missing or invalid settings fall back to defaults. Settings are edited as JSON until onboarding adds a setup UI. The same local application directory is reserved for later transcript state.
 
-The JSON configuration keeps ordered module definitions with `id`, `visible`, `condition`, and optional six-digit hex foreground/background colors. Top-level `placement`, `separator`, and `spacing` control the shared layout. For example:
+The JSON configuration keeps ordered module definitions with `id`, `visible`, `condition`, and optional six-digit hex foreground/background colors. Top-level `placement`, `separator`, `spacing`, and `gap` control the shared layout. `spacing` pads text inside a colored block; `gap` adds neutral space between visible blocks after conditional filtering. For example:
 
 ```json
 {
   "placement": "header",
   "separator": "",
+  "gap": 1,
   "spacing": 1,
   "modules": [
     { "id": "project", "visible": true, "condition": "always" },

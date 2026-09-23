@@ -17,6 +17,8 @@ export interface PromptConfiguration {
   placement: ContextPlacement;
   modules: ContextModuleConfig[];
   separator: string;
+  /** Spaces between colored context blocks; use spacing for padding inside each block. */
+  gap: number;
   spacing: number;
 }
 
@@ -29,6 +31,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
   ],
   separator: '',
+  gap: 1,
   spacing: 1,
 };
 
@@ -54,10 +57,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
     ? Math.max(0, Math.min(3, Math.round(value.spacing)))
     : DEFAULT_PROMPT_CONFIGURATION.spacing;
+  const gap = typeof value.gap === 'number' && Number.isFinite(value.gap)
+    ? Math.max(0, Math.min(3, Math.round(value.gap)))
+    : DEFAULT_PROMPT_CONFIGURATION.gap;
   const separator = validSeparator(value.separator) ? value.separator : DEFAULT_PROMPT_CONFIGURATION.separator;
 
   if (!Array.isArray(value.modules)) {
-    return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), placement, spacing, separator};
+    return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), placement, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -80,7 +86,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.push(module);
   }
 
-  return {placement, modules, separator, spacing};
+  return {placement, modules, separator, spacing, gap};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {
