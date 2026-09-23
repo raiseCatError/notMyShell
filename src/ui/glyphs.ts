@@ -28,6 +28,7 @@ export const GLYPHS = {
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '─'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
   get powerlineTransition() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
+  get powerlineReverse() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
 };
 
@@ -38,4 +39,3 @@ export const SPINNER_FRAMES = {
       : ['·', '*', '+', '*', '·', '*', '+', '*'];
   }
 };
-

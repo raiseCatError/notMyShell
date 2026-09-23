@@ -4,14 +4,17 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
-import {displayWidth, repeatToWidth, truncateText} from '../util/text.js';
+import {displayWidth, repeatToWidth, stripAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
+import {homedir} from 'node:os';
+import {fitPowerlineBlocks, type PowerlineBlock} from '../prompt/powerline.js';
 
-const ARCHIVED_CONTEXT = foreground({red: 139, green: 141, blue: 157});
+const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 export interface HistoricalContextSnapshot {
   cwd: string;
+  project?: string;
   branch?: string;
 }
 
@@ -278,7 +281,7 @@ export class OutputBuffer {
           const isFoldable = hiddenLines > 10 || !cmd.expanded;
           if (isFoldable) {
             if (!cmd.expanded) {
-              const plain = `  ⇡ ${hiddenLines} lines hidden  (Ctrl+O for details)`;
+              const plain = foldHint(`${hiddenLines} lines hidden · Ctrl+O`, '›', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
               result.push({
                 ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
@@ -286,7 +289,7 @@ export class OutputBuffer {
               skipUntil = cmd.endId;
               continue;
             } else {
-              const plain = `  ⇣ Collapse output  (Ctrl+O to hide ${hiddenLines} lines)`;
+              const plain = foldHint(`${hiddenLines} lines shown · Ctrl+O`, '⌄', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
               result.push({
                 ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
@@ -391,6 +394,12 @@ function renderActivityRow(activity: SecondaryActivity, width: number): WrappedR
   };
 }
 
+function foldHint(summary: string, disclosure: string, width: number): string {
+  const suffix = `  ${disclosure}`;
+  if (width <= displayWidth(suffix)) return truncateText(suffix, width);
+  return `${truncateText(summary, width - displayWidth(suffix))}${suffix}`;
+}
+
 function appendActivityOutput(result: WrappedRow[], lines: ReturnType<AnsiOutputParser['allLines']>, activity: SecondaryActivity, width: number): void {
   for (let lineIndex = activity.outputStartId; lineIndex < Math.min(activity.outputEndId, lines.length); lineIndex += 1) {
     for (const row of wrapStyledLine(lines[lineIndex] ?? [], Math.max(1, width - 4))) {
@@ -406,10 +415,24 @@ function appendActivityOutput(result: WrappedRow[], lines: ReturnType<AnsiOutput
 
 function renderHistoricalContext(context: HistoricalContextSnapshot, width: number): WrappedRow {
   const cwd = context.cwd.replace(CONTROL_CHARACTERS, '�');
+  const home = homedir().replace(/\/$/u, '');
+  const cwdLabel = cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
+  const modules: PowerlineBlock[] = [];
+  const project = context.project?.replace(CONTROL_CHARACTERS, '�');
+  const archiveForeground = {red: 220, green: 211, blue: 237};
+  if (project && !(project === cwdLabel || (project === '~' && cwdLabel === '~'))) {
+    modules.push({text: project, foreground: archiveForeground, background: {red: 82, green: 73, blue: 111}});
+  }
+  modules.push({text: cwdLabel, foreground: archiveForeground, background: {red: 70, green: 65, blue: 98}});
   const branch = context.branch?.replace(CONTROL_CHARACTERS, '�');
-  const label = branch ? `${cwd}  ${GLYPHS.branch} ${branch}` : cwd;
-  const visibleLabel = truncateText(label, Math.max(0, width - 1));
-  const remaining = Math.max(0, width - displayWidth(visibleLabel) - 1);
-  const plain = `${visibleLabel} ${repeatToWidth('─', remaining)}`;
-  return {ansi: `${ARCHIVED_CONTEXT}${plain}\u001B[0m`, plain, isHistoricalHeader: true};
+  if (branch) modules.push({text: `${GLYPHS.branch} ${branch}`, foreground: archiveForeground, background: {red: 91, green: 80, blue: 119}});
+
+  const visibleBlocks = fitPowerlineBlocks(modules, 1, 1, Math.max(0, width - 1), true);
+  const remaining = Math.max(0, width - displayWidth(visibleBlocks) - 1);
+  const plain = `${stripAnsi(visibleBlocks)} ${repeatToWidth('─', remaining)}`;
+  return {
+    ansi: `${visibleBlocks}\u001B[0m ${ARCHIVE_DIVIDER}${repeatToWidth('─', remaining)}\u001B[0m`,
+    plain,
+    isHistoricalHeader: true,
+  };
 }
