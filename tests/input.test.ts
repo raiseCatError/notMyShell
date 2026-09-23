@@ -71,6 +71,17 @@ test('input grows upward, caps at eight rows, and preserves output space', () =>
   assert.equal(tiny.outputHeight, 0);
 });
 
+test('composer context placement reserves a frame row and keeps the screen row budget exact', () => {
+  const layout = calculateScreenLayout(24, 2, 2, true, false, true, 'composer', true);
+  assert.equal(layout.showComposerTopBorder, true);
+  assert.equal(layout.showPrompt, true);
+  assert.equal(layout.showSeparator, true);
+  assert.equal(layout.outputHeight + layout.inputHeight + layout.suggestionCount
+    + Number(layout.showJump) + (layout.showLiveActivity ? 2 : 0)
+    + Number(layout.showPrompt) + Number(layout.showComposerTopBorder)
+    + Number(layout.showSeparator) + Number(layout.showGap), 24);
+});
+
 test('decodes terminal paging aliases and Ctrl-End variants', () => {
   assert.deepEqual(decodeKeys('\u001B[5~'), [{kind: 'pageUp'}]);
   assert.deepEqual(decodeKeys('\u001B[6~'), [{kind: 'pageDown'}]);

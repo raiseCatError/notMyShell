@@ -9,6 +9,7 @@ export interface PromptContext {
   cwd: string;
   project: string;
   branch?: string;
+  exitStatus?: number;
 }
 
 export interface GitProbe {
@@ -48,4 +49,3 @@ export async function resolvePromptContext(
     return {cwd, project: basename(cwd) || cwd};
   }
 }
-

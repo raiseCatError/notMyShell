@@ -14,6 +14,24 @@ Improve routine interaction with NMSh through a safe return to ordinary zsh, con
 
 Implement context modules once and render the same ordered module list in configurable placements. Header separator placement is the default. The other primary placement puts context on its own line inside the composer, above the input line; a below-input placement may be supported where inexpensive. Configuration covers order, visibility, separators, spacing, colors, and conditions. Initial modules are cwd, git branch, and previous exit status. Preserve NMSh's Powerline-style visual identity; do not delegate this layer to Starship or Powerlevel10k.
 
+The first configurable implementation reads `config.json` from `~/Library/Application Support/notMyShell/` on macOS (or `$XDG_CONFIG_HOME/nmsh/` when set). Missing or invalid settings fall back to defaults. Settings are edited as JSON until onboarding adds a setup UI. The same local application directory is reserved for later transcript state.
+
+The JSON configuration keeps ordered module definitions with `id`, `visible`, `condition`, and optional six-digit hex foreground/background colors. Top-level `placement`, `separator`, and `spacing` control the shared layout. For example:
+
+```json
+{
+  "placement": "header",
+  "separator": "",
+  "spacing": 1,
+  "modules": [
+    { "id": "project", "visible": true, "condition": "always" },
+    { "id": "cwd", "visible": true, "condition": "always" },
+    { "id": "gitBranch", "visible": true, "condition": "inRepository" },
+    { "id": "exitStatus", "visible": true, "condition": "nonzeroExit" }
+  ]
+}
+```
+
 ## Rich text paste
 
 Large multiline text-only pastes may appear as one editable logical atom. Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; unwrap restores its original editable source. Submission uses the exact pasted source, never the visual label. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
