@@ -4,6 +4,7 @@ import {CompletionService, type CompletionCandidate} from '../shell/CompletionSe
 import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
+import {createWelcomeSnapshot} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
 import {buildContextLine, buildInlineContextPrefix} from '../prompt/prompt.js';
@@ -47,6 +48,7 @@ const PASTE_ATOM_BACKGROUND = '\u001B[48;2;63;65;82m';
 const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
+  private readonly buildIdentity = readBuildIdentity();
   private readonly initialCwd = process.cwd();
   private shellCwd = this.initialCwd;
   private readonly renderer = new TerminalRenderer();
@@ -94,6 +96,7 @@ export class TerminalApp {
   private finish!: (exitCode: number) => void;
 
   constructor() {
+    this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.initialCwd));
     const dimensions = this.dimensions();
     this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
     this.semanticService = new SemanticService(this.initialCwd);
@@ -496,7 +499,7 @@ export class TerminalApp {
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
-      else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(readBuildIdentity()), INFO);
+      else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
       else if (slash.kind === 'clear') await this.startFreshPresentation();
       else if (slash.kind === 'resume') await this.openResumePicker();
       else if (slash.kind === 'help') this.showHelp(command);
@@ -670,6 +673,7 @@ export class TerminalApp {
       await this.archiveCurrentPresentation();
       this.output.clearPresentation();
       this.presentationStartCwd = this.shellCwd;
+      this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.presentationStartCwd));
       this.historyViewport.latest();
     } catch {
       this.output.addFrontendInteraction('/clear', 'Could not archive this transcript; the current view was kept.', ERROR);
@@ -697,7 +701,7 @@ export class TerminalApp {
     if (!selected) return;
     try {
       const current = this.output.transcript();
-      if (current.records.length > 0 || current.lines.length > 0) await this.archiveCurrentPresentation();
+      if (current.welcome || current.records.length > 0 || current.lines.length > 0) await this.archiveCurrentPresentation();
       this.output.restoreTranscript(selected.transcript);
       this.presentationStartCwd = selected.startCwd;
       this.resumeSessions = undefined;

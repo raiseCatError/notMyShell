@@ -23,7 +23,15 @@ interface TranscriptFile extends TranscriptSession {
 function isTranscript(value: unknown): value is OutputTranscript {
   if (!value || typeof value !== 'object') return false;
   const transcript = value as Partial<OutputTranscript>;
-  return Array.isArray(transcript.records)
+  return (transcript.welcome === undefined || (typeof transcript.welcome.cwd === 'string'
+    && transcript.welcome.shell === 'zsh'
+    && transcript.welcome.identity !== null
+    && typeof transcript.welcome.identity === 'object'
+    && typeof transcript.welcome.identity.version === 'string'
+    && typeof transcript.welcome.identity.commit === 'string'
+    && (transcript.welcome.identity.branch === undefined || typeof transcript.welcome.identity.branch === 'string')
+    && (transcript.welcome.identity.dirty === undefined || typeof transcript.welcome.identity.dirty === 'boolean')))
+    && Array.isArray(transcript.records)
     && transcript.records.every(record => record && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'

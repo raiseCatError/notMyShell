@@ -8,6 +8,7 @@ import {displayWidth, repeatToWidth, stripAnsi, truncateText} from '../util/text
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, type PowerlineBlock} from '../prompt/powerline.js';
+import {renderWelcome, type WelcomeSnapshot} from './Welcome.js';
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
@@ -45,6 +46,7 @@ export interface CompletedCommand {
 }
 
 export interface OutputTranscript {
+  welcome?: WelcomeSnapshot;
   records: CompletedCommand[];
   lines: SerializedLine[];
   visualGaps: number[];
@@ -60,6 +62,7 @@ export function serializeCopyPayload(record: CompletedCommand): string {
 }
 
 export class OutputBuffer {
+  private welcome?: WelcomeSnapshot;
   private readonly parser: AnsiOutputParser;
   private readonly completed: CompletedCommand[] = [];
   private readonly visualGaps = new Set<number>();
@@ -86,6 +89,7 @@ export class OutputBuffer {
 
   transcript(): OutputTranscript {
     return {
+      ...(this.welcome ? {welcome: {...this.welcome, identity: {...this.welcome.identity}}} : {}),
       records: this.completed.map(record => ({
         ...record,
         historicalContext: record.historicalContext ? {...record.historicalContext} : undefined,
@@ -98,6 +102,7 @@ export class OutputBuffer {
   }
 
   restoreTranscript(transcript: OutputTranscript): void {
+    this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
     this.parser.restore(transcript.lines);
     this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({
       ...record,
@@ -119,6 +124,7 @@ export class OutputBuffer {
   }
 
   clearPresentation(): void {
+    this.welcome = undefined;
     this.parser.restore([]);
     this.completed.length = 0;
     this.visualGaps.clear();
@@ -126,6 +132,10 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
+  }
+
+  setWelcome(snapshot: WelcomeSnapshot): void {
+    this.welcome = {...snapshot, identity: {...snapshot.identity}};
   }
 
   beginCommand(
@@ -249,7 +259,7 @@ export class OutputBuffer {
 
   wrapped(width: number): WrappedRow[] {
     const lines = this.parser.allLines();
-    const result: WrappedRow[] = [];
+    const result: WrappedRow[] = this.welcome ? renderWelcome(this.welcome, width) : [];
     let skipUntil = -1;
     const activitiesByStart = new Map<number, SecondaryActivity>();
     for (const activity of [
