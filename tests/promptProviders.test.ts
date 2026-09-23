@@ -7,6 +7,9 @@ import {archiveColor} from '../src/prompt/snapshot.js';
 import {NATIVE_LAVENDER_RAMP, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
 import {normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
+import {TerminalApp} from '../src/app/TerminalApp.js';
+import {renderPromptPanel} from '../src/prompt/PromptPanel.js';
+import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 
 test('NMSh Native defaults to eight contrast-safe lavender shades and cycles by visible order', () => {
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.provider, 'nmsh');
@@ -102,5 +105,28 @@ test('inactive Starship settings survive provider changes and normal config pers
     assert.equal(restored.starship.configPath, '/tmp/custom.toml');
   } finally {
     await rm(directory, {recursive: true, force: true});
+  }
+});
+
+test('onboarding preview uses a dedicated panel and hides the live composer cursor', () => {
+  const app = new TerminalApp();
+  let frame: TerminalFrame | undefined;
+  try {
+    app['fetchSuggestions'] = async () => {};
+    app['renderer'].render = next => { frame = next; };
+    app['context'] = {cwd: '/tmp/work', project: 'work', branch: 'main', exitStatus: 0};
+    app['promptPanelState'] = {onboarding: true, step: 'appearance', selectedIndex: 1,
+      draft: structuredClone(DEFAULT_PROMPT_CONFIGURATION)};
+    app['render']();
+    assert.equal(frame?.cursorVisible, false);
+    assert.ok(frame?.rows.some(row => row.includes('Prompt setup')));
+    assert.ok(frame?.rows.some(row => row.includes('Two-line preview')));
+    assert.ok(frame?.rows.some(row => row.includes('Fading wedge')));
+    assert.ok(frame?.rows.at(-1)?.includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
+    const panel = renderPromptPanel(app['promptPanelState']!, 80, ['sample preview']);
+    assert.ok(panel.some(row => row.includes('Fading wedge')));
+  } finally {
+    app['stop'](0);
+    app['session'].kill();
   }
 });

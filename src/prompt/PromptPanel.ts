@@ -96,7 +96,10 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   if (state.message) rows.push(`${SECONDARY}${state.message}${RESET}`);
   if (preview.length) {
     rows.push('');
-    rows.push(`${PRIMARY}Preview${RESET}`);
+    const selectedLayout = state.step === 'layout'
+      ? state.selectedIndex === 1 ? 'oneLine' : 'twoLine'
+      : state.draft.composerLayout;
+    rows.push(`${PRIMARY}${selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}`);
     rows.push(...preview);
   }
   rows.push('');

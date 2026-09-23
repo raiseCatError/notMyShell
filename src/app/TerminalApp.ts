@@ -994,7 +994,7 @@ export class TerminalApp {
     const input = `${ACCENT}${GLYPHS.prompt}${RESET} command`;
     return previewConfig.placement === 'composer'
       ? [boundary, providerRow, input, boundary]
-      : [providerRow, input];
+      : [providerRow, input, boundary];
   }
 
   private starshipPanelStatusText(state: PromptPanelState, width: number): string {
@@ -1154,7 +1154,7 @@ export class TerminalApp {
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
     const fullInput = this.layoutEditorInput(columns);
-    const layout = calculateScreenLayout(
+    const calculatedLayout = calculateScreenLayout(
       rows,
       fullInput.allRows.length,
       overlayRows,
@@ -1165,7 +1165,21 @@ export class TerminalApp {
       this.hasVisibleProviderPrompt(),
       this.promptConfiguration.composerLayout,
     );
-    const input = this.layoutEditorInput(columns, layout.inputHeight);
+    const layout = this.promptPanelState ? {
+      ...calculatedLayout,
+      outputHeight: Math.max(0, rows - promptPanelRows),
+      inputHeight: 0,
+      suggestionCount: 0,
+      showJump: false,
+      showLiveActivity: false,
+      showPrompt: false,
+      showComposerTopBorder: false,
+      showSeparator: false,
+      showGap: false,
+    } : calculatedLayout;
+    const input = this.promptPanelState
+      ? {...fullInput, rows: [], caretRow: 0, caretColumn: 0}
+      : this.layoutEditorInput(columns, layout.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
     const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, layout.suggestionCount);
     const outputHeight = layout.outputHeight;
@@ -1321,7 +1335,7 @@ export class TerminalApp {
           + 1,
       ),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
-      cursorVisible: true,
+      cursorVisible: !this.promptPanelState,
     });
   }
 

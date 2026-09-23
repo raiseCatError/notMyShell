@@ -27,11 +27,12 @@ export const GLYPHS = {
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : '↓'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '─'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
-  // Model each block like Oh My Posh: a leading edge belongs to the block
-  // that follows it, and the trailing edge belongs to the block before it.
-  get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
+  // The leading edge points into the following segment; the trailing edge
+  // points out of the segment that precedes it.
+  get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
   get powerlineTrailing() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
   get powerlineFade() { return getCurrentGlyphMode() === 'nerd' ? '▓▒░' : '==='; },
+  get powerlineFadeWedge() { return getCurrentGlyphMode() === 'nerd' ? ['▶', '▸', '›'] : ['>', '>', '>']; },
 };
 
 export const SPINNER_FRAMES = {
