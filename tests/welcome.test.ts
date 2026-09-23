@@ -78,6 +78,9 @@ test('/clear begins a new welcome at live cwd; /resume restores the archived one
   const app = new TerminalApp();
   Object.defineProperty(app, 'transcriptStore', {value: new TranscriptStore(directory)});
   try {
+    if (!app['session']['ready']) {
+      await new Promise<void>(resolve => app['session'].once('prompt', () => resolve()));
+    }
     const first = app['output'].transcript().welcome!;
     const liveShell = app['session'];
     app['shellCwd'] = '/tmp/new-location';
