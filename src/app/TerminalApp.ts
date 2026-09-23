@@ -150,19 +150,31 @@ export class TerminalApp {
       if (key.y && key.y <= layout.outputHeight) {
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
-        const row = wrapped[viewStart + key.y - 1];
-        if (row) {
-          if (key.kind === 'mouseClick' && row.commandIndex !== undefined) {
-            // Only toggle if we click specifically on a fold hint
-            if (row.isFoldHint) {
-              this.output.toggleExpanded(row.commandIndex);
+
+        // Exact same calculation as render()
+        const visibleLength = Math.min(wrapped.length - viewStart, layout.outputHeight);
+        const topPadding = this.historyViewport.detached ? 0 : Math.max(0, layout.outputHeight - visibleLength);
+
+        const localVisibleIndex = key.y - 1 - topPadding;
+
+        if (localVisibleIndex >= 0) {
+          const row = wrapped[viewStart + localVisibleIndex];
+          if (row) {
+            if (key.kind === 'mouseClick' && row.commandIndex !== undefined) {
+              // Only toggle if we click specifically on a fold hint
+              if (row.isFoldHint) {
+                this.output.toggleExpanded(row.commandIndex);
+                this.render();
+              }
+            }
+            if (row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
+              this.hoveredLineIndex = row.lineIndex;
               this.render();
             }
           }
-          if (row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
-            this.hoveredLineIndex = row.lineIndex;
-            this.render();
-          }
+        } else if (this.hoveredLineIndex !== undefined) {
+          this.hoveredLineIndex = undefined;
+          this.render();
         }
       } else if (this.hoveredLineIndex !== undefined) {
         this.hoveredLineIndex = undefined;
