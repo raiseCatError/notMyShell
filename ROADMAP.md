@@ -4,10 +4,9 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.2.0 — Structured Execution](https://github.com/raiseCatError/notMyShell/releases/tag/v0.2.0) |
+| **Current release** | [v0.3.0 — Session & Interaction UX](https://github.com/raiseCatError/notMyShell/releases/tag/v0.3.0) |
 | **Development branch** | `dev` |
-| **Release candidate** | [v0.3.0 — Session & Interaction UX](https://github.com/raiseCatError/notMyShell/milestone/2) (on `dev`, awaiting final human validation) |
-| **Next milestone** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/milestone/3) |
+| **Active milestone** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/milestone/3) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -16,13 +15,13 @@ GitHub issues define actionable remaining work. A merged implementation may stil
 
 [Milestone #1](https://github.com/raiseCatError/notMyShell/milestone/1) is closed and shipped. Its design record remains at [docs/design/structured-execution.md](docs/design/structured-execution.md), and release notes remain in [CHANGELOG.md](CHANGELOG.md).
 
-## Now — v0.3.0 Session & Interaction UX (release candidate)
+## Released — v0.3.0 Session & Interaction UX
 
-All v0.3 engineering is merged to `dev`, and the package version is `0.3.0`. The milestone now contains only implemented work awaiting final human terminal validation (Ghostty, Terminal.app, VS Code). v0.3.0 is not released until that validation passes.
+The [v0.3.0 release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.3.0) shipped after final human validation in Ghostty, Terminal.app, and VS Code integrated terminal. Its milestone is closed. The package version stays `0.3.0` during v0.4 development.
 
 **Design record:** [docs/design/session-interaction-ux.md](docs/design/session-interaction-ux.md)
 
-### Implemented; final human terminal validation remains
+### Shipped scope
 
 | Issue | Implemented scope |
 |---|---|
@@ -38,11 +37,11 @@ All v0.3 engineering is merged to `dev`, and the package version is `0.3.0`. The
 | [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested Node TAP activity and shimmer |
 | [#53](https://github.com/raiseCatError/notMyShell/issues/53) | Build identity, `/version`, `--version` |
 
-Already approved in Ghostty: the full-body cat design, the `/prompt` structure, Cool First, one-line mode, and muted theme-preserving history.
+The final release candidate also included the passive-hover selection fix.
 
-## Next — v0.4.0 Shell Intelligence & Extensibility
+## Now — v0.4.0 Shell Intelligence & Extensibility
 
-[Milestone #3](https://github.com/raiseCatError/notMyShell/milestone/3). Not started.
+[Milestone #3](https://github.com/raiseCatError/notMyShell/milestone/3) is active. Issue acceptance criteria govern implementation; terminal appearance and interaction changes still require physical validation.
 
 | Issue | Area |
 |---|---|
@@ -57,6 +56,9 @@ Already approved in Ghostty: the full-body cat design, the `/prompt` structure, 
 | [#72](https://github.com/raiseCatError/notMyShell/issues/72) | Richer Git prompt state |
 | [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules (research) |
 | [#74](https://github.com/raiseCatError/notMyShell/issues/74) | Update discovery and safe `/update` |
+| [#78](https://github.com/raiseCatError/notMyShell/issues/78), [#79](https://github.com/raiseCatError/notMyShell/issues/79) | Chroma research and independent composer/transcript layout modes |
+| [#83](https://github.com/raiseCatError/notMyShell/issues/83)–[#86](https://github.com/raiseCatError/notMyShell/issues/86) | Tool configuration, command inspector, block controls, central `/settings` |
+| [#88](https://github.com/raiseCatError/notMyShell/issues/88)–[#93](https://github.com/raiseCatError/notMyShell/issues/93) | Continuous journal, glyph compatibility, shared panel shell, task progress, Starship and P10k configuration |
 
 zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
 

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- First-run terminal glyph compatibility choice (Nerd Font or Safe/ASCII), persisted under NMSh settings; existing v0.3 configurations retain their appearance.
+- Central `/settings` browser with glyph style, prompt, transcript, and keyboard entry points, and a temporary shared panel boundary.
+
 ## [0.3.0] - 2026-09-24
 
 Session & Interaction UX, plus the appearance and customization system.
