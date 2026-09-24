@@ -1,5 +1,6 @@
 import type {RgbColor} from '../ui/palette.js';
-import type {ComposerLayout, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
+import type {ConnectorFadeColors, PowerlineShape} from './powerline.js';
+import type {ComposerLayout, ConnectorFadeStyle, GitColorMode, GitConnectorFade, GitGeometry, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
   text: string;
@@ -8,6 +9,12 @@ export interface PromptSegmentSnapshot {
   foreground?: RgbColor;
   background?: RgbColor;
   geometry: 'powerline' | 'plain';
+  /** A marker-sized segment (e.g. clean Git): no text, shaped only by the prompt geometry. */
+  compact?: boolean;
+  /** Resolved connector shape override for boundaries touching this segment. */
+  shape?: PowerlineShape;
+  /** Resolved gap-fade override for boundaries touching this segment. */
+  fade?: PowerlineShape | 'off';
 }
 
 /** Semantic prompt data captured at submission; never an ANSI-only string. */
@@ -19,7 +26,17 @@ export interface PromptSnapshot {
   /** Older transcripts may hold the legacy `pointed`; renderers normalize it. */
   startStyle?: NativeStartStyle;
   connector?: NativeConnectorStyle;
+  /** Missing in older snapshots, which rendered solid connectors. */
+  connectorFade?: ConnectorFadeStyle;
+  /** Fade color source at submission; missing means Previous. */
+  connectorFadeColors?: ConnectorFadeColors;
   palette?: NativePaletteId;
+  /** Rich Git color mode at submission; older snapshots followed the theme. */
+  gitColors?: GitColorMode;
+  /** Rich Git settings at submission, recorded for fidelity; segments carry the resolved geometry. */
+  gitEnabled?: boolean;
+  gitGeometry?: GitGeometry;
+  gitConnectorFade?: GitConnectorFade;
   gap?: number;
   gapEnabled?: boolean;
   spacing?: number;
@@ -96,4 +113,9 @@ export function archiveColor(color: RgbColor, role: 'foreground' | 'background' 
 export function grayscaleArchiveColor(color: RgbColor, role: 'foreground' | 'background' = 'foreground'): RgbColor {
   const [l] = toOklab(archiveColor(color, role));
   return fromOklab(l, 0, 0);
+}
+
+/** Same perceived lightness, no hue. */
+export function desaturatePromptColor(color: RgbColor): RgbColor {
+  return fromOklab(toOklab(color)[0], 0, 0);
 }

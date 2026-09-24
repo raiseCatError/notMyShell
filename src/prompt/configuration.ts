@@ -2,10 +2,14 @@ import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {
+  normalizeConnectorFadeColors,
+  resolveFadeColors,
+  type ConnectorFadeColors,
   normalizeConnectorStyle,
   normalizeEdgeStyle,
   type PowerlineConnectorStyle,
   type PowerlineEdgeStyle,
+  type PowerlineShape,
 } from './powerline.js';
 
 export type ContextPlacement = 'header' | 'composer';
@@ -21,7 +25,43 @@ export type NativeConnectorStyle = PowerlineConnectorStyle;
 /** `nerd` shows Nerd Font module icons; a future `text` mode can join without migration. */
 export type NativeIconMode = 'nerd' | 'off';
 export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale';
-export type NativeGapChoice = 'off' | 'compact' | 'normal';
+export type NativeGapChoice = 'off' | 'compact' | 'normal' | 'wide';
+/**
+ * Rich Git state colors: `semantic` keeps meaningful Git colors under any
+ * theme, `followTheme` derives them from the Main Prompt theme, `grayscale`
+ * removes their hue. The branch itself always follows the theme.
+ */
+export type GitColorMode = 'semantic' | 'followTheme' | 'grayscale';
+export const GIT_COLOR_MODES: readonly GitColorMode[] = ['semantic', 'followTheme', 'grayscale'];
+/** One-cell softened connector: follow the Connector shape, off, or a fixed shape override. */
+export type ConnectorFadeStyle = 'follow' | 'off' | PowerlineShape;
+export const CONNECTOR_FADE_STYLES: readonly ConnectorFadeStyle[] = ['follow', 'off', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
+
+/** Rich Git state geometry: follow the Main Prompt connector, or a fixed shape. */
+export type GitGeometry = 'follow' | PowerlineShape;
+export const GIT_GEOMETRIES: readonly GitGeometry[] = ['follow', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
+/**
+ * Rich Git connector fade: inherit the Main Prompt fade, follow Rich Git's own
+ * geometry, turn it off, or a fixed shape.
+ */
+export type GitConnectorFade = 'followMain' | 'followGeometry' | 'off' | PowerlineShape;
+export const GIT_CONNECTOR_FADES: readonly GitConnectorFade[] = ['followMain', 'followGeometry', 'off', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
+
+export function normalizeGitGeometry(value: unknown): GitGeometry {
+  return GIT_GEOMETRIES.includes(value as GitGeometry) ? value as GitGeometry : 'follow';
+}
+
+export function normalizeGitConnectorFade(value: unknown): GitConnectorFade {
+  return GIT_CONNECTOR_FADES.includes(value as GitConnectorFade) ? value as GitConnectorFade : 'followMain';
+}
+
+export function normalizeGitColorMode(value: unknown): GitColorMode {
+  return GIT_COLOR_MODES.includes(value as GitColorMode) ? value as GitColorMode : 'semantic';
+}
+
+export function normalizeConnectorFade(value: unknown): ConnectorFadeStyle {
+  return CONNECTOR_FADE_STYLES.includes(value as ConnectorFadeStyle) ? value as ConnectorFadeStyle : 'off';
+}
 
 export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale'];
 
@@ -86,6 +126,14 @@ export interface PromptConfiguration {
     endStyle: NativeEndStyle;
     palette: NativePaletteId;
     icons: NativeIconMode;
+    connectorFade: ConnectorFadeStyle;
+    /** Which neighbor(s) color the faded transition zones; missing in older configs, meaning Previous. */
+    connectorFadeColors: ConnectorFadeColors;
+    /** Rich Git master switch; Off keeps the plain branch module. */
+    gitEnabled: boolean;
+    gitColors: GitColorMode;
+    gitGeometry: GitGeometry;
+    gitConnectorFade: GitConnectorFade;
   };
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
@@ -106,7 +154,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
   sessionRetention: 1000,
-  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd'},
+  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
+    connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -164,7 +213,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
-    startStyle, connector, endStyle, palette, icons};
+    startStyle, connector, endStyle, palette, icons,
+    connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
+    connectorFadeColors: normalizeConnectorFadeColors(nativeValue.connectorFadeColors),
+    gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
+    gitColors: normalizeGitColorMode(nativeValue.gitColors),
+    gitGeometry: normalizeGitGeometry(nativeValue.gitGeometry),
+    gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;
@@ -177,6 +232,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const gap = typeof value.gap === 'number' && Number.isFinite(value.gap)
     ? Math.max(0, Math.min(3, Math.round(value.gap)))
     : DEFAULT_PROMPT_CONFIGURATION.gap;
+  // Mixed needs a Normal or Wide gap; an unreleased Compact/Off + Mixed reads as Previous.
+  nmsh.connectorFadeColors = resolveFadeColors(nmsh.connectorFadeColors, nmsh.gapEnabled, gap);
   const separator = validSeparator(value.separator) ? value.separator : DEFAULT_PROMPT_CONFIGURATION.separator;
 
   if (!Array.isArray(value.modules)) {
@@ -242,14 +299,20 @@ export function hasVisibleContextModule(
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0));
 }
 
-/** Gap presets map onto the stored gap width: compact keeps caps but no space. */
+/**
+ * Gap presets map onto the stored gap width: compact 0, normal 1, wide 2.
+ * Legacy widths above 2 read as wide.
+ */
 export function nativeGapChoice(configuration: PromptConfiguration): NativeGapChoice {
   if (!configuration.nmsh.gapEnabled) return 'off';
-  return configuration.gap === 0 ? 'compact' : 'normal';
+  return configuration.gap === 0 ? 'compact' : configuration.gap === 1 ? 'normal' : 'wide';
 }
 
 export function applyNativeGapChoice(configuration: PromptConfiguration, choice: NativeGapChoice): void {
   configuration.nmsh.gapEnabled = choice !== 'off';
   if (choice === 'compact') configuration.gap = 0;
-  else if (choice === 'normal' && configuration.gap === 0) configuration.gap = 1;
+  else if (choice === 'normal') configuration.gap = 1;
+  else if (choice === 'wide') configuration.gap = 2;
+  configuration.nmsh.connectorFadeColors = resolveFadeColors(configuration.nmsh.connectorFadeColors,
+    configuration.nmsh.gapEnabled, configuration.gap);
 }

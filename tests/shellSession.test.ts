@@ -128,3 +128,35 @@ test('ShellSession fires its own precmd exactly once per prompt alongside foreig
     rmSync(markerDir, {recursive: true, force: true});
   }
 });
+
+test('a Powerlevel10k-style hook that moves itself last never repaints the prompt into output', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-fake-home-'));
+  // Mirrors p10k: its precmd re-appends itself to the end of precmd_functions
+  // every cycle and restores prompt_sp, which prints an end-of-line `%` mark.
+  writeFileSync(join(home, '.zshrc'), `
+function fake_p10k_precmd {
+  precmd_functions=(\${precmd_functions:#fake_p10k_precmd} fake_p10k_precmd)
+  setopt prompt_cr prompt_sp
+  PROMPT='THEME-LEFT on branch '
+  RPROMPT='THEME-RIGHT-OK'
+}
+precmd_functions+=(fake_p10k_precmd)
+`);
+  const session = new ShellSession(home, 120, 30, home);
+  let output = '';
+  session.on('data', chunk => { output += chunk; });
+  try {
+    await waitForMarker(session);
+    for (const command of ['echo one', 'false', 'echo three']) {
+      session.submit(command);
+      await waitForMarker(session);
+    }
+    assert.match(output, /three/u);
+    assert.ok(!output.includes('THEME-LEFT') && !output.includes('THEME-RIGHT-OK'),
+      `a self-reordering theme hook must not paint its prompt into command output: ${JSON.stringify(output)}`);
+    assert.ok(!output.includes('%'), 'the prompt_sp end-of-line mark must not reach command output');
+  } finally {
+    session.kill();
+    rmSync(home, {recursive: true, force: true});
+  }
+});
