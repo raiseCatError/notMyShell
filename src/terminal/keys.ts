@@ -9,6 +9,12 @@ export type Key =
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  // Kitty keyboard protocol (CSI > 1 u, enabled by TerminalRenderer on entry;
+  // Ghostty honors it) encodes Escape as its functional key code (27) rather
+  // than a lone raw ESC byte. Without these, Escape falls through to the
+  // generic "unknown CSI sequence" branch below and is silently swallowed.
+  ['\u001B[27u', 'escape'],
+  ['\u001B[27;1u', 'escape'], // explicit default-modifier form
   ['\u001B[Z', 'focusPrevious'],
   ['\u001B[27;2;13~', 'newline'],
   ['\u001B[13;2u', 'newline'],
