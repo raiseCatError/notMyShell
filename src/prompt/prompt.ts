@@ -34,10 +34,11 @@ interface RenderedModule {
 }
 
 /** Semantic identity of one rendered segment; themes color roles, not positions. */
-export type PromptRole = 'project' | 'cwd' | 'gitBranch' | ToolchainId | 'success' | 'failure';
+export type PromptRole = 'project' | 'cwd' | 'gitBranch' | 'gitChanges' | 'gitAhead' | 'gitConflict' | 'gitOperation' | ToolchainId | 'success' | 'failure';
 type SegmentColors = {foreground: RgbColor; background: RgbColor};
 
-const PROMPT_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', 'node', 'go', 'python', 'docker', 'success', 'failure'];
+const PROMPT_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', 'gitChanges', 'gitAhead', 'gitConflict', 'gitOperation',
+  'node', 'go', 'python', 'docker', 'success', 'failure'];
 export function isPromptRole(value: unknown): value is PromptRole {
   return PROMPT_ROLES.includes(value as PromptRole);
 }
@@ -57,8 +58,14 @@ export interface NativePromptTheme {
   colors(role: PromptRole): SegmentColors;
 }
 
-function theme(id: NativePaletteId, label: string, description: string, roles: Record<PromptRole, SegmentColors>): NativePromptTheme {
-  return {id, label, description, colors: role => roles[role]};
+function theme(id: NativePaletteId, label: string, description: string,
+  roles: Record<Exclude<PromptRole, 'gitChanges' | 'gitAhead' | 'gitConflict' | 'gitOperation'>, SegmentColors>): NativePromptTheme {
+  return {id, label, description, colors: role => {
+    if (role === 'gitChanges') return roles.failure;
+    if (role === 'gitAhead') return roles.success;
+    if (role === 'gitConflict' || role === 'gitOperation') return roles.failure;
+    return roles[role];
+  }};
 }
 
 /*
@@ -152,9 +159,24 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
   switch (config.id) {
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
     case 'cwd': return [{text: relativeCwd(context.cwd), role: 'cwd'}];
-    case 'gitBranch': return context.branch
-      ? [{text: icons === 'off' ? safePromptText(context.branch) : `${GLYPHS.branch} ${safePromptText(context.branch)}`, role: 'gitBranch'}]
-      : [];
+    case 'gitBranch': {
+      if (!context.branch) return [];
+      const git = context.git;
+      const dirty = Boolean(git && (git.staged || git.modified || git.untracked || git.conflicts));
+      const branchLabel = `${safePromptText(context.branch)}${dirty ? '*' : ''}`;
+      const segments: Array<{text: string; role: PromptRole}> = [
+        {text: icons === 'off' ? branchLabel : `${GLYPHS.branch} ${branchLabel}`, role: 'gitBranch'},
+      ];
+      if (!git) return segments;
+      const changes = [git.staged && `+${git.staged}`, git.modified && `~${git.modified}`, git.untracked && `?${git.untracked}`]
+        .filter(Boolean).join(' ');
+      if (changes) segments.push({text: changes, role: 'gitChanges'});
+      if (git.conflicts) segments.push({text: `!${git.conflicts}`, role: 'gitConflict'});
+      const tracking = [git.ahead && `↑${git.ahead}`, git.behind && `↓${git.behind}`].filter(Boolean).join(' ');
+      if (tracking) segments.push({text: tracking, role: 'gitAhead'});
+      if (git.operation) segments.push({text: git.operation, role: 'gitOperation'});
+      return segments;
+    }
     case 'toolchain': return (context.toolchains ?? []).map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
     case 'exitStatus': return [{
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,

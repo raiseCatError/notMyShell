@@ -43,6 +43,21 @@ test('conditional modules take their role colors in visible order', () => {
   ]);
 });
 
+test('Git state renders compact semantic segments and clean repositories retain branch only', () => {
+  const context = {cwd: '/tmp/repo', project: 'repo', branch: 'main',
+    git: {staged: 2, modified: 3, untracked: 1, conflicts: 1, ahead: 2, behind: 1, operation: 'rebase' as const}};
+  const modules = renderedModules(context, DEFAULT_PROMPT_CONFIGURATION).filter(module => module.id === 'gitBranch');
+  assert.deepEqual(modules.map(module => module.role), ['gitBranch', 'gitChanges', 'gitConflict', 'gitAhead', 'gitOperation']);
+  assert.deepEqual(modules.map(module => module.text.slice(module.role === 'gitBranch' ? -5 : 0)),
+    ['main*', '+2 ~3 ?1', '!1', '↑2 ↓1', 'rebase']);
+  assert.deepEqual(modules[2]!.background, NATIVE_PROMPT_THEMES.lavender.colors('failure').background);
+  const clean = renderedModules({...context, git: {...context.git, staged: 0, modified: 0, untracked: 0,
+    conflicts: 0, ahead: 0, behind: 0, operation: undefined}}, DEFAULT_PROMPT_CONFIGURATION)
+    .filter(module => module.id === 'gitBranch');
+  assert.equal(clean.length, 1);
+  assert.ok(clean[0]!.text.endsWith('main'));
+});
+
 test('native open uses U+E0D7 and gap-enabled segments close and reopen over neutral background', () => {
   const rendered = buildPromptLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60);
   const plain = stripAnsi(rendered);
