@@ -12,16 +12,22 @@ export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus';
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
-export type PromptProviderId = 'nmsh' | 'starship';
+export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
 export type NativeEndStyle = PowerlineEdgeStyle;
 export type NativeStartStyle = PowerlineEdgeStyle;
 export type NativeConnectorStyle = PowerlineConnectorStyle;
 /** `nerd` shows Nerd Font module icons; a future `text` mode can join without migration. */
 export type NativeIconMode = 'nerd' | 'off';
-export type NativePaletteId = 'lavender' | 'brand' | 'semantic' | 'cool' | 'warm' | 'grayscale';
+export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale';
 export type NativeGapChoice = 'off' | 'compact' | 'normal';
 
-export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'semantic', 'cool', 'warm', 'grayscale'];
+export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale'];
+
+/** Retired theme ids keep working: Soft Semantic overlapped Brand / Semantic. */
+export function normalizePaletteId(value: unknown, fallback: NativePaletteId = 'lavender'): NativePaletteId {
+  if (value === 'semantic') return 'brand';
+  return NATIVE_PALETTE_IDS.includes(value as NativePaletteId) ? value as NativePaletteId : fallback;
+}
 
 export interface ContextModuleConfig {
   id: ContextModuleId;
@@ -58,7 +64,7 @@ export function normalizeTranscriptAppearance(value: unknown): TranscriptAppeara
     divider: typeof value.divider === 'boolean' ? value.divider : true,
     historicalPrompt: typeof value.historicalPrompt === 'boolean' ? value.historicalPrompt : true,
     historyColors: value.historyColors === 'theme' || value.historyColors === 'grayscale' ? value.historyColors : 'followPrompt',
-    historyTheme: NATIVE_PALETTE_IDS.includes(value.historyTheme as NativePaletteId) ? value.historyTheme as NativePaletteId : 'lavender',
+    historyTheme: normalizePaletteId(value.historyTheme),
     dividerDensity: value.dividerDensity === 'compact' ? 'compact' : 'normal',
   };
 }
@@ -75,6 +81,8 @@ export interface PromptConfiguration {
     icons: NativeIconMode;
   };
   starship: {configPath: string | null};
+  /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
+  powerlevel10k: {themePath: string | null; configPath: string | null};
   transcript: TranscriptAppearance;
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
@@ -90,6 +98,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   onboardingComplete: false,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd'},
   starship: {configPath: null},
+  powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
@@ -124,16 +133,19 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!isRecord(value)) return structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 
   const promptValue = isRecord(value.prompt) ? value.prompt : value;
-  const provider: PromptProviderId = promptValue.provider === 'starship' ? 'starship' : 'nmsh';
+  const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
+    ? promptValue.provider
+    : 'nmsh';
+  const p10kValue = isRecord(promptValue.powerlevel10k) ? promptValue.powerlevel10k : {};
+  const optionalPath = (value: unknown) => typeof value === 'string' && value.trim() ? value : null;
+  const powerlevel10k = {themePath: optionalPath(p10kValue.themePath), configPath: optionalPath(p10kValue.configPath)};
   const nativeValue = isRecord(promptValue.nmsh) ? promptValue.nmsh : promptValue;
   const starshipValue = isRecord(promptValue.starship) ? promptValue.starship : {};
   const endStyle = normalizeEdgeStyle(nativeValue.endStyle, 'fadeWedge');
   const startStyle = normalizeEdgeStyle(nativeValue.startStyle, 'wedge');
   const connector = normalizeConnectorStyle(nativeValue.connector);
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
-  const palette: NativePaletteId = NATIVE_PALETTE_IDS.includes(nativeValue.palette as NativePaletteId)
-    ? nativeValue.palette as NativePaletteId
-    : 'lavender';
+  const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
     startStyle, connector, endStyle, palette, icons};
@@ -153,7 +165,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      nmsh, starship: {configPath: starshipConfigPath}, transcript, placement, composerLayout, spacing, gap, separator};
+      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, placement, composerLayout, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -184,7 +196,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, nmsh, transcript,
+  return {provider, onboardingComplete: value.onboardingComplete === true, nmsh, transcript, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 

@@ -10,6 +10,8 @@ const EYE = {red: 22, green: 18, blue: 32};
 const WHISKER = {red: 150, green: 142, blue: 172};
 const BRAND_ACCENT = {red: 166, green: 124, blue: 243};
 const DIVIDER = {red: 105, green: 98, blue: 130};
+const BOLD = '\u001B[1m';
+const NORMAL_WEIGHT = '\u001B[22m';
 const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 export interface WelcomeSnapshot {
@@ -95,6 +97,8 @@ function catRow(row: number, frame: WelcomeCatFrame = 'open'): {ansi: string; pl
 interface Span {
   text: string;
   color: typeof BODY;
+  /** Only the product wordmark is bold; metadata stays quiet. */
+  bold?: boolean;
 }
 
 /** Truncate styled spans to a cell budget while keeping per-span color. */
@@ -106,7 +110,7 @@ function renderSpans(spans: readonly Span[], width: number): {ansi: string; plai
     if (!remaining) break;
     const part = remaining.startsWith(span.text) ? span.text : remaining;
     remaining = remaining.slice(part.length);
-    ansi += `${foreground(span.color)}${part}`;
+    ansi += `${span.bold ? BOLD : NORMAL_WEIGHT}${foreground(span.color)}${part}`;
   }
   return {ansi: `${ansi}${RESET}`, plain};
 }
@@ -121,12 +125,16 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
   const identity = snapshot.identity;
   const metadata: Span[][] = [
     [
-      {text: 'not', color: UI_COLORS.primary},
-      {text: 'My', color: BRAND_ACCENT},
-      {text: 'Shell', color: UI_COLORS.primary},
+      {text: 'not', color: UI_COLORS.primary, bold: true},
+      {text: 'My', color: BRAND_ACCENT, bold: true},
+      {text: 'Shell', color: UI_COLORS.primary, bold: true},
       {text: ` ${safe(versionLabel(identity.version))}`, color: UI_COLORS.subtle},
     ],
-    [{text: `build ${safe(identity.commit)}${identity.branch ? ` · ${safe(identity.branch)}` : ''}${identity.dirty ? ' · dirty' : ''}`, color: UI_COLORS.subtle}],
+    [
+      {text: `build ${safe(identity.commit)}`, color: UI_COLORS.subtle},
+      ...(identity.branch ? [{text: ` · ${safe(identity.branch)}`, color: UI_COLORS.secondary}] : []),
+      ...(identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
+    ],
     [{text: shortCwd(snapshot.cwd), color: UI_COLORS.secondary}],
     [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}}],
   ];

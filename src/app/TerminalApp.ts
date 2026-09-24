@@ -16,7 +16,8 @@ import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
-import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
+import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -80,8 +81,12 @@ export class TerminalApp {
   private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
   private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
   private starshipStatus?: StarshipStatus;
-  private starshipPrompt?: StarshipPromptResult;
-  private starshipPromptError?: string;
+  /** Live Starship/Powerlevel10k rendering for the effective provider. */
+  private externalPrompt?: StarshipPromptResult;
+  private externalPromptError?: string;
+  /** /prompt preview rendering; never shown as the live prompt. */
+  private panelExternalPrompt?: {provider: PromptProviderId; result: StarshipPromptResult};
+  private p10kStatus?: Powerlevel10kStatus;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
@@ -128,7 +133,7 @@ export class TerminalApp {
 
   async run(): Promise<number> {
     if (!this.promptConfiguration.onboardingComplete) {
-      this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: this.promptConfiguration.provider === 'starship' ? 1 : 0,
+      this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
     }
     this.renderer.enter();
@@ -831,51 +836,80 @@ export class TerminalApp {
   }
 
   private currentPromptSnapshot(): PromptSnapshot {
-    if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
-      return {provider: 'starship', layout: this.promptConfiguration.composerLayout,
-        segments: structuredClone(this.starshipPrompt.segments), cwd: this.context.cwd,
+    if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
+      return {provider: this.effectivePromptProvider, layout: this.promptConfiguration.composerLayout,
+        segments: structuredClone(this.externalPrompt.segments), cwd: this.context.cwd,
         ...(this.context.branch ? {branch: this.context.branch} : {})};
     }
     return nativePromptSnapshot(this.context, this.promptConfiguration);
   }
 
+  private starshipEnvironment(configuration: PromptConfiguration): NodeJS.ProcessEnv {
+    return configuration.starship.configPath ? {...process.env, STARSHIP_CONFIG: configuration.starship.configPath} : process.env;
+  }
+
+  private detectPowerlevel10k(configuration: PromptConfiguration): Powerlevel10kStatus {
+    const env = configuration.powerlevel10k.configPath
+      ? {...process.env, POWERLEVEL9K_CONFIG_FILE: configuration.powerlevel10k.configPath}
+      : process.env;
+    const themePath = configuration.powerlevel10k.themePath;
+    return detectPowerlevel10k(env, undefined, themePath ? [themePath] : undefined);
+  }
+
+  /** Render an external provider for the current context; throws when it is unavailable. */
+  private async renderExternalPrompt(configuration: PromptConfiguration): Promise<StarshipPromptResult> {
+    if (configuration.provider === 'powerlevel10k') {
+      this.p10kStatus = this.detectPowerlevel10k(configuration);
+      return renderPowerlevel10kPrompt(this.context, this.p10kStatus);
+    }
+    const env = this.starshipEnvironment(configuration);
+    this.starshipStatus ??= await detectStarship(env);
+    if (!this.starshipStatus.installed) throw new Error('Starship is not installed or not available on PATH.');
+    return renderStarshipPrompt(this.context, this.starshipStatus, env);
+  }
+
   private async refreshProviderPrompt(): Promise<void> {
-    if (this.promptConfiguration.provider !== 'starship') {
+    if (this.promptConfiguration.provider === 'nmsh') {
       this.effectivePromptProvider = 'nmsh';
-      this.starshipPrompt = undefined;
-      this.starshipPromptError = undefined;
+      this.externalPrompt = undefined;
+      this.externalPromptError = undefined;
       return;
     }
     try {
-      const starshipEnv = this.promptConfiguration.starship.configPath
-        ? {...process.env, STARSHIP_CONFIG: this.promptConfiguration.starship.configPath}
-        : process.env;
-      this.starshipStatus ??= await detectStarship(starshipEnv);
-      if (!this.starshipStatus.installed) throw new Error('Starship is not installed or not available on PATH.');
-      const rendered = await renderStarshipPrompt(this.context, this.starshipStatus, starshipEnv);
-      this.starshipPrompt = rendered;
-      this.starshipPromptError = undefined;
-      this.effectivePromptProvider = 'starship';
+      this.externalPrompt = await this.renderExternalPrompt(this.promptConfiguration);
+      this.externalPromptError = undefined;
+      this.effectivePromptProvider = this.promptConfiguration.provider;
     } catch (error) {
-      this.starshipPromptError = error instanceof Error ? error.message : String(error);
-      this.starshipPrompt = undefined;
+      // Fall back truthfully: NMSh Native is active and the saved provider says so.
+      this.externalPromptError = error instanceof Error ? error.message : String(error);
+      this.externalPrompt = undefined;
       this.effectivePromptProvider = 'nmsh';
       this.promptConfiguration.provider = 'nmsh';
       try { savePromptConfiguration(this.promptConfiguration); } catch { /* Runtime fallback remains in effect. */ }
     }
   }
 
-  private async startPromptSettings(onboarding: boolean): Promise<void> {
-    this.promptPanelState = {onboarding, step: 'provider', selectedIndex: this.promptConfiguration.provider === 'starship' ? 1 : 0,
-      draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
-    if (this.promptConfiguration.provider === 'starship') {
-      const starshipEnv = this.promptConfiguration.starship.configPath
-        ? {...process.env, STARSHIP_CONFIG: this.promptConfiguration.starship.configPath}
-        : process.env;
-      this.starshipStatus = await detectStarship(starshipEnv);
-      this.promptPanelState.starshipStatus = this.starshipStatus;
-      await this.refreshProviderPrompt();
+  /** Render the selected external provider for the /prompt preview only. */
+  private async refreshPanelPreview(state: PromptPanelState): Promise<void> {
+    try {
+      this.panelExternalPrompt = {provider: state.draft.provider, result: await this.renderExternalPrompt(state.draft)};
+    } catch (error) {
+      this.panelExternalPrompt = undefined;
+      state.message = `${providerLabel(state.draft.provider)} preview failed: ${error instanceof Error ? error.message : String(error)}`;
     }
+  }
+
+  private async startPromptSettings(onboarding: boolean): Promise<void> {
+    this.promptPanelState = {onboarding, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
+      draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    this.panelExternalPrompt = undefined;
+    if (this.promptConfiguration.provider === 'starship') {
+      this.starshipStatus = await detectStarship(this.starshipEnvironment(this.promptConfiguration));
+      this.promptPanelState.starshipStatus = this.starshipStatus;
+    } else if (this.promptConfiguration.provider === 'powerlevel10k') {
+      this.promptPanelState.p10kStatus = this.detectPowerlevel10k(this.promptConfiguration);
+    }
+    if (this.promptConfiguration.provider !== 'nmsh') await this.refreshPanelPreview(this.promptPanelState);
     this.render();
   }
 
@@ -883,22 +917,35 @@ export class TerminalApp {
     const state = this.promptPanelState;
     if (!state) return;
     if (state.step === 'provider') {
-      state.draft.provider = state.selectedIndex === 1 ? 'starship' : 'nmsh';
+      state.draft.provider = PROVIDER_ORDER[state.selectedIndex] ?? 'nmsh';
+      state.message = undefined;
       if (state.draft.provider === 'starship') {
-        const starshipEnv = state.draft.starship.configPath
-          ? {...process.env, STARSHIP_CONFIG: state.draft.starship.configPath}
-          : process.env;
-        state.starshipStatus = await detectStarship(starshipEnv);
+        state.starshipStatus = await detectStarship(this.starshipEnvironment(state.draft));
         this.starshipStatus = state.starshipStatus;
         state.step = 'starship';
         state.selectedIndex = 0;
-        if (state.starshipStatus.installed) {
-          try { this.starshipPrompt = await renderStarshipPrompt(this.context, state.starshipStatus, starshipEnv); }
-          catch (error) { state.message = `Starship preview failed: ${error instanceof Error ? error.message : String(error)}`; }
-        }
+        if (state.starshipStatus.installed) await this.refreshPanelPreview(state);
+      } else if (state.draft.provider === 'powerlevel10k') {
+        state.p10kStatus = this.detectPowerlevel10k(state.draft);
+        state.step = 'powerlevel10k';
+        state.selectedIndex = 0;
+        if (state.p10kStatus.installed) await this.refreshPanelPreview(state);
       } else {
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
+      }
+    } else if (state.step === 'powerlevel10k') {
+      const installed = Boolean(state.p10kStatus?.installed);
+      const choice = installed ? ['use', 'native', 'back'][state.selectedIndex] : ['native', 'back'][state.selectedIndex];
+      if (choice === 'use') {
+        state.step = 'layout';
+        state.selectedIndex = layoutChoiceIndex(state.draft);
+      } else if (choice === 'native') {
+        state.draft.provider = 'nmsh';
+        state.step = 'layout';
+        state.selectedIndex = layoutChoiceIndex(state.draft);
+      } else {
+        state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('powerlevel10k');
       }
     } else if (state.step === 'starship') {
       if (state.starshipStatus?.installed) {
@@ -906,15 +953,7 @@ export class TerminalApp {
           state.draft.provider = 'starship';
           state.step = 'layout';
           state.selectedIndex = layoutChoiceIndex(state.draft);
-          try {
-            const starshipEnv = state.draft.starship.configPath
-              ? {...process.env, STARSHIP_CONFIG: state.draft.starship.configPath}
-              : process.env;
-            this.starshipPrompt = await renderStarshipPrompt(this.context, state.starshipStatus, starshipEnv);
-            this.effectivePromptProvider = 'starship';
-          } catch (error) {
-            state.message = `Starship preview failed: ${error instanceof Error ? error.message : String(error)}`;
-          }
+          await this.refreshPanelPreview(state);
         } else if (state.selectedIndex === 1) {
           state.message = 'Starship presets use `starship preset <name> -o <new-path>`. Choose a new path to preserve existing files, then use STARSHIP_CONFIG or configure it in NMSh.';
         } else if (state.selectedIndex === 2) {
@@ -922,7 +961,7 @@ export class TerminalApp {
           state.step = 'layout';
           state.selectedIndex = layoutChoiceIndex(state.draft);
         } else {
-          state.step = 'provider'; state.selectedIndex = 1;
+          state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('starship');
         }
       } else if (state.selectedIndex === 0) {
         const hasHomebrew = (process.env.PATH ?? '').split(delimiter).some(directory => existsSync(join(directory, 'brew')));
@@ -936,7 +975,7 @@ export class TerminalApp {
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
       } else {
-        state.step = 'provider'; state.selectedIndex = 1;
+        state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('starship');
       }
     } else if (state.step === 'installConfirm') {
       if (state.selectedIndex === 1) {
@@ -979,11 +1018,11 @@ export class TerminalApp {
       savePromptConfiguration(state.draft);
       this.promptConfiguration = structuredClone(state.draft);
       this.promptPanelState = undefined;
+      this.panelExternalPrompt = undefined;
       await this.refreshProviderPrompt();
-      if (this.starshipPromptError && this.promptConfiguration.provider === 'starship') {
-        this.promptConfiguration.provider = 'nmsh';
-        savePromptConfiguration(this.promptConfiguration);
-        this.output.addHistoryLine(`${ERROR}Starship prompt failed; NMSh is active. ${this.starshipPromptError}${RESET}`);
+      // refreshProviderPrompt already fell back to NMSh and saved that truthfully.
+      if (this.externalPromptError && state.draft.provider !== 'nmsh') {
+        this.output.addHistoryLine(`${ERROR}${providerLabel(state.draft.provider)} prompt failed; NMSh is active. ${this.externalPromptError}${RESET}`);
       } else {
         this.output.addHistoryLine(`${SUCCESS}Prompt settings saved · ${describePromptConfiguration(this.promptConfiguration)}${RESET}`);
       }
@@ -999,14 +1038,16 @@ export class TerminalApp {
     if (!state) return [];
     const width = Math.max(1, columns - 4);
     const previewConfig = structuredClone(state.draft);
-    if (state.step === 'provider') previewConfig.provider = state.selectedIndex === 1 ? 'starship' : 'nmsh';
+    if (state.step === 'provider') previewConfig.provider = PROVIDER_ORDER[state.selectedIndex] ?? 'nmsh';
     if (state.step === 'starship') previewConfig.provider = 'starship';
+    if (state.step === 'powerlevel10k') previewConfig.provider = 'powerlevel10k';
     if (state.step === 'layout') applyLayoutChoice(previewConfig, state.selectedIndex);
     const boundary = `${SEPARATOR}${repeatToWidth('─', width)}${RESET}`;
     let providerRow: string;
-    if (previewConfig.provider === 'starship') {
-      if (!this.starshipPrompt) return [this.starshipPanelStatusText(state, width)];
-      providerRow = this.starshipPromptRow(width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
+    if (previewConfig.provider !== 'nmsh') {
+      const preview = this.panelExternalPrompt?.provider === previewConfig.provider ? this.panelExternalPrompt.result : undefined;
+      if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
+      providerRow = this.externalPromptRow(preview, width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
       const prefix = buildInlineContextPrefix(this.context, width, previewConfig);
       return [boundary, `${prefix}command`, boundary];
@@ -1014,7 +1055,7 @@ export class TerminalApp {
       providerRow = buildContextLine(this.context, width, previewConfig, previewConfig.placement);
     }
     if (previewConfig.composerLayout === 'oneLine') {
-      const prefix = previewConfig.provider === 'starship'
+      const prefix = previewConfig.provider !== 'nmsh'
         ? `${providerRow}${RESET} `
         : buildInlineContextPrefix(this.context, width, previewConfig);
       return [boundary, `${prefix}command`, boundary];
@@ -1044,7 +1085,7 @@ export class TerminalApp {
   /** A representative history header: the live provider's identity over preview-only modules. */
   private transcriptPreviewSample(): HistoricalContextSnapshot {
     const context = themePreviewContext();
-    const prompt = this.effectivePromptProvider === 'starship' && this.starshipPrompt
+    const prompt = this.effectivePromptProvider !== 'nmsh' && this.externalPrompt
       ? this.currentPromptSnapshot()
       : nativePromptSnapshot(context, this.promptConfiguration);
     return {cwd: context.cwd, project: context.project, branch: context.branch, prompt};
@@ -1082,19 +1123,21 @@ export class TerminalApp {
     return NATIVE_PALETTE_IDS.map(palette => buildThemePreviewLine(state.draft, palette, width));
   }
 
-  private starshipPanelStatusText(state: PromptPanelState, width: number): string {
-    if (state.starshipStatus?.installed) return truncateText(state.message ?? 'Starship preview is unavailable.', width);
-    return truncateText('Starship is not installed; choose install or NMSh.', width);
+  private externalPanelStatusText(state: PromptPanelState, provider: PromptProviderId, width: number): string {
+    const installed = provider === 'starship' ? state.starshipStatus?.installed : state.p10kStatus?.installed;
+    if (installed) return truncateText(state.message ?? `${providerLabel(provider)} preview is unavailable.`, width);
+    return truncateText(`${providerLabel(provider)} is not installed; see the options above.`, width);
   }
 
+
   private hasVisibleProviderPrompt(): boolean {
-    if (this.effectivePromptProvider === 'starship') return Boolean(this.starshipPrompt?.text.trim());
+    if (this.effectivePromptProvider !== 'nmsh') return Boolean(this.externalPrompt?.text.trim());
     return hasVisibleContextModule(this.promptConfiguration, this.context);
   }
 
   private currentPromptLine(width: number): string {
-    if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
-      return this.starshipPromptRow(width, this.promptConfiguration.placement);
+    if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
+      return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement);
     }
     return buildContextLine(this.context, width, this.promptConfiguration);
   }
@@ -1125,9 +1168,9 @@ export class TerminalApp {
     }, welcomeBlinkDelay(this.welcomeBlinkCount));
   }
 
-  /** Starship content follows the same placement rule as native: the divider fill only in header placement. */
-  private starshipPromptRow(width: number, placement: PromptConfiguration['placement']): string {
-    const content = truncateAnsi(this.starshipPrompt?.ansi ?? '', Math.max(0, width - 1));
+  /** External provider content follows the native placement rule: the divider fill only in header placement. */
+  private externalPromptRow(prompt: StarshipPromptResult, width: number, placement: PromptConfiguration['placement']): string {
+    const content = truncateAnsi(prompt.ansi, Math.max(0, width - 1));
     if (placement === 'composer') return `${content}${RESET}`;
     return `${content}${RESET}${SEPARATOR}${repeatToWidth('─', Math.max(0, width - displayWidth(content)))}${RESET}`;
   }
@@ -1477,9 +1520,9 @@ export class TerminalApp {
 
   private inputFirstLinePrefix(columns: number): string | undefined {
     if (this.promptConfiguration.composerLayout !== 'oneLine') return undefined;
-    if (this.effectivePromptProvider === 'starship' && this.starshipPrompt) {
+    if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       const maxWidth = Math.max(0, columns - 1);
-      return `${truncateAnsi(this.starshipPrompt.ansi, maxWidth)}${RESET} `;
+      return `${truncateAnsi(this.externalPrompt.ansi, maxWidth)}${RESET} `;
     }
     return buildInlineContextPrefix(this.context, columns, this.promptConfiguration);
   }

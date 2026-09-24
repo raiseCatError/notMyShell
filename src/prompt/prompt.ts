@@ -88,16 +88,6 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     docker: pair('#1d63ed', '#ffffff'),
     ...STATUS_COLORS,
   }),
-  semantic: theme('semantic', 'Soft Semantic', 'pastel roles with dark text', {
-    project: pair('#bba3f0', '#241a3d'),
-    cwd: pair('#5e626c', '#e2e4e9'),
-    gitBranch: pair('#3a3d46', '#f5f5f7'),
-    node: pair('#8dbb7e', '#13240f'),
-    go: pair('#7cc6db', '#0b2530'),
-    python: pair('#e8d38a', '#2b240a'),
-    docker: pair('#82aedc', '#0d2036'),
-    ...STATUS_COLORS,
-  }),
   cool: theme('cool', 'Cool First', 'periwinkle, slate and teal with tool colors', {
     project: pair('#6f7fd8', '#f5f5f7'),
     cwd: pair('#4a5878', '#dde3f0'),

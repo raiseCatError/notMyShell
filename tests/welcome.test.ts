@@ -59,7 +59,9 @@ test('welcome wordmark spells notMyShell with only My in brand lavender #A67CF3 
   assert.match(rows[0]!.plain, / {2}notMyShell v0\.2\.0$/u);
   assert.doesNotMatch(rows.map(row => row.plain).join('\n'), /NMSh|NMSH|nmsh/u);
   const primary = '38;2;242;240;236m';
-  assert.ok(rows[0]!.ansi.includes(`${primary}not\u001B[38;2;166;124;243mMy\u001B[${primary}Shell`));
+  assert.ok(rows[0]!.ansi.includes(`\u001B[1m\u001B[${primary}not\u001B[1m\u001B[38;2;166;124;243mMy\u001B[1m\u001B[${primary}Shell`), 'bold wordmark');
+  assert.match(rows[0]!.ansi, /\u001B\[22m\u001B\[38;2;125;133;144m v0\.2\.0/u, 'version is not bold');
+  assert.ok(rows.slice(1, 4).every(row => !row.ansi.includes('\u001B[1m')), 'metadata stays quiet');
   assert.doesNotMatch(rows[0]!.ansi, /172;252;115/u, 'the mistaken green is gone');
   assert.match(rows[0]!.ansi, /38;2;125;133;144m v0\.2\.0/u);
   assert.match(rows[1]!.plain, /build abcdef0 · dev$/u);

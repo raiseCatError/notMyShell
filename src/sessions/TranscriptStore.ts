@@ -49,7 +49,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
           && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')))
       && (record.historicalContext?.prompt === undefined || (typeof record.historicalContext.prompt === 'object'
         && record.historicalContext.prompt !== null
-        && (record.historicalContext.prompt.provider === 'nmsh' || record.historicalContext.prompt.provider === 'starship')
+        && ['nmsh', 'starship', 'powerlevel10k'].includes(record.historicalContext.prompt.provider)
         && Array.isArray(record.historicalContext.prompt.segments)
         && (record.historicalContext.prompt.gapEnabled === undefined || typeof record.historicalContext.prompt.gapEnabled === 'boolean')
         && record.historicalContext.prompt.segments.every(segment => segment && typeof segment.text === 'string'

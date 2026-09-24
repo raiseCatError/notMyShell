@@ -4,16 +4,18 @@ import {
   nativeGapChoice,
   type NativeGapChoice,
   type PromptConfiguration,
+  type PromptProviderId,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES} from './prompt.js';
 import {POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
 import {renderControls} from '../ui/controls.js';
 import type {StarshipStatus} from './starship.js';
+import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 
-export type PromptPanelStep = 'provider' | 'starship' | 'layout' | 'appearance' | 'modules' | 'installConfirm';
+export type PromptPanelStep = 'provider' | 'starship' | 'powerlevel10k' | 'layout' | 'appearance' | 'modules' | 'installConfirm';
 export interface PromptPanelState {
   onboarding: boolean;
   step: PromptPanelStep;
@@ -22,6 +24,7 @@ export interface PromptPanelState {
   /** The configuration currently in effect; the draft is only a preview until saved. */
   saved?: PromptConfiguration;
   starshipStatus?: StarshipStatus;
+  p10kStatus?: Powerlevel10kStatus;
   message?: string;
 }
 
@@ -31,6 +34,12 @@ const ACCENT = foreground(UI_COLORS.accent);
 const SUBTLE = foreground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal'];
+export const PROVIDER_ORDER: readonly PromptProviderId[] = ['nmsh', 'starship', 'powerlevel10k'];
+
+export function providerLabel(provider: PromptProviderId): string {
+  return provider === 'nmsh' ? 'NMSh Native' : provider === 'starship' ? 'Starship' : 'Powerlevel10k';
+}
+
 const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'gap', 'end', 'icons', 'modules'] as const;
 export const APPEARANCE_MODULES_ROW = APPEARANCE_ROWS.indexOf('modules');
 
@@ -90,7 +99,7 @@ function layoutLabel(configuration: PromptConfiguration): string {
 
 /** One-line summary of an effective configuration. */
 export function describePromptConfiguration(configuration: PromptConfiguration): string {
-  if (configuration.provider === 'starship') return `Starship · ${layoutLabel(configuration)}`;
+  if (configuration.provider !== 'nmsh') return `${providerLabel(configuration.provider)} · ${layoutLabel(configuration)}`;
   const nmsh = configuration.nmsh;
   return [
     NATIVE_PROMPT_THEMES[nmsh.palette].label,
@@ -150,7 +159,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
 
 export function promptPanelItemCount(state: PromptPanelState): number {
   switch (state.step) {
-    case 'provider': return 2;
+    case 'provider': return PROVIDER_ORDER.length;
+    case 'powerlevel10k': return state.p10kStatus?.installed ? 3 : 2;
     case 'starship': return state.starshipStatus?.installed ? 4 : 3;
     case 'layout': return LAYOUT_CHOICES.length;
     case 'appearance': return APPEARANCE_ROWS.length;
@@ -168,7 +178,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
   else if (key.kind === 'down') state.selectedIndex = (state.selectedIndex + 1) % promptPanelItemCount(state);
   else if (key.kind === 'left' || key.kind === 'right') {
     const delta = key.kind === 'left' ? -1 : 1;
-    if (state.step === 'provider') state.selectedIndex = (state.selectedIndex + delta + 2) % 2;
+    if (state.step === 'provider') state.selectedIndex = (state.selectedIndex + delta + PROVIDER_ORDER.length) % PROVIDER_ORDER.length;
     else if (state.step === 'layout') state.selectedIndex = (state.selectedIndex + delta + LAYOUT_CHOICES.length) % LAYOUT_CHOICES.length;
     else if (state.step === 'appearance') {
       const nmsh = state.draft.nmsh;
@@ -199,8 +209,13 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   const item = (index: number, text: string) => `${index === state.selectedIndex ? ACCENT : SECONDARY}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
   if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
-    rows.push(item(0, `NMSh · built-in lavender prompt${state.draft.provider === 'nmsh' ? '  ●' : ''}`));
-    rows.push(item(1, `Starship · use its themes/configuration${state.draft.provider === 'starship' ? '  ●' : ''}`));
+    const descriptions: Record<PromptProviderId, string> = {
+      nmsh: 'NMSh Native · built-in themes, geometry, and modules',
+      starship: 'Starship · use its themes/configuration',
+      powerlevel10k: 'Powerlevel10k · use your ~/.p10k.zsh left prompt',
+    };
+    PROVIDER_ORDER.forEach((provider, index) => rows.push(item(index,
+      `${descriptions[provider]}${state.draft.provider === provider ? '  ●' : ''}${state.saved?.provider === provider ? '  ✓ saved' : ''}`)));
   } else if (state.step === 'starship') {
     rows.push(`${PRIMARY}Starship${RESET}`);
     if (state.starshipStatus?.installed) {
@@ -215,6 +230,23 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       rows.push(item(0, process.platform === 'darwin' ? 'Install with Homebrew · brew install starship' : 'Install Starship using its official guide'));
       rows.push(item(1, 'Use NMSh for now'));
       rows.push(item(2, 'Back'));
+    }
+  } else if (state.step === 'powerlevel10k') {
+    rows.push(`${PRIMARY}Powerlevel10k${RESET}`);
+    const status = state.p10kStatus;
+    if (status?.installed) {
+      rows.push(`${SECONDARY}Theme ${status.themePath}${RESET}`);
+      rows.push(`${SECONDARY}Config ${status.configPath}${status.configExists ? '' : ' (not found; p10k defaults)'}${RESET}`);
+      rows.push(`${SUBTLE}Rendered in an isolated zsh; NMSh keeps the editor. Your left prompt is shown without its prompt character;${RESET}`);
+      rows.push(`${SUBTLE}git state uses p10k's vcs_info fallback, and the right prompt is not shown yet. Neither file is modified.${RESET}`);
+      rows.push(item(0, 'Use Powerlevel10k'));
+      rows.push(item(1, 'Use NMSh for now'));
+      rows.push(item(2, 'Back'));
+    } else {
+      rows.push(`${SECONDARY}Powerlevel10k was not found.${RESET}`);
+      rows.push(`${SUBTLE}Install it yourself (e.g. brew install powerlevel10k), run p10k configure from /zsh, then reopen /prompt.${RESET}`);
+      rows.push(item(0, 'Use NMSh for now'));
+      rows.push(item(1, 'Back'));
     }
   } else if (state.step === 'installConfirm') {
     rows.push(`${PRIMARY}Run this command?${RESET}`);

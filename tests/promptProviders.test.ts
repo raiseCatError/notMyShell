@@ -24,10 +24,10 @@ const contrast = (a: {red: number; green: number; blue: number}, b: {red: number
   return (high! + 0.05) / (low! + 0.05);
 };
 
-test('six native themes exist, stay readable, and keep adjacent segments distinct', () => {
-  assert.deepEqual(NATIVE_PALETTE_IDS, ['lavender', 'brand', 'semantic', 'cool', 'warm', 'grayscale']);
+test('five visible native themes exist, stay readable, and keep adjacent segments distinct', () => {
+  assert.deepEqual(NATIVE_PALETTE_IDS, ['lavender', 'brand', 'cool', 'warm', 'grayscale']);
   assert.deepEqual(NATIVE_PALETTE_IDS.map(id => NATIVE_PROMPT_THEMES[id].label),
-    ['Lavender Native', 'Brand / Semantic', 'Soft Semantic', 'Cool First', 'Warm First', 'Grayscale']);
+    ['Lavender Native', 'Brand / Semantic', 'Cool First', 'Warm First', 'Grayscale']);
   const order = ['project', 'cwd', 'gitBranch', 'node', 'go', 'python', 'docker', 'failure'] as const;
   for (const id of NATIVE_PALETTE_IDS) {
     const theme = NATIVE_PROMPT_THEMES[id];
@@ -177,17 +177,17 @@ test('native themes color by semantic role and flow into archived snapshots', ()
   assert.deepEqual(byText('2').background, {red: 205, green: 115, blue: 123}, 'existing failure color is kept');
   assert.deepEqual(modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'toolchain', 'toolchain', 'toolchain', 'toolchain', 'exitStatus']);
 
-  const soft = renderedModules(context, normalizePromptConfiguration({nmsh: {palette: 'semantic'}}));
-  const shared = soft.filter((module, index) => JSON.stringify(module.background) === JSON.stringify(modules[index]!.background));
-  assert.ok(shared.length <= 2, 'Soft Semantic is not a rename of Brand / Semantic (only git/status may be shared)');
+  const legacy = normalizePromptConfiguration({nmsh: {palette: 'semantic'}, transcript: {historyTheme: 'semantic'}});
+  assert.equal(legacy.nmsh.palette, 'brand', 'retired Soft Semantic configs map to Brand / Semantic');
+  assert.equal(legacy.transcript.historyTheme, 'brand');
 
-  const semantic = normalizePromptConfiguration({nmsh: {palette: 'semantic'}});
-  const snapshot = nativePromptSnapshot(context, semantic);
-  assert.equal(snapshot.palette, 'semantic');
-  const archivedProject = archiveColor(snapshot.segments[0]!.background!, 'background');
-  const archivedText = archiveColor(snapshot.segments[0]!.foreground!);
-  assert.ok(archivedProject.blue > archivedProject.green, 'archived project keeps its lavender pigment');
-  assert.ok(contrast(archivedText, archivedProject) > 2, 'dark live text becomes readable muted text in history');
+  const snapshot = nativePromptSnapshot(context, brand);
+  assert.equal(snapshot.palette, 'brand');
+  const python = snapshot.segments.find(segment => segment.role === 'python')!;
+  const archivedProject = archiveColor(python.background!, 'background');
+  const archivedText = archiveColor(python.foreground!);
+  assert.ok(archivedProject.red > archivedProject.blue, 'archived python keeps its yellow pigment');
+  assert.ok(contrast(archivedText, archivedProject) > 2, 'dark live text on a light segment becomes readable muted text in history');
 });
 
 test('theme previews show every module type without adding them to the live prompt', () => {
@@ -295,7 +295,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   const saved = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   const state = {onboarding: false, step: 'appearance' as const, selectedIndex: 0, draft: structuredClone(saved), saved};
   const summary = 'Lavender Native · two-line divider · wedge start · wedge joins · gap normal · fading wedge end · icons on';
-  const unchanged = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'S', 'C', 'W', 'G']).map(stripAnsi);
+  const unchanged = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'C', 'W', 'G']).map(stripAnsi);
   assert.ok(unchanged.some(row => row.includes(`Current  ${summary}`)));
   assert.ok(unchanged.some(row => row.includes('matches current')));
   assert.ok(unchanged.some(row => /● Lavender Native +✓ L/u.test(row)));
@@ -305,7 +305,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   press(0, 'right'); press(1, 'right'); press(1, 'right'); press(2, 'right'); press(3, 'left'); press(4, 'right'); press(4, 'right'); press(5, 'right');
   assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
     ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
-  const changed = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'S', 'C', 'W', 'G']).map(stripAnsi);
+  const changed = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'C', 'W', 'G']).map(stripAnsi);
   for (const expected of [
     'Theme      ‹ Brand / Semantic ›  saved: Lavender Native',
     'Start      ‹ Flat ›  saved: Wedge',
@@ -395,12 +395,12 @@ test('layout choice persists through the normal prompt configuration file', asyn
   }
 });
 
-test('Starship prompt rows follow the same placement rule as native', () => {
+test('external provider rows follow the same placement rule as native', () => {
   const app = new TerminalApp();
   try {
-    app['starshipPrompt'] = {ansi: 'star', text: 'star', segments: [], normalizedMultiline: false};
-    assert.match(stripAnsi(app['starshipPromptRow'](20, 'header')), /^star─+$/u);
-    assert.equal(stripAnsi(app['starshipPromptRow'](20, 'composer')), 'star');
+    const prompt = {ansi: 'star', text: 'star', segments: [], normalizedMultiline: false};
+    assert.match(stripAnsi(app['externalPromptRow'](prompt, 20, 'header')), /^star─+$/u);
+    assert.equal(stripAnsi(app['externalPromptRow'](prompt, 20, 'composer')), 'star');
   } finally {
     app['stop'](0);
     app['session'].kill();
