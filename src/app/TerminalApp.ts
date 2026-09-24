@@ -111,6 +111,14 @@ export class TerminalApp {
   private contextGeneration = 0;
   private appearanceState?: AppearanceState;
   private keyboardState?: KeyboardState;
+  /**
+   * Where the currently-open top-level panel (prompt/transcript/appearance/
+   * keyboard) was opened from. Esc at that panel's own root uses this to
+   * decide whether to return to the /settings root or close to the
+   * composer, instead of every panel guessing independently.
+   */
+  private panelOrigin?: 'settings';
+  private panelOriginIndex = 0;
   private lastPtyRows = 0;
   private lastPtyColumns = 0;
   private stopped = false;
@@ -236,9 +244,16 @@ export class TerminalApp {
         else {
           const section = SETTINGS_SECTIONS[state.selectedIndex];
           if (section === 'Appearance') { state.section = 'appearance'; state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1; }
-          else if (section === 'Prompt') { this.settingsPanelState = undefined; void this.startPromptSettings(false); }
-          else if (section === 'Transcript') { this.settingsPanelState = undefined; this.startTranscriptSettings(); }
-          else if (section === 'Keyboard') { this.settingsPanelState = undefined; void this.startKeyboard(); }
+          else if (section === 'Prompt') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = state.selectedIndex;
+            this.settingsPanelState = undefined; void this.startPromptSettings(false);
+          } else if (section === 'Transcript') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = state.selectedIndex;
+            this.settingsPanelState = undefined; this.startTranscriptSettings();
+          } else if (section === 'Keyboard') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = state.selectedIndex;
+            this.settingsPanelState = undefined; void this.startKeyboard();
+          }
         }
       }
       this.render();
@@ -247,6 +262,7 @@ export class TerminalApp {
     if (this.transcriptPanelState) {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.transcriptPanelState = undefined;
+        this.returnFromPanel();
         this.render();
       } else if (key.kind === 'enter') {
         this.saveTranscriptSettings();
@@ -302,7 +318,7 @@ export class TerminalApp {
         this.render();
       } else if (key.kind === 'escape' || key.kind === 'interrupt') {
         if (this.promptPanelState.onboarding) void this.savePromptSettings();
-        else { this.promptPanelState = undefined; this.render(); }
+        else { this.promptPanelState = undefined; this.returnFromPanel(); this.render(); }
       } else if (key.kind === 'enter') {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
@@ -380,6 +396,7 @@ export class TerminalApp {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.appearanceState = undefined;
         this.output.addHistoryLine(`${STOPPED}✻ Appearance configuration cancelled${RESET}`);
+        this.returnFromPanel();
         this.render();
         return;
       }
@@ -396,6 +413,7 @@ export class TerminalApp {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.keyboardState = undefined;
         this.output.addHistoryLine(`${STOPPED}✻ Keyboard configuration cancelled${RESET}`);
+        this.returnFromPanel();
         this.render();
         return;
       }
@@ -650,12 +668,12 @@ export class TerminalApp {
     const slash = parseSlashCommand(command);
     if (slash) {
       if (slash.kind === 'copy') await this.copyRecent(slash.index);
-      else if (slash.kind === 'appearance') await this.startAppearance();
-      else if (slash.kind === 'prompt') await this.startPromptSettings(false);
+      else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
+      else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
       else if (slash.kind === 'settings') this.settingsPanelState = {section: 'root', selectedIndex: 0,
         glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
-      else if (slash.kind === 'transcript') this.startTranscriptSettings();
-      else if (slash.kind === 'keyboard') await this.startKeyboard();
+      else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
+      else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
       else if (slash.kind === 'clear') await this.startFreshPresentation();
@@ -1369,6 +1387,20 @@ export class TerminalApp {
     if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);
     if (this.keyboardState) return framePanel(renderKeyboardPanel(this.keyboardState, columns), columns);
     return framePanel(this.renderedPromptPanel(columns), columns);
+  }
+
+  /**
+   * Closes whatever top-level panel is currently open and, if it was opened
+   * from /settings, reopens the settings root at the row it was launched
+   * from instead of dropping straight to the composer. Callers clear their
+   * own panel state field first, then call this.
+   */
+  private returnFromPanel(): void {
+    if (this.panelOrigin === 'settings') {
+      this.settingsPanelState = {section: 'root', selectedIndex: this.panelOriginIndex,
+        glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+    }
+    this.panelOrigin = undefined;
   }
 
   private saveGlyphChoice(style: PromptConfiguration['glyphStyle']): void {
