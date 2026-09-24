@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile, rm, stat, writeFile} from 'node:fs/promises';
+import {mkdtemp, readFile, rm, stat, symlink, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {detectPowerlevel10k, powerlevel10kThemeCandidates, renderPowerlevel10kPrompt} from '../src/prompt/powerlevel10k.js';
+import {configuratorFileChanged, powerlevel10kZshrcPath, preparePowerlevel10kConfigurator} from '../src/prompt/Powerlevel10kConfigurator.js';
 import {describePromptConfiguration, handlePromptPanelKey, PROVIDER_ORDER, renderPromptPanel, type PromptPanelState} from '../src/prompt/PromptPanel.js';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import type {Key} from '../src/terminal/keys.js';
@@ -126,13 +127,57 @@ test('/prompt offers three providers and an honest Powerlevel10k step', () => {
     p10kStatus: {installed: true, themePath: '/t/powerlevel10k.zsh-theme', configPath: '/h/.p10k.zsh', configExists: true}};
   rows = renderPromptPanel(installed, 160, []).map(stripAnsi);
   assert.ok(rows.some(row => row.includes('Theme /t/powerlevel10k.zsh-theme')));
-  assert.ok(rows.some(row => row.includes('right prompt is not shown yet. Neither file is modified.')));
+  assert.ok(rows.some(row => row.includes('right prompt is not shown yet.')));
   assert.ok(rows.some(row => row.includes('› Use Powerlevel10k')));
+  assert.ok(rows.some(row => row.includes('Configure Powerlevel10k')));
 
   const missing = {...installed, p10kStatus: {installed: false, configPath: '/h/.p10k.zsh', configExists: false}};
   rows = renderPromptPanel(missing, 160, []).map(stripAnsi);
   assert.ok(rows.some(row => row.includes('Powerlevel10k was not found.')));
   assert.ok(!rows.some(row => /Install Powerlevel10k now/u.test(row)), 'no silent or implied installation');
+
+  installed.step = 'p10kConfirm';
+  rows = renderPromptPanel(installed, 160, []).map(stripAnsi);
+  assert.ok(rows.some(row => row.includes('wizard may modify')));
+  assert.ok(rows.some(row => row.includes('/h/.p10k.zsh')));
+  assert.ok(rows.some(row => row.includes('Create backups and continue')));
+});
+
+test('Powerlevel10k wizard preparation backs up both possible targets and detects changes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-p10k-config-'));
+  const config = join(directory, '.p10k.zsh');
+  const zshrc = join(directory, '.zshrc');
+  await writeFile(config, '# config\n');
+  await writeFile(zshrc, '# shell\n');
+  try {
+    assert.equal(powerlevel10kZshrcPath({ZDOTDIR: directory}), zshrc);
+    const preparation = await preparePowerlevel10kConfigurator(
+      {installed: true, themePath: '/fake/theme', configPath: config, configExists: true}, {ZDOTDIR: directory});
+    assert.equal(await readFile(preparation.config.backup!, 'utf8'), '# config\n');
+    assert.equal(await readFile(preparation.zshrc.backup!, 'utf8'), '# shell\n');
+    assert.equal(await configuratorFileChanged(preparation.config), false);
+    await writeFile(config, '# updated\n');
+    assert.equal(await configuratorFileChanged(preparation.config), true);
+    assert.equal(await configuratorFileChanged(preparation.zshrc), false);
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+});
+
+test('Powerlevel10k wizard preparation refuses symlinked user configuration', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-p10k-symlink-'));
+  const config = join(directory, '.p10k.zsh');
+  const zshrc = join(directory, '.zshrc');
+  await writeFile(zshrc, '# shell\n');
+  await symlink(zshrc, config);
+  try {
+    await assert.rejects(preparePowerlevel10kConfigurator(
+      {installed: true, themePath: '/fake/theme', configPath: config, configExists: true}, {ZDOTDIR: directory}),
+    /not a regular file/u);
+    assert.equal(await readFile(zshrc, 'utf8'), '# shell\n');
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
 });
 
 test('a broken Powerlevel10k provider falls back to NMSh truthfully', async () => {

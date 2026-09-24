@@ -12,12 +12,13 @@ import {renderControls} from '../ui/controls.js';
 import type {StarshipStatus} from './starship.js';
 import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAdapter.js';
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
+import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 
-export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
+export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 export interface PromptPanelState {
   onboarding: boolean;
   step: PromptPanelStep;
@@ -27,6 +28,8 @@ export interface PromptPanelState {
   saved?: PromptConfiguration;
   starshipStatus?: StarshipStatus;
   p10kStatus?: Powerlevel10kStatus;
+  p10kPreparation?: ConfiguratorPreparation;
+  p10kResult?: string[];
   message?: string;
   task?: TaskProgress;
   starshipModules?: boolean[];
@@ -156,6 +159,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'installDetails') return [['Enter/Esc', 'back']];
   if (state.step === 'starshipModules') return [['↑↓', 'move'], ['Enter', 'edit'], ['Esc', 'back']];
   if (state.step === 'starshipConfirm') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
+  if (state.step === 'p10kResult') return [['Enter/Esc', 'back']];
+  if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
     return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['Enter/Esc', 'done']];
@@ -170,7 +175,9 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
 export function promptPanelItemCount(state: PromptPanelState): number {
   switch (state.step) {
     case 'provider': return PROVIDER_ORDER.length;
-    case 'powerlevel10k': return state.p10kStatus?.installed ? 3 : 2;
+    case 'powerlevel10k': return state.p10kStatus?.installed ? 4 : 2;
+    case 'p10kConfirm': case 'p10kReady': return 2;
+    case 'p10kResult': return 1;
     case 'starship': return state.starshipStatus?.installed ? 5 : 3;
     case 'starshipModules': return STARSHIP_MODULES.length;
     case 'starshipConfirm': return 2;
@@ -268,16 +275,35 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       rows.push(`${SECONDARY}Theme ${status.themePath}${RESET}`);
       rows.push(`${SECONDARY}Config ${status.configPath}${status.configExists ? '' : ' (not found; p10k defaults)'}${RESET}`);
       rows.push(`${SUBTLE}Rendered in an isolated zsh; NMSh keeps the editor. Your left prompt is shown without its prompt character;${RESET}`);
-      rows.push(`${SUBTLE}git state uses p10k's vcs_info fallback, and the right prompt is not shown yet. Neither file is modified.${RESET}`);
+      rows.push(`${SUBTLE}git state uses p10k's vcs_info fallback, and the right prompt is not shown yet.${RESET}`);
       rows.push(item(0, 'Use Powerlevel10k'));
-      rows.push(item(1, 'Use NMSh for now'));
-      rows.push(item(2, 'Back'));
+      rows.push(item(1, 'Configure Powerlevel10k'));
+      rows.push(item(2, 'Use NMSh for now'));
+      rows.push(item(3, 'Back'));
     } else {
       rows.push(`${SECONDARY}Powerlevel10k was not found.${RESET}`);
       rows.push(`${SUBTLE}Install it yourself (e.g. brew install powerlevel10k), run p10k configure from /zsh, then reopen /prompt.${RESET}`);
       rows.push(item(0, 'Use NMSh for now'));
       rows.push(item(1, 'Back'));
     }
+  } else if (state.step === 'p10kConfirm') {
+    rows.push(`${PRIMARY}Run Powerlevel10k's official configurator?${RESET}`);
+    rows.push(`${SECONDARY}The wizard may modify:${RESET}`);
+    rows.push(`${SECONDARY}  ${state.p10kStatus?.configPath ?? '~/.p10k.zsh'}${RESET}`);
+    rows.push(`${SECONDARY}  ${powerlevel10kZshrcPath()}${RESET}`);
+    rows.push(`${SUBTLE}NMSh will hand terminal control to the wizard and restore it afterwards.${RESET}`);
+    rows.push(item(0, 'Create backups and continue'));
+    rows.push(item(1, 'Cancel'));
+  } else if (state.step === 'p10kReady') {
+    rows.push(`${PRIMARY}Powerlevel10k backup ready${RESET}`);
+    for (const file of [state.p10kPreparation?.config, state.p10kPreparation?.zshrc]) {
+      if (file) rows.push(`${SECONDARY}  ${file.path}: ${file.backup ?? 'not present before wizard'}${RESET}`);
+    }
+    rows.push(item(0, 'Launch official wizard'));
+    rows.push(item(1, 'Cancel'));
+  } else if (state.step === 'p10kResult') {
+    rows.push(`${PRIMARY}Powerlevel10k configurator finished${RESET}`);
+    rows.push(...(state.p10kResult ?? []).map(line => `${SECONDARY}  ${line}${RESET}`));
   } else if (state.step === 'installConfirm') {
     rows.push(`${PRIMARY}Run this command?${RESET}`);
     rows.push(`${SECONDARY}brew install starship${RESET}`);

@@ -18,6 +18,7 @@ import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, sa
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
+import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
@@ -99,6 +100,7 @@ export class TerminalApp {
   private focusedActivityId?: string;
   private focusedCommandIndex?: number;
   private passthrough = false;
+  private externalPassthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
   private activityTimer?: NodeJS.Timeout;
@@ -200,6 +202,7 @@ export class TerminalApp {
   };
 
   private readonly onResize = (): void => {
+    if (this.externalPassthrough) return;
     this.renderer.invalidate();
     this.lastPtyRows = 0;
     this.lastPtyColumns = 0;
@@ -252,6 +255,21 @@ export class TerminalApp {
     }
     if (this.promptPanelState) {
       if (this.promptPanelState.step === 'installProgress') return;
+      if (this.promptPanelState.step === 'p10kResult') {
+        if (key.kind === 'enter' || key.kind === 'escape') {
+          this.promptPanelState.step = 'powerlevel10k';
+          this.promptPanelState.selectedIndex = 1;
+          this.render();
+        }
+        return;
+      }
+      if ((this.promptPanelState.step === 'p10kConfirm' || this.promptPanelState.step === 'p10kReady')
+        && (key.kind === 'escape' || key.kind === 'interrupt')) {
+        this.promptPanelState.step = 'powerlevel10k';
+        this.promptPanelState.selectedIndex = 1;
+        this.render();
+        return;
+      }
       if (this.promptPanelState.step === 'starshipModules' && (key.kind === 'escape' || key.kind === 'interrupt')) {
         this.promptPanelState.step = 'starship';
         this.promptPanelState.selectedIndex = 1;
@@ -1037,6 +1055,43 @@ export class TerminalApp {
     this.render();
   }
 
+  private async runPowerlevel10kWizard(status: Powerlevel10kStatus): Promise<number> {
+    if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
+    if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
+    const ignoreInterrupt = (): void => { /* The foreground wizard handles Ctrl+C. */ };
+    this.externalPassthrough = true;
+    let inputDetached = false;
+    let rawModeReleased = false;
+    let rendererLeft = false;
+    let interruptAttached = false;
+    try {
+      process.stdin.off('data', this.onInput);
+      process.stdin.pause();
+      inputDetached = true;
+      process.stdin.setRawMode(false);
+      rawModeReleased = true;
+      this.renderer.leave();
+      rendererLeft = true;
+      process.on('SIGINT', ignoreInterrupt);
+      interruptAttached = true;
+      return await launchPowerlevel10kConfigurator(status);
+    } finally {
+      if (interruptAttached) process.off('SIGINT', ignoreInterrupt);
+      if (!this.stopped) {
+        if (rendererLeft) this.renderer.enter();
+        if (rawModeReleased) process.stdin.setRawMode(true);
+        this.keyDecoder.reset();
+        if (inputDetached) {
+          process.stdin.on('data', this.onInput);
+          process.stdin.resume();
+        }
+        this.renderer.invalidate();
+      }
+      this.externalPassthrough = false;
+      this.render();
+    }
+  }
+
   private async advancePromptPanel(): Promise<void> {
     const state = this.promptPanelState;
     if (!state) return;
@@ -1060,16 +1115,56 @@ export class TerminalApp {
       }
     } else if (state.step === 'powerlevel10k') {
       const installed = Boolean(state.p10kStatus?.installed);
-      const choice = installed ? ['use', 'native', 'back'][state.selectedIndex] : ['native', 'back'][state.selectedIndex];
+      const choice = installed ? ['use', 'configure', 'native', 'back'][state.selectedIndex] : ['native', 'back'][state.selectedIndex];
       if (choice === 'use') {
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
+      } else if (choice === 'configure') {
+        state.step = 'p10kConfirm';
+        state.selectedIndex = 0;
       } else if (choice === 'native') {
         state.draft.provider = 'nmsh';
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
       } else {
         state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('powerlevel10k');
+      }
+    } else if (state.step === 'p10kConfirm') {
+      if (state.selectedIndex === 1) {
+        state.step = 'powerlevel10k'; state.selectedIndex = 1;
+      } else if (state.p10kStatus) {
+        try {
+          state.p10kPreparation = await preparePowerlevel10kConfigurator(state.p10kStatus);
+          state.step = 'p10kReady';
+          state.selectedIndex = 0;
+          state.message = undefined;
+        } catch (error) {
+          state.message = `Could not back up Powerlevel10k config: ${error instanceof Error ? error.message : String(error)}`;
+        }
+      }
+    } else if (state.step === 'p10kReady') {
+      if (state.selectedIndex === 1) {
+        state.step = 'powerlevel10k'; state.selectedIndex = 1;
+      } else if (state.p10kStatus && state.p10kPreparation) {
+        const status = state.p10kStatus;
+        const preparation = state.p10kPreparation;
+        try {
+          const exitCode = await this.runPowerlevel10kWizard(status);
+          const configChanged = await configuratorFileChanged(preparation.config);
+          const zshrcChanged = await configuratorFileChanged(preparation.zshrc);
+          state.p10kStatus = this.detectPowerlevel10k(state.draft);
+          state.p10kResult = [
+            `Wizard exit: ${exitCode}`,
+            `${preparation.config.path}: ${configChanged ? 'changed' : 'unchanged'}`,
+            `${preparation.zshrc.path}: ${zshrcChanged ? 'changed' : 'unchanged'}`,
+          ];
+          if (state.p10kStatus.installed) await this.refreshPanelPreview(state);
+          if (this.promptConfiguration.provider === 'powerlevel10k') await this.refreshProviderPrompt();
+        } catch (error) {
+          state.p10kResult = [`Wizard could not run: ${error instanceof Error ? error.message : String(error)}`];
+        }
+        state.step = 'p10kResult';
+        state.selectedIndex = 0;
       }
     } else if (state.step === 'starship') {
       if (state.starshipStatus?.installed) {
@@ -1501,8 +1596,8 @@ export class TerminalApp {
   }
 
   private render(): void {
+    if (this.stopped || this.passthrough || this.externalPassthrough) return;
     void this.fetchSuggestions();
-    if (this.stopped || this.passthrough) return;
     const {columns, rows} = this.dimensions();
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
 
