@@ -58,7 +58,7 @@ const SECONDARY = foreground(UI_COLORS.secondary);
 const ACCENT = foreground(UI_COLORS.accent);
 const SUBTLE = foreground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
-const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal'];
+const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal', 'wide'];
 export const PROVIDER_ORDER: readonly PromptProviderId[] = ['nmsh', 'starship', 'powerlevel10k'];
 
 export function providerLabel(provider: PromptProviderId): string {
@@ -121,7 +121,7 @@ function cycle<T>(values: readonly T[], current: T, delta: number): T {
 }
 
 function gapLabel(value: NativeGapChoice): string {
-  return value === 'off' ? 'Off · connected' : value === 'compact' ? 'Compact' : 'Normal';
+  return value === 'off' ? 'Off · connected' : value === 'compact' ? 'Compact' : value === 'normal' ? 'Normal' : 'Wide';
 }
 
 /**

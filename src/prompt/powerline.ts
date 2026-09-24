@@ -105,14 +105,25 @@ export function connectorFadeColor(left: RgbColor): RgbColor {
   return fadePromptColor(left, 0);
 }
 
-/** Background escapes for the close (left) and open (right) cells of a faded gap. */
-function fadeZones(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors, compact: boolean): {left: string; right: string} {
+/** Background escapes for the close (left) and open (right) cells of a Compact faded gap. */
+function fadeZones(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors): {left: string; right: string} {
   const fadeA = background(connectorFadeColor(previous));
   const fadeB = background(connectorFadeColor(following));
   switch (mode) {
     case 'mixed': return {left: fadeA, right: fadeB};
-    case 'next': return {left: compact ? fadeB : NEUTRAL_BACKGROUND, right: fadeB};
-    default: return {left: fadeA, right: compact ? fadeA : NEUTRAL_BACKGROUND};
+    case 'next': return {left: fadeB, right: fadeB};
+    default: return {left: fadeA, right: fadeA};
+  }
+}
+
+/** Cap colors for a notched (Normal/Wide) gap: only the chosen side(s) darken. */
+function gapCapColors(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors): {left: RgbColor; right: RgbColor} {
+  const fadeA = connectorFadeColor(previous);
+  const fadeB = connectorFadeColor(following);
+  switch (mode) {
+    case 'mixed': return {left: fadeA, right: fadeB};
+    case 'next': return {left: previous, right: fadeB};
+    default: return {left: fadeA, right: following};
   }
 }
 
@@ -183,11 +194,7 @@ export function renderPowerlineBlocks(
       continue;
     }
     // Separated: close cap (Connector shape), gap cells, open cap. A connector
-    // fade picks only the open cap's shape. Fade colors pick the zones: the
-    // close cell belongs to the left side, the open cell to the right, and the
-    // gap cells between them always stay terminal background. Compact zones
-    // touch, so a one-sided mode carries its color across both caps. No width
-    // is added; with zero cells (Flat + Compact) there is nothing to color.
+    // fade picks only the open cap's shape; fade colors only pick colors.
     const fade = boundary<PowerlineShape | 'off'>(current, next, block => block.fade, connectorFade ?? 'off');
     const close = powerlineShapeGlyphs(shape).close;
     if (fade === 'off') {
@@ -197,11 +204,25 @@ export function renderPowerlineBlocks(
       if (open) content += `${foreground(next.background)}${open}`;
       continue;
     }
-    const {left, right} = fadeZones(current.background, next.background, fadeColors, gapWidth === 0);
     const open = powerlineShapeGlyphs(fade).open;
-    if (close) content += `${RESET}${left}${foreground(current.background)}${close}`;
-    if (gapWidth) content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth)}`;
-    if (open) content += `${RESET}${right}${foreground(next.background)}${open}`;
+    if (gapWidth === 0) {
+      // Compact: the zones touch, so a one-sided mode carries its color across
+      // both caps. No width is added; Flat + Flat has nothing to color.
+      const {left, right} = fadeZones(current.background, next.background, fadeColors);
+      if (close) content += `${RESET}${left}${foreground(current.background)}${close}`;
+      if (open) content += `${RESET}${right}${foreground(next.background)}${open}`;
+      continue;
+    }
+    // Normal and Wide: both caps cut their (faded) side into terminal
+    // background, forming a notch between them. Wide adds one blank cell.
+    // With no cap glyph on either side (Flat + Flat), Normal falls back to one
+    // blank cell and Wide to two.
+    const {left, right} = gapCapColors(current.background, next.background, fadeColors);
+    const wide = gapWidth >= 2;
+    const spacer = close || open ? (wide ? 1 : 0) : (wide ? 2 : 1);
+    if (close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(left)}${close}`;
+    if (spacer) content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(spacer)}`;
+    if (open) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(right)}${open}`;
   }
 
   content += renderEnd(modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));

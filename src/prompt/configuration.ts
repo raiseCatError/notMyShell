@@ -24,7 +24,7 @@ export type NativeConnectorStyle = PowerlineConnectorStyle;
 /** `nerd` shows Nerd Font module icons; a future `text` mode can join without migration. */
 export type NativeIconMode = 'nerd' | 'off';
 export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale';
-export type NativeGapChoice = 'off' | 'compact' | 'normal';
+export type NativeGapChoice = 'off' | 'compact' | 'normal' | 'wide';
 /**
  * Rich Git state colors: `semantic` keeps meaningful Git colors under any
  * theme, `followTheme` derives them from the Main Prompt theme, `grayscale`
@@ -296,14 +296,18 @@ export function hasVisibleContextModule(
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0));
 }
 
-/** Gap presets map onto the stored gap width: compact keeps caps but no space. */
+/**
+ * Gap presets map onto the stored gap width: compact 0, normal 1, wide 2.
+ * Legacy widths above 2 read as wide.
+ */
 export function nativeGapChoice(configuration: PromptConfiguration): NativeGapChoice {
   if (!configuration.nmsh.gapEnabled) return 'off';
-  return configuration.gap === 0 ? 'compact' : 'normal';
+  return configuration.gap === 0 ? 'compact' : configuration.gap === 1 ? 'normal' : 'wide';
 }
 
 export function applyNativeGapChoice(configuration: PromptConfiguration, choice: NativeGapChoice): void {
   configuration.nmsh.gapEnabled = choice !== 'off';
   if (choice === 'compact') configuration.gap = 0;
-  else if (choice === 'normal' && configuration.gap === 0) configuration.gap = 1;
+  else if (choice === 'normal') configuration.gap = 1;
+  else if (choice === 'wide') configuration.gap = 2;
 }
