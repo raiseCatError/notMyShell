@@ -1,14 +1,19 @@
 import {
   applyNativeGapChoice,
+  CONNECTOR_FADE_STYLES,
+  GIT_COLOR_MODES,
   NATIVE_PALETTE_IDS,
+  type ConnectorFadeStyle,
+  type GitColorMode,
   nativeGapChoice,
   type NativeGapChoice,
   type PromptConfiguration,
   type PromptProviderId,
 } from './configuration.js';
-import {NATIVE_PROMPT_THEMES} from './prompt.js';
+import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
 import {POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
 import {renderControls} from '../ui/controls.js';
+import {renderTabStrip} from '../ui/PanelShell.js';
 import type {StarshipStatus} from './starship.js';
 import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAdapter.js';
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
@@ -34,7 +39,15 @@ export interface PromptPanelState {
   task?: TaskProgress;
   starshipModules?: boolean[];
   starshipProposal?: StarshipConfigProposal;
+  /** NMSh appearance top view: Main Prompt (default) or Rich Git. */
+  view?: PromptView;
+  /** `tabs`: ←/→ switch views; `rows` (default): ←/→ edit the selected row. */
+  focus?: 'tabs' | 'rows';
 }
+
+export type PromptView = 'main' | 'git';
+export const PROMPT_VIEWS = ['Main Prompt', 'Rich Git'] as const;
+const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git'];
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -48,8 +61,24 @@ export function providerLabel(provider: PromptProviderId): string {
   return provider === 'nmsh' ? 'NMSh Native' : provider === 'starship' ? 'Starship' : 'Powerlevel10k';
 }
 
-const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'gap', 'end', 'icons', 'modules'] as const;
+const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'gap', 'end', 'icons', 'modules'] as const;
 export const APPEARANCE_MODULES_ROW = APPEARANCE_ROWS.indexOf('modules');
+/** Rich Git has one editable row; geometry is inherited and shown read-only. */
+const RICH_GIT_ROWS = ['gitColors'] as const;
+
+/** Enter on the Main Prompt Modules row opens the module manager. */
+export function onModulesRow(state: PromptPanelState): boolean {
+  return state.step === 'appearance' && (state.view ?? 'main') === 'main' && state.focus !== 'tabs'
+    && state.selectedIndex === APPEARANCE_MODULES_ROW;
+}
+
+export function connectorFadeLabel(value: ConnectorFadeStyle): string {
+  return value === 'follow' ? 'Follow connector' : value === 'off' ? 'Off' : SHAPE_LABELS[value];
+}
+
+export function gitColorsLabel(value: GitColorMode): string {
+  return value === 'semantic' ? 'Semantic' : value === 'followTheme' ? 'Follow theme' : 'Grayscale';
+}
 
 const SHAPE_LABELS: Record<PowerlineShape, string> = {
   wedge: 'Wedge', flat: 'Flat', rounded: 'Rounded', slash: 'Slant /', backslash: 'Slant \\',
@@ -166,8 +195,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
     return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['Enter/Esc', 'done']];
   }
   if (state.step === 'appearance') {
-    const onModules = state.selectedIndex === APPEARANCE_MODULES_ROW;
-    return [['↑↓', 'move'], ['←→', 'change'], ['Enter', onModules ? 'edit modules' : 'save'], escape];
+    if (state.focus === 'tabs') return [['←→', 'switch view'], ['↓', 'select'], ['Enter', 'save'], escape];
+    return [['↑↓', 'move'], ['←→', 'change'], ['Enter', onModulesRow(state) ? 'edit modules' : 'save'], escape];
   }
   return [['↑↓', 'move'], ['Enter', 'choose'], escape];
 }
@@ -182,7 +211,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
     case 'starshipModules': return STARSHIP_MODULES.length;
     case 'starshipConfirm': return 2;
     case 'layout': return LAYOUT_CHOICES.length;
-    case 'appearance': return APPEARANCE_ROWS.length;
+    case 'appearance': return (state.view ?? 'main') === 'git' ? RICH_GIT_ROWS.length : APPEARANCE_ROWS.length;
     case 'modules': return state.draft.modules.length;
     case 'installConfirm': return 2;
     case 'installProgress': case 'installResult': case 'installDetails': return 1;
@@ -194,18 +223,33 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     state.message = undefined;
     return true;
   }
-  if (key.kind === 'up') state.selectedIndex = (state.selectedIndex - 1 + promptPanelItemCount(state)) % promptPanelItemCount(state);
+  if (state.step === 'appearance' && state.focus === 'tabs') {
+    if (key.kind === 'left' || key.kind === 'right') {
+      const index = PROMPT_VIEW_IDS.indexOf(state.view ?? 'main');
+      state.view = PROMPT_VIEW_IDS[(index + (key.kind === 'left' ? -1 : 1) + PROMPT_VIEW_IDS.length) % PROMPT_VIEW_IDS.length];
+      state.selectedIndex = 0;
+    } else if (key.kind === 'down') state.focus = 'rows';
+    else return false;
+    state.message = undefined;
+    return true;
+  }
+  // ↑ from the first appearance row reaches the view bar, as in /settings.
+  if (key.kind === 'up' && state.step === 'appearance' && state.selectedIndex === 0) state.focus = 'tabs';
+  else if (key.kind === 'up') state.selectedIndex = (state.selectedIndex - 1 + promptPanelItemCount(state)) % promptPanelItemCount(state);
   else if (key.kind === 'down') state.selectedIndex = (state.selectedIndex + 1) % promptPanelItemCount(state);
   else if (key.kind === 'left' || key.kind === 'right') {
     const delta = key.kind === 'left' ? -1 : 1;
     if (state.step === 'provider') state.selectedIndex = (state.selectedIndex + delta + PROVIDER_ORDER.length) % PROVIDER_ORDER.length;
     else if (state.step === 'layout') state.selectedIndex = (state.selectedIndex + delta + LAYOUT_CHOICES.length) % LAYOUT_CHOICES.length;
-    else if (state.step === 'appearance') {
+    else if (state.step === 'appearance' && state.view === 'git') {
+      state.draft.nmsh.gitColors = cycle(GIT_COLOR_MODES, state.draft.nmsh.gitColors, delta);
+    } else if (state.step === 'appearance') {
       const nmsh = state.draft.nmsh;
       switch (APPEARANCE_ROWS[state.selectedIndex]) {
         case 'theme': nmsh.palette = cycle(NATIVE_PALETTE_IDS, nmsh.palette, delta); break;
         case 'start': nmsh.startStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.startStyle, delta); break;
         case 'connector': nmsh.connector = cycle(POWERLINE_SHAPES, nmsh.connector, delta); break;
+        case 'connectorFade': nmsh.connectorFade = cycle(CONNECTOR_FADE_STYLES, nmsh.connectorFade, delta); break;
         case 'gap': applyNativeGapChoice(state.draft, cycle(GAP_CHOICES, nativeGapChoice(state.draft), delta)); break;
         case 'end': nmsh.endStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.endStyle, delta); break;
         case 'icons': nmsh.icons = nmsh.icons === 'off' ? 'nerd' : 'off'; break;
@@ -221,7 +265,8 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
  * `themePreviews` holds one live native prompt per palette, in
  * NATIVE_PALETTE_IDS order; it is shown only while editing appearance.
  */
-export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = [], rowsAvailable = Infinity): string[] {
+export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = [], rowsAvailable = Infinity,
+  gitShowcase: string[] = []): string[] {
   const title = state.onboarding ? 'Prompt setup' : 'Prompt settings';
   const rows = [`${PRIMARY}  ${title}${RESET}`];
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
@@ -338,15 +383,31 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     const draft = state.draft.nmsh;
     const iconLabel = (mode: PromptConfiguration['nmsh']['icons']) => mode === 'off' ? 'Off' : 'On';
     const visibleModules = state.draft.modules.filter(module => module.visible).length;
-    rows.push(`${PRIMARY}NMSh appearance${RESET}`);
-    rows.push(item(0, `Theme      ${value(NATIVE_PROMPT_THEMES[draft.palette].label, saved && NATIVE_PROMPT_THEMES[saved.palette].label)}`));
-    rows.push(item(1, `Start      ${value(edgeStyleLabel(draft.startStyle), saved && edgeStyleLabel(saved.startStyle))}`));
-    rows.push(item(2, `Connector  ${value(SHAPE_LABELS[draft.connector], saved && SHAPE_LABELS[saved.connector])}`));
-    rows.push(item(3, `Gap        ${value(gapLabel(nativeGapChoice(state.draft)), savedGap)}`));
-    rows.push(item(4, `End        ${value(edgeStyleLabel(draft.endStyle), saved && edgeStyleLabel(saved.endStyle))}`));
-    rows.push(item(5, `Icons      ${value(iconLabel(draft.icons), saved && iconLabel(saved.icons))}`));
-    rows.push(item(6, `Modules    ${visibleModules} of ${state.draft.modules.length} shown ›`));
-    if (themePreviews.length) {
+    const view = state.view ?? 'main';
+    const rowIndex = (index: number) => state.focus === 'tabs' ? -1 : index;
+    const row = (index: number, text: string) => item(rowIndex(index), text);
+    rows.push(renderTabStrip(PROMPT_VIEWS, PROMPT_VIEW_IDS.indexOf(view), columns, state.focus === 'tabs'), '');
+    if (view === 'git') {
+      rows.push(row(0, `Colors          ${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
+      rows.push(`  ${SUBTLE}Geometry        Follow main prompt${RESET}`);
+      rows.push(`  ${SUBTLE}Connector fade  Follow main prompt · ${connectorFadeLabel(draft.connectorFade).toLowerCase()}${RESET}`);
+      if (gitShowcase.length) {
+        rows.push('', `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}preview only${RESET}`);
+        RICH_GIT_SHOWCASE.forEach((entry, index) =>
+          rows.push(`  ${SECONDARY}${entry.label.padEnd(10)}${RESET} ${gitShowcase[index] ?? ''}${RESET}`));
+      }
+    } else {
+      rows.push(row(0, `Theme           ${value(NATIVE_PROMPT_THEMES[draft.palette].label, saved && NATIVE_PROMPT_THEMES[saved.palette].label)}`));
+      rows.push(row(1, `Start           ${value(edgeStyleLabel(draft.startStyle), saved && edgeStyleLabel(saved.startStyle))}`));
+      rows.push(row(2, `Connector       ${value(SHAPE_LABELS[draft.connector], saved && SHAPE_LABELS[saved.connector])}`));
+      const fadeNote = state.draft.nmsh.gapEnabled && draft.connectorFade !== 'off' ? `  ${SUBTLE}applies with Gap Off` : '';
+      rows.push(row(3, `Connector fade  ${value(connectorFadeLabel(draft.connectorFade), saved && connectorFadeLabel(saved.connectorFade))}${fadeNote}`));
+      rows.push(row(4, `Gap             ${value(gapLabel(nativeGapChoice(state.draft)), savedGap)}`));
+      rows.push(row(5, `End             ${value(edgeStyleLabel(draft.endStyle), saved && edgeStyleLabel(saved.endStyle))}`));
+      rows.push(row(6, `Icons           ${value(iconLabel(draft.icons), saved && iconLabel(saved.icons))}`));
+      rows.push(row(7, `Modules         ${visibleModules} of ${state.draft.modules.length} shown ›`));
+    }
+    if (themePreviews.length && view === 'main') {
       rows.push('');
       rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
       NATIVE_PALETTE_IDS.forEach((id, index) => {

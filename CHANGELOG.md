@@ -24,6 +24,11 @@ Session & Interaction UX, plus the appearance and customization system.
 - **Native prompt themes:** Lavender Native (default, brand lavender `#A67CF3`), Brand / Semantic, Cool First, Warm First, and Grayscale, with per-theme previews in `/prompt`.
 - **Native geometry:** independent Start, Connector, Gap (Off / Compact / Normal), and End. Shapes are Wedge, Flat, Rounded, Slant `/`, and Slant `\`, with fading variants on outer edges only.
 - **Native icons** On/Off for git and toolchain modules; toolchain modules for Node, Go, Python, and Docker are detected from marker files.
+- **Rich Git** in the Native prompt: one segment each for staged `+N`, modified `~N`, untracked `?N`, conflicts `!N`, ahead `↑N`, behind `↓N`, diverged `↑N ↓N`, and merge/rebase/cherry-pick. A genuinely clean tree adds a small success-colored marker shaped by the prompt geometry, and an unknown status never shows as clean. Status is collected asynchronously after commands and directory changes.
+- **`/prompt` views**: Main Prompt (theme, geometry, icons, modules, theme gallery) and Rich Git (colors plus a showcase of every state), switched with ←/→ from the view bar.
+- **Rich Git colors**: Semantic (default; meaningful Git colors under any theme), Follow theme, or Grayscale. The branch always follows the Main Prompt theme.
+- **Connector fade**: an optional one-cell softened transition between joined segments (Gap Off). The default, Follow connector, tracks the Connector shape; a fixed shape overrides it, and Off keeps solid connectors. Start and End keep their three-step fades.
+- Fixed: a zsh prompt theme such as Powerlevel10k no longer paints its own prompt into command output.
 - **Module manager** in `/prompt`: show/hide, reorder, and the exit-status condition.
 - **Composer layouts:** two-line with the prompt row as divider, two-line inside a bordered composer, or one-line (existing `composerLayout` and `placement` keys).
 - **Semantic prompt history:** each command keeps a snapshot of its prompt; history renders a muted version of it.

@@ -6,6 +6,7 @@ import {
   normalizeEdgeStyle,
   type PowerlineConnectorStyle,
   type PowerlineEdgeStyle,
+  type PowerlineShape,
 } from './powerline.js';
 
 export type ContextPlacement = 'header' | 'composer';
@@ -22,6 +23,24 @@ export type NativeConnectorStyle = PowerlineConnectorStyle;
 export type NativeIconMode = 'nerd' | 'off';
 export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale';
 export type NativeGapChoice = 'off' | 'compact' | 'normal';
+/**
+ * Rich Git state colors: `semantic` keeps meaningful Git colors under any
+ * theme, `followTheme` derives them from the Main Prompt theme, `grayscale`
+ * removes their hue. The branch itself always follows the theme.
+ */
+export type GitColorMode = 'semantic' | 'followTheme' | 'grayscale';
+export const GIT_COLOR_MODES: readonly GitColorMode[] = ['semantic', 'followTheme', 'grayscale'];
+/** One-cell softened connector: follow the Connector shape, off, or a fixed shape override. */
+export type ConnectorFadeStyle = 'follow' | 'off' | PowerlineShape;
+export const CONNECTOR_FADE_STYLES: readonly ConnectorFadeStyle[] = ['follow', 'off', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
+
+export function normalizeGitColorMode(value: unknown): GitColorMode {
+  return GIT_COLOR_MODES.includes(value as GitColorMode) ? value as GitColorMode : 'semantic';
+}
+
+export function normalizeConnectorFade(value: unknown): ConnectorFadeStyle {
+  return CONNECTOR_FADE_STYLES.includes(value as ConnectorFadeStyle) ? value as ConnectorFadeStyle : 'follow';
+}
 
 export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale'];
 
@@ -86,6 +105,8 @@ export interface PromptConfiguration {
     endStyle: NativeEndStyle;
     palette: NativePaletteId;
     icons: NativeIconMode;
+    connectorFade: ConnectorFadeStyle;
+    gitColors: GitColorMode;
   };
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
@@ -106,7 +127,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
   sessionRetention: 1000,
-  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd'},
+  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
+    connectorFade: 'follow', gitColors: 'semantic'},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -164,7 +186,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
-    startStyle, connector, endStyle, palette, icons};
+    startStyle, connector, endStyle, palette, icons,
+    connectorFade: normalizeConnectorFade(nativeValue.connectorFade), gitColors: normalizeGitColorMode(nativeValue.gitColors)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;

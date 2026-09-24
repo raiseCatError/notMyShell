@@ -15,7 +15,7 @@ import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildThemePreviewLine, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -24,7 +24,7 @@ import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type St
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
-import {APPEARANCE_MODULES_ROW, applyLayoutChoice, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -1264,7 +1264,7 @@ export class TerminalApp {
       applyLayoutChoice(state.draft, state.selectedIndex);
       if (state.draft.provider === 'nmsh') { state.step = 'appearance'; state.selectedIndex = 0; }
       else await this.savePromptSettings();
-    } else if (state.step === 'appearance' && state.selectedIndex === APPEARANCE_MODULES_ROW) {
+    } else if (onModulesRow(state)) {
       state.step = 'modules';
       state.selectedIndex = 0;
     } else if (state.step === 'modules') {
@@ -1577,15 +1577,24 @@ export class TerminalApp {
   private renderedPromptPanel(columns: number): string[] {
     if (!this.promptPanelState) return [];
     const preview = this.promptPanelState.step.startsWith('install') ? [] : this.promptPanelPreview(columns);
-    const full = renderPromptPanel(this.promptPanelState, columns, preview, this.promptThemePreviews(columns), this.dimensions().rows - 1);
+    const full = renderPromptPanel(this.promptPanelState, columns, preview, this.promptThemePreviews(columns), this.dimensions().rows - 1,
+      this.promptGitShowcase(columns));
     // Short terminals keep the editable rows and live preview; the theme gallery goes first.
     return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(this.promptPanelState, columns, preview, [], this.dimensions().rows - 1);
+  }
+
+  /** Rich Git view rows: the draft's colors and geometry over synthetic states; never runs Git. */
+  private promptGitShowcase(columns: number): string[] {
+    const state = this.promptPanelState;
+    if (!state || state.step !== 'appearance' || state.view !== 'git') return [];
+    const width = Math.max(1, columns - 15);
+    return RICH_GIT_SHOWCASE.map(entry => buildRichGitShowcaseLine(state.draft, entry.git, width));
   }
 
   /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */
   private promptThemePreviews(columns: number): string[] {
     const state = this.promptPanelState;
-    if (!state || state.step !== 'appearance') return [];
+    if (!state || state.step !== 'appearance' || state.view === 'git') return [];
     const width = Math.max(1, columns - 22);
     return NATIVE_PALETTE_IDS.map(palette => buildThemePreviewLine(state.draft, palette, width));
   }

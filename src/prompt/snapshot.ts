@@ -1,5 +1,5 @@
 import type {RgbColor} from '../ui/palette.js';
-import type {ComposerLayout, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
+import type {ComposerLayout, ConnectorFadeStyle, GitColorMode, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
   text: string;
@@ -8,6 +8,8 @@ export interface PromptSegmentSnapshot {
   foreground?: RgbColor;
   background?: RgbColor;
   geometry: 'powerline' | 'plain';
+  /** A marker-sized segment (e.g. clean Git): no text, shaped only by the prompt geometry. */
+  compact?: boolean;
 }
 
 /** Semantic prompt data captured at submission; never an ANSI-only string. */
@@ -19,7 +21,11 @@ export interface PromptSnapshot {
   /** Older transcripts may hold the legacy `pointed`; renderers normalize it. */
   startStyle?: NativeStartStyle;
   connector?: NativeConnectorStyle;
+  /** Missing in older snapshots, which rendered solid connectors. */
+  connectorFade?: ConnectorFadeStyle;
   palette?: NativePaletteId;
+  /** Rich Git color mode at submission; older snapshots followed the theme. */
+  gitColors?: GitColorMode;
   gap?: number;
   gapEnabled?: boolean;
   spacing?: number;
@@ -96,4 +102,15 @@ export function archiveColor(color: RgbColor, role: 'foreground' | 'background' 
 export function grayscaleArchiveColor(color: RgbColor, role: 'foreground' | 'background' = 'foreground'): RgbColor {
   const [l] = toOklab(archiveColor(color, role));
   return fromOklab(l, 0, 0);
+}
+
+/** Perceptual blend: `amount` 0 is `from`, 1 is `to`. */
+export function mixPromptColors(from: RgbColor, to: RgbColor, amount = 0.5): RgbColor {
+  const a = toOklab(from), b = toOklab(to);
+  return fromOklab(a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount, a[2] + (b[2] - a[2]) * amount);
+}
+
+/** Same perceived lightness, no hue. */
+export function desaturatePromptColor(color: RgbColor): RgbColor {
+  return fromOklab(toOklab(color)[0], 0, 0);
 }
