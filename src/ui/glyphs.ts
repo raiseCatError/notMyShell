@@ -26,6 +26,8 @@ export const GLYPHS = {
   get selection() { return getCurrentGlyphMode() === 'nerd' ? '›' : '>'; },
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '-'; },
+  /** A tiny wedge after the branch when the working tree is clean. */
+  get gitClean() { return getCurrentGlyphMode() === 'nerd' ? '\uF054' : '>'; },
   get search() { return getCurrentGlyphMode() === 'nerd' ? '\uF002' : '/'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
   // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.

@@ -34,10 +34,10 @@ interface RenderedModule {
 }
 
 /** Semantic identity of one rendered segment; themes color roles, not positions. */
-export type PromptRole = 'project' | 'cwd' | 'gitBranch' | 'gitChanges' | 'gitAhead' | 'gitConflict' | 'gitOperation' | ToolchainId | 'success' | 'failure';
+export type PromptRole = 'project' | 'cwd' | 'gitBranch' | 'gitChanges' | 'gitAhead' | 'gitClean' | 'gitConflict' | 'gitOperation' | ToolchainId | 'success' | 'failure';
 type SegmentColors = {foreground: RgbColor; background: RgbColor};
 
-const PROMPT_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', 'gitChanges', 'gitAhead', 'gitConflict', 'gitOperation',
+const PROMPT_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', 'gitChanges', 'gitAhead', 'gitClean', 'gitConflict', 'gitOperation',
   'node', 'go', 'python', 'docker', 'success', 'failure'];
 export function isPromptRole(value: unknown): value is PromptRole {
   return PROMPT_ROLES.includes(value as PromptRole);
@@ -59,10 +59,10 @@ export interface NativePromptTheme {
 }
 
 function theme(id: NativePaletteId, label: string, description: string,
-  roles: Record<Exclude<PromptRole, 'gitChanges' | 'gitAhead' | 'gitConflict' | 'gitOperation'>, SegmentColors>): NativePromptTheme {
+  roles: Record<Exclude<PromptRole, 'gitChanges' | 'gitAhead' | 'gitClean' | 'gitConflict' | 'gitOperation'>, SegmentColors>): NativePromptTheme {
   return {id, label, description, colors: role => {
     if (role === 'gitChanges') return roles.failure;
-    if (role === 'gitAhead') return roles.success;
+    if (role === 'gitAhead' || role === 'gitClean') return roles.success;
     if (role === 'gitConflict' || role === 'gitOperation') return roles.failure;
     return roles[role];
   }};
@@ -150,6 +150,11 @@ function withIcon(id: ModuleIconId, text: string, icons: NativeIconMode): string
   return icon ? `${icon} ${text}` : text;
 }
 
+/** Nothing staged, modified, untracked, or conflicted, and no merge/rebase/cherry-pick underway. */
+export function isCleanWorkingTree(git: NonNullable<PromptContext['git']>): boolean {
+  return !git.staged && !git.modified && !git.untracked && !git.conflicts && !git.operation;
+}
+
 function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode): Array<{text: string; role: PromptRole}> {
   const status = context.exitStatus ?? 0;
   if (!config.visible) return [];
@@ -167,7 +172,9 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
       const segments: Array<{text: string; role: PromptRole}> = [
         {text: icons === 'off' ? branchLabel : `${GLYPHS.branch} ${branchLabel}`, role: 'gitBranch'},
       ];
+      // No status (outside a repo, probe failed or timed out) is unknown, never clean.
       if (!git) return segments;
+      if (isCleanWorkingTree(git)) segments.push({text: GLYPHS.gitClean, role: 'gitClean'});
       const changes = [git.staged && `+${git.staged}`, git.modified && `~${git.modified}`, git.untracked && `?${git.untracked}`]
         .filter(Boolean).join(' ');
       if (changes) segments.push({text: changes, role: 'gitChanges'});

@@ -71,6 +71,11 @@ function nmsh_precmd {
   PROMPT=''
   RPROMPT=''
   PS2=''
+  # Themes such as Powerlevel10k move their own hook to the end of
+  # precmd_functions every cycle; move ours back after it so the next cycle
+  # still blanks last. Their prompt-spacing options must not return either.
+  precmd_functions=(\${precmd_functions:#nmsh_precmd} nmsh_precmd)
+  unsetopt prompt_cr prompt_sp
   stty -echo 2>/dev/null
   printf '\\e]777;nmsh;${token};%d;%s\\a' "\$nmsh_status" "\$PWD"
 }
