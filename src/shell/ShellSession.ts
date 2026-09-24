@@ -18,14 +18,13 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private zdotdir: string;
   private ready = false;
 
-  constructor(cwd: string, columns: number, rows: number) {
+  constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '') {
     super();
     const token = randomBytes(12).toString('hex');
     this.protocol = new ShellProtocolDecoder(token);
 
     // Create a temporary ZDOTDIR for bootstrap
     const zdotdir = mkdtempSync(join(tmpdir(), 'nmsh-zdotdir-'));
-    const home = process.env.HOME || '';
 
     // Proxy .zshenv
     writeFileSync(join(zdotdir, '.zshenv'), `
@@ -62,13 +61,16 @@ export TERM=\$nmsh_orig_term
 
 # NMSh specific setup
 export NMSH_ACTIVE=1
-PROMPT=''
-RPROMPT=''
-PS2=''
 unsetopt zle prompt_cr prompt_sp
 
 function nmsh_precmd {
   local nmsh_status=$?
+  # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
+  # may run before us in precmd_functions and repaint PROMPT/RPROMPT. NMSh
+  # owns prompt rendering, so it always has the last word here.
+  PROMPT=''
+  RPROMPT=''
+  PS2=''
   stty -echo 2>/dev/null
   printf '\\e]777;nmsh;${token};%d;%s\\a' "\$nmsh_status" "\$PWD"
 }
@@ -77,8 +79,13 @@ function nmsh_preexec {
   stty echo 2>/dev/null
 }
 
-precmd_functions=(nmsh_precmd)
-preexec_functions=(nmsh_preexec)
+# Compose with whatever the user's config/plugins already installed instead
+# of clobbering precmd_functions/preexec_functions: tools like zoxide and
+# Atuin register non-UI hooks (directory tracking, history sync) into these
+# arrays, and overwriting them silently drops that behavior.
+autoload -Uz add-zsh-hook
+add-zsh-hook precmd nmsh_precmd
+add-zsh-hook preexec nmsh_preexec
 
 # Background cleanup handled by Node.js
 `);
