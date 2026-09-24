@@ -1,8 +1,10 @@
+import {homedir} from 'node:os';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
-  adjustSettingsRow, renderSettingsPanel, selectedSettingsRow, SETTINGS_SECTIONS, settingsItemCount, settingsRowDestination,
-  toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
+  adjustSettingsRow, isInlineEditable, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
+  settingsView, statusLineCount, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
+  type SettingsView, type StatusSections,
 } from '../ui/SettingsPanel.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
@@ -22,12 +24,13 @@ import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type St
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
-import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {APPEARANCE_MODULES_ROW, applyLayoutChoice, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
+import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
@@ -121,7 +124,10 @@ export class TerminalApp {
    * composer, instead of every panel guessing independently.
    */
   private panelOrigin?: 'settings';
-  private panelOriginIndex = 0;
+  private panelOriginView: SettingsView = 'settings';
+  private panelOriginRow = 0;
+  /** Whether continuous session journaling is persisting; shown in Status. */
+  private journalActive = false;
   private lastPtyRows = 0;
   private lastPtyColumns = 0;
   private stopped = false;
@@ -154,7 +160,7 @@ export class TerminalApp {
     this.journal = new SessionJournal(this.transcriptStore, this.promptConfiguration.sessionRetention,
       () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript()}),
       () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR));
-    try { await this.journal.start(); } catch {
+    try { await this.journal.start(); this.journalActive = true; } catch {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
     }
     if (!this.promptConfiguration.glyphChoiceComplete) {
@@ -647,8 +653,7 @@ export class TerminalApp {
       if (slash.kind === 'copy') await this.copyRecent(slash.index);
       else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
       else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
-      else if (slash.kind === 'settings') this.settingsPanelState = {section: 'root', selectedIndex: 0,
-        glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+      else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
       else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
       else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
@@ -839,7 +844,8 @@ export class TerminalApp {
     this.presentationStartCwd = this.shellCwd;
     this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.presentationStartCwd));
     this.historyViewport.latest();
-    try { await this.journal?.start(); } catch {
+    try { await this.journal?.start(); this.journalActive = Boolean(this.journal); } catch {
+      this.journalActive = false;
       this.output.addFrontendInteraction('/clear', 'A fresh view started, but its journal could not be persisted yet.', ERROR);
     }
   }
@@ -878,7 +884,8 @@ export class TerminalApp {
     this.presentationStartCwd = selected.startCwd;
     this.resumeBrowser = undefined;
     this.historyViewport.latest();
-    try { await this.journal?.start(); } catch {
+    try { await this.journal?.start(); this.journalActive = Boolean(this.journal); } catch {
+      this.journalActive = false;
       this.output.addFrontendInteraction('/resume', 'The transcript was restored, but its new journal could not be persisted yet.', ERROR);
     }
     this.render();
@@ -1331,7 +1338,10 @@ export class TerminalApp {
   }
 
   private settingsPanelRows(columns: number): string[] {
-    if (this.settingsPanelState) return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, this.promptConfiguration);
+    if (this.settingsPanelState) {
+      return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
+        status: settingsView(this.settingsPanelState) === 'status' ? this.statusSections() : undefined});
+    }
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
     }
@@ -1375,7 +1385,7 @@ export class TerminalApp {
    */
   private returnFromPanel(): void {
     if (this.panelOrigin === 'settings') {
-      this.settingsPanelState = {section: 'root', selectedIndex: this.panelOriginIndex,
+      this.settingsPanelState = {section: 'root', view: this.panelOriginView, selectedIndex: 0, contentIndex: this.panelOriginRow,
         glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
     }
     this.panelOrigin = undefined;
@@ -1389,7 +1399,7 @@ export class TerminalApp {
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
       this.settingsPanelState = undefined;
-      if (!onboarding) this.settingsPanelState = {section: 'root', selectedIndex: 0, contentIndex: 0,
+      if (!onboarding) this.settingsPanelState = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 1,
         glyphStyle: style, onboarding: false};
       if (onboarding && !next.onboardingComplete) {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
@@ -1401,16 +1411,23 @@ export class TerminalApp {
     }
   }
 
+  private openSettingsPanel(view: SettingsView): void {
+    this.settingsPanelState = {section: 'root', view, selectedIndex: 0, contentIndex: 0,
+      glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+  }
+
   /**
-   * /settings keys. Root: ↑↓ rows, ←→ change enum/boolean values, Space
-   * toggles booleans, Enter opens a row's panel, Tab/Shift+Tab switch tabs.
-   * Typing (or `/`) focuses search; while focused, text edits the query and
-   * Esc clears it before a second Esc closes Settings.
+   * Keys for the shared Settings / Status / Config panel:
+   * - ←/→ switch views, except on an inline-editable Config row where they
+   *   change its value (↑ from the first row moves focus to the view bar).
+   * - ↑/↓ move rows (scroll in Status); Enter/Space change a value or open a panel.
+   * - `/` focuses Config search; only then does typing edit the query.
+   * - Esc clears search first, then closes (or returns from the glyph preview).
    */
   private handleSettingsKey(key: Key, state: SettingsPanelState): void {
     if (key.kind === 'escape' || key.kind === 'interrupt') {
       if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
-      else if (state.section === 'appearance') { state.section = 'root'; state.selectedIndex = 0; state.contentIndex = 0; }
+      else if (state.section === 'appearance') { state.section = 'root'; state.view = 'settings'; state.contentIndex = 1; }
       else if (state.searchQuery || state.searchFocused) { state.searchQuery = ''; state.searchFocused = false; state.contentIndex = 0; }
       else this.settingsPanelState = undefined;
       return;
@@ -1420,50 +1437,97 @@ export class TerminalApp {
       else if (key.kind === 'enter') this.saveGlyphChoice(state.selectedIndex === 0 ? 'nerd' : 'safe');
       return;
     }
+    const view = settingsView(state);
     const row = selectedSettingsRow(state);
-    if (key.kind === 'complete' || key.kind === 'focusPrevious') {
-      state.selectedIndex = (state.selectedIndex + (key.kind === 'complete' ? 1 : -1) + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length;
-      state.searchQuery = '';
-      state.searchFocused = false;
-      state.contentIndex = 0;
-    } else if (key.kind === 'text' && state.searchFocused) {
+    if (state.searchFocused && key.kind === 'text') {
       state.searchQuery = (state.searchQuery ?? '') + key.value;
       state.contentIndex = 0;
-    } else if (key.kind === 'text' && key.value === ' ') {
-      if (row) this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
-    } else if (key.kind === 'text') {
-      state.searchFocused = true;
-      state.searchQuery = key.value === '/' ? (state.searchQuery ?? '') : (state.searchQuery ?? '') + key.value;
-      state.contentIndex = 0;
-    } else if (key.kind === 'backspace') {
-      if (state.searchQuery) state.searchFocused = true;
+    } else if (state.searchFocused && key.kind === 'backspace') {
       state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
       state.contentIndex = 0;
+    } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
+      state.searchFocused = true;
+      state.focus = 'rows';
+      state.searchQuery ??= '';
+    } else if (key.kind === 'left' || key.kind === 'right') {
+      const delta = key.kind === 'left' ? -1 : 1;
+      if (view === 'config' && state.focus !== 'tabs' && isInlineEditable(row)) {
+        this.applySettingsConfiguration(adjustSettingsRow(row!, this.promptConfiguration, delta));
+      } else switchSettingsView(state, delta);
+    } else if (view === 'status') {
+      if (key.kind === 'up' || key.kind === 'down') {
+        const max = Math.max(0, statusLineCount(this.statusSections()) - 1);
+        state.contentIndex = Math.max(0, Math.min(max, (state.contentIndex ?? 0) + (key.kind === 'up' ? -1 : 1)));
+      }
+    } else if (state.focus === 'tabs') {
+      if (key.kind === 'down' || key.kind === 'enter') { state.focus = 'rows'; state.contentIndex = 0; }
     } else if (key.kind === 'up' || key.kind === 'down') {
       const count = settingsItemCount(state);
-      if (count > 0) state.contentIndex = ((state.contentIndex ?? 0) + (key.kind === 'up' ? -1 : 1) + count) % count;
-    } else if (key.kind === 'left' || key.kind === 'right') {
-      if (row) this.applySettingsConfiguration(adjustSettingsRow(row, this.promptConfiguration, key.kind === 'left' ? -1 : 1));
-    } else if (key.kind === 'enter' && row) {
-      if (row.control === 'boolean') this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
-      const destination = settingsRowDestination(row);
-      if (destination) this.openSettingsDestination(destination, SETTINGS_SECTIONS.indexOf(row.category), state);
+      const index = state.contentIndex ?? 0;
+      if (key.kind === 'up' && index === 0 && !state.searchFocused) state.focus = 'tabs';
+      else if (count > 0) state.contentIndex = Math.max(0, Math.min(count - 1, index + (key.kind === 'up' ? -1 : 1)));
+    } else if ((key.kind === 'enter' || (key.kind === 'text' && key.value === ' ')) && row) {
+      if (isInlineEditable(row)) this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
+      else if (key.kind === 'enter') {
+        const destination = settingsRowDestination(row);
+        if (destination) this.openSettingsDestination(destination, view, state.contentIndex ?? 0, state);
+      }
     }
   }
 
-  private openSettingsDestination(destination: SettingsDestination, tab: number, state: SettingsPanelState): void {
+  private openSettingsDestination(destination: SettingsDestination, view: SettingsView, rowIndex: number, state: SettingsPanelState): void {
     if (destination === 'glyph') {
       state.section = 'appearance';
       state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1;
       return;
     }
     this.panelOrigin = 'settings';
-    this.panelOriginIndex = tab;
+    this.panelOriginView = view;
+    this.panelOriginRow = rowIndex;
     this.settingsPanelState = undefined;
     if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else void this.startKeyboard();
+  }
+
+  /**
+   * Read-only facts for the Status view, from in-memory state only: no
+   * subprocesses, no environment values beyond the terminal's self-reported
+   * TERM_PROGRAM, nothing that could carry credentials.
+   */
+  private statusSections(): StatusSections {
+    const config = this.promptConfiguration;
+    const build = this.buildIdentity;
+    const {columns, rows} = this.dimensions();
+    const home = homedir();
+    const tilde = (path: string) => path === home ? '~' : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
+    const terminal = process.env.TERM_PROGRAM
+      ? `${process.env.TERM_PROGRAM}${process.env.TERM_PROGRAM_VERSION ? ` ${process.env.TERM_PROGRAM_VERSION}` : ''}`
+      : undefined;
+    const active = this.effectivePromptProvider;
+    return [
+      [
+        {label: 'Version', value: build.version},
+        {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
+        {label: 'Shell', value: 'zsh (/bin/zsh)'},
+        {label: 'Working directory', value: tilde(this.shellCwd)},
+        ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
+        {label: 'Terminal size', value: `${columns}×${rows}`},
+      ],
+      [
+        {label: 'Prompt provider', value: providerLabel(config.provider)},
+        ...(active !== config.provider ? [{label: 'Active prompt', value: `${providerLabel(active)} (fallback)`, tone: 'warning' as const}] : []),
+        {label: 'Composer', value: layoutLabel(config)},
+        {label: 'Glyph style', value: config.glyphStyle === 'nerd' ? 'Nerd Font' : 'Safe / ASCII'},
+        {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
+      ],
+      [
+        {label: 'Session journal', value: this.journalActive ? 'active' : 'inactive', tone: this.journalActive ? 'success' : 'warning'},
+        {label: 'Session retention', value: config.sessionRetention === null ? 'unlimited' : `${config.sessionRetention} sessions`},
+        {label: 'Config file', value: tilde(promptConfigurationPath()), tone: 'muted'},
+      ],
+    ];
   }
 
   /** Persists an inline Settings edit and applies it live; on failure the old value stays. */

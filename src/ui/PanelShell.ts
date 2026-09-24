@@ -1,43 +1,11 @@
-import {foreground, UI_COLORS} from './palette.js';
-import {displayWidth, repeatToWidth, truncateAnsi} from '../util/text.js';
+import {background, foreground, UI_COLORS} from './palette.js';
+import {repeatToWidth, truncateAnsi, displayWidth} from '../util/text.js';
 import {GLYPHS} from './glyphs.js';
 
 const RESET = '\u001B[0m';
 const BOLD = '\u001B[1m';
-const UNDERLINE = '\u001B[4m';
-const TAB_GAP = '   ';
+const TAB_GAP = ' ';
 const INDENT = '  ';
-
-export interface PanelShellOptions {
-  title: string;
-  content: string[];
-  columns: number;
-  footer?: string;
-  tabs?: readonly string[];
-  selectedTab?: number;
-  /** A pre-rendered search field row (see SettingsPanel), shown below the tabs. */
-  searchRow?: string;
-}
-
-/**
- * Panel anatomy: separator, title, tabs, search, content, footer. All shell
- * rows are ephemeral presentation rows, never transcript, PTY, resume, or
- * copy data.
- */
-export function renderPanelShell(options: PanelShellOptions): string[] {
-  const {title, content, columns, footer, tabs, selectedTab = 0, searchRow} = options;
-  const rows = framePanel([`${BOLD}${foreground(UI_COLORS.primary)}${INDENT}${title}${RESET}`], columns);
-  if (tabs?.length) rows.push('', renderTabStrip(tabs, selectedTab, columns));
-  if (searchRow !== undefined) rows.push('', searchRow);
-  rows.push('', ...content);
-  if (footer) rows.push('', footer);
-  return rows.map(row => truncateAnsi(row, columns));
-}
-
-/** Rows the shell adds around `content`, so callers can budget list height. */
-export function panelShellChrome(options: {tabs: boolean; search: boolean; footer: boolean}): number {
-  return 3 + (options.tabs ? 2 : 0) + (options.search ? 2 : 0) + (options.footer ? 2 : 0);
-}
 
 /**
  * The widest contiguous run of tabs around `selected` that fits `columns`,
@@ -60,22 +28,24 @@ export function tabWindow(widths: readonly number[], selected: number, columns: 
 }
 
 /**
- * One row of tabs, never wrapped. The active tab is accent, bold, and
- * underlined; the rest are muted. Overflow is windowed around the active tab
- * and marked with quiet `‹` / `›` indicators.
+ * One row of padded tabs, never wrapped. The active tab is a filled lavender
+ * block: bright lavender while the tab row has keyboard focus, deep lavender
+ * otherwise. Overflow windows around the active tab with quiet `‹` / `›`.
  */
-export function renderTabStrip(tabs: readonly string[], selected: number, columns: number): string {
+export function renderTabStrip(tabs: readonly string[], selected: number, columns: number, focused = false): string {
   const width = Math.max(1, columns);
-  const {start, end} = tabWindow(tabs.map(tab => displayWidth(tab)), selected, width);
-  const muted = foreground(UI_COLORS.subtle);
-  let line = start > 0 ? `${muted}‹ ${RESET}` : INDENT;
+  const labels = tabs.map(tab => ` ${tab} `);
+  const {start, end} = tabWindow(labels.map(label => displayWidth(label)), selected, width);
+  const muted = foreground(UI_COLORS.secondary);
+  const active = focused
+    ? `${BOLD}${background(UI_COLORS.accent)}${foreground(UI_COLORS.projectBackground)}`
+    : `${BOLD}${background(UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
+  let line = start > 0 ? `${foreground(UI_COLORS.subtle)}‹ ${RESET}` : INDENT;
   for (let index = start; index <= end; index++) {
     if (index > start) line += TAB_GAP;
-    line += index === selected
-      ? `${BOLD}${UNDERLINE}${foreground(UI_COLORS.accent)}${tabs[index]}${RESET}`
-      : `${muted}${tabs[index]}${RESET}`;
+    line += `${index === selected ? active : muted}${labels[index]}${RESET}`;
   }
-  if (end < tabs.length - 1) line += `${muted} ›${RESET}`;
+  if (end < tabs.length - 1) line += `${foreground(UI_COLORS.subtle)} ›${RESET}`;
   return truncateAnsi(line, width);
 }
 

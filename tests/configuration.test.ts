@@ -49,9 +49,9 @@ test('panel boundary is transient rendering chrome', () => {
   const rows = renderSettingsPanel({section: 'appearance', selectedIndex: 1, glyphStyle: 'safe', onboarding: false}, 20);
   assert.match(rows[0]!, /─{20}|-{20}/u);
   assert.equal(rows[1]?.includes('Glyph style'), true);
-  const compact = renderSettingsPanel({section: 'root', selectedIndex: 10, glyphStyle: 'safe', onboarding: false}, 20, 8);
+  const compact = renderSettingsPanel({section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 4, glyphStyle: 'safe', onboarding: false}, 20, 8);
   assert.ok(compact.length <= 8);
-  assert.match(compact.join('\n'), /Keyboard/u);
+  assert.match(compact.join('\n'), /Key/u);
 });
 
 test('composer layout loads from the existing prompt config and legacy config defaults to two-line', async () => {
