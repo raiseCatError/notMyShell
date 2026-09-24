@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildContextLine, buildInlineContextPrefix, buildPromptLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, renderedModules} from '../src/prompt/prompt.js';
-import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src/prompt/configuration.js';
+import {buildContextLine, buildInlineContextPrefix, buildPromptLine, GIT_SEMANTIC_COLORS, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, promptRoleColors, renderedModules} from '../src/prompt/prompt.js';
+import {DEFAULT_PROMPT_CONFIGURATION, NATIVE_PALETTE_IDS, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {homedir} from 'node:os';
-import {renderPowerlineBlocks} from '../src/prompt/powerline.js';
+import {connectorFadeColor, renderPowerlineBlocks} from '../src/prompt/powerline.js';
 import {fadePromptColor} from '../src/prompt/snapshot.js';
 
 const A = {red: 100, green: 60, blue: 180};
@@ -43,8 +43,48 @@ test('conditional modules take their role colors in visible order', () => {
   ]);
 });
 
-test('native open uses U+E0D7 and gap-enabled segments close and reopen over neutral background', () => {
-  const rendered = buildPromptLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60);
+test('Git state renders one semantic segment per state; clean repositories add a compact marker', () => {
+  const context = {cwd: '/tmp/repo', project: 'repo', branch: 'main',
+    git: {staged: 2, modified: 3, untracked: 1, conflicts: 1, ahead: 2, behind: 1, operation: 'rebase' as const}};
+  const modules = renderedModules(context, DEFAULT_PROMPT_CONFIGURATION).filter(module => module.id === 'gitBranch');
+  assert.deepEqual(modules.map(module => module.role),
+    ['gitBranch', 'gitStaged', 'gitModified', 'gitUntracked', 'gitConflict', 'gitDiverged', 'gitOperation']);
+  assert.deepEqual(modules.map(module => module.text.slice(module.role === 'gitBranch' ? -5 : 0)),
+    ['main*', '+2', '~3', '?1', '!1', '↑2 ↓1', 'rebase']);
+  const clean = renderedModules({...context, git: {...context.git, staged: 0, modified: 0, untracked: 0,
+    conflicts: 0, ahead: 0, behind: 0, operation: undefined}}, DEFAULT_PROMPT_CONFIGURATION)
+    .filter(module => module.id === 'gitBranch');
+  assert.deepEqual(clean.map(module => module.role), ['gitBranch', 'gitClean']);
+  assert.ok(clean[0]!.text.endsWith('main'));
+  assert.equal(clean[1]!.text, '', 'the clean marker carries no glyph of its own');
+  assert.equal(clean[1]!.compact, true);
+});
+
+test('clean marker appears only for a probed, genuinely clean working tree', () => {
+  const clean = {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 0, behind: 0};
+  const roles = (git: typeof clean & {operation?: 'merge' | 'rebase' | 'cherry-pick'} | undefined, branch: string | undefined = 'main') =>
+    renderedModules({cwd: '/tmp/repo', project: 'repo', ...(branch ? {branch} : {}), ...(git ? {git} : {})}, DEFAULT_PROMPT_CONFIGURATION)
+      .map(module => module.role);
+  assert.ok(roles(clean).includes('gitClean'));
+  assert.ok(roles({...clean, ahead: 1, behind: 2}).includes('gitClean'), 'ahead/behind is not a dirty working tree');
+  for (const dirty of [{staged: 1}, {modified: 1}, {untracked: 1}, {conflicts: 1}, {operation: 'merge' as const},
+    {operation: 'rebase' as const}, {operation: 'cherry-pick' as const}]) {
+    assert.ok(!roles({...clean, ...dirty}).includes('gitClean'), JSON.stringify(dirty));
+  }
+  assert.ok(!roles(undefined).includes('gitClean'), 'a failed or timed-out probe is unknown, not clean');
+  assert.ok(!roles(undefined, undefined).includes('gitClean'), 'outside a repository');
+  const marker = renderedModules({cwd: '/tmp/repo', project: 'repo', branch: 'main', git: clean}, DEFAULT_PROMPT_CONFIGURATION)
+    .find(module => module.role === 'gitClean')!;
+  assert.deepEqual(marker.background, GIT_SEMANTIC_COLORS.gitClean.background, 'semantic success green by default');
+  for (const id of NATIVE_PALETTE_IDS) {
+    assert.deepEqual(promptRoleColors('gitClean', id, 'followTheme'), NATIVE_PROMPT_THEMES[id].colors('success'),
+      `${id}: Follow theme uses the theme's success role`);
+  }
+});
+
+test('native open uses U+E0D7; with Connector fade Off, gaps close and reopen over neutral background', () => {
+  const neutral = normalizePromptConfiguration({nmsh: {connectorFade: 'off'}});
+  const rendered = buildContextLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60, neutral, 'header');
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
   assert.match(plain, /^ repo   \/tmp\/work    main /u);

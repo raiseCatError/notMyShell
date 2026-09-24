@@ -7,11 +7,11 @@ import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, type PowerlineBlock} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
-import {isPromptRole, NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
-import {DEFAULT_TRANSCRIPT_APPEARANCE, type TranscriptAppearance} from '../prompt/configuration.js';
+import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
+import {DEFAULT_TRANSCRIPT_APPEARANCE, normalizeConnectorFade, type GitColorMode, type TranscriptAppearance} from '../prompt/configuration.js';
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
@@ -515,12 +515,18 @@ interface HistoricalSegment {
   background?: Rgb;
   /** Legacy headers carry pre-muted colors that must not be archived twice. */
   preMuted?: boolean;
+  compact?: boolean;
+  shape?: PowerlineShape;
+  fade?: PowerlineShape | 'off';
+  /** Rich Git color mode the segment was captured under. */
+  gitColors?: GitColorMode;
 }
 
 function historyColor(color: Rgb | undefined, fallback: Rgb, part: 'foreground' | 'background', segment: HistoricalSegment,
   appearance: TranscriptAppearance): Rgb | undefined {
   if (appearance.historyColors === 'theme' && isPromptRole(segment.role)) {
-    return archiveColor(NATIVE_PROMPT_THEMES[appearance.historyTheme].colors(segment.role)[part], part);
+    // Recolored history keeps the captured Rich Git mode; old snapshots followed the theme.
+    return archiveColor(promptRoleColors(segment.role, appearance.historyTheme, segment.gitColors ?? 'followTheme')[part], part);
   }
   if (!color) return part === 'foreground' ? fallback : undefined;
   if (appearance.historyColors === 'grayscale') return grayscaleArchiveColor(color, part);
@@ -544,19 +550,27 @@ function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[]
 function historicalPrompt(context: HistoricalContextSnapshot, width: number, appearance: TranscriptAppearance): string {
   const snapshot = context.prompt;
   const segments: HistoricalSegment[] = snapshot
-    ? snapshot.segments.map(segment => ({...segment, text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}))
+    ? snapshot.segments.map(segment => ({...segment, gitColors: snapshot.gitColors,
+      text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}))
     : legacySegments(context);
   if (!snapshot || snapshot.segments.every(segment => segment.geometry === 'powerline')) {
     const blocks: PowerlineBlock[] = segments.map(segment => ({
       text: segment.text,
       foreground: historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance)!,
       background: historyColor(segment.background, ARCHIVE_BLOCK_COLOR, 'background', segment, appearance) ?? ARCHIVE_BLOCK_COLOR,
+      ...(segment.compact ? {compact: true} : {}),
+      ...(segment.shape ? {geometry: segment.shape} : {}),
+      ...(segment.fade ? {fade: segment.fade} : {}),
     }));
     if (!snapshot) return fitPowerlineBlocks(blocks, 1, 1, width, true);
     const gap = snapshot.gap ?? 1;
     return fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, width,
       normalizeEdgeStyle(snapshot.endStyle, 'flat'), snapshot.gapEnabled ?? gap > 0,
-      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector));
+      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector),
+      // Snapshots without a connector fade predate it and rendered solid connectors.
+      snapshot.connectorFade === undefined ? undefined
+        : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), normalizeConnectorStyle(snapshot.connector)),
+      normalizeConnectorFadeColors(snapshot.connectorFadeColors));
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),
