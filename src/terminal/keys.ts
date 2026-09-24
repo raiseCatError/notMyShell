@@ -99,10 +99,16 @@ export function decodeKeys(input: string): Key[] {
       const x = Number(sgrMatch[2]);
       const y = Number(sgrMatch[3]);
       const isPress = sgrMatch[4] === 'M';
-      if (button === 64) keys.push({kind: 'wheelUp'});
-      else if (button === 65) keys.push({kind: 'wheelDown'});
-      else if (button === 0 && isPress) keys.push({kind: 'mouseClick', x, y});
-      else if (button === 35 || button === 32) keys.push({kind: 'mouseMove', x, y});
+      // SGR button bits: 4 Shift, 8 Alt, 16 Ctrl, 32 motion, 64 wheel.
+      const shift = (button & 4) !== 0;
+      const motion = (button & 32) !== 0;
+      const base = button & ~(4 | 8 | 16 | 32);
+      if (base === 64) keys.push({kind: 'wheelUp'});
+      else if (base === 65) keys.push({kind: 'wheelDown'});
+      // Shift+mouse is native text selection: never click, toggle, or hover.
+      else if (shift) { /* ignored */ }
+      else if (motion && (base === 3 || base === 0)) keys.push({kind: 'mouseMove', x, y});
+      else if (!motion && base === 0 && isPress) keys.push({kind: 'mouseClick', x, y});
       index += sgrMatch[0].length;
       continue;
     }

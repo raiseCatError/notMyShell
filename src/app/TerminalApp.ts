@@ -174,8 +174,10 @@ export class TerminalApp {
       this.session.write(data);
       return;
     }
-    for (const key of this.keyDecoder.push(data)) this.handleKey(key);
-    this.render();
+    const keys = this.keyDecoder.push(data);
+    for (const key of keys) this.handleKey(key);
+    // Passive motion renders only when hover changes; skip the generic frame.
+    if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
   };
 
   private readonly onResize = (): void => {
@@ -257,10 +259,14 @@ export class TerminalApp {
               this.output.toggleActivityExpanded(row.activityId);
               this.render();
             }
-            if (row.lineIndex !== undefined && row.lineIndex !== this.hoveredLineIndex) {
+            // Re-render only when the hovered logical row changes; rows without a line clear hover.
+            if (row.lineIndex !== this.hoveredLineIndex) {
               this.hoveredLineIndex = row.lineIndex;
               this.render();
             }
+          } else if (this.hoveredLineIndex !== undefined) {
+            this.hoveredLineIndex = undefined;
+            this.render();
           }
         } else if (this.hoveredLineIndex !== undefined) {
           this.hoveredLineIndex = undefined;
