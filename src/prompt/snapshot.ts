@@ -1,5 +1,5 @@
 import type {RgbColor} from '../ui/palette.js';
-import type {ComposerLayout, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
+import type {ComposerLayout, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
   text: string;
@@ -14,7 +14,9 @@ export interface PromptSnapshot {
   layout: ComposerLayout;
   segments: PromptSegmentSnapshot[];
   endStyle?: NativeEndStyle;
+  /** Older transcripts may hold the legacy `pointed`; renderers normalize it. */
   startStyle?: NativeStartStyle;
+  connector?: NativeConnectorStyle;
   palette?: NativePaletteId;
   gap?: number;
   gapEnabled?: boolean;

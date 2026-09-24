@@ -1,10 +1,11 @@
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
-import {GLYPHS} from '../ui/glyphs.js';
+import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
   type ContextModuleConfig,
+  type NativeIconMode,
   type NativePaletteId,
   type PromptConfiguration,
 } from './configuration.js';
@@ -139,7 +140,14 @@ function relativeCwd(value: string): string {
   return cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
 }
 
-function moduleSegments(config: ContextModuleConfig, context: PromptContext): Array<{text: string; role: PromptRole}> {
+const TOOLCHAIN_LABELS: Record<ToolchainId, string> = {node: 'node', go: 'go', python: 'python', docker: 'docker'};
+
+function withIcon(id: ModuleIconId, text: string, icons: NativeIconMode): string {
+  const icon = icons === 'nerd' ? moduleIcon(id) : '';
+  return icon ? `${icon} ${text}` : text;
+}
+
+function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode): Array<{text: string; role: PromptRole}> {
   const status = context.exitStatus ?? 0;
   if (!config.visible) return [];
   if (config.condition === 'inRepository' && !context.branch) return [];
@@ -149,9 +157,9 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext): Ar
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
     case 'cwd': return [{text: relativeCwd(context.cwd), role: 'cwd'}];
     case 'gitBranch': return context.branch
-      ? [{text: `${GLYPHS.branch} ${safePromptText(context.branch)}`, role: 'gitBranch'}]
+      ? [{text: icons === 'off' ? safePromptText(context.branch) : `${GLYPHS.branch} ${safePromptText(context.branch)}`, role: 'gitBranch'}]
       : [];
-    case 'toolchain': return (context.toolchains ?? []).map(id => ({text: GLYPHS[id], role: id}));
+    case 'toolchain': return (context.toolchains ?? []).map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
     case 'exitStatus': return [{
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,
       role: status === 0 ? 'success' : 'failure',
@@ -160,7 +168,7 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext): Ar
 }
 
 export function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
-  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context)
+  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons)
     .map(segment => ({...segment, module})));
 
   // The project block owns the brighter live identity when both location
@@ -193,6 +201,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     segments,
     endStyle: configuration.nmsh.endStyle,
     startStyle: configuration.nmsh.startStyle,
+    connector: configuration.nmsh.connector,
     palette: configuration.nmsh.palette,
     gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
     gapEnabled: configuration.nmsh.gapEnabled,
@@ -218,7 +227,7 @@ export function buildContextLine(
 
   const lineEndStyle = configuration.nmsh.endStyle;
   const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
-    configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled, configuration.nmsh.startStyle);
+    configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled, configuration.nmsh.startStyle, configuration.nmsh.connector);
 
   if (placement === 'composer') return `${content}${RESET}`;
 

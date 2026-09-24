@@ -1,14 +1,23 @@
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
+import {
+  normalizeConnectorStyle,
+  normalizeEdgeStyle,
+  type PowerlineConnectorStyle,
+  type PowerlineEdgeStyle,
+} from './powerline.js';
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus';
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
 export type PromptProviderId = 'nmsh' | 'starship';
-export type NativeEndStyle = 'fadeWedge' | 'wedge' | 'fadeFlat' | 'flat';
-export type NativeStartStyle = 'pointed' | 'flat';
+export type NativeEndStyle = PowerlineEdgeStyle;
+export type NativeStartStyle = PowerlineEdgeStyle;
+export type NativeConnectorStyle = PowerlineConnectorStyle;
+/** `nerd` shows Nerd Font module icons; a future `text` mode can join without migration. */
+export type NativeIconMode = 'nerd' | 'off';
 export type NativePaletteId = 'lavender' | 'brand' | 'semantic' | 'cool' | 'warm' | 'grayscale';
 export type NativeGapChoice = 'off' | 'compact' | 'normal';
 
@@ -25,7 +34,14 @@ export interface ContextModuleConfig {
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
-  nmsh: {gapEnabled: boolean; endStyle: NativeEndStyle; startStyle: NativeStartStyle; palette: NativePaletteId};
+  nmsh: {
+    gapEnabled: boolean;
+    startStyle: NativeStartStyle;
+    connector: NativeConnectorStyle;
+    endStyle: NativeEndStyle;
+    palette: NativePaletteId;
+    icons: NativeIconMode;
+  };
   starship: {configPath: string | null};
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
@@ -39,7 +55,7 @@ export interface PromptConfiguration {
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   provider: 'nmsh',
   onboardingComplete: false,
-  nmsh: {gapEnabled: true, endStyle: 'fadeWedge', startStyle: 'pointed', palette: 'lavender'},
+  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd'},
   starship: {configPath: null},
   placement: 'header',
   composerLayout: 'twoLine',
@@ -77,14 +93,15 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const provider: PromptProviderId = promptValue.provider === 'starship' ? 'starship' : 'nmsh';
   const nativeValue = isRecord(promptValue.nmsh) ? promptValue.nmsh : promptValue;
   const starshipValue = isRecord(promptValue.starship) ? promptValue.starship : {};
-  const endStyle: NativeEndStyle = nativeValue.endStyle === 'wedge' || nativeValue.endStyle === 'fadeFlat' || nativeValue.endStyle === 'flat'
-    ? nativeValue.endStyle
-    : 'fadeWedge';
-  const startStyle: NativeStartStyle = nativeValue.startStyle === 'flat' ? 'flat' : 'pointed';
+  const endStyle = normalizeEdgeStyle(nativeValue.endStyle, 'fadeWedge');
+  const startStyle = normalizeEdgeStyle(nativeValue.startStyle, 'wedge');
+  const connector = normalizeConnectorStyle(nativeValue.connector);
+  const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
   const palette: NativePaletteId = NATIVE_PALETTE_IDS.includes(nativeValue.palette as NativePaletteId)
     ? nativeValue.palette as NativePaletteId
     : 'lavender';
-  const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true, endStyle, startStyle, palette};
+  const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
+    startStyle, connector, endStyle, palette, icons};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;
