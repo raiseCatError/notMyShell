@@ -3,6 +3,7 @@ import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {
   normalizeConnectorFadeColors,
+  resolveFadeColors,
   type ConnectorFadeColors,
   normalizeConnectorStyle,
   normalizeEdgeStyle,
@@ -231,6 +232,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const gap = typeof value.gap === 'number' && Number.isFinite(value.gap)
     ? Math.max(0, Math.min(3, Math.round(value.gap)))
     : DEFAULT_PROMPT_CONFIGURATION.gap;
+  // Mixed needs a Normal or Wide gap; an unreleased Compact/Off + Mixed reads as Previous.
+  nmsh.connectorFadeColors = resolveFadeColors(nmsh.connectorFadeColors, nmsh.gapEnabled, gap);
   const separator = validSeparator(value.separator) ? value.separator : DEFAULT_PROMPT_CONFIGURATION.separator;
 
   if (!Array.isArray(value.modules)) {
@@ -310,4 +313,6 @@ export function applyNativeGapChoice(configuration: PromptConfiguration, choice:
   if (choice === 'compact') configuration.gap = 0;
   else if (choice === 'normal') configuration.gap = 1;
   else if (choice === 'wide') configuration.gap = 2;
+  configuration.nmsh.connectorFadeColors = resolveFadeColors(configuration.nmsh.connectorFadeColors,
+    configuration.nmsh.gapEnabled, configuration.gap);
 }

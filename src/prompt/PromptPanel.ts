@@ -15,7 +15,7 @@ import {
   type PromptProviderId,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
-import {CONNECTOR_FADE_COLORS, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
+import {fadeColorChoices, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
 import {renderControls} from '../ui/controls.js';
 import {renderTabStrip} from '../ui/PanelShell.js';
 import type {StarshipStatus} from './starship.js';
@@ -280,7 +280,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
         case 'start': nmsh.startStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.startStyle, delta); break;
         case 'connector': nmsh.connector = cycle(POWERLINE_SHAPES, nmsh.connector, delta); break;
         case 'connectorFade': nmsh.connectorFade = cycle(CONNECTOR_FADE_STYLES, nmsh.connectorFade, delta); break;
-        case 'fadeColors': nmsh.connectorFadeColors = cycle(CONNECTOR_FADE_COLORS, nmsh.connectorFadeColors, delta); break;
+        case 'fadeColors': nmsh.connectorFadeColors = cycle(fadeColorChoices(nmsh.gapEnabled, state.draft.gap), nmsh.connectorFadeColors, delta); break;
         case 'gap': applyNativeGapChoice(state.draft, cycle(GAP_CHOICES, nativeGapChoice(state.draft), delta)); break;
         case 'end': nmsh.endStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.endStyle, delta); break;
         case 'icons': nmsh.icons = nmsh.icons === 'off' ? 'nerd' : 'off'; break;

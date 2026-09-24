@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {buildContextLine, buildRichGitShowcaseLine, nativePromptSnapshot, RICH_GIT_SHOWCASE} from '../src/prompt/prompt.js';
 import {applyNativeGapChoice, DEFAULT_PROMPT_CONFIGURATION, loadPromptConfiguration, nativeGapChoice, normalizePromptConfiguration, savePromptConfiguration,
   type PromptConfiguration} from '../src/prompt/configuration.js';
-import {connectorFadeColor, CONNECTOR_FADE_COLORS, POWERLINE_SHAPES, renderPowerlineBlocks, type ConnectorFadeColors,
+import {connectorFadeColor, CONNECTOR_FADE_COLORS, fadeColorChoices, POWERLINE_SHAPES, renderPowerlineBlocks, type ConnectorFadeColors,
   type PowerlineBlock} from '../src/prompt/powerline.js';
 import {renderHistoricalContext} from '../src/output/OutputBuffer.js';
 import {powerlineShapeGlyphs} from '../src/ui/glyphs.js';
@@ -57,69 +57,67 @@ test('Fade colors defaults to Previous, persists every mode, and old configs nor
 
 const FADE_A = connectorFadeColor(PURPLE);
 const FADE_B = connectorFadeColor(GREEN);
-/** Normal/Wide: both caps cut their color into terminal background; Wide adds one blank cell. */
-const notch = (closeColor: typeof WHITE, openColor: typeof WHITE, wide: boolean) =>
-  `${RESET}${NEUTRAL}${fg(closeColor)}${WEDGE.close}${wide ? `${RESET}${NEUTRAL} ` : ''}${RESET}${NEUTRAL}${fg(openColor)}${SLASH.open}`;
+type Zone = typeof WHITE | undefined;
+const zone = (color: Zone) => color ? bg(color) : NEUTRAL;
+/** Wedge exit cell: close glyph painted in `from` over `to`. */
+const exit = (from: typeof WHITE, to: Zone) => `${RESET}${zone(to)}${fg(from)}${WEDGE.close}`;
+/** Slant / entry cell: open glyph painted in `to` over `from`. */
+const entry = (from: Zone, to: typeof WHITE) => `${RESET}${zone(from)}${fg(to)}${SLASH.open}`;
+const solid = (color: typeof WHITE) => `${RESET}${bg(color)} `;
 const COMPACT = 0;
 const NORMAL = 1;
 const WIDE = 2;
+const between = (output: string) => output.slice(output.indexOf(' A ') + 3, output.indexOf(' B '));
 
-test('Previous: Compact carries darker-A across both caps; Normal/Wide are darker-A / terminal, terminal / B', () => {
+test('Compact: Previous and Next are one-sided; Mixed resolves to Previous', () => {
   assert.ok(render('previous', COMPACT).includes(transition(fadeA, 0, fadeA)));
-  assert.ok(render('previous', NORMAL).includes(notch(FADE_A, GREEN, false)));
-  assert.ok(render('previous', WIDE).includes(notch(FADE_A, GREEN, true)));
-  const otherB = render('previous', NORMAL, [block('A', PURPLE), block('B', ORANGE)]);
-  assert.ok(otherB.includes(`${RESET}${NEUTRAL}${fg(FADE_A)}${WEDGE.close}`), 'B never changes darker-A');
-  for (const gap of [COMPACT, NORMAL, WIDE]) {
-    assert.ok(!render('previous', gap).includes(fadeB) && !render('previous', gap).includes(fg(FADE_B)));
-  }
-});
-
-test('Next: Compact carries darker-B across both caps; Normal/Wide are A / terminal, terminal / darker-B', () => {
   assert.ok(render('next', COMPACT).includes(transition(fadeB, 0, fadeB)));
-  assert.ok(render('next', NORMAL).includes(notch(PURPLE, FADE_B, false)));
-  assert.ok(render('next', WIDE).includes(notch(PURPLE, FADE_B, true)));
-  const otherA = render('next', NORMAL, [block('A', ORANGE), block('B', GREEN)]);
-  assert.ok(otherA.includes(`${RESET}${NEUTRAL}${fg(FADE_B)}${SLASH.open}`), 'A never changes darker-B');
-  for (const gap of [COMPACT, NORMAL, WIDE]) {
-    assert.ok(!render('next', gap).includes(fadeA) && !render('next', gap).includes(fg(FADE_A)));
-  }
+  assert.equal(render('mixed', COMPACT), render('previous', COMPACT), 'Mixed never renders in Compact');
+  assert.ok(!render('next', COMPACT).includes(fadeA) && !render('previous', COMPACT).includes(fadeB));
 });
 
-test('Mixed: Compact touches darker-A to darker-B; Normal notches both into terminal; Wide adds one blank cell', () => {
-  const compact = render('mixed', COMPACT);
-  assert.ok(compact.includes(transition(fadeA, 0, fadeB)), 'Compact reuses the two cap cells');
-  assert.ok(!compact.includes(`${NEUTRAL} `), 'Compact exposes no terminal-background cell');
-  const normal = render('mixed', NORMAL);
-  assert.ok(normal.includes(notch(FADE_A, FADE_B, false)), 'Normal caps sit on terminal background');
-  assert.ok(!normal.includes(`${NEUTRAL} ${RESET}${NEUTRAL}${fg(FADE_B)}`), 'Normal has no blank spacer');
-  assert.ok(!normal.includes(fadeA) && !normal.includes(fadeB), 'Normal paints no faded background');
-  assert.ok(render('mixed', WIDE).includes(notch(FADE_A, FADE_B, true)), 'Wide is the Normal notch plus one terminal cell');
+test('Normal: one bridge cell between the fade regions, no terminal-background hole', () => {
+  const previous = render('previous', NORMAL);
+  assert.ok(previous.includes(exit(PURPLE, FADE_A) + solid(FADE_A) + entry(FADE_A, GREEN)), 'A | darkA | darkA/B | B');
+  const next = render('next', NORMAL);
+  assert.ok(next.includes(exit(PURPLE, FADE_B) + solid(FADE_B) + entry(FADE_B, GREEN)), 'A | A/darkB | darkB | B');
+  const mixed = render('mixed', NORMAL);
+  assert.ok(mixed.includes(exit(PURPLE, FADE_A) + entry(FADE_A, FADE_B) + entry(FADE_B, GREEN)), 'A | darkA | darkA/darkB | darkB | B');
+  for (const output of [previous, next, mixed]) assert.ok(!between(output).includes(NEUTRAL), 'Normal exposes no terminal background');
+  assert.ok(!previous.includes(fg(FADE_B)) && !previous.includes(fadeB), 'Previous never computes darkB');
+  assert.ok(!next.includes(fg(FADE_A)) && !next.includes(fadeA), 'Next never computes darkA');
+  const otherB = render('previous', NORMAL, [block('A', PURPLE), block('B', ORANGE)]);
+  assert.ok(otherB.includes(exit(PURPLE, FADE_A)), 'B never changes darkA');
+});
+
+test('Wide: the center becomes two cells through the actual terminal background', () => {
+  assert.ok(render('previous', WIDE).includes(exit(PURPLE, FADE_A) + solid(FADE_A) + exit(FADE_A, undefined) + entry(undefined, GREEN)));
+  assert.ok(render('next', WIDE).includes(exit(PURPLE, undefined) + entry(undefined, FADE_B) + solid(FADE_B) + entry(FADE_B, GREEN)));
+  assert.ok(render('mixed', WIDE).includes(exit(PURPLE, FADE_A) + exit(FADE_A, undefined) + entry(undefined, FADE_B) + entry(FADE_B, GREEN)));
+  assert.ok(!render('previous', WIDE).includes(fadeB) && !render('next', WIDE).includes(fadeA));
   assert.equal(NEUTRAL, '\u001B[49m', 'terminal background is the default, not a computed color');
 });
 
-test('Fade colors and Gap never change geometry; width is Compact = Normal, Wide = Normal + 1', () => {
+test('Width: Compact < Normal = Compact + 1 < Wide = Normal + 1 for shaped caps; geometry stays independent', () => {
   for (const connector of POWERLINE_SHAPES) {
     for (const fade of POWERLINE_SHAPES) {
-      const glyphs = (gap: number) => stripAnsi(renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', connector, fade)).replaceAll(' ', '');
-      for (const gap of [COMPACT, NORMAL, WIDE]) {
-        const outputs = CONNECTOR_FADE_COLORS.map(mode => renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', connector, fade, mode));
-        for (const output of outputs) {
-          assert.equal(stripAnsi(output), stripAnsi(outputs[0]!), `${connector}/${fade}/${gap}: same glyphs`);
-          assert.equal(displayWidth(output), displayWidth(outputs[0]!), `${connector}/${fade}/${gap}: no added width`);
-        }
-        assert.equal(glyphs(gap), glyphs(COMPACT), `${connector}/${fade}/${gap}: Gap never changes geometry`);
+      if (connector === 'flat' || fade === 'flat') continue;
+      const width = (gap: number, mode: ConnectorFadeColors) =>
+        displayWidth(renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', connector, fade, mode));
+      for (const mode of CONNECTOR_FADE_COLORS) {
+        assert.equal(width(NORMAL, mode), width(COMPACT, mode) + 1, `${connector}/${fade}/${mode}: Normal is Compact + 1`);
+        assert.equal(width(WIDE, mode), width(NORMAL, mode) + 1, `${connector}/${fade}/${mode}: Wide is Normal + 1`);
+        assert.equal(width(3, mode), width(WIDE, mode), 'legacy wider gaps render as Wide');
+        const off = displayWidth(renderPowerlineBlocks(blocks, NORMAL, 1, 'flat', true, 'flat', connector));
+        assert.equal(width(NORMAL, mode), off, 'Normal matches the unfaded Normal gap width');
       }
-      const width = (gap: number) => displayWidth(renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', connector, fade));
-      const caps = Boolean(powerlineShapeGlyphs(connector).close || powerlineShapeGlyphs(fade).open);
-      assert.equal(width(NORMAL), width(COMPACT) + (caps ? 0 : 1), `${connector}/${fade}: Normal adds no spacer beside real caps`);
-      assert.equal(width(WIDE), width(NORMAL) + 1, `${connector}/${fade}: Wide is Normal plus exactly one cell`);
-      assert.equal(width(3), width(WIDE), `${connector}/${fade}: legacy wider gaps render as Wide`);
     }
   }
-  assert.ok(stripAnsi(render('mixed', NORMAL)).includes(`A ${WEDGE.close}${SLASH.open} B`), 'Wedge exits, Slant / enters');
+  const mixed = stripAnsi(render('mixed', NORMAL));
+  assert.ok(mixed.includes(`A ${WEDGE.close}${SLASH.open}${SLASH.open} B`), 'Wedge exits, Slant / enters; the bridge sits between');
   const rounded = stripAnsi(renderPowerlineBlocks(blocks, WIDE, 1, 'flat', true, 'flat', 'rounded', 'wedge', 'mixed'));
-  assert.ok(rounded.includes(`A ${powerlineShapeGlyphs('rounded').close} ${WEDGE.open} B`), 'Rounded exits, Wedge enters');
+  const ROUNDED = powerlineShapeGlyphs('rounded');
+  assert.ok(rounded.includes(`A ${ROUNDED.close}${ROUNDED.close}${WEDGE.open}${WEDGE.open} B`), 'Rounded exits, Wedge enters');
 });
 
 test('Flat + Flat fallback: Compact 0, Normal 1, Wide 2 terminal cells, never colored', () => {
@@ -133,8 +131,28 @@ test('Flat + Flat fallback: Compact 0, Normal 1, Wide 2 terminal cells, never co
     }
   }
   const oneCap = renderPowerlineBlocks(blocks, NORMAL, 1, 'flat', true, 'flat', 'flat', 'slash', 'mixed');
-  assert.equal(displayWidth(oneCap), displayWidth(plain) + 1, 'a single real cap is the notch; no spacer is invented');
-  assert.ok(oneCap.includes(`${RESET}${NEUTRAL}${fg(FADE_B)}${SLASH.open}`));
+  assert.ok(oneCap.includes(`${RESET}${fadeA} ${entry(FADE_A, FADE_B)}${entry(FADE_B, GREEN)}`), 'a Flat exit is a plain darkA cell');
+});
+
+test('Mixed is valid only with Normal or Wide; Gap changes and config normalization resolve it to Previous', () => {
+  assert.deepEqual(fadeColorChoices(true, 0), ['previous', 'next']);
+  assert.deepEqual(fadeColorChoices(false, 1), ['previous', 'next']);
+  assert.deepEqual(fadeColorChoices(true, 1), ['previous', 'next', 'mixed']);
+  assert.deepEqual(fadeColorChoices(true, 2), ['previous', 'next', 'mixed']);
+  for (const choice of ['compact', 'off'] as const) {
+    const value = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+    value.nmsh.connectorFadeColors = 'mixed';
+    applyNativeGapChoice(value, choice);
+    assert.equal(value.nmsh.connectorFadeColors, 'previous', `${choice} resolves Mixed`);
+  }
+  const wide = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  wide.nmsh.connectorFadeColors = 'mixed';
+  applyNativeGapChoice(wide, 'wide');
+  assert.equal(wide.nmsh.connectorFadeColors, 'mixed', 'Wide keeps Mixed');
+  assert.equal(normalizePromptConfiguration({gap: 0, nmsh: {connectorFadeColors: 'mixed'}}).nmsh.connectorFadeColors, 'previous');
+  assert.equal(normalizePromptConfiguration({gap: 1, nmsh: {gapEnabled: false, connectorFadeColors: 'mixed'}}).nmsh.connectorFadeColors, 'previous');
+  assert.equal(normalizePromptConfiguration({gap: 1, nmsh: {connectorFadeColors: 'mixed'}}).nmsh.connectorFadeColors, 'mixed');
+  assert.equal(normalizePromptConfiguration({gap: 0, nmsh: {connectorFadeColors: 'next'}}).nmsh.connectorFadeColors, 'next');
 });
 
 test('Gap cycles Off, Compact, Normal, Wide; old gap widths normalize', () => {
@@ -177,7 +195,8 @@ test('live prompt, Rich Git transitions, and the showcase honor Fade colors', ()
   const context = {cwd: '/r', project: 'r', branch: 'main', git: {staged: 1, modified: 2, untracked: 0, conflicts: 0, ahead: 0, behind: 0}};
   const lines = CONNECTOR_FADE_COLORS.map(mode => buildContextLine(context, 120, config(mode)));
   assert.equal(new Set(lines).size, 3, 'each mode changes the live prompt');
-  assert.equal(new Set(lines.map(stripAnsi)).size, 1, 'only colors change');
+  assert.equal(stripAnsi(lines[0]!), stripAnsi(lines[1]!), 'Previous and Next differ only in color');
+  assert.equal(displayWidth(lines[2]!), displayWidth(lines[0]!), 'Mixed swaps the solid cell for a bridge glyph, same width');
   const showcase = CONNECTOR_FADE_COLORS.map(mode => buildRichGitShowcaseLine(config(mode), RICH_GIT_SHOWCASE[1]!.git, 60));
   assert.equal(new Set(showcase).size, 3, 'the Rich Git showcase follows Fade colors');
 });

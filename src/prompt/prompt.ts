@@ -11,7 +11,7 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, resolveConnectorFade, type PowerlineShape} from './powerline.js';
+import {fitPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
@@ -307,7 +307,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     startStyle: configuration.nmsh.startStyle,
     connector: configuration.nmsh.connector,
     connectorFade: configuration.nmsh.connectorFade,
-    connectorFadeColors: configuration.nmsh.connectorFadeColors,
+    connectorFadeColors: resolveFadeColors(configuration.nmsh.connectorFadeColors, configuration.nmsh.gapEnabled, configuration.gap),
     palette: configuration.nmsh.palette,
     gitColors: configuration.nmsh.gitColors,
     gitEnabled: configuration.nmsh.gitEnabled,

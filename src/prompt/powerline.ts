@@ -105,26 +105,87 @@ export function connectorFadeColor(left: RgbColor): RgbColor {
   return fadePromptColor(left, 0);
 }
 
-/** Background escapes for the close (left) and open (right) cells of a Compact faded gap. */
+/** Background for both cap cells of a Compact faded gap: one side only (Mixed resolves to Previous). */
 function fadeZones(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors): {left: string; right: string} {
-  const fadeA = background(connectorFadeColor(previous));
-  const fadeB = background(connectorFadeColor(following));
-  switch (mode) {
-    case 'mixed': return {left: fadeA, right: fadeB};
-    case 'next': return {left: fadeB, right: fadeB};
-    default: return {left: fadeA, right: fadeA};
-  }
+  const zone = background(connectorFadeColor(mode === 'next' ? following : previous));
+  return {left: zone, right: zone};
 }
 
-/** Cap colors for a notched (Normal/Wide) gap: only the chosen side(s) darken. */
-function gapCapColors(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors): {left: RgbColor; right: RgbColor} {
-  const fadeA = connectorFadeColor(previous);
-  const fadeB = connectorFadeColor(following);
-  switch (mode) {
-    case 'mixed': return {left: fadeA, right: fadeB};
-    case 'next': return {left: previous, right: fadeB};
-    default: return {left: fadeA, right: following};
+/** A zone color between two segments; `undefined` is the terminal's default background. */
+type Zone = RgbColor | undefined;
+
+function zoneBackground(zone: Zone): string {
+  return zone ? background(zone) : NEUTRAL_BACKGROUND;
+}
+
+/**
+ * One transition cell reading `from` on the left and `to` on the right.
+ * Exit cells (A side) use the shape's close glyph painted in `from`; entry
+ * cells (B side) use its open glyph painted in `to`, so each glyph's filled
+ * half sits on the correct side. A Flat shape has no glyph: the cell is a
+ * plain space in the zone it opens onto (exit: `to`, entry: `from`).
+ */
+function transitionCell(from: Zone, to: Zone, shape: PowerlineShape, side: 'exit' | 'entry'): string {
+  const glyphs = powerlineShapeGlyphs(shape);
+  const glyph = side === 'exit' ? glyphs.close : glyphs.open;
+  const painted = side === 'exit' ? from : to;
+  const behind = side === 'exit' ? to : from;
+  if (!glyph || !painted) return `${RESET}${zoneBackground(side === 'exit' ? to : from)} `;
+  return `${RESET}${zoneBackground(behind)}${foreground(painted)}${glyph}`;
+}
+
+function solidCell(zone: Zone): string {
+  return `${RESET}${zoneBackground(zone)} `;
+}
+
+/**
+ * Normal/Wide transition cells between A and B. Normal is three cells,
+ * Wide four; Connector shapes the A-side cells, the connector fade the
+ * B-side cells (and Normal Mixed's darkA/darkB bridge).
+ *   Normal Previous  [A|darkA][darkA][darkA|B]
+ *   Normal Next      [A|darkB][darkB][darkB|B]
+ *   Normal Mixed     [A|darkA][darkA|darkB][darkB|B]
+ *   Wide   Previous  [A|darkA][darkA][darkA|term][term|B]
+ *   Wide   Next      [A|term][term|darkB][darkB][darkB|B]
+ *   Wide   Mixed     [A|darkA][darkA|term][term|darkB][darkB|B]
+ */
+function bridgeCells(a: RgbColor, b: RgbColor, exit: PowerlineShape, entry: PowerlineShape,
+  mode: ConnectorFadeColors, wide: boolean): string {
+  if (!wide) {
+    if (mode === 'mixed') {
+      const fadeA = connectorFadeColor(a);
+      const fadeB = connectorFadeColor(b);
+      return transitionCell(a, fadeA, exit, 'exit') + transitionCell(fadeA, fadeB, entry, 'entry') + transitionCell(fadeB, b, entry, 'entry');
+    }
+    const fade = connectorFadeColor(mode === 'next' ? b : a);
+    return transitionCell(a, fade, exit, 'exit') + solidCell(fade) + transitionCell(fade, b, entry, 'entry');
   }
+  if (mode === 'next') {
+    const fadeB = connectorFadeColor(b);
+    return transitionCell(a, undefined, exit, 'exit') + transitionCell(undefined, fadeB, entry, 'entry')
+      + solidCell(fadeB) + transitionCell(fadeB, b, entry, 'entry');
+  }
+  const fadeA = connectorFadeColor(a);
+  if (mode === 'mixed') {
+    const fadeB = connectorFadeColor(b);
+    return transitionCell(a, fadeA, exit, 'exit') + transitionCell(fadeA, undefined, exit, 'exit')
+      + transitionCell(undefined, fadeB, entry, 'entry') + transitionCell(fadeB, b, entry, 'entry');
+  }
+  return transitionCell(a, fadeA, exit, 'exit') + solidCell(fadeA)
+    + transitionCell(fadeA, undefined, exit, 'exit') + transitionCell(undefined, b, entry, 'entry');
+}
+
+/** Mixed needs a Normal or Wide gap; Compact and Off resolve it to Previous. */
+export function fadeColorsAllowMixed(gapEnabled: boolean, gap: number): boolean {
+  return gapEnabled && Math.trunc(gap) >= 1;
+}
+
+export function fadeColorChoices(gapEnabled: boolean, gap: number): readonly ConnectorFadeColors[] {
+  return fadeColorsAllowMixed(gapEnabled, gap) ? CONNECTOR_FADE_COLORS : ['previous', 'next'];
+}
+
+export function resolveFadeColors(mode: ConnectorFadeColors, gapEnabled: boolean, gap: number): ConnectorFadeColors {
+  return mode === 'mixed' && !fadeColorsAllowMixed(gapEnabled, gap) ? 'previous' : mode;
 }
 
 function blockContent(block: PowerlineBlock, spacing: number): string {
@@ -205,24 +266,22 @@ export function renderPowerlineBlocks(
       continue;
     }
     const open = powerlineShapeGlyphs(fade).open;
+    const mode = resolveFadeColors(fadeColors, gapEnabled, gapWidth);
     if (gapWidth === 0) {
       // Compact: the zones touch, so a one-sided mode carries its color across
       // both caps. No width is added; Flat + Flat has nothing to color.
-      const {left, right} = fadeZones(current.background, next.background, fadeColors);
+      const {left, right} = fadeZones(current.background, next.background, mode);
       if (close) content += `${RESET}${left}${foreground(current.background)}${close}`;
       if (open) content += `${RESET}${right}${foreground(next.background)}${open}`;
       continue;
     }
-    // Normal and Wide: both caps cut their (faded) side into terminal
-    // background, forming a notch between them. Wide adds one blank cell.
-    // With no cap glyph on either side (Flat + Flat), Normal falls back to one
-    // blank cell and Wide to two.
-    const {left, right} = gapCapColors(current.background, next.background, fadeColors);
-    const wide = gapWidth >= 2;
-    const spacer = close || open ? (wide ? 1 : 0) : (wide ? 2 : 1);
-    if (close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(left)}${close}`;
-    if (spacer) content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(spacer)}`;
-    if (open) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(right)}${open}`;
+    // Flat + Flat has no glyph to split a cell, so Normal and Wide fall back
+    // to one and two terminal-background cells with no fade color.
+    if (!close && !open) {
+      content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth >= 2 ? 2 : 1)}`;
+      continue;
+    }
+    content += bridgeCells(current.background, next.background, shape, fade, mode, gapWidth >= 2);
   }
 
   content += renderEnd(modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));
