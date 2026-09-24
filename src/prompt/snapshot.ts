@@ -3,6 +3,8 @@ import type {ComposerLayout, NativeConnectorStyle, NativeEndStyle, NativePalette
 
 export interface PromptSegmentSnapshot {
   text: string;
+  /** Native semantic role, so history can be re-themed without touching stored colors. */
+  role?: string;
   foreground?: RgbColor;
   background?: RgbColor;
   geometry: 'powerline' | 'plain';
@@ -88,4 +90,10 @@ export function archiveColor(color: RgbColor, role: 'foreground' | 'background' 
     : Math.max(0.58, archiveForegroundLightness(l, 0.84));
   const reducedChroma = chroma * (role === 'background' ? 0.68 : 0.72);
   return fromOklab(lightness, (a / chroma) * reducedChroma, (b / chroma) * reducedChroma);
+}
+
+/** Explicitly neutral history: the archive transform with all chroma removed. */
+export function grayscaleArchiveColor(color: RgbColor, role: 'foreground' | 'background' = 'foreground'): RgbColor {
+  const [l] = toOklab(archiveColor(color, role));
+  return fromOklab(l, 0, 0);
 }

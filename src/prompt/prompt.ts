@@ -27,6 +27,7 @@ function safePromptText(value: string): string {
 
 interface RenderedModule {
   id: ContextModuleConfig['id'];
+  role: PromptRole;
   text: string;
   foreground: RgbColor;
   background: RgbColor;
@@ -35,6 +36,11 @@ interface RenderedModule {
 /** Semantic identity of one rendered segment; themes color roles, not positions. */
 export type PromptRole = 'project' | 'cwd' | 'gitBranch' | ToolchainId | 'success' | 'failure';
 type SegmentColors = {foreground: RgbColor; background: RgbColor};
+
+const PROMPT_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', 'node', 'go', 'python', 'docker', 'success', 'failure'];
+export function isPromptRole(value: unknown): value is PromptRole {
+  return PROMPT_ROLES.includes(value as PromptRole);
+}
 
 const hex = (value: string): RgbColor => colorFromHex(value, {red: 0, green: 0, blue: 0});
 const pair = (backgroundHex: string, foregroundHex: string): SegmentColors => ({background: hex(backgroundHex), foreground: hex(foregroundHex)});
@@ -180,6 +186,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     const colors = palette.colors(segment.role);
     return {
       id: segment.module.id,
+      role: segment.role,
       text: segment.text,
       foreground: colorFromHex(segment.module.foreground, colors.foreground),
       background: colorFromHex(segment.module.background, colors.background),
@@ -191,6 +198,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
   const modules = renderedModules(context, configuration);
   const segments: PromptSegmentSnapshot[] = modules.map(module => ({
     text: module.text,
+    role: module.role,
     foreground: module.foreground,
     background: module.background,
     geometry: 'powerline',

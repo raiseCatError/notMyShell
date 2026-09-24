@@ -31,6 +31,38 @@ export interface ContextModuleConfig {
   background?: string;
 }
 
+export type HistoryColorMode = 'followPrompt' | 'theme' | 'grayscale';
+export type DividerDensity = 'normal' | 'compact';
+
+/** How historical command headers are presented; stored snapshots are never changed. */
+export interface TranscriptAppearance {
+  divider: boolean;
+  historicalPrompt: boolean;
+  historyColors: HistoryColorMode;
+  /** Used when `historyColors` is `theme`. */
+  historyTheme: NativePaletteId;
+  dividerDensity: DividerDensity;
+}
+
+export const DEFAULT_TRANSCRIPT_APPEARANCE: TranscriptAppearance = {
+  divider: true,
+  historicalPrompt: true,
+  historyColors: 'followPrompt',
+  historyTheme: 'lavender',
+  dividerDensity: 'normal',
+};
+
+export function normalizeTranscriptAppearance(value: unknown): TranscriptAppearance {
+  if (!isRecord(value)) return {...DEFAULT_TRANSCRIPT_APPEARANCE};
+  return {
+    divider: typeof value.divider === 'boolean' ? value.divider : true,
+    historicalPrompt: typeof value.historicalPrompt === 'boolean' ? value.historicalPrompt : true,
+    historyColors: value.historyColors === 'theme' || value.historyColors === 'grayscale' ? value.historyColors : 'followPrompt',
+    historyTheme: NATIVE_PALETTE_IDS.includes(value.historyTheme as NativePaletteId) ? value.historyTheme as NativePaletteId : 'lavender',
+    dividerDensity: value.dividerDensity === 'compact' ? 'compact' : 'normal',
+  };
+}
+
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
@@ -43,6 +75,7 @@ export interface PromptConfiguration {
     icons: NativeIconMode;
   };
   starship: {configPath: string | null};
+  transcript: TranscriptAppearance;
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
   modules: ContextModuleConfig[];
@@ -57,6 +90,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   onboardingComplete: false,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd'},
   starship: {configPath: null},
+  transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
   modules: [
@@ -100,6 +134,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const palette: NativePaletteId = NATIVE_PALETTE_IDS.includes(nativeValue.palette as NativePaletteId)
     ? nativeValue.palette as NativePaletteId
     : 'lavender';
+  const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
     startStyle, connector, endStyle, palette, icons};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
@@ -118,7 +153,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      nmsh, starship: {configPath: starshipConfigPath}, placement, composerLayout, spacing, gap, separator};
+      nmsh, starship: {configPath: starshipConfigPath}, transcript, placement, composerLayout, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -149,7 +184,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, nmsh,
+  return {provider, onboardingComplete: value.onboardingComplete === true, nmsh, transcript,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 
