@@ -81,7 +81,7 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 - NMSh Native prompt (default) with Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale themes
 - Independent Start / Connector / Gap / End geometry (wedge, flat, rounded, slanted, and fading outer edges), icons On/Off, and a module manager: `/prompt`
 - Terminal glyph style (Nerd Font or Safe/ASCII) is chosen on first run and can be changed under `/settings` → Appearance. Existing v0.3 configurations keep Nerd Font styling; `NMSH_ICONS=nerd|safe` overrides the saved choice for the current process.
-- Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor and never rewrites their configuration
+- Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor. The Starship module editor changes only reviewed settings, with a backup of an existing config.
 - One-line or two-line composer layouts
 
 ### Interface
