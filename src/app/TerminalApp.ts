@@ -1,6 +1,6 @@
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
-import {renderSettingsPanel, SETTINGS_SECTIONS, settingsItemCount, type SettingsPanelState} from '../ui/SettingsPanel.js';
+import {renderSettingsPanel, SETTINGS_SECTIONS, settingsItemCount, visibleSettingsEntries, type SettingsPanelState} from '../ui/SettingsPanel.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
@@ -232,26 +232,44 @@ export class TerminalApp {
       const state = this.settingsPanelState;
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
-        else if (state.section === 'appearance') { state.section = 'root'; state.selectedIndex = 0; }
+        else if (state.section === 'appearance') { state.section = 'root'; state.selectedIndex = 0; state.contentIndex = 0; }
+        else if (state.searchQuery) { state.searchQuery = ''; state.contentIndex = 0; }
         else this.settingsPanelState = undefined;
+      } else if (state.section === 'root' && (key.kind === 'complete' || key.kind === 'focusPrevious')) {
+        state.selectedIndex = (state.selectedIndex + (key.kind === 'complete' ? 1 : -1) + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length;
+        state.searchQuery = '';
+        state.contentIndex = 0;
+      } else if (state.section === 'root' && key.kind === 'text') {
+        state.searchQuery = (state.searchQuery ?? '') + key.value;
+        state.contentIndex = 0;
+      } else if (state.section === 'root' && key.kind === 'backspace') {
+        state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
+        state.contentIndex = 0;
       } else if (key.kind === 'up' || key.kind === 'down') {
         const count = settingsItemCount(state);
-        state.selectedIndex = (state.selectedIndex + (key.kind === 'up' ? -1 : 1) + count) % count;
+        if (count > 0) {
+          if (state.section === 'root') state.contentIndex = ((state.contentIndex ?? 0) + (key.kind === 'up' ? -1 : 1) + count) % count;
+          else state.selectedIndex = (state.selectedIndex + (key.kind === 'up' ? -1 : 1) + count) % count;
+        }
       } else if (key.kind === 'left' || key.kind === 'right') {
         if (state.section === 'appearance') state.selectedIndex = state.selectedIndex === 0 ? 1 : 0;
       } else if (key.kind === 'enter') {
         if (state.section === 'appearance') this.saveGlyphChoice(state.selectedIndex === 0 ? 'nerd' : 'safe');
         else {
-          const section = SETTINGS_SECTIONS[state.selectedIndex];
-          if (section === 'Appearance') { state.section = 'appearance'; state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1; }
-          else if (section === 'Prompt') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = state.selectedIndex;
+          const entry = visibleSettingsEntries(state)[state.contentIndex ?? 0];
+          const destinationTab = entry ? SETTINGS_SECTIONS.indexOf(entry.category as typeof SETTINGS_SECTIONS[number]) : state.selectedIndex;
+          if (entry?.destination === 'glyph') { state.section = 'appearance'; state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1; }
+          else if (entry?.destination === 'appearance') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
+            this.settingsPanelState = undefined; void this.startAppearance();
+          } else if (entry?.destination === 'prompt') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
             this.settingsPanelState = undefined; void this.startPromptSettings(false);
-          } else if (section === 'Transcript') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = state.selectedIndex;
+          } else if (entry?.destination === 'transcript') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
             this.settingsPanelState = undefined; this.startTranscriptSettings();
-          } else if (section === 'Keyboard') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = state.selectedIndex;
+          } else if (entry?.destination === 'keyboard') {
+            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
             this.settingsPanelState = undefined; void this.startKeyboard();
           }
         }
@@ -805,6 +823,7 @@ export class TerminalApp {
 
     if (isVSCode || (!isGhostty && !await detectGhosttyConfigPath())) {
        this.output.addFrontendInteraction('/appearance', `Host: ${isVSCode ? 'VS Code Integrated Terminal' : 'Unsupported Host'}\nWindow opacity and blur are controlled by the host.`, INFO);
+       this.returnFromPanel();
        this.render();
        return;
     }
@@ -1353,7 +1372,7 @@ export class TerminalApp {
   }
 
   private settingsPanelRows(columns: number): string[] {
-    if (this.settingsPanelState) return framePanel(renderSettingsPanel(this.settingsPanelState, this.dimensions().rows - 1), columns);
+    if (this.settingsPanelState) return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows);
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
     }
@@ -1411,6 +1430,8 @@ export class TerminalApp {
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
       this.settingsPanelState = undefined;
+      if (!onboarding) this.settingsPanelState = {section: 'root', selectedIndex: 0, contentIndex: 0,
+        glyphStyle: style, onboarding: false};
       if (onboarding && !next.onboardingComplete) {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
           draft: structuredClone(next), saved: structuredClone(next)};
