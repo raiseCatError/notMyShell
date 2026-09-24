@@ -281,23 +281,81 @@ test('slash commands, prompts without a running command, and passthrough entry n
     assert.equal(app['running'], undefined);
     app['onShellPrompt'](0, '/tmp');
     assert.equal(sent.length, 0);
-    // A fullscreen command hands focus reports to the child: focus becomes unknown.
-    app['terminalFocus'] = 'focused';
-    const written: string[] = [];
-    app['renderer']['write' as never] = ((data: string) => { written.push(data); }) as never;
-    app['renderer']['active' as never] = true as never;
-    app['session'].submit = () => {};
-    app['editor'].insert('vim notes.txt');
-    await app['submit']();
-    assert.equal(app['passthrough'], true);
-    assert.equal(app['terminalFocus'], 'unknown');
-    assert.match(written.join(''), /\?1004l/u);
-    assert.equal(sent.length, 0, 'nothing while the command is running');
-    app['running']!.startedAt = Date.now() - 120_000;
-    app['onShellPrompt'](0, '/tmp');
-    assert.equal(sent.length, 1, 'unknown focus notifies on completion');
-    assert.match(written.at(-1)!, /\?1004h/u);
   });
+});
+
+async function runFullscreen(app: TerminalApp, written: string[], exitCode = 0): Promise<void> {
+  app['renderer']['write' as never] = ((data: string) => { written.push(data); }) as never;
+  app['renderer']['active' as never] = true as never;
+  app['session'].submit = () => {};
+  app['editor'].insert('vim notes.txt');
+  await app['submit']();
+  assert.equal(app['passthrough'], true);
+  assert.match(written.join(''), /\?1004l/u);
+  app['running']!.startedAt = Date.now() - 120_000;
+  app['onShellPrompt'](exitCode, '/tmp');
+  assert.equal(app['passthrough'], false);
+  assert.match(written.at(-1)!, /\?1004h/u);
+}
+
+test('passthrough preserves focused, blurred, and unknown focus across suspend and resume', async () => {
+  for (const focus of ['focused', 'blurred', 'unknown'] as const) {
+    await withApp(async app => {
+      app['terminalFocus'] = focus;
+      await runFullscreen(app, []);
+      assert.equal(app['terminalFocus'], focus, focus);
+      // A real report after resume still updates the preserved state.
+      app['onInput']('\u001B[O');
+      assert.equal(app['terminalFocus'], 'blurred');
+      app['onInput']('\u001B[I');
+      assert.equal(app['terminalFocus'], 'focused');
+    });
+  }
+});
+
+test('long fullscreen commands: focused stays suppressed, blurred and unknown notify after exit', async () => {
+  for (const [focus, expected] of [['focused', 0], ['blurred', 1], ['unknown', 1]] as const) {
+    await withApp(async (app, sent) => {
+      app['terminalFocus'] = focus;
+      const written: string[] = [];
+      app['renderer']['write' as never] = ((data: string) => { written.push(data); }) as never;
+      app['renderer']['active' as never] = true as never;
+      app['session'].submit = () => {};
+      app['editor'].insert('vim notes.txt');
+      await app['submit']();
+      assert.equal(sent.length, 0, 'nothing while the command is running');
+      app['running']!.startedAt = Date.now() - 120_000;
+      app['onShellPrompt'](0, '/tmp');
+      assert.equal(sent.length, expected, focus);
+    });
+  }
+});
+
+test('the Powerlevel10k wizard handoff preserves each focus state and still toggles focus reporting', async () => {
+  const stdin = process.stdin as unknown as Record<string, unknown>;
+  const stdout = process.stdout as unknown as Record<string, unknown>;
+  const saved = {stdinTTY: stdin.isTTY, stdoutTTY: stdout.isTTY, setRawMode: stdin.setRawMode};
+  stdin.isTTY = true;
+  stdout.isTTY = true;
+  stdin.setRawMode = () => process.stdin;
+  try {
+    for (const focus of ['focused', 'blurred', 'unknown'] as const) {
+      await withApp(async app => {
+        const written: string[] = [];
+        app['renderer']['write' as never] = ((data: string) => { written.push(data); }) as never;
+        app['renderer']['active' as never] = true as never;
+        app['terminalFocus'] = focus;
+        // Not installed: the wizard rejects immediately, after the full handoff and restore.
+        await assert.rejects(app['runPowerlevel10kWizard']({installed: false} as never));
+        assert.match(written.join(''), /\?1004l[\s\S]*\?1004h/u);
+        assert.equal(app['terminalFocus'], focus, focus);
+      });
+    }
+  } finally {
+    stdin.isTTY = saved.stdinTTY;
+    stdout.isTTY = saved.stdoutTTY;
+    stdin.setRawMode = saved.setRawMode;
+  }
 });
 
 // ── Settings UI ─────────────────────────────────────────────────────────

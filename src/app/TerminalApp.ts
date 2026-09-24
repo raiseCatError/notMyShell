@@ -107,7 +107,7 @@ export class TerminalApp {
   private focusedActivityId?: string;
   private focusedCommandIndex?: number;
   private passthrough = false;
-  /** Learned from focus reports while NMSh owns the terminal; unknown otherwise. */
+  /** Learned from focus reports; kept across passthrough and handoffs until the next report. */
   private terminalFocus: TerminalFocus = 'unknown';
   private readonly notifications: NotificationService = createNotificationService();
   private externalPassthrough = false;
@@ -690,7 +690,6 @@ export class TerminalApp {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
         this.passthrough = true;
         this.renderer.suspendForPassthrough();
-        this.terminalFocus = 'unknown';
         const dimensions = this.dimensions();
         this.session.resize(dimensions.columns, dimensions.rows);
       }
@@ -711,7 +710,6 @@ export class TerminalApp {
     this.passthrough = shouldPassthrough(command);
     if (this.passthrough) {
       this.renderer.suspendForPassthrough();
-      this.terminalFocus = 'unknown';
       const dimensions = this.dimensions();
       this.session.resize(dimensions.columns, dimensions.rows);
     }
@@ -1107,7 +1105,6 @@ export class TerminalApp {
       process.stdin.setRawMode(false);
       rawModeReleased = true;
       this.renderer.leave();
-      this.terminalFocus = 'unknown';
       rendererLeft = true;
       process.on('SIGINT', ignoreInterrupt);
       interruptAttached = true;
