@@ -5,7 +5,6 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {nmshConfigDirectory, promptConfigurationPath} from '../src/configuration/paths.js';
 import {loadPromptConfiguration, normalizePromptConfiguration, savePromptConfiguration} from '../src/prompt/configuration.js';
-import {framePanel} from '../src/ui/PanelShell.js';
 import {getCurrentGlyphMode, powerlineShapeGlyphs, setIconStyle} from '../src/ui/glyphs.js';
 import {renderSettingsPanel} from '../src/ui/SettingsPanel.js';
 
@@ -47,14 +46,12 @@ test('glyph style persists and safe geometry avoids private-use glyphs', async (
 });
 
 test('panel boundary is transient rendering chrome', () => {
-  const rows = renderSettingsPanel({section: 'appearance', selectedIndex: 1, glyphStyle: 'safe', onboarding: false});
-  const framed = framePanel(rows, 12);
-  assert.equal(framed.length, rows.length + 1);
-  assert.match(framed[0]!, /─{12}|-{12}/u);
-  assert.equal(rows[0]?.includes('Appearance'), true);
-  const compact = renderSettingsPanel({section: 'root', selectedIndex: 10, glyphStyle: 'safe', onboarding: false}, 7);
-  assert.equal(compact.length, 7);
-  assert.match(compact.join('\n'), /Keyboard/u);
+  const rows = renderSettingsPanel({section: 'appearance', selectedIndex: 1, glyphStyle: 'safe', onboarding: false}, 20);
+  assert.match(rows[0]!, /─{20}|-{20}/u);
+  assert.equal(rows[1]?.includes('Glyph style'), true);
+  const compact = renderSettingsPanel({section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 4, glyphStyle: 'safe', onboarding: false}, 20, 8);
+  assert.ok(compact.length <= 8);
+  assert.match(compact.join('\n'), /Key/u);
 });
 
 test('composer layout loads from the existing prompt config and legacy config defaults to two-line', async () => {

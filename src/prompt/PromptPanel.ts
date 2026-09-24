@@ -101,7 +101,7 @@ export function applyLayoutChoice(configuration: PromptConfiguration, index: num
   if (choice.placement) configuration.placement = choice.placement;
 }
 
-function layoutLabel(configuration: PromptConfiguration): string {
+export function layoutLabel(configuration: PromptConfiguration): string {
   return LAYOUT_CHOICES[layoutChoiceIndex(configuration)]!.summary;
 }
 
