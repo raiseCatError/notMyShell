@@ -287,6 +287,7 @@ export class OutputBuffer {
       ...this.completed.flatMap(command => command.activities ?? []),
       ...(this.active?.activities ?? []),
     ]) activitiesByStart.set(activity.outputStartId, activity);
+    const ownerOf = this.blockOwnership();
 
     for (let i = 0; i < lines.length; i++) {
       if (i < skipUntil) continue;
@@ -297,7 +298,11 @@ export class OutputBuffer {
 
       const historicalContext = this.historicalContexts.get(i);
       const header = historicalContext && renderHistoricalContext(historicalContext, width, this.transcriptAppearance);
-      if (header) result.push(header);
+      if (header) {
+        const owner = ownerOf(i);
+        if (owner !== undefined) header.blockStartId = owner;
+        result.push(header);
+      }
 
       const cmd = this.completed.find(c => c.outputStartId === i);
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
@@ -373,7 +378,50 @@ export class OutputBuffer {
         if (activity.expanded) appendActivityOutput(result, lines, activity, width);
       }
     }
+    for (const row of result) {
+      if (row.isHistoricalHeader || row.lineIndex === undefined || row.lineIndex < 0) continue;
+      const owner = ownerOf(row.lineIndex);
+      if (owner !== undefined) row.blockStartId = owner;
+    }
     return result;
+  }
+
+  /**
+   * Maps a source line to the startId of the command block that owns it.
+   * Blocks span [startId, endId) from the command records; the running
+   * command owns everything from its start onward.
+   */
+  private blockOwnership(): (lineIndex: number) => number | undefined {
+    const blocks = [
+      ...this.completed.map(command => ({start: command.startId, end: command.endId ?? Number.POSITIVE_INFINITY})),
+      ...(this.active ? [{start: this.active.start, end: Number.POSITIVE_INFINITY}] : []),
+    ].filter(block => this.lineTypes.get(block.start) === 'command').sort((a, b) => a.start - b.start);
+    return lineIndex => {
+      let low = 0;
+      let high = blocks.length - 1;
+      let found: {start: number; end: number} | undefined;
+      while (low <= high) {
+        const middle = (low + high) >> 1;
+        if (blocks[middle]!.start <= lineIndex) { found = blocks[middle]; low = middle + 1; } else high = middle - 1;
+      }
+      return found && lineIndex < found.end ? found.start : undefined;
+    };
+  }
+
+  /**
+   * One-row sticky rendering of a block's submitted command: the start of the
+   * stored command row, ANSI-safe truncated with an ellipsis when it is wider
+   * than the viewport or continues onto more rows. Never stored anywhere.
+   */
+  stickyHeaderRow(startId: number, width: number): string | undefined {
+    if (width <= 0 || this.lineTypes.get(startId) !== 'command') return undefined;
+    const lines = this.parser.allLines();
+    const line = lines[startId];
+    if (!line) return undefined;
+    const ansi = wrapStyledLine(line, Number.MAX_SAFE_INTEGER)[0]?.ansi ?? '';
+    const continues = this.lineTypes.get(startId + 1) === 'command' && this.blockOwnership()(startId + 1) === startId;
+    if (continues && displayWidth(ansi) < width) return `${ansi}${foreground(UI_COLORS.secondary)}…\u001B[0m`;
+    return truncateAnsi(ansi, width);
   }
 
   toggleExpanded(commandIndex: number): void {
