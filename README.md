@@ -126,7 +126,7 @@ NMSh currently boots a real, controlled zsh instance.
 **UI Plugin differences:**
 - `Powerlevel10k` (and other prompt rendering) is strictly suppressed.
 - `zsh-autosuggestions` and `zsh-syntax-highlighting` are replaced by NMSh-native equivalents.
-- `fzf-tab` UI is not rendered directly.
+- Native `fzf-tab` integration is not currently supported; safe zsh completion/widget interoperability remains unresolved in [issue #52](https://github.com/raiseCatError/notMyShell/issues/52).
 
 NMSh loads your `~/.zshrc` in a controlled sandbox to extract environment knowledge without letting UI plugins fight for terminal control.
 
