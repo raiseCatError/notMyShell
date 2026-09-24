@@ -673,6 +673,7 @@ export class TerminalApp {
       else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
       else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
       else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
+      else if (slash.kind === 'notifications') this.openNotificationSettings();
       else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
       else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
@@ -997,9 +998,16 @@ export class TerminalApp {
    * foreground command; rendering and restored transcripts never reach it.
    */
   private notifyCommandCompletion(completed: CompletedCommand): void {
-    if (!this.notifications.supported) return;
-    if (!shouldNotify(completed, this.promptConfiguration.notifications, this.terminalFocus)) return;
-    this.notifications.notify(formatCommandNotification(completed));
+    const settings = this.promptConfiguration.notifications;
+    const eligible = this.notifications.supported && shouldNotify(completed, settings, this.terminalFocus);
+    const debug = process.env.NMSH_DEBUG_NOTIFICATIONS === '1'
+      ? (line: string) => { try { appendFileSync('/tmp/nmsh-notification-debug.log', `${new Date().toISOString()} ${line}\n`); } catch { /* Debug only. */ } }
+      : undefined;
+    debug?.(`completed elapsedMs=${completed.elapsedMs} exit=${completed.exitCode} interrupted=${completed.interrupted}`
+      + ` focus=${this.terminalFocus} settings=${JSON.stringify(settings)} supported=${this.notifications.supported} eligible=${eligible}`);
+    if (!eligible) return;
+    void this.notifications.notify(formatCommandNotification(completed))
+      .then(delivery => debug?.(`delivery ${JSON.stringify(delivery)}`), () => {});
   }
 
   private async refreshContext(cwd: string): Promise<void> {
@@ -1458,6 +1466,12 @@ export class TerminalApp {
       glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
   }
 
+  /** The Config panel narrowed to its Command notifications rows; same rows, same saved values. */
+  private openNotificationSettings(): void {
+    this.settingsPanelState = {section: 'root', view: 'config', scope: 'notifications', focus: 'rows', selectedIndex: 0, contentIndex: 0,
+      glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+  }
+
   /**
    * Keys for the shared Settings / Status / Config panel:
    * - ←/→ switch views, except on an inline-editable Config row where they
@@ -1487,7 +1501,7 @@ export class TerminalApp {
     } else if (state.searchFocused && key.kind === 'backspace') {
       state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
       state.contentIndex = 0;
-    } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
+    } else if (key.kind === 'text' && key.value === '/' && view === 'config' && !state.scope) {
       state.searchFocused = true;
       state.focus = 'rows';
       state.searchQuery ??= '';
@@ -1495,7 +1509,7 @@ export class TerminalApp {
       const delta = key.kind === 'left' ? -1 : 1;
       if (view === 'config' && state.focus !== 'tabs' && isInlineEditable(row)) {
         this.applySettingsConfiguration(adjustSettingsRow(row!, this.promptConfiguration, delta));
-      } else switchSettingsView(state, delta);
+      } else if (!state.scope) switchSettingsView(state, delta);
     } else if (view === 'status') {
       if (key.kind === 'up' || key.kind === 'down') {
         const max = Math.max(0, statusLineCount(this.statusSections()) - 1);
@@ -1506,7 +1520,7 @@ export class TerminalApp {
     } else if (key.kind === 'up' || key.kind === 'down') {
       const count = settingsItemCount(state);
       const index = state.contentIndex ?? 0;
-      if (key.kind === 'up' && index === 0 && !state.searchFocused) state.focus = 'tabs';
+      if (key.kind === 'up' && index === 0 && !state.searchFocused && !state.scope) state.focus = 'tabs';
       else if (count > 0) state.contentIndex = Math.max(0, Math.min(count - 1, index + (key.kind === 'up' ? -1 : 1)));
     } else if ((key.kind === 'enter' || (key.kind === 'text' && key.value === ' ')) && row) {
       if (isInlineEditable(row)) this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));

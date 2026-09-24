@@ -1,16 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import type {ChildProcess} from 'node:child_process';
+import type {ChildProcess, SpawnOptions} from 'node:child_process';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {TerminalRenderer} from '../src/terminal/TerminalRenderer.js';
 import {decodeKeys, KeyDecoder} from '../src/terminal/keys.js';
 import {
   DEFAULT_NOTIFICATION_SETTINGS,
   DEFAULT_PROMPT_CONFIGURATION,
+  loadPromptConfiguration,
   normalizeNotificationSettings,
   normalizePromptConfiguration,
   type NotificationSettings,
@@ -27,7 +29,9 @@ import {
   type CompletedCommand,
   type SpawnFunction,
 } from '../src/notifications/commandNotifications.js';
-import {adjustSettingsRow, SETTINGS_ROWS, settingsRowValue, stepPreset, NOTIFICATION_THRESHOLD_STEPS} from '../src/ui/SettingsPanel.js';
+import {parseSlashCommand, slashCommands, slashSuggestions} from '../src/commands/slashCommands.js';
+import {stripAnsi} from '../src/util/text.js';
+import {adjustSettingsRow, renderSettingsPanel, visibleSettingsRows, SETTINGS_ROWS, settingsRowValue, stepPreset, NOTIFICATION_THRESHOLD_STEPS} from '../src/ui/SettingsPanel.js';
 
 const settings = (patch: Partial<NotificationSettings> = {}): NotificationSettings => ({...DEFAULT_NOTIFICATION_SETTINGS, ...patch});
 const done = (patch: Partial<CompletedCommand> = {}): CompletedCommand =>
@@ -107,49 +111,94 @@ test('command summary strips ANSI and newlines and is bounded', () => {
 
 // ── Backend ─────────────────────────────────────────────────────────────
 
-function fakeSpawn(calls: Array<{command: string; args: readonly string[]; shell: unknown}>, fail?: 'throw' | 'error'): SpawnFunction {
+type SpawnCall = {command: string; args: readonly string[]; options: SpawnOptions};
+
+/** A stand-in child that closes with `exit` (and optional stderr), or fails to spawn. */
+function fakeSpawn(calls: SpawnCall[], outcome: {exit?: number; stderr?: string; signal?: NodeJS.Signals; fail?: 'throw' | 'error'} = {}): SpawnFunction {
   return (command, args, options) => {
-    if (fail === 'throw') throw new Error('spawn EACCES');
-    calls.push({command, args, shell: options.shell});
+    if (outcome.fail === 'throw') throw new Error('spawn EACCES');
+    calls.push({command, args, options});
     const child = new EventEmitter() as ChildProcess;
-    (child as unknown as {unref: () => void}).unref = () => {};
-    if (fail === 'error') queueMicrotask(() => child.emit('error', new Error('ENOENT')));
+    const stderr = new PassThrough();
+    Object.assign(child, {stderr, unref: () => { throw new Error('the child must not be unref\'d'); }});
+    setImmediate(() => {
+      if (outcome.fail === 'error') { child.emit('error', new Error('spawn /usr/bin/osascript ENOENT')); return; }
+      if (outcome.stderr) stderr.write(outcome.stderr);
+      stderr.end();
+      setImmediate(() => child.emit('close', outcome.signal ? null : outcome.exit ?? 0, outcome.signal ?? null));
+    });
     return child;
   };
 }
 
-test('macOS backend passes strings as argv to osascript with the shell disabled', () => {
-  const calls: Array<{command: string; args: readonly string[]; shell: unknown}> = [];
+test('macOS backend runs /usr/bin/osascript with an argv-only AppleScript program and no shell', async () => {
+  const calls: SpawnCall[] = [];
   const note: CommandNotification = {title: 'notMyShell', subtitle: 'Command failed · 1m 0s · exit 1', body: `echo "a'b" $(rm -rf ~) \\ -e`};
-  new MacNotificationService(fakeSpawn(calls)).notify(note);
+  assert.deepEqual(await new MacNotificationService(fakeSpawn(calls)).notify(note), {ok: true});
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.command, OSASCRIPT_PATH);
-  assert.equal(calls[0]!.shell, false);
+  assert.equal(calls[0]!.options.shell, false);
+  assert.equal(calls[0]!.options.detached, undefined, 'an attached child');
+  assert.deepEqual(calls[0]!.options.stdio, ['ignore', 'ignore', 'pipe']);
   const args = calls[0]!.args;
-  assert.deepEqual(args.slice(-3), [note.title, note.subtitle, note.body]);
-  // The script source never contains notification text.
-  const script = args.slice(0, -3).filter((_, index) => index % 2 === 1).join('\n');
-  assert.ok(!script.includes('rm -rf') && !script.includes('notMyShell'));
-  assert.match(script, /^on run argv\n.*item 3 of argv.*item 1 of argv.*item 2 of argv.*\nend run$/u);
+  assert.deepEqual(args, [
+    '-e', 'on run argv',
+    '-e', 'display notification (item 3 of argv) with title (item 1 of argv) subtitle (item 2 of argv)',
+    '-e', 'end run',
+    note.title, note.subtitle, note.body,
+  ]);
   assert.deepEqual(osascriptArguments(note), args);
 });
 
-test('backend spawn failures and child errors never throw', async () => {
-  const note = formatCommandNotification(done());
-  assert.doesNotThrow(() => new MacNotificationService(fakeSpawn([], 'throw')).notify(note));
-  assert.doesNotThrow(() => new MacNotificationService(fakeSpawn([], 'error')).notify(note));
-  await new Promise(resolve => setImmediate(resolve));
+test('hostile command text only ever appears as the final argv item', () => {
+  for (const body of ['-la', '--help', '-e display dialog "x"', `it's "quoted"`, 'line1\nline2', '日本語 ✓ 🚀', '$(whoami) `id` ; rm -rf /']) {
+    const args = osascriptArguments({title: 'notMyShell', subtitle: 's', body});
+    assert.equal(args.at(-1), body);
+    assert.equal(args.at(-3), 'notMyShell', 'the title is the first non-option argument');
+    assert.equal(args.filter(arg => arg === body).length, 1);
+  }
+  // The summary a real notification carries is already one line.
+  assert.equal(formatCommandNotification(done({command: '-x\n"a"'})).body, '-x "a"');
 });
 
-test('non-darwin platforms are unsupported and never spawn osascript', () => {
-  const calls: Array<{command: string; args: readonly string[]; shell: unknown}> = [];
+test('backend failures resolve with a reason and never throw', async () => {
+  const note = formatCommandNotification(done());
+  assert.deepEqual(await new MacNotificationService(fakeSpawn([], {fail: 'throw'})).notify(note),
+    {ok: false, reason: 'spawn', message: 'Error: spawn EACCES'});
+  assert.deepEqual(await new MacNotificationService(fakeSpawn([], {fail: 'error'})).notify(note),
+    {ok: false, reason: 'spawn', message: 'spawn /usr/bin/osascript ENOENT'});
+  assert.deepEqual(await new MacNotificationService(fakeSpawn([], {exit: 1, stderr: '0:12: syntax error: A identifier can’t go after this “"”. (-2740)\n'})).notify(note),
+    {ok: false, reason: 'exit', exitCode: 1, message: '0:12: syntax error: A identifier can’t go after this “"”. (-2740)'});
+  assert.deepEqual(await new MacNotificationService(fakeSpawn([], {signal: 'SIGTERM'})).notify(note),
+    {ok: false, reason: 'timeout', exitCode: null, message: 'SIGTERM'});
+});
+
+test('notify returns immediately; delivery settles later', async () => {
+  let settled = false;
+  const pending = new MacNotificationService(fakeSpawn([])).notify(formatCommandNotification(done()));
+  void pending.then(() => { settled = true; });
+  assert.equal(settled, false);
+  await pending;
+  assert.equal(settled, true);
+});
+
+test('non-darwin platforms are unsupported and never spawn osascript', async () => {
+  const calls: SpawnCall[] = [];
   for (const platform of ['linux', 'win32', 'freebsd'] as const) {
     const service = createNotificationService(platform, fakeSpawn(calls));
     assert.equal(service.supported, false);
-    service.notify(formatCommandNotification(done()));
+    assert.deepEqual(await service.notify(formatCommandNotification(done())), {ok: false, reason: 'unsupported'});
   }
   assert.equal(calls.length, 0);
   assert.equal(createNotificationService('darwin', fakeSpawn(calls)).supported, true);
+});
+
+test('a real osascript invocation compiles and receives argv (macOS only)', {skip: process.platform !== 'darwin'}, async () => {
+  // Same program shape, but returning argv instead of posting, so the test never notifies.
+  const {execFileSync} = await import('node:child_process');
+  const args = osascriptArguments({title: 'notMyShell', subtitle: 'Command finished · 6.0s', body: `-la "it's" ✓`})
+    .map(arg => arg.startsWith('display notification') ? 'return (item 1 of argv) & "|" & (item 2 of argv) & "|" & (item 3 of argv)' : arg);
+  assert.equal(execFileSync(OSASCRIPT_PATH, args, {encoding: 'utf8'}).trim(), `notMyShell|Command finished · 6.0s|-la "it's" ✓`);
 });
 
 // ── Focus decoding and lifecycle ────────────────────────────────────────
@@ -193,7 +242,7 @@ async function withApp(run: (app: TerminalApp, sent: CommandNotification[]) => v
   process.env.XDG_CONFIG_HOME = directory;
   const app = new TerminalApp();
   const sent: CommandNotification[] = [];
-  app['notifications' as never] = {supported: true, notify: (note: CommandNotification) => sent.push(note)} as never;
+  app['notifications' as never] = {supported: true, notify: async (note: CommandNotification) => { sent.push(note); return {ok: true}; }} as never;
   app['render'] = () => {};
   app['refreshContext'] = async () => {};
   app['session'].write = () => {};
@@ -358,6 +407,18 @@ test('the Powerlevel10k wizard handoff preserves each focus state and still togg
   }
 });
 
+test('threshold 5s through the live completion path: 4.9s no, 5.0s and 6.0s yes, one call each', async () => {
+  await withApp(async (app, sent) => {
+    app['promptConfiguration'] = {...app['promptConfiguration'], notifications: settings({thresholdSeconds: 5})};
+    for (const [ageMs, expected] of [[4_900, 0], [5_000, 1], [6_000, 2]] as const) {
+      startLongCommand(app, `sleep ${ageMs / 1000}`, ageMs);
+      app['onShellPrompt'](0, '/tmp');
+      assert.equal(sent.length, expected, `${ageMs}ms`);
+    }
+    assert.deepEqual(sent.map(note => note.subtitle), ['Command finished · 5.0s', 'Command finished · 6.0s']);
+  });
+});
+
 // ── Settings UI ─────────────────────────────────────────────────────────
 
 test('Config exposes command notification rows with On/Off, stepped threshold, and focus policy', () => {
@@ -375,4 +436,75 @@ test('Config exposes command notification rows with On/Off, stepped threshold, a
   assert.equal(adjustSettingsRow(byId('notifyAfter'), custom, 1)!.notifications.thresholdSeconds, 60);
   assert.equal(stepPreset(NOTIFICATION_THRESHOLD_STEPS, 3600, 1), 5);
   assert.equal(stepPreset(NOTIFICATION_THRESHOLD_STEPS, 5, -1), 3600);
+});
+
+// ── /notification and /notifications ───────────────────────────────────
+
+test('/notification and /notifications parse identically and are registered for help and autocomplete', () => {
+  assert.deepEqual(parseSlashCommand('/notification'), {kind: 'notifications'});
+  assert.deepEqual(parseSlashCommand('/notifications'), {kind: 'notifications'});
+  assert.deepEqual(parseSlashCommand('/notifications  '), {kind: 'notifications'});
+  assert.equal(parseSlashCommand('/notificationsx')?.kind, 'unknown');
+  const names = slashSuggestions('/noti').map(command => command.name);
+  assert.deepEqual(names.sort(), ['/notification', '/notifications']);
+  assert.ok(slashCommands.some(command => command.name === '/notification'));
+});
+
+test('both aliases open the same notification-only panel without touching the shell or notifying', async () => {
+  for (const alias of ['/notification', '/notifications']) {
+    await withApp(async (app, sent) => {
+      const submitted: string[] = [];
+      app['session'].submit = (command: string) => { submitted.push(command); };
+      const before = structuredClone(app['promptConfiguration']);
+      app['editor'].insert(alias);
+      await app['submit']();
+      const state = app['settingsPanelState']!;
+      assert.equal(state.scope, 'notifications', alias);
+      assert.equal(state.contentIndex, 0);
+      assert.deepEqual(visibleSettingsRows(state).map(row => row.label),
+        ['Notifications', 'Notify after', 'On success', 'On failure', 'When focused']);
+      assert.deepEqual(app['promptConfiguration'], before, 'opening changes nothing');
+      const text = renderSettingsPanel(state, 80, 30, {configuration: app['promptConfiguration']}).map(stripAnsi).join('\n');
+      assert.match(text, /Command notifications/u);
+      assert.match(text, /Notify after\s+60s/u);
+      assert.match(text, /When focused\s+Suppress/u);
+      assert.doesNotMatch(text, /Settings.*Status.*Config|Glyph style|History divider|Search settings/u);
+      assert.equal(app['running'], undefined);
+      assert.deepEqual(submitted, []);
+      app['onShellPrompt'](0, '/tmp');
+      assert.equal(sent.length, 0);
+    });
+  }
+});
+
+test('the notification panel edits the same persisted values Config shows; arrows never leave it', async () => {
+  await withApp(async app => {
+    app['editor'].insert('/notifications');
+    await app['submit']();
+    const state = app['settingsPanelState']!;
+    app['handleKey']({kind: 'up'});
+    assert.notEqual(state.focus, 'tabs');
+    app['handleKey']({kind: 'text', value: '/'});
+    assert.equal(state.searchFocused, undefined);
+    app['handleKey']({kind: 'down'});
+    app['handleKey']({kind: 'left'});
+    assert.equal(app['promptConfiguration'].notifications.thresholdSeconds, 30);
+    assert.equal(state.scope, 'notifications', '←/→ edit instead of switching views');
+    for (let index = 0; index < 3; index += 1) app['handleKey']({kind: 'down'});
+    app['handleKey']({kind: 'text', value: ' '});
+    assert.equal(app['promptConfiguration'].notifications.whenFocused, 'notify');
+    assert.deepEqual(loadPromptConfiguration(join(process.env.XDG_CONFIG_HOME!, 'nmsh', 'config.json')).notifications,
+      app['promptConfiguration'].notifications);
+    app['handleKey']({kind: 'escape'});
+    assert.equal(app['settingsPanelState'], undefined);
+    // /settings shows the same values in Config, with its tabs and search intact.
+    app['editor'].insert('/settings');
+    await app['submit']();
+    const config = app['settingsPanelState']!;
+    assert.equal(config.scope, undefined);
+    const text = renderSettingsPanel(config, 100, 60, {configuration: app['promptConfiguration']}).map(stripAnsi).join('\n');
+    assert.match(text, /Search settings/u);
+    assert.match(text, /Notify after\s+30s/u);
+    assert.match(text, /When focused\s+Notify/u);
+  });
 });

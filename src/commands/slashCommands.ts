@@ -11,6 +11,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
+  {name: '/notifications', insertion: '/notifications', description: 'Configure command completion notifications'},
+  {name: '/notification', insertion: '/notification', description: 'Configure command completion notifications'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
@@ -27,6 +29,7 @@ export type ParsedSlashCommand =
   | {kind: 'appearance'}
   | {kind: 'prompt'}
   | {kind: 'settings'; view: 'config' | 'status'}
+  | {kind: 'notifications'}
   | {kind: 'transcript'}
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
@@ -44,6 +47,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
+  if (/^\/notifications?\s*$/u.test(input)) return {kind: 'notifications'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};

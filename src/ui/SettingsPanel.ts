@@ -35,7 +35,14 @@ export interface SettingsPanelState {
   searchFocused?: boolean;
   glyphStyle: GlyphStyle;
   onboarding: boolean;
+  /**
+   * `notifications`: /notification(s) shows only the Command notifications
+   * rows from Config, with no view tabs or search.
+   */
+  scope?: 'notifications';
 }
+
+export const NOTIFICATION_CATEGORY = 'Command notifications';
 
 export function settingsView(state: SettingsPanelState): SettingsView {
   return state.view ?? 'config';
@@ -129,20 +136,20 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'historyColors', label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.transcript.historyColors, set: (config, historyColors) => withTranscript(config, {historyColors})}),
-  enumRow({id: 'notifications', label: 'Notifications', description: 'Notify when a long-running command finishes', category: 'Command notifications',
+  enumRow({id: 'notifications', label: 'Notifications', description: 'Notify when a long-running command finishes', category: NOTIFICATION_CATEGORY,
     values: ON_OFF, labels: ['On', 'Off'],
     get: config => config.notifications.enabled, set: (config, enabled) => withNotifications(config, {enabled})}),
-  {id: 'notifyAfter', label: 'Notify after', description: 'Minimum command duration before notifying', category: 'Command notifications',
+  {id: 'notifyAfter', label: 'Notify after', description: 'Minimum command duration before notifying', category: NOTIFICATION_CATEGORY,
     control: 'stepper', steps: NOTIFICATION_THRESHOLD_STEPS, format: formatThreshold,
     get: config => config.notifications.thresholdSeconds,
     set: (config, thresholdSeconds) => withNotifications(config, {thresholdSeconds})},
-  enumRow({id: 'notifyOnSuccess', label: 'On success', description: 'Notify when a long command exits 0', category: 'Command notifications',
+  enumRow({id: 'notifyOnSuccess', label: 'On success', description: 'Notify when a long command exits 0', category: NOTIFICATION_CATEGORY,
     values: ON_OFF, labels: ['On', 'Off'],
     get: config => config.notifications.onSuccess, set: (config, onSuccess) => withNotifications(config, {onSuccess})}),
-  enumRow({id: 'notifyOnFailure', label: 'On failure', description: 'Notify when a long command fails or is interrupted', category: 'Command notifications',
+  enumRow({id: 'notifyOnFailure', label: 'On failure', description: 'Notify when a long command fails or is interrupted', category: NOTIFICATION_CATEGORY,
     values: ON_OFF, labels: ['On', 'Off'],
     get: config => config.notifications.onFailure, set: (config, onFailure) => withNotifications(config, {onFailure})}),
-  enumRow({id: 'notifyWhenFocused', label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: 'Command notifications',
+  enumRow({id: 'notifyWhenFocused', label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: NOTIFICATION_CATEGORY,
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
 ];
@@ -159,6 +166,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Syntax', 'Tools', 'Completion', 'Chroma', 'Updates'] as const;
 
 export function visibleSettingsRows(state: SettingsPanelState): SettingsRow[] {
+  if (state.scope === 'notifications') return SETTINGS_ROWS.filter(row => row.category === NOTIFICATION_CATEGORY);
   const view = settingsView(state);
   if (view === 'status') return [];
   if (view === 'settings') return [...SETTINGS_ENTRIES];
@@ -296,6 +304,7 @@ function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
 function footerText(state: SettingsPanelState, row: SettingsRow | undefined): string {
   const view = settingsView(state);
   if (state.searchFocused) return '↑↓ results · Enter select · Esc clear';
+  if (state.scope) return '↑↓ to select · ←/→ Enter/Space to change · Esc to close';
   if (view === 'status') return '←/→ to switch · ↑↓ to scroll · Esc to close';
   if (state.focus === 'tabs') return '←/→ to switch · ↓ to select · Esc to close';
   const search = view === 'config' ? ' · / to search' : '';
@@ -350,7 +359,9 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   const config = context.configuration ?? {...DEFAULT_PROMPT_CONFIGURATION, glyphStyle: state.glyphStyle};
   const view = settingsView(state);
   const tabsFocused = state.focus === 'tabs';
-  const header = [renderTabStrip(SETTINGS_VIEWS, VIEW_IDS.indexOf(view), columns, tabsFocused), ''];
+  const header = state.scope === 'notifications'
+    ? [`${BOLD}${PRIMARY}${MARGIN}${NOTIFICATION_CATEGORY}${RESET}`, '']
+    : [renderTabStrip(SETTINGS_VIEWS, VIEW_IDS.indexOf(view), columns, tabsFocused), ''];
   const rows = visibleSettingsRows(state);
   const selectedIndex = Math.min(state.contentIndex ?? 0, Math.max(0, rows.length - 1));
   const selectedRow = tabsFocused ? undefined : rows[selectedIndex];
@@ -371,6 +382,8 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
     if (available >= rows.length + 3) {
       body.push('', `${MARGIN}${SECONDARY}Planned for v0.4${RESET}`, `${MARGIN}${SUBTLE}${PLANNED_AREAS.join(' · ')}${RESET}`);
     }
+  } else if (state.scope) {
+    body.push(...renderRows(rows, selectedIndex, columns, '', row => settingsRowValue(row, config) ?? '', available));
   } else {
     const query = state.searchQuery?.trim() ?? '';
     body.push(...renderSearchField(state, columns));

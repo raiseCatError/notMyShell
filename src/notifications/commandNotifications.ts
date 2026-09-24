@@ -54,10 +54,15 @@ export function formatCommandNotification(completed: CompletedCommand): CommandN
   return {title: PRODUCT_NAME, subtitle, body: summarizeCommand(completed.command)};
 }
 
-/** Best-effort delivery; implementations never throw and never write to the terminal. */
+/** What happened to one delivery attempt; for tests and the opt-in debug log, never shell output. */
+export type NotificationDelivery =
+  | {ok: true}
+  | {ok: false; reason: 'unsupported' | 'spawn' | 'exit' | 'timeout'; exitCode?: number | null; message?: string};
+
+/** Best-effort delivery; implementations never throw, never block, and never write to the terminal. */
 export interface NotificationService {
   readonly supported: boolean;
-  notify(notification: CommandNotification): void;
+  notify(notification: CommandNotification): Promise<NotificationDelivery>;
 }
 
 export type SpawnFunction = (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
@@ -79,26 +84,46 @@ export function osascriptArguments(notification: CommandNotification): string[] 
   return [...NOTIFICATION_SCRIPT.flatMap(line => ['-e', line]), notification.title, notification.subtitle, notification.body];
 }
 
+const STDERR_LIMIT = 2048;
+export const OSASCRIPT_TIMEOUT_MS = 10_000;
+
+/**
+ * An ordinary attached child: osascript lives for well under a second, so it
+ * is neither detached nor unref'd, and its exit status and stderr are kept.
+ */
 export class MacNotificationService implements NotificationService {
   readonly supported = true;
 
   constructor(private readonly spawnProcess: SpawnFunction = spawn) {}
 
-  notify(notification: CommandNotification): void {
-    try {
-      const child = this.spawnProcess(OSASCRIPT_PATH, osascriptArguments(notification),
-        {shell: false, stdio: 'ignore', timeout: 10_000});
-      child.on('error', () => { /* Missing osascript or denied permission: delivery is best-effort. */ });
-      child.unref();
-    } catch {
-      // Spawn failures never reach the command lifecycle.
-    }
+  notify(notification: CommandNotification): Promise<NotificationDelivery> {
+    return new Promise(resolve => {
+      let child: ChildProcess;
+      try {
+        child = this.spawnProcess(OSASCRIPT_PATH, osascriptArguments(notification),
+          {shell: false, stdio: ['ignore', 'ignore', 'pipe'], timeout: OSASCRIPT_TIMEOUT_MS});
+      } catch (error) {
+        resolve({ok: false, reason: 'spawn', message: String(error)});
+        return;
+      }
+      let stderr = '';
+      child.stderr?.setEncoding('utf8');
+      child.stderr?.on('data', (chunk: string) => { if (stderr.length < STDERR_LIMIT) stderr += chunk; });
+      child.once('error', error => resolve({ok: false, reason: 'spawn', message: error.message}));
+      child.once('close', (code, signal) => {
+        if (code === 0) resolve({ok: true});
+        else resolve({ok: false, reason: signal === 'SIGTERM' ? 'timeout' : 'exit', exitCode: code,
+          message: stderr.trim().slice(0, STDERR_LIMIT) || signal || undefined});
+      });
+    });
   }
 }
 
 export class UnsupportedNotificationService implements NotificationService {
   readonly supported = false;
-  notify(): void { /* Native notifications are only implemented for macOS. */ }
+  notify(): Promise<NotificationDelivery> {
+    return Promise.resolve({ok: false, reason: 'unsupported'});
+  }
 }
 
 export function createNotificationService(platform: NodeJS.Platform = process.platform, spawnProcess?: SpawnFunction): NotificationService {
