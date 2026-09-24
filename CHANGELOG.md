@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - First-run terminal glyph compatibility choice (Nerd Font or Safe/ASCII), persisted under NMSh settings; existing v0.3 configurations retain their appearance.
 - Central `/settings` browser with glyph style, prompt, transcript, and keyboard entry points, and a temporary shared panel boundary.
+- `/settings` is a tabbed settings editor: styled one-row tabs that window on narrow terminals, a search field (type or `/` to focus, Esc clears) with highlighted matches, current values on every row, ←→ to change glyph style and transcript options inline, Space to toggle, Enter for full panels, and contextual key hints. Planned v0.4 areas are shown as read-only.
 - Continuous local presentation-session checkpoints with retention of 1000 unpinned sessions by default, plus `/resume` search and date navigation.
 - Reusable elapsed-time task progress with a per-character travelling shimmer, factual completion states, and bounded diagnostic details; Starship Homebrew installation uses it.
 - A focused Starship module editor in `/prompt` that previews changes through Starship's own CLI, preserves unrelated config, and backs up existing files before applying reviewed changes.

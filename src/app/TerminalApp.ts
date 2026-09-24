@@ -1,6 +1,9 @@
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
-import {renderSettingsPanel, SETTINGS_SECTIONS, settingsItemCount, visibleSettingsEntries, type SettingsPanelState} from '../ui/SettingsPanel.js';
+import {
+  adjustSettingsRow, renderSettingsPanel, selectedSettingsRow, SETTINGS_SECTIONS, settingsItemCount, settingsRowDestination,
+  toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
+} from '../ui/SettingsPanel.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
@@ -229,51 +232,7 @@ export class TerminalApp {
 
   private handleKey(key: Key): void {
     if (this.settingsPanelState) {
-      const state = this.settingsPanelState;
-      if (key.kind === 'escape' || key.kind === 'interrupt') {
-        if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
-        else if (state.section === 'appearance') { state.section = 'root'; state.selectedIndex = 0; state.contentIndex = 0; }
-        else if (state.searchQuery) { state.searchQuery = ''; state.contentIndex = 0; }
-        else this.settingsPanelState = undefined;
-      } else if (state.section === 'root' && (key.kind === 'complete' || key.kind === 'focusPrevious')) {
-        state.selectedIndex = (state.selectedIndex + (key.kind === 'complete' ? 1 : -1) + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length;
-        state.searchQuery = '';
-        state.contentIndex = 0;
-      } else if (state.section === 'root' && key.kind === 'text') {
-        state.searchQuery = (state.searchQuery ?? '') + key.value;
-        state.contentIndex = 0;
-      } else if (state.section === 'root' && key.kind === 'backspace') {
-        state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
-        state.contentIndex = 0;
-      } else if (key.kind === 'up' || key.kind === 'down') {
-        const count = settingsItemCount(state);
-        if (count > 0) {
-          if (state.section === 'root') state.contentIndex = ((state.contentIndex ?? 0) + (key.kind === 'up' ? -1 : 1) + count) % count;
-          else state.selectedIndex = (state.selectedIndex + (key.kind === 'up' ? -1 : 1) + count) % count;
-        }
-      } else if (key.kind === 'left' || key.kind === 'right') {
-        if (state.section === 'appearance') state.selectedIndex = state.selectedIndex === 0 ? 1 : 0;
-      } else if (key.kind === 'enter') {
-        if (state.section === 'appearance') this.saveGlyphChoice(state.selectedIndex === 0 ? 'nerd' : 'safe');
-        else {
-          const entry = visibleSettingsEntries(state)[state.contentIndex ?? 0];
-          const destinationTab = entry ? SETTINGS_SECTIONS.indexOf(entry.category as typeof SETTINGS_SECTIONS[number]) : state.selectedIndex;
-          if (entry?.destination === 'glyph') { state.section = 'appearance'; state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1; }
-          else if (entry?.destination === 'appearance') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
-            this.settingsPanelState = undefined; void this.startAppearance();
-          } else if (entry?.destination === 'prompt') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
-            this.settingsPanelState = undefined; void this.startPromptSettings(false);
-          } else if (entry?.destination === 'transcript') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
-            this.settingsPanelState = undefined; this.startTranscriptSettings();
-          } else if (entry?.destination === 'keyboard') {
-            this.panelOrigin = 'settings'; this.panelOriginIndex = destinationTab;
-            this.settingsPanelState = undefined; void this.startKeyboard();
-          }
-        }
-      }
+      this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
       return;
     }
@@ -1372,7 +1331,7 @@ export class TerminalApp {
   }
 
   private settingsPanelRows(columns: number): string[] {
-    if (this.settingsPanelState) return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows);
+    if (this.settingsPanelState) return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, this.promptConfiguration);
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
     }
@@ -1440,6 +1399,85 @@ export class TerminalApp {
       // Keep the chooser visible so the user can retry without losing their choice.
       if (this.settingsPanelState) this.settingsPanelState.glyphStyle = style;
     }
+  }
+
+  /**
+   * /settings keys. Root: ↑↓ rows, ←→ change enum/boolean values, Space
+   * toggles booleans, Enter opens a row's panel, Tab/Shift+Tab switch tabs.
+   * Typing (or `/`) focuses search; while focused, text edits the query and
+   * Esc clears it before a second Esc closes Settings.
+   */
+  private handleSettingsKey(key: Key, state: SettingsPanelState): void {
+    if (key.kind === 'escape' || key.kind === 'interrupt') {
+      if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
+      else if (state.section === 'appearance') { state.section = 'root'; state.selectedIndex = 0; state.contentIndex = 0; }
+      else if (state.searchQuery || state.searchFocused) { state.searchQuery = ''; state.searchFocused = false; state.contentIndex = 0; }
+      else this.settingsPanelState = undefined;
+      return;
+    }
+    if (state.section === 'appearance') {
+      if (key.kind === 'up' || key.kind === 'down' || key.kind === 'left' || key.kind === 'right') state.selectedIndex = state.selectedIndex === 0 ? 1 : 0;
+      else if (key.kind === 'enter') this.saveGlyphChoice(state.selectedIndex === 0 ? 'nerd' : 'safe');
+      return;
+    }
+    const row = selectedSettingsRow(state);
+    if (key.kind === 'complete' || key.kind === 'focusPrevious') {
+      state.selectedIndex = (state.selectedIndex + (key.kind === 'complete' ? 1 : -1) + SETTINGS_SECTIONS.length) % SETTINGS_SECTIONS.length;
+      state.searchQuery = '';
+      state.searchFocused = false;
+      state.contentIndex = 0;
+    } else if (key.kind === 'text' && state.searchFocused) {
+      state.searchQuery = (state.searchQuery ?? '') + key.value;
+      state.contentIndex = 0;
+    } else if (key.kind === 'text' && key.value === ' ') {
+      if (row) this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
+    } else if (key.kind === 'text') {
+      state.searchFocused = true;
+      state.searchQuery = key.value === '/' ? (state.searchQuery ?? '') : (state.searchQuery ?? '') + key.value;
+      state.contentIndex = 0;
+    } else if (key.kind === 'backspace') {
+      if (state.searchQuery) state.searchFocused = true;
+      state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
+      state.contentIndex = 0;
+    } else if (key.kind === 'up' || key.kind === 'down') {
+      const count = settingsItemCount(state);
+      if (count > 0) state.contentIndex = ((state.contentIndex ?? 0) + (key.kind === 'up' ? -1 : 1) + count) % count;
+    } else if (key.kind === 'left' || key.kind === 'right') {
+      if (row) this.applySettingsConfiguration(adjustSettingsRow(row, this.promptConfiguration, key.kind === 'left' ? -1 : 1));
+    } else if (key.kind === 'enter' && row) {
+      if (row.control === 'boolean') this.applySettingsConfiguration(toggleSettingsRow(row, this.promptConfiguration));
+      const destination = settingsRowDestination(row);
+      if (destination) this.openSettingsDestination(destination, SETTINGS_SECTIONS.indexOf(row.category), state);
+    }
+  }
+
+  private openSettingsDestination(destination: SettingsDestination, tab: number, state: SettingsPanelState): void {
+    if (destination === 'glyph') {
+      state.section = 'appearance';
+      state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1;
+      return;
+    }
+    this.panelOrigin = 'settings';
+    this.panelOriginIndex = tab;
+    this.settingsPanelState = undefined;
+    if (destination === 'appearance') void this.startAppearance();
+    else if (destination === 'prompt') void this.startPromptSettings(false);
+    else if (destination === 'transcript') this.startTranscriptSettings();
+    else void this.startKeyboard();
+  }
+
+  /** Persists an inline Settings edit and applies it live; on failure the old value stays. */
+  private applySettingsConfiguration(next: PromptConfiguration | undefined): void {
+    if (!next) return;
+    try {
+      savePromptConfiguration(next);
+    } catch {
+      return;
+    }
+    this.promptConfiguration = next;
+    setIconStyle(next.glyphStyle);
+    this.output.setTranscriptAppearance(next.transcript);
+    if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
   }
 
   private startTranscriptSettings(): void {

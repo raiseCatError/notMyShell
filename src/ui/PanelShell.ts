@@ -3,6 +3,10 @@ import {displayWidth, repeatToWidth, truncateAnsi} from '../util/text.js';
 import {GLYPHS} from './glyphs.js';
 
 const RESET = '\u001B[0m';
+const BOLD = '\u001B[1m';
+const UNDERLINE = '\u001B[4m';
+const TAB_GAP = '   ';
+const INDENT = '  ';
 
 export interface PanelShellOptions {
   title: string;
@@ -11,38 +15,67 @@ export interface PanelShellOptions {
   footer?: string;
   tabs?: readonly string[];
   selectedTab?: number;
-  search?: string;
+  /** A pre-rendered search field row (see SettingsPanel), shown below the tabs. */
+  searchRow?: string;
 }
 
-/** All shell rows are ephemeral presentation rows, never transcript data. */
+/**
+ * Panel anatomy: separator, title, tabs, search, content, footer. All shell
+ * rows are ephemeral presentation rows, never transcript, PTY, resume, or
+ * copy data.
+ */
 export function renderPanelShell(options: PanelShellOptions): string[] {
-  const {title, content, columns, footer, tabs, selectedTab = 0, search} = options;
-  const rows = framePanel([`${foreground(UI_COLORS.primary)}  ${title}${RESET}`], columns);
-  if (tabs?.length) rows.push(renderTabStrip(tabs, selectedTab, columns));
-  if (search !== undefined) rows.push(`${foreground(UI_COLORS.subtle)}  Search: ${search || 'type to filter'}${RESET}`);
+  const {title, content, columns, footer, tabs, selectedTab = 0, searchRow} = options;
+  const rows = framePanel([`${BOLD}${foreground(UI_COLORS.primary)}${INDENT}${title}${RESET}`], columns);
+  if (tabs?.length) rows.push('', renderTabStrip(tabs, selectedTab, columns));
+  if (searchRow !== undefined) rows.push('', searchRow);
   rows.push('', ...content);
   if (footer) rows.push('', footer);
   return rows.map(row => truncateAnsi(row, columns));
 }
 
-/** A single windowed line; the active tab remains visible even at small widths. */
+/** Rows the shell adds around `content`, so callers can budget list height. */
+export function panelShellChrome(options: {tabs: boolean; search: boolean; footer: boolean}): number {
+  return 3 + (options.tabs ? 2 : 0) + (options.search ? 2 : 0) + (options.footer ? 2 : 0);
+}
+
+/**
+ * The widest contiguous run of tabs around `selected` that fits `columns`,
+ * with room reserved for the `‹` / `›` overflow markers it needs.
+ */
+export function tabWindow(widths: readonly number[], selected: number, columns: number): {start: number; end: number} {
+  const fits = (start: number, end: number) => {
+    let used = INDENT.length + (end < widths.length - 1 ? 2 : 0);
+    for (let index = start; index <= end; index++) used += widths[index]! + (index > start ? TAB_GAP.length : 0);
+    return used <= columns;
+  };
+  let start = selected;
+  let end = selected;
+  for (let grew = true; grew;) {
+    grew = false;
+    if (end + 1 < widths.length && fits(start, end + 1)) { end++; grew = true; }
+    if (start > 0 && fits(start - 1, end)) { start--; grew = true; }
+  }
+  return {start, end};
+}
+
+/**
+ * One row of tabs, never wrapped. The active tab is accent, bold, and
+ * underlined; the rest are muted. Overflow is windowed around the active tab
+ * and marked with quiet `‹` / `›` indicators.
+ */
 export function renderTabStrip(tabs: readonly string[], selected: number, columns: number): string {
   const width = Math.max(1, columns);
-  const labels = tabs.map((tab, index) =>
-    `${index === selected ? foreground(UI_COLORS.accent) : foreground(UI_COLORS.secondary)}${index === selected ? '[' : ' '}${tab}${index === selected ? ']' : ' '}${RESET}`);
-  let start = 0;
-  for (; start <= selected; start++) {
-    const prefix = start > 0 ? '‹ ' : '  ';
-    const used = displayWidth(prefix) + labels.slice(start, selected + 1).reduce((sum, label) => sum + displayWidth(label) + 1, 0);
-    if (used <= width || start === selected) break;
+  const {start, end} = tabWindow(tabs.map(tab => displayWidth(tab)), selected, width);
+  const muted = foreground(UI_COLORS.subtle);
+  let line = start > 0 ? `${muted}‹ ${RESET}` : INDENT;
+  for (let index = start; index <= end; index++) {
+    if (index > start) line += TAB_GAP;
+    line += index === selected
+      ? `${BOLD}${UNDERLINE}${foreground(UI_COLORS.accent)}${tabs[index]}${RESET}`
+      : `${muted}${tabs[index]}${RESET}`;
   }
-  let line = start > 0 ? '‹ ' : '  ';
-  for (let index = start; index < labels.length; index++) {
-    const more = index < labels.length - 1 ? ' ›' : '';
-    if (displayWidth(line) + displayWidth(labels[index]!) + displayWidth(more) > width && index > selected) break;
-    line += labels[index]! + ' ';
-    if (displayWidth(line) >= width) break;
-  }
+  if (end < tabs.length - 1) line += `${muted} ›${RESET}`;
   return truncateAnsi(line, width);
 }
 
