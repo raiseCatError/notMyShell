@@ -18,7 +18,9 @@ NMSh Native uses the ordered context modules (project, cwd, git branch, detected
 
 Nerd Font mode uses U+E0D7 (``) to open a segment on neutral background and U+E0B0 (``) for every transition and trailing wedge. With gaps disabled, only the first segment opens; a single transition cell uses the previous segment's background as foreground and the next segment's background as background. With gaps enabled, each segment closes on neutral background, the configured cells remain neutral, and the next segment opens independently. Safe glyph mode maps these shapes to ASCII `<` and `>`.
 
-End styles are semantic: `flat` omits the final wedge, `wedge` ends with one neutral-background U+E0B0, `fadeFlat` dims the three neutral-background `▓▒░` cells, and `fadeWedge` renders four U+E0B0 cells whose foreground/background colors step from the final module pigment through progressively dimmer same-hue colors to terminal-neutral background. Two-line mode then draws a solid divider; one-line mode feeds the selected ending into the editable prompt width budget.
+Native geometry has four independent parts. **Start** shapes only the outer left edge of the whole prompt, **Connector** only module-to-module geometry, **Gap** only whether modules are joined (one transition cell) or separated by neutral cells, and **End** only the outer right edge. Shapes are `wedge` (U+E0D7 opening, U+E0B0 join/close; the approved default), `flat`, `rounded` (U+E0B6/U+E0B4), `slash` `/` (U+E0BA/U+E0BC), and `backslash` `\` (U+E0BE/U+E0B8), with ASCII equivalents in safe glyph mode. Connectors are always solid shapes; with Gap on they close each module and reopen the next in the connector shape. Start and End may also be faded: `fadeWedge`, `fadeFlat`, `fadeRounded`, and `fadeSlash` step through three same-hue dimmer colors (`fadeFlat` uses `░▒▓`/`▓▒░` cells), with the start fade mirroring the end fade so it brightens into the prompt. Legacy `startStyle: "pointed"` normalizes to `wedge`, and older snapshots without a connector render with `wedge`. Two-line mode then draws a solid divider; one-line mode feeds the selected ending into the editable prompt width budget.
+
+`icons` (`nerd` default, `off`) controls Native module icons only: git branch (U+F418) and Node/Go/Python/Docker toolchain icons. Status glyphs (✔/✘) always remain. The value is a mode rather than a boolean so a future `text` mode can be added without migration. Starship and other providers keep their own symbols.
 
 The JSON config remains in `~/Library/Application Support/notMyShell/config.json` on macOS (or `$XDG_CONFIG_HOME/nmsh/config.json` when set). Legacy top-level module, placement, spacing, gap, and composer fields remain accepted. The provider configuration is:
 
@@ -29,7 +31,9 @@ The JSON config remains in `~/Library/Application Support/notMyShell/config.json
   "nmsh": {
     "gapEnabled": true,
     "endStyle": "fadeWedge",
-    "startStyle": "pointed",
+    "startStyle": "wedge",
+    "connector": "wedge",
+    "icons": "nerd",
     "palette": "lavender"
   },
   "starship": {
@@ -83,7 +87,7 @@ While a parent is running, its activity timeline is rendered at the end of the a
 
 ## Onboarding
 
-First-run onboarding asks for NMSh Native or Starship (NMSh is preselected), then the independent two-line/one-line composer choice. NMSh Native then shows an appearance step for theme, start style, gap, and ending, with a live preview from the real renderer and a one-row preview of every theme (the gallery is omitted on short terminals). Theme rows use the draft's real geometry over a synthetic preview-only context (project, cwd, git, Node, Go, Python, Docker) so every role is visible; the live prompt still shows only detected modules. The panel shows the saved configuration as `Current`, marks each changed value with its saved value, and labels the preview `unsaved preview` or `matches current`; nothing is applied until Enter saves. Starship setup reports binary version and config path, supports existing/default configuration and truthful preset guidance, and offers an explicit Homebrew install confirmation on macOS when available. Both provider paths ask for composer layout. Escape can skip; completion and choices persist in the existing prompt config. `/prompt` reopens the same settings flow. Switching providers retains inactive provider settings and never edits Starship config or the user's ordinary `.zshrc`.
+First-run onboarding asks for NMSh Native or Starship (NMSh is preselected), then the independent two-line/one-line composer choice. NMSh Native then shows an appearance step for theme, start, connector, gap, end, icons, and a module manager (Space shows/hides, Shift+↑↓ reorders, ←→ changes the exit-status condition; custom module colors are preserved), with a live preview from the real renderer and a one-row preview of every theme (the gallery is omitted on short terminals). Theme rows use the draft's real geometry over a synthetic preview-only context (project, cwd, git, Node, Go, Python, Docker) so every role is visible; the live prompt still shows only detected modules. The panel shows the saved configuration as `Current`, marks each changed value with its saved value, and labels the preview `unsaved preview` or `matches current`; nothing is applied until Enter saves. Every step ends with a consistent controls row listing its keys. Starship setup reports binary version and config path, supports existing/default configuration and truthful preset guidance, and offers an explicit Homebrew install confirmation on macOS when available. Both provider paths ask for composer layout. Escape can skip; completion and choices persist in the existing prompt config. `/prompt` reopens the same settings flow. Switching providers retains inactive provider settings and never edits Starship config or the user's ordinary `.zshrc`.
 
 ## Current scope and planned follow-up
 

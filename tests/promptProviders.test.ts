@@ -4,11 +4,12 @@ import {mkdtemp, chmod, mkdir, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {archiveColor} from '../src/prompt/snapshot.js';
+import {edgeParts, normalizeEdgeStyle, POWERLINE_EDGE_STYLES, renderPowerlineBlocks} from '../src/prompt/powerline.js';
 import {buildContextLine, buildThemePreviewLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
 import {applyNativeGapChoice, NATIVE_PALETTE_IDS, nativeGapChoice, normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
-import {applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, LAYOUT_CHOICES, layoutChoiceIndex, renderPromptPanel} from '../src/prompt/PromptPanel.js';
+import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, LAYOUT_CHOICES, layoutChoiceIndex, promptDraftChanged, renderPromptPanel} from '../src/prompt/PromptPanel.js';
 import {detectToolchains} from '../src/shell/ShellContext.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import type {Key} from '../src/terminal/keys.js';
@@ -149,7 +150,7 @@ test('onboarding preview uses a dedicated panel and hides the live composer curs
     assert.ok(frame?.rows.some(row => row.includes('Prompt setup')));
     assert.ok(frame?.rows.some(row => row.includes('Two-line preview')));
     assert.ok(frame?.rows.some(row => row.includes('Fading wedge')));
-    assert.ok(frame?.rows.at(-1)?.includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
+    assert.ok(stripAnsi(frame?.rows.at(-1) ?? '').includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
     const previewRows = app['promptPanelPreview'](80);
     const runtimeRow = buildContextLine(app['context'], 76, app['promptPanelState']!.draft,
       app['promptPanelState']!.draft.placement);
@@ -200,26 +201,70 @@ test('theme previews show every module type without adding them to the live prom
   assert.ok(displayWidth(narrow) <= 30, 'previews degrade inside narrow widths');
 });
 
-test('start style and gap presets change native geometry for live and archived prompts', () => {
-  const context = {cwd: '/tmp/work', project: 'repo', exitStatus: 0};
-  const pointed = stripAnsi(buildContextLine(context, 40, DEFAULT_PROMPT_CONFIGURATION, 'composer'));
-  const flatConfig = normalizePromptConfiguration({nmsh: {startStyle: 'flat'}});
-  const flat = stripAnsi(buildContextLine(context, 40, flatConfig, 'composer'));
-  assert.ok(pointed.startsWith(''));
-  assert.ok(flat.startsWith(' repo'));
-  assert.equal([...flat].filter(glyph => glyph === '').length, 0, 'flat start opens every independent segment square');
-  assert.equal(nativePromptSnapshot(context, flatConfig).startStyle, 'flat');
+test('Start, Connector, Gap, and End are independent', () => {
+  const context = {cwd: '/tmp/work', project: 'repo', branch: 'main', exitStatus: 0};
+  const line = (nmsh: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    stripAnsi(buildContextLine(context, 60, normalizePromptConfiguration({nmsh, ...extra}), 'composer'));
+  const base = line({});
+  assert.ok(base.startsWith(''), 'default start is the approved wedge');
+  const flatStart = line({startStyle: 'flat'});
+  assert.equal(flatStart, base.slice(1), 'flat start removes only the outer left cap');
+  assert.equal([...flatStart].filter(glyph => glyph === '').length, 2, 'internal openings still follow the connector');
+  const roundedStart = line({startStyle: 'rounded'});
+  assert.equal(roundedStart.slice(1), base.slice(1), 'start never changes connectors, gaps, or end');
+  const roundedConnector = line({connector: 'rounded'});
+  assert.ok(roundedConnector.startsWith(''), 'connector never changes the start');
+  assert.match(roundedConnector, /repo   \/tmp/u, 'rounded connector closes and reopens across the gap');
+  assert.ok(roundedConnector.endsWith(base.slice(base.lastIndexOf(' main ') + 6)), 'connector never changes the end');
+  assert.match(line({connector: 'slash'}, {nmsh: {gapEnabled: false, connector: 'slash'}}), /repo  \/tmp/u, 'connected slant is one join cell');
+  const flatEnd = line({endStyle: 'flat'});
+  assert.ok(flatEnd.startsWith('') && flatEnd.endsWith(' main '), 'end changes only the outer right edge');
+  assert.equal(nativePromptSnapshot(context, normalizePromptConfiguration({nmsh: {connector: 'backslash'}})).connector, 'backslash');
 
   const config = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   assert.equal(nativeGapChoice(config), 'normal');
   applyNativeGapChoice(config, 'compact');
   assert.equal(nativeGapChoice(config), 'compact');
-  const compact = stripAnsi(buildContextLine(context, 40, config, 'composer'));
-  assert.match(compact, /repo  \/tmp/u, 'compact keeps caps without the neutral space');
+  assert.match(stripAnsi(buildContextLine(context, 60, config, 'composer')), /repo  \/tmp/u, 'compact keeps caps without the neutral space');
   applyNativeGapChoice(config, 'off');
   assert.equal(config.nmsh.gapEnabled, false);
   applyNativeGapChoice(config, 'normal');
   assert.deepEqual([config.nmsh.gapEnabled, config.gap], [true, 1]);
+});
+
+test('outer-edge fades mirror each other and connectors never fade', () => {
+  const blocks = [
+    {text: 'A', foreground: {red: 250, green: 250, blue: 250}, background: {red: 166, green: 124, blue: 243}},
+    {text: 'B', foreground: {red: 250, green: 250, blue: 250}, background: {red: 94, green: 69, blue: 166}},
+  ];
+  for (const style of POWERLINE_EDGE_STYLES) {
+    const rendered = renderPowerlineBlocks(blocks, 1, 1, style, false, style, 'wedge');
+    const plain = stripAnsi(rendered);
+    const {fade, shape} = edgeParts(style);
+    const edgeWidth = shape === 'flat' && !fade ? 0 : fade ? (shape === 'flat' ? 3 : 4) : 1;
+    assert.equal(displayWidth(rendered), edgeWidth + 3 + 1 + 3 + edgeWidth + (style === 'fadeFlat' ? 1 : 0), style);
+    assert.equal([...plain.slice(edgeWidth, plain.length - edgeWidth)].filter(glyph => glyph === '').length, 1, `${style}: one solid join between modules`);
+  }
+  assert.ok(stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'fadeFlat', false, 'fadeFlat')).startsWith('░▒▓'));
+});
+
+test('legacy geometry ids normalize and old snapshots still render', () => {
+  const legacy = normalizePromptConfiguration({nmsh: {startStyle: 'pointed', endStyle: 'wedge'}});
+  assert.deepEqual([legacy.nmsh.startStyle, legacy.nmsh.connector, legacy.nmsh.endStyle], ['wedge', 'wedge', 'wedge']);
+  assert.equal(normalizePromptConfiguration({nmsh: {startStyle: 'round', connector: 'zigzag'}}).nmsh.startStyle, 'wedge');
+  assert.equal(normalizePromptConfiguration({nmsh: {connector: 'zigzag'}}).nmsh.connector, 'wedge');
+  assert.equal(normalizeEdgeStyle('pointed', 'flat'), 'wedge');
+});
+
+test('icons on/off only affects Native module icons', () => {
+  const context = {cwd: '/tmp/work', project: 'repo', branch: 'main', toolchains: ['node' as const, 'docker' as const], exitStatus: 1};
+  const on = stripAnsi(buildContextLine(context, 120, DEFAULT_PROMPT_CONFIGURATION, 'composer'));
+  const off = stripAnsi(buildContextLine(context, 120, normalizePromptConfiguration({nmsh: {icons: 'off'}}), 'composer'));
+  assert.match(on, / main.* node.* docker/u);
+  assert.doesNotMatch(off, /[]/u);
+  assert.match(off, / main .* node .* docker .*✘ 1/u, 'labels and status glyphs remain');
+  assert.equal(normalizePromptConfiguration({nmsh: {icons: false}}).nmsh.icons, 'off');
+  assert.equal(normalizePromptConfiguration({}).nmsh.icons, 'nerd');
 });
 
 test('saved configurations gain new modules at their default position', () => {
@@ -230,7 +275,7 @@ test('saved configurations gain new modules at their default position', () => {
   assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus']);
   assert.equal(config.modules.at(-1)!.visible, false);
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
-  assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'pointed');
+  assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
 });
 
 test('toolchains are detected from marker files in cwd and repository root', async () => {
@@ -249,22 +294,66 @@ test('toolchains are detected from marker files in cwd and repository root', asy
 test('/prompt appearance shows saved values, unsaved changes, and live theme previews', () => {
   const saved = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   const state = {onboarding: false, step: 'appearance' as const, selectedIndex: 0, draft: structuredClone(saved), saved};
-  const unchanged = renderPromptPanel(state, 120, ['live preview'], ['L', 'B', 'S', 'C', 'W', 'G']).map(stripAnsi);
-  assert.ok(unchanged.some(row => row.includes('Current  Lavender Native · two-line divider · pointed start · gap normal · fading wedge')));
+  const summary = 'Lavender Native · two-line divider · wedge start · wedge joins · gap normal · fading wedge end · icons on';
+  const unchanged = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'S', 'C', 'W', 'G']).map(stripAnsi);
+  assert.ok(unchanged.some(row => row.includes(`Current  ${summary}`)));
   assert.ok(unchanged.some(row => row.includes('matches current')));
   assert.ok(unchanged.some(row => /● Lavender Native +✓ L/u.test(row)));
+  assert.equal(unchanged.at(-1), '↑↓ move · ←→ change · Enter save · Esc cancel', 'consistent controls row');
 
-  handlePromptPanelKey({kind: 'right'} as Key, state);
-  state.selectedIndex = 1; handlePromptPanelKey({kind: 'right'} as Key, state);
-  state.selectedIndex = 2; handlePromptPanelKey({kind: 'left'} as Key, state);
-  assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, nativeGapChoice(state.draft)], ['brand', 'flat', 'compact']);
-  const changed = renderPromptPanel(state, 120, ['live preview'], ['L', 'B', 'S', 'C', 'W', 'G']).map(stripAnsi);
-  assert.ok(changed.some(row => row.includes('Theme   ‹ Brand / Semantic ›  saved: Lavender Native')));
-  assert.ok(changed.some(row => row.includes('Start   ‹ Flat ›  saved: Pointed')));
-  assert.ok(changed.some(row => row.includes('Gap     ‹ Compact ›  saved: Normal')));
-  assert.ok(changed.some(row => row.includes('unsaved preview')));
+  const press = (row: number, kind: 'left' | 'right') => { state.selectedIndex = row; handlePromptPanelKey({kind} as Key, state); };
+  press(0, 'right'); press(1, 'right'); press(1, 'right'); press(2, 'right'); press(3, 'left'); press(4, 'right'); press(4, 'right'); press(5, 'right');
+  assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
+    ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
+  const changed = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'S', 'C', 'W', 'G']).map(stripAnsi);
+  for (const expected of [
+    'Theme      ‹ Brand / Semantic ›  saved: Lavender Native',
+    'Start      ‹ Flat ›  saved: Wedge',
+    'Connector  ‹ Flat ›  saved: Wedge',
+    'Gap        ‹ Compact ›  saved: Normal',
+    'End        ‹ Fading flat ›  saved: Fading wedge',
+    'Icons      ‹ Off ›  saved: On',
+    'Modules    5 of 5 shown ›',
+    'unsaved preview',
+  ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
-  assert.equal(describePromptConfiguration(saved), 'Lavender Native · two-line divider · pointed start · gap normal · fading wedge');
+  state.selectedIndex = APPEARANCE_MODULES_ROW;
+  assert.match(stripAnsi(renderPromptPanel(state, 160, []).at(-1)!), /Enter edit modules/u);
+  assert.equal(describePromptConfiguration(saved), summary);
+});
+
+test('/prompt module manager toggles, reorders, and sets options without losing custom settings', () => {
+  const saved = normalizePromptConfiguration({modules: [
+    {id: 'project', visible: true, condition: 'always', background: '#112233'},
+    {id: 'cwd', visible: true, condition: 'always'},
+    {id: 'gitBranch', visible: true, condition: 'inRepository'},
+    {id: 'toolchain', visible: true, condition: 'always'},
+    {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
+  ]});
+  const state = {onboarding: false, step: 'modules' as const, selectedIndex: 1, draft: structuredClone(saved), saved};
+  assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
+  assert.equal(state.draft.modules[1]!.visible, false);
+  handlePromptPanelKey({kind: 'selectUp'} as Key, state);
+  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'toolchain', 'exitStatus']);
+  assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
+  handlePromptPanelKey({kind: 'selectUp'} as Key, state);
+  assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');
+  state.selectedIndex = 4;
+  handlePromptPanelKey({kind: 'right'} as Key, state);
+  assert.equal(state.draft.modules[4]!.condition, 'always');
+  assert.equal(state.draft.modules[1]!.background, '#112233', 'custom colors survive reordering');
+  const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
+  assert.ok(rows.some(row => /○ Path +hidden/u.test(row)));
+  assert.ok(rows.some(row => /› ● Exit status +‹ always ›/u.test(row)));
+  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · Enter/Esc done');
+  assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
+  const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);
+  try {
+    savePromptConfiguration(state.draft, path);
+    assert.deepEqual(loadPromptConfiguration(path).modules, state.draft.modules);
+  } finally {
+    void rm(path, {force: true});
+  }
 });
 
 test('/prompt layout choices expose the existing placement and composerLayout keys without a new setting', () => {

@@ -15,7 +15,7 @@ import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
-import {applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -189,7 +189,12 @@ export class TerminalApp {
 
   private handleKey(key: Key): void {
     if (this.promptPanelState) {
-      if (key.kind === 'escape' || key.kind === 'interrupt') {
+      if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
+        // Esc leaves the module manager, keeping its draft edits for the final save.
+        this.promptPanelState.step = 'appearance';
+        this.promptPanelState.selectedIndex = APPEARANCE_MODULES_ROW;
+        this.render();
+      } else if (key.kind === 'escape' || key.kind === 'interrupt') {
         if (this.promptPanelState.onboarding) void this.savePromptSettings();
         else { this.promptPanelState = undefined; this.render(); }
       } else if (key.kind === 'enter') {
@@ -941,6 +946,12 @@ export class TerminalApp {
       applyLayoutChoice(state.draft, state.selectedIndex);
       if (state.draft.provider === 'nmsh') { state.step = 'appearance'; state.selectedIndex = 0; }
       else await this.savePromptSettings();
+    } else if (state.step === 'appearance' && state.selectedIndex === APPEARANCE_MODULES_ROW) {
+      state.step = 'modules';
+      state.selectedIndex = 0;
+    } else if (state.step === 'modules') {
+      state.step = 'appearance';
+      state.selectedIndex = APPEARANCE_MODULES_ROW;
     } else {
       await this.savePromptSettings();
     }

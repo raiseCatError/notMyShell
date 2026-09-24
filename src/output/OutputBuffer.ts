@@ -7,7 +7,7 @@ import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, type PowerlineBlock} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, type PowerlineBlock} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {archiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 
@@ -483,7 +483,8 @@ function renderPromptSnapshot(context: HistoricalContextSnapshot, width: number)
     }));
     const gap = snapshot.gap ?? 1;
     prompt = fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, Math.max(0, width - 1),
-      snapshot.endStyle ?? false, snapshot.gapEnabled ?? gap > 0, snapshot.startStyle ?? 'pointed');
+      normalizeEdgeStyle(snapshot.endStyle, 'flat'), snapshot.gapEnabled ?? gap > 0,
+      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector));
   } else {
     prompt = snapshot.segments.map(segment => `${rgbStyle(
       segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,
