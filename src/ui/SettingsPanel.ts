@@ -188,8 +188,11 @@ const BOLD = '\u001B[1m';
 const INVERSE = '\u001B[7m';
 const RESET = '\u001B[0m';
 const MARGIN = '  ';
-/** Search matches: lavender bold text only, unlike the pointer + bright label of the selected row. */
-export const SEARCH_MATCH = `${BOLD}${ACCENT}`;
+/**
+ * Search matches: underlined lavender text, no background. The underline keeps
+ * a match distinct inside the selected row, whose label is itself bold lavender.
+ */
+export const SEARCH_MATCH = `${BOLD}\u001B[4m${ACCENT}`;
 
 function box(): {tl: string; tr: string; bl: string; br: string; h: string; v: string} {
   return getCurrentGlyphMode() === 'nerd'
@@ -238,7 +241,7 @@ function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
     const value = valueOf(row);
     const valueStyled = `${active ? ACCENT : SECONDARY}${value}${RESET}`;
     const room = labelColumn - 2;
-    const label = truncateAnsi(highlightMatches(row.label, query, active ? `${BOLD}${PRIMARY}` : PRIMARY, SEARCH_MATCH) + RESET, room);
+    const label = truncateAnsi(highlightMatches(row.label, query, active ? `${BOLD}${ACCENT}` : PRIMARY, SEARCH_MATCH) + RESET, room);
     const pad = Math.max(2, labelColumn - displayWidth(label));
     out.push(truncateAnsi(`${MARGIN}${pointer} ${label}${' '.repeat(pad)}${valueStyled}`, columns));
   });

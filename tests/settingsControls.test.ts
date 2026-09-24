@@ -13,6 +13,7 @@ import {
 } from '../src/ui/SettingsPanel.js';
 import {displayWidth, highlightMatches, stripAnsi} from '../src/util/text.js';
 import {getCurrentGlyphMode, setIconStyle} from '../src/ui/glyphs.js';
+import {foreground, UI_COLORS} from '../src/ui/palette.js';
 
 const config = (patch: Partial<SettingsPanelState> = {}): SettingsPanelState =>
   ({section: 'root', view: 'config', selectedIndex: 0, glyphStyle: 'nerd', onboarding: false, ...patch});
@@ -85,6 +86,14 @@ test('Config rows are compact, single-line, with aligned values and a pointer', 
   assert.equal(new Set(valueStarts).size, 1, `values align: ${list.join('|')}`);
   assert.match(list[2]!, /^ {2}› History divider\s+true$/u);
   assert.match(list[0]!, /^ {4}Glyph style\s+Nerd Font$/u, 'enum values are plain, not ‹ › wrapped');
+  const styled = renderSettingsPanel(config({contentIndex: 2}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION});
+  const accent = foreground(UI_COLORS.accent);
+  const selected = styled.find(row => stripAnsi(row).includes('› History divider'))!;
+  assert.ok(selected.includes(`\u001B[1m${accent}History divider`), 'selected label is bold accent');
+  assert.ok(selected.includes(`${accent}true`), 'selected value is accent');
+  const other = styled.find(row => stripAnsi(row).includes('Divider density'))!;
+  assert.ok(other.includes(`${foreground(UI_COLORS.primary)}Divider density`), 'unselected labels stay primary');
+  assert.notEqual(SEARCH_MATCH, `\u001B[1m${accent}`, 'search matches differ from the selected-row style');
 });
 
 test('search highlights matches restrainedly, distinct from the selected row', () => {
