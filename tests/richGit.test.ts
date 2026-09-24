@@ -118,13 +118,13 @@ test('fade color comes only from the left segment: one darker step of its hue', 
   for (const rendered of [withGreen, withRed]) assert.ok(rendered.includes(bg(fadeA)), 'changing B never changes the fade');
 });
 
-test('Connector shapes the close cap and Connector fade only the open cap, all over darker-A', () => {
+test('Connector shapes the close cap and Connector fade only the open cap; Previous puts darker-A behind the exit only', () => {
   for (const connector of POWERLINE_SHAPES) {
     for (const fade of POWERLINE_SHAPES) {
       const rendered = renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', connector, fade);
       const close = powerlineShapeGlyphs(connector).close;
       const open = powerlineShapeGlyphs(fade).open;
-      const expected = `${close ? `${RESET}${bg(fadeA)}${fg(PURPLE)}${close}` : ''}${RESET}${bg(fadeA)} ${open ? `${fg(GREEN)}${open}` : ''}`;
+      const expected = `${close ? `${RESET}${bg(fadeA)}${fg(PURPLE)}${close}` : ''}${RESET}\u001B[49m ${open ? `${RESET}\u001B[49m${fg(GREEN)}${open}` : ''}`;
       assert.ok(rendered.includes(expected), `${connector} + fade ${fade}`);
     }
   }
@@ -151,19 +151,19 @@ test('Off restores neutral gaps; Gap Off stays joined; widths never change', () 
   }
 });
 
-test('Compact fades through its touching caps; Normal gaps are fully darker-A with no neutral hole', () => {
+test('Compact fades through its touching caps; Normal keeps a terminal-background gap after darker-A', () => {
   const compact = renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'wedge', 'wedge');
-  assert.ok(compact.includes(`${RESET}${bg(fadeA)}${fg(PURPLE)}${RESET}${bg(fadeA)}${fg(GREEN)}`), 'caps sit on darker-A');
+  assert.ok(compact.includes(`${RESET}${bg(fadeA)}${fg(PURPLE)}${powerlineShapeGlyphs('wedge').close}${RESET}${bg(fadeA)}${fg(GREEN)}`), 'caps sit on darker-A');
   for (const gap of [1, 2, 3]) {
     const rendered = renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge', 'wedge');
-    assert.ok(rendered.includes(`${RESET}${bg(fadeA)}${' '.repeat(gap)}${fg(GREEN)}`), `gap ${gap} is one flat darker-A run`);
-    const between = rendered.slice(rendered.indexOf('A'), rendered.indexOf('B'));
-    assert.ok(!between.includes('\u001B[49m'), `gap ${gap}: no terminal-background hole`);
+    assert.ok(rendered.includes(`${RESET}${bg(fadeA)}${fg(PURPLE)}${powerlineShapeGlyphs('wedge').close}${RESET}\u001B[49m${' '.repeat(gap)}${RESET}\u001B[49m${fg(GREEN)}`),
+      `gap ${gap} stays terminal background`);
   }
   const flatCompact = renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'flat', 'flat');
   assert.equal(displayWidth(flatCompact), displayWidth(renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'flat')),
     'Flat + Compact has zero cells to color and adds none');
-  assert.ok(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'flat', 'flat').includes(`${bg(fadeA)} `), 'Flat with a gap colors it');
+  assert.ok(!flatCompact.includes(bg(fadeA)), 'Flat + Compact shows no fade');
+  assert.ok(!renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'flat', 'flat').includes(bg(fadeA)), 'Flat never colors the gap');
 });
 
 test('Start/End fades are unchanged, output ends neutral, and safe mode stays ASCII', () => {
@@ -316,8 +316,8 @@ test('snapshots keep every Rich Git setting and resolved geometry; later changes
   const row = renderHistoricalContext({cwd: '/r', prompt: snapshot}, 100, appearance)!.plain;
   assert.ok(row.includes('\uE0BC \uE0BA +1'), `history keeps the captured Rich Git geometry and fade Off: ${row}`);
   const history = renderHistoricalContext({cwd: '/r', prompt: snapshot}, 100, appearance)!.ansi;
-  assert.match(history, /\u001B\[0m\u001B\[48;2;[\d;]+m\u001B\[38;2;[\d;]+m\uE0B0\u001B\[0m\u001B\[48;2;[\d;]+m /u,
-    'history keeps the captured Main Prompt fade: the exit cap and gap sit on the faded left color');
+  assert.match(history, /\u001B\[0m\u001B\[48;2;[\d;]+m\u001B\[38;2;[\d;]+m\uE0B0\u001B\[0m\u001B\[49m /u,
+    'history keeps the captured Main Prompt fade: the exit cap sits on the faded left color, the gap stays neutral');
   const legacy = {...snapshot, connectorFade: undefined, gitColors: undefined, gitGeometry: undefined, gitConnectorFade: undefined,
     segments: [...snapshot.segments.filter(segment => !segment.role?.startsWith('gitS')).map(({shape, fade, ...segment}) => segment),
       {text: '+1 ~2', role: 'gitChanges', geometry: 'powerline' as const}]};

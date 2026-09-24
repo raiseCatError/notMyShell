@@ -15,7 +15,7 @@ import {
   type PromptProviderId,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
-import {POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
+import {CONNECTOR_FADE_COLORS, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
 import {renderControls} from '../ui/controls.js';
 import {renderTabStrip} from '../ui/PanelShell.js';
 import type {StarshipStatus} from './starship.js';
@@ -65,7 +65,7 @@ export function providerLabel(provider: PromptProviderId): string {
   return provider === 'nmsh' ? 'NMSh Native' : provider === 'starship' ? 'Starship' : 'Powerlevel10k';
 }
 
-const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'gap', 'end', 'icons', 'modules'] as const;
+const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'fadeColors', 'gap', 'end', 'icons', 'modules'] as const;
 export const APPEARANCE_MODULES_ROW = APPEARANCE_ROWS.indexOf('modules');
 /** Rich Git's own settings; each edits inline with ←/→ (Space also toggles Enabled). */
 const RICH_GIT_ROWS = ['gitEnabled', 'gitColors', 'gitGeometry', 'gitConnectorFade'] as const;
@@ -78,6 +78,10 @@ export function onModulesRow(state: PromptPanelState): boolean {
 
 export function connectorFadeLabel(value: ConnectorFadeStyle): string {
   return value === 'follow' ? 'Follow connector' : value === 'off' ? 'Off' : SHAPE_LABELS[value];
+}
+
+export function fadeColorsLabel(value: ConnectorFadeColors): string {
+  return value === 'previous' ? 'Previous' : value === 'next' ? 'Next' : 'Mixed';
 }
 
 export function gitGeometryLabel(value: GitGeometry): string {
@@ -276,6 +280,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
         case 'start': nmsh.startStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.startStyle, delta); break;
         case 'connector': nmsh.connector = cycle(POWERLINE_SHAPES, nmsh.connector, delta); break;
         case 'connectorFade': nmsh.connectorFade = cycle(CONNECTOR_FADE_STYLES, nmsh.connectorFade, delta); break;
+        case 'fadeColors': nmsh.connectorFadeColors = cycle(CONNECTOR_FADE_COLORS, nmsh.connectorFadeColors, delta); break;
         case 'gap': applyNativeGapChoice(state.draft, cycle(GAP_CHOICES, nativeGapChoice(state.draft), delta)); break;
         case 'end': nmsh.endStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.endStyle, delta); break;
         case 'icons': nmsh.icons = nmsh.icons === 'off' ? 'nerd' : 'off'; break;
@@ -435,10 +440,11 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       rows.push(row(2, `Connector       ${value(SHAPE_LABELS[draft.connector], saved && SHAPE_LABELS[saved.connector])}`));
       const fadeNote = !state.draft.nmsh.gapEnabled && draft.connectorFade !== 'off' ? `  ${SUBTLE}applies with a gap` : '';
       rows.push(row(3, `Connector fade  ${value(connectorFadeLabel(draft.connectorFade), saved && connectorFadeLabel(saved.connectorFade))}${fadeNote}`));
-      rows.push(row(4, `Gap             ${value(gapLabel(nativeGapChoice(state.draft)), savedGap)}`));
-      rows.push(row(5, `End             ${value(edgeStyleLabel(draft.endStyle), saved && edgeStyleLabel(saved.endStyle))}`));
-      rows.push(row(6, `Icons           ${value(iconLabel(draft.icons), saved && iconLabel(saved.icons))}`));
-      rows.push(row(7, `Modules         ${visibleModules} of ${state.draft.modules.length} shown ›`));
+      rows.push(row(4, `Fade colors     ${value(fadeColorsLabel(draft.connectorFadeColors), saved && fadeColorsLabel(saved.connectorFadeColors))}`));
+      rows.push(row(5, `Gap             ${value(gapLabel(nativeGapChoice(state.draft)), savedGap)}`));
+      rows.push(row(6, `End             ${value(edgeStyleLabel(draft.endStyle), saved && edgeStyleLabel(saved.endStyle))}`));
+      rows.push(row(7, `Icons           ${value(iconLabel(draft.icons), saved && iconLabel(saved.icons))}`));
+      rows.push(row(8, `Modules         ${visibleModules} of ${state.draft.modules.length} shown ›`));
     }
     if (themePreviews.length && view === 'main') {
       rows.push('');

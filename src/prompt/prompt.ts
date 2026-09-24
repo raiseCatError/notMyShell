@@ -307,6 +307,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     startStyle: configuration.nmsh.startStyle,
     connector: configuration.nmsh.connector,
     connectorFade: configuration.nmsh.connectorFade,
+    connectorFadeColors: configuration.nmsh.connectorFadeColors,
     palette: configuration.nmsh.palette,
     gitColors: configuration.nmsh.gitColors,
     gitEnabled: configuration.nmsh.gitEnabled,
@@ -337,7 +338,7 @@ export function buildContextLine(
   const lineEndStyle = configuration.nmsh.endStyle;
   const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
     configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled, configuration.nmsh.startStyle, configuration.nmsh.connector,
-    resolveConnectorFade(configuration.nmsh.connectorFade, configuration.nmsh.connector));
+    resolveConnectorFade(configuration.nmsh.connectorFade, configuration.nmsh.connector), configuration.nmsh.connectorFadeColors);
 
   if (placement === 'composer') return `${content}${RESET}`;
 

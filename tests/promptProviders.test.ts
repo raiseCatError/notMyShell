@@ -302,16 +302,18 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   assert.equal(unchanged.at(-1), '↑↓ move · ←→ change · Enter save · Esc cancel', 'consistent controls row');
 
   const press = (row: number, kind: 'left' | 'right') => { state.selectedIndex = row; handlePromptPanelKey({kind} as Key, state); };
-  press(0, 'right'); press(1, 'right'); press(1, 'right'); press(2, 'right'); press(3, 'left'); press(4, 'left'); press(5, 'right'); press(5, 'right'); press(6, 'right');
+  press(0, 'right'); press(1, 'right'); press(1, 'right'); press(2, 'right'); press(3, 'left'); press(4, 'left'); press(5, 'left'); press(6, 'right'); press(6, 'right'); press(7, 'right');
   assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
     ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
   assert.equal(state.draft.nmsh.connectorFade, 'backslash', 'Connector fade cycles backwards from Follow connector');
+  assert.equal(state.draft.nmsh.connectorFadeColors, 'mixed', 'Fade colors cycles backwards from Previous');
   const changed = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'C', 'W', 'G']).map(stripAnsi);
   for (const expected of [
     'Theme           ‹ Brand / Semantic ›  saved: Lavender Native',
     'Start           ‹ Flat ›  saved: Wedge',
     'Connector       ‹ Flat ›  saved: Wedge',
     'Connector fade  ‹ Slant \\ ›  saved: Follow connector',
+    'Fade colors     ‹ Mixed ›  saved: Previous',
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',

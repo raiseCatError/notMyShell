@@ -40,6 +40,14 @@ export interface PowerlineBlock {
 /** The shape a connector fade actually uses, or undefined for solid connectors. */
 export type ResolvedConnectorFade = PowerlineShape | undefined;
 
+/** Which neighbor(s) supply the darker transition zones around a separated gap. */
+export type ConnectorFadeColors = 'previous' | 'next' | 'mixed';
+export const CONNECTOR_FADE_COLORS: readonly ConnectorFadeColors[] = ['previous', 'next', 'mixed'];
+
+export function normalizeConnectorFadeColors(value: unknown): ConnectorFadeColors {
+  return CONNECTOR_FADE_COLORS.includes(value as ConnectorFadeColors) ? value as ConnectorFadeColors : 'previous';
+}
+
 /** `follow` tracks the Connector shape; a fixed shape is a deliberate override. */
 export function resolveConnectorFade(setting: 'follow' | 'off' | PowerlineShape | undefined,
   connector: PowerlineConnectorStyle): ResolvedConnectorFade {
@@ -97,6 +105,17 @@ export function connectorFadeColor(left: RgbColor): RgbColor {
   return fadePromptColor(left, 0);
 }
 
+/** Background escapes for the close (left) and open (right) cells of a faded gap. */
+function fadeZones(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors, compact: boolean): {left: string; right: string} {
+  const fadeA = background(connectorFadeColor(previous));
+  const fadeB = background(connectorFadeColor(following));
+  switch (mode) {
+    case 'mixed': return {left: fadeA, right: fadeB};
+    case 'next': return {left: compact ? fadeB : NEUTRAL_BACKGROUND, right: fadeB};
+    default: return {left: fadeA, right: compact ? fadeA : NEUTRAL_BACKGROUND};
+  }
+}
+
 function blockContent(block: PowerlineBlock, spacing: number): string {
   const body = block.compact ? ' ' : `${' '.repeat(spacing)}${block.text}${' '.repeat(spacing)}`;
   return `${foreground(block.foreground)}${background(block.background)}${body}`;
@@ -144,6 +163,7 @@ export function renderPowerlineBlocks(
   startStyle: PowerlineStartStyle = 'wedge',
   connector: PowerlineConnectorStyle = 'wedge',
   connectorFade: ResolvedConnectorFade = undefined,
+  fadeColors: ConnectorFadeColors = 'previous',
 ): string {
   if (modules.length === 0) return `${RESET}${NEUTRAL_BACKGROUND}`;
   const gapWidth = gapEnabled ? Math.max(0, Math.trunc(gap)) : 0;
@@ -163,9 +183,11 @@ export function renderPowerlineBlocks(
       continue;
     }
     // Separated: close cap (Connector shape), gap cells, open cap. A connector
-    // fade picks only the open cap's shape and lays one darker step of the
-    // left segment behind all three, so nothing neutral shows through and no
-    // width is added. With zero cells (Flat + Compact) there is nothing to color.
+    // fade picks only the open cap's shape. Fade colors pick the zones: the
+    // close cell belongs to the left side, the open cell to the right, and the
+    // gap cells between them always stay terminal background. Compact zones
+    // touch, so a one-sided mode carries its color across both caps. No width
+    // is added; with zero cells (Flat + Compact) there is nothing to color.
     const fade = boundary<PowerlineShape | 'off'>(current, next, block => block.fade, connectorFade ?? 'off');
     const close = powerlineShapeGlyphs(shape).close;
     if (fade === 'off') {
@@ -175,11 +197,11 @@ export function renderPowerlineBlocks(
       if (open) content += `${foreground(next.background)}${open}`;
       continue;
     }
-    const zone = background(connectorFadeColor(current.background));
+    const {left, right} = fadeZones(current.background, next.background, fadeColors, gapWidth === 0);
     const open = powerlineShapeGlyphs(fade).open;
-    if (close) content += `${RESET}${zone}${foreground(current.background)}${close}`;
-    content += `${RESET}${zone}${' '.repeat(gapWidth)}`;
-    if (open) content += `${foreground(next.background)}${open}`;
+    if (close) content += `${RESET}${left}${foreground(current.background)}${close}`;
+    if (gapWidth) content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth)}`;
+    if (open) content += `${RESET}${right}${foreground(next.background)}${open}`;
   }
 
   content += renderEnd(modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));
@@ -197,6 +219,7 @@ export function fitPowerlineBlocks(
   startStyle: PowerlineStartStyle = 'wedge',
   connector: PowerlineConnectorStyle = 'wedge',
   connectorFade: ResolvedConnectorFade = undefined,
+  fadeColors: ConnectorFadeColors = 'previous',
 ): string {
   if (width <= 0 || modules.length === 0) return '';
   const style = normalizeEndStyle(endStyle);
@@ -205,7 +228,7 @@ export function fitPowerlineBlocks(
     return `${foreground(first.foreground)}${truncateText(first.text, width)}${RESET}${NEUTRAL_BACKGROUND}`;
   }
   const render = (blocks: readonly PowerlineBlock[], blockGap: number, blockSpacing: number, enabled: boolean) =>
-    renderPowerlineBlocks(blocks, blockGap, blockSpacing, style, enabled, startStyle, connector, connectorFade);
+    renderPowerlineBlocks(blocks, blockGap, blockSpacing, style, enabled, startStyle, connector, connectorFade, fadeColors);
 
   for (let count = modules.length; count >= 1; count -= 1) {
     const visible = modules.slice(0, count);

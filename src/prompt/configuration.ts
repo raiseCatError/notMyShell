@@ -2,6 +2,8 @@ import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {
+  normalizeConnectorFadeColors,
+  type ConnectorFadeColors,
   normalizeConnectorStyle,
   normalizeEdgeStyle,
   type PowerlineConnectorStyle,
@@ -124,6 +126,8 @@ export interface PromptConfiguration {
     palette: NativePaletteId;
     icons: NativeIconMode;
     connectorFade: ConnectorFadeStyle;
+    /** Which neighbor(s) color the faded transition zones; missing in older configs, meaning Previous. */
+    connectorFadeColors: ConnectorFadeColors;
     /** Rich Git master switch; Off keeps the plain branch module. */
     gitEnabled: boolean;
     gitColors: GitColorMode;
@@ -150,7 +154,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphChoiceComplete: false,
   sessionRetention: 1000,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
-    connectorFade: 'follow', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
+    connectorFade: 'follow', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -210,6 +214,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
     startStyle, connector, endStyle, palette, icons,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
+    connectorFadeColors: normalizeConnectorFadeColors(nativeValue.connectorFadeColors),
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
     gitColors: normalizeGitColorMode(nativeValue.gitColors),
     gitGeometry: normalizeGitGeometry(nativeValue.gitGeometry),

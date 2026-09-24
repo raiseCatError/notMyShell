@@ -7,7 +7,7 @@ import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
@@ -521,7 +521,8 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
       normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector),
       // Snapshots without a connector fade predate it and rendered solid connectors.
       snapshot.connectorFade === undefined ? undefined
-        : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), normalizeConnectorStyle(snapshot.connector)));
+        : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), normalizeConnectorStyle(snapshot.connector)),
+      normalizeConnectorFadeColors(snapshot.connectorFadeColors));
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),

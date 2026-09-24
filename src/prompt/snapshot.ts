@@ -1,5 +1,5 @@
 import type {RgbColor} from '../ui/palette.js';
-import type {PowerlineShape} from './powerline.js';
+import type {ConnectorFadeColors, PowerlineShape} from './powerline.js';
 import type {ComposerLayout, ConnectorFadeStyle, GitColorMode, GitConnectorFade, GitGeometry, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
@@ -28,6 +28,8 @@ export interface PromptSnapshot {
   connector?: NativeConnectorStyle;
   /** Missing in older snapshots, which rendered solid connectors. */
   connectorFade?: ConnectorFadeStyle;
+  /** Fade color source at submission; missing means Previous. */
+  connectorFadeColors?: ConnectorFadeColors;
   palette?: NativePaletteId;
   /** Rich Git color mode at submission; older snapshots followed the theme. */
   gitColors?: GitColorMode;
