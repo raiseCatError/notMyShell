@@ -189,6 +189,7 @@ test('Fade Off and Gap Off ignore Fade colors', () => {
 test('live prompt, Rich Git transitions, and the showcase honor Fade colors', () => {
   const config = (mode: ConnectorFadeColors) => {
     const value = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+    value.nmsh.connectorFade = 'follow';
     value.nmsh.connectorFadeColors = mode;
     return value;
   };
@@ -203,6 +204,7 @@ test('live prompt, Rich Git transitions, and the showcase honor Fade colors', ()
 
 test('snapshots record Fade colors; history keeps it after config changes; old snapshots render as Previous', () => {
   const draft = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  draft.nmsh.connectorFade = 'follow';
   draft.nmsh.connectorFadeColors = 'next';
   const context = {cwd: '/r', project: 'r', branch: 'main'};
   const snapshot = nativePromptSnapshot(context, draft);

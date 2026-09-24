@@ -305,14 +305,14 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   press(0, 'right'); press(1, 'right'); press(1, 'right'); press(2, 'right'); press(3, 'left'); press(4, 'left'); press(5, 'left'); press(6, 'right'); press(6, 'right'); press(7, 'right');
   assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
     ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
-  assert.equal(state.draft.nmsh.connectorFade, 'backslash', 'Connector fade cycles backwards from Follow connector');
+  assert.equal(state.draft.nmsh.connectorFade, 'follow', 'Connector fade cycles backwards from the default Off');
   assert.equal(state.draft.nmsh.connectorFadeColors, 'previous', 'Mixed (cycled back from Previous at Normal) resolves to Previous at Compact');
   const changed = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'C', 'W', 'G']).map(stripAnsi);
   for (const expected of [
     'Theme           ‹ Brand / Semantic ›  saved: Lavender Native',
     'Start           ‹ Flat ›  saved: Wedge',
     'Connector       ‹ Flat ›  saved: Wedge',
-    'Connector fade  ‹ Slant \\ ›  saved: Follow connector',
+    'Connector fade  ‹ Follow connector ›  saved: Off',
     'Fade colors     ‹ Previous ›',
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',

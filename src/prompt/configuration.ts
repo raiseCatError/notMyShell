@@ -60,7 +60,7 @@ export function normalizeGitColorMode(value: unknown): GitColorMode {
 }
 
 export function normalizeConnectorFade(value: unknown): ConnectorFadeStyle {
-  return CONNECTOR_FADE_STYLES.includes(value as ConnectorFadeStyle) ? value as ConnectorFadeStyle : 'follow';
+  return CONNECTOR_FADE_STYLES.includes(value as ConnectorFadeStyle) ? value as ConnectorFadeStyle : 'off';
 }
 
 export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale'];
@@ -155,7 +155,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphChoiceComplete: false,
   sessionRetention: 1000,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
-    connectorFade: 'follow', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
+    connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},

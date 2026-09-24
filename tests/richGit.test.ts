@@ -14,6 +14,8 @@ import type {Key} from '../src/terminal/keys.js';
 
 const config = (patch: (value: PromptConfiguration) => void = () => {}): PromptConfiguration => {
   const value = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  // The default Connector fade is Off; these tests exercise the fade, so opt in.
+  value.nmsh.connectorFade = 'follow';
   patch(value);
   return value;
 };
@@ -24,19 +26,25 @@ const chroma = (color: {red: number; green: number; blue: number}) => Math.max(c
 
 test('Rich Git colors default to Semantic and old configs normalize without losing settings', () => {
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.gitColors, 'semantic');
-  assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.connectorFade, 'follow');
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.connectorFade, 'off');
+  assert.equal(normalizePromptConfiguration({}).nmsh.connectorFade, 'off', 'new configs default to Off');
+  for (const saved of ['follow', 'off', 'wedge', 'flat', 'rounded', 'slash', 'backslash'] as const) {
+    const loaded = normalizePromptConfiguration({onboardingComplete: true, gap: 2, nmsh: {connectorFade: saved, palette: 'warm'}});
+    assert.deepEqual([loaded.nmsh.connectorFade, loaded.onboardingComplete, loaded.nmsh.palette, loaded.gap], [saved, true, 'warm', 2],
+      `an explicitly saved ${saved} is preserved`);
+  }
   const legacy = normalizePromptConfiguration({provider: 'nmsh', onboardingComplete: true, glyphStyle: 'safe', glyphChoiceComplete: true,
     nmsh: {palette: 'warm', connector: 'rounded', startStyle: 'flat', endStyle: 'wedge', gapEnabled: false, icons: 'off'},
     transcript: {divider: false}});
   assert.equal(legacy.nmsh.gitColors, 'semantic');
-  assert.equal(legacy.nmsh.connectorFade, 'follow');
+  assert.equal(legacy.nmsh.connectorFade, 'off', 'no saved Connector fade reads as the default Off');
   assert.deepEqual([legacy.nmsh.palette, legacy.nmsh.connector, legacy.nmsh.startStyle, legacy.nmsh.endStyle, legacy.nmsh.gapEnabled, legacy.nmsh.icons],
     ['warm', 'rounded', 'flat', 'wedge', false, 'off']);
   assert.equal(legacy.onboardingComplete, true);
   assert.equal(legacy.glyphStyle, 'safe');
   assert.equal(legacy.transcript.divider, false);
   assert.equal(normalizePromptConfiguration({nmsh: {gitColors: 'neon', connectorFade: 'zigzag'}}).nmsh.gitColors, 'semantic');
-  assert.equal(normalizePromptConfiguration({nmsh: {connectorFade: 'zigzag'}}).nmsh.connectorFade, 'follow');
+  assert.equal(normalizePromptConfiguration({nmsh: {connectorFade: 'zigzag'}}).nmsh.connectorFade, 'off', 'an invalid value reads as the default Off');
 });
 
 test('Semantic ignores the theme, Follow theme uses it, Grayscale removes hue; the branch always follows the theme', () => {
