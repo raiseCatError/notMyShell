@@ -43,6 +43,8 @@ import {Highlighter, type TokenType} from '../input/Highlighter.js';
 import {SemanticService} from '../shell/SemanticService.js';
 import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
 import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
+import {SessionJournal} from '../sessions/SessionJournal.js';
+import {createResumeBrowser, navigateResume, resumeDayLabel, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -115,7 +117,8 @@ export class TerminalApp {
   private shellHandoffCwd?: string;
   private shellHandoffRequested = false;
   private presentationStartCwd = process.cwd();
-  private resumeSessions?: TranscriptSession[];
+  private resumeBrowser?: ResumeBrowserState;
+  private journal?: SessionJournal;
   private preparingCommand = false;
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
@@ -136,6 +139,12 @@ export class TerminalApp {
   }
 
   async run(): Promise<number> {
+    this.journal = new SessionJournal(this.transcriptStore, this.promptConfiguration.sessionRetention,
+      () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript()}),
+      () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR));
+    try { await this.journal.start(); } catch {
+      this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
+    }
     if (!this.promptConfiguration.glyphChoiceComplete) {
       this.settingsPanelState = {section: 'appearance', selectedIndex: this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1,
         glyphStyle: this.promptConfiguration.glyphStyle, onboarding: true};
@@ -168,7 +177,11 @@ export class TerminalApp {
     }, STATUS_REFRESH_MS);
     this.scheduleWelcomeBlink();
     this.render();
-    return this.done;
+    const exitCode = await this.done;
+    try { await this.journal.close(); } catch {
+      process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
+    }
+    return exitCode;
   }
 
   private readonly onInput = (data: string): void => {
@@ -252,13 +265,24 @@ export class TerminalApp {
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
       return;
     }
-    if (this.resumeSessions) {
+    if (this.resumeBrowser) {
+      const browser = this.resumeBrowser;
       if (key.kind === 'escape' || key.kind === 'interrupt') {
-        this.resumeSessions = undefined;
+        this.resumeBrowser = undefined;
       } else if (key.kind === 'up') {
-        this.selectedSuggestion = Math.max(0, this.selectedSuggestion - 1);
+        browser.selectedIndex = Math.max(0, browser.selectedIndex - 1);
       } else if (key.kind === 'down') {
-        this.selectedSuggestion = Math.min(this.resumeSessions.length - 1, this.selectedSuggestion + 1);
+        browser.selectedIndex = Math.max(0, Math.min(visibleResumeSessions(browser).length - 1, browser.selectedIndex + 1));
+      } else if (key.kind === 'left' || key.kind === 'right') {
+        navigateResume(browser, 'week', key.kind === 'left' ? -1 : 1);
+      } else if (key.kind === 'selectLeft' || key.kind === 'selectRight') {
+        navigateResume(browser, 'month', key.kind === 'selectLeft' ? -1 : 1);
+      } else if (key.kind === 'text') {
+        browser.query += key.value;
+        browser.selectedIndex = 0;
+      } else if (key.kind === 'backspace') {
+        browser.query = browser.query.slice(0, -1);
+        browser.selectedIndex = 0;
       } else if (key.kind === 'enter') {
         void this.resumeSelectedSession();
       }
@@ -615,6 +639,9 @@ export class TerminalApp {
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
     this.running = {command, startedAt, interrupted: false, cleared: false, startId};
+    void this.journal?.flush().catch(() => {
+      this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
+    });
     this.activityAnimationNow = startedAt;
 
     // Initial static heuristic, but dynamic can override
@@ -748,6 +775,10 @@ export class TerminalApp {
   }
 
   private async archiveCurrentPresentation(): Promise<void> {
+    if (this.journal) {
+      await this.journal.finish();
+      return;
+    }
     const transcript = this.output.transcript();
     await this.transcriptStore.archive({
       startCwd: this.presentationStartCwd,
@@ -761,49 +792,74 @@ export class TerminalApp {
       this.output.addFrontendInteraction('/clear', 'Wait for the foreground command to finish before clearing the transcript.', INFO);
       return;
     }
-    try {
-      await this.archiveCurrentPresentation();
-      this.output.clearPresentation();
-      this.presentationStartCwd = this.shellCwd;
-      this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.presentationStartCwd));
-      this.historyViewport.latest();
-    } catch {
+    try { await this.archiveCurrentPresentation(); } catch {
       this.output.addFrontendInteraction('/clear', 'Could not archive this transcript; the current view was kept.', ERROR);
+      return;
+    }
+    this.output.clearPresentation();
+    this.presentationStartCwd = this.shellCwd;
+    this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.presentationStartCwd));
+    this.historyViewport.latest();
+    try { await this.journal?.start(); } catch {
+      this.output.addFrontendInteraction('/clear', 'A fresh view started, but its journal could not be persisted yet.', ERROR);
     }
   }
 
   private async openResumePicker(): Promise<void> {
     try {
-      const sessions = await this.transcriptStore.list();
+      const sessions = (await this.transcriptStore.listSummaries()).filter(session => session.id !== this.journal?.id);
       if (sessions.length === 0) {
         this.output.addFrontendInteraction('/resume', 'No archived NMSh transcript sessions were found.', INFO);
         return;
       }
-      this.resumeSessions = sessions;
-      this.selectedSuggestion = 0;
+      const browser = createResumeBrowser(sessions);
+      this.resumeBrowser = browser;
+      void this.indexResumeCommands(browser);
     } catch {
       this.output.addFrontendInteraction('/resume', 'Could not read local transcript archives.', ERROR);
     }
   }
 
   private async resumeSelectedSession(): Promise<void> {
-    const sessions = this.resumeSessions;
-    if (!sessions) return;
-    const selected = sessions[this.selectedSuggestion];
+    const browser = this.resumeBrowser;
+    if (!browser) return;
+    const selected = visibleResumeSessions(browser)[browser.selectedIndex];
     if (!selected) return;
+    let restored: TranscriptSession;
     try {
+      restored = await this.transcriptStore.load(selected.id);
       const current = this.output.transcript();
       if (current.welcome || current.records.length > 0 || current.lines.length > 0) await this.archiveCurrentPresentation();
-      this.output.restoreTranscript(selected.transcript);
-      this.presentationStartCwd = selected.startCwd;
-      this.resumeSessions = undefined;
-      this.selectedSuggestion = 0;
-      this.historyViewport.latest();
-      this.render();
     } catch {
       this.output.addFrontendInteraction('/resume', 'Could not restore the selected transcript; the current view was kept.', ERROR);
-      this.resumeSessions = undefined;
+      this.resumeBrowser = undefined;
+      return;
     }
+    this.output.restoreTranscript(restored.transcript);
+    this.presentationStartCwd = selected.startCwd;
+    this.resumeBrowser = undefined;
+    this.historyViewport.latest();
+    try { await this.journal?.start(); } catch {
+      this.output.addFrontendInteraction('/resume', 'The transcript was restored, but its new journal could not be persisted yet.', ERROR);
+    }
+    this.render();
+  }
+
+  /** Build command search data in memory, yielding regularly to keep the UI responsive. */
+  private async indexResumeCommands(browser: ResumeBrowserState): Promise<void> {
+    for (const [index, item] of browser.sessions.entries()) {
+      if (this.resumeBrowser !== browser || this.stopped) return;
+      try {
+        const session = await this.transcriptStore.load(item.id);
+        browser.commandText.set(item.id, session.transcript.records.map(record => record.command).join('\n'));
+      } catch { /* Keep invalid archives out of command search. */ }
+      if (index % 16 === 15) {
+        if (browser.query) this.render();
+        await new Promise<void>(resolve => setImmediate(resolve));
+      }
+    }
+    browser.indexing = false;
+    if (this.resumeBrowser === browser) this.render();
   }
 
 
@@ -820,6 +876,7 @@ export class TerminalApp {
       this.lastOutputTime = Date.now();
       const wasPassthrough = this.passthrough;
       this.output.write(data);
+      this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
         process.stdout.write(data);
@@ -853,6 +910,9 @@ export class TerminalApp {
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
+    void this.journal?.flush().catch(() => {
+      this.output.addFrontendInteraction('/resume', 'Could not persist the completed command.', ERROR);
+    });
     if (this.passthrough) {
       this.passthrough = false;
       this.renderer.resumeAfterPassthrough();
@@ -1107,7 +1167,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.promptPanelState || this.transcriptPanelState || this.settingsPanelState
-      || this.resumeSessions || this.appearanceState || this.keyboardState);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
   private settingsPanelRows(columns: number): string[] {
@@ -1115,15 +1175,31 @@ export class TerminalApp {
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
     }
-    if (this.resumeSessions) {
-      const count = Math.max(1, Math.min(this.resumeSessions.length, this.dimensions().rows - 5));
-      const start = Math.max(0, Math.min(this.selectedSuggestion, this.resumeSessions.length - count));
-      const rows = [`${PRIMARY}  Resume session${RESET}`, ''];
-      this.resumeSessions.slice(start, start + count).forEach((session, offset) => {
-        const selected = start + offset === this.selectedSuggestion;
-        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${new Date(session.createdAt).toLocaleString()} · ${session.commandCount} commands · ${session.finalCwd}${RESET}`, columns));
-      });
-      rows.push('', `${SUBTLE}  ↑↓ move · Enter restore · Esc cancel${RESET}`);
+    if (this.resumeBrowser) {
+      const browser = this.resumeBrowser;
+      const sessions = visibleResumeSessions(browser);
+      const canMove = (unit: 'week' | 'month', direction: -1 | 1) =>
+        navigateResume({...browser}, unit, direction);
+      const week = new Date(browser.week).toLocaleDateString();
+      const rows = [`${PRIMARY}  Resume session${RESET}`,
+        `${SECONDARY}  Search: ${browser.query || '_'}${browser.indexing ? `  ${SUBTLE}(indexing commands…)${SECONDARY}` : ''}${RESET}`,
+        `${SUBTLE}  Week of ${week} · ← ${canMove('week', -1) ? 'previous week' : '—'} · → ${canMove('week', 1) ? 'next week' : '—'}${RESET}`, ''];
+      const budget = Math.max(1, this.dimensions().rows - 7);
+      const start = Math.max(0, browser.selectedIndex - 2);
+      let lastDay = '';
+      for (let index = start; index < sessions.length && rows.length < budget + 4; index++) {
+        const session = sessions[index]!;
+        const day = resumeDayLabel(session.createdAt);
+        if (day !== lastDay && rows.length + 1 < budget + 4) rows.push(`${SUBTLE}  ${day}${RESET}`);
+        if (rows.length >= budget + 4) break;
+        lastDay = day;
+        const selected = index === browser.selectedIndex;
+        const time = new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
+        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${session.project || 'notMyShell'} · ${session.finalCwd} · ${session.commandCount} commands${interrupted}${RESET}`, columns));
+      }
+      if (sessions.length === 0) rows.push(`${SUBTLE}  No matching sessions${RESET}`);
+      rows.push('', `${SUBTLE}  ↑↓ move · ←→ week · Shift+←→ month · Enter restore · Esc close${RESET}`);
       return framePanel(rows, columns);
     }
     if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);
@@ -1362,13 +1438,7 @@ export class TerminalApp {
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
 
     let availableSuggestions: any[] = [];
-    if (this.resumeSessions) {
-      availableSuggestions = this.resumeSessions.map(session => ({
-        name: `${new Date(session.createdAt).toLocaleString()} · ${session.commandCount} commands · ${session.finalCwd}`,
-        insertion: '',
-        description: session.preview || session.startCwd,
-      }));
-    } else if (!this.running) {
+    if (!this.running) {
       if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
         const q = this.editor.text.substring(9).toLowerCase();
         const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));

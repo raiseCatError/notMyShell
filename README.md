@@ -87,7 +87,7 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 ### Interface
 - Command lifecycle rows with activity animation and nested Node TAP activity
 - Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
-- `/clear` archives the view and `/resume` restores it, on the same live zsh
+- NMSh checkpoints the local presentation session during use; `/clear` starts a fresh view and `/resume` browses retained sessions without rewinding live zsh state
 - `/zsh` hands off to an ordinary interactive zsh
 - Rich paste atoms for large multiline pastes
 - `/copy` and `/copy N` for instant clipboard access

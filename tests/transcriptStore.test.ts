@@ -34,6 +34,7 @@ test('transcript store writes private, versioned local archives with determinist
     assert.deepEqual(files[0]?.transcript.records[0]?.historicalContext, {cwd: '/tmp', branch: 'dev'});
     const raw = JSON.parse(await readFile(join(directory, `${archived.id}.json`), 'utf8')) as {schemaVersion: number};
     assert.equal(raw.schemaVersion, TRANSCRIPT_SCHEMA_VERSION);
+    assert.equal((await readFile(join(directory, `${archived.id}.meta.json`), 'utf8')).includes('pwd'), false);
     assert.equal((await stat(directory)).mode & 0o777, 0o700);
     assert.equal((await stat(join(directory, `${archived.id}.json`))).mode & 0o777, 0o600);
   } finally {
@@ -80,6 +81,25 @@ test('local transcript persistence stores semantic activity ranges without ANSI 
     };
     assert.ok(raw.transcript.records[0]?.activities?.length);
     assert.equal('ansi' in (raw.transcript.records[0]?.activities?.[0] ?? {}), false);
+  } finally {
+    await rm(directory, {recursive: true, force: true});
+  }
+});
+
+test('session rotation follows successful persistence and exempts pinned sessions', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-session-rotation-'));
+  try {
+    const store = new TranscriptStore(directory);
+    const snapshot = new OutputBuffer().transcript();
+    const first = store.create({startCwd: '/first', finalCwd: '/first', transcript: snapshot, pinned: true});
+    const second = store.create({startCwd: '/second', finalCwd: '/second', transcript: snapshot});
+    const third = store.create({startCwd: '/third', finalCwd: '/third', transcript: snapshot});
+    const fourth = store.create({startCwd: '/fourth', finalCwd: '/fourth', transcript: snapshot});
+    for (const session of [first, second, third, fourth]) await store.save(session, 2);
+    const retained = await store.listSummaries();
+    assert.deepEqual(new Set(retained.map(item => item.id)), new Set([first.id, third.id, fourth.id]));
+    assert.equal((await store.load(fourth.id)).id, fourth.id);
+    assert.equal((await stat(join(directory, `${fourth.id}.json`))).mode & 0o777, 0o600);
   } finally {
     await rm(directory, {recursive: true, force: true});
   }
