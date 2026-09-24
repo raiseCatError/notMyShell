@@ -4,7 +4,7 @@ import {buildContextLine, buildInlineContextPrefix, buildPromptLine, GIT_SEMANTI
 import {DEFAULT_PROMPT_CONFIGURATION, NATIVE_PALETTE_IDS, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {homedir} from 'node:os';
-import {renderPowerlineBlocks} from '../src/prompt/powerline.js';
+import {connectorFadeColor, renderPowerlineBlocks} from '../src/prompt/powerline.js';
 import {fadePromptColor} from '../src/prompt/snapshot.js';
 
 const A = {red: 100, green: 60, blue: 180};
@@ -82,11 +82,12 @@ test('clean marker appears only for a probed, genuinely clean working tree', () 
   }
 });
 
-test('native open uses U+E0D7 and gap-enabled segments close and reopen over neutral background', () => {
-  const rendered = buildPromptLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60);
+test('native open uses U+E0D7; with Connector fade Off, gaps close and reopen over neutral background', () => {
+  const neutral = normalizePromptConfiguration({nmsh: {connectorFade: 'off'}});
+  const rendered = buildContextLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60, neutral, 'header');
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
-  assert.match(plain, /^ repo ▒ \/tmp\/work ▒  main /u);
+  assert.match(plain, /^ repo   \/tmp\/work    main /u);
   assert.ok(rendered.startsWith('\u001B[0m\u001B[49m\u001B[38;2;166;124;243m'));
   assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;166;124;243m/u);
 });

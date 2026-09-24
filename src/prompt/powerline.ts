@@ -11,7 +11,8 @@ export type {PowerlineShape};
 
 /**
  * Outer-edge styles (Start and End): a shape, optionally faded over three
- * cells. Connectors are shapes; their optional fade colors one gap cell.
+ * cells. Between separated segments, Connector shapes the closing cap and the
+ * optional connector fade shapes the opening cap over a darker left color.
  */
 export type PowerlineEdgeStyle = PowerlineShape | 'fadeWedge' | 'fadeFlat' | 'fadeRounded' | 'fadeSlash';
 export type PowerlineEndStyle = PowerlineEdgeStyle;
@@ -91,12 +92,9 @@ function boundary<T>(current: PowerlineBlock, next: PowerlineBlock, pick: (block
   return pick(next) ?? pick(current) ?? fallback;
 }
 
-/**
- * The one-cell connector fade: a shade glyph drawn in the previous block's
- * color over the next block's, so both colors mix inside one gap cell.
- */
-function fadeCell(from: RgbColor, to: RgbColor): string {
-  return `${RESET}${foreground(from)}${background(to)}${GLYPHS.connectorShade}`;
+/** The faded transition background: one darker step of the left segment only. */
+export function connectorFadeColor(left: RgbColor): RgbColor {
+  return fadePromptColor(left, 0);
 }
 
 function blockContent(block: PowerlineBlock, spacing: number): string {
@@ -164,15 +162,24 @@ export function renderPowerlineBlocks(
       if (glyph) content += join(current.background, next.background, glyph);
       continue;
     }
-    // Separated: close cap, gap cells, open cap. A connector fade shapes the
-    // caps and turns the first gap cell into the fade; it never adds width.
+    // Separated: close cap (Connector shape), gap cells, open cap. A connector
+    // fade picks only the open cap's shape and lays one darker step of the
+    // left segment behind all three, so nothing neutral shows through and no
+    // width is added. With zero cells (Flat + Compact) there is nothing to color.
     const fade = boundary<PowerlineShape | 'off'>(current, next, block => block.fade, connectorFade ?? 'off');
-    const caps = powerlineShapeGlyphs(fade === 'off' ? shape : fade);
-    if (caps.close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${caps.close}`;
-    if (fade !== 'off' && gapWidth > 0) content += fadeCell(current.background, next.background);
-    const neutral = fade !== 'off' && gapWidth > 0 ? gapWidth - 1 : gapWidth;
-    content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(neutral)}${RESET}${NEUTRAL_BACKGROUND}`;
-    if (caps.open) content += `${foreground(next.background)}${caps.open}`;
+    const close = powerlineShapeGlyphs(shape).close;
+    if (fade === 'off') {
+      const open = powerlineShapeGlyphs(shape).open;
+      if (close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${close}`;
+      content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth)}${RESET}${NEUTRAL_BACKGROUND}`;
+      if (open) content += `${foreground(next.background)}${open}`;
+      continue;
+    }
+    const zone = background(connectorFadeColor(current.background));
+    const open = powerlineShapeGlyphs(fade).open;
+    if (close) content += `${RESET}${zone}${foreground(current.background)}${close}`;
+    content += `${RESET}${zone}${' '.repeat(gapWidth)}`;
+    if (open) content += `${foreground(next.background)}${open}`;
   }
 
   content += renderEnd(modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));

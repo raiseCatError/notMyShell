@@ -214,7 +214,7 @@ test('Start, Connector, Gap, and End are independent', () => {
   assert.equal(roundedStart.slice(1), base.slice(1), 'start never changes connectors, gaps, or end');
   const roundedConnector = line({connector: 'rounded'});
   assert.ok(roundedConnector.startsWith(''), 'connector never changes the start');
-  assert.match(roundedConnector, /repo ▒ \/tmp/u, 'rounded connector closes and reopens across the gap');
+  assert.match(roundedConnector, /repo   \/tmp/u, 'rounded connector closes and reopens across the gap');
   assert.ok(roundedConnector.endsWith(base.slice(base.lastIndexOf(' main ') + 6)), 'connector never changes the end');
   assert.match(line({connector: 'slash'}, {nmsh: {gapEnabled: false, connector: 'slash'}}), /repo  \/tmp/u, 'connected slant is one join cell');
   const flatEnd = line({endStyle: 'flat'});

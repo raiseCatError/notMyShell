@@ -26,8 +26,6 @@ export const GLYPHS = {
   get selection() { return getCurrentGlyphMode() === 'nerd' ? '›' : '>'; },
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '-'; },
-  /** One-cell connector fade where the shape has no glyph (flat). */
-  get connectorShade() { return getCurrentGlyphMode() === 'nerd' ? '▒' : ':'; },
   get search() { return getCurrentGlyphMode() === 'nerd' ? '\uF002' : '/'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
   // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.

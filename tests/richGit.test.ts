@@ -5,7 +5,7 @@ import {
   nativePromptSnapshot, promptRoleColors, renderedModules, RICH_GIT_SHOWCASE,
 } from '../src/prompt/prompt.js';
 import {DEFAULT_PROMPT_CONFIGURATION, NATIVE_PALETTE_IDS, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
-import {POWERLINE_SHAPES, renderPowerlineBlocks, resolveConnectorFade, type PowerlineBlock} from '../src/prompt/powerline.js';
+import {connectorFadeColor, POWERLINE_SHAPES, renderPowerlineBlocks, resolveConnectorFade, type PowerlineBlock} from '../src/prompt/powerline.js';
 import {handlePromptPanelKey, onModulesRow, renderPromptPanel, type PromptPanelState} from '../src/prompt/PromptPanel.js';
 import {renderHistoricalContext} from '../src/output/OutputBuffer.js';
 import {powerlineShapeGlyphs, setIconStyle} from '../src/ui/glyphs.js';
@@ -105,46 +105,76 @@ test('Connector fade resolves: Follow connector tracks it, a fixed shape sticks,
   assert.equal(resolveConnectorFade(undefined, 'wedge'), undefined);
 });
 
-test('the fade is one shaded gap cell: FG previous, BG next, never extra width', () => {
-  for (const gap of [1, 2, 3]) {
-    const neutral = renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge');
-    const faded = renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge', 'wedge');
-    assert.equal(displayWidth(faded), displayWidth(neutral), `gap ${gap}: the fade replaces a gap cell`);
-    assert.ok(faded.includes(`${fg(PURPLE)}${bg(GREEN)}▒`), 'FG is the previous background, BG the next');
-    assert.equal([...stripAnsi(faded)].filter(character => character === '▒').length, 1, 'exactly one fade cell');
-    assert.match(stripAnsi(faded), new RegExp(`▒ {${gap - 1}}`, 'u'), `gap ${gap}: fade first, then neutral cells`);
+const RESET = '\u001B[0m';
+const fadeA = connectorFadeColor(PURPLE);
+
+test('fade color comes only from the left segment: one darker step of its hue', () => {
+  assert.notDeepEqual(fadeA, PURPLE);
+  const lightness = (color: typeof WHITE) => color.red + color.green + color.blue;
+  assert.ok(lightness(fadeA) < lightness(PURPLE), 'darker than the left segment');
+  const other = [{...blocks[0]!}, {...blocks[1]!, background: {red: 220, green: 40, blue: 40}}];
+  const withGreen = renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', 'wedge');
+  const withRed = renderPowerlineBlocks(other, 1, 1, 'flat', true, 'flat', 'wedge', 'wedge');
+  for (const rendered of [withGreen, withRed]) assert.ok(rendered.includes(bg(fadeA)), 'changing B never changes the fade');
+});
+
+test('Connector shapes the close cap and Connector fade only the open cap, all over darker-A', () => {
+  for (const connector of POWERLINE_SHAPES) {
+    for (const fade of POWERLINE_SHAPES) {
+      const rendered = renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', connector, fade);
+      const close = powerlineShapeGlyphs(connector).close;
+      const open = powerlineShapeGlyphs(fade).open;
+      const expected = `${close ? `${RESET}${bg(fadeA)}${fg(PURPLE)}${close}` : ''}${RESET}${bg(fadeA)} ${open ? `${fg(GREEN)}${open}` : ''}`;
+      assert.ok(rendered.includes(expected), `${connector} + fade ${fade}`);
+    }
   }
+  const mixed = stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', 'slash'));
+  assert.ok(mixed.includes(' '), 'Wedge exit, Slant / entry');
+  assert.ok(!mixed.includes(' '), 'the exit is not replaced by the fade shape');
+  assert.ok(stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'rounded', 'wedge')).includes(' '),
+    'Rounded exit, Wedge entry');
+  assert.ok(stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'rounded', resolveConnectorFade('follow', 'rounded')))
+    .includes(' '), 'Follow connector matches both sides');
+});
+
+test('Off restores neutral gaps; Gap Off stays joined; widths never change', () => {
+  const neutral = renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge');
+  assert.equal(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', undefined), neutral);
+  assert.ok(!neutral.includes(bg(fadeA)));
   const joined = renderPowerlineBlocks(blocks, 0, 1, 'flat', false, 'flat', 'wedge', 'wedge');
-  assert.equal(joined, renderPowerlineBlocks(blocks, 0, 1, 'flat', false, 'flat', 'wedge'), 'Gap Off: ordinary joined connector, no fade');
-  assert.ok(!stripAnsi(joined).includes('▒'));
-  const compact = renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'wedge', 'wedge');
-  assert.ok(!stripAnsi(compact).includes('▒'), 'a zero-width (Compact) gap has no cell to color');
-  assert.ok(faded(1).endsWith('\u001B[0m\u001B[49m'), 'ANSI state ends neutral');
-  function faded(gap: number) { return renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge', 'wedge'); }
-});
-
-test('caps around the fade gap use the fade shape; Off keeps a neutral gap', () => {
+  assert.equal(joined, renderPowerlineBlocks(blocks, 0, 1, 'flat', false, 'flat', 'wedge'), 'Gap Off is an ordinary joined connector');
   for (const shape of POWERLINE_SHAPES) {
-    const glyphs = powerlineShapeGlyphs(shape);
-    const plain = stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', shape));
-    assert.ok(plain.includes(`${glyphs.close}▒${glyphs.open}`), `${shape}: ${plain}`);
+    for (const gap of [0, 1, 2, 3]) {
+      assert.equal(displayWidth(renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', shape, shape)),
+        displayWidth(renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', shape)), `${shape} gap ${gap}`);
+    }
   }
-  const override = stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'rounded', 'slash'));
-  assert.ok(override.includes('▒'), 'a fixed fade shape sticks when the connector differs');
-  assert.equal(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', undefined),
-    renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge'));
-  const end = renderPowerlineBlocks(blocks.slice(0, 1), 1, 0, 'fadeWedge', true, 'fadeWedge', 'wedge', 'wedge');
-  assert.equal(end, renderPowerlineBlocks(blocks.slice(0, 1), 1, 0, 'fadeWedge', true, 'fadeWedge', 'wedge'), 'Start/End fades are untouched');
-  assert.equal([...stripAnsi(end)].filter(character => character === '').length, 7, 'three-step start and end fades');
 });
 
-test('the fade cell falls back to ASCII in safe glyph mode', () => {
+test('Compact fades through its touching caps; Normal gaps are fully darker-A with no neutral hole', () => {
+  const compact = renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'wedge', 'wedge');
+  assert.ok(compact.includes(`${RESET}${bg(fadeA)}${fg(PURPLE)}${RESET}${bg(fadeA)}${fg(GREEN)}`), 'caps sit on darker-A');
+  for (const gap of [1, 2, 3]) {
+    const rendered = renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge', 'wedge');
+    assert.ok(rendered.includes(`${RESET}${bg(fadeA)}${' '.repeat(gap)}${fg(GREEN)}`), `gap ${gap} is one flat darker-A run`);
+    const between = rendered.slice(rendered.indexOf('A'), rendered.indexOf('B'));
+    assert.ok(!between.includes('\u001B[49m'), `gap ${gap}: no terminal-background hole`);
+  }
+  const flatCompact = renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'flat', 'flat');
+  assert.equal(displayWidth(flatCompact), displayWidth(renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'flat')),
+    'Flat + Compact has zero cells to color and adds none');
+  assert.ok(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'flat', 'flat').includes(`${bg(fadeA)} `), 'Flat with a gap colors it');
+});
+
+test('Start/End fades are unchanged, output ends neutral, and safe mode stays ASCII', () => {
+  const end = renderPowerlineBlocks(blocks, 1, 0, 'fadeWedge', true, 'fadeWedge', 'wedge', 'wedge');
+  assert.equal([...stripAnsi(end)].filter(character => character === '').length, 8, 'three-step start and end plus one connector');
+  assert.ok(end.endsWith('\u001B[0m\u001B[49m'));
   setIconStyle('safe');
   try {
     for (const shape of POWERLINE_SHAPES) {
-      const rendered = renderPowerlineBlocks(blocks, 2, 1, 'flat', true, 'flat', shape, shape);
-      assert.ok([...stripAnsi(rendered)].every(character => character.codePointAt(0)! < 0x80), `${shape}: ${stripAnsi(rendered)}`);
-      assert.ok(rendered.includes(`${fg(PURPLE)}${bg(GREEN)}:`));
+      const rendered = stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', shape));
+      assert.ok([...rendered].every(character => character.codePointAt(0)! < 0x80), `${shape}: ${rendered}`);
     }
   } finally {
     setIconStyle('nerd');
@@ -189,15 +219,23 @@ test('Rich Git geometry follows the Main Prompt by default and a fixed shape ove
   assert.ok(stripAnsi(cleanLine).includes('main  '), 'the clean marker enters with Rich Git geometry');
 });
 
-test('Rich Git connector fade: follow main, follow geometry, off, or a fixed shape', () => {
-  const gap = (gitConnectorFade: PromptConfiguration['nmsh']['gitConnectorFade'], patch: (value: PromptConfiguration) => void = () => {}) =>
-    line(value => { value.nmsh.gitGeometry = 'rounded'; value.nmsh.gitConnectorFade = gitConnectorFade; patch(value); });
-  assert.ok(gap('followMain').includes('▒ +1'), 'Follow connector on the Main Prompt means Rich Git geometry here');
-  assert.ok(gap('followMain', value => { value.nmsh.connectorFade = 'slash'; }).includes('▒ +1'), 'inherits a fixed Main fade');
-  assert.ok(!gap('followMain', value => { value.nmsh.connectorFade = 'off'; }).includes('▒ +1'), 'inherits Main Off');
-  assert.ok(gap('followGeometry', value => { value.nmsh.connectorFade = 'off'; }).includes('▒ +1'));
-  assert.ok(!gap('off').includes('▒ +1'));
-  assert.ok(gap('backslash').includes('▒ +1'));
+test('Rich Git connector fade: follow main, follow geometry, off, or a fixed shape — only the entry cap changes', () => {
+  const branchFade = bg(connectorFadeColor(NATIVE_PROMPT_THEMES.lavender.colors('gitBranch').background));
+  const gap = (gitConnectorFade: PromptConfiguration['nmsh']['gitConnectorFade'], patch: (value: PromptConfiguration) => void = () => {}) => {
+    const value = config(draft => {
+      draft.modules = draft.modules.map(module => ({...module, visible: module.id === 'project' || module.id === 'gitBranch'}));
+      draft.nmsh.gitGeometry = 'rounded'; draft.nmsh.gitConnectorFade = gitConnectorFade; patch(draft);
+    });
+    return buildContextLine({cwd: '/r', project: 'r', branch: 'main', git: dirty}, 160, value, 'composer');
+  };
+  assert.ok(stripAnsi(gap('followMain')).includes('  +1'), 'Follow connector on the Main Prompt means Rich Git geometry');
+  assert.ok(gap('followMain').includes(branchFade));
+  assert.ok(stripAnsi(gap('followMain', value => { value.nmsh.connectorFade = 'slash'; })).includes('  +1'),
+    'inherits a fixed Main fade for the entry cap; the exit stays Rounded');
+  assert.ok(!gap('followMain', value => { value.nmsh.connectorFade = 'off'; }).includes(branchFade), 'inherits Main Off');
+  assert.ok(gap('followGeometry', value => { value.nmsh.connectorFade = 'off'; }).includes(branchFade));
+  assert.ok(!gap('off').includes(branchFade));
+  assert.ok(stripAnsi(gap('backslash')).includes('  +1'), 'a fixed Rich Git fade changes only the entry');
   assert.equal(normalizePromptConfiguration({}).nmsh.gitConnectorFade, 'followMain');
   assert.equal(normalizePromptConfiguration({}).nmsh.gitGeometry, 'follow');
 });
@@ -277,10 +315,13 @@ test('snapshots keep every Rich Git setting and resolved geometry; later changes
   const appearance = {...DEFAULT_PROMPT_CONFIGURATION.transcript, divider: false};
   const row = renderHistoricalContext({cwd: '/r', prompt: snapshot}, 100, appearance)!.plain;
   assert.ok(row.includes('\uE0BC \uE0BA +1'), `history keeps the captured Rich Git geometry and fade Off: ${row}`);
-  assert.ok(row.includes('▒'), 'history keeps the captured Main Prompt fade');
+  const history = renderHistoricalContext({cwd: '/r', prompt: snapshot}, 100, appearance)!.ansi;
+  assert.match(history, /\u001B\[0m\u001B\[48;2;[\d;]+m\u001B\[38;2;[\d;]+m\uE0B0\u001B\[0m\u001B\[48;2;[\d;]+m /u,
+    'history keeps the captured Main Prompt fade: the exit cap and gap sit on the faded left color');
   const legacy = {...snapshot, connectorFade: undefined, gitColors: undefined, gitGeometry: undefined, gitConnectorFade: undefined,
     segments: [...snapshot.segments.filter(segment => !segment.role?.startsWith('gitS')).map(({shape, fade, ...segment}) => segment),
       {text: '+1 ~2', role: 'gitChanges', geometry: 'powerline' as const}]};
   const old = renderHistoricalContext({cwd: '/r', prompt: legacy}, 100, {...appearance, historyColors: 'theme'})!;
-  assert.ok(old.plain.includes('+1 ~2') && !old.plain.includes('▒'), 'old snapshots keep neutral gaps and legacy roles');
+  assert.ok(old.plain.includes('+1 ~2'), 'old snapshots keep legacy roles');
+  assert.ok(/\uE0B0\u001B\[0m\u001B\[49m \u001B\[0m\u001B\[49m/u.test(old.ansi), 'old snapshots keep neutral gaps');
 });
