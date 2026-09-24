@@ -21,6 +21,10 @@ test('v0.3 config keeps Nerd appearance and completed onboarding; fresh config a
   assert.equal(normalizePromptConfiguration({onboardingComplete: true}).glyphChoiceComplete, true);
   assert.equal(normalizePromptConfiguration({onboardingComplete: true}).glyphStyle, 'nerd');
   assert.equal(normalizePromptConfiguration({glyphStyle: 'invalid'}).glyphStyle, 'nerd');
+  assert.equal(normalizePromptConfiguration({}).sessionRetention, 1000);
+  assert.equal(normalizePromptConfiguration({sessionRetention: 500}).sessionRetention, 500);
+  assert.equal(normalizePromptConfiguration({sessionRetention: null}).sessionRetention, null);
+  assert.equal(normalizePromptConfiguration({sessionRetention: -1}).sessionRetention, 1000);
 });
 
 test('glyph style persists and safe geometry avoids private-use glyphs', async () => {

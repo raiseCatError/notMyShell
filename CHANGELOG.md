@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - First-run terminal glyph compatibility choice (Nerd Font or Safe/ASCII), persisted under NMSh settings; existing v0.3 configurations retain their appearance.
 - Central `/settings` browser with glyph style, prompt, transcript, and keyboard entry points, and a temporary shared panel boundary.
+- Continuous local presentation-session checkpoints with retention of 1000 unpinned sessions by default, plus `/resume` search and date navigation.
 
 ## [0.3.0] - 2026-09-24
 
