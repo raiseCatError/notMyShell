@@ -19,6 +19,7 @@ import {buildContextLine, buildInlineContextPrefix, buildRichGitShowcaseLine, bu
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
+import {createNotificationService, formatCommandNotification, shouldNotify, type CompletedCommand, type NotificationService, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
@@ -106,6 +107,9 @@ export class TerminalApp {
   private focusedActivityId?: string;
   private focusedCommandIndex?: number;
   private passthrough = false;
+  /** Learned from focus reports while NMSh owns the terminal; unknown otherwise. */
+  private terminalFocus: TerminalFocus = 'unknown';
+  private readonly notifications: NotificationService = createNotificationService();
   private externalPassthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
@@ -237,6 +241,10 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (key.kind === 'focusIn' || key.kind === 'focusOut') {
+      this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      return;
+    }
     if (this.settingsPanelState) {
       this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
@@ -682,6 +690,7 @@ export class TerminalApp {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
         this.passthrough = true;
         this.renderer.suspendForPassthrough();
+        this.terminalFocus = 'unknown';
         const dimensions = this.dimensions();
         this.session.resize(dimensions.columns, dimensions.rows);
       }
@@ -702,6 +711,7 @@ export class TerminalApp {
     this.passthrough = shouldPassthrough(command);
     if (this.passthrough) {
       this.renderer.suspendForPassthrough();
+      this.terminalFocus = 'unknown';
       const dimensions = this.dimensions();
       this.session.resize(dimensions.columns, dimensions.rows);
     }
@@ -967,6 +977,8 @@ export class TerminalApp {
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
+    this.notifyCommandCompletion({command: command.command, elapsedMs: elapsed, exitCode,
+      interrupted: command.interrupted || exitCode === 130});
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the completed command.', ERROR);
     });
@@ -981,6 +993,16 @@ export class TerminalApp {
     this.render();
   }
 
+
+  /**
+   * Runs once per live completion, from the prompt marker that ends the
+   * foreground command; rendering and restored transcripts never reach it.
+   */
+  private notifyCommandCompletion(completed: CompletedCommand): void {
+    if (!this.notifications.supported) return;
+    if (!shouldNotify(completed, this.promptConfiguration.notifications, this.terminalFocus)) return;
+    this.notifications.notify(formatCommandNotification(completed));
+  }
 
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
@@ -1085,6 +1107,7 @@ export class TerminalApp {
       process.stdin.setRawMode(false);
       rawModeReleased = true;
       this.renderer.leave();
+      this.terminalFocus = 'unknown';
       rendererLeft = true;
       process.on('SIGINT', ignoreInterrupt);
       interruptAttached = true;

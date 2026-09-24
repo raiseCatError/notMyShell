@@ -5,7 +5,8 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number}
+  | {kind: 'focusIn' | 'focusOut'};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -13,6 +14,9 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   // Ghostty honors it) encodes Escape as its functional key code (27) rather
   // than a lone raw ESC byte. Without these, Escape falls through to the
   // generic "unknown CSI sequence" branch below and is silently swallowed.
+  // Focus reports (CSI ? 1004 h, enabled by TerminalRenderer): consumed, never typed.
+  ['\u001B[I', 'focusIn'],
+  ['\u001B[O', 'focusOut'],
   ['\u001B[27u', 'escape'],
   ['\u001B[27;1u', 'escape'], // explicit default-modifier form
   ['\u001B[Z', 'focusPrevious'],
