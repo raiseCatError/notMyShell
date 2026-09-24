@@ -6,9 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.3.0] - Unreleased (release candidate)
+## [0.3.0] - 2026-09-24
 
-Session & Interaction UX, plus the appearance and customization system. This entry is prepared on `dev`; the release date is set when v0.3.0 is published.
+Session & Interaction UX, plus the appearance and customization system.
 
 ### Added
 - **Prompt providers:** NMSh Native (default), optional Starship, and optional Powerlevel10k. Starship and Powerlevel10k supply prompt content only; NMSh keeps the editor, composer, history, and structured execution. `.zshrc`, `starship.toml`, and `.p10k.zsh` are never written.
@@ -40,7 +40,7 @@ Session & Interaction UX, plus the appearance and customization system. This ent
 - Native `fzf-tab` support does not exist yet; configured-zsh completion parity is tracked for v0.4 (#52).
 - Powerlevel10k: the right prompt, gitstatus daemon, instant prompt, and settings defined only in `.zshrc` are not reproduced.
 - Nested activity is limited to directly observed Node TAP v13 streams.
-- Visual behavior has been validated in Ghostty for earlier builds; the final v0.3.0 candidate still needs human validation in Ghostty, Terminal.app, and VS Code.
+- Final v0.3.0 candidate visual and interaction validation passed in Ghostty, Terminal.app, and VS Code integrated terminal.
 
 ## [0.2.0] - 2026-09-23
 
