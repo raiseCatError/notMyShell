@@ -1,27 +1,31 @@
 import {graphemes} from '../input/inputLayout.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 
+/** Time for the wave to travel one wavelength; independent of text length. */
 export const SHIMMER_CYCLE_MS = 1800;
-export const BREATH_CYCLE_MS = 2000;
+/** Recent output quickens the wave slightly instead of pulsing the whole line. */
+export const ACTIVE_SHIMMER_CYCLE_MS = 1200;
+/** Glyphs per wavelength: neighbours differ by 1/12 of a cycle. */
+export const SHIMMER_WAVELENGTH = 12;
+/** Luminance stays inside this band so the effect reads as a soft sheen. */
+const SHIMMER_FLOOR = 0.12;
+const SHIMMER_CEILING = 0.9;
 
 export function wrappedPhase(elapsedMs: number, cycleMs: number): number {
   if (cycleMs <= 0) return 0;
   return ((elapsedMs % cycleMs) + cycleMs) % cycleMs / cycleMs;
 }
 
-export function shimmerIntensity(elapsedMs: number, glyphIndex: number, textLength: number, isActive: boolean): number {
-  if (isActive) {
-    const localPhase = wrappedPhase(elapsedMs, BREATH_CYCLE_MS);
-    return (1 - Math.cos(localPhase * Math.PI * 2)) / 2;
-  } else {
-    const phase = wrappedPhase(elapsedMs, SHIMMER_CYCLE_MS);
-    // Right to left narrow crest.
-    // The crest moves from textLength + 3 down to -3.
-    const crestPosition = (1 - phase) * (textLength + 6) - 3;
-    const distance = Math.abs(glyphIndex - crestPosition);
-    // Narrow bright crest ~3 characters wide means distance up to 1.5
-    return Math.max(0, 1 - distance / 1.5);
-  }
+/**
+ * Per-glyph luminance (0 base … 1 peak) of a smooth wave travelling left to
+ * right. Each glyph is phase-shifted from its neighbour by 1/wavelength, and
+ * the crest advances wavelength/cycle glyphs per millisecond, so a 100 ms
+ * frame moves it well under one glyph whatever the text length.
+ */
+export function shimmerIntensity(elapsedMs: number, glyphIndex: number, _textLength: number, isActive: boolean): number {
+  const phase = wrappedPhase(elapsedMs, isActive ? ACTIVE_SHIMMER_CYCLE_MS : SHIMMER_CYCLE_MS);
+  const wave = (1 + Math.cos(2 * Math.PI * (glyphIndex / SHIMMER_WAVELENGTH - phase))) / 2;
+  return SHIMMER_FLOOR + (SHIMMER_CEILING - SHIMMER_FLOOR) * wave;
 }
 
 export function interpolateRgb(from: RgbColor, to: RgbColor, amount: number): RgbColor {
@@ -34,12 +38,16 @@ export function interpolateRgb(from: RgbColor, to: RgbColor, amount: number): Rg
 }
 
 export function shimmerText(text: string, elapsedMs: number, isActive: boolean): string {
+  return shimmerTextWithColors(text, elapsedMs, isActive, UI_COLORS.workingBase, UI_COLORS.workingPeak);
+}
+
+export function shimmerTextWithColors(text: string, elapsedMs: number, isActive: boolean, base: RgbColor, peak: RgbColor): string {
   const chars = graphemes(text);
   const len = chars.length;
   return chars.map((glyph, index) => {
     const color = interpolateRgb(
-      UI_COLORS.workingBase,
-      UI_COLORS.workingPeak,
+      base,
+      peak,
       shimmerIntensity(elapsedMs, index, len, isActive),
     );
     return `${foreground(color)}${glyph}`;

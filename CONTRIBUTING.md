@@ -19,7 +19,8 @@ Before starting work, check:
 
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.2.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/1)** — current release target
+- **[v0.3.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/2)** — current release candidate (awaiting final human terminal validation)
+- **[v0.4.0 Milestone](https://github.com/raiseCatError/notMyShell/milestone/3)** — next planned work
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model

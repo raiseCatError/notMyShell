@@ -1,7 +1,11 @@
 export type CommandOutcome = 'failure' | 'interrupted';
 
 export function formatDuration(milliseconds: number): string {
-  const totalSeconds = Math.max(0, milliseconds) / 1000;
+  const elapsedMilliseconds = Math.max(0, milliseconds);
+  if (elapsedMilliseconds < 1) return '<1 ms';
+  if (elapsedMilliseconds < 1000) return `${Math.floor(elapsedMilliseconds)} ms`;
+
+  const totalSeconds = elapsedMilliseconds / 1000;
   if (totalSeconds < 60) return `${totalSeconds.toFixed(1)}s`;
 
   const totalWholeSeconds = Math.floor(totalSeconds);

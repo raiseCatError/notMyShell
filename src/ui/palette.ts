@@ -7,6 +7,7 @@ export interface RgbColor {
 export const UI_COLORS = {
   projectBackground: {red: 84, green: 82, blue: 132},
   projectForeground: {red: 245, green: 244, blue: 250},
+  cwdBackground: {red: 69, green: 73, blue: 94},
   gitBackground: {red: 52, green: 105, blue: 98},
   gitForeground: {red: 239, green: 248, blue: 246},
   
@@ -32,4 +33,3 @@ export function foreground(color: RgbColor): string {
 export function background(color: RgbColor): string {
   return `\u001B[48;2;${color.red};${color.green};${color.blue}m`;
 }
-

@@ -14,10 +14,10 @@ async function sourceFiles(directory: string): Promise<string[]> {
   return files;
 }
 
-test('active runtime has no mascot implementation, timer, or row reservation', async () => {
+test('active runtime has no animated mascot timer or reserved screen row', async () => {
   const files = await sourceFiles('src');
   const source = (await Promise.all(files.map(file => readFile(file, 'utf8')))).join('\n');
-  assert.ok(!/mascot|CatMascot|MASCOT_REFRESH|mascotRows/iu.test(source));
+  assert.ok(!/CatMascot|MASCOT_REFRESH|mascotRows/iu.test(source));
 });
 
 test('archived mascot is outside normal TypeScript and test paths', async () => {

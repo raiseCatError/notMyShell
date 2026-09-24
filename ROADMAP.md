@@ -4,81 +4,65 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.1.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.1.0) |
+| **Current release** | [v0.2.0 — Structured Execution](https://github.com/raiseCatError/notMyShell/releases/tag/v0.2.0) |
 | **Development branch** | `dev` |
-| **Next milestone** | [v0.2.0 — Structured Execution](https://github.com/raiseCatError/notMyShell/milestone/1) |
+| **Release candidate** | [v0.3.0 — Session & Interaction UX](https://github.com/raiseCatError/notMyShell/milestone/2) (on `dev`, awaiting final human validation) |
+| **Next milestone** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/milestone/3) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-**How the tracking system works:**
+GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
 
-| Layer | Purpose |
+## Released — v0.2.0 Structured Execution
+
+[Milestone #1](https://github.com/raiseCatError/notMyShell/milestone/1) is closed and shipped. Its design record remains at [docs/design/structured-execution.md](docs/design/structured-execution.md), and release notes remain in [CHANGELOG.md](CHANGELOG.md).
+
+## Now — v0.3.0 Session & Interaction UX (release candidate)
+
+All v0.3 engineering is merged to `dev`, and the package version is `0.3.0`. The milestone now contains only implemented work awaiting final human terminal validation (Ghostty, Terminal.app, VS Code). v0.3.0 is not released until that validation passes.
+
+**Design record:** [docs/design/session-interaction-ux.md](docs/design/session-interaction-ux.md)
+
+### Implemented; final human terminal validation remains
+
+| Issue | Implemented scope |
 |---|---|
-| **ROADMAP.md** (this file) | High-level product direction and navigation |
-| **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** | Concrete actionable work items |
-| **[Milestones](https://github.com/raiseCatError/notMyShell/milestones)** | Work targeted at a specific release |
-| **GitHub Project** | Live status board |
-| **Pull Requests** | Implementation |
-| **[CHANGELOG.md](CHANGELOG.md)** | Shipped and released work |
-| **[docs/design/](docs/design/)** | Durable design decisions and architectural concepts |
+| [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Native Start / Connector / Gap / End geometry, rounded and slanted shapes, outer-edge fades, icons On/Off, module manager |
+| [#58](https://github.com/raiseCatError/notMyShell/issues/58) | NMSh Native / Starship providers, final five-theme set, synthetic previews, semantic snapshots |
+| [#66](https://github.com/raiseCatError/notMyShell/issues/66) | `/transcript` divider, historical prompt, history colors, divider density |
+| [#67](https://github.com/raiseCatError/notMyShell/issues/67) | Powerlevel10k provider via an isolated helper, with documented limitations |
+| [#49](https://github.com/raiseCatError/notMyShell/issues/49) | One-line/two-line composer and `header`/`composer` placement |
+| [#56](https://github.com/raiseCatError/notMyShell/issues/56) | Welcome header, bold wordmark, full-body cat and blink |
+| [#36](https://github.com/raiseCatError/notMyShell/issues/36) | `/zsh` handoff and nested-NMSh prevention |
+| [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms |
+| [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Local transcript archive, `/clear`, `/resume` |
+| [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested Node TAP activity and shimmer |
+| [#53](https://github.com/raiseCatError/notMyShell/issues/53) | Build identity, `/version`, `--version` |
 
----
+Already approved in Ghostty: the full-body cat design, the `/prompt` structure, Cool First, one-line mode, and muted theme-preserving history.
 
-## Now — Structured Execution ([v0.2.0](https://github.com/raiseCatError/notMyShell/milestone/1))
+## Next — v0.4.0 Shell Intelligence & Extensibility
 
-Making ordinary shell execution structured, readable, compact, and recoverable while preserving complete raw PTY behavior.
+[Milestone #3](https://github.com/raiseCatError/notMyShell/milestone/3). Not started.
 
-**Design document:** [docs/design/structured-execution.md](docs/design/structured-execution.md)
-
-| Issue | Title |
+| Issue | Area |
 |---|---|
-| [#1](https://github.com/raiseCatError/notMyShell/issues/1) | Visual hierarchy: distinguish submitted commands, NMSh metadata, and shell output |
-| [#2](https://github.com/raiseCatError/notMyShell/issues/2) | Output folding: preserve raw PTY output with per-command presentation state |
-| [#3](https://github.com/raiseCatError/notMyShell/issues/3) | Ctrl+O: toggle compact and detailed execution views |
-| [#4](https://github.com/raiseCatError/notMyShell/issues/4) | Automatic execution presentation: inline, folded, live, passthrough |
-| [#5](https://github.com/raiseCatError/notMyShell/issues/5) | Execution timeline: factual command milestones and summaries |
-| [#6](https://github.com/raiseCatError/notMyShell/issues/6) | Deterministic summaries for common CLI tools |
-| [#7](https://github.com/raiseCatError/notMyShell/issues/7) | Structured execution compatibility and human validation pass |
+| [#68](https://github.com/raiseCatError/notMyShell/issues/68) | Theme-aware syntax highlighting and `/syntax` |
+| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability (fzf-tab is not supported today) |
+| [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins (autosuggestions, highlighting, history widgets) |
+| [#16](https://github.com/raiseCatError/notMyShell/issues/16) | Safe user zsh config and plugin interoperability (hooks, Atuin, zoxide, fzf) |
+| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and setup (zoxide, fzf, Atuin) |
+| [#69](https://github.com/raiseCatError/notMyShell/issues/69) | Right-side prompt/context |
+| [#70](https://github.com/raiseCatError/notMyShell/issues/70) | Show-on-command contextual prompt modules |
+| [#71](https://github.com/raiseCatError/notMyShell/issues/71) | Intelligent directory shortening |
+| [#72](https://github.com/raiseCatError/notMyShell/issues/72) | Richer Git prompt state |
+| [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules (research) |
+| [#74](https://github.com/raiseCatError/notMyShell/issues/74) | Update discovery and safe `/update` |
 
----
-
-## Next — Prompt & Personalization
-
-A modular, configurable NMSh context/prompt system. Similar in spirit to Starship's modularity, but NMSh renders the context itself.
-
-Potential modules: cwd, git branch, git dirty state, runtime version, exit status, time, battery, SSH/hostname.
-
-Configuration will allow ordering, visibility, separators, colors, and conditional display. Context placement (inline, above/below editor) will be configurable.
-
-Includes first-run onboarding to guide new users through basic NMSh configuration and terminal host setup.
-
-Also in this phase: editor quality improvements including rich paste atom support for large multiline pastes.
-
-| Issue | Title |
-|---|---|
-| [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Modular NMSh prompt/context system |
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | First-run onboarding and appearance configuration |
-| [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms for large multiline text |
-
----
+zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
 
 ## Later — Terminal Host Independence
 
-NMSh core is **terminal-host agnostic**. It must not structurally depend on any specific terminal host. A TerminalHost capability abstraction gates enhanced behaviors so they do not leak into NMSh core.
-
-**Host model:**
-
-```
-Terminal.app  Ghostty  iTerm2  Kitty  WezTerm  (others)
-                          ↓
-                        NMSh
-                          ↓
-                         zsh
-```
-
-- **Terminal.app** — baseline host; NMSh must look good and be fully functional here
-- **Ghostty** — enhanced integration (keyboard protocol, appearance); must not become a structural dependency
-- **iTerm2, Kitty, WezTerm** — capability-driven compatibility passes
-- **Supacode** — agent/worktree environment; separate research, not treated as a standard terminal host
+Keep TerminalHost abstraction and host compatibility separate from v0.3. NMSh core remains host agnostic; enhanced host capabilities must not become structural dependencies.
 
 | Issue | Title |
 |---|---|
@@ -88,76 +72,28 @@ Terminal.app  Ghostty  iTerm2  Kitty  WezTerm  (others)
 | [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Compatibility passes for iTerm2, Kitty, and WezTerm |
 | [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Investigate NMSh interoperability with Supacode and agent-oriented terminal hosts |
 
----
+## Ongoing — CLI/TUI Compatibility and Polish
 
-## Ongoing — CLI/TUI Compatibility
-
-NMSh interoperates with useful CLI tools rather than replacing their functionality.
-
-- **gh** still handles GitHub
-- **zoxide** still handles smart directory navigation
-- **Atuin** can still handle advanced history
-- **tmux** still multiplexes
-- **nano/vim** still edit
-- **Agent CLIs** (Claude Code, Codex, Aider) still own their interfaces
-
-NMSh provides the surrounding interaction and presentation layer.
-
-| Issue | Title |
-|---|---|
-| [#14](https://github.com/raiseCatError/notMyShell/issues/14) | CLI and TUI interoperability compatibility suite |
-
----
+NMSh provides the surrounding interaction and presentation layer; tools such as `gh`, zoxide, Atuin, tmux, editors, and agent CLIs keep their own interfaces. See [#14](https://github.com/raiseCatError/notMyShell/issues/14) for compatibility work and [#20](https://github.com/raiseCatError/notMyShell/issues/20) for uncategorized polish that does not already have a focused issue.
 
 ## Longer Term — Shells and Platforms
 
-**zsh-first:** zsh is NMSh's only first-class shell backend for the foreseeable near term. Deep zsh quality is more important than shallow multi-shell support.
-
-**ShellAdapter (future research):** A long-term architectural concept to make shells interchangeable beneath NMSh. No shell other than zsh is supported or promised today.
-
-**Linux:** preferred first non-macOS platform — the POSIX PTY and zsh model maps naturally.
-
-**Windows:** research only. Windows may require substantially different backend architecture (ConPTY, process/job control differences). Windows support is NOT promised.
+zsh remains the only first-class backend. ShellAdapter research and Linux/Windows investigations remain future work; multi-shell and those platform targets are not promised today.
 
 | Issue | Title |
 |---|---|
-| [#16](https://github.com/raiseCatError/notMyShell/issues/16) | zsh-first quality: aliases, completions, Atuin, zoxide, fzf, and plugin compatibility |
 | [#17](https://github.com/raiseCatError/notMyShell/issues/17) | Research ShellAdapter architecture for future multi-shell support |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Investigate Linux support |
 | [#19](https://github.com/raiseCatError/notMyShell/issues/19) | Research Windows / ConPTY feasibility |
 
----
-
-## Ongoing Polish
-
-Mouse behavior, Unicode, completion quality, history, performance, installation, and demo assets.
-
-| Issue | Title |
-|---|---|
-| [#20](https://github.com/raiseCatError/notMyShell/issues/20) | Ongoing polish: mouse, Unicode, completions, history, performance, and installation |
-
----
-
-## Future — Session & Editor UX
-
-| Issue | Title |
-|---|---|
-| [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Persistent local sessions: archive /clear history and resume with /resume |
-
----
-
 ## Design Principles
 
-- **Real persistent shell underneath** — NMSh is a frontend over a persistent real shell; it never replaces the shell with command-by-command subprocess spawning
-- **NMSh is not a terminal emulator** — the terminal host renders cells and interprets ANSI sequences; NMSh does not
-- **zsh-first** — deep zsh quality before multi-shell breadth
-- **Terminal-host agnostic core** — NMSh core must not structurally depend on any specific terminal host
-- **CLI/TUI interoperable** — NMSh wraps and coordinates CLI tools, does not replace them
-- **Zero-AI core experience** — no LLM tokens, no model API calls, no cloud inference required for any core NMSh behavior; the UI feels intelligent through deterministic local logic
-- **Raw PTY output remains recoverable** — output is never discarded merely because it is hidden; presentation state is separate from storage
-- **Fullscreen apps retain passthrough** — interactive/fullscreen programs use the raw PTY path; NMSh applies no presentation overlay
-
----
+- NMSh is a frontend over a persistent real zsh session.
+- The terminal host renders cells and interprets ANSI; NMSh is not a terminal emulator.
+- Raw PTY output remains recoverable and is not semantically recolored.
+- Fullscreen applications retain the passthrough path.
+- NMSh core remains terminal-host agnostic and interoperates with CLI/TUI tools.
+- The core experience uses deterministic local logic without cloud inference or model API calls.
 
 ## GitHub Project
 

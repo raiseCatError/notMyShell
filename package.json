@@ -1,6 +1,6 @@
 {
   "name": "nmsh",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "A cleaner terminal frontend for zsh with persistent input, autocomplete, semantic highlighting, scrollable history, and better command feedback.",
   "private": true,
   "main": "dist/index.js",
@@ -13,7 +13,7 @@
     "nmsh": "node dist/index.js",
     "test": "node --import=tsx --test tests/**/*.test.ts",
     "dev": "tsx src/index.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "keywords": [

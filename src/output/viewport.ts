@@ -7,7 +7,11 @@ export interface WrappedRow {
   plain: string;
   lineIndex?: number;
   isFoldHint?: boolean;
+  isHistoricalHeader?: boolean;
   commandIndex?: number;
+  activityId?: string;
+  activityStartedAt?: number;
+  isLiveActivity?: boolean;
 }
 
 export function wrapStyledLine(line: StyledLine, width: number): WrappedRow[] {

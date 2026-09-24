@@ -7,6 +7,8 @@ export interface StyledCell {
 }
 
 export type StyledLine = Array<StyledCell | null | undefined>;
+export type SerializedCell = StyledCell | null | {empty: true};
+export type SerializedLine = SerializedCell[];
 
 export class AnsiOutputParser {
   readonly lines: StyledLine[] = [];
@@ -124,10 +126,44 @@ export class AnsiOutputParser {
     return selected.join('\n');
   }
 
+  plainLineAt(index: number): string | undefined {
+    const line = this.lines[index];
+    return line ? plainLine(line) : undefined;
+  }
+
+  plainCurrentLine(): string {
+    return plainLine(this.current);
+  }
+
+  hasCurrentContent(): boolean {
+    return this.current.some(cell => cell !== undefined && cell !== null);
+  }
+
   allLines(): StyledLine[] {
     const hasContent = this.current.some(cell => cell !== undefined && cell !== null);
     if (!hasContent) return [...this.lines];
     return [...this.lines, this.current];
+  }
+
+  snapshot(): SerializedLine[] {
+    return this.allLines().map(line => Array.from({length: line.length}, (_, index) => {
+      const cell = line[index];
+      if (cell === undefined) return {empty: true};
+      if (cell === null) return null;
+      return {...cell};
+    }));
+  }
+
+  restore(lines: SerializedLine[]): void {
+    this.lines.length = 0;
+    this.current = [];
+    this.column = 0;
+    this.style = '';
+    this.pending = '';
+    for (const line of lines) {
+      const restored: StyledLine = line.map(cell => cell === null ? null : 'empty' in cell ? undefined : {...cell});
+      this.lines.push(restored);
+    }
   }
 
   trim(maxLines: number): number {
@@ -208,4 +244,3 @@ export function plainLine(line: StyledLine): string {
   }
   return result.replace(/\s+$/u, '');
 }
-

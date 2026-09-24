@@ -61,6 +61,7 @@ fi
 export TERM=\$nmsh_orig_term
 
 # NMSh specific setup
+export NMSH_ACTIVE=1
 PROMPT=''
 RPROMPT=''
 PS2=''

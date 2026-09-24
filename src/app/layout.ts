@@ -1,3 +1,5 @@
+import type {ComposerLayout, ContextPlacement} from '../prompt/configuration.js';
+
 export const MAX_VISIBLE_INPUT_ROWS = 8;
 
 export interface ScreenLayout {
@@ -7,6 +9,7 @@ export interface ScreenLayout {
   showJump: boolean;
   showLiveActivity: boolean;
   showPrompt: boolean;
+  showComposerTopBorder: boolean;
   showSeparator: boolean;
   showGap: boolean;
 }
@@ -18,11 +21,17 @@ export function calculateScreenLayout(
   requestedLiveActivity = false,
   requestedJump = false,
   hasOutput = false,
+  contextPlacement: ContextPlacement = 'header',
+  hasVisibleContext = true,
+  composerLayout: ComposerLayout = 'twoLine',
 ): ScreenLayout {
   const safeRows = Math.max(1, rows);
-  const showPrompt = safeRows >= 2;
+  const oneLine = composerLayout === 'oneLine';
+  const showPrompt = safeRows >= 2 && hasVisibleContext && !oneLine;
   const showSeparator = safeRows >= 3;
-  const fixedRows = Number(showPrompt) + Number(showSeparator);
+  const showComposerTopBorder = safeRows >= (oneLine ? 3 : 4)
+    && (oneLine || (showPrompt && contextPlacement === 'composer'));
+  const fixedRows = Number(showPrompt) + Number(showSeparator) + Number(showComposerTopBorder);
   const minimumOutput = safeRows >= 7 ? 2 : 0;
   const inputCapacity = Math.max(1, safeRows - fixedRows - minimumOutput);
   const inputHeight = Math.min(Math.max(1, requestedInputRows), MAX_VISIBLE_INPUT_ROWS, inputCapacity);
@@ -41,6 +50,7 @@ export function calculateScreenLayout(
     showJump,
     showLiveActivity,
     showPrompt,
+    showComposerTopBorder,
     showSeparator,
     showGap,
   };
