@@ -13,9 +13,10 @@ import type {StarshipStatus} from './starship.js';
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
-import {truncateAnsi} from '../util/text.js';
+import {stripAnsi, truncateAnsi} from '../util/text.js';
+import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 
-export type PromptPanelStep = 'provider' | 'starship' | 'powerlevel10k' | 'layout' | 'appearance' | 'modules' | 'installConfirm';
+export type PromptPanelStep = 'provider' | 'starship' | 'powerlevel10k' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 export interface PromptPanelState {
   onboarding: boolean;
   step: PromptPanelStep;
@@ -26,6 +27,7 @@ export interface PromptPanelState {
   starshipStatus?: StarshipStatus;
   p10kStatus?: Powerlevel10kStatus;
   message?: string;
+  task?: TaskProgress;
 }
 
 const PRIMARY = foreground(UI_COLORS.primary);
@@ -146,6 +148,9 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
 }
 
 export function promptPanelControls(state: PromptPanelState): Array<[string, string]> {
+  if (state.step === 'installProgress') return [['Please wait', 'installation in progress']];
+  if (state.step === 'installResult') return [['Enter', state.task?.state.status === 'failed' ? 'details' : 'continue'], ['D', 'details'], ['Esc', 'back']];
+  if (state.step === 'installDetails') return [['Enter/Esc', 'back']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
     return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['Enter/Esc', 'done']];
@@ -166,6 +171,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
     case 'appearance': return APPEARANCE_ROWS.length;
     case 'modules': return state.draft.modules.length;
     case 'installConfirm': return 2;
+    case 'installProgress': case 'installResult': case 'installDetails': return 1;
   }
 }
 
@@ -201,7 +207,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
  * `themePreviews` holds one live native prompt per palette, in
  * NATIVE_PALETTE_IDS order; it is shown only while editing appearance.
  */
-export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = []): string[] {
+export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = [], rowsAvailable = Infinity): string[] {
   const title = state.onboarding ? 'Prompt setup' : 'Prompt settings';
   const rows = [`${PRIMARY}  ${title}${RESET}`];
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
@@ -253,6 +259,13 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(`${SECONDARY}brew install starship${RESET}`);
     rows.push(item(0, 'Install Starship now'));
     rows.push(item(1, 'Back'));
+  } else if (state.step === 'installProgress' || state.step === 'installResult') {
+    rows.push(...(state.task ? renderTaskProgress(state.task.state) : [`${SUBTLE}No task is active.${RESET}`]));
+  } else if (state.step === 'installDetails') {
+    rows.push(`${PRIMARY}Installation details${RESET}`);
+    const details = state.task?.state.details.trim() || state.task?.state.error || 'No diagnostic output was captured.';
+    rows.push(...details.split(/\r?\n/u).slice(-Math.max(1, Math.min(12, rowsAvailable - 6))).map(line =>
+      `${SECONDARY}  ${stripAnsi(line).replace(/[\u0000-\u001f\u007f]/gu, '?')}${RESET}`));
   } else if (state.step === 'layout') {
     rows.push(`${PRIMARY}Choose composer layout${RESET}`);
     const draftChoice = layoutChoiceIndex(state.draft);

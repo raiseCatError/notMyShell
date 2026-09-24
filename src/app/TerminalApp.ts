@@ -2,8 +2,6 @@ import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderSettingsPanel, SETTINGS_SECTIONS, settingsItemCount, type SettingsPanelState} from '../ui/SettingsPanel.js';
 import {appendFileSync, existsSync} from 'node:fs';
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
 import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
@@ -31,6 +29,7 @@ import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {shimmerText, shimmerTextWithColors} from '../status/shimmer.js';
+import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
@@ -58,7 +57,6 @@ const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = '\u001B[48;2;63;65;82m';
 const STATUS_REFRESH_MS = 100;
-const execFileAsync = promisify(execFile);
 
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
@@ -252,6 +250,20 @@ export class TerminalApp {
       return;
     }
     if (this.promptPanelState) {
+      if (this.promptPanelState.step === 'installProgress') return;
+      if (this.promptPanelState.step === 'installResult' || this.promptPanelState.step === 'installDetails') {
+        if (this.promptPanelState.step === 'installDetails') {
+          if (key.kind === 'enter' || key.kind === 'escape') this.promptPanelState.step = 'installResult';
+        } else if (key.kind === 'text' && key.value.toLowerCase() === 'd') {
+          this.promptPanelState.step = 'installDetails';
+        } else if (key.kind === 'escape' || key.kind === 'interrupt') {
+          this.promptPanelState.step = 'starship';
+        } else if (key.kind === 'enter') {
+          this.promptPanelState.step = this.promptPanelState.task?.state.status === 'failed' ? 'installDetails' : 'starship';
+        }
+        this.render();
+        return;
+      }
       if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
         // Esc leaves the module manager, keeping its draft edits for the final save.
         this.promptPanelState.step = 'appearance';
@@ -1080,18 +1092,18 @@ export class TerminalApp {
       if (state.selectedIndex === 1) {
         state.step = 'starship'; state.selectedIndex = 0;
       } else {
-        state.message = 'Installing Starship with Homebrew…'; this.render();
-        try {
-          await execFileAsync('brew', ['install', 'starship'], {timeout: 10 * 60_000, maxBuffer: 64 * 1024});
+        state.step = 'installProgress';
+        state.task = new TaskProgress('Installing Starship with Homebrew', () => this.render(), Date.now(), 'Starship');
+        this.render();
+        const outcome = await state.task.run('brew', ['install', 'starship']);
+        if (this.stopped) return;
+        if (outcome.status === 'succeeded') {
           this.starshipStatus = await detectStarship(process.env);
           state.starshipStatus = this.starshipStatus;
-          if (!this.starshipStatus.installed) throw new Error('Homebrew completed, but starship was not found on PATH.');
-          state.step = 'starship'; state.selectedIndex = 0;
-          state.message = 'Starship installed and detected.';
-        } catch (error) {
-          state.step = 'starship'; state.selectedIndex = 0;
-          state.message = `Installation failed: ${error instanceof Error ? error.message : String(error)}`;
+          if (!this.starshipStatus.installed) state.task.markFailure('Homebrew completed, but starship was not found on PATH.');
         }
+        state.step = 'installResult';
+        state.selectedIndex = 0;
       }
     } else if (state.step === 'layout') {
       applyLayoutChoice(state.draft, state.selectedIndex);
@@ -1257,10 +1269,10 @@ export class TerminalApp {
 
   private renderedPromptPanel(columns: number): string[] {
     if (!this.promptPanelState) return [];
-    const preview = this.promptPanelPreview(columns);
-    const full = renderPromptPanel(this.promptPanelState, columns, preview, this.promptThemePreviews(columns));
+    const preview = this.promptPanelState.step.startsWith('install') ? [] : this.promptPanelPreview(columns);
+    const full = renderPromptPanel(this.promptPanelState, columns, preview, this.promptThemePreviews(columns), this.dimensions().rows - 1);
     // Short terminals keep the editable rows and live preview; the theme gallery goes first.
-    return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(this.promptPanelState, columns, preview);
+    return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(this.promptPanelState, columns, preview, [], this.dimensions().rows - 1);
   }
 
   /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */
@@ -1712,6 +1724,7 @@ export class TerminalApp {
     if (this.stopped) return;
     this.stopped = true;
     if (this.activityTimer) clearInterval(this.activityTimer);
+    this.promptPanelState?.task?.dispose();
     if (this.welcomeBlinkTimer) clearTimeout(this.welcomeBlinkTimer);
     this.welcomeBlinkTimer = undefined;
     process.stdin.off('data', this.onInput);
