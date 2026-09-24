@@ -16,6 +16,7 @@ import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
+import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
@@ -251,6 +252,18 @@ export class TerminalApp {
     }
     if (this.promptPanelState) {
       if (this.promptPanelState.step === 'installProgress') return;
+      if (this.promptPanelState.step === 'starshipModules' && (key.kind === 'escape' || key.kind === 'interrupt')) {
+        this.promptPanelState.step = 'starship';
+        this.promptPanelState.selectedIndex = 1;
+        this.render();
+        return;
+      }
+      if (this.promptPanelState.step === 'starshipConfirm' && (key.kind === 'escape' || key.kind === 'interrupt')) {
+        this.promptPanelState.step = 'starshipModules';
+        this.promptPanelState.starshipProposal = undefined;
+        this.render();
+        return;
+      }
       if (this.promptPanelState.step === 'installResult' || this.promptPanelState.step === 'installDetails') {
         if (this.promptPanelState.step === 'installDetails') {
           if (key.kind === 'enter' || key.kind === 'escape') this.promptPanelState.step = 'installResult';
@@ -1066,8 +1079,18 @@ export class TerminalApp {
           state.selectedIndex = layoutChoiceIndex(state.draft);
           await this.refreshPanelPreview(state);
         } else if (state.selectedIndex === 1) {
-          state.message = 'Starship presets use `starship preset <name> -o <new-path>`. Choose a new path to preserve existing files, then use STARSHIP_CONFIG or configure it in NMSh.';
+          try {
+            const adapter = new StarshipConfigAdapter(state.starshipStatus);
+            state.starshipModules = await Promise.all(STARSHIP_MODULES.map(module => adapter.disabled(module)));
+            state.step = 'starshipModules';
+            state.selectedIndex = 0;
+            state.message = undefined;
+          } catch (error) {
+            state.message = `Could not read Starship config: ${error instanceof Error ? error.message : String(error)}`;
+          }
         } else if (state.selectedIndex === 2) {
+          state.message = 'Starship presets use `starship preset <name> -o <new-path>`. Choose a new path to preserve existing files, then use STARSHIP_CONFIG or configure it in NMSh.';
+        } else if (state.selectedIndex === 3) {
           state.draft.provider = 'nmsh';
           state.step = 'layout';
           state.selectedIndex = layoutChoiceIndex(state.draft);
@@ -1087,6 +1110,40 @@ export class TerminalApp {
         state.selectedIndex = layoutChoiceIndex(state.draft);
       } else {
         state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('starship');
+      }
+    } else if (state.step === 'starshipModules') {
+      const module = STARSHIP_MODULES[state.selectedIndex];
+      if (!module || !state.starshipStatus) return;
+      try {
+        state.starshipProposal = await new StarshipConfigAdapter(state.starshipStatus)
+          .propose(module, !state.starshipModules?.[state.selectedIndex]);
+        state.step = 'starshipConfirm';
+        state.selectedIndex = 0;
+        state.message = undefined;
+      } catch (error) {
+        state.message = `Could not prepare change: ${error instanceof Error ? error.message : String(error)}`;
+      }
+    } else if (state.step === 'starshipConfirm') {
+      if (state.selectedIndex === 1) {
+        state.step = 'starshipModules';
+        state.selectedIndex = STARSHIP_MODULES.indexOf(state.starshipProposal?.module ?? 'directory');
+        state.starshipProposal = undefined;
+      } else if (state.starshipProposal && state.starshipStatus) {
+        try {
+          const proposal = state.starshipProposal;
+          const adapter = new StarshipConfigAdapter(state.starshipStatus);
+          const backup = await adapter.apply(proposal);
+          state.starshipModules = await Promise.all(STARSHIP_MODULES.map(module => adapter.disabled(module)));
+          state.starshipStatus.configExists = true;
+          state.step = 'starshipModules';
+          state.selectedIndex = STARSHIP_MODULES.indexOf(proposal.module);
+          state.starshipProposal = undefined;
+          state.message = backup ? `Saved. Backup: ${backup}` : 'Saved Starship configuration.';
+          await this.refreshPanelPreview(state);
+          if (this.promptConfiguration.provider === 'starship') await this.refreshProviderPrompt();
+        } catch (error) {
+          state.message = `Could not save change: ${error instanceof Error ? error.message : String(error)}`;
+        }
       }
     } else if (state.step === 'installConfirm') {
       if (state.selectedIndex === 1) {

@@ -10,13 +10,14 @@ import {NATIVE_PROMPT_THEMES} from './prompt.js';
 import {POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
 import {renderControls} from '../ui/controls.js';
 import type {StarshipStatus} from './starship.js';
+import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAdapter.js';
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 
-export type PromptPanelStep = 'provider' | 'starship' | 'powerlevel10k' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
+export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 export interface PromptPanelState {
   onboarding: boolean;
   step: PromptPanelStep;
@@ -28,6 +29,8 @@ export interface PromptPanelState {
   p10kStatus?: Powerlevel10kStatus;
   message?: string;
   task?: TaskProgress;
+  starshipModules?: boolean[];
+  starshipProposal?: StarshipConfigProposal;
 }
 
 const PRIMARY = foreground(UI_COLORS.primary);
@@ -151,6 +154,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'installProgress') return [['Please wait', 'installation in progress']];
   if (state.step === 'installResult') return [['Enter', state.task?.state.status === 'failed' ? 'details' : 'continue'], ['D', 'details'], ['Esc', 'back']];
   if (state.step === 'installDetails') return [['Enter/Esc', 'back']];
+  if (state.step === 'starshipModules') return [['↑↓', 'move'], ['Enter', 'edit'], ['Esc', 'back']];
+  if (state.step === 'starshipConfirm') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
     return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['Enter/Esc', 'done']];
@@ -166,7 +171,9 @@ export function promptPanelItemCount(state: PromptPanelState): number {
   switch (state.step) {
     case 'provider': return PROVIDER_ORDER.length;
     case 'powerlevel10k': return state.p10kStatus?.installed ? 3 : 2;
-    case 'starship': return state.starshipStatus?.installed ? 4 : 3;
+    case 'starship': return state.starshipStatus?.installed ? 5 : 3;
+    case 'starshipModules': return STARSHIP_MODULES.length;
+    case 'starshipConfirm': return 2;
     case 'layout': return LAYOUT_CHOICES.length;
     case 'appearance': return APPEARANCE_ROWS.length;
     case 'modules': return state.draft.modules.length;
@@ -228,15 +235,32 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       rows.push(`${SECONDARY}Detected ${state.starshipStatus.version ?? 'binary'}${RESET}`);
       rows.push(`${SECONDARY}Config ${state.starshipStatus.configPath}${state.starshipStatus.configExists ? '' : ' (defaults)'}${RESET}`);
       rows.push(item(0, 'Use existing configuration / defaults'));
-      rows.push(item(1, 'Show preset setup command'));
-      rows.push(item(2, 'Use NMSh for now'));
-      rows.push(item(3, 'Back'));
+      rows.push(item(1, 'Configure modules'));
+      rows.push(item(2, 'Show preset setup command'));
+      rows.push(item(3, 'Use NMSh for now'));
+      rows.push(item(4, 'Back'));
     } else {
       rows.push(`${SECONDARY}Starship is not installed.${RESET}`);
       rows.push(item(0, process.platform === 'darwin' ? 'Install with Homebrew · brew install starship' : 'Install Starship using its official guide'));
       rows.push(item(1, 'Use NMSh for now'));
       rows.push(item(2, 'Back'));
     }
+  } else if (state.step === 'starshipModules') {
+    rows.push(`${PRIMARY}Starship modules${RESET}`);
+    rows.push(`${SUBTLE}Edit supported modules using Starship's config command.${RESET}`);
+    STARSHIP_MODULES.forEach((module, index) => rows.push(item(index,
+      `${module.padEnd(16)} ${state.starshipModules?.[index] ? 'Disabled' : 'Enabled'}`)));
+  } else if (state.step === 'starshipConfirm') {
+    const proposal = state.starshipProposal;
+    rows.push(`${PRIMARY}Review Starship config change${RESET}`);
+    if (proposal) {
+      rows.push(`${SECONDARY}${proposal.path}${RESET}`);
+      rows.push(`${SUBTLE}${proposal.module}: ${proposal.disabled ? 'disable' : 'enable'}${RESET}`);
+      rows.push(...proposal.diff.map(line => `${SECONDARY}  ${stripAnsi(line).replace(/[\u0000-\u001f\u007f]/gu, '?')}${RESET}`));
+      rows.push(`${SUBTLE}An existing file will be backed up before the change.${RESET}`);
+    }
+    rows.push(item(0, 'Apply reviewed change'));
+    rows.push(item(1, 'Cancel'));
   } else if (state.step === 'powerlevel10k') {
     rows.push(`${PRIMARY}Powerlevel10k${RESET}`);
     const status = state.p10kStatus;
