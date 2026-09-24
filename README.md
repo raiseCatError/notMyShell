@@ -77,12 +77,21 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 - Ghost autosuggestions from history
 - **Semantic syntax highlighting** (differentiates executables, builtins, aliases, and functions instantly)
 
+### Prompt
+- NMSh Native prompt (default) with Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale themes
+- Independent Start / Connector / Gap / End geometry (wedge, flat, rounded, slanted, and fading outer edges), icons On/Off, and a module manager: `/prompt`
+- Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor and never rewrites their configuration
+- One-line or two-line composer layouts
+
 ### Interface
-- Command lifecycle rows with activity animation
-- Scrollable history viewport
+- Command lifecycle rows with activity animation and nested Node TAP activity
+- Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
+- `/clear` archives the view and `/resume` restores it, on the same live zsh
+- `/zsh` hands off to an ordinary interactive zsh
+- Rich paste atoms for large multiline pastes
 - `/copy` and `/copy N` for instant clipboard access
 - `/history` interactive search
-- `/appearance` and `/keyboard` integrations
+- `/version`, `/appearance`, and `/keyboard` integrations
 
 ### Interactive Apps
 - Safe passthrough yielding for full-screen applications like `fzf`, `vim`, `nano`, and `less`.
@@ -124,7 +133,7 @@ NMSh currently boots a real, controlled zsh instance.
 - `zoxide` integration, pipelines, redirects, and external commands
 
 **UI Plugin differences:**
-- `Powerlevel10k` (and other prompt rendering) is strictly suppressed.
+- Foreign prompt rendering in the managed shell (Powerlevel10k, RPROMPT, ZLE prompts) is suppressed so it cannot fight NMSh. You can still choose Starship or Powerlevel10k as an NMSh prompt provider. Powerlevel10k's left prompt is rendered in an isolated helper, without its prompt character, gitstatus daemon, or right prompt.
 - `zsh-autosuggestions` and `zsh-syntax-highlighting` are replaced by NMSh-native equivalents.
 - Native `fzf-tab` integration is not currently supported; safe zsh completion/widget interoperability remains unresolved in [issue #52](https://github.com/raiseCatError/notMyShell/issues/52).
 
@@ -208,7 +217,10 @@ The `/appearance` slash command provides an interactive UI to adjust Ghostty's w
 
 - **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
 - **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
-- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures.
+- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Theme-aware highlighting is planned for v0.4.
+- **Completion:** The completion bridge is not full parity with a configured interactive zsh, and native `fzf-tab` is not supported yet ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
+- **Nested activity:** Only directly observed Node TAP v13 streams produce nested activity rows.
+- **Powerlevel10k provider:** The right prompt, instant prompt, gitstatus daemon, and p10k settings defined only in `.zshrc` are not reproduced.
 
 ## Development
 
