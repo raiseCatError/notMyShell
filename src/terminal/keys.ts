@@ -16,6 +16,8 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[27u', 'escape'],
   ['\u001B[27;1u', 'escape'], // explicit default-modifier form
   ['\u001B[Z', 'focusPrevious'],
+  ['\u001B[9;2u', 'focusPrevious'], // Kitty Shift+Tab
+  ['\u001B[9u', 'complete'], // Kitty Tab
   ['\u001B[27;2;13~', 'newline'],
   ['\u001B[13;2u', 'newline'],
   ['\u001B\r', 'newline'], // macOS Terminal Shift+Enter

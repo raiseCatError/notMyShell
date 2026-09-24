@@ -17,7 +17,7 @@ function cleanup(app: TerminalApp): void {
 test('a panel opened from /settings returns to the settings root on Esc, not the composer', () => {
   const app = makeApp();
   try {
-    app['settingsPanelState'] = {section: 'root', selectedIndex: 1, glyphStyle: 'nerd', onboarding: false};
+    app['settingsPanelState'] = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 2, glyphStyle: 'nerd', onboarding: false};
     app['handleKey']({kind: 'enter'});
     assert.ok(app['promptPanelState'], 'selecting Prompt from settings opens the prompt panel');
     assert.equal(app['settingsPanelState'], undefined);
@@ -26,7 +26,8 @@ test('a panel opened from /settings returns to the settings root on Esc, not the
     assert.equal(app['promptPanelState'], undefined, 'Esc closes the prompt panel');
     assert.ok(app['settingsPanelState'], 'Esc returns to settings instead of the composer');
     assert.equal(app['settingsPanelState']!.section, 'root');
-    assert.equal(app['settingsPanelState']!.selectedIndex, 1, 'settings reopens at the row it was launched from');
+    assert.equal(app['settingsPanelState']!.view, 'settings');
+    assert.equal(app['settingsPanelState']!.contentIndex, 2, 'settings reopens at the row it was launched from');
   } finally {
     cleanup(app);
   }
@@ -88,7 +89,7 @@ test('a confirmation step cancels rather than confirming on Esc', () => {
 test('repeated Esc from a deeply nested settings-opened panel eventually reaches the composer', () => {
   const app = makeApp();
   try {
-    app['settingsPanelState'] = {section: 'root', selectedIndex: 1, glyphStyle: 'nerd', onboarding: false};
+    app['settingsPanelState'] = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 2, glyphStyle: 'nerd', onboarding: false};
     app['handleKey']({kind: 'enter'}); // settings -> prompt panel
     app['promptPanelState']!.step = 'starshipModules';
 
@@ -133,12 +134,13 @@ test('the keyboard panel returns to settings on Esc when opened from there', () 
   const app = makeApp();
   try {
     app['panelOrigin'] = 'settings';
-    app['panelOriginIndex'] = 10;
+    app['panelOriginView'] = 'settings';
+    app['panelOriginRow'] = 4;
     app['keyboardState'] = {selectedIndex: 0};
     app['handleKey'](ESCAPE);
     assert.equal(app['keyboardState'], undefined);
     assert.ok(app['settingsPanelState'], 'Esc returns to settings instead of the composer');
-    assert.equal(app['settingsPanelState']!.selectedIndex, 10);
+    assert.equal(app['settingsPanelState']!.contentIndex, 4);
   } finally {
     cleanup(app);
   }
