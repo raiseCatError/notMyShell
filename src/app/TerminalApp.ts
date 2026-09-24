@@ -1,4 +1,6 @@
-import {GLYPHS} from '../ui/glyphs.js';
+import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
+import {framePanel} from '../ui/PanelShell.js';
+import {renderSettingsPanel, SETTINGS_SECTIONS, settingsItemCount, type SettingsPanelState} from '../ui/SettingsPanel.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
@@ -89,6 +91,7 @@ export class TerminalApp {
   private p10kStatus?: Powerlevel10kStatus;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
+  private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
@@ -118,6 +121,7 @@ export class TerminalApp {
   private finish!: (exitCode: number) => void;
 
   constructor() {
+    setIconStyle(this.promptConfiguration.glyphStyle);
     this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.initialCwd));
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     const dimensions = this.dimensions();
@@ -132,7 +136,10 @@ export class TerminalApp {
   }
 
   async run(): Promise<number> {
-    if (!this.promptConfiguration.onboardingComplete) {
+    if (!this.promptConfiguration.glyphChoiceComplete) {
+      this.settingsPanelState = {section: 'appearance', selectedIndex: this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1,
+        glyphStyle: this.promptConfiguration.glyphStyle, onboarding: true};
+    } else if (!this.promptConfiguration.onboardingComplete) {
       this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
     }
@@ -198,6 +205,30 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.settingsPanelState) {
+      const state = this.settingsPanelState;
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
+        else if (state.section === 'appearance') { state.section = 'root'; state.selectedIndex = 0; }
+        else this.settingsPanelState = undefined;
+      } else if (key.kind === 'up' || key.kind === 'down') {
+        const count = settingsItemCount(state);
+        state.selectedIndex = (state.selectedIndex + (key.kind === 'up' ? -1 : 1) + count) % count;
+      } else if (key.kind === 'left' || key.kind === 'right') {
+        if (state.section === 'appearance') state.selectedIndex = state.selectedIndex === 0 ? 1 : 0;
+      } else if (key.kind === 'enter') {
+        if (state.section === 'appearance') this.saveGlyphChoice(state.selectedIndex === 0 ? 'nerd' : 'safe');
+        else {
+          const section = SETTINGS_SECTIONS[state.selectedIndex];
+          if (section === 'Appearance') { state.section = 'appearance'; state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1; }
+          else if (section === 'Prompt') { this.settingsPanelState = undefined; void this.startPromptSettings(false); }
+          else if (section === 'Transcript') { this.settingsPanelState = undefined; this.startTranscriptSettings(); }
+          else if (section === 'Keyboard') { this.settingsPanelState = undefined; void this.startKeyboard(); }
+        }
+      }
+      this.render();
+      return;
+    }
     if (this.transcriptPanelState) {
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.transcriptPanelState = undefined;
@@ -554,6 +585,8 @@ export class TerminalApp {
       if (slash.kind === 'copy') await this.copyRecent(slash.index);
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'prompt') await this.startPromptSettings(false);
+      else if (slash.kind === 'settings') this.settingsPanelState = {section: 'root', selectedIndex: 0,
+        glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
       else if (slash.kind === 'transcript') this.startTranscriptSettings();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
@@ -1048,7 +1081,7 @@ export class TerminalApp {
     if (state.step === 'starship') previewConfig.provider = 'starship';
     if (state.step === 'powerlevel10k') previewConfig.provider = 'powerlevel10k';
     if (state.step === 'layout') applyLayoutChoice(previewConfig, state.selectedIndex);
-    const boundary = `${SEPARATOR}${repeatToWidth('─', width)}${RESET}`;
+    const boundary = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, width)}${RESET}`;
     let providerRow: string;
     if (previewConfig.provider !== 'nmsh') {
       const preview = this.panelExternalPrompt?.provider === previewConfig.provider ? this.panelExternalPrompt.result : undefined;
@@ -1073,14 +1106,47 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState);
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.settingsPanelState
+      || this.resumeSessions || this.appearanceState || this.keyboardState);
   }
 
   private settingsPanelRows(columns: number): string[] {
+    if (this.settingsPanelState) return framePanel(renderSettingsPanel(this.settingsPanelState, this.dimensions().rows - 1), columns);
     if (this.transcriptPanelState) {
-      return renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 3);
+      return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
     }
-    return this.renderedPromptPanel(columns);
+    if (this.resumeSessions) {
+      const count = Math.max(1, Math.min(this.resumeSessions.length, this.dimensions().rows - 5));
+      const start = Math.max(0, Math.min(this.selectedSuggestion, this.resumeSessions.length - count));
+      const rows = [`${PRIMARY}  Resume session${RESET}`, ''];
+      this.resumeSessions.slice(start, start + count).forEach((session, offset) => {
+        const selected = start + offset === this.selectedSuggestion;
+        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${new Date(session.createdAt).toLocaleString()} · ${session.commandCount} commands · ${session.finalCwd}${RESET}`, columns));
+      });
+      rows.push('', `${SUBTLE}  ↑↓ move · Enter restore · Esc cancel${RESET}`);
+      return framePanel(rows, columns);
+    }
+    if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);
+    if (this.keyboardState) return framePanel(renderKeyboardPanel(this.keyboardState, columns), columns);
+    return framePanel(this.renderedPromptPanel(columns), columns);
+  }
+
+  private saveGlyphChoice(style: PromptConfiguration['glyphStyle']): void {
+    const next = {...this.promptConfiguration, glyphStyle: style, glyphChoiceComplete: true};
+    try {
+      savePromptConfiguration(next);
+      this.promptConfiguration = next;
+      setIconStyle(style);
+      const onboarding = this.settingsPanelState?.onboarding;
+      this.settingsPanelState = undefined;
+      if (onboarding && !next.onboardingComplete) {
+        this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
+          draft: structuredClone(next), saved: structuredClone(next)};
+      }
+    } catch {
+      // Keep the chooser visible so the user can retry without losing their choice.
+      if (this.settingsPanelState) this.settingsPanelState.glyphStyle = style;
+    }
   }
 
   private startTranscriptSettings(): void {
@@ -1178,7 +1244,7 @@ export class TerminalApp {
   private externalPromptRow(prompt: StarshipPromptResult, width: number, placement: PromptConfiguration['placement']): string {
     const content = truncateAnsi(prompt.ansi, Math.max(0, width - 1));
     if (placement === 'composer') return `${content}${RESET}`;
-    return `${content}${RESET}${SEPARATOR}${repeatToWidth('─', Math.max(0, width - displayWidth(content)))}${RESET}`;
+    return `${content}${RESET}${SEPARATOR}${repeatToWidth(GLYPHS.separator, Math.max(0, width - displayWidth(content)))}${RESET}`;
   }
 
   private scroll(direction: -1 | 1): void {
@@ -1314,9 +1380,9 @@ export class TerminalApp {
       }
     }
 
-    if (this.promptPanelState) availableSuggestions = [];
+    if (this.settingsPanelActive) availableSuggestions = [];
     const promptPanelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : 0;
-    const overlayRows = this.promptPanelState ? promptPanelRows : this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
+    const overlayRows = this.settingsPanelActive ? promptPanelRows : this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
     const fullInput = this.layoutEditorInput(columns);
@@ -1427,7 +1493,7 @@ export class TerminalApp {
       frameRows.push(truncateAnsi(this.currentActivity(), columns));
       frameRows.push('');
     }
-    if (layout.showComposerTopBorder) frameRows.push(`${SEPARATOR}${repeatToWidth('─', columns)}${RESET}`);
+    if (layout.showComposerTopBorder) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
     if (layout.showPrompt) frameRows.push(promptLine);
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
@@ -1462,7 +1528,7 @@ export class TerminalApp {
     }
 
     for (const row of input.rows) {
-      const prefix = row.prefix.startsWith('❯') ? `${ACCENT}❯${RESET}${row.prefix.slice(1)}` : row.prefix;
+      const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
       for (let i = 0; i < glyphsInRow.length; i++) {
@@ -1484,7 +1550,7 @@ export class TerminalApp {
       }
       frameRows.push(truncateAnsi(`${prefix}${textStyled}${suffix}`, columns));
     }
-    if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth('─', columns)}${RESET}`);
+    if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
 
     this.renderer.render({
       rows: frameRows.slice(0, rows),

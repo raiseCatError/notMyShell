@@ -20,12 +20,12 @@ export function getCurrentGlyphMode(): GlyphMode {
 
 export const GLYPHS = {
   get branch() { return getCurrentGlyphMode() === 'nerd' ? '' : 'git:'; },
-  get success() { return getCurrentGlyphMode() === 'nerd' ? '✔' : '✓'; },
-  get failure() { return getCurrentGlyphMode() === 'nerd' ? '✘' : '×'; },
-  get info() { return getCurrentGlyphMode() === 'nerd' ? '⎿' : '›'; },
+  get success() { return getCurrentGlyphMode() === 'nerd' ? '✔' : '+'; },
+  get failure() { return getCurrentGlyphMode() === 'nerd' ? '✘' : 'x'; },
+  get info() { return getCurrentGlyphMode() === 'nerd' ? '⎿' : '>'; },
   get selection() { return getCurrentGlyphMode() === 'nerd' ? '›' : '>'; },
-  get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : '↓'; },
-  get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '─'; },
+  get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'; },
+  get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '-'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
   // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.
   get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },

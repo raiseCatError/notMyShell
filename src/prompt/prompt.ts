@@ -216,11 +216,11 @@ export function buildContextLine(
   placement: 'header' | 'composer' = configuration.placement,
 ): string {
   if (width <= 0) return '';
-  if (width < 8) return `${LINE}${repeatToWidth('─', width)}${RESET}`;
+  if (width < 8) return `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}`;
 
   const modules = renderedModules(context, configuration);
   if (modules.length === 0) {
-    return placement === 'header' ? `${LINE}${repeatToWidth('─', width)}${RESET}` : '';
+    return placement === 'header' ? `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}` : '';
   }
 
   const lineEndStyle = configuration.nmsh.endStyle;
@@ -230,7 +230,7 @@ export function buildContextLine(
   if (placement === 'composer') return `${content}${RESET}`;
 
   const separatorWidth = Math.max(0, width - displayWidth(content));
-  return `${content}${LINE}${repeatToWidth('─', separatorWidth)}${RESET}`;
+  return `${content}${LINE}${repeatToWidth(GLYPHS.separator, separatorWidth)}${RESET}`;
 }
 
 /**
@@ -276,6 +276,6 @@ export function buildPromptLine(context: PromptContext, width: number): string {
 
 export function promptContentWidth(context: PromptContext, width: number): number {
   const plain = stripAnsi(buildPromptLine(context, width));
-  const separatorIndex = plain.indexOf('─');
+  const separatorIndex = plain.indexOf(GLYPHS.separator);
   return displayWidth(separatorIndex === -1 ? plain : plain.slice(0, separatorIndex));
 }

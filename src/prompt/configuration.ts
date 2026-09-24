@@ -10,6 +10,7 @@ import {
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
+export type GlyphStyle = 'nerd' | 'safe';
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus';
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
@@ -72,6 +73,9 @@ export function normalizeTranscriptAppearance(value: unknown): TranscriptAppeara
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
+  /** Missing in v0.3 configs; normalize to nerd to preserve their appearance. */
+  glyphStyle: GlyphStyle;
+  glyphChoiceComplete: boolean;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -96,6 +100,8 @@ export interface PromptConfiguration {
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   provider: 'nmsh',
   onboardingComplete: false,
+  glyphStyle: 'nerd',
+  glyphChoiceComplete: false,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd'},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
@@ -133,6 +139,9 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!isRecord(value)) return structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 
   const promptValue = isRecord(value.prompt) ? value.prompt : value;
+  const glyphStyle: GlyphStyle = value.glyphStyle === 'safe' ? 'safe' : 'nerd';
+  // Existing configured installations keep their v0.3 appearance without a new wizard.
+  const glyphChoiceComplete = value.glyphChoiceComplete === true || value.onboardingComplete === true;
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -165,6 +174,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
+      glyphStyle, glyphChoiceComplete,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, placement, composerLayout, spacing, gap, separator};
   }
 
@@ -196,7 +206,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, nmsh, transcript, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, nmsh, transcript, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 
