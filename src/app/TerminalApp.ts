@@ -973,7 +973,7 @@ export class TerminalApp {
 
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
-    const context = await resolvePromptContext(cwd);
+    const context = await resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled});
     if (generation !== this.contextGeneration || this.stopped) return;
     this.context = {...context, exitStatus: this.context.exitStatus ?? 0};
     await this.refreshProviderPrompt();
@@ -1285,6 +1285,8 @@ export class TerminalApp {
       this.promptConfiguration = structuredClone(state.draft);
       this.promptPanelState = undefined;
       this.panelExternalPrompt = undefined;
+      // Turning Rich Git on needs a status probe the last refresh may have skipped.
+      if (state.saved?.nmsh.gitEnabled !== state.draft.nmsh.gitEnabled) void this.refreshContext(this.shellCwd);
       await this.refreshProviderPrompt();
       // refreshProviderPrompt already fell back to NMSh and saved that truthfully.
       if (this.externalPromptError && state.draft.provider !== 'nmsh') {
@@ -1588,7 +1590,9 @@ export class TerminalApp {
     const state = this.promptPanelState;
     if (!state || state.step !== 'appearance' || state.view !== 'git') return [];
     const width = Math.max(1, columns - 15);
-    return RICH_GIT_SHOWCASE.map(entry => buildRichGitShowcaseLine(state.draft, entry.git, width));
+    // Disabled Rich Git still shows what it would add, dimmed by the panel.
+    const draft = {...state.draft, nmsh: {...state.draft.nmsh, gitEnabled: true}};
+    return RICH_GIT_SHOWCASE.map(entry => buildRichGitShowcaseLine(draft, entry.git, width));
   }
 
   /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */

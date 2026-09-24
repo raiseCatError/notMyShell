@@ -88,117 +88,199 @@ test('Git state segments and the clean marker take the Main Prompt connector geo
   }
 });
 
+const WHITE = {red: 255, green: 255, blue: 255};
+const PURPLE = {red: 100, green: 60, blue: 180};
+const GREEN = {red: 40, green: 120, blue: 80};
 const blocks: PowerlineBlock[] = [
-  {text: 'A', foreground: {red: 255, green: 255, blue: 255}, background: {red: 100, green: 60, blue: 180}},
-  {text: 'B', foreground: {red: 255, green: 255, blue: 255}, background: {red: 40, green: 120, blue: 80}},
-  {text: 'C', foreground: {red: 255, green: 255, blue: 255}, background: {red: 200, green: 90, blue: 60}},
+  {text: 'A', foreground: WHITE, background: PURPLE},
+  {text: 'B', foreground: WHITE, background: GREEN},
 ];
+const fg = (color: typeof WHITE) => `\u001B[38;2;${color.red};${color.green};${color.blue}m`;
+const bg = (color: typeof WHITE) => `\u001B[48;2;${color.red};${color.green};${color.blue}m`;
 
-test('Connector fade follows the connector by default, a fixed override sticks, and Off stays solid', () => {
+test('Connector fade resolves: Follow connector tracks it, a fixed shape sticks, Off and old snapshots have none', () => {
   for (const shape of POWERLINE_SHAPES) assert.equal(resolveConnectorFade('follow', shape), shape);
   assert.equal(resolveConnectorFade('slash', 'rounded'), 'slash');
   assert.equal(resolveConnectorFade('off', 'wedge'), undefined);
-  assert.equal(resolveConnectorFade(undefined, 'wedge'), undefined, 'old snapshots render solid connectors');
-  const solid = renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', 'wedge');
-  assert.equal(renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', 'wedge', resolveConnectorFade('off', 'wedge')), solid);
-  const faded = renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', 'wedge', 'wedge');
-  assert.notEqual(faded, solid);
-  assert.ok(!faded.includes('48;2;40;120;80m\u{E0B0}') , 'the fade cell background is a blend, not the next segment');
+  assert.equal(resolveConnectorFade(undefined, 'wedge'), undefined);
 });
 
-test('connector fade is exactly one cell, uses the fade shape, and keeps widths predictable', () => {
+test('the fade is one shaded gap cell: FG previous, BG next, never extra width', () => {
+  for (const gap of [1, 2, 3]) {
+    const neutral = renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge');
+    const faded = renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge', 'wedge');
+    assert.equal(displayWidth(faded), displayWidth(neutral), `gap ${gap}: the fade replaces a gap cell`);
+    assert.ok(faded.includes(`${fg(PURPLE)}${bg(GREEN)}▒`), 'FG is the previous background, BG the next');
+    assert.equal([...stripAnsi(faded)].filter(character => character === '▒').length, 1, 'exactly one fade cell');
+    assert.match(stripAnsi(faded), new RegExp(`▒ {${gap - 1}}`, 'u'), `gap ${gap}: fade first, then neutral cells`);
+  }
+  const joined = renderPowerlineBlocks(blocks, 0, 1, 'flat', false, 'flat', 'wedge', 'wedge');
+  assert.equal(joined, renderPowerlineBlocks(blocks, 0, 1, 'flat', false, 'flat', 'wedge'), 'Gap Off: ordinary joined connector, no fade');
+  assert.ok(!stripAnsi(joined).includes('▒'));
+  const compact = renderPowerlineBlocks(blocks, 0, 1, 'flat', true, 'flat', 'wedge', 'wedge');
+  assert.ok(!stripAnsi(compact).includes('▒'), 'a zero-width (Compact) gap has no cell to color');
+  assert.ok(faded(1).endsWith('\u001B[0m\u001B[49m'), 'ANSI state ends neutral');
+  function faded(gap: number) { return renderPowerlineBlocks(blocks, gap, 1, 'flat', true, 'flat', 'wedge', 'wedge'); }
+});
+
+test('caps around the fade gap use the fade shape; Off keeps a neutral gap', () => {
   for (const shape of POWERLINE_SHAPES) {
-    const solid = renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', shape);
-    const faded = renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', shape, shape);
-    const expected = displayWidth(solid) + (powerlineShapeGlyphs(shape).join ? 0 : 2);
-    assert.equal(displayWidth(faded), expected, `${shape}: one cell per connector`);
-    const glyph = powerlineShapeGlyphs(shape).join || '▒';
-    assert.equal([...stripAnsi(faded)].filter(character => character === glyph).length, 2, `${shape}: one fade cell per join`);
+    const glyphs = powerlineShapeGlyphs(shape);
+    const plain = stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', shape));
+    assert.ok(plain.includes(`${glyphs.close}▒${glyphs.open}`), `${shape}: ${plain}`);
   }
-  const override = renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', 'rounded', 'slash');
-  assert.ok(stripAnsi(override).includes('') && !stripAnsi(override).includes(''));
-  for (const gap of [0, 1, 2]) {
-    assert.equal(renderPowerlineBlocks(blocks, gap, 1, 'wedge', true, 'wedge', 'wedge', 'wedge'),
-      renderPowerlineBlocks(blocks, gap, 1, 'wedge', true, 'wedge', 'wedge'), 'gapped caps stay solid');
-  }
-  const fadeEnd = renderPowerlineBlocks(blocks.slice(0, 1), 0, 0, 'fadeWedge', false, 'flat', 'wedge', 'wedge');
-  assert.equal([...stripAnsi(fadeEnd)].filter(character => character === '\uE0B0').length, 4, 'End keeps three fade steps plus its cap');
-  assert.equal(fadeEnd, renderPowerlineBlocks(blocks.slice(0, 1), 0, 0, 'fadeWedge', false, 'flat', 'wedge'),
-    'connector fade never changes Start/End fades');
+  const override = stripAnsi(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'rounded', 'slash'));
+  assert.ok(override.includes('▒'), 'a fixed fade shape sticks when the connector differs');
+  assert.equal(renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge', undefined),
+    renderPowerlineBlocks(blocks, 1, 1, 'flat', true, 'flat', 'wedge'));
+  const end = renderPowerlineBlocks(blocks.slice(0, 1), 1, 0, 'fadeWedge', true, 'fadeWedge', 'wedge', 'wedge');
+  assert.equal(end, renderPowerlineBlocks(blocks.slice(0, 1), 1, 0, 'fadeWedge', true, 'fadeWedge', 'wedge'), 'Start/End fades are untouched');
+  assert.equal([...stripAnsi(end)].filter(character => character === '').length, 7, 'three-step start and end fades');
 });
 
-test('connector fade has an ASCII fallback in safe glyph mode', () => {
+test('the fade cell falls back to ASCII in safe glyph mode', () => {
   setIconStyle('safe');
   try {
     for (const shape of POWERLINE_SHAPES) {
-      const plain = stripAnsi(renderPowerlineBlocks(blocks, 0, 0, 'flat', false, 'flat', shape, shape));
-      assert.ok([...plain].every(character => character.codePointAt(0)! < 0x80), `${shape}: ${plain}`);
+      const rendered = renderPowerlineBlocks(blocks, 2, 1, 'flat', true, 'flat', shape, shape);
+      assert.ok([...stripAnsi(rendered)].every(character => character.codePointAt(0)! < 0x80), `${shape}: ${stripAnsi(rendered)}`);
+      assert.ok(rendered.includes(`${fg(PURPLE)}${bg(GREEN)}:`));
     }
   } finally {
     setIconStyle('nerd');
   }
 });
 
+const dirty = {...clean, staged: 1, modified: 1};
+const line = (patch: (value: PromptConfiguration) => void, git = dirty) => stripAnsi(buildContextLine(
+  {cwd: '/r', project: 'r', branch: 'main', git}, 160,
+  config(value => { value.modules = value.modules.map(module => ({...module, visible: module.id === 'project' || module.id === 'gitBranch'})); patch(value); }),
+  'composer'));
+
+test('Rich Git Enabled defaults On; Off keeps the plain branch and hides every state', () => {
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.nmsh.gitEnabled, true);
+  assert.equal(normalizePromptConfiguration({nmsh: {palette: 'cool'}}).nmsh.gitEnabled, true);
+  assert.equal(normalizePromptConfiguration({nmsh: {gitEnabled: false}}).nmsh.gitEnabled, false);
+  const off = config(value => { value.nmsh.gitEnabled = false; });
+  for (const entry of RICH_GIT_SHOWCASE) {
+    const roles = renderedModules({cwd: '/r', project: 'r', branch: 'main', git: entry.git}, off).map(module => module.role);
+    assert.ok(roles.includes('gitBranch'), entry.label);
+    assert.ok(!roles.some(role => (GIT_STATE_ROLES as readonly string[]).includes(role)), entry.label);
+  }
+  assert.ok(!line(value => { value.nmsh.gitEnabled = false; }).includes('main*'), 'no dirty mark either');
+  assert.match(line(() => {}), /\+1.*~1/u, 'On restores state');
+  const theme = stripAnsi(buildThemePreviewLine(off, 'lavender', 200));
+  assert.ok(!theme.includes('+2') && theme.includes('main'), 'the theme gallery omits Rich Git when it is off');
+});
+
+test('Rich Git geometry follows the Main Prompt by default and a fixed shape overrides only Git state', () => {
+  for (const connector of POWERLINE_SHAPES) {
+    const plain = line(value => { value.nmsh.gapEnabled = false; value.nmsh.connector = connector; });
+    const join = powerlineShapeGlyphs(connector).join;
+    if (join) assert.ok(plain.includes(`${join} +1 ${join} ~1`), `${connector}: ${plain}`);
+  }
+  for (const connector of ['wedge', 'flat'] as const) {
+    const plain = line(value => { value.nmsh.gapEnabled = false; value.nmsh.connector = connector; value.nmsh.gitGeometry = 'rounded'; });
+    assert.ok(plain.includes('main*  +1  ~1'), `${connector}: Git region is rounded: ${plain}`);
+    if (connector === 'wedge') assert.ok(plain.includes('r  '), 'project → branch keeps the Main Prompt connector');
+  }
+  const cleanLine = buildContextLine({cwd: '/r', project: 'r', branch: 'main', git: clean}, 160,
+    config(value => { value.nmsh.gapEnabled = false; value.nmsh.gitGeometry = 'slash'; }), 'composer');
+  assert.ok(stripAnsi(cleanLine).includes('main  '), 'the clean marker enters with Rich Git geometry');
+});
+
+test('Rich Git connector fade: follow main, follow geometry, off, or a fixed shape', () => {
+  const gap = (gitConnectorFade: PromptConfiguration['nmsh']['gitConnectorFade'], patch: (value: PromptConfiguration) => void = () => {}) =>
+    line(value => { value.nmsh.gitGeometry = 'rounded'; value.nmsh.gitConnectorFade = gitConnectorFade; patch(value); });
+  assert.ok(gap('followMain').includes('▒ +1'), 'Follow connector on the Main Prompt means Rich Git geometry here');
+  assert.ok(gap('followMain', value => { value.nmsh.connectorFade = 'slash'; }).includes('▒ +1'), 'inherits a fixed Main fade');
+  assert.ok(!gap('followMain', value => { value.nmsh.connectorFade = 'off'; }).includes('▒ +1'), 'inherits Main Off');
+  assert.ok(gap('followGeometry', value => { value.nmsh.connectorFade = 'off'; }).includes('▒ +1'));
+  assert.ok(!gap('off').includes('▒ +1'));
+  assert.ok(gap('backslash').includes('▒ +1'));
+  assert.equal(normalizePromptConfiguration({}).nmsh.gitConnectorFade, 'followMain');
+  assert.equal(normalizePromptConfiguration({}).nmsh.gitGeometry, 'follow');
+});
+
 function appearanceState(): PromptPanelState {
   const saved = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   return {onboarding: false, step: 'appearance', selectedIndex: 0, draft: structuredClone(saved), saved};
 }
-const press = (state: PromptPanelState, kind: Key['kind']) => handlePromptPanelKey({kind} as Key, state);
+const press = (state: PromptPanelState, kind: Key['kind'], value?: string) =>
+  handlePromptPanelKey((value ? {kind, value} : {kind}) as Key, state);
 
-test('/prompt has Main Prompt and Rich Git views switched with arrows from the view bar', () => {
+test('/prompt Main Prompt and Rich Git views: arrows switch views and edit every Rich Git row', () => {
   const state = appearanceState();
-  const rows = renderPromptPanel(state, 120, []);
-  const bar = rows.find(row => stripAnsi(row).includes('Main Prompt') && stripAnsi(row).includes('Rich Git'))!;
+  const bar = renderPromptPanel(state, 120, []).find(row => stripAnsi(row).includes('Main Prompt') && stripAnsi(row).includes('Rich Git'))!;
   assert.match(bar, /\u001B\[48;2;[\d;]+m\u001B\[38;2;[\d;]+m Main Prompt /u, 'the active view is a filled block');
   press(state, 'right');
   assert.equal(state.draft.nmsh.palette, 'brand', '←/→ on a row still edit it');
   press(state, 'left');
   press(state, 'up');
-  assert.equal(state.focus, 'tabs');
   press(state, 'right');
   assert.equal(state.view, 'git');
-  assert.equal(state.draft.nmsh.palette, 'lavender', 'switching views edits nothing');
   press(state, 'complete');
   assert.equal(state.view, 'git', 'Tab does not switch views');
   press(state, 'down');
-  assert.equal(state.focus, 'rows');
+  press(state, 'text', ' ');
+  assert.equal(state.draft.nmsh.gitEnabled, false, 'Space toggles Enabled');
   press(state, 'right');
+  assert.equal(state.draft.nmsh.gitEnabled, true);
+  press(state, 'down'); press(state, 'right');
   assert.equal(state.draft.nmsh.gitColors, 'followTheme');
+  press(state, 'down'); press(state, 'right');
+  assert.equal(state.draft.nmsh.gitGeometry, 'wedge');
+  press(state, 'down'); press(state, 'right');
+  assert.equal(state.draft.nmsh.gitConnectorFade, 'followGeometry');
   assert.ok(!onModulesRow(state));
-  const git = renderPromptPanel(state, 120, [], ['theme row'], Infinity, ['showcase row']).map(stripAnsi);
-  assert.ok(git.some(row => /Colors\s+‹ Follow theme ›/u.test(row)));
-  assert.ok(git.some(row => /Geometry\s+Follow main prompt/u.test(row)));
-  assert.ok(!git.some(row => row.includes('theme row')), 'the theme gallery stays in Main Prompt');
+  const rows = renderPromptPanel(state, 140, [], ['theme row'], Infinity, RICH_GIT_SHOWCASE.map(() => 'sample')).map(stripAnsi);
+  for (const pattern of [/Enabled\s+‹ On ›/u, /Colors\s+‹ Follow theme ›/u, /Geometry\s+‹ Wedge ›/u, /Connector fade\s+‹ Follow Rich Git geometry ›/u]) {
+    assert.ok(rows.some(row => pattern.test(row)), String(pattern));
+  }
+  assert.ok(!rows.some(row => row.includes('theme row')), 'the theme gallery stays in Main Prompt');
+  state.draft.nmsh.gitEnabled = false;
+  const off = renderPromptPanel(state, 140, [], [], Infinity, RICH_GIT_SHOWCASE.map(() => 'sample')).map(stripAnsi);
+  assert.ok(off.some(row => row.includes('Rich Git is off')), 'a disabled showcase says so');
 });
 
-test('showcases render Rich Git state from synthetic data only', () => {
+test('the Rich Git showcase covers every state from synthetic data and reacts to each setting', () => {
   const theme = stripAnsi(buildThemePreviewLine(config(), 'lavender', 200));
   for (const marker of ['+2', '~1', '?3', '↑2']) assert.ok(theme.includes(marker), `${marker} in ${theme}`);
-  const lines = RICH_GIT_SHOWCASE.map(entry => buildRichGitShowcaseLine(config(), entry.git, 60));
   const roles = new Set(RICH_GIT_SHOWCASE.flatMap(entry => renderedModules({cwd: '/', project: 'p', branch: 'main', git: entry.git}, config())
     .map(module => module.role)));
   for (const role of GIT_STATE_ROLES) assert.ok(roles.has(role), `showcase covers ${role}`);
-  for (const line of lines) assert.ok(displayWidth(line) <= 60);
-  const semantic = buildRichGitShowcaseLine(config(), RICH_GIT_SHOWCASE[1]!.git, 60);
-  const gray = buildRichGitShowcaseLine(config(value => { value.nmsh.gitColors = 'grayscale'; }), RICH_GIT_SHOWCASE[1]!.git, 60);
-  assert.notEqual(semantic, gray, 'changing Colors changes the showcase');
+  const sample = (patch: (value: PromptConfiguration) => void = () => {}) => buildRichGitShowcaseLine(config(patch), RICH_GIT_SHOWCASE[1]!.git, 60);
+  const base = sample();
+  assert.ok(displayWidth(base) <= 60);
+  for (const [name, patch] of [
+    ['Enabled', (value: PromptConfiguration) => { value.nmsh.gitEnabled = false; }],
+    ['Colors', (value: PromptConfiguration) => { value.nmsh.gitColors = 'grayscale'; }],
+    ['Geometry', (value: PromptConfiguration) => { value.nmsh.gitGeometry = 'slash'; }],
+    ['Connector fade', (value: PromptConfiguration) => { value.nmsh.gitConnectorFade = 'off'; }],
+    ['Main gap', (value: PromptConfiguration) => { value.nmsh.gapEnabled = false; }],
+  ] as const) assert.notEqual(sample(patch), base, `${name} changes the showcase`);
 });
 
-test('snapshots keep Git color mode and connector fade; later changes and old snapshots render as captured', () => {
-  const draft = config(value => { value.nmsh.gitColors = 'grayscale'; value.nmsh.connectorFade = 'slash'; value.nmsh.gapEnabled = false; });
-  const snapshot = nativePromptSnapshot({cwd: '/r', project: 'r', branch: 'main', git: clean}, draft);
-  assert.equal(snapshot.gitColors, 'grayscale');
-  assert.equal(snapshot.connectorFade, 'slash');
-  assert.ok(snapshot.segments.some(segment => segment.role === 'gitClean' && segment.compact));
+test('snapshots keep every Rich Git setting and resolved geometry; later changes and old snapshots render as captured', () => {
+  const draft = config(value => {
+    value.nmsh.gitColors = 'grayscale'; value.nmsh.gitGeometry = 'slash'; value.nmsh.gitConnectorFade = 'off';
+  });
+  const snapshot = nativePromptSnapshot({cwd: '/r', project: 'r', branch: 'main', git: {...clean, staged: 1}}, draft);
+  assert.deepEqual([snapshot.gitEnabled, snapshot.gitColors, snapshot.gitGeometry, snapshot.gitConnectorFade, snapshot.connectorFade],
+    [true, 'grayscale', 'slash', 'off', 'follow']);
+  const staged = snapshot.segments.find(segment => segment.role === 'gitStaged')!;
+  assert.deepEqual([staged.shape, staged.fade], ['slash', 'off']);
   const frozen = JSON.stringify(snapshot);
-  draft.nmsh.gitColors = 'semantic';
+  draft.nmsh.gitGeometry = 'rounded';
   draft.nmsh.connectorFade = 'off';
   assert.equal(JSON.stringify(snapshot), frozen);
   const appearance = {...DEFAULT_PROMPT_CONFIGURATION.transcript, divider: false};
-  const withFade = renderHistoricalContext({cwd: '/r', prompt: snapshot}, 80, appearance)!.plain;
-  assert.ok(withFade.includes(''), 'history uses the captured fade shape');
-  const legacy = {...snapshot, connectorFade: undefined, gitColors: undefined,
-    segments: [...snapshot.segments.filter(segment => segment.role !== 'gitClean'), {text: '+1 ~2', role: 'gitChanges', geometry: 'powerline' as const}]};
-  const oldRow = renderHistoricalContext({cwd: '/r', prompt: legacy}, 80, {...appearance, historyColors: 'theme'})!;
-  assert.ok(oldRow.plain.includes('+1 ~2') && !oldRow.plain.includes(''), 'old snapshots keep solid connectors and legacy roles');
+  const row = renderHistoricalContext({cwd: '/r', prompt: snapshot}, 100, appearance)!.plain;
+  assert.ok(row.includes('\uE0BC \uE0BA +1'), `history keeps the captured Rich Git geometry and fade Off: ${row}`);
+  assert.ok(row.includes('▒'), 'history keeps the captured Main Prompt fade');
+  const legacy = {...snapshot, connectorFade: undefined, gitColors: undefined, gitGeometry: undefined, gitConnectorFade: undefined,
+    segments: [...snapshot.segments.filter(segment => !segment.role?.startsWith('gitS')).map(({shape, fade, ...segment}) => segment),
+      {text: '+1 ~2', role: 'gitChanges', geometry: 'powerline' as const}]};
+  const old = renderHistoricalContext({cwd: '/r', prompt: legacy}, 100, {...appearance, historyColors: 'theme'})!;
+  assert.ok(old.plain.includes('+1 ~2') && !old.plain.includes('▒'), 'old snapshots keep neutral gaps and legacy roles');
 });

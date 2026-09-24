@@ -100,6 +100,8 @@ export async function resolvePromptContext(
   cwd: string,
   probe: GitProbe = systemGitProbe,
   home = homedir(),
+  /** Rich Git Off skips the status probe; branch detection still runs. */
+  options: {status?: boolean} = {},
 ): Promise<PromptContext> {
   const normalizedCwd = normalize(cwd);
   const normalizedHome = normalize(home);
@@ -115,7 +117,7 @@ export async function resolvePromptContext(
       branch = commit ? `detached:${commit}` : undefined;
     }
     let git: GitStatus | undefined;
-    try {
+    if (options.status !== false) try {
       git = parseGitStatus(await probe.run(cwd, ['status', '--porcelain=v1', '--branch', '--untracked-files=normal']));
       git.operation = await gitOperation(cwd, probe);
     } catch {

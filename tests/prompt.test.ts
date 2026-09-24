@@ -86,7 +86,7 @@ test('native open uses U+E0D7 and gap-enabled segments close and reopen over neu
   const rendered = buildPromptLine({cwd: '/tmp/work', project: 'repo', branch: 'main'}, 60);
   const plain = stripAnsi(rendered);
   assert.equal(displayWidth(rendered), 60);
-  assert.match(plain, /^ repo   \/tmp\/work    main /u);
+  assert.match(plain, /^ repo ▒ \/tmp\/work ▒  main /u);
   assert.ok(rendered.startsWith('\u001B[0m\u001B[49m\u001B[38;2;166;124;243m'));
   assert.match(rendered, /\u001B\[0m\u001B\[49m\u001B\[38;2;166;124;243m/u);
 });

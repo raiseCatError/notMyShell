@@ -11,7 +11,7 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, resolveConnectorFade} from './powerline.js';
+import {fitPowerlineBlocks, resolveConnectorFade, type PowerlineShape} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
@@ -33,6 +33,8 @@ interface RenderedModule {
   foreground: RgbColor;
   background: RgbColor;
   compact?: boolean;
+  geometry?: PowerlineShape;
+  fade?: PowerlineShape | 'off';
 }
 
 /** Semantic identity of one rendered segment; themes color roles, not positions. */
@@ -204,7 +206,7 @@ export function isCleanWorkingTree(git: NonNullable<PromptContext['git']>): bool
   return !git.staged && !git.modified && !git.untracked && !git.conflicts && !git.operation;
 }
 
-function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode): Array<{text: string; role: PromptRole; compact?: boolean}> {
+function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode, richGit: boolean): Array<{text: string; role: PromptRole; compact?: boolean}> {
   const status = context.exitStatus ?? 0;
   if (!config.visible) return [];
   if (config.condition === 'inRepository' && !context.branch) return [];
@@ -215,7 +217,8 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
     case 'cwd': return [{text: relativeCwd(context.cwd), role: 'cwd'}];
     case 'gitBranch': {
       if (!context.branch) return [];
-      const git = context.git;
+      // Rich Git Off keeps the plain branch: no state segments, no dirty mark.
+      const git = richGit ? context.git : undefined;
       const dirty = Boolean(git && (git.staged || git.modified || git.untracked || git.conflicts));
       const branchLabel = `${safePromptText(context.branch)}${dirty ? '*' : ''}`;
       const segments: Array<{text: string; role: PromptRole; compact?: boolean}> = [
@@ -243,14 +246,31 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
   }
 }
 
+/**
+ * Rich Git's geometry as generic block metadata: unset fields inherit the
+ * Main Prompt, so the renderer never needs to know what Git is.
+ */
+export function richGitGeometry(nmsh: PromptConfiguration['nmsh']): {geometry?: PowerlineShape; fade?: PowerlineShape | 'off'} {
+  const geometry = nmsh.gitGeometry === 'follow' ? undefined : nmsh.gitGeometry;
+  const connector = geometry ?? nmsh.connector;
+  // Follow main prompt inherits the Main Prompt fade *mode*: "Follow connector"
+  // then means Rich Git's own connector, so a geometry override stays visible.
+  const main = nmsh.connectorFade === 'follow' ? connector : nmsh.connectorFade;
+  const fade = nmsh.gitConnectorFade === 'followMain' ? main
+    : nmsh.gitConnectorFade === 'followGeometry' ? connector
+      : nmsh.gitConnectorFade;
+  return {...(geometry ? {geometry} : {}), fade};
+}
+
 export function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
-  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons)
+  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons, configuration.nmsh.gitEnabled)
     .map(segment => ({...segment, module})));
 
   // The project block owns the brighter live identity when both location
   // modules say the same thing (notably "~" at HOME).
   const project = eligible.find(segment => segment.role === 'project');
   const visible = eligible.filter(segment => !(segment.role === 'cwd' && project?.text === segment.text));
+  const richGit = richGitGeometry(configuration.nmsh);
   return visible.map(segment => {
     const colors = promptRoleColors(segment.role, configuration.nmsh.palette, configuration.nmsh.gitColors);
     // Per-module custom colors are for the module's identity, not its Git states.
@@ -262,6 +282,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
       foreground: custom ? colorFromHex(segment.module.foreground, colors.foreground) : colors.foreground,
       background: custom ? colorFromHex(segment.module.background, colors.background) : colors.background,
       ...(segment.compact ? {compact: true} : {}),
+      ...(isGitStateRole(segment.role) ? richGit : {}),
     };
   });
 }
@@ -275,6 +296,8 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     background: module.background,
     geometry: 'powerline',
     ...(module.compact ? {compact: true} : {}),
+    ...(module.geometry ? {shape: module.geometry} : {}),
+    ...(module.fade ? {fade: module.fade} : {}),
   }));
   return {
     provider: 'nmsh',
@@ -286,6 +309,9 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     connectorFade: configuration.nmsh.connectorFade,
     palette: configuration.nmsh.palette,
     gitColors: configuration.nmsh.gitColors,
+    gitEnabled: configuration.nmsh.gitEnabled,
+    gitGeometry: configuration.nmsh.gitGeometry,
+    gitConnectorFade: configuration.nmsh.gitConnectorFade,
     gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
     gapEnabled: configuration.nmsh.gapEnabled,
     spacing: configuration.spacing,
@@ -336,14 +362,17 @@ export function themePreviewContext(home = homedir()): PromptContext {
 }
 
 /** Representative Rich Git states for the /prompt Rich Git showcase. Preview-only. */
+const NO_GIT_STATE = {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 0, behind: 0};
 export const RICH_GIT_SHOWCASE: ReadonlyArray<{label: string; git: NonNullable<PromptContext['git']>}> = [
-  {label: 'Clean', git: {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 0, behind: 0}},
-  {label: 'Changes', git: {staged: 2, modified: 1, untracked: 3, conflicts: 0, ahead: 0, behind: 0}},
-  {label: 'Ahead', git: {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 2, behind: 0}},
-  {label: 'Behind', git: {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 0, behind: 1}},
-  {label: 'Diverged', git: {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 2, behind: 1}},
-  {label: 'Conflict', git: {staged: 0, modified: 0, untracked: 0, conflicts: 1, ahead: 0, behind: 0}},
-  {label: 'Operation', git: {staged: 0, modified: 1, untracked: 0, conflicts: 0, ahead: 0, behind: 0, operation: 'rebase'}},
+  {label: 'Clean', git: NO_GIT_STATE},
+  {label: 'Staged', git: {...NO_GIT_STATE, staged: 2}},
+  {label: 'Modified', git: {...NO_GIT_STATE, modified: 1}},
+  {label: 'Untracked', git: {...NO_GIT_STATE, untracked: 3}},
+  {label: 'Ahead', git: {...NO_GIT_STATE, ahead: 2}},
+  {label: 'Behind', git: {...NO_GIT_STATE, behind: 1}},
+  {label: 'Diverged', git: {...NO_GIT_STATE, ahead: 2, behind: 1}},
+  {label: 'Conflict', git: {...NO_GIT_STATE, conflicts: 1}},
+  {label: 'Operation', git: {...NO_GIT_STATE, modified: 1, operation: 'rebase'}},
 ];
 
 /** One showcase row: the draft's real geometry and colors over the branch module alone. */

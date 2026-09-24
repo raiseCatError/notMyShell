@@ -1,5 +1,6 @@
 import type {RgbColor} from '../ui/palette.js';
-import type {ComposerLayout, ConnectorFadeStyle, GitColorMode, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
+import type {PowerlineShape} from './powerline.js';
+import type {ComposerLayout, ConnectorFadeStyle, GitColorMode, GitConnectorFade, GitGeometry, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
   text: string;
@@ -10,6 +11,10 @@ export interface PromptSegmentSnapshot {
   geometry: 'powerline' | 'plain';
   /** A marker-sized segment (e.g. clean Git): no text, shaped only by the prompt geometry. */
   compact?: boolean;
+  /** Resolved connector shape override for boundaries touching this segment. */
+  shape?: PowerlineShape;
+  /** Resolved gap-fade override for boundaries touching this segment. */
+  fade?: PowerlineShape | 'off';
 }
 
 /** Semantic prompt data captured at submission; never an ANSI-only string. */
@@ -26,6 +31,10 @@ export interface PromptSnapshot {
   palette?: NativePaletteId;
   /** Rich Git color mode at submission; older snapshots followed the theme. */
   gitColors?: GitColorMode;
+  /** Rich Git settings at submission, recorded for fidelity; segments carry the resolved geometry. */
+  gitEnabled?: boolean;
+  gitGeometry?: GitGeometry;
+  gitConnectorFade?: GitConnectorFade;
   gap?: number;
   gapEnabled?: boolean;
   spacing?: number;
@@ -102,12 +111,6 @@ export function archiveColor(color: RgbColor, role: 'foreground' | 'background' 
 export function grayscaleArchiveColor(color: RgbColor, role: 'foreground' | 'background' = 'foreground'): RgbColor {
   const [l] = toOklab(archiveColor(color, role));
   return fromOklab(l, 0, 0);
-}
-
-/** Perceptual blend: `amount` 0 is `from`, 1 is `to`. */
-export function mixPromptColors(from: RgbColor, to: RgbColor, amount = 0.5): RgbColor {
-  const a = toOklab(from), b = toOklab(to);
-  return fromOklab(a[0] + (b[0] - a[0]) * amount, a[1] + (b[1] - a[1]) * amount, a[2] + (b[2] - a[2]) * amount);
 }
 
 /** Same perceived lightness, no hue. */

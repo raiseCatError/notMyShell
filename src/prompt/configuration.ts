@@ -34,6 +34,24 @@ export const GIT_COLOR_MODES: readonly GitColorMode[] = ['semantic', 'followThem
 export type ConnectorFadeStyle = 'follow' | 'off' | PowerlineShape;
 export const CONNECTOR_FADE_STYLES: readonly ConnectorFadeStyle[] = ['follow', 'off', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
 
+/** Rich Git state geometry: follow the Main Prompt connector, or a fixed shape. */
+export type GitGeometry = 'follow' | PowerlineShape;
+export const GIT_GEOMETRIES: readonly GitGeometry[] = ['follow', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
+/**
+ * Rich Git connector fade: inherit the Main Prompt fade, follow Rich Git's own
+ * geometry, turn it off, or a fixed shape.
+ */
+export type GitConnectorFade = 'followMain' | 'followGeometry' | 'off' | PowerlineShape;
+export const GIT_CONNECTOR_FADES: readonly GitConnectorFade[] = ['followMain', 'followGeometry', 'off', 'wedge', 'flat', 'rounded', 'slash', 'backslash'];
+
+export function normalizeGitGeometry(value: unknown): GitGeometry {
+  return GIT_GEOMETRIES.includes(value as GitGeometry) ? value as GitGeometry : 'follow';
+}
+
+export function normalizeGitConnectorFade(value: unknown): GitConnectorFade {
+  return GIT_CONNECTOR_FADES.includes(value as GitConnectorFade) ? value as GitConnectorFade : 'followMain';
+}
+
 export function normalizeGitColorMode(value: unknown): GitColorMode {
   return GIT_COLOR_MODES.includes(value as GitColorMode) ? value as GitColorMode : 'semantic';
 }
@@ -106,7 +124,11 @@ export interface PromptConfiguration {
     palette: NativePaletteId;
     icons: NativeIconMode;
     connectorFade: ConnectorFadeStyle;
+    /** Rich Git master switch; Off keeps the plain branch module. */
+    gitEnabled: boolean;
     gitColors: GitColorMode;
+    gitGeometry: GitGeometry;
+    gitConnectorFade: GitConnectorFade;
   };
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
@@ -128,7 +150,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphChoiceComplete: false,
   sessionRetention: 1000,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
-    connectorFade: 'follow', gitColors: 'semantic'},
+    connectorFade: 'follow', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -187,7 +209,11 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
     startStyle, connector, endStyle, palette, icons,
-    connectorFade: normalizeConnectorFade(nativeValue.connectorFade), gitColors: normalizeGitColorMode(nativeValue.gitColors)};
+    connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
+    gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
+    gitColors: normalizeGitColorMode(nativeValue.gitColors),
+    gitGeometry: normalizeGitGeometry(nativeValue.gitGeometry),
+    gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;

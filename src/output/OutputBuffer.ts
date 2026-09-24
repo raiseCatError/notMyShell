@@ -7,7 +7,7 @@ import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
@@ -468,6 +468,8 @@ interface HistoricalSegment {
   /** Legacy headers carry pre-muted colors that must not be archived twice. */
   preMuted?: boolean;
   compact?: boolean;
+  shape?: PowerlineShape;
+  fade?: PowerlineShape | 'off';
   /** Rich Git color mode the segment was captured under. */
   gitColors?: GitColorMode;
 }
@@ -509,6 +511,8 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
       foreground: historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance)!,
       background: historyColor(segment.background, ARCHIVE_BLOCK_COLOR, 'background', segment, appearance) ?? ARCHIVE_BLOCK_COLOR,
       ...(segment.compact ? {compact: true} : {}),
+      ...(segment.shape ? {geometry: segment.shape} : {}),
+      ...(segment.fade ? {fade: segment.fade} : {}),
     }));
     if (!snapshot) return fitPowerlineBlocks(blocks, 1, 1, width, true);
     const gap = snapshot.gap ?? 1;

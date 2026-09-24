@@ -85,3 +85,17 @@ test('active Git operations are resolved from the Git directory', async () => {
     await rm(gitDir, {recursive: true, force: true});
   }
 });
+
+test('Rich Git Off skips the status probe but still detects the branch', async () => {
+  const calls: string[] = [];
+  const probe: GitProbe = {run: async (_cwd, args) => {
+    calls.push(args[0]!);
+    if (args[0] === 'rev-parse') return '/repo';
+    if (args[0] === 'symbolic-ref') return 'main';
+    return '## main';
+  }};
+  const context = await resolvePromptContext('/repo/src', probe, '/home/nobody', {status: false});
+  assert.equal(context.branch, 'main');
+  assert.equal(context.git, undefined);
+  assert.ok(!calls.includes('status'), `no status probe: ${calls.join(', ')}`);
+});

@@ -2,6 +2,10 @@ import {
   applyNativeGapChoice,
   CONNECTOR_FADE_STYLES,
   GIT_COLOR_MODES,
+  GIT_CONNECTOR_FADES,
+  GIT_GEOMETRIES,
+  type GitConnectorFade,
+  type GitGeometry,
   NATIVE_PALETTE_IDS,
   type ConnectorFadeStyle,
   type GitColorMode,
@@ -63,8 +67,8 @@ export function providerLabel(provider: PromptProviderId): string {
 
 const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'gap', 'end', 'icons', 'modules'] as const;
 export const APPEARANCE_MODULES_ROW = APPEARANCE_ROWS.indexOf('modules');
-/** Rich Git has one editable row; geometry is inherited and shown read-only. */
-const RICH_GIT_ROWS = ['gitColors'] as const;
+/** Rich Git's own settings; each edits inline with ←/→ (Space also toggles Enabled). */
+const RICH_GIT_ROWS = ['gitEnabled', 'gitColors', 'gitGeometry', 'gitConnectorFade'] as const;
 
 /** Enter on the Main Prompt Modules row opens the module manager. */
 export function onModulesRow(state: PromptPanelState): boolean {
@@ -74,6 +78,15 @@ export function onModulesRow(state: PromptPanelState): boolean {
 
 export function connectorFadeLabel(value: ConnectorFadeStyle): string {
   return value === 'follow' ? 'Follow connector' : value === 'off' ? 'Off' : SHAPE_LABELS[value];
+}
+
+export function gitGeometryLabel(value: GitGeometry): string {
+  return value === 'follow' ? 'Follow main prompt' : SHAPE_LABELS[value];
+}
+
+export function gitConnectorFadeLabel(value: GitConnectorFade): string {
+  return value === 'followMain' ? 'Follow main prompt' : value === 'followGeometry' ? 'Follow Rich Git geometry'
+    : value === 'off' ? 'Off' : SHAPE_LABELS[value];
 }
 
 export function gitColorsLabel(value: GitColorMode): string {
@@ -219,6 +232,12 @@ export function promptPanelItemCount(state: PromptPanelState): number {
 }
 
 export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean {
+  if (state.step === 'appearance' && state.view === 'git' && state.focus !== 'tabs'
+    && RICH_GIT_ROWS[state.selectedIndex] === 'gitEnabled' && key.kind === 'text' && key.value === ' ') {
+    state.draft.nmsh.gitEnabled = !state.draft.nmsh.gitEnabled;
+    state.message = undefined;
+    return true;
+  }
   if (state.step === 'modules' && handleModulesKey(key, state)) {
     state.message = undefined;
     return true;
@@ -242,7 +261,14 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     if (state.step === 'provider') state.selectedIndex = (state.selectedIndex + delta + PROVIDER_ORDER.length) % PROVIDER_ORDER.length;
     else if (state.step === 'layout') state.selectedIndex = (state.selectedIndex + delta + LAYOUT_CHOICES.length) % LAYOUT_CHOICES.length;
     else if (state.step === 'appearance' && state.view === 'git') {
-      state.draft.nmsh.gitColors = cycle(GIT_COLOR_MODES, state.draft.nmsh.gitColors, delta);
+      const nmsh = state.draft.nmsh;
+      switch (RICH_GIT_ROWS[state.selectedIndex]) {
+        case 'gitEnabled': nmsh.gitEnabled = !nmsh.gitEnabled; break;
+        case 'gitColors': nmsh.gitColors = cycle(GIT_COLOR_MODES, nmsh.gitColors, delta); break;
+        case 'gitGeometry': nmsh.gitGeometry = cycle(GIT_GEOMETRIES, nmsh.gitGeometry, delta); break;
+        case 'gitConnectorFade': nmsh.gitConnectorFade = cycle(GIT_CONNECTOR_FADES, nmsh.gitConnectorFade, delta); break;
+        default: return false;
+      }
     } else if (state.step === 'appearance') {
       const nmsh = state.draft.nmsh;
       switch (APPEARANCE_ROWS[state.selectedIndex]) {
@@ -388,19 +414,26 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     const row = (index: number, text: string) => item(rowIndex(index), text);
     rows.push(renderTabStrip(PROMPT_VIEWS, PROMPT_VIEW_IDS.indexOf(view), columns, state.focus === 'tabs'), '');
     if (view === 'git') {
-      rows.push(row(0, `Colors          ${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
-      rows.push(`  ${SUBTLE}Geometry        Follow main prompt${RESET}`);
-      rows.push(`  ${SUBTLE}Connector fade  Follow main prompt · ${connectorFadeLabel(draft.connectorFade).toLowerCase()}${RESET}`);
+      const onOff = (enabled: boolean) => enabled ? 'On' : 'Off';
+      rows.push(row(0, `Enabled         ${value(onOff(draft.gitEnabled), saved && onOff(saved.gitEnabled))}`));
+      rows.push(row(1, `Colors          ${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
+      rows.push(row(2, `Geometry        ${value(gitGeometryLabel(draft.gitGeometry), saved && gitGeometryLabel(saved.gitGeometry))}`));
+      const gitFadeNote = !state.draft.nmsh.gapEnabled && draft.gitConnectorFade !== 'off' ? `  ${SUBTLE}applies with a gap` : '';
+      rows.push(row(3, `Connector fade  ${value(gitConnectorFadeLabel(draft.gitConnectorFade), saved && gitConnectorFadeLabel(saved.gitConnectorFade))}${gitFadeNote}`));
       if (gitShowcase.length) {
-        rows.push('', `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}preview only${RESET}`);
-        RICH_GIT_SHOWCASE.forEach((entry, index) =>
-          rows.push(`  ${SECONDARY}${entry.label.padEnd(10)}${RESET} ${gitShowcase[index] ?? ''}${RESET}`));
+        rows.push('', draft.gitEnabled
+          ? `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}preview only${RESET}`
+          : `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}Rich Git is off · the prompt shows the branch only · dimmed sample${RESET}`);
+        RICH_GIT_SHOWCASE.forEach((entry, index) => {
+          const line = gitShowcase[index] ?? '';
+          rows.push(`  ${SECONDARY}${entry.label.padEnd(10)}${RESET} ${draft.gitEnabled ? line : `${SUBTLE}${stripAnsi(line)}`}${RESET}`);
+        });
       }
     } else {
       rows.push(row(0, `Theme           ${value(NATIVE_PROMPT_THEMES[draft.palette].label, saved && NATIVE_PROMPT_THEMES[saved.palette].label)}`));
       rows.push(row(1, `Start           ${value(edgeStyleLabel(draft.startStyle), saved && edgeStyleLabel(saved.startStyle))}`));
       rows.push(row(2, `Connector       ${value(SHAPE_LABELS[draft.connector], saved && SHAPE_LABELS[saved.connector])}`));
-      const fadeNote = state.draft.nmsh.gapEnabled && draft.connectorFade !== 'off' ? `  ${SUBTLE}applies with Gap Off` : '';
+      const fadeNote = !state.draft.nmsh.gapEnabled && draft.connectorFade !== 'off' ? `  ${SUBTLE}applies with a gap` : '';
       rows.push(row(3, `Connector fade  ${value(connectorFadeLabel(draft.connectorFade), saved && connectorFadeLabel(saved.connectorFade))}${fadeNote}`));
       rows.push(row(4, `Gap             ${value(gapLabel(nativeGapChoice(state.draft)), savedGap)}`));
       rows.push(row(5, `End             ${value(edgeStyleLabel(draft.endStyle), saved && edgeStyleLabel(saved.endStyle))}`));

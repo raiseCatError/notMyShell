@@ -1,6 +1,6 @@
 import {background, foreground, type RgbColor} from '../ui/palette.js';
 import {GLYPHS, powerlineShapeGlyphs, type PowerlineShape} from '../ui/glyphs.js';
-import {fadePromptColor, mixPromptColors} from './snapshot.js';
+import {fadePromptColor} from './snapshot.js';
 import {displayWidth, truncateText} from '../util/text.js';
 
 const RESET = '\u001B[0m';
@@ -11,7 +11,7 @@ export type {PowerlineShape};
 
 /**
  * Outer-edge styles (Start and End): a shape, optionally faded over three
- * cells. Connectors are shapes; their optional fade is a single cell.
+ * cells. Connectors are shapes; their optional fade colors one gap cell.
  */
 export type PowerlineEdgeStyle = PowerlineShape | 'fadeWedge' | 'fadeFlat' | 'fadeRounded' | 'fadeSlash';
 export type PowerlineEndStyle = PowerlineEdgeStyle;
@@ -30,6 +30,10 @@ export interface PowerlineBlock {
   background: RgbColor;
   /** Marker-sized: one background cell, no text or padding; geometry still applies. */
   compact?: boolean;
+  /** Connector shape for boundaries touching this block, overriding the prompt's. */
+  geometry?: PowerlineShape;
+  /** Gap fade for boundaries touching this block: a shape, `off`, or the prompt's when unset. */
+  fade?: PowerlineShape | 'off';
 }
 
 /** The shape a connector fade actually uses, or undefined for solid connectors. */
@@ -79,14 +83,20 @@ function fadeColors(color: RgbColor): RgbColor[] {
 }
 
 /**
- * The single softened cell between two joined segments. Shaped glyphs keep
- * the old segment in the foreground over a blend of both backgrounds; flat
- * uses one shade cell, so the transition never grows beyond one cell.
+ * A boundary takes the geometry of the block it enters when that block sets
+ * one, else of the block it leaves, else the prompt's. So a region of
+ * overriding blocks owns its entry, internal, and exit boundaries.
  */
-function fadedJoin(from: RgbColor, to: RgbColor, shape: PowerlineShape): string {
-  const glyph = powerlineShapeGlyphs(shape).join;
-  if (!glyph) return join(to, from, GLYPHS.connectorShade);
-  return join(from, mixPromptColors(from, to), glyph);
+function boundary<T>(current: PowerlineBlock, next: PowerlineBlock, pick: (block: PowerlineBlock) => T | undefined, fallback: T): T {
+  return pick(next) ?? pick(current) ?? fallback;
+}
+
+/**
+ * The one-cell connector fade: a shade glyph drawn in the previous block's
+ * color over the next block's, so both colors mix inside one gap cell.
+ */
+function fadeCell(from: RgbColor, to: RgbColor): string {
+  return `${RESET}${foreground(from)}${background(to)}${GLYPHS.connectorShade}`;
 }
 
 function blockContent(block: PowerlineBlock, spacing: number): string {
@@ -139,7 +149,6 @@ export function renderPowerlineBlocks(
 ): string {
   if (modules.length === 0) return `${RESET}${NEUTRAL_BACKGROUND}`;
   const gapWidth = gapEnabled ? Math.max(0, Math.trunc(gap)) : 0;
-  const connectorGlyphs = powerlineShapeGlyphs(connector);
   let content = renderStart(modules[0]!.background, normalizeEdgeStyle(startStyle, 'wedge'));
 
   for (let index = 0; index < modules.length; index += 1) {
@@ -147,20 +156,23 @@ export function renderPowerlineBlocks(
     content += blockContent(current, spacing);
     const next = modules[index + 1];
     if (!next) continue;
-    if (gapEnabled) {
-      // Separated modules share no edge to blend: caps stay solid and the
-      // connector fade (a joined-segment transition) does not apply.
-      if (connectorGlyphs.close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${connectorGlyphs.close}`;
-      content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth)}`;
-      content += `${RESET}${NEUTRAL_BACKGROUND}`;
-      if (connectorGlyphs.open) content += `${foreground(next.background)}${connectorGlyphs.open}`;
-    } else if (connectorFade) {
-      content += fadedJoin(current.background, next.background, connectorFade);
-    } else if (connectorGlyphs.join) {
-      // One transition cell paints the old segment on the left and the next
-      // segment on the right. The next block therefore has no opening cap.
-      content += join(current.background, next.background, connectorGlyphs.join);
+    const shape = boundary(current, next, block => block.geometry, connector);
+    if (!gapEnabled) {
+      // Joined: one transition cell paints the old segment on the left and the
+      // next on the right, so the next block has no opening cap. No gap, no fade.
+      const glyph = powerlineShapeGlyphs(shape).join;
+      if (glyph) content += join(current.background, next.background, glyph);
+      continue;
     }
+    // Separated: close cap, gap cells, open cap. A connector fade shapes the
+    // caps and turns the first gap cell into the fade; it never adds width.
+    const fade = boundary<PowerlineShape | 'off'>(current, next, block => block.fade, connectorFade ?? 'off');
+    const caps = powerlineShapeGlyphs(fade === 'off' ? shape : fade);
+    if (caps.close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${caps.close}`;
+    if (fade !== 'off' && gapWidth > 0) content += fadeCell(current.background, next.background);
+    const neutral = fade !== 'off' && gapWidth > 0 ? gapWidth - 1 : gapWidth;
+    content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(neutral)}${RESET}${NEUTRAL_BACKGROUND}`;
+    if (caps.open) content += `${foreground(next.background)}${caps.open}`;
   }
 
   content += renderEnd(modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));
