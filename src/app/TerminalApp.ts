@@ -14,7 +14,7 @@ import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
-import {HistoryViewport} from '../output/viewport.js';
+import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
 import {buildContextLine, buildInlineContextPrefix, buildThemePreviewLine, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
@@ -345,7 +345,18 @@ export class TerminalApp {
 
         const localVisibleIndex = key.y - 1 - topPadding;
 
-        if (localVisibleIndex >= 0) {
+        const sticky = localVisibleIndex === 0 ? this.stickyHeader(wrapped, viewStart) : undefined;
+        if (sticky) {
+          // The sticky overlay owns the top row: a click jumps to the block's real header.
+          if (key.kind === 'mouseClick') {
+            this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, sticky.targetIndex - viewStart);
+            this.hoveredLineIndex = undefined;
+            this.render();
+          } else if (this.hoveredLineIndex !== undefined) {
+            this.hoveredLineIndex = undefined;
+            this.render();
+          }
+        } else if (localVisibleIndex >= 0) {
           const row = wrapped[viewStart + localVisibleIndex];
           if (row) {
             if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
@@ -1332,6 +1343,15 @@ export class TerminalApp {
       : [providerRow, input, boundary];
   }
 
+  /**
+   * Presentation-only sticky command header for the current viewport. Panels
+   * and passthrough own the screen, so they suppress it.
+   */
+  private stickyHeader(wrapped: WrappedRow[], viewStart: number): StickyHeader | undefined {
+    if (this.settingsPanelActive || this.passthrough || this.externalPassthrough) return undefined;
+    return stickyHeaderFor(wrapped, viewStart);
+  }
+
   private get settingsPanelActive(): boolean {
     return Boolean(this.promptPanelState || this.transcriptPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
@@ -1854,6 +1874,9 @@ export class TerminalApp {
       }
       return finalAnsi;
     });
+    const sticky = this.stickyHeader(wrapped, viewStart);
+    const stickyRow = sticky && this.output.stickyHeaderRow(sticky.startId, columns);
+    if (stickyRow && visible.length > 0) visible[0] = `\u001B[48;2;38;38;48m${stickyRow.replaceAll(RESET, `${RESET}\u001B[48;2;38;38;48m`)}\u001B[K${RESET}`;
     const frameRows = [...visible];
     while (frameRows.length < outputHeight) frameRows.push('');
     if (layout.showGap) frameRows.push('');

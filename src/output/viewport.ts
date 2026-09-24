@@ -12,6 +12,32 @@ export interface WrappedRow {
   activityId?: string;
   activityStartedAt?: number;
   isLiveActivity?: boolean;
+  /** startId of the command block that owns this row; presentation metadata only. */
+  blockStartId?: number;
+}
+
+export interface StickyHeader {
+  /** Stable startId of the owning command block. */
+  startId: number;
+  /** Index of the block's first rendered row (its real header), which a click jumps to. */
+  targetIndex: number;
+}
+
+/**
+ * The block whose real command row has scrolled above the viewport while it
+ * still owns the top visible row. Derived only from row ownership, never text.
+ */
+export function stickyHeaderFor(rows: WrappedRow[], viewStart: number): StickyHeader | undefined {
+  const startId = rows[viewStart]?.blockStartId;
+  if (startId === undefined) return undefined;
+  let targetIndex = viewStart;
+  let commandRowAbove = false;
+  for (let index = viewStart; index >= 0 && rows[index]?.blockStartId === startId; index -= 1) {
+    targetIndex = index;
+    const row = rows[index]!;
+    if (index < viewStart && row.lineIndex === startId && !row.isHistoricalHeader) commandRowAbove = true;
+  }
+  return commandRowAbove ? {startId, targetIndex} : undefined;
 }
 
 export function wrapStyledLine(line: StyledLine, width: number): WrappedRow[] {
