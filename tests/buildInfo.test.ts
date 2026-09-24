@@ -17,7 +17,8 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 test('build identity validates package version and uses explicit unknown metadata gracefully', () => {
   const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {version: string};
   const embedded = parseBuildIdentity({version: packageJson.version, commit: '29d6cec', branch: 'dev'});
-  assert.equal(embedded.version, '0.2.0');
+  assert.match(embedded.version, /^\d+\.\d+\.\d+$/u, 'the embedded version is the package semver');
+  assert.equal(embedded.version, packageJson.version);
   assert.equal(formatBuildIdentity(embedded), `notMyShell ${packageJson.version}\nbuild 29d6cec (dev)`);
   assert.deepEqual(parseBuildIdentity({version: 2, commit: 'not-a-sha'}), {version: 'unknown', commit: 'unknown'});
   assert.deepEqual(readBuildIdentity(new URL('./missing-build-info.json', import.meta.url)), {version: 'unknown', commit: 'unknown'});

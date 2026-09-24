@@ -6,7 +6,8 @@
 |---|---|
 | **Current release** | [v0.2.0 — Structured Execution](https://github.com/raiseCatError/notMyShell/releases/tag/v0.2.0) |
 | **Development branch** | `dev` |
-| **Active milestone** | [v0.3.0 — Session & Interaction UX](https://github.com/raiseCatError/notMyShell/milestone/2) |
+| **Release candidate** | [v0.3.0 — Session & Interaction UX](https://github.com/raiseCatError/notMyShell/milestone/2) (on `dev`, awaiting final human validation) |
+| **Next milestone** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/milestone/3) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -15,44 +16,49 @@ GitHub issues define actionable remaining work. A merged implementation may stil
 
 [Milestone #1](https://github.com/raiseCatError/notMyShell/milestone/1) is closed and shipped. Its design record remains at [docs/design/structured-execution.md](docs/design/structured-execution.md), and release notes remain in [CHANGELOG.md](CHANGELOG.md).
 
-## Now — v0.3.0 Session & Interaction UX
+## Now — v0.3.0 Session & Interaction UX (release candidate)
 
-The core v0.3 interaction features are implemented on `dev`: safe zsh handoff, modular Native and Starship prompts, themes, composer layout and placement, rich paste atoms, persistent transcripts, first-run prompt setup, observed nested activity, and build identity. Remaining work is focused on outstanding human validation and the follow-up items below; the milestone is not a list of unstarted features.
+All v0.3 engineering is merged to `dev`, and the package version is `0.3.0`. The milestone now contains only implemented work awaiting final human terminal validation (Ghostty, Terminal.app, VS Code). v0.3.0 is not released until that validation passes.
 
 **Design record:** [docs/design/session-interaction-ux.md](docs/design/session-interaction-ux.md)
 
-### Implemented; human terminal validation remains
+### Implemented; final human terminal validation remains
 
-Keep these issues open with `needs-human-test` until the listed physical checks pass:
-
-| Issue | Implemented scope | Remaining validation |
-|---|---|---|
-| [#36](https://github.com/raiseCatError/notMyShell/issues/36) | `/zsh` handoff and nested-NMSh prevention | Real interactive zsh lifecycle and terminal-mode handoff |
-| [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Large multiline paste atoms and exact-source submission | Paste/edit/delete/unwrap behavior in Ghostty and Terminal.app |
-| [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Local transcript archive, `/clear`, and `/resume` | Shell-state continuity and archive behavior in real terminals |
-| [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Directly observed nested Node TAP activity | Live/folded activity, shimmer, and parent detail behavior |
-| [#49](https://github.com/raiseCatError/notMyShell/issues/49) | One-line/two-line composer and `header`/`composer` placement | PR #64 placement choices and narrow-terminal visuals |
-| [#53](https://github.com/raiseCatError/notMyShell/issues/53) | Build-time identity and `/version` / `--version` | Verify both commands after rebuilding the globally linked app |
-| [#56](https://github.com/raiseCatError/notMyShell/issues/56) | Welcome metadata, full-body cat, and blink animation | Blink timing/appearance and welcome lifecycle; cat design itself is approved |
-| [#58](https://github.com/raiseCatError/notMyShell/issues/58) | Native/Starship providers, six Native themes, synthetic previews, semantic snapshots | PR #64 theme variants/previews and final theme rendering |
-
-The current `/prompt` layout is visually approved. Cool First, one-line mode, and muted theme-preserving historical prompts are also approved. PR #64's changed theme variants, placement choices, blink animation, and silver shimmer still need final Ghostty validation; automated tests do not replace that check.
-
-### Open follow-up engineering
-
-These are remaining tasks, not completed v0.3 scope:
-
-| Issue | Remaining work |
+| Issue | Implemented scope |
 |---|---|
-| [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Separate Native Start, Connector, Gap, and End semantics; add configurable prompt icons/no-icons; continue modular prompt improvements. The current `startStyle` still affects independent internal segment openings. |
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional first-run shell-tool discovery/setup for zoxide, fzf, and Atuin, with Recommended / Choose individually / Skip and explicit confirmation before installation. Prompt/provider/layout setup is already implemented. |
-| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Design and implement a safe zsh completion/editor protocol. Native `fzf-tab` support remains unresolved and is not currently claimed. |
+| [#8](https://github.com/raiseCatError/notMyShell/issues/8) | Native Start / Connector / Gap / End geometry, rounded and slanted shapes, outer-edge fades, icons On/Off, module manager |
+| [#58](https://github.com/raiseCatError/notMyShell/issues/58) | NMSh Native / Starship providers, final five-theme set, synthetic previews, semantic snapshots |
+| [#66](https://github.com/raiseCatError/notMyShell/issues/66) | `/transcript` divider, historical prompt, history colors, divider density |
+| [#67](https://github.com/raiseCatError/notMyShell/issues/67) | Powerlevel10k provider via an isolated helper, with documented limitations |
+| [#49](https://github.com/raiseCatError/notMyShell/issues/49) | One-line/two-line composer and `header`/`composer` placement |
+| [#56](https://github.com/raiseCatError/notMyShell/issues/56) | Welcome header, bold wordmark, full-body cat and blink |
+| [#36](https://github.com/raiseCatError/notMyShell/issues/36) | `/zsh` handoff and nested-NMSh prevention |
+| [#21](https://github.com/raiseCatError/notMyShell/issues/21) | Rich paste atoms |
+| [#22](https://github.com/raiseCatError/notMyShell/issues/22) | Local transcript archive, `/clear`, `/resume` |
+| [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested Node TAP activity and shimmer |
+| [#53](https://github.com/raiseCatError/notMyShell/issues/53) | Build identity, `/version`, `--version` |
 
-Issue #58 also tracks the later expansion of visual themes into broader NMSh presentation themes, including semantic editor/syntax colors where appropriate. Planned core directions are Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale. Soft Semantic may be consolidated or retired after review; it is not a separate required long-term theme.
+Already approved in Ghostty: the full-body cat design, the `/prompt` structure, Cool First, one-line mode, and muted theme-preserving history.
 
-Issue #16 remains the broader zsh/tool interoperability issue: preserve compatible shell lifecycle hooks and improve aliases, ordinary completion, Atuin, zoxide, and fzf behavior. `fzf-tab` protocol work belongs to #52, not a claim of current support. zsh-autosuggestions and zsh-syntax-highlighting are not required; NMSh provides those UI roles itself.
+## Next — v0.4.0 Shell Intelligence & Extensibility
 
-Issue #43 (muted theme-preserving historical snapshots) is implemented, visually approved, and closed. Issue #53 (compiled `/version` and `--version`) is implemented but remains open for its explicit global-install runtime check.
+[Milestone #3](https://github.com/raiseCatError/notMyShell/milestone/3). Not started.
+
+| Issue | Area |
+|---|---|
+| [#68](https://github.com/raiseCatError/notMyShell/issues/68) | Theme-aware syntax highlighting and `/syntax` |
+| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability (fzf-tab is not supported today) |
+| [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins (autosuggestions, highlighting, history widgets) |
+| [#16](https://github.com/raiseCatError/notMyShell/issues/16) | Safe user zsh config and plugin interoperability (hooks, Atuin, zoxide, fzf) |
+| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and setup (zoxide, fzf, Atuin) |
+| [#69](https://github.com/raiseCatError/notMyShell/issues/69) | Right-side prompt/context |
+| [#70](https://github.com/raiseCatError/notMyShell/issues/70) | Show-on-command contextual prompt modules |
+| [#71](https://github.com/raiseCatError/notMyShell/issues/71) | Intelligent directory shortening |
+| [#72](https://github.com/raiseCatError/notMyShell/issues/72) | Richer Git prompt state |
+| [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules (research) |
+| [#74](https://github.com/raiseCatError/notMyShell/issues/74) | Update discovery and safe `/update` |
+
+zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
 
 ## Later — Terminal Host Independence
 
@@ -76,7 +82,6 @@ zsh remains the only first-class backend. ShellAdapter research and Linux/Window
 
 | Issue | Title |
 |---|---|
-| [#16](https://github.com/raiseCatError/notMyShell/issues/16) | zsh-first quality and tool/plugin interoperability |
 | [#17](https://github.com/raiseCatError/notMyShell/issues/17) | Research ShellAdapter architecture for future multi-shell support |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Investigate Linux support |
 | [#19](https://github.com/raiseCatError/notMyShell/issues/19) | Research Windows / ConPTY feasibility |

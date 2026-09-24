@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.3.0] - Unreleased (release candidate)
+
+Session & Interaction UX, plus the appearance and customization system. This entry is prepared on `dev`; the release date is set when v0.3.0 is published.
+
+### Added
+- **Prompt providers:** NMSh Native (default), optional Starship, and optional Powerlevel10k. Starship and Powerlevel10k supply prompt content only; NMSh keeps the editor, composer, history, and structured execution. `.zshrc`, `starship.toml`, and `.p10k.zsh` are never written.
+- **Powerlevel10k** renders your left prompt in an isolated helper zsh (no ZLE, no controlling TTY). Without its prompt character, git state comes from p10k's `vcs_info` fallback, and there is no right prompt yet.
+- **Native prompt themes:** Lavender Native (default, brand lavender `#A67CF3`), Brand / Semantic, Cool First, Warm First, and Grayscale, with per-theme previews in `/prompt`.
+- **Native geometry:** independent Start, Connector, Gap (Off / Compact / Normal), and End. Shapes are Wedge, Flat, Rounded, Slant `/`, and Slant `\`, with fading variants on outer edges only.
+- **Native icons** On/Off for git and toolchain modules; toolchain modules for Node, Go, Python, and Docker are detected from marker files.
+- **Module manager** in `/prompt`: show/hide, reorder, and the exit-status condition.
+- **Composer layouts:** two-line with the prompt row as divider, two-line inside a bordered composer, or one-line (existing `composerLayout` and `placement` keys).
+- **Semantic prompt history:** each command keeps a snapshot of its prompt; history renders a muted version of it.
+- **`/transcript`:** divider and historical prompt On/Off, history colors (Follow prompt / Choose theme / Grayscale), and Compact/Normal divider density.
+- **Persistent local sessions:** `/clear` archives the transcript and starts fresh on the same live zsh; `/resume` restores archives.
+- **`/zsh`** hands off to an ordinary interactive zsh; nested NMSh is prevented.
+- **Rich paste atoms** for large multiline pastes, submitted with exact source.
+- **Nested activity rows** for directly observed Node TAP streams, with a per-character traveling shimmer.
+- **Welcome header** with a terminal-native full-body cat (occasional blink), a bold `notMyShell` wordmark, build identity, start cwd, and shell.
+- **Build identity** via `/version` and `--version`.
+- **Settings panels** share a consistent controls row.
+
+### Changed
+- `startStyle: "pointed"` is now `wedge`, and Start no longer affects internal segment openings; existing configs normalize automatically.
+- The retired Soft Semantic theme id (`semantic`) normalizes to Brand / Semantic.
+
+### Fixed
+- Prompt settings previews no longer change the live provider before saving, and a failed external provider now reports that NMSh Native is active.
+- Wide Starship prompts in history are truncated to the row width.
+
+### Known limitations
+- Native `fzf-tab` support does not exist yet; configured-zsh completion parity is tracked for v0.4 (#52).
+- Powerlevel10k: the right prompt, gitstatus daemon, instant prompt, and settings defined only in `.zshrc` are not reproduced.
+- Nested activity is limited to directly observed Node TAP v13 streams.
+- Visual behavior has been validated in Ghostty for earlier builds; the final v0.3.0 candidate still needs human validation in Ghostty, Terminal.app, and VS Code.
+
 ## [0.2.0] - 2026-09-23
 
 ### Added
