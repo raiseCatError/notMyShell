@@ -4,12 +4,14 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
-import {displayWidth, repeatToWidth, stripAnsi, truncateText} from '../util/text.js';
+import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, type PowerlineBlock} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
-import {archiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
+import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
+import {isPromptRole, NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
+import {DEFAULT_TRANSCRIPT_APPEARANCE, type TranscriptAppearance} from '../prompt/configuration.js';
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
@@ -65,6 +67,8 @@ export function serializeCopyPayload(record: CompletedCommand): string {
 
 export class OutputBuffer {
   private welcome?: WelcomeSnapshot;
+  /** Presentation-only history header settings from /transcript. */
+  private transcriptAppearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
   /** Presentation-only idle frame; never serialized into transcripts. */
   private welcomeFrame: WelcomeCatFrame = 'open';
   private readonly parser: AnsiOutputParser;
@@ -136,6 +140,10 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
+  }
+
+  setTranscriptAppearance(appearance: TranscriptAppearance): void {
+    this.transcriptAppearance = {...appearance};
   }
 
   get hasWelcome(): boolean {
@@ -288,7 +296,8 @@ export class OutputBuffer {
       }
 
       const historicalContext = this.historicalContexts.get(i);
-      if (historicalContext) result.push(renderHistoricalContext(historicalContext, width));
+      const header = historicalContext && renderHistoricalContext(historicalContext, width, this.transcriptAppearance);
+      if (header) result.push(header);
 
       const cmd = this.completed.find(c => c.outputStartId === i);
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
@@ -436,62 +445,100 @@ function appendActivityOutput(result: WrappedRow[], lines: ReturnType<AnsiOutput
   }
 }
 
-function renderHistoricalContext(context: HistoricalContextSnapshot, width: number): WrappedRow {
-  if (context.prompt) return renderPromptSnapshot(context, width);
+type Rgb = {red: number; green: number; blue: number};
+const ARCHIVE_DIVIDER_COLOR = {red: 185, green: 176, blue: 197};
+const ARCHIVE_BLOCK_COLOR = {red: 75, green: 67, blue: 86};
+const LEGACY_FOREGROUND = {red: 220, green: 211, blue: 237};
+const LEGACY_BACKGROUNDS: Record<string, Rgb> = {
+  project: {red: 82, green: 73, blue: 111},
+  cwd: {red: 70, green: 65, blue: 98},
+  gitBranch: {red: 91, green: 80, blue: 119},
+};
+/** Compact density: a finer dashed rule in a quieter tone, same single row. */
+const DIVIDER_STYLES = {
+  normal: {glyph: '─', color: ARCHIVE_DIVIDER},
+  compact: {glyph: '┈', color: foreground({red: 118, green: 112, blue: 138})},
+} as const;
+
+interface HistoricalSegment {
+  text: string;
+  role?: string;
+  foreground?: Rgb;
+  background?: Rgb;
+  /** Legacy headers carry pre-muted colors that must not be archived twice. */
+  preMuted?: boolean;
+}
+
+function historyColor(color: Rgb | undefined, fallback: Rgb, part: 'foreground' | 'background', segment: HistoricalSegment,
+  appearance: TranscriptAppearance): Rgb | undefined {
+  if (appearance.historyColors === 'theme' && isPromptRole(segment.role)) {
+    return archiveColor(NATIVE_PROMPT_THEMES[appearance.historyTheme].colors(segment.role)[part], part);
+  }
+  if (!color) return part === 'foreground' ? fallback : undefined;
+  if (appearance.historyColors === 'grayscale') return grayscaleArchiveColor(color, part);
+  return segment.preMuted ? color : archiveColor(color, part);
+}
+
+function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[] {
   const cwd = context.cwd.replace(CONTROL_CHARACTERS, '�');
   const home = homedir().replace(/\/$/u, '');
   const cwdLabel = cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
-  const modules: PowerlineBlock[] = [];
   const project = context.project?.replace(CONTROL_CHARACTERS, '�');
-  const archiveForeground = {red: 220, green: 211, blue: 237};
-  if (project) {
-    modules.push({text: project, foreground: archiveForeground, background: {red: 82, green: 73, blue: 111}});
-  }
-  if (!project || project !== cwdLabel) {
-    modules.push({text: cwdLabel, foreground: archiveForeground, background: {red: 70, green: 65, blue: 98}});
-  }
+  const segments: HistoricalSegment[] = [];
+  if (project) segments.push({text: project, role: 'project'});
+  if (!project || project !== cwdLabel) segments.push({text: cwdLabel, role: 'cwd'});
   const branch = context.branch?.replace(CONTROL_CHARACTERS, '�');
-  if (branch) modules.push({text: `${GLYPHS.branch} ${branch}`, foreground: archiveForeground, background: {red: 91, green: 80, blue: 119}});
-
-  const visibleBlocks = fitPowerlineBlocks(modules, 1, 1, Math.max(0, width - 1), true);
-  const remaining = Math.max(0, width - displayWidth(visibleBlocks) - 1);
-  const plain = `${stripAnsi(visibleBlocks)} ${repeatToWidth('─', remaining)}`;
-  return {
-    ansi: `${visibleBlocks}\u001B[0m ${ARCHIVE_DIVIDER}${repeatToWidth('─', remaining)}\u001B[0m`,
-    plain,
-    isHistoricalHeader: true,
-  };
+  if (branch) segments.push({text: `${GLYPHS.branch} ${branch}`, role: 'gitBranch'});
+  return segments.map(segment => ({...segment, foreground: LEGACY_FOREGROUND, background: LEGACY_BACKGROUNDS[segment.role!], preMuted: true}));
 }
 
-const ARCHIVE_DIVIDER_COLOR = {red: 185, green: 176, blue: 197};
-const ARCHIVE_BLOCK_COLOR = {red: 75, green: 67, blue: 86};
+/** The prompt part of a historical header, colored per the transcript appearance. */
+function historicalPrompt(context: HistoricalContextSnapshot, width: number, appearance: TranscriptAppearance): string {
+  const snapshot = context.prompt;
+  const segments: HistoricalSegment[] = snapshot
+    ? snapshot.segments.map(segment => ({...segment, text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}))
+    : legacySegments(context);
+  if (!snapshot || snapshot.segments.every(segment => segment.geometry === 'powerline')) {
+    const blocks: PowerlineBlock[] = segments.map(segment => ({
+      text: segment.text,
+      foreground: historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance)!,
+      background: historyColor(segment.background, ARCHIVE_BLOCK_COLOR, 'background', segment, appearance) ?? ARCHIVE_BLOCK_COLOR,
+    }));
+    if (!snapshot) return fitPowerlineBlocks(blocks, 1, 1, width, true);
+    const gap = snapshot.gap ?? 1;
+    return fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, width,
+      normalizeEdgeStyle(snapshot.endStyle, 'flat'), snapshot.gapEnabled ?? gap > 0,
+      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector));
+  }
+  const plainSpans = segments.map(segment => `${rgbStyle(
+    historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),
+    historyColor(segment.background, ARCHIVE_BLOCK_COLOR, 'background', segment, appearance),
+  )}${segment.text}`).join('');
+  return truncateAnsi(plainSpans, width);
+}
 
-function rgbStyle(foregroundColor?: {red: number; green: number; blue: number}, backgroundColor?: {red: number; green: number; blue: number}): string {
+/**
+ * One header row above a historical command, or none when both the divider
+ * and the historical prompt are off. Presentation only: stored snapshots and
+ * raw PTY output are never modified.
+ */
+export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
+  appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE): WrappedRow | undefined {
+  if (!appearance.divider && !appearance.historicalPrompt) return undefined;
+  const divider = DIVIDER_STYLES[appearance.dividerDensity];
+  if (!appearance.historicalPrompt) {
+    const line = repeatToWidth(divider.glyph, width);
+    return {ansi: `${divider.color}${line}\u001B[0m`, plain: line, isHistoricalHeader: true};
+  }
+  const prompt = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
+  if (!appearance.divider) return {ansi: `${prompt}\u001B[0m`, plain: stripAnsi(prompt), isHistoricalHeader: true};
+  const remaining = Math.max(0, width - displayWidth(prompt) - 1);
+  const fill = repeatToWidth(divider.glyph, remaining);
+  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m`, plain: `${stripAnsi(prompt)} ${fill}`, isHistoricalHeader: true};
+}
+
+function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {
   const fg = foregroundColor ? `\u001B[38;2;${foregroundColor.red};${foregroundColor.green};${foregroundColor.blue}m` : '';
   const bg = backgroundColor ? `\u001B[48;2;${backgroundColor.red};${backgroundColor.green};${backgroundColor.blue}m` : '\u001B[49m';
   return `${fg}${bg}`;
-}
-
-function renderPromptSnapshot(context: HistoricalContextSnapshot, width: number): WrappedRow {
-  const snapshot = context.prompt!;
-  let prompt = '';
-  if (snapshot.segments.every(segment => segment.geometry === 'powerline')) {
-    const blocks = snapshot.segments.map(segment => ({
-      text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' '),
-      foreground: segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,
-      background: segment.background ? archiveColor(segment.background, 'background') : ARCHIVE_BLOCK_COLOR,
-    }));
-    const gap = snapshot.gap ?? 1;
-    prompt = fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, Math.max(0, width - 1),
-      normalizeEdgeStyle(snapshot.endStyle, 'flat'), snapshot.gapEnabled ?? gap > 0,
-      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector));
-  } else {
-    prompt = snapshot.segments.map(segment => `${rgbStyle(
-      segment.foreground ? archiveColor(segment.foreground) : ARCHIVE_DIVIDER_COLOR,
-      segment.background ? archiveColor(segment.background, 'background') : undefined,
-    )}${segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}`).join('');
-  }
-  const remaining = Math.max(0, width - displayWidth(prompt) - 1);
-  const plain = `${stripAnsi(prompt)} ${repeatToWidth('─', remaining)}`;
-  return {ansi: `${prompt}\u001B[0m ${ARCHIVE_DIVIDER}${repeatToWidth('─', remaining)}\u001B[0m`, plain, isHistoricalHeader: true};
 }

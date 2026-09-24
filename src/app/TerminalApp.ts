@@ -6,11 +6,12 @@ import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
-import {OutputBuffer, serializeCopyPayload} from '../output/OutputBuffer.js';
+import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildThemePreviewLine, nativePromptSnapshot} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildThemePreviewLine, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
@@ -82,6 +83,7 @@ export class TerminalApp {
   private starshipPrompt?: StarshipPromptResult;
   private starshipPromptError?: string;
   private promptPanelState?: PromptPanelState;
+  private transcriptPanelState?: TranscriptPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
@@ -112,6 +114,7 @@ export class TerminalApp {
 
   constructor() {
     this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.initialCwd));
+    this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     const dimensions = this.dimensions();
     this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
     this.semanticService = new SemanticService(this.initialCwd);
@@ -188,6 +191,15 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.transcriptPanelState) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.transcriptPanelState = undefined;
+        this.render();
+      } else if (key.kind === 'enter') {
+        this.saveTranscriptSettings();
+      } else if (handleTranscriptPanelKey(key, this.transcriptPanelState)) this.render();
+      return;
+    }
     if (this.promptPanelState) {
       if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
         // Esc leaves the module manager, keeping its draft edits for the final save.
@@ -218,7 +230,7 @@ export class TerminalApp {
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
       const fullInput = this.layoutEditorInput(columns);
-      const overlayRows = this.promptPanelState ? this.renderedPromptPanel(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
+      const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
       const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
       if (key.y && key.y <= layout.outputHeight) {
         const wrapped = this.output.wrapped(columns);
@@ -414,7 +426,7 @@ export class TerminalApp {
 
         const {columns, rows} = this.dimensions();
         const fullInput = this.layoutEditorInput(columns);
-        const overlayRows = this.promptPanelState ? this.renderedPromptPanel(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
+        const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
         const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
 
         const wrapped = this.output.wrapped(columns);
@@ -531,6 +543,7 @@ export class TerminalApp {
       if (slash.kind === 'copy') await this.copyRecent(slash.index);
       else if (slash.kind === 'appearance') await this.startAppearance();
       else if (slash.kind === 'prompt') await this.startPromptSettings(false);
+      else if (slash.kind === 'transcript') this.startTranscriptSettings();
       else if (slash.kind === 'keyboard') await this.startKeyboard();
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
@@ -1012,6 +1025,47 @@ export class TerminalApp {
       : [providerRow, input, boundary];
   }
 
+  private get settingsPanelActive(): boolean {
+    return Boolean(this.promptPanelState || this.transcriptPanelState);
+  }
+
+  private settingsPanelRows(columns: number): string[] {
+    if (this.transcriptPanelState) {
+      return renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 3);
+    }
+    return this.renderedPromptPanel(columns);
+  }
+
+  private startTranscriptSettings(): void {
+    const saved = structuredClone(this.promptConfiguration.transcript);
+    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved};
+  }
+
+  /** A representative history header: the live provider's identity over preview-only modules. */
+  private transcriptPreviewSample(): HistoricalContextSnapshot {
+    const context = themePreviewContext();
+    const prompt = this.effectivePromptProvider === 'starship' && this.starshipPrompt
+      ? this.currentPromptSnapshot()
+      : nativePromptSnapshot(context, this.promptConfiguration);
+    return {cwd: context.cwd, project: context.project, branch: context.branch, prompt};
+  }
+
+  private saveTranscriptSettings(): void {
+    const state = this.transcriptPanelState;
+    if (!state) return;
+    const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft)};
+    try {
+      savePromptConfiguration(next);
+      this.promptConfiguration = next;
+      this.output.setTranscriptAppearance(next.transcript);
+      this.transcriptPanelState = undefined;
+      this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
+    } catch (error) {
+      state.message = `Could not save transcript settings: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    this.render();
+  }
+
   private renderedPromptPanel(columns: number): string[] {
     if (!this.promptPanelState) return [];
     const preview = this.promptPanelPreview(columns);
@@ -1081,7 +1135,7 @@ export class TerminalApp {
   private scroll(direction: -1 | 1): void {
     const {columns, rows} = this.dimensions();
     const input = this.layoutEditorInput(columns);
-    const overlayRows = this.promptPanelState ? this.renderedPromptPanel(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
+    const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
       input.allRows.length,
@@ -1101,7 +1155,7 @@ export class TerminalApp {
   private scrollLines(amount: number): void {
     const {columns, rows} = this.dimensions();
     const input = this.layoutEditorInput(columns);
-    const overlayRows = this.promptPanelState ? this.renderedPromptPanel(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
+    const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
     const outputHeight = Math.max(1, calculateScreenLayout(
       rows,
       input.allRows.length,
@@ -1212,7 +1266,7 @@ export class TerminalApp {
     }
 
     if (this.promptPanelState) availableSuggestions = [];
-    const promptPanelRows = this.promptPanelState ? this.renderedPromptPanel(columns).length : 0;
+    const promptPanelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : 0;
     const overlayRows = this.promptPanelState ? promptPanelRows : this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
@@ -1228,7 +1282,7 @@ export class TerminalApp {
       this.hasVisibleProviderPrompt(),
       this.promptConfiguration.composerLayout,
     );
-    const layout = this.promptPanelState ? {
+    const layout = this.settingsPanelActive ? {
       ...calculatedLayout,
       outputHeight: Math.max(0, rows - promptPanelRows),
       inputHeight: 0,
@@ -1240,7 +1294,7 @@ export class TerminalApp {
       showSeparator: false,
       showGap: false,
     } : calculatedLayout;
-    const input = this.promptPanelState
+    const input = this.settingsPanelActive
       ? {...fullInput, rows: [], caretRow: 0, caretColumn: 0}
       : this.layoutEditorInput(columns, layout.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
@@ -1301,8 +1355,8 @@ export class TerminalApp {
     if (layout.showGap) frameRows.push('');
 
     if (layout.showJump) frameRows.push(this.jumpAffordance(columns));
-    if (this.promptPanelState) {
-      frameRows.push(...this.renderedPromptPanel(columns));
+    if (this.settingsPanelActive) {
+      frameRows.push(...this.settingsPanelRows(columns));
     } else if (this.appearanceState) {
       for (const row of renderAppearancePanel(this.appearanceState, columns)) {
         frameRows.push(row);
@@ -1398,7 +1452,7 @@ export class TerminalApp {
           + 1,
       ),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
-      cursorVisible: !this.promptPanelState,
+      cursorVisible: !this.settingsPanelActive,
     });
   }
 
