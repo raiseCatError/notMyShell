@@ -9,6 +9,7 @@ import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
+import {evaluateFold, foldWindow, type OutputFoldingMode} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
 import {DEFAULT_TRANSCRIPT_APPEARANCE, normalizeConnectorFade, type GitColorMode, type TranscriptAppearance} from '../prompt/configuration.js';
@@ -44,6 +45,7 @@ export interface CompletedCommand {
   outputStartId: number;
   endId?: number;
   expanded?: boolean;
+  /** Live presentation observed while running; `FOLDED` only in older transcripts. */
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
   activities?: SecondaryActivity[];
@@ -69,6 +71,7 @@ export class OutputBuffer {
   private welcome?: WelcomeSnapshot;
   /** Presentation-only history header settings from /transcript. */
   private transcriptAppearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
+  private outputFolding: OutputFoldingMode = 'smart';
   /** Presentation-only idle frame; never serialized into transcripts. */
   private welcomeFrame: WelcomeCatFrame = 'open';
   private readonly parser: AnsiOutputParser;
@@ -140,6 +143,11 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
+  }
+
+  /** Applies to commands that finish from now on; existing blocks keep their state. */
+  setOutputFolding(mode: OutputFoldingMode): void {
+    this.outputFolding = mode;
   }
 
   setTranscriptAppearance(appearance: TranscriptAppearance): void {
@@ -220,12 +228,17 @@ export class OutputBuffer {
 
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
-    let expanded = true;
-    if (mode === 'FOLDED' || this.active.activities.length > 0) expanded = false;
+    const output = this.parser.snapshotPlain(this.active.outputStart);
+    // Activity-bearing parents keep their own disclosure; otherwise the fold
+    // policy decides from the finished output. Presentation only.
+    const autoFolded = this.active.activities.length === 0 && this.outputFolding === 'smart'
+      && evaluateFold({command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
+        ...(this.classifier ? {facts: this.classifier.streamFacts} : {})}).fold;
+    const expanded = this.active.activities.length === 0 && !autoFolded;
 
     const record: CompletedCommand = {
       command: this.active.command,
-      output: this.parser.snapshotPlain(this.active.outputStart),
+      output,
       lifecycleText: '',
       exitCode,
       startId: this.active.start,
@@ -318,11 +331,20 @@ export class OutputBuffer {
           const isFoldable = hiddenLines > 10 || !cmd.expanded;
           if (isFoldable) {
             if (!cmd.expanded) {
-              const plain = foldHint(`${hiddenLines} lines hidden · Ctrl+O`, '›', width);
+              // Collapsed: keep the head and tail of the stored output visible
+              // around the disclosure row; the full output is never altered.
+              const commandIndex = this.completed.indexOf(cmd);
+              const {head, tail} = foldWindow(hiddenLines);
+              const pushLines = (from: number, to: number) => {
+                for (let line = from; line < to; line += 1) {
+                  for (const row of wrapStyledLine(lines[line] ?? '', width)) result.push({...row, lineIndex: line, commandIndex});
+                }
+              };
+              pushLines(cmd.outputStartId, cmd.outputStartId + head);
+              const plain = foldHint(`${hiddenLines - head - tail} lines hidden · Ctrl+O`, '›', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
-              result.push({
-                ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
-              });
+              result.push({ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
+              pushLines(cmd.endId - tail, cmd.endId);
               skipUntil = cmd.endId;
               continue;
             } else {

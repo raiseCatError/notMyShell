@@ -155,6 +155,7 @@ export class TerminalApp {
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.initialCwd));
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
+    this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     const dimensions = this.dimensions();
     this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
     this.semanticService = new SemanticService(this.initialCwd);
@@ -1663,6 +1664,7 @@ export class TerminalApp {
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
     this.output.setTranscriptAppearance(next.transcript);
+    this.output.setOutputFolding(next.outputFolding);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
   }
 
