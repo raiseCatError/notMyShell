@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {archiveColor} from '../src/prompt/snapshot.js';
 import {edgeParts, normalizeEdgeStyle, POWERLINE_EDGE_STYLES, renderPowerlineBlocks} from '../src/prompt/powerline.js';
-import {buildContextLine, buildThemePreviewLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
+import {buildContextLine, buildThemePreviewLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, nativePromptSnapshot, renderedModules, moduleShowcaseContext} from '../src/prompt/prompt.js';
 import {applyNativeGapChoice, NATIVE_PALETTE_IDS, nativeGapChoice, normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -152,7 +152,7 @@ test('onboarding preview uses a dedicated panel and hides the live composer curs
     assert.ok(frame?.rows.some(row => row.includes('Fading wedge')));
     assert.ok(stripAnsi(frame?.rows.at(-1) ?? '').includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
     const previewRows = app['promptPanelPreview'](80);
-    const runtimeRow = buildContextLine(app['context'], 76, app['promptPanelState']!.draft,
+    const runtimeRow = buildContextLine(moduleShowcaseContext(), 76, app['promptPanelState']!.draft,
       app['promptPanelState']!.draft.placement);
     assert.ok(previewRows.includes(runtimeRow), 'Native onboarding preview uses the runtime segment renderer');
     const panel = renderPromptPanel(app['promptPanelState']!, 80, ['sample preview']);
@@ -346,16 +346,18 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   handlePromptPanelKey({kind: 'right'} as Key, state);
   assert.equal(state.draft.modules[5]!.condition, 'always');
   handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
-  assert.equal(state.draft.modules[5]!.placement, 'right', 'P moves an eligible module right');
+  assert.equal(state.draft.modules[5]!.placement, 'right', 'P moves the module right');
   state.selectedIndex = 2;
   handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
-  assert.equal(state.draft.modules[2]!.placement, undefined, 'the branch is identity and stays left');
+  assert.equal(state.draft.modules[2]!.placement, 'right', 'the branch can move right too');
+  handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
+  assert.equal(state.draft.modules[2]!.placement, undefined, 'and back left');
   state.selectedIndex = 5;
   assert.equal(state.draft.modules[1]!.background, '#112233', 'custom colors survive reordering');
   const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
   assert.ok(rows.some(row => /○ Path +left +hidden/u.test(row)));
   assert.ok(rows.some(row => /› ● Exit status +right +‹ always ›/u.test(row)));
-  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · Enter/Esc done');
+  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · M mirror right: On · Enter/Esc done');
   assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
   const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);
   try {

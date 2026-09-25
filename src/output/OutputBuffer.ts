@@ -583,7 +583,8 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
     const right = blocks.filter((_, index) => segments[index]!.placement === 'right');
     if (right.length === 0) return left;
     return {left, right: fitRightPowerlineBlocks(right, width - displayWidth(left) - 1 - RIGHT_CONTEXT_MIN_DIVIDER,
-      candidate => renderPowerlineBlocks(candidate, gap, spacing, endStyle, gapEnabled, startStyle, connector, fade, fadeColors))};
+      candidate => renderPowerlineBlocks(candidate, gap, spacing, endStyle, gapEnabled, startStyle, connector, fade, fadeColors,
+        snapshot.mirrorRight ? 'mirrored' : 'normal'))};
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),

@@ -14,7 +14,6 @@ import {
   type PromptConfiguration,
   type PromptProviderId,
   modulePlacement,
-  RIGHT_ELIGIBLE_MODULES,
   ON_COMMAND_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
@@ -193,8 +192,8 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   const module = modules[index];
   if (!module) return false;
   if (key.kind === 'text' && key.value === ' ') module.visible = !module.visible;
+  else if (key.kind === 'text' && (key.value === 'm' || key.value === 'M')) state.draft.nmsh.mirrorRight = !state.draft.nmsh.mirrorRight;
   else if (key.kind === 'text' && (key.value === 'p' || key.value === 'P')) {
-    if (!RIGHT_ELIGIBLE_MODULES.has(module.id)) return true;
     if (modulePlacement(module) === 'right') delete module.placement;
     else module.placement = 'right';
   }
@@ -221,7 +220,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
-    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'], ['Enter/Esc', 'done']];
+    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'],
+      ['M', `mirror right: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
   }
   if (state.step === 'appearance') {
     if (state.focus === 'tabs') return [['←→', 'switch view'], ['↓', 'select'], ['Enter', 'save'], escape];
@@ -411,7 +411,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     LAYOUT_CHOICES.forEach((choice, index) => rows.push(item(index,
       `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
   } else if (state.step === 'modules') {
-    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · P moves eligible modules to the right${RESET}`);
+    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · Mirror right side: ${RESET}${state.draft.nmsh.mirrorRight ? `${ACCENT}On` : `${SECONDARY}Off`}${RESET}`);
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);

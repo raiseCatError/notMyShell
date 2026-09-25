@@ -39,6 +39,8 @@ export interface PromptSnapshot {
   gitEnabled?: boolean;
   gitGeometry?: GitGeometry;
   gitConnectorFade?: GitConnectorFade;
+  /** Right-area orientation at submission; missing (older snapshots) renders unmirrored. */
+  mirrorRight?: boolean;
   gap?: number;
   gapEnabled?: boolean;
   spacing?: number;

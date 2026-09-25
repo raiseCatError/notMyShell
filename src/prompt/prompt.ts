@@ -340,6 +340,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     gitEnabled: configuration.nmsh.gitEnabled,
     gitGeometry: configuration.nmsh.gitGeometry,
     gitConnectorFade: configuration.nmsh.gitConnectorFade,
+    ...(modules.some(module => module.placement === 'right') ? {mirrorRight: configuration.nmsh.mirrorRight} : {}),
     gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
     gapEnabled: configuration.nmsh.gapEnabled,
     spacing: configuration.spacing,
@@ -369,7 +370,7 @@ export function fitContextRow(modules: readonly RenderedModule[], width: number,
   const remaining = width - displayWidth(left) - (left ? 1 : 0);
   const right = rightBlocks.length === 0 || remaining < 3 ? '' : fitRightPowerlineBlocks(rightBlocks, remaining,
     blocks => renderPowerlineBlocks(blocks, gap, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
-      fade, nmsh.connectorFadeColors));
+      fade, nmsh.connectorFadeColors, nmsh.mirrorRight ? 'mirrored' : 'normal'));
   return {left, right};
 }
 
@@ -387,13 +388,18 @@ export function buildRightContext(context: PromptContext, width: number, configu
 function fittedModules(context: PromptContext, configuration: PromptConfiguration, width: number): RenderedModule[] {
   const nmsh = configuration.nmsh;
   let modules = renderedModules(context, configuration);
-  if (!modules.some(module => module.role === 'cwd')) return modules;
+  const cwd = modules.find(module => module.role === 'cwd');
+  if (!cwd) return modules;
+  const render = (blocks: readonly RenderedModule[], mirrored = false) => blocks.length === 0 ? 0 : displayWidth(renderPowerlineBlocks(blocks,
+    nmsh.gapEnabled ? configuration.gap : 0, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
+    resolveConnectorFade(nmsh.connectorFade, nmsh.connector), nmsh.connectorFadeColors, mirrored ? 'mirrored' : 'normal'));
   for (let level = 0; level < PATH_DISPLAY_LEVELS; level += 1) {
     if (level > 0) modules = renderedModules(context, configuration, level);
-    // Right context drops first, so only the left prompt decides the path level.
-    const full = renderPowerlineBlocks(modules.filter(module => module.placement !== 'right'), nmsh.gapEnabled ? configuration.gap : 0,
-      configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector, resolveConnectorFade(nmsh.connectorFade, nmsh.connector), nmsh.connectorFadeColors);
-    if (displayWidth(full) <= width) return modules;
+    const left = render(modules.filter(module => module.placement !== 'right'));
+    // A left path decides by the left prompt alone, so right context drops
+    // before it shortens; a right path shortens to keep the right area whole.
+    const right = cwd.placement === 'right' ? render(modules.filter(module => module.placement === 'right'), nmsh.mirrorRight) : 0;
+    if (left + (right ? right + (left ? 1 : 0) : 0) <= width) return modules;
   }
   return modules;
 }
@@ -432,6 +438,28 @@ export function themePreviewContext(home = homedir()): PromptContext {
     git: {staged: 2, modified: 1, untracked: 3, conflicts: 0, ahead: 2, behind: 0},
     toolchains: ['node', 'go', 'python', 'docker'],
     exitStatus: 0,
+  };
+}
+
+/**
+ * Preview-only context for the module showcase: every module type with a
+ * representative value, independent of the real cwd, repository, tools, and
+ * typed command. Built from literals only; nothing is probed or executed.
+ */
+export function moduleShowcaseContext(home = homedir()): PromptContext {
+  const root = `${home.replace(/\/$/u, '')}/Projects/notMyShell`;
+  return {
+    cwd: `${root}/src`,
+    project: 'notMyShell',
+    root,
+    branch: 'feature/example',
+    git: {staged: 2, modified: 1, untracked: 0, conflicts: 0, ahead: 1, behind: 0},
+    toolchains: ['node'],
+    exitStatus: 1,
+    // Show-on-command modules appear as if their commands were being typed.
+    commandWords: ['kubectl', 'docker', 'npm'],
+    kubeContext: 'dev-cluster',
+    dockerContext: 'colima',
   };
 }
 

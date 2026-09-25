@@ -81,9 +81,57 @@ function normalizeEndStyle(endStyle: PowerlineEndStyle | boolean): PowerlineEndS
   return endStyle ? 'fadeFlat' : 'flat';
 }
 
+/**
+ * The renderer paints a list of cells rather than a string, so geometry can
+ * be oriented structurally. `sgr` is the exact escape prefix of the normal
+ * orientation; `foreground`/`background` are the cell's resolved colors
+ * (background `undefined` is the terminal's own). `text` cells hold a whole
+ * block body and are never reflected; `glyph` cells are single geometry
+ * glyphs; `space` cells are symmetric fill. Empty-text cells only carry SGR.
+ */
+interface Cell {
+  sgr: string;
+  text: string;
+  kind: 'glyph' | 'text' | 'space';
+  background?: RgbColor;
+  foreground?: RgbColor;
+}
+
+class Painter {
+  readonly cells: Cell[] = [];
+  add(sgr: string, text: string, zone: Zone, color?: RgbColor, kind: Cell['kind'] = 'glyph'): void {
+    this.cells.push({sgr, text, kind, ...(zone ? {background: zone} : {}), ...(color ? {foreground: color} : {})});
+  }
+}
+
+/** Horizontal reflection of every geometry glyph, in both glyph modes. */
+const REFLECTED_GLYPHS: Readonly<Record<string, string>> = {
+  '\ue0b0': '\ue0b2', '\ue0b2': '\ue0b0', '\ue0d7': '\ue0d6', '\ue0d6': '\ue0d7',
+  '\ue0b4': '\ue0b6', '\ue0b6': '\ue0b4',
+  '\ue0b8': '\ue0ba', '\ue0ba': '\ue0b8', '\ue0bc': '\ue0be', '\ue0be': '\ue0bc',
+  '<': '>', '>': '<', '(': ')', ')': '(', '/': '\\', '\\': '/',
+};
+
+/** Normal orientation: the exact escape sequence this renderer has always produced. */
+function serialize(cells: readonly Cell[]): string {
+  return cells.map(cell => `${cell.sgr}${cell.text}`).join('');
+}
+
+/**
+ * Mirrored orientation: the horizontal reflection of the cells. Cell order
+ * reverses and geometry glyphs reflect; each cell keeps its colors, and
+ * block text keeps its reading order.
+ */
+function serializeReflected(cells: readonly Cell[]): string {
+  return cells.filter(cell => cell.text).reverse().map(cell => {
+    const text = cell.kind === 'glyph' ? REFLECTED_GLYPHS[cell.text] ?? cell.text : cell.text;
+    return `${RESET}${zoneBackground(cell.background)}${cell.foreground ? foreground(cell.foreground) : ''}${text}`;
+  }).join('');
+}
+
 /** One cell painting `from` on the left and `to` on the right. */
-function join(from: RgbColor, to: RgbColor, glyph: string): string {
-  return `${RESET}${foreground(from)}${background(to)}${glyph}`;
+function join(paint: Painter, from: RgbColor, to: RgbColor, glyph: string): void {
+  paint.add(`${RESET}${foreground(from)}${background(to)}`, glyph, to, from);
 }
 
 /** Brightest to dimmest same-hue steps for outer-edge fades. */
@@ -105,10 +153,9 @@ export function connectorFadeColor(left: RgbColor): RgbColor {
   return fadePromptColor(left, 0);
 }
 
-/** Background for both cap cells of a Compact faded gap: one side only (Mixed resolves to Previous). */
-function fadeZones(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors): {left: string; right: string} {
-  const zone = background(connectorFadeColor(mode === 'next' ? following : previous));
-  return {left: zone, right: zone};
+/** Zone for both cap cells of a Compact faded gap: one side only (Mixed resolves to Previous). */
+function fadeZone(previous: RgbColor, following: RgbColor, mode: ConnectorFadeColors): RgbColor {
+  return connectorFadeColor(mode === 'next' ? following : previous);
 }
 
 /** A zone color between two segments; `undefined` is the terminal's default background. */
@@ -125,17 +172,21 @@ function zoneBackground(zone: Zone): string {
  * half sits on the correct side. A Flat shape has no glyph: the cell is a
  * plain space in the zone it opens onto (exit: `to`, entry: `from`).
  */
-function transitionCell(from: Zone, to: Zone, shape: PowerlineShape, side: 'exit' | 'entry'): string {
+function transitionCell(paint: Painter, from: Zone, to: Zone, shape: PowerlineShape, side: 'exit' | 'entry'): void {
   const glyphs = powerlineShapeGlyphs(shape);
   const glyph = side === 'exit' ? glyphs.close : glyphs.open;
   const painted = side === 'exit' ? from : to;
   const behind = side === 'exit' ? to : from;
-  if (!glyph || !painted) return `${RESET}${zoneBackground(side === 'exit' ? to : from)} `;
-  return `${RESET}${zoneBackground(behind)}${foreground(painted)}${glyph}`;
+  if (!glyph || !painted) {
+    const zone = side === 'exit' ? to : from;
+    paint.add(`${RESET}${zoneBackground(zone)}`, ' ', zone, undefined, 'space');
+    return;
+  }
+  paint.add(`${RESET}${zoneBackground(behind)}${foreground(painted)}`, glyph, behind, painted);
 }
 
-function solidCell(zone: Zone): string {
-  return `${RESET}${zoneBackground(zone)} `;
+function solidCell(paint: Painter, zone: Zone): void {
+  paint.add(`${RESET}${zoneBackground(zone)}`, ' ', zone, undefined, 'space');
 }
 
 /**
@@ -149,30 +200,44 @@ function solidCell(zone: Zone): string {
  *   Wide   Next      [A|term][term|darkB][darkB][darkB|B]
  *   Wide   Mixed     [A|darkA][darkA|term][term|darkB][darkB|B]
  */
-function bridgeCells(a: RgbColor, b: RgbColor, exit: PowerlineShape, entry: PowerlineShape,
-  mode: ConnectorFadeColors, wide: boolean): string {
+function bridgeCells(paint: Painter, a: RgbColor, b: RgbColor, exit: PowerlineShape, entry: PowerlineShape,
+  mode: ConnectorFadeColors, wide: boolean): void {
   if (!wide) {
     if (mode === 'mixed') {
       const fadeA = connectorFadeColor(a);
       const fadeB = connectorFadeColor(b);
-      return transitionCell(a, fadeA, exit, 'exit') + transitionCell(fadeA, fadeB, entry, 'entry') + transitionCell(fadeB, b, entry, 'entry');
+      transitionCell(paint, a, fadeA, exit, 'exit');
+      transitionCell(paint, fadeA, fadeB, entry, 'entry');
+      transitionCell(paint, fadeB, b, entry, 'entry');
+      return;
     }
     const fade = connectorFadeColor(mode === 'next' ? b : a);
-    return transitionCell(a, fade, exit, 'exit') + solidCell(fade) + transitionCell(fade, b, entry, 'entry');
+    transitionCell(paint, a, fade, exit, 'exit');
+    solidCell(paint, fade);
+    transitionCell(paint, fade, b, entry, 'entry');
+    return;
   }
   if (mode === 'next') {
     const fadeB = connectorFadeColor(b);
-    return transitionCell(a, undefined, exit, 'exit') + transitionCell(undefined, fadeB, entry, 'entry')
-      + solidCell(fadeB) + transitionCell(fadeB, b, entry, 'entry');
+    transitionCell(paint, a, undefined, exit, 'exit');
+    transitionCell(paint, undefined, fadeB, entry, 'entry');
+    solidCell(paint, fadeB);
+    transitionCell(paint, fadeB, b, entry, 'entry');
+    return;
   }
   const fadeA = connectorFadeColor(a);
   if (mode === 'mixed') {
     const fadeB = connectorFadeColor(b);
-    return transitionCell(a, fadeA, exit, 'exit') + transitionCell(fadeA, undefined, exit, 'exit')
-      + transitionCell(undefined, fadeB, entry, 'entry') + transitionCell(fadeB, b, entry, 'entry');
+    transitionCell(paint, a, fadeA, exit, 'exit');
+    transitionCell(paint, fadeA, undefined, exit, 'exit');
+    transitionCell(paint, undefined, fadeB, entry, 'entry');
+    transitionCell(paint, fadeB, b, entry, 'entry');
+    return;
   }
-  return transitionCell(a, fadeA, exit, 'exit') + solidCell(fadeA)
-    + transitionCell(fadeA, undefined, exit, 'exit') + transitionCell(undefined, b, entry, 'entry');
+  transitionCell(paint, a, fadeA, exit, 'exit');
+  solidCell(paint, fadeA);
+  transitionCell(paint, fadeA, undefined, exit, 'exit');
+  transitionCell(paint, undefined, b, entry, 'entry');
 }
 
 /** Mixed needs a Normal or Wide gap; Compact and Off resolve it to Previous. */
@@ -188,43 +253,68 @@ export function resolveFadeColors(mode: ConnectorFadeColors, gapEnabled: boolean
   return mode === 'mixed' && !fadeColorsAllowMixed(gapEnabled, gap) ? 'previous' : mode;
 }
 
-function blockContent(block: PowerlineBlock, spacing: number): string {
+function blockContent(paint: Painter, block: PowerlineBlock, spacing: number): void {
   const body = block.compact ? ' ' : `${' '.repeat(spacing)}${block.text}${' '.repeat(spacing)}`;
-  return `${foreground(block.foreground)}${background(block.background)}${body}`;
+  paint.add(`${foreground(block.foreground)}${background(block.background)}`, body, block.background, block.foreground, 'text');
 }
 
-function renderStart(first: RgbColor, style: PowerlineStartStyle): string {
+function renderStart(paint: Painter, first: RgbColor, style: PowerlineStartStyle): void {
   const {shape, fade} = edgeParts(style);
   const glyphs = powerlineShapeGlyphs(shape);
-  let content = `${RESET}${NEUTRAL_BACKGROUND}`;
-  if (!fade) return glyphs.open ? `${content}${foreground(first)}${glyphs.open}` : content;
+  paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+  if (!fade) {
+    if (glyphs.open) paint.add(foreground(first), glyphs.open, undefined, first);
+    return;
+  }
   const [bright, middle, dim] = fadeColors(first) as [RgbColor, RgbColor, RgbColor];
   if (shape === 'flat') {
     const cells = [...GLYPHS.powerlineFadeIn];
-    return `${content}${foreground(dim)}${cells[0]}${foreground(middle)}${cells[1]}${foreground(bright)}${cells[2]}`;
+    paint.add(foreground(dim), cells[0]!, undefined, dim);
+    paint.add(foreground(middle), cells[1]!, undefined, middle);
+    paint.add(foreground(bright), cells[2]!, undefined, bright);
+    return;
   }
   // Mirror of the end fade: dim cap, then solid joins brightening into the prompt.
-  content += `${foreground(dim)}${glyphs.open}`;
-  return `${content}${join(dim, middle, glyphs.join)}${join(middle, bright, glyphs.join)}${join(bright, first, glyphs.join)}`;
+  paint.add(foreground(dim), glyphs.open, undefined, dim);
+  join(paint, dim, middle, glyphs.join);
+  join(paint, middle, bright, glyphs.join);
+  join(paint, bright, first, glyphs.join);
 }
 
-function renderEnd(last: RgbColor, style: PowerlineEndStyle): string {
+function renderEnd(paint: Painter, last: RgbColor, style: PowerlineEndStyle): void {
   const {shape, fade} = edgeParts(style);
   const glyphs = powerlineShapeGlyphs(shape);
-  if (!fade) return glyphs.close ? `${RESET}${NEUTRAL_BACKGROUND}${foreground(last)}${glyphs.close}` : '';
-  const stops = [last, ...fadeColors(last)];
+  if (!fade) {
+    if (glyphs.close) paint.add(`${RESET}${NEUTRAL_BACKGROUND}${foreground(last)}`, glyphs.close, undefined, last);
+    return;
+  }
+  const stops = [last, ...fadeColors(last)] as [RgbColor, RgbColor, RgbColor, RgbColor];
   if (shape === 'flat') {
     const cells = [...GLYPHS.powerlineFade];
-    return `${RESET}${NEUTRAL_BACKGROUND}${foreground(stops[1]!)}${cells[0]}${foreground(stops[2]!)}${cells[1]}${foreground(stops[3]!)}${cells[2]} `;
+    paint.add(`${RESET}${NEUTRAL_BACKGROUND}${foreground(stops[1])}`, cells[0]!, undefined, stops[1]);
+    paint.add(foreground(stops[2]), cells[1]!, undefined, stops[2]);
+    paint.add(foreground(stops[3]), cells[2]!, undefined, stops[3]);
+    paint.add('', ' ', undefined, stops[3], 'space');
+    return;
   }
-  return `${join(stops[0]!, stops[1]!, glyphs.join)}${join(stops[1]!, stops[2]!, glyphs.join)}${join(stops[2]!, stops[3]!, glyphs.join)}`
-    + `${RESET}${foreground(stops[3]!)}${NEUTRAL_BACKGROUND}${glyphs.close}`;
+  join(paint, stops[0], stops[1], glyphs.join);
+  join(paint, stops[1], stops[2], glyphs.join);
+  join(paint, stops[2], stops[3], glyphs.join);
+  paint.add(`${RESET}${foreground(stops[3])}${NEUTRAL_BACKGROUND}`, glyphs.close, undefined, stops[3]);
 }
+
+/** Which way a prompt's geometry faces: toward the right (a left prompt) or reflected toward the left. */
+export type PowerlineOrientation = 'normal' | 'mirrored';
 
 /**
  * Render Native/archived segments. Start shapes only the outer left edge,
  * End only the outer right edge, Connector only module-to-module geometry,
  * and Gap only whether modules are joined or separated by neutral cells.
+ *
+ * `mirrored` is the horizontal reflection of rendering the blocks in reverse:
+ * blocks keep their visual left-to-right order, the flow runs from the right
+ * edge inward, Start shapes the right (anchored) edge and End the left, and
+ * Previous/Next keep their meaning along that flow.
  */
 export function renderPowerlineBlocks(
   modules: readonly PowerlineBlock[],
@@ -236,14 +326,34 @@ export function renderPowerlineBlocks(
   connector: PowerlineConnectorStyle = 'wedge',
   connectorFade: ResolvedConnectorFade = undefined,
   fadeColors: ConnectorFadeColors = 'previous',
+  orientation: PowerlineOrientation = 'normal',
 ): string {
   if (modules.length === 0) return `${RESET}${NEUTRAL_BACKGROUND}`;
+  if (orientation === 'mirrored') {
+    const reflected = paintPowerlineBlocks([...modules].reverse(), gap, spacing, endStyle, gapEnabled, startStyle, connector, connectorFade, fadeColors);
+    return `${serializeReflected(reflected)}${RESET}${NEUTRAL_BACKGROUND}`;
+  }
+  return serialize(paintPowerlineBlocks(modules, gap, spacing, endStyle, gapEnabled, startStyle, connector, connectorFade, fadeColors));
+}
+
+function paintPowerlineBlocks(
+  modules: readonly PowerlineBlock[],
+  gap: number,
+  spacing: number,
+  endStyle: PowerlineEndStyle | boolean,
+  gapEnabled: boolean,
+  startStyle: PowerlineStartStyle,
+  connector: PowerlineConnectorStyle,
+  connectorFade: ResolvedConnectorFade,
+  fadeColors: ConnectorFadeColors,
+): Cell[] {
+  const paint = new Painter();
   const gapWidth = gapEnabled ? Math.max(0, Math.trunc(gap)) : 0;
-  let content = renderStart(modules[0]!.background, normalizeEdgeStyle(startStyle, 'wedge'));
+  renderStart(paint, modules[0]!.background, normalizeEdgeStyle(startStyle, 'wedge'));
 
   for (let index = 0; index < modules.length; index += 1) {
     const current = modules[index]!;
-    content += blockContent(current, spacing);
+    blockContent(paint, current, spacing);
     const next = modules[index + 1];
     if (!next) continue;
     const shape = boundary(current, next, block => block.geometry, connector);
@@ -251,7 +361,7 @@ export function renderPowerlineBlocks(
       // Joined: one transition cell paints the old segment on the left and the
       // next on the right, so the next block has no opening cap. No gap, no fade.
       const glyph = powerlineShapeGlyphs(shape).join;
-      if (glyph) content += join(current.background, next.background, glyph);
+      if (glyph) join(paint, current.background, next.background, glyph);
       continue;
     }
     // Separated: close cap (Connector shape), gap cells, open cap. A connector
@@ -260,9 +370,10 @@ export function renderPowerlineBlocks(
     const close = powerlineShapeGlyphs(shape).close;
     if (fade === 'off') {
       const open = powerlineShapeGlyphs(shape).open;
-      if (close) content += `${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}${close}`;
-      content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth)}${RESET}${NEUTRAL_BACKGROUND}`;
-      if (open) content += `${foreground(next.background)}${open}`;
+      if (close) paint.add(`${RESET}${NEUTRAL_BACKGROUND}${foreground(current.background)}`, close, undefined, current.background);
+      paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, ' '.repeat(gapWidth), undefined, undefined, 'space');
+      paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+      if (open) paint.add(foreground(next.background), open, undefined, next.background);
       continue;
     }
     const open = powerlineShapeGlyphs(fade).open;
@@ -270,22 +381,23 @@ export function renderPowerlineBlocks(
     if (gapWidth === 0) {
       // Compact: the zones touch, so a one-sided mode carries its color across
       // both caps. No width is added; Flat + Flat has nothing to color.
-      const {left, right} = fadeZones(current.background, next.background, mode);
-      if (close) content += `${RESET}${left}${foreground(current.background)}${close}`;
-      if (open) content += `${RESET}${right}${foreground(next.background)}${open}`;
+      const zone = fadeZone(current.background, next.background, mode);
+      if (close) paint.add(`${RESET}${background(zone)}${foreground(current.background)}`, close, zone, current.background);
+      if (open) paint.add(`${RESET}${background(zone)}${foreground(next.background)}`, open, zone, next.background);
       continue;
     }
     // Flat + Flat has no glyph to split a cell, so Normal and Wide fall back
     // to one and two terminal-background cells with no fade color.
     if (!close && !open) {
-      content += `${RESET}${NEUTRAL_BACKGROUND}${' '.repeat(gapWidth >= 2 ? 2 : 1)}`;
+      paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, ' '.repeat(gapWidth >= 2 ? 2 : 1), undefined, undefined, 'space');
       continue;
     }
-    content += bridgeCells(current.background, next.background, shape, fade, mode, gapWidth >= 2);
+    bridgeCells(paint, current.background, next.background, shape, fade, mode, gapWidth >= 2);
   }
 
-  content += renderEnd(modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));
-  return `${content}${RESET}${NEUTRAL_BACKGROUND}`;
+  renderEnd(paint, modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));
+  paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+  return paint.cells;
 }
 
 /** Fit complete segment transitions to the cell budget, omitting decorations first. */

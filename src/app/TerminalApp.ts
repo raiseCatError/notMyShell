@@ -15,7 +15,7 @@ import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -1412,22 +1412,26 @@ export class TerminalApp {
     if (state.step === 'powerlevel10k') previewConfig.provider = 'powerlevel10k';
     if (state.step === 'layout') applyLayoutChoice(previewConfig, state.selectedIndex);
     const boundary = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, width)}${RESET}`;
+    // Configuring layout, appearance, or modules uses the deterministic
+    // showcase so every module type is visible; other steps show the live prompt.
+    const context = state.step === 'modules' || state.step === 'appearance' || state.step === 'layout'
+      ? moduleShowcaseContext() : this.promptContext();
     let providerRow: string;
     if (previewConfig.provider !== 'nmsh') {
       const preview = this.panelExternalPrompt?.provider === previewConfig.provider ? this.panelExternalPrompt.result : undefined;
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
       providerRow = this.externalPromptRow(preview, width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
-      const line = `${buildInlineContextPrefix(this.promptContext(), width, previewConfig)}command`;
-      const right = buildRightContext(this.promptContext(), width - displayWidth(line) - 2, previewConfig);
+      const line = `${buildInlineContextPrefix(context, width, previewConfig)}command`;
+      const right = buildRightContext(context, width - displayWidth(line) - 2, previewConfig);
       return [boundary, right ? `${line}${RESET}${' '.repeat(width - displayWidth(line) - displayWidth(right))}${right}${RESET}` : line, boundary];
     } else {
-      providerRow = buildContextLine(this.promptContext(), width, previewConfig, previewConfig.placement);
+      providerRow = buildContextLine(context, width, previewConfig, previewConfig.placement);
     }
     if (previewConfig.composerLayout === 'oneLine') {
       const prefix = previewConfig.provider !== 'nmsh'
         ? `${providerRow}${RESET} `
-        : buildInlineContextPrefix(this.context, width, previewConfig);
+        : buildInlineContextPrefix(context, width, previewConfig);
       return [boundary, `${prefix}command`, boundary];
     }
     const input = `${ACCENT}${GLYPHS.prompt}${RESET} command`;

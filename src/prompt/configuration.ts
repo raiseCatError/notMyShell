@@ -20,13 +20,9 @@ export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
-/**
- * Lower-priority context may move right; identity (project, path, branch)
- * stays left so the essential prompt survives narrow widths.
- */
-export const RIGHT_ELIGIBLE_MODULES: ReadonlySet<ContextModuleId> = new Set(['gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
-export function modulePlacement(module: {id: ContextModuleId; placement?: ModulePlacement}): ModulePlacement {
-  return module.placement === 'right' && RIGHT_ELIGIBLE_MODULES.has(module.id) ? 'right' : 'left';
+/** Every module can sit in either area; narrow widths drop the right area first. */
+export function modulePlacement(module: {placement?: ModulePlacement}): ModulePlacement {
+  return module.placement === 'right' ? 'right' : 'left';
 }
 /** `onCommand`: shown only while the typed command is one the module is about (show-on-command). */
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand';
@@ -174,6 +170,8 @@ export interface PromptConfiguration {
     gitColors: GitColorMode;
     gitGeometry: GitGeometry;
     gitConnectorFade: GitConnectorFade;
+    /** Right-aligned context faces left (reflected geometry); missing in older configs means On. */
+    mirrorRight: boolean;
   };
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
@@ -197,7 +195,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionRetention: 1000,
   updateChecks: 'off',
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
-    connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
+    connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
+    mirrorRight: true},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -268,7 +267,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
     gitColors: normalizeGitColorMode(nativeValue.gitColors),
     gitGeometry: normalizeGitGeometry(nativeValue.gitGeometry),
-    gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade)};
+    gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade),
+    mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;
@@ -307,7 +307,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
         ? item.condition as ContextCondition
         : fallback.condition,
     };
-    if (item.placement === 'right' && RIGHT_ELIGIBLE_MODULES.has(id)) module.placement = 'right';
+    if (item.placement === 'right') module.placement = 'right';
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
     modules.push(module);

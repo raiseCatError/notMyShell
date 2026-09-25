@@ -22,7 +22,7 @@ function withRight(ids: ContextModuleId[], base: PromptConfiguration = DEFAULT_P
   return configuration;
 }
 
-test('placement defaults left, only low-priority modules may move right, and it persists', () => {
+test('placement defaults left, every module may move right, and it persists', () => {
   assert.ok(DEFAULT_PROMPT_CONFIGURATION.modules.every(module => modulePlacement(module) === 'left'), 'default appearance is unchanged');
   const config = normalizePromptConfiguration({modules: [
     {id: 'project', visible: true, condition: 'always', placement: 'right'},
@@ -32,8 +32,9 @@ test('placement defaults left, only low-priority modules may move right, and it 
     {id: 'toolchain', visible: true, condition: 'always', placement: 'right'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit', placement: 'bogus'},
     {id: 'kubeContext', visible: true, condition: 'onCommand', placement: 'right'},
+    {id: 'dockerContext', visible: true, condition: 'onCommand', placement: 'right'},
   ]});
-  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['left', 'left', 'left', 'right', 'right', 'left', 'right', 'left']);
+  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['right', 'right', 'right', 'right', 'right', 'left', 'right', 'right']);
   assert.deepEqual(normalizePromptConfiguration(JSON.parse(JSON.stringify(config))).modules, config.modules);
 });
 
