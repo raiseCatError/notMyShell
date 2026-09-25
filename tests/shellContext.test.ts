@@ -24,6 +24,7 @@ test('uses repository name and branch inside a repository', async () => {
   assert.deepEqual(await resolvePromptContext('/Users/test/Projects/example/src', probe, '/Users/test'), {
     cwd: '/Users/test/Projects/example/src',
     project: 'example',
+    root: '/Users/test/Projects/example',
     branch: 'feature/prompt',
   });
 });
