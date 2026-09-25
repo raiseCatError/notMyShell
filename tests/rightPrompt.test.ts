@@ -31,8 +31,9 @@ test('placement defaults left, only low-priority modules may move right, and it 
     {id: 'gitStatus', visible: true, condition: 'inRepository', placement: 'right'},
     {id: 'toolchain', visible: true, condition: 'always', placement: 'right'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit', placement: 'bogus'},
+    {id: 'kubeContext', visible: true, condition: 'onCommand', placement: 'right'},
   ]});
-  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['left', 'left', 'left', 'right', 'right', 'left']);
+  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['left', 'left', 'left', 'right', 'right', 'left', 'right', 'left']);
   assert.deepEqual(normalizePromptConfiguration(JSON.parse(JSON.stringify(config))).modules, config.modules);
 });
 
@@ -42,7 +43,7 @@ test('v0.3 configs gain Git status right after the branch, wherever it was moved
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus']);
+  assert.deepEqual(config.modules.map(module => module.id), ['gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
   assert.equal(config.modules[1]!.visible, false);
 });
 

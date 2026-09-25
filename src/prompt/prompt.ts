@@ -12,6 +12,7 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
+import {COMMAND_CONTEXT_TRIGGERS, matchesCommand, TOOLCHAIN_TRIGGERS} from './commandContext.js';
 import {displayPath, PATH_DISPLAY_LEVELS} from './pathDisplay.js';
 import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
@@ -46,11 +47,11 @@ export const GIT_STATE_ROLES = ['gitClean', 'gitStaged', 'gitModified', 'gitUntr
   'gitDiverged', 'gitConflict', 'gitOperation'] as const;
 export type GitStateRole = typeof GIT_STATE_ROLES[number];
 /** `gitChanges` is legacy: snapshots from before per-state roles combined + ~ ? into one segment. */
-export type PromptRole = 'project' | 'cwd' | 'gitBranch' | GitStateRole | 'gitChanges' | ToolchainId | 'success' | 'failure';
+export type PromptRole = 'project' | 'cwd' | 'gitBranch' | GitStateRole | 'gitChanges' | ToolchainId | 'kubernetes' | 'success' | 'failure';
 type SegmentColors = {foreground: RgbColor; background: RgbColor};
 
 const PROMPT_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', ...GIT_STATE_ROLES, 'gitChanges',
-  'node', 'go', 'python', 'docker', 'success', 'failure'];
+  'node', 'go', 'python', 'docker', 'kubernetes', 'success', 'failure'];
 
 export function isGitStateRole(role: PromptRole): role is GitStateRole | 'gitChanges' {
   return role === 'gitChanges' || (GIT_STATE_ROLES as readonly string[]).includes(role);
@@ -136,6 +137,7 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     go: pair('#5d56c2', '#f5f6ff'),
     python: pair('#b08bcb', '#26173d'),
     docker: pair('#544ca8', '#f2f3ff'),
+    kubernetes: pair('#6c5fc7', '#f4f2ff'),
     success: pair('#7c84cf', '#f5f6ff'),
     failure: pair('#b85c8f', '#fff3f8'),
   }),
@@ -147,6 +149,7 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     go: pair('#00add8', '#04222b'),
     python: pair('#ffd43b', '#2b2300'),
     docker: pair('#1d63ed', '#ffffff'),
+    kubernetes: pair('#326ce5', '#ffffff'),
     ...STATUS_COLORS,
   }),
   cool: theme('cool', 'Cool First', 'periwinkle, slate and teal with tool colors', {
@@ -157,6 +160,7 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     go: pair('#29aed6', '#0b2530'),
     python: pair('#f2cf4a', '#2b240a'),
     docker: pair('#2f8ee0', '#f5f5f7'),
+    kubernetes: pair('#3d6fd1', '#f5f7ff'),
     ...STATUS_COLORS,
   }),
   warm: theme('warm', 'Warm First', 'amber, sand, rust and olive', {
@@ -167,6 +171,7 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     go: pair('#4a8585', '#f0f8f8'),
     python: pair('#d8b04c', '#2a2008'),
     docker: pair('#5c7fa3', '#f0f4f8'),
+    kubernetes: pair('#6b7f99', '#f1f4f8'),
     ...STATUS_COLORS,
   }),
   grayscale: theme('grayscale', 'Grayscale', 'graphite to silver, no hue', {
@@ -177,6 +182,7 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     go: pair('#74777d', '#f3f4f5'),
     python: pair('#bdbfc3', '#16171a'),
     docker: pair('#585b61', '#f0f1f3'),
+    kubernetes: pair('#4c4f55', '#f0f1f3'),
     success: pair('#8e9196', '#111214'),
     failure: pair('#e4e5e7', '#111214'),
   }),
@@ -213,6 +219,8 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
   if (!config.visible) return [];
   if (config.condition === 'inRepository' && !context.branch) return [];
   if (config.condition === 'nonzeroExit' && status === 0) return [];
+  // Toolchains filter per toolchain below; other on-command modules need a matching command.
+  if (config.condition === 'onCommand' && config.id !== 'toolchain' && !isOnCommandRelevant(config.id, context.commandWords ?? [])) return [];
 
   switch (config.id) {
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
@@ -243,12 +251,23 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
       if (git.operation) segments.push({text: git.operation, role: 'gitOperation'});
       return segments;
     }
-    case 'toolchain': return (context.toolchains ?? []).map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
+    case 'toolchain': return (context.toolchains ?? [])
+      .filter(id => config.condition !== 'onCommand' || matchesCommand(TOOLCHAIN_TRIGGERS[id], context.commandWords))
+      .map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
+    case 'kubeContext': return context.kubeContext ? [{text: withIcon('kubernetes', safePromptText(context.kubeContext), icons), role: 'kubernetes'}] : [];
+    case 'dockerContext': return context.dockerContext ? [{text: withIcon('docker', safePromptText(context.dockerContext), icons), role: 'docker'}] : [];
     case 'exitStatus': return [{
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,
       role: status === 0 ? 'success' : 'failure',
     }];
   }
+}
+
+/** Whether an on-command module is relevant to the command words being typed. */
+export function isOnCommandRelevant(id: ContextModuleConfig['id'], words: readonly string[]): boolean {
+  if (id === 'kubeContext' || id === 'dockerContext') return matchesCommand(COMMAND_CONTEXT_TRIGGERS[id], words);
+  if (id === 'toolchain') return Object.values(TOOLCHAIN_TRIGGERS).some(triggers => matchesCommand(triggers, words));
+  return false;
 }
 
 /**

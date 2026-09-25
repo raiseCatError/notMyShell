@@ -1,6 +1,7 @@
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
+import {UPDATE_CHECK_FREQUENCIES, type UpdateCheckFrequency} from '../update/update.js';
 import {
   normalizeConnectorFadeColors,
   resolveFadeColors,
@@ -16,18 +17,21 @@ export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
 /**
  * Lower-priority context may move right; identity (project, path, branch)
  * stays left so the essential prompt survives narrow widths.
  */
-export const RIGHT_ELIGIBLE_MODULES: ReadonlySet<ContextModuleId> = new Set(['gitStatus', 'toolchain', 'exitStatus']);
+export const RIGHT_ELIGIBLE_MODULES: ReadonlySet<ContextModuleId> = new Set(['gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
 export function modulePlacement(module: {id: ContextModuleId; placement?: ModulePlacement}): ModulePlacement {
   return module.placement === 'right' && RIGHT_ELIGIBLE_MODULES.has(module.id) ? 'right' : 'left';
 }
-export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
+/** `onCommand`: shown only while the typed command is one the module is about (show-on-command). */
+export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand';
+/** Modules whose condition can be switched to show-on-command. */
+export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
 export type NativeEndStyle = PowerlineEdgeStyle;
 export type NativeStartStyle = PowerlineEdgeStyle;
@@ -153,6 +157,8 @@ export interface PromptConfiguration {
   glyphChoiceComplete: boolean;
   /** Maximum unpinned presentation sessions; null disables rotation. */
   sessionRetention: SessionRetention;
+  /** Background release checks are opt-in; `/update` always checks on request. */
+  updateChecks: UpdateCheckFrequency;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -189,6 +195,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
   sessionRetention: 1000,
+  updateChecks: 'off',
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
   starship: {configPath: null},
@@ -204,14 +211,16 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'gitStatus', visible: true, condition: 'inRepository'},
     {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
+    {id: 'kubeContext', visible: true, condition: 'onCommand'},
+    {id: 'dockerContext', visible: true, condition: 'onCommand'},
   ],
   separator: '',
   gap: 1,
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus']);
-const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -235,6 +244,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const sessionRetention: SessionRetention = value.sessionRetention === null
     ? null : [100, 500, 1000, 5000].includes(value.sessionRetention as number)
       ? value.sessionRetention as SessionRetention : 1000;
+  const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
+    ? value.updateChecks as UpdateCheckFrequency : 'off';
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -276,7 +287,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention,
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
   }
 
@@ -292,6 +303,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       id,
       visible: typeof item.visible === 'boolean' ? item.visible : fallback.visible,
       condition: typeof item.condition === 'string' && CONDITIONS.has(item.condition as ContextCondition)
+        && (item.condition !== 'onCommand' || ON_COMMAND_MODULES.has(id))
         ? item.condition as ContextCondition
         : fallback.condition,
     };
@@ -316,7 +328,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, nmsh, transcript, syntax, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, nmsh, transcript, syntax, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 
@@ -338,11 +350,14 @@ export function savePromptConfiguration(configuration: PromptConfiguration, path
 
 export function hasVisibleContextModule(
   configuration: PromptConfiguration,
-  context?: {branch?: string; exitStatus?: number},
+  context?: {branch?: string; exitStatus?: number; commandWords?: readonly string[]},
+  /** Whether an on-command module is relevant to the typed command. */
+  onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
-    && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0));
+    && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)
+    && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? [])));
 }
 
 /**

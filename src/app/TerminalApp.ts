@@ -15,7 +15,7 @@ import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildRightContext, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -26,6 +26,8 @@ import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
+import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -71,6 +73,9 @@ const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
+  private updateInProgress = false;
+  /** The release version the last `/update` offered; `/update apply` installs only that. */
+  private offeredUpdate?: string;
   private readonly initialCwd = process.cwd();
   private shellCwd = this.initialCwd;
   private readonly renderer = new TerminalRenderer();
@@ -91,6 +96,7 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
+  private readonly commandContexts = new CommandContextCache(() => this.render());
   private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
   private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
   private starshipStatus?: StarshipStatus;
@@ -199,6 +205,7 @@ export class TerminalApp {
     }, STATUS_REFRESH_MS);
     this.scheduleWelcomeBlink();
     this.render();
+    void this.quietUpdateCheck();
     const exitCode = await this.done;
     try { await this.journal.close(); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
@@ -684,6 +691,7 @@ export class TerminalApp {
       else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
+      else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
       else if (slash.kind === 'clear') await this.startFreshPresentation();
       else if (slash.kind === 'resume') await this.openResumePicker();
       else if (slash.kind === 'help') this.showHelp(command);
@@ -702,7 +710,7 @@ export class TerminalApp {
       }
       this.render();
     }, {cwd: this.shellCwd, project: contextAtSubmission.project, branch: contextAtSubmission.branch,
-      prompt: this.currentPromptSnapshot()});
+      prompt: this.currentPromptSnapshot(command)});
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
@@ -935,6 +943,57 @@ export class TerminalApp {
   }
 
 
+  /** Opt-in background discovery: one quiet line per newly seen release, never an interruption. */
+  private async quietUpdateCheck(): Promise<void> {
+    const release = await backgroundUpdateCheck(this.buildIdentity.version, this.promptConfiguration.updateChecks).catch(() => undefined);
+    if (!release || this.stopped) return;
+    this.output.addHistoryLine(`${INFO}NMSh ${release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
+    this.render();
+  }
+
+  /**
+   * `/update` checks and shows the plan; `/update apply` installs only the
+   * release the last `/update` offered. Both re-verify everything first.
+   */
+  private async runUpdateCommand(command: string, apply: boolean): Promise<void> {
+    const reply = (text: string, style = INFO) => { this.output.addFrontendInteraction(command, text, style); this.render(); };
+    if (this.updateInProgress) return reply('An update check is already running.');
+    this.updateInProgress = true;
+    try {
+      const current = this.buildIdentity.version;
+      let release: ReleaseInfo;
+      try {
+        release = await fetchLatestRelease();
+      } catch (error) {
+        return reply(`Could not check for updates: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, ERROR);
+      }
+      if (compareVersions(release.version, current) <= 0) return reply(`NMSh ${current} is up to date (latest release ${release.tag}).`, SUCCESS);
+      const header = [`NMSh ${current} → ${release.version} is available.`, ...release.summary.map(line => `  ${line}`), release.url];
+      const planned = await planUpdate(await detectInstall(installRoot()), release);
+      if (!planned.ok) {
+        return reply([...header, '', `NMSh will not update this installation automatically: ${planned.reason}`,
+          'To update it yourself:', ...planned.manual.map(line => `  ${line}`)].join('\n'));
+      }
+      if (!apply || this.offeredUpdate !== release.version) {
+        this.offeredUpdate = release.version;
+        return reply([...header, '', 'Plan:', ...planned.plan.steps.map(line => `  • ${line}`), '',
+          'Run /update apply to install it. Your settings, transcripts, and shell profile are not touched.'].join('\n'));
+      }
+      reply(`Updating to ${release.version}…`);
+      const result = await applyUpdate(planned.plan, systemRunner, line => {
+        this.output.addHistoryLine(`${SECONDARY}  ${line}${RESET}`);
+        this.render();
+      });
+      this.offeredUpdate = undefined;
+      this.output.addHistoryLine(result.ok
+        ? `${SUCCESS}NMSh ${release.version} is installed. Restart NMSh to use it; this session keeps running ${current}.${RESET}`
+        : `${ERROR}The update did not complete; the lines above say what happened.${RESET}`);
+    } finally {
+      this.updateInProgress = false;
+      this.render();
+    }
+  }
+
   private showHelp(command: string): void {
     const summary = slashCommands.map(item => `${item.name} — ${item.description}`).join(' · ');
     const helpText = `${summary}\n\n${INFO}✻ Large multiline paste is one editable atom; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.\n✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
@@ -1009,13 +1068,26 @@ export class TerminalApp {
     this.render();
   }
 
-  private currentPromptSnapshot(): PromptSnapshot {
+  /**
+   * Prompt context plus show-on-command state from the editor buffer. The
+   * text is only tokenized; lookups are cached reads that never block typing.
+   */
+  private promptContext(command = this.editor.text): PromptContext {
+    const words = commandWords(command);
+    const wanted = (id: CommandContextId) => this.promptConfiguration.modules.some(module => module.id === id && module.visible
+      && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
+    const kubeContext = wanted('kubeContext') ? this.commandContexts.get('kubeContext') : undefined;
+    const dockerContext = wanted('dockerContext') ? this.commandContexts.get('dockerContext') : undefined;
+    return {...this.context, commandWords: words, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
+  }
+
+  private currentPromptSnapshot(command?: string): PromptSnapshot {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return {provider: this.effectivePromptProvider, layout: this.promptConfiguration.composerLayout,
         segments: structuredClone(this.externalPrompt.segments), cwd: this.context.cwd,
         ...(this.context.branch ? {branch: this.context.branch} : {})};
     }
-    return nativePromptSnapshot(this.context, this.promptConfiguration);
+    return nativePromptSnapshot(this.promptContext(command), this.promptConfiguration);
   }
 
   private starshipEnvironment(configuration: PromptConfiguration): NodeJS.ProcessEnv {
@@ -1346,11 +1418,11 @@ export class TerminalApp {
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
       providerRow = this.externalPromptRow(preview, width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
-      const line = `${buildInlineContextPrefix(this.context, width, previewConfig)}command`;
-      const right = buildRightContext(this.context, width - displayWidth(line) - 2, previewConfig);
+      const line = `${buildInlineContextPrefix(this.promptContext(), width, previewConfig)}command`;
+      const right = buildRightContext(this.promptContext(), width - displayWidth(line) - 2, previewConfig);
       return [boundary, right ? `${line}${RESET}${' '.repeat(width - displayWidth(line) - displayWidth(right))}${right}${RESET}` : line, boundary];
     } else {
-      providerRow = buildContextLine(this.context, width, previewConfig, previewConfig.placement);
+      providerRow = buildContextLine(this.promptContext(), width, previewConfig, previewConfig.placement);
     }
     if (previewConfig.composerLayout === 'oneLine') {
       const prefix = previewConfig.provider !== 'nmsh'
@@ -1683,14 +1755,14 @@ export class TerminalApp {
 
   private hasVisibleProviderPrompt(): boolean {
     if (this.effectivePromptProvider !== 'nmsh') return Boolean(this.externalPrompt?.text.trim());
-    return hasVisibleContextModule(this.promptConfiguration, this.context);
+    return hasVisibleContextModule(this.promptConfiguration, this.promptContext(), isOnCommandRelevant);
   }
 
   private currentPromptLine(width: number): string {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement);
     }
-    return buildContextLine(this.context, width, this.promptConfiguration);
+    return buildContextLine(this.promptContext(), width, this.promptConfiguration);
   }
 
   /**
@@ -2039,7 +2111,7 @@ export class TerminalApp {
       const maxWidth = Math.max(0, columns - 1);
       return `${truncateAnsi(this.externalPrompt.ansi, maxWidth)}${RESET} `;
     }
-    return buildInlineContextPrefix(this.context, columns, this.promptConfiguration);
+    return buildInlineContextPrefix(this.promptContext(), columns, this.promptConfiguration);
   }
 
   /**
@@ -2051,7 +2123,7 @@ export class TerminalApp {
     if (this.promptConfiguration.composerLayout !== 'oneLine' || this.effectivePromptProvider !== 'nmsh') return '';
     const used = displayWidth(line);
     // Two cells of breathing room after the text, plus the caret cell.
-    const right = buildRightContext(this.context, columns - used - 2, this.promptConfiguration);
+    const right = buildRightContext(this.promptContext(), columns - used - 2, this.promptConfiguration);
     if (!right) return '';
     return `${RESET}${' '.repeat(columns - used - displayWidth(right))}${right}${RESET}`;
   }

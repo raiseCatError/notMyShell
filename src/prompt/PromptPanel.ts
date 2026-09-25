@@ -15,6 +15,7 @@ import {
   type PromptProviderId,
   modulePlacement,
   RIGHT_ELIGIBLE_MODULES,
+  ON_COMMAND_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
 import {fadeColorChoices, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
@@ -115,6 +116,7 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
 
 const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
   project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
+  kubeContext: 'Kubernetes', dockerContext: 'Docker context',
 };
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
@@ -177,7 +179,8 @@ export function promptDraftChanged(state: PromptPanelState): boolean {
 function moduleOption(module: PromptConfiguration['modules'][number]): string {
   switch (module.id) {
     case 'gitBranch': case 'gitStatus': return 'in repositories';
-    case 'toolchain': return 'when detected';
+    case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
+    case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
     default: return 'always';
   }
@@ -197,6 +200,8 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   }
   else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
     module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
+  } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
+    module.condition = module.condition === 'onCommand' ? 'always' : 'onCommand';
   } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
     const target = index + (key.kind === 'selectUp' ? -1 : 1);
     if (target < 0 || target >= modules.length) return true;
@@ -409,9 +414,9 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · P moves eligible modules to the right${RESET}`);
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
-      const option = module.id === 'exitStatus' ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
+      const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
       const side = modulePlacement(module).padEnd(7);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(13)}${SUBTLE}${side}${module.visible ? option : 'hidden'}${RESET}`);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(15)}${SUBTLE}${side}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;
