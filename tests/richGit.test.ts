@@ -21,7 +21,7 @@ const config = (patch: (value: PromptConfiguration) => void = () => {}): PromptC
 };
 const clean = {staged: 0, modified: 0, untracked: 0, conflicts: 0, ahead: 0, behind: 0};
 const gitRoles = (git: typeof clean) => renderedModules({cwd: '/r', project: 'r', branch: 'main', git}, config())
-  .filter(module => module.id === 'gitBranch').map(module => module.role);
+  .filter(module => (module.id === 'gitBranch' || module.id === 'gitStatus')).map(module => module.role);
 const chroma = (color: {red: number; green: number; blue: number}) => Math.max(color.red, color.green, color.blue) - Math.min(color.red, color.green, color.blue);
 
 test('Rich Git colors default to Semantic and old configs normalize without losing settings', () => {
@@ -197,7 +197,7 @@ test('Start/End fades are unchanged, output ends neutral, and safe mode stays AS
 const dirty = {...clean, staged: 1, modified: 1};
 const line = (patch: (value: PromptConfiguration) => void, git = dirty) => stripAnsi(buildContextLine(
   {cwd: '/r', project: 'r', branch: 'main', git}, 160,
-  config(value => { value.modules = value.modules.map(module => ({...module, visible: module.id === 'project' || module.id === 'gitBranch'})); patch(value); }),
+  config(value => { value.modules = value.modules.map(module => ({...module, visible: module.id === 'project' || (module.id === 'gitBranch' || module.id === 'gitStatus')})); patch(value); }),
   'composer'));
 
 test('Rich Git Enabled defaults On; Off keeps the plain branch and hides every state', () => {
@@ -236,7 +236,7 @@ test('Rich Git connector fade: follow main, follow geometry, off, or a fixed sha
   const branchFade = bg(connectorFadeColor(NATIVE_PROMPT_THEMES.lavender.colors('gitBranch').background));
   const gap = (gitConnectorFade: PromptConfiguration['nmsh']['gitConnectorFade'], patch: (value: PromptConfiguration) => void = () => {}) => {
     const value = config(draft => {
-      draft.modules = draft.modules.map(module => ({...module, visible: module.id === 'project' || module.id === 'gitBranch'}));
+      draft.modules = draft.modules.map(module => ({...module, visible: module.id === 'project' || (module.id === 'gitBranch' || module.id === 'gitStatus')}));
       draft.nmsh.gitGeometry = 'rounded'; draft.nmsh.gitConnectorFade = gitConnectorFade; patch(draft);
     });
     return buildContextLine({cwd: '/r', project: 'r', branch: 'main', git: dirty}, 160, value, 'composer');

@@ -13,6 +13,7 @@ import {
   type NativeGapChoice,
   type PromptConfiguration,
   type PromptProviderId,
+  modulePlacement,
   ON_COMMAND_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
@@ -113,7 +114,7 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
 }
 
 const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
-  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', toolchain: 'Toolchains', exitStatus: 'Exit status',
+  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
   kubeContext: 'Kubernetes', dockerContext: 'Docker context',
 };
 
@@ -176,7 +177,7 @@ export function promptDraftChanged(state: PromptPanelState): boolean {
 
 function moduleOption(module: PromptConfiguration['modules'][number]): string {
   switch (module.id) {
-    case 'gitBranch': return 'in repositories';
+    case 'gitBranch': case 'gitStatus': return 'in repositories';
     case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
     case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
@@ -191,6 +192,11 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   const module = modules[index];
   if (!module) return false;
   if (key.kind === 'text' && key.value === ' ') module.visible = !module.visible;
+  else if (key.kind === 'text' && (key.value === 'm' || key.value === 'M')) state.draft.nmsh.mirrorRight = !state.draft.nmsh.mirrorRight;
+  else if (key.kind === 'text' && (key.value === 'p' || key.value === 'P')) {
+    if (modulePlacement(module) === 'right') delete module.placement;
+    else module.placement = 'right';
+  }
   else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
     module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
   } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
@@ -214,7 +220,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
-    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['Enter/Esc', 'done']];
+    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'],
+      ['M', `mirror right: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
   }
   if (state.step === 'appearance') {
     if (state.focus === 'tabs') return [['←→', 'switch view'], ['↓', 'select'], ['Enter', 'save'], escape];
@@ -404,11 +411,12 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     LAYOUT_CHOICES.forEach((choice, index) => rows.push(item(index,
       `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
   } else if (state.step === 'modules') {
-    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}left to right, in prompt order${RESET}`);
+    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · Mirror right side: ${RESET}${state.draft.nmsh.mirrorRight ? `${ACCENT}On` : `${SECONDARY}Off`}${RESET}`);
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(15)}${SUBTLE}${module.visible ? option : 'hidden'}${RESET}`);
+      const side = modulePlacement(module).padEnd(7);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(15)}${SUBTLE}${side}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;

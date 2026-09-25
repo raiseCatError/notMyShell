@@ -17,7 +17,13 @@ export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
+/** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
+export type ModulePlacement = 'left' | 'right';
+/** Every module can sit in either area; narrow widths drop the right area first. */
+export function modulePlacement(module: {placement?: ModulePlacement}): ModulePlacement {
+  return module.placement === 'right' ? 'right' : 'left';
+}
 /** `onCommand`: shown only while the typed command is one the module is about (show-on-command). */
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand';
 /** Modules whose condition can be switched to show-on-command. */
@@ -79,6 +85,8 @@ export interface ContextModuleConfig {
   id: ContextModuleId;
   visible: boolean;
   condition: ContextCondition;
+  /** Missing means left; only right-eligible modules honor `right`. */
+  placement?: ModulePlacement;
   foreground?: string;
   background?: string;
 }
@@ -162,6 +170,8 @@ export interface PromptConfiguration {
     gitColors: GitColorMode;
     gitGeometry: GitGeometry;
     gitConnectorFade: GitConnectorFade;
+    /** Right-aligned context faces left (reflected geometry); missing in older configs means On. */
+    mirrorRight: boolean;
   };
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
@@ -185,7 +195,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionRetention: 1000,
   updateChecks: 'off',
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
-    connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain'},
+    connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
+    mirrorRight: true},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -196,6 +207,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
+    {id: 'gitStatus', visible: true, condition: 'inRepository'},
     {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
     {id: 'kubeContext', visible: true, condition: 'onCommand'},
@@ -206,7 +218,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
 const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -255,7 +267,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
     gitColors: normalizeGitColorMode(nativeValue.gitColors),
     gitGeometry: normalizeGitGeometry(nativeValue.gitGeometry),
-    gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade)};
+    gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade),
+    mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;
@@ -294,6 +307,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
         ? item.condition as ContextCondition
         : fallback.condition,
     };
+    if (item.placement === 'right') module.placement = 'right';
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
     modules.push(module);
@@ -302,6 +316,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // default position instead of silently staying absent.
   DEFAULT_PROMPT_CONFIGURATION.modules.forEach((fallback, defaultIndex) => {
     if (seen.has(fallback.id)) return;
+    // Git status split from the branch module: it joins right after the
+    // branch wherever the user placed it, so v0.3 prompts look the same.
+    const branch = fallback.id === 'gitStatus' ? modules.findIndex(module => module.id === 'gitBranch') : -1;
+    if (branch !== -1) {
+      modules.splice(branch + 1, 0, {...fallback, visible: modules[branch]!.visible});
+      return;
+    }
     const later = DEFAULT_PROMPT_CONFIGURATION.modules.slice(defaultIndex + 1).map(module => module.id);
     const before = modules.findIndex(module => later.includes(module.id));
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});

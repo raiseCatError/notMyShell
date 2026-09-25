@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {archiveColor} from '../src/prompt/snapshot.js';
 import {edgeParts, normalizeEdgeStyle, POWERLINE_EDGE_STYLES, renderPowerlineBlocks} from '../src/prompt/powerline.js';
-import {buildContextLine, buildThemePreviewLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
+import {buildContextLine, buildThemePreviewLine, NATIVE_PROMPT_THEMES, NMSH_BRAND_LAVENDER, nativePromptSnapshot, renderedModules, moduleShowcaseContext} from '../src/prompt/prompt.js';
 import {applyNativeGapChoice, NATIVE_PALETTE_IDS, nativeGapChoice, normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -152,7 +152,7 @@ test('onboarding preview uses a dedicated panel and hides the live composer curs
     assert.ok(frame?.rows.some(row => row.includes('Fading wedge')));
     assert.ok(stripAnsi(frame?.rows.at(-1) ?? '').includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
     const previewRows = app['promptPanelPreview'](80);
-    const runtimeRow = buildContextLine(app['context'], 76, app['promptPanelState']!.draft,
+    const runtimeRow = buildContextLine(moduleShowcaseContext(), 76, app['promptPanelState']!.draft,
       app['promptPanelState']!.draft.placement);
     assert.ok(previewRows.includes(runtimeRow), 'Native onboarding preview uses the runtime segment renderer');
     const panel = renderPromptPanel(app['promptPanelState']!, 80, ['sample preview']);
@@ -272,7 +272,7 @@ test('saved configurations gain new modules at their default position', () => {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
   assert.equal(config.modules.find(module => module.id === 'exitStatus')!.visible, false);
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
@@ -317,7 +317,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',
-    'Modules         7 of 7 shown ›',
+    'Modules         8 of 8 shown ›',
     'unsaved preview',
   ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
@@ -338,18 +338,26 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
   assert.equal(state.draft.modules[1]!.visible, false);
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
-  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
   assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
   assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');
-  state.selectedIndex = 4;
+  state.selectedIndex = 5;
   handlePromptPanelKey({kind: 'right'} as Key, state);
-  assert.equal(state.draft.modules[4]!.condition, 'always');
+  assert.equal(state.draft.modules[5]!.condition, 'always');
+  handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
+  assert.equal(state.draft.modules[5]!.placement, 'right', 'P moves the module right');
+  state.selectedIndex = 2;
+  handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
+  assert.equal(state.draft.modules[2]!.placement, 'right', 'the branch can move right too');
+  handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
+  assert.equal(state.draft.modules[2]!.placement, undefined, 'and back left');
+  state.selectedIndex = 5;
   assert.equal(state.draft.modules[1]!.background, '#112233', 'custom colors survive reordering');
   const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
-  assert.ok(rows.some(row => /○ Path +hidden/u.test(row)));
-  assert.ok(rows.some(row => /› ● Exit status +‹ always ›/u.test(row)));
-  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · Enter/Esc done');
+  assert.ok(rows.some(row => /○ Path +left +hidden/u.test(row)));
+  assert.ok(rows.some(row => /› ● Exit status +right +‹ always ›/u.test(row)));
+  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · M mirror right: On · Enter/Esc done');
   assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
   const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);
   try {

@@ -15,6 +15,8 @@ export interface PromptSegmentSnapshot {
   shape?: PowerlineShape;
   /** Resolved gap-fade override for boundaries touching this segment. */
   fade?: PowerlineShape | 'off';
+  /** Right-aligned context at submission; missing means the left prompt. */
+  placement?: 'right';
 }
 
 /** Semantic prompt data captured at submission; never an ANSI-only string. */
@@ -37,6 +39,8 @@ export interface PromptSnapshot {
   gitEnabled?: boolean;
   gitGeometry?: GitGeometry;
   gitConnectorFade?: GitConnectorFade;
+  /** Right-area orientation at submission; missing (older snapshots) renders unmirrored. */
+  mirrorRight?: boolean;
   gap?: number;
   gapEnabled?: boolean;
   spacing?: number;

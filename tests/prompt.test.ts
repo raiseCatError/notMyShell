@@ -46,14 +46,14 @@ test('conditional modules take their role colors in visible order', () => {
 test('Git state renders one semantic segment per state; clean repositories add a compact marker', () => {
   const context = {cwd: '/tmp/repo', project: 'repo', branch: 'main',
     git: {staged: 2, modified: 3, untracked: 1, conflicts: 1, ahead: 2, behind: 1, operation: 'rebase' as const}};
-  const modules = renderedModules(context, DEFAULT_PROMPT_CONFIGURATION).filter(module => module.id === 'gitBranch');
+  const modules = renderedModules(context, DEFAULT_PROMPT_CONFIGURATION).filter(module => (module.id === 'gitBranch' || module.id === 'gitStatus'));
   assert.deepEqual(modules.map(module => module.role),
     ['gitBranch', 'gitStaged', 'gitModified', 'gitUntracked', 'gitConflict', 'gitDiverged', 'gitOperation']);
   assert.deepEqual(modules.map(module => module.text.slice(module.role === 'gitBranch' ? -5 : 0)),
     ['main*', '+2', '~3', '?1', '!1', '↑2 ↓1', 'rebase']);
   const clean = renderedModules({...context, git: {...context.git, staged: 0, modified: 0, untracked: 0,
     conflicts: 0, ahead: 0, behind: 0, operation: undefined}}, DEFAULT_PROMPT_CONFIGURATION)
-    .filter(module => module.id === 'gitBranch');
+    .filter(module => (module.id === 'gitBranch' || module.id === 'gitStatus'));
   assert.deepEqual(clean.map(module => module.role), ['gitBranch', 'gitClean']);
   assert.ok(clean[0]!.text.endsWith('main'));
   assert.equal(clean[1]!.text, '', 'the clean marker carries no glyph of its own');

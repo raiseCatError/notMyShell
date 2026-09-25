@@ -7,7 +7,7 @@ import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
 import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
@@ -518,6 +518,7 @@ interface HistoricalSegment {
   compact?: boolean;
   shape?: PowerlineShape;
   fade?: PowerlineShape | 'off';
+  placement?: 'right';
   /** Rich Git color mode the segment was captured under. */
   gitColors?: GitColorMode;
 }
@@ -547,7 +548,11 @@ function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[]
 }
 
 /** The prompt part of a historical header, colored per the transcript appearance. */
-function historicalPrompt(context: HistoricalContextSnapshot, width: number, appearance: TranscriptAppearance): string {
+/** Divider cells kept between a historical left prompt and its right context. */
+const RIGHT_CONTEXT_MIN_DIVIDER = 2;
+
+/** A historical prompt: its left part, plus right-aligned context when the snapshot recorded any. */
+function historicalPrompt(context: HistoricalContextSnapshot, width: number, appearance: TranscriptAppearance): string | {left: string; right: string} {
   const snapshot = context.prompt;
   const segments: HistoricalSegment[] = snapshot
     ? snapshot.segments.map(segment => ({...segment, gitColors: snapshot.gitColors,
@@ -564,13 +569,22 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
     }));
     if (!snapshot) return fitPowerlineBlocks(blocks, 1, 1, width, true);
     const gap = snapshot.gap ?? 1;
-    return fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, width,
-      normalizeEdgeStyle(snapshot.endStyle, 'flat'), snapshot.gapEnabled ?? gap > 0,
-      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector),
-      // Snapshots without a connector fade predate it and rendered solid connectors.
-      snapshot.connectorFade === undefined ? undefined
-        : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), normalizeConnectorStyle(snapshot.connector)),
-      normalizeConnectorFadeColors(snapshot.connectorFadeColors));
+    const connector = normalizeConnectorStyle(snapshot.connector);
+    const endStyle = normalizeEdgeStyle(snapshot.endStyle, 'flat');
+    const startStyle = normalizeEdgeStyle(snapshot.startStyle, 'wedge');
+    const gapEnabled = snapshot.gapEnabled ?? gap > 0;
+    const spacing = snapshot.spacing ?? 1;
+    // Snapshots without a connector fade predate it and rendered solid connectors.
+    const fade = snapshot.connectorFade === undefined ? undefined
+      : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), connector);
+    const fadeColors = normalizeConnectorFadeColors(snapshot.connectorFadeColors);
+    const left = fitPowerlineBlocks(blocks.filter((_, index) => segments[index]!.placement !== 'right'), gap, spacing, width,
+      endStyle, gapEnabled, startStyle, connector, fade, fadeColors);
+    const right = blocks.filter((_, index) => segments[index]!.placement === 'right');
+    if (right.length === 0) return left;
+    return {left, right: fitRightPowerlineBlocks(right, width - displayWidth(left) - 1 - RIGHT_CONTEXT_MIN_DIVIDER,
+      candidate => renderPowerlineBlocks(candidate, gap, spacing, endStyle, gapEnabled, startStyle, connector, fade, fadeColors,
+        snapshot.mirrorRight ? 'mirrored' : 'normal'))};
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),
@@ -592,11 +606,19 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
     const line = repeatToWidth(divider.glyph, width);
     return {ansi: `${divider.color}${line}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
-  const prompt = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
-  if (!appearance.divider) return {ansi: `${prompt}\u001B[0m`, plain: stripAnsi(prompt), isHistoricalHeader: true};
-  const remaining = Math.max(0, width - displayWidth(prompt) - 1);
+  const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
+  const prompt = typeof parts === 'string' ? parts : parts.left;
+  const right = typeof parts === 'string' || !parts.right ? '' : parts.right;
+  const rightWidth = right ? displayWidth(right) + 1 : 0;
+  if (!appearance.divider) {
+    const pad = right ? ' '.repeat(Math.max(1, width - displayWidth(prompt) - displayWidth(right))) : '';
+    const ansi = right ? `${prompt}\u001B[0m${pad}${right}\u001B[0m` : `${prompt}\u001B[0m`;
+    return {ansi, plain: stripAnsi(ansi), isHistoricalHeader: true};
+  }
+  const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
-  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m`, plain: `${stripAnsi(prompt)} ${fill}`, isHistoricalHeader: true};
+  const rightAnsi = right ? ` ${right}\u001B[0m` : '';
+  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {

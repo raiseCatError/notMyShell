@@ -15,7 +15,7 @@ import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -26,8 +26,8 @@ import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
-import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -1412,21 +1412,26 @@ export class TerminalApp {
     if (state.step === 'powerlevel10k') previewConfig.provider = 'powerlevel10k';
     if (state.step === 'layout') applyLayoutChoice(previewConfig, state.selectedIndex);
     const boundary = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, width)}${RESET}`;
+    // Configuring layout, appearance, or modules uses the deterministic
+    // showcase so every module type is visible; other steps show the live prompt.
+    const context = state.step === 'modules' || state.step === 'appearance' || state.step === 'layout'
+      ? moduleShowcaseContext() : this.promptContext();
     let providerRow: string;
     if (previewConfig.provider !== 'nmsh') {
       const preview = this.panelExternalPrompt?.provider === previewConfig.provider ? this.panelExternalPrompt.result : undefined;
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
       providerRow = this.externalPromptRow(preview, width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
-      const prefix = buildInlineContextPrefix(this.promptContext(), width, previewConfig);
-      return [boundary, `${prefix}command`, boundary];
+      const line = `${buildInlineContextPrefix(context, width, previewConfig)}command`;
+      const right = buildRightContext(context, width - displayWidth(line) - 2, previewConfig);
+      return [boundary, right ? `${line}${RESET}${' '.repeat(width - displayWidth(line) - displayWidth(right))}${right}${RESET}` : line, boundary];
     } else {
-      providerRow = buildContextLine(this.promptContext(), width, previewConfig, previewConfig.placement);
+      providerRow = buildContextLine(context, width, previewConfig, previewConfig.placement);
     }
     if (previewConfig.composerLayout === 'oneLine') {
       const prefix = previewConfig.provider !== 'nmsh'
         ? `${providerRow}${RESET} `
-        : buildInlineContextPrefix(this.context, width, previewConfig);
+        : buildInlineContextPrefix(context, width, previewConfig);
       return [boundary, `${prefix}command`, boundary];
     }
     const input = `${ACCENT}${GLYPHS.prompt}${RESET} command`;
@@ -2061,7 +2066,8 @@ export class TerminalApp {
       if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
-      frameRows.push(truncateAnsi(`${prefix}${textStyled}${suffix}`, columns));
+      const line = truncateAnsi(`${prefix}${textStyled}${suffix}`, columns);
+      frameRows.push(row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line);
     }
     if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
 
@@ -2110,6 +2116,20 @@ export class TerminalApp {
       return `${truncateAnsi(this.externalPrompt.ansi, maxWidth)}${RESET} `;
     }
     return buildInlineContextPrefix(this.promptContext(), columns, this.promptConfiguration);
+  }
+
+  /**
+   * One-line composer: right-aligned context on the first input row while the
+   * typed text leaves room, like a right prompt. It yields to the input and
+   * never pushes the caret or wraps.
+   */
+  private oneLineRightContext(line: string, columns: number): string {
+    if (this.promptConfiguration.composerLayout !== 'oneLine' || this.effectivePromptProvider !== 'nmsh') return '';
+    const used = displayWidth(line);
+    // Two cells of breathing room after the text, plus the caret cell.
+    const right = buildRightContext(this.promptContext(), columns - used - 2, this.promptConfiguration);
+    if (!right) return '';
+    return `${RESET}${' '.repeat(columns - used - displayWidth(right))}${right}${RESET}`;
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
