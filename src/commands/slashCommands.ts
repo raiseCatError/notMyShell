@@ -60,7 +60,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
-  if (input.startsWith('/history ')) return {kind: 'history', query: input.substring(9).trim()};
+  const history = /^\/history(?:\s+([\s\S]*))?$/u.exec(input);
+  if (history) return {kind: 'history', query: (history[1] ?? '').trim()};
   return {kind: 'unknown', input};
 }
 

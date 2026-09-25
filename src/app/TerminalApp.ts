@@ -58,6 +58,8 @@ import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptSto
 import {SessionJournal} from '../sessions/SessionJournal.js';
 import {createResumeBrowser, navigateResume, resumeDayLabel, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 
+/** Editor text that marks interactive history search. */
+const HISTORY_SEARCH = '/history ';
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
 const SUBTLE = foreground(UI_COLORS.subtle);
@@ -465,7 +467,7 @@ export class TerminalApp {
     if (key.kind === 'historySearch') {
       if (!this.running) {
         this.editor.clear();
-        this.editor.insert('/history ');
+        this.editor.insert(HISTORY_SEARCH);
       }
       return;
     }
@@ -501,7 +503,10 @@ export class TerminalApp {
       return;
     }
 
-    const suggestions = this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
+    // History search navigates its own matches; other slash text navigates slash commands.
+    const suggestions = this.historySearchActive
+      ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
+      : this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
     if (key.kind === 'up' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
@@ -666,6 +671,20 @@ export class TerminalApp {
     }
   }
 
+  /**
+   * Enter in history search: bare `/history` opens the search; otherwise the
+   * selected match is restored into the editor (not run). With no match the
+   * search stays open unchanged. Nothing is written to zsh or the transcript.
+   */
+  private submitHistorySearch(query: string, searching: boolean): void {
+    const selected = searching ? this.historyMatches(query)[this.selectedSuggestion] ?? this.historyMatches(query)[0] : undefined;
+    if (selected) this.applySuggestion(selected);
+    else {
+      this.editor.insert(`${HISTORY_SEARCH}${query}`);
+      this.selectedSuggestion = 0;
+    }
+  }
+
   private applySuggestion(suggestion: {insertion: string}): void {
     this.editor.clear();
     this.editor.insert(suggestion.insertion);
@@ -692,6 +711,7 @@ export class TerminalApp {
       else if (slash.kind === 'clear') await this.startFreshPresentation();
       else if (slash.kind === 'resume') await this.openResumePicker();
       else if (slash.kind === 'help') this.showHelp(command);
+      else if (slash.kind === 'history') this.submitHistorySearch(slash.query, command.startsWith(HISTORY_SEARCH));
       else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
       this.render();
       return;
@@ -1873,14 +1893,21 @@ export class TerminalApp {
     return lines;
   }
 
+  /** Interactive history search is the editor state `/history <query>`; it never reaches zsh or the transcript. */
+  private get historySearchActive(): boolean {
+    return !this.editor.hasPasteAtoms && this.editor.text.startsWith(HISTORY_SEARCH);
+  }
+
+  private historyMatches(query: string): Array<{name: string; insertion: string; description: string}> {
+    const q = query.toLowerCase();
+    return this.historyService.getAll().filter(h => h.toLowerCase().includes(q))
+      .slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
+  }
+
   /** Composer suggestion rows for the current editor state; the same list render paints and geometry counts. */
   private composerSuggestions(): any[] {
     if (this.running || this.settingsPanelActive) return [];
-    if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
-      const q = this.editor.text.substring(9).toLowerCase();
-      const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
-      return matches.slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
-    }
+    if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
     if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
     return this.shellSuggestions;
   }
