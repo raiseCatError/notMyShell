@@ -9,6 +9,10 @@ const execFileAsync = promisify(execFile);
 export interface PromptContext {
   cwd: string;
   project: string;
+  /** Repository top level when cwd is inside one; the path display keeps its name whole. */
+  root?: string;
+  /** Unambiguous ancestor abbreviations for the path display, resolved asynchronously. */
+  pathAbbreviations?: Record<string, string>;
   branch?: string;
   git?: GitStatus;
   exitStatus?: number;
@@ -123,7 +127,7 @@ export async function resolvePromptContext(
     } catch {
       // A large or unavailable repository must not hold the prompt hostage.
     }
-    return withToolchains({cwd, project: basename(root) || basename(cwd), branch: branch || undefined, ...(git ? {git} : {})},
+    return withToolchains({cwd, project: basename(root) || basename(cwd), ...(root ? {root} : {}), branch: branch || undefined, ...(git ? {git} : {})},
       await detectToolchains([cwd, root]));
   } catch {
     return withToolchains({cwd, project: basename(cwd) || cwd}, await detectToolchains([cwd]));

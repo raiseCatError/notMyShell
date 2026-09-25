@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Continuous local presentation-session checkpoints with retention of 1000 unpinned sessions by default, plus `/resume` search and date navigation.
 - Reusable elapsed-time task progress with a per-character travelling shimmer, factual completion states, and bounded diagnostic details; Starship Homebrew installation uses it.
 - `/syntax` panel (also under `/settings` → Syntax): Highlighting On/Off and Colors Follow prompt theme (default, unchanged appearance on Lavender Native) / Choose theme / Grayscale, with live preview rows. Submitted commands keep their original styling; PTY output and `/copy` are unaffected.
+- Intelligent directory shortening for the Native path module: at full width the path is unchanged. As the terminal narrows, parent directories abbreviate first to their shortest unambiguous prefix, then directories inside the repository, then runs collapse to `…`, and finally only the current directory remains. The repository name and current directory are never abbreviated, `~` stays `~`, and history keeps the full path. Display only; the real cwd is never touched.
 - A focused Starship module editor in `/prompt` that previews changes through Starship's own CLI, preserves unrelated config, and backs up existing files before applying reviewed changes.
 
 ## [0.3.0] - 2026-09-24

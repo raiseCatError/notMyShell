@@ -11,7 +11,8 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
+import {displayPath, PATH_DISPLAY_LEVELS} from './pathDisplay.js';
+import {fitPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
@@ -188,10 +189,9 @@ function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
   };
 }
 
-function relativeCwd(value: string): string {
-  const home = homedir().replace(/\/$/u, '');
-  const cwd = safePromptText(value);
-  return cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
+/** The cwd module's text at one shortening level of the central path policy. */
+function cwdText(context: PromptContext, level: number): string {
+  return safePromptText(displayPath({cwd: context.cwd, home: homedir(), root: context.root, abbreviations: context.pathAbbreviations}, level));
 }
 
 const TOOLCHAIN_LABELS: Record<ToolchainId, string> = {node: 'node', go: 'go', python: 'python', docker: 'docker'};
@@ -206,7 +206,7 @@ export function isCleanWorkingTree(git: NonNullable<PromptContext['git']>): bool
   return !git.staged && !git.modified && !git.untracked && !git.conflicts && !git.operation;
 }
 
-function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode, richGit: boolean): Array<{text: string; role: PromptRole; compact?: boolean}> {
+function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode, richGit: boolean, pathLevel: number): Array<{text: string; role: PromptRole; compact?: boolean}> {
   const status = context.exitStatus ?? 0;
   if (!config.visible) return [];
   if (config.condition === 'inRepository' && !context.branch) return [];
@@ -214,7 +214,7 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
 
   switch (config.id) {
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
-    case 'cwd': return [{text: relativeCwd(context.cwd), role: 'cwd'}];
+    case 'cwd': return [{text: cwdText(context, pathLevel), role: 'cwd'}];
     case 'gitBranch': {
       if (!context.branch) return [];
       // Rich Git Off keeps the plain branch: no state segments, no dirty mark.
@@ -262,8 +262,9 @@ export function richGitGeometry(nmsh: PromptConfiguration['nmsh']): {geometry?: 
   return {...(geometry ? {geometry} : {}), fade};
 }
 
-export function renderedModules(context: PromptContext, configuration: PromptConfiguration): RenderedModule[] {
-  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons, configuration.nmsh.gitEnabled)
+/** `pathLevel` shortens the cwd module (see PATH_DISPLAY_LEVELS); 0 is the full, width-independent form. */
+export function renderedModules(context: PromptContext, configuration: PromptConfiguration, pathLevel = 0): RenderedModule[] {
+  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons, configuration.nmsh.gitEnabled, pathLevel)
     .map(segment => ({...segment, module})));
 
   // The project block owns the brighter live identity when both location
@@ -321,6 +322,23 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
   };
 }
 
+/**
+ * The least-shortened modules whose full prompt fits: the path shortens
+ * before any module is dropped, and only when the width requires it.
+ */
+function fittedModules(context: PromptContext, configuration: PromptConfiguration, width: number): RenderedModule[] {
+  const nmsh = configuration.nmsh;
+  let modules = renderedModules(context, configuration);
+  if (!modules.some(module => module.role === 'cwd')) return modules;
+  for (let level = 0; level < PATH_DISPLAY_LEVELS; level += 1) {
+    if (level > 0) modules = renderedModules(context, configuration, level);
+    const full = renderPowerlineBlocks(modules, nmsh.gapEnabled ? configuration.gap : 0, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled,
+      nmsh.startStyle, nmsh.connector, resolveConnectorFade(nmsh.connectorFade, nmsh.connector), nmsh.connectorFadeColors);
+    if (displayWidth(full) <= width) return modules;
+  }
+  return modules;
+}
+
 export function buildContextLine(
   context: PromptContext,
   width: number,
@@ -336,7 +354,7 @@ export function buildContextLine(
   }
 
   const lineEndStyle = configuration.nmsh.endStyle;
-  const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
+  const content = fitPowerlineBlocks(fittedModules(context, configuration, width), configuration.nmsh.gapEnabled ? configuration.gap : 0,
     configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled, configuration.nmsh.startStyle, configuration.nmsh.connector,
     resolveConnectorFade(configuration.nmsh.connectorFade, configuration.nmsh.connector), configuration.nmsh.connectorFadeColors);
 
