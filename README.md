@@ -81,6 +81,9 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 - NMSh Native prompt (default) with Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale themes
 - Independent Start / Connector / Connector fade / Gap / End geometry (wedge, flat, rounded, slanted, and fading outer edges), icons On/Off, and a module manager: `/prompt` → Main Prompt
 - Rich Git state (staged, modified, untracked, conflicts, ahead/behind/diverged, operations, clean) with its own Enabled, Colors (Semantic default, Follow theme, Grayscale), Geometry, and Connector fade settings: `/prompt` → Rich Git
+- Right-side prompt context: any module can sit left or right (`/prompt` → Modules, `P`); the right side mirrors its geometry to face left by default (`M`) and is the first thing to go on narrow terminals
+- Show-on-command modules: Kubernetes and Docker context (and optionally toolchains) appear only while a relevant command such as `kubectl` or `docker` is typed; typed text is never executed to decide
+- Width-aware path shortening keeps the repository name and current directory whole while abbreviating parents as the terminal narrows
 - Terminal glyph style (Nerd Font or Safe/ASCII) is chosen on first run and can be changed in `/config` (Glyph style) or previewed under `/settings` → Settings → Glyph style. Existing v0.3 configurations keep Nerd Font styling; `NMSH_ICONS=nerd|safe` overrides the saved choice for the current process.
 - Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor. The Starship module editor changes only reviewed settings, with a backup of an existing config.
 - One-line or two-line composer layouts
@@ -88,6 +91,8 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 ### Interface
 - Command lifecycle rows with activity animation and nested Node TAP activity
 - Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
+- Smart output folding: long, repetitive successful output collapses to its first and last lines around `› N lines hidden · Ctrl+O`, while failures and useful output stay expanded; `/copy` and `/resume` always keep the full output (Config → Output folding: Smart / Never)
+- Sticky command headers keep the current command visible while scrolling
 - NMSh checkpoints the local presentation session during use; `/clear` starts a fresh view and `/resume` browses retained sessions without rewinding live zsh state
 - `/zsh` hands off to an ordinary interactive zsh
 - Rich paste atoms for large multiline pastes
