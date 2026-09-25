@@ -2,6 +2,7 @@ import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {UPDATE_CHECK_FREQUENCIES, type UpdateCheckFrequency} from '../update/update.js';
+import type {OutputFoldingMode} from '../output/FoldPolicy.js';
 import {
   normalizeConnectorFadeColors,
   resolveFadeColors,
@@ -155,6 +156,8 @@ export interface PromptConfiguration {
   sessionRetention: SessionRetention;
   /** Background release checks are opt-in; `/update` always checks on request. */
   updateChecks: UpdateCheckFrequency;
+  /** Whether long, boring finished output starts collapsed. Presentation only. */
+  outputFolding: OutputFoldingMode;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -194,6 +197,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphChoiceComplete: false,
   sessionRetention: 1000,
   updateChecks: 'off',
+  outputFolding: 'smart',
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true},
@@ -245,6 +249,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       ? value.sessionRetention as SessionRetention : 1000;
   const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
     ? value.updateChecks as UpdateCheckFrequency : 'off';
+  const outputFolding: OutputFoldingMode = value.outputFolding === 'never' ? 'never' : 'smart';
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -287,7 +292,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks,
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
   }
 
@@ -328,7 +333,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, nmsh, transcript, syntax, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, nmsh, transcript, syntax, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 

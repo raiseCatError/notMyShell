@@ -183,6 +183,9 @@ test('historical header stays visible for folded output and older transcript rec
   output.write(`${Array.from({length: 12}, (_, index) => `line ${index}`).join('\n')}\n`);
   output.complete(0);
   let rows = output.wrapped(80);
+  assert.equal(rows.find(row => row.isFoldHint)?.plain, '12 lines shown · Ctrl+O  ⌄', 'short output never auto-folds');
+  output.toggleExpanded(0);
+  rows = output.wrapped(80);
   assert.equal(rows.find(row => row.isFoldHint)?.plain, '12 lines hidden · Ctrl+O  ›');
   output.toggleExpanded(0);
 
