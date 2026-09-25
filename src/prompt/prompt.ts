@@ -4,6 +4,7 @@ import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
+  modulePlacement,
   type ContextModuleConfig,
   type GitColorMode,
   type NativeIconMode,
@@ -11,7 +12,7 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
@@ -35,6 +36,7 @@ interface RenderedModule {
   compact?: boolean;
   geometry?: PowerlineShape;
   fade?: PowerlineShape | 'off';
+  placement?: 'right';
 }
 
 /** Semantic identity of one rendered segment; themes color roles, not positions. */
@@ -221,11 +223,14 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
       const git = richGit ? context.git : undefined;
       const dirty = Boolean(git && (git.staged || git.modified || git.untracked || git.conflicts));
       const branchLabel = `${safePromptText(context.branch)}${dirty ? '*' : ''}`;
-      const segments: Array<{text: string; role: PromptRole; compact?: boolean}> = [
-        {text: icons === 'off' ? branchLabel : `${GLYPHS.branch} ${branchLabel}`, role: 'gitBranch'},
-      ];
+      return [{text: icons === 'off' ? branchLabel : `${GLYPHS.branch} ${branchLabel}`, role: 'gitBranch'}];
+    }
+    case 'gitStatus': {
+      // Rich Git Off keeps the plain branch: no state segments.
+      const git = richGit && context.branch ? context.git : undefined;
       // No status (outside a repo, probe failed or timed out) is unknown, never clean.
-      if (!git) return segments;
+      if (!git) return [];
+      const segments: Array<{text: string; role: PromptRole; compact?: boolean}> = [];
       // Clean is a marker-sized segment; the prompt geometry gives it its shape.
       if (isCleanWorkingTree(git)) segments.push({text: '', role: 'gitClean', compact: true});
       if (git.staged) segments.push({text: `+${git.staged}`, role: 'gitStaged'});
@@ -283,6 +288,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
       background: custom ? colorFromHex(segment.module.background, colors.background) : colors.background,
       ...(segment.compact ? {compact: true} : {}),
       ...(isGitStateRole(segment.role) ? richGit : {}),
+      ...(modulePlacement(segment.module) === 'right' ? {placement: 'right' as const} : {}),
     };
   });
 }
@@ -298,6 +304,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     ...(module.compact ? {compact: true} : {}),
     ...(module.geometry ? {shape: module.geometry} : {}),
     ...(module.fade ? {fade: module.fade} : {}),
+    ...(module.placement ? {placement: module.placement} : {}),
   }));
   return {
     provider: 'nmsh',
@@ -321,6 +328,38 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
   };
 }
 
+/** The live prompt split into its left prompt and right-aligned context, fitted to one row. */
+export interface ContextRowParts {
+  left: string;
+  right: string;
+}
+
+/**
+ * Fit one prompt row: the left prompt takes what it needs first, then the
+ * right context gets what remains after a one-cell minimum gap, or drops.
+ */
+export function fitContextRow(modules: readonly RenderedModule[], width: number, configuration: PromptConfiguration): ContextRowParts {
+  const nmsh = configuration.nmsh;
+  const gap = nmsh.gapEnabled ? configuration.gap : 0;
+  const fade = resolveConnectorFade(nmsh.connectorFade, nmsh.connector);
+  const leftBlocks = modules.filter(module => module.placement !== 'right');
+  const rightBlocks = modules.filter(module => module.placement === 'right');
+  const left = fitPowerlineBlocks(leftBlocks, gap, configuration.spacing, width, nmsh.endStyle, nmsh.gapEnabled,
+    nmsh.startStyle, nmsh.connector, fade, nmsh.connectorFadeColors);
+  const remaining = width - displayWidth(left) - (left ? 1 : 0);
+  const right = rightBlocks.length === 0 || remaining < 3 ? '' : fitRightPowerlineBlocks(rightBlocks, remaining,
+    blocks => renderPowerlineBlocks(blocks, gap, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
+      fade, nmsh.connectorFadeColors));
+  return {left, right};
+}
+
+/** Right-aligned context alone, for rows whose left side is the editor (one-line composer). */
+export function buildRightContext(context: PromptContext, width: number, configuration: PromptConfiguration): string {
+  if (width <= 0) return '';
+  const modules = renderedModules(context, configuration).filter(module => module.placement === 'right');
+  return modules.length === 0 ? '' : fitContextRow(modules, width, configuration).right;
+}
+
 export function buildContextLine(
   context: PromptContext,
   width: number,
@@ -335,15 +374,11 @@ export function buildContextLine(
     return placement === 'header' ? `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}` : '';
   }
 
-  const lineEndStyle = configuration.nmsh.endStyle;
-  const content = fitPowerlineBlocks(modules, configuration.nmsh.gapEnabled ? configuration.gap : 0,
-    configuration.spacing, width, lineEndStyle, configuration.nmsh.gapEnabled, configuration.nmsh.startStyle, configuration.nmsh.connector,
-    resolveConnectorFade(configuration.nmsh.connectorFade, configuration.nmsh.connector), configuration.nmsh.connectorFadeColors);
-
-  if (placement === 'composer') return `${content}${RESET}`;
-
-  const separatorWidth = Math.max(0, width - displayWidth(content));
-  return `${content}${LINE}${repeatToWidth(GLYPHS.separator, separatorWidth)}${RESET}`;
+  const {left, right} = fitContextRow(modules, width, configuration);
+  const rightPart = right ? ` ${right}${RESET}` : '';
+  const fillWidth = Math.max(0, width - displayWidth(left) - displayWidth(rightPart));
+  if (placement === 'composer') return rightPart ? `${left}${RESET}${' '.repeat(fillWidth)}${rightPart}` : `${left}${RESET}`;
+  return `${left}${LINE}${repeatToWidth(GLYPHS.separator, fillWidth)}${RESET}${rightPart}`;
 }
 
 /**
@@ -379,7 +414,7 @@ export const RICH_GIT_SHOWCASE: ReadonlyArray<{label: string; git: NonNullable<P
 /** One showcase row: the draft's real geometry and colors over the branch module alone. */
 export function buildRichGitShowcaseLine(configuration: PromptConfiguration, git: NonNullable<PromptContext['git']>, width: number): string {
   const preview = structuredClone(configuration);
-  preview.modules = DEFAULT_PROMPT_CONFIGURATION.modules.map(module => ({...module, visible: module.id === 'gitBranch'}));
+  preview.modules = DEFAULT_PROMPT_CONFIGURATION.modules.map(module => ({...module, visible: module.id === 'gitBranch' || module.id === 'gitStatus'}));
   return buildContextLine({cwd: '/', project: 'notMyShell', branch: 'main', git}, width, preview, 'composer');
 }
 
@@ -400,8 +435,10 @@ export function buildInlineContextPrefix(
   if (width <= 0) return '';
   if (width <= displayWidth(GLYPHS.prompt) + 2) return `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET}`;
   const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 1);
+  // One-line: the prefix is the left prompt; right context sits at the end of the input row.
+  const leftOnly = {...configuration, modules: configuration.modules.filter(module => modulePlacement(module) === 'left')};
   const modules = moduleWidth >= 8
-    ? buildContextLine(context, moduleWidth, configuration, 'composer')
+    ? buildContextLine(context, moduleWidth, leftOnly, 'composer')
     : '';
   return `${modules}${modules ? ' ' : ''}${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET} `;
 }

@@ -13,6 +13,8 @@ import {
   type NativeGapChoice,
   type PromptConfiguration,
   type PromptProviderId,
+  modulePlacement,
+  RIGHT_ELIGIBLE_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
 import {fadeColorChoices, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
@@ -112,7 +114,7 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
 }
 
 const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
-  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', toolchain: 'Toolchains', exitStatus: 'Exit status',
+  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
 };
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
@@ -174,7 +176,7 @@ export function promptDraftChanged(state: PromptPanelState): boolean {
 
 function moduleOption(module: PromptConfiguration['modules'][number]): string {
   switch (module.id) {
-    case 'gitBranch': return 'in repositories';
+    case 'gitBranch': case 'gitStatus': return 'in repositories';
     case 'toolchain': return 'when detected';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
     default: return 'always';
@@ -188,6 +190,11 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   const module = modules[index];
   if (!module) return false;
   if (key.kind === 'text' && key.value === ' ') module.visible = !module.visible;
+  else if (key.kind === 'text' && (key.value === 'p' || key.value === 'P')) {
+    if (!RIGHT_ELIGIBLE_MODULES.has(module.id)) return true;
+    if (modulePlacement(module) === 'right') delete module.placement;
+    else module.placement = 'right';
+  }
   else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
     module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
   } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
@@ -209,7 +216,7 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
-    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['Enter/Esc', 'done']];
+    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'], ['Enter/Esc', 'done']];
   }
   if (state.step === 'appearance') {
     if (state.focus === 'tabs') return [['←→', 'switch view'], ['↓', 'select'], ['Enter', 'save'], escape];
@@ -399,11 +406,12 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     LAYOUT_CHOICES.forEach((choice, index) => rows.push(item(index,
       `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
   } else if (state.step === 'modules') {
-    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}left to right, in prompt order${RESET}`);
+    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · P moves eligible modules to the right${RESET}`);
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(13)}${SUBTLE}${module.visible ? option : 'hidden'}${RESET}`);
+      const side = modulePlacement(module).padEnd(7);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(13)}${SUBTLE}${side}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;

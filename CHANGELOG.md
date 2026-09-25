@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Continuous local presentation-session checkpoints with retention of 1000 unpinned sessions by default, plus `/resume` search and date navigation.
 - Reusable elapsed-time task progress with a per-character travelling shimmer, factual completion states, and bounded diagnostic details; Starship Homebrew installation uses it.
 - `/syntax` panel (also under `/settings` → Syntax): Highlighting On/Off and Colors Follow prompt theme (default, unchanged appearance on Lavender Native) / Choose theme / Grayscale, with live preview rows. Submitted commands keep their original styling; PTY output and `/copy` are unaffected.
+- NMSh right-side prompt context: in `/prompt` → Modules, `P` moves Git status, Toolchains, or Exit status to a right-aligned area (default: everything stays left). It works in header and composer placement and in the one-line composer (at the end of the input row while the text leaves room). Narrow terminals drop right-side context before any left content. History snapshots record right placement and render it after the divider. Rich Git state is now its own **Git status** module next to the branch; saved configurations gain it right after the branch with the same visibility.
 - A focused Starship module editor in `/prompt` that previews changes through Starship's own CLI, preserves unrelated config, and backs up existing files before applying reviewed changes.
 
 ## [0.3.0] - 2026-09-24

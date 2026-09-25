@@ -334,3 +334,21 @@ export function fitPowerlineBlocks(
 
   return `${foreground(first.foreground)}${truncateText(first.text, width)}${RESET}${NEUTRAL_BACKGROUND}`;
 }
+
+/**
+ * Fit the right-aligned context group into what the left prompt leaves.
+ * Right-side context is lower priority: it never truncates text and never
+ * squeezes the left prompt. Blocks farthest from the right edge drop first,
+ * mirroring how the left prompt drops blocks farthest from its anchor.
+ */
+export function fitRightPowerlineBlocks(
+  modules: readonly PowerlineBlock[],
+  width: number,
+  render: (blocks: readonly PowerlineBlock[]) => string,
+): string {
+  for (let start = 0; start < modules.length; start += 1) {
+    const candidate = render(modules.slice(start));
+    if (displayWidth(candidate) <= width) return candidate;
+  }
+  return '';
+}

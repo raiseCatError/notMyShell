@@ -15,6 +15,8 @@ export interface PromptSegmentSnapshot {
   shape?: PowerlineShape;
   /** Resolved gap-fade override for boundaries touching this segment. */
   fade?: PowerlineShape | 'off';
+  /** Right-aligned context at submission; missing means the left prompt. */
+  placement?: 'right';
 }
 
 /** Semantic prompt data captured at submission; never an ANSI-only string. */

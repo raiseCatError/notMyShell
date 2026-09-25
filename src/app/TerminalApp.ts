@@ -15,7 +15,7 @@ import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, buildRightContext, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -1342,8 +1342,9 @@ export class TerminalApp {
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
       providerRow = this.externalPromptRow(preview, width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
-      const prefix = buildInlineContextPrefix(this.context, width, previewConfig);
-      return [boundary, `${prefix}command`, boundary];
+      const line = `${buildInlineContextPrefix(this.context, width, previewConfig)}command`;
+      const right = buildRightContext(this.context, width - displayWidth(line) - 2, previewConfig);
+      return [boundary, right ? `${line}${RESET}${' '.repeat(width - displayWidth(line) - displayWidth(right))}${right}${RESET}` : line, boundary];
     } else {
       providerRow = buildContextLine(this.context, width, previewConfig, previewConfig.placement);
     }
@@ -1985,7 +1986,8 @@ export class TerminalApp {
       if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
-      frameRows.push(truncateAnsi(`${prefix}${textStyled}${suffix}`, columns));
+      const line = truncateAnsi(`${prefix}${textStyled}${suffix}`, columns);
+      frameRows.push(row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line);
     }
     if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
 
@@ -2034,6 +2036,20 @@ export class TerminalApp {
       return `${truncateAnsi(this.externalPrompt.ansi, maxWidth)}${RESET} `;
     }
     return buildInlineContextPrefix(this.context, columns, this.promptConfiguration);
+  }
+
+  /**
+   * One-line composer: right-aligned context on the first input row while the
+   * typed text leaves room, like a right prompt. It yields to the input and
+   * never pushes the caret or wraps.
+   */
+  private oneLineRightContext(line: string, columns: number): string {
+    if (this.promptConfiguration.composerLayout !== 'oneLine' || this.effectivePromptProvider !== 'nmsh') return '';
+    const used = displayWidth(line);
+    // Two cells of breathing room after the text, plus the caret cell.
+    const right = buildRightContext(this.context, columns - used - 2, this.promptConfiguration);
+    if (!right) return '';
+    return `${RESET}${' '.repeat(columns - used - displayWidth(right))}${right}${RESET}`;
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {

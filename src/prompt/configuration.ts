@@ -16,7 +16,17 @@ export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus';
+/** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
+export type ModulePlacement = 'left' | 'right';
+/**
+ * Lower-priority context may move right; identity (project, path, branch)
+ * stays left so the essential prompt survives narrow widths.
+ */
+export const RIGHT_ELIGIBLE_MODULES: ReadonlySet<ContextModuleId> = new Set(['gitStatus', 'toolchain', 'exitStatus']);
+export function modulePlacement(module: {id: ContextModuleId; placement?: ModulePlacement}): ModulePlacement {
+  return module.placement === 'right' && RIGHT_ELIGIBLE_MODULES.has(module.id) ? 'right' : 'left';
+}
 export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
 export type NativeEndStyle = PowerlineEdgeStyle;
@@ -75,6 +85,8 @@ export interface ContextModuleConfig {
   id: ContextModuleId;
   visible: boolean;
   condition: ContextCondition;
+  /** Missing means left; only right-eligible modules honor `right`. */
+  placement?: ModulePlacement;
   foreground?: string;
   background?: string;
 }
@@ -189,6 +201,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
+    {id: 'gitStatus', visible: true, condition: 'inRepository'},
     {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
   ],
@@ -197,7 +210,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus']);
 const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -282,6 +295,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
         ? item.condition as ContextCondition
         : fallback.condition,
     };
+    if (item.placement === 'right' && RIGHT_ELIGIBLE_MODULES.has(id)) module.placement = 'right';
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
     modules.push(module);
@@ -290,6 +304,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // default position instead of silently staying absent.
   DEFAULT_PROMPT_CONFIGURATION.modules.forEach((fallback, defaultIndex) => {
     if (seen.has(fallback.id)) return;
+    // Git status split from the branch module: it joins right after the
+    // branch wherever the user placed it, so v0.3 prompts look the same.
+    const branch = fallback.id === 'gitStatus' ? modules.findIndex(module => module.id === 'gitBranch') : -1;
+    if (branch !== -1) {
+      modules.splice(branch + 1, 0, {...fallback, visible: modules[branch]!.visible});
+      return;
+    }
     const later = DEFAULT_PROMPT_CONFIGURATION.modules.slice(defaultIndex + 1).map(module => module.id);
     const before = modules.findIndex(module => later.includes(module.id));
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
