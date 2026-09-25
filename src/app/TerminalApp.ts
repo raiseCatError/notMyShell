@@ -46,7 +46,9 @@ import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES}
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
-import {Highlighter, type TokenType} from '../input/Highlighter.js';
+import {Highlighter} from '../input/Highlighter.js';
+import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
+import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
 import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
 import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
@@ -99,6 +101,7 @@ export class TerminalApp {
   private p10kStatus?: Powerlevel10kStatus;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
+  private syntaxPanelState?: SyntaxPanelState;
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
   private hoveredLineIndex?: number;
@@ -240,6 +243,16 @@ export class TerminalApp {
     if (this.settingsPanelState) {
       this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
+      return;
+    }
+    if (this.syntaxPanelState) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.syntaxPanelState = undefined;
+        this.returnFromPanel();
+        this.render();
+      } else if (key.kind === 'enter') {
+        this.saveSyntaxSettings();
+      } else if (handleSyntaxPanelKey(key, this.syntaxPanelState)) this.render();
       return;
     }
     if (this.transcriptPanelState) {
@@ -666,6 +679,7 @@ export class TerminalApp {
       else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
       else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
       else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
+      else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
       else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
@@ -1354,8 +1368,13 @@ export class TerminalApp {
     return stickyHeaderFor(wrapped, viewStart);
   }
 
+  /** Current editor syntax style; cached per setting combination, never read from disk while typing. */
+  private get syntaxSgr(): SyntaxSgr {
+    return syntaxSgrForConfiguration(this.promptConfiguration);
+  }
+
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.settingsPanelState
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.syntaxPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
@@ -1363,6 +1382,9 @@ export class TerminalApp {
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
         status: settingsView(this.settingsPanelState) === 'status' ? this.statusSections() : undefined});
+    }
+    if (this.syntaxPanelState) {
+      return framePanel(renderSyntaxPanel(this.syntaxPanelState, columns, this.promptConfiguration.nmsh.palette, this.dimensions().rows - 4), columns);
     }
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
@@ -1510,6 +1532,7 @@ export class TerminalApp {
     if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
+    else if (destination === 'syntax') this.startSyntaxSettings();
     else void this.startKeyboard();
   }
 
@@ -1542,6 +1565,7 @@ export class TerminalApp {
         ...(active !== config.provider ? [{label: 'Active prompt', value: `${providerLabel(active)} (fallback)`, tone: 'warning' as const}] : []),
         {label: 'Composer', value: layoutLabel(config)},
         {label: 'Glyph style', value: config.glyphStyle === 'nerd' ? 'Nerd Font' : 'Safe / ASCII'},
+        {label: 'Syntax', value: !config.syntax.highlighting ? 'Off' : config.syntax.colors === 'followPrompt' ? 'Follow prompt theme' : config.syntax.colors === 'theme' ? 'Choose theme' : 'Grayscale'},
         {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
       ],
       [
@@ -1592,6 +1616,28 @@ export class TerminalApp {
       this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
     } catch (error) {
       state.message = `Could not save transcript settings: ${error instanceof Error ? error.message : String(error)}`;
+    }
+    this.render();
+  }
+
+  private startSyntaxSettings(): void {
+    const saved = structuredClone(this.promptConfiguration.syntax);
+    this.syntaxPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved};
+  }
+
+  /** New input and new commands use the saved style; submitted history keeps its captured ANSI. */
+  private saveSyntaxSettings(): void {
+    const state = this.syntaxPanelState;
+    if (!state) return;
+    const next = {...structuredClone(this.promptConfiguration), syntax: structuredClone(state.draft)};
+    try {
+      savePromptConfiguration(next);
+      this.promptConfiguration = next;
+      this.syntaxPanelState = undefined;
+      this.returnFromPanel();
+      this.output.addHistoryLine(`${SUCCESS}Syntax settings saved.${RESET}`);
+    } catch (error) {
+      state.message = `Could not save syntax settings: ${error instanceof Error ? error.message : String(error)}`;
     }
     this.render();
   }
@@ -1716,37 +1762,21 @@ export class TerminalApp {
   }
 
 
-  private formatCommandAnsi(command: string, startId: number | null): string[] {
+  private formatCommandAnsi(command: string, startId: number | null, sgr = this.syntaxSgr): string[] {
     const inputChars = graphemes(command);
     const tokens = this.highlighter.tokenize(inputChars, this.semanticService.cache);
-    const charColors = new Array(inputChars.length).fill(PRIMARY);
+    const charColors = syntaxCharStyles(tokens, inputChars.length, sgr);
 
     for (const token of tokens) {
       if (token.type === 'Command' && startId !== null) {
+        // Resolution re-renders with the style captured at submission, so
+        // later syntax setting changes never recolor this history entry.
         void this.semanticService.classifyCommand(token.text).then(() => {
-          const newFormatted = this.formatCommandAnsi(command, null);
+          const newFormatted = this.formatCommandAnsi(command, null, sgr);
           this.output.updateCommandHighlight(startId, newFormatted);
           this.render();
         });
       }
-      let color = PRIMARY;
-      switch (token.type) {
-        case 'Command': color = PRIMARY; break;
-        case 'KnownCommand': color = ACCENT; break;
-        case 'Builtin': color = ACCENT; break;
-        case 'Alias': color = ACCENT; break;
-        case 'Function': color = ACCENT; break;
-        case 'UnknownCommand': color = ERROR; break;
-        case 'Argument': color = PRIMARY; break;
-        case 'String': color = STOPPED; break;
-        case 'Variable': color = ACCENT; break;
-        case 'Operator': color = SUBTLE; break;
-        case 'Path': color = SECONDARY; break;
-        case 'Flag': color = SECONDARY; break;
-        case 'Comment': color = SUBTLE; break;
-        case 'Normal': color = PRIMARY; break;
-      }
-      for (let i = token.start; i < token.end; i++) charColors[i] = color;
     }
 
     const lines: string[] = [];
@@ -1926,30 +1956,12 @@ export class TerminalApp {
     const inputChars = graphemes(this.editor.displayText);
     const pasteAtoms = this.editor.displayPasteAtoms;
     const tokens = this.highlighter.tokenize(inputChars, this.semanticService.cache);
-    const charColors = new Array(inputChars.length).fill(PRIMARY);
+    const charColors = syntaxCharStyles(tokens, inputChars.length, this.syntaxSgr);
 
     for (const token of tokens) {
       if (token.type === 'Command') {
         void this.semanticService.classifyCommand(token.text).then(() => this.render());
       }
-      let color = PRIMARY;
-      switch (token.type) {
-        case 'Command': color = PRIMARY; break;
-        case 'KnownCommand': color = ACCENT; break;
-        case 'Builtin': color = ACCENT; break;
-        case 'Alias': color = ACCENT; break;
-        case 'Function': color = ACCENT; break;
-        case 'UnknownCommand': color = ERROR; break;
-        case 'Argument': color = PRIMARY; break;
-        case 'String': color = STOPPED; break;
-        case 'Variable': color = ACCENT; break;
-        case 'Operator': color = SUBTLE; break;
-        case 'Path': color = SECONDARY; break;
-        case 'Flag': color = SECONDARY; break;
-        case 'Comment': color = SUBTLE; break;
-        case 'Normal': color = PRIMARY; break;
-      }
-      for (let i = token.start; i < token.end; i++) charColors[i] = color;
     }
 
     for (const row of input.rows) {
