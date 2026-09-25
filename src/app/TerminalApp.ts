@@ -44,7 +44,7 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
-import {calculateScreenLayout} from './layout.js';
+import {cursorScreenRow, planScreen, regionAt, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
@@ -355,23 +355,21 @@ export class TerminalApp {
     }
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
-      const fullInput = this.layoutEditorInput(columns);
-      const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
-      if (key.y && key.y <= layout.outputHeight) {
+      // Hit-test against the same plan render paints; Shift+mouse never reaches here (native selection).
+      const plan = this.planFrame(columns, rows);
+      const hit = key.y ? regionAt(plan, screenRowFromTerminal(key.y)) : undefined;
+      if (hit?.region.kind === 'transcript') {
+        const outputHeight = plan.transcript.height;
         const wrapped = this.output.wrapped(columns);
-        const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
+        const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
+        const localVisibleIndex = hit.localRow;
 
-        // Exact same top-aligned calculation as render().
-        const topPadding = 0;
-
-        const localVisibleIndex = key.y - 1 - topPadding;
-
+        // The sticky header paints over the transcript region's first row.
         const sticky = localVisibleIndex === 0 ? this.stickyHeader(wrapped, viewStart) : undefined;
         if (sticky) {
           // The sticky overlay owns the top row: a click jumps to the block's real header.
           if (key.kind === 'mouseClick') {
-            this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, sticky.targetIndex - viewStart);
+            this.historyViewport.scrollLines(wrapped.length, outputHeight, sticky.targetIndex - viewStart);
             this.hoveredLineIndex = undefined;
             this.render();
           } else if (this.hoveredLineIndex !== undefined) {
@@ -568,9 +566,7 @@ export class TerminalApp {
         }
 
         const {columns, rows} = this.dimensions();
-        const fullInput = this.layoutEditorInput(columns);
-        const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
+        const outputHeight = this.planFrame(columns, rows).transcript.height;
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
@@ -579,9 +575,9 @@ export class TerminalApp {
             ? r.commandIndex === this.focusedCommandIndex && r.isFoldHint
             : r.lineIndex === this.focusedLineIndex);
         if (wrappedIndex !== -1) {
-          this.historyViewport.resolve(wrapped.length, layout.outputHeight);
-          if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + layout.outputHeight) {
-             this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, wrappedIndex - this.historyViewport.start - Math.floor(layout.outputHeight / 2));
+          this.historyViewport.resolve(wrapped.length, outputHeight);
+          if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + outputHeight) {
+             this.historyViewport.scrollLines(wrapped.length, outputHeight, wrappedIndex - this.historyViewport.start - Math.floor(outputHeight / 2));
           }
         }
 
@@ -1805,45 +1801,26 @@ export class TerminalApp {
   }
 
   private scroll(direction: -1 | 1): void {
-    const {columns, rows} = this.dimensions();
-    const input = this.layoutEditorInput(columns);
-    const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
-    const outputHeight = Math.max(1, calculateScreenLayout(
-      rows,
-      input.allRows.length,
-      overlayRows,
-      Boolean(this.running),
-      this.historyViewport.detached,
-      this.output.wrapped(columns).length > 0,
-      this.promptConfiguration.placement,
-      this.hasVisibleProviderPrompt(),
-      this.promptConfiguration.composerLayout,
-    ).outputHeight);
+    const {columns} = this.dimensions();
+    const outputHeight = this.transcriptViewportHeight();
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
     this.historyViewport.page(total, outputHeight, direction);
   }
 
   private scrollLines(amount: number): void {
-    const {columns, rows} = this.dimensions();
-    const input = this.layoutEditorInput(columns);
-    const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
-    const outputHeight = Math.max(1, calculateScreenLayout(
-      rows,
-      input.allRows.length,
-      overlayRows,
-      Boolean(this.running),
-      this.historyViewport.detached,
-      this.output.wrapped(columns).length > 0,
-      this.promptConfiguration.placement,
-      this.hasVisibleProviderPrompt(),
-      this.promptConfiguration.composerLayout,
-    ).outputHeight);
+    const {columns} = this.dimensions();
+    const outputHeight = this.transcriptViewportHeight();
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
     this.historyViewport.scrollLines(total, outputHeight, amount);
   }
 
+  /** Scroll paging needs at least one row even when the plan leaves the transcript empty. */
+  private transcriptViewportHeight(): number {
+    const {columns, rows} = this.dimensions();
+    return Math.max(1, this.planFrame(columns, rows).transcript.height);
+  }
 
   private formatCommandAnsi(command: string, startId: number | null, sgr = this.syntaxSgr): string[] {
     const inputChars = graphemes(command);
@@ -1896,66 +1873,65 @@ export class TerminalApp {
     return lines;
   }
 
+  /** Composer suggestion rows for the current editor state; the same list render paints and geometry counts. */
+  private composerSuggestions(): any[] {
+    if (this.running || this.settingsPanelActive) return [];
+    if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
+      const q = this.editor.text.substring(9).toLowerCase();
+      const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
+      return matches.slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
+    }
+    if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
+    return this.shellSuggestions;
+  }
+
+  /**
+   * The one screen plan for the current state. Render, hit-testing, scroll,
+   * focus, cursor and PTY sizing all call this instead of counting rows.
+   */
+  private planFrame(
+    columns: number,
+    rows: number,
+    fullInput = this.layoutEditorInput(columns),
+    suggestions = this.composerSuggestions().length,
+    panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
+  ): ScreenPlan {
+    return planScreen({
+      rows,
+      inputRows: fullInput.allRows.length,
+      suggestions,
+      running: Boolean(this.running),
+      detached: this.historyViewport.detached,
+      hasOutput: this.output.wrapped(columns).length > 0,
+      contextPlacement: this.promptConfiguration.placement,
+      hasVisibleContext: this.hasVisibleProviderPrompt(),
+      composerLayout: this.promptConfiguration.composerLayout,
+      panelRows,
+    });
+  }
+
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough) return;
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
-    const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
-
-    let availableSuggestions: any[] = [];
-    if (!this.running) {
-      if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
-        const q = this.editor.text.substring(9).toLowerCase();
-        const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
-        availableSuggestions = matches.slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
-      } else if (isSlash) {
-        availableSuggestions = this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
-      } else {
-        availableSuggestions = this.shellSuggestions;
-      }
-    }
-
-    if (this.settingsPanelActive) availableSuggestions = [];
-    const promptPanelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : 0;
-    const overlayRows = this.settingsPanelActive ? promptPanelRows : this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
+    const availableSuggestions = this.composerSuggestions();
+    const panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns) : undefined;
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
     const fullInput = this.layoutEditorInput(columns);
-    const calculatedLayout = calculateScreenLayout(
-      rows,
-      fullInput.allRows.length,
-      overlayRows,
-      Boolean(this.running),
-      this.historyViewport.detached,
-      this.output.wrapped(columns).length > 0,
-      this.promptConfiguration.placement,
-      this.hasVisibleProviderPrompt(),
-      this.promptConfiguration.composerLayout,
-    );
-    const layout = this.settingsPanelActive ? {
-      ...calculatedLayout,
-      outputHeight: Math.max(0, rows - promptPanelRows),
-      inputHeight: 0,
-      suggestionCount: 0,
-      showJump: false,
-      showLiveActivity: false,
-      showPrompt: false,
-      showComposerTopBorder: false,
-      showSeparator: false,
-      showGap: false,
-    } : calculatedLayout;
-    const input = this.settingsPanelActive
+    const plan = this.planFrame(columns, rows, fullInput, availableSuggestions.length, panelRows?.length);
+    const input = plan.panelActive
       ? {...fullInput, rows: [], caretRow: 0, caretColumn: 0}
-      : this.layoutEditorInput(columns, layout.inputHeight);
+      : this.layoutEditorInput(columns, plan.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
-    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, layout.suggestionCount);
-    const outputHeight = layout.outputHeight;
-    if (this.lastPtyRows !== outputHeight || this.lastPtyColumns !== columns) {
-      this.lastPtyRows = outputHeight;
+    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, plan.suggestionCount);
+    if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
+      this.lastPtyRows = plan.ptyRows;
       this.lastPtyColumns = columns;
-      this.session.resize(columns, outputHeight);
+      this.session.resize(columns, plan.ptyRows);
     }
 
+    const outputHeight = plan.transcript.height;
     const wrapped = this.output.wrapped(columns);
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
@@ -2003,36 +1979,6 @@ export class TerminalApp {
     const sticky = this.stickyHeader(wrapped, viewStart);
     const stickyRow = sticky && this.output.stickyHeaderRow(sticky.startId, columns);
     if (stickyRow && visible.length > 0) visible[0] = `\u001B[48;2;38;38;48m${stickyRow.replaceAll(RESET, `${RESET}\u001B[48;2;38;38;48m`)}\u001B[K${RESET}`;
-    const frameRows = [...visible];
-    while (frameRows.length < outputHeight) frameRows.push('');
-    if (layout.showGap) frameRows.push('');
-
-    if (layout.showJump) frameRows.push(this.jumpAffordance(columns));
-    if (this.settingsPanelActive) {
-      frameRows.push(...this.settingsPanelRows(columns));
-    } else if (this.appearanceState) {
-      for (const row of renderAppearancePanel(this.appearanceState, columns)) {
-        frameRows.push(row);
-      }
-    } else if (this.keyboardState) {
-      for (const row of renderKeyboardPanel(this.keyboardState, columns)) {
-        frameRows.push(row);
-      }
-    } else {
-      for (const [visibleIndex, suggestion] of suggestionView.items.entries()) {
-        const selected = suggestionView.start + visibleIndex === effectiveSelection;
-        frameRows.push(truncateAnsi(
-          `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
-          columns,
-        ));
-      }
-    }
-    if (layout.showLiveActivity && this.running) {
-      frameRows.push(truncateAnsi(this.currentActivity(), columns));
-      frameRows.push('');
-    }
-    if (layout.showComposerTopBorder) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
-    if (layout.showPrompt) frameRows.push(promptLine);
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
 
@@ -2047,7 +1993,7 @@ export class TerminalApp {
       }
     }
 
-    for (const row of input.rows) {
+    const inputRows = input.rows.map(row => {
       const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
@@ -2069,26 +2015,42 @@ export class TerminalApp {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
       const line = truncateAnsi(`${prefix}${textStyled}${suffix}`, columns);
-      frameRows.push(row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line);
+      return row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line;
+    });
+
+    // The plan decides where each region lives; this only decides what paints into it.
+    const separator = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`;
+    const regionRows = (region: Region): string[] => {
+      switch (region.kind) {
+        case 'transcript': return visible;
+        case 'gap': return [];
+        case 'jump': return [this.jumpAffordance(columns)];
+        case 'panel': return panelRows ?? [];
+        case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
+          const selected = suggestionView.start + visibleIndex === effectiveSelection;
+          return truncateAnsi(
+            `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
+            columns,
+          );
+        });
+        case 'activity': return this.running ? [truncateAnsi(this.currentActivity(), columns), ''] : [];
+        case 'composerBorder': return [separator];
+        case 'prompt': return [promptLine];
+        case 'input': return inputRows;
+        case 'separator': return [separator];
+      }
+    };
+    const frameRows = new Array<string>(plan.rows).fill('');
+    for (const region of plan.regions) {
+      const content = regionRows(region);
+      for (let index = 0; index < region.height; index += 1) frameRows[region.top + index] = content[index] ?? '';
     }
-    if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
 
     this.renderer.render({
-      rows: frameRows.slice(0, rows),
-      cursorRow: Math.min(
-        rows,
-        outputHeight
-          + Number(layout.showGap)
-          + Number(layout.showJump)
-          + (this.appearanceState ? 7 : (this.keyboardState ? 6 : suggestionView.items.length))
-          + (layout.showLiveActivity ? 2 : 0)
-          + Number(layout.showComposerTopBorder)
-          + Number(layout.showPrompt)
-          + input.caretRow
-          + 1,
-      ),
+      rows: frameRows,
+      cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
-      cursorVisible: !this.settingsPanelActive,
+      cursorVisible: !plan.panelActive,
     });
   }
 
