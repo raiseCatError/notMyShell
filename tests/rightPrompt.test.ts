@@ -121,3 +121,13 @@ test('renderedModules tags right segments; Git status follows Rich Git Off', () 
   off.nmsh.gitEnabled = false;
   assert.equal(renderedModules(context, off).filter(module => module.id === 'gitStatus').length, 0);
 });
+
+test('with directory shortening, right context drops before the path shortens', () => {
+  const config = withRight(['gitStatus', 'toolchain', 'exitStatus']);
+  const leftOnly = {...config, modules: config.modules.filter(module => modulePlacement(module) === 'left')};
+  const full = stripAnsi(buildContextLine(context, 200, leftOnly, 'composer')).trimEnd();
+  const width = displayWidth(full) + 2;
+  const plain = stripAnsi(buildContextLine(context, width, config, 'header'));
+  assert.ok(plain.includes('/work/notMyShell'), 'the full path survives');
+  assert.ok(!plain.includes('+2'), 'right context yields first');
+});

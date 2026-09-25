@@ -26,6 +26,7 @@ import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
+import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
@@ -998,9 +999,12 @@ export class TerminalApp {
 
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
-    const context = await resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled});
+    const [context, pathAbbreviations] = await Promise.all([
+      resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled}),
+      resolvePathAbbreviations(cwd, homedir()),
+    ]);
     if (generation !== this.contextGeneration || this.stopped) return;
-    this.context = {...context, exitStatus: this.context.exitStatus ?? 0};
+    this.context = {...context, pathAbbreviations, exitStatus: this.context.exitStatus ?? 0};
     await this.refreshProviderPrompt();
     this.render();
   }
