@@ -18,6 +18,11 @@ export interface PromptContext {
   exitStatus?: number;
   /** Toolchains detected from marker files in cwd or the repository root. */
   toolchains?: ToolchainId[];
+  /** Command words of the editor buffer, for show-on-command modules; never executed. */
+  commandWords?: readonly string[];
+  /** Show-on-command lookups, present once resolved. */
+  kubeContext?: string;
+  dockerContext?: string;
 }
 
 export interface GitStatus {
