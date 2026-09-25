@@ -26,6 +26,7 @@ import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
+import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -71,6 +72,9 @@ const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
+  private updateInProgress = false;
+  /** The release version the last `/update` offered; `/update apply` installs only that. */
+  private offeredUpdate?: string;
   private readonly initialCwd = process.cwd();
   private shellCwd = this.initialCwd;
   private readonly renderer = new TerminalRenderer();
@@ -199,6 +203,7 @@ export class TerminalApp {
     }, STATUS_REFRESH_MS);
     this.scheduleWelcomeBlink();
     this.render();
+    void this.quietUpdateCheck();
     const exitCode = await this.done;
     try { await this.journal.close(); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
@@ -684,6 +689,7 @@ export class TerminalApp {
       else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
       else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
       else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
+      else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
       else if (slash.kind === 'clear') await this.startFreshPresentation();
       else if (slash.kind === 'resume') await this.openResumePicker();
       else if (slash.kind === 'help') this.showHelp(command);
@@ -934,6 +940,57 @@ export class TerminalApp {
     if (this.resumeBrowser === browser) this.render();
   }
 
+
+  /** Opt-in background discovery: one quiet line per newly seen release, never an interruption. */
+  private async quietUpdateCheck(): Promise<void> {
+    const release = await backgroundUpdateCheck(this.buildIdentity.version, this.promptConfiguration.updateChecks).catch(() => undefined);
+    if (!release || this.stopped) return;
+    this.output.addHistoryLine(`${INFO}NMSh ${release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
+    this.render();
+  }
+
+  /**
+   * `/update` checks and shows the plan; `/update apply` installs only the
+   * release the last `/update` offered. Both re-verify everything first.
+   */
+  private async runUpdateCommand(command: string, apply: boolean): Promise<void> {
+    const reply = (text: string, style = INFO) => { this.output.addFrontendInteraction(command, text, style); this.render(); };
+    if (this.updateInProgress) return reply('An update check is already running.');
+    this.updateInProgress = true;
+    try {
+      const current = this.buildIdentity.version;
+      let release: ReleaseInfo;
+      try {
+        release = await fetchLatestRelease();
+      } catch (error) {
+        return reply(`Could not check for updates: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, ERROR);
+      }
+      if (compareVersions(release.version, current) <= 0) return reply(`NMSh ${current} is up to date (latest release ${release.tag}).`, SUCCESS);
+      const header = [`NMSh ${current} → ${release.version} is available.`, ...release.summary.map(line => `  ${line}`), release.url];
+      const planned = await planUpdate(await detectInstall(installRoot()), release);
+      if (!planned.ok) {
+        return reply([...header, '', `NMSh will not update this installation automatically: ${planned.reason}`,
+          'To update it yourself:', ...planned.manual.map(line => `  ${line}`)].join('\n'));
+      }
+      if (!apply || this.offeredUpdate !== release.version) {
+        this.offeredUpdate = release.version;
+        return reply([...header, '', 'Plan:', ...planned.plan.steps.map(line => `  • ${line}`), '',
+          'Run /update apply to install it. Your settings, transcripts, and shell profile are not touched.'].join('\n'));
+      }
+      reply(`Updating to ${release.version}…`);
+      const result = await applyUpdate(planned.plan, systemRunner, line => {
+        this.output.addHistoryLine(`${SECONDARY}  ${line}${RESET}`);
+        this.render();
+      });
+      this.offeredUpdate = undefined;
+      this.output.addHistoryLine(result.ok
+        ? `${SUCCESS}NMSh ${release.version} is installed. Restart NMSh to use it; this session keeps running ${current}.${RESET}`
+        : `${ERROR}The update did not complete; the lines above say what happened.${RESET}`);
+    } finally {
+      this.updateInProgress = false;
+      this.render();
+    }
+  }
 
   private showHelp(command: string): void {
     const summary = slashCommands.map(item => `${item.name} — ${item.description}`).join(' · ');

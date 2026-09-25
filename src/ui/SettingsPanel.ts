@@ -1,3 +1,4 @@
+import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
   type DividerDensity,
@@ -110,6 +111,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'syntaxColors', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
+  enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
+    values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
+    get: config => config.updateChecks, set: (config, updateChecks) => ({...config, updateChecks})}),
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -122,7 +126,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
 ];
 
-export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma', 'Updates'] as const;
+export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;
 
 export function visibleSettingsRows(state: SettingsPanelState): SettingsRow[] {
   const view = settingsView(state);
