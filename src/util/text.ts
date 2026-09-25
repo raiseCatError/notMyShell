@@ -54,3 +54,21 @@ export function truncateAnsi(value: string, maxWidth: number): string {
 export function repeatToWidth(character: string, width: number): string {
   return width > 0 ? character.repeat(width) : '';
 }
+
+/**
+ * Styles each case-insensitive occurrence of `query` in plain `text` with
+ * `mark`, restoring `base` afterwards. The text itself is never altered, so
+ * the result strips back to the original string.
+ */
+export function highlightMatches(text: string, query: string, base: string, mark: string): string {
+  const needle = query.trim().toLowerCase();
+  const haystack = text.toLowerCase();
+  if (!needle || haystack.length !== text.length) return `${base}${text}`;
+  let output = base;
+  let index = 0;
+  for (let found = haystack.indexOf(needle); found !== -1; found = haystack.indexOf(needle, index)) {
+    output += `${text.slice(index, found)}\u001B[0m${mark}${text.slice(found, found + needle.length)}\u001B[0m${base}`;
+    index = found + needle.length;
+  }
+  return output + text.slice(index);
+}

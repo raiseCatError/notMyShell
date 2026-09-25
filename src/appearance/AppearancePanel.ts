@@ -1,8 +1,7 @@
 import {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
-import {truncateAnsi, repeatToWidth} from '../util/text.js';
-import {BlurMode, GhosttySettings} from './ghostty.js';
-import {IconStylePref, getIconStyle, setIconStyle} from '../ui/glyphs.js';
+import {truncateAnsi} from '../util/text.js';
+import {BlurMode} from './ghostty.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -10,7 +9,6 @@ const INTERACTIVE = foreground(UI_COLORS.accent);
 const RESET = '\u001B[0m';
 
 export const BLUR_MODES: BlurMode[] = ['Off', 'Numeric', 'Glass Regular', 'Glass Clear'];
-export const ICON_STYLES: IconStylePref[] = ['nerd', 'safe'];
 
 export interface AppearanceState {
   opacity: number;
@@ -20,7 +18,7 @@ export interface AppearanceState {
 }
 
 export function handleAppearanceKey(key: Key, state: AppearanceState): boolean {
-  const maxIndex = BLUR_MODES[state.blurModeIndex] === 'Numeric' ? 3 : 2;
+  const maxIndex = BLUR_MODES[state.blurModeIndex] === 'Numeric' ? 2 : 1;
   if (key.kind === 'up') {
     state.selectedIndex = Math.max(0, state.selectedIndex - 1);
     return true;
@@ -41,17 +39,12 @@ export function handleAppearanceKey(key: Key, state: AppearanceState): boolean {
     } else if (state.selectedIndex === 1) {
       if (Math.abs(delta) === 1) {
          state.blurModeIndex = Math.max(0, Math.min(BLUR_MODES.length - 1, state.blurModeIndex + delta));
-         if (BLUR_MODES[state.blurModeIndex] !== 'Numeric' && state.selectedIndex > 2) {
-           state.selectedIndex = 2;
+         if (BLUR_MODES[state.blurModeIndex] !== 'Numeric' && state.selectedIndex > 1) {
+           state.selectedIndex = 1;
          }
       }
     } else if (state.selectedIndex === 2 && BLUR_MODES[state.blurModeIndex] === 'Numeric') {
       state.blurStrength = Math.max(0, Math.min(50, state.blurStrength + delta));
-    } else {
-      // Icon Style is at index 2 (if not Numeric) or 3 (if Numeric)
-      const currentIconStyleIndex = ICON_STYLES.indexOf(getIconStyle());
-      const nextIndex = Math.max(0, Math.min(ICON_STYLES.length - 1, currentIconStyleIndex + delta));
-      setIconStyle(ICON_STYLES[nextIndex] ?? 'auto');
     }
     return true;
   }
@@ -82,12 +75,7 @@ export function renderAppearancePanel(state: AppearanceState, columns: number): 
   // Blur Strength
   if (BLUR_MODES[state.blurModeIndex] === 'Numeric') {
     rows.push(`  ${sel(nextIndex)} ${labelColor(nextIndex)}Blur         ${INTERACTIVE}${drawBar(state.blurStrength / 50)}  ${state.blurStrength}${RESET}`);
-    nextIndex++;
   }
-
-  // Icon Style
-  const displayIconStyle = getIconStyle() === 'safe' ? 'Safe' : 'Fancy';
-  rows.push(`  ${sel(nextIndex)} ${labelColor(nextIndex)}Icon style   ${PRIMARY}${displayIconStyle}${RESET}`);
 
   rows.push('');
   rows.push(`  ${SECONDARY}↑↓ select · ←→ adjust · Enter save · Esc cancel${RESET}`);

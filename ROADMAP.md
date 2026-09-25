@@ -4,10 +4,9 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.2.0 — Structured Execution](https://github.com/raiseCatError/notMyShell/releases/tag/v0.2.0) |
+| **Current release** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/releases/tag/v0.4.0) |
 | **Development branch** | `dev` |
-| **Release candidate** | [v0.3.0 — Session & Interaction UX](https://github.com/raiseCatError/notMyShell/milestone/2) (on `dev`, awaiting final human validation) |
-| **Next milestone** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/milestone/3) |
+| **Next direction** | [#79 Interaction layout modes](https://github.com/raiseCatError/notMyShell/issues/79) (design/research) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -16,13 +15,13 @@ GitHub issues define actionable remaining work. A merged implementation may stil
 
 [Milestone #1](https://github.com/raiseCatError/notMyShell/milestone/1) is closed and shipped. Its design record remains at [docs/design/structured-execution.md](docs/design/structured-execution.md), and release notes remain in [CHANGELOG.md](CHANGELOG.md).
 
-## Now — v0.3.0 Session & Interaction UX (release candidate)
+## Released — v0.3.0 Session & Interaction UX
 
-All v0.3 engineering is merged to `dev`, and the package version is `0.3.0`. The milestone now contains only implemented work awaiting final human terminal validation (Ghostty, Terminal.app, VS Code). v0.3.0 is not released until that validation passes.
+The [v0.3.0 release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.3.0) shipped after final human validation in Ghostty, Terminal.app, and VS Code integrated terminal. Its milestone is closed.
 
 **Design record:** [docs/design/session-interaction-ux.md](docs/design/session-interaction-ux.md)
 
-### Implemented; final human terminal validation remains
+### Shipped scope
 
 | Issue | Implemented scope |
 |---|---|
@@ -38,25 +37,55 @@ All v0.3 engineering is merged to `dev`, and the package version is `0.3.0`. The
 | [#47](https://github.com/raiseCatError/notMyShell/issues/47) | Nested Node TAP activity and shimmer |
 | [#53](https://github.com/raiseCatError/notMyShell/issues/53) | Build identity, `/version`, `--version` |
 
-Already approved in Ghostty: the full-body cat design, the `/prompt` structure, Cool First, one-line mode, and muted theme-preserving history.
+The final release candidate also included the passive-hover selection fix.
 
-## Next — v0.4.0 Shell Intelligence & Extensibility
+## Released — v0.4.0 Shell Intelligence & Extensibility
 
-[Milestone #3](https://github.com/raiseCatError/notMyShell/milestone/3). Not started.
+[Milestone #3](https://github.com/raiseCatError/notMyShell/milestone/3) shipped after final human validation in Ghostty. Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
-| Issue | Area |
+### Shipped scope
+
+| Issue | Implemented scope |
 |---|---|
+| [#69](https://github.com/raiseCatError/notMyShell/issues/69) | Right-side prompt context, per-module left/right placement, mirrored right-side geometry, deterministic prompt showcase |
+| [#70](https://github.com/raiseCatError/notMyShell/issues/70) | Show-on-command Kubernetes, Docker, and toolchain modules |
+| [#71](https://github.com/raiseCatError/notMyShell/issues/71) | Width-aware intelligent directory shortening |
+| [#72](https://github.com/raiseCatError/notMyShell/issues/72) | Rich Git state, Rich Git settings, connector fade, Gap Wide |
 | [#68](https://github.com/raiseCatError/notMyShell/issues/68) | Theme-aware syntax highlighting and `/syntax` |
-| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability (fzf-tab is not supported today) |
-| [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins (autosuggestions, highlighting, history widgets) |
-| [#16](https://github.com/raiseCatError/notMyShell/issues/16) | Safe user zsh config and plugin interoperability (hooks, Atuin, zoxide, fzf) |
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and setup (zoxide, fzf, Atuin) |
-| [#69](https://github.com/raiseCatError/notMyShell/issues/69) | Right-side prompt/context |
-| [#70](https://github.com/raiseCatError/notMyShell/issues/70) | Show-on-command contextual prompt modules |
-| [#71](https://github.com/raiseCatError/notMyShell/issues/71) | Intelligent directory shortening |
-| [#72](https://github.com/raiseCatError/notMyShell/issues/72) | Richer Git prompt state |
-| [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules (research) |
+| [#113](https://github.com/raiseCatError/notMyShell/issues/113) | Smart output folding with preserved head/tail and a Smart/Never setting |
+| [#104](https://github.com/raiseCatError/notMyShell/issues/104) | Sticky command headers |
+| [#86](https://github.com/raiseCatError/notMyShell/issues/86), [#90](https://github.com/raiseCatError/notMyShell/issues/90), [#100](https://github.com/raiseCatError/notMyShell/issues/100) | Central `/settings`, shared panel shell, consistent Esc/back navigation |
+| [#88](https://github.com/raiseCatError/notMyShell/issues/88) | Continuous session journal and advanced `/resume` |
+| [#89](https://github.com/raiseCatError/notMyShell/issues/89) | Persisted glyph style and first-run compatibility choice |
+| [#91](https://github.com/raiseCatError/notMyShell/issues/91) | Reusable long-running task progress UI |
+| [#92](https://github.com/raiseCatError/notMyShell/issues/92), [#93](https://github.com/raiseCatError/notMyShell/issues/93) | Starship module editor and Powerlevel10k configurator handoff |
+| [#16](https://github.com/raiseCatError/notMyShell/issues/16) | Compatible user zsh hooks (zoxide, Atuin) preserved |
 | [#74](https://github.com/raiseCatError/notMyShell/issues/74) | Update discovery and safe `/update` |
+
+## Next — Interaction Layout Modes
+
+[#79](https://github.com/raiseCatError/notMyShell/issues/79) is the next planned design/research direction. It is not implemented. It explores two independent axes over the same real shell and session semantics:
+
+- **Composer placement:** Dock Bottom (today), Dock Top, or Flow / Classic Terminal.
+- **Transcript presentation:** Normal transcript or Chat presentation.
+
+Any placement can combine with any presentation. Shell execution, raw PTY output, `/copy`, persistence, and passthrough stay unchanged.
+
+## Backlog — Research and Future Features
+
+These remain open and are not scheduled for a release.
+
+| Issue | Title |
+|---|---|
+| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability |
+| [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins |
+| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and first-run setup |
+| [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules |
+| [#78](https://github.com/raiseCatError/notMyShell/issues/78) | Chroma: gradients, animated color treatments, and transient visual effects |
+| [#83](https://github.com/raiseCatError/notMyShell/issues/83) | Tool configuration center inside `/settings` |
+| [#84](https://github.com/raiseCatError/notMyShell/issues/84) | Command inspector |
+| [#85](https://github.com/raiseCatError/notMyShell/issues/85) | Interactive command/output block controls |
+| [#106](https://github.com/raiseCatError/notMyShell/issues/106) | Command completion notifications for long-running commands |
 
 zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
 

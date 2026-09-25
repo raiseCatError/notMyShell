@@ -1,5 +1,11 @@
 import {PresentationMode} from './PresentationMode.js';
+import type {StreamFacts} from './FoldPolicy.js';
 
+/**
+ * Live presentation of a running command: INLINE, LIVE, or PASSTHROUGH.
+ * Whether a finished block starts collapsed is FoldPolicy's decision; the
+ * classifier only reports what it observed while streaming.
+ */
 export class CommandClassifier {
   public mode: PresentationMode = 'INLINE';
 
@@ -60,24 +66,12 @@ export class CommandClassifier {
     this.recalculate(Date.now());
   }
 
-  finalize(exitCode: number): void {
-    const now = Date.now();
-    this.recalculate(now);
+  finalize(_exitCode: number): void {
+    this.recalculate(Date.now());
+  }
 
-    let nextMode: PresentationMode = this.mode;
-
-    if (nextMode === 'LIVE' && this.lines > 20 && this.sustainedStreamingScore < 2 && (now - this.startTime) < 5000) {
-      nextMode = 'FOLDED';
-    }
-
-    if (nextMode === 'INLINE' && this.lines > 10) {
-      nextMode = 'FOLDED';
-    }
-
-    if (this.mode !== nextMode) {
-      this.mode = nextMode;
-      this.onModeChange?.(this.mode);
-    }
+  get streamFacts(): StreamFacts {
+    return {progressRewrites: this.hasProgressRewrites, sustainedStreaming: this.sustainedStreamingScore >= 2};
   }
 
   private recalculate(now: number): void {
@@ -92,8 +86,6 @@ export class CommandClassifier {
         nextMode = 'LIVE';
       } else if (this.hasCursorMovement && now - this.startTime >= 2000) {
         nextMode = 'LIVE';
-      } else if (this.lines > 10) {
-        nextMode = 'FOLDED';
       }
     }
 

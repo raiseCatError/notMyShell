@@ -7,11 +7,12 @@ import {CommandClassifier} from './Classifier.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, normalizeConnectorStyle, normalizeEdgeStyle, type PowerlineBlock} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
+import {evaluateFold, foldWindow, type OutputFoldingMode} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor, type PromptSnapshot} from '../prompt/snapshot.js';
-import {isPromptRole, NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
-import {DEFAULT_TRANSCRIPT_APPEARANCE, type TranscriptAppearance} from '../prompt/configuration.js';
+import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
+import {DEFAULT_TRANSCRIPT_APPEARANCE, normalizeConnectorFade, type GitColorMode, type TranscriptAppearance} from '../prompt/configuration.js';
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
@@ -44,6 +45,7 @@ export interface CompletedCommand {
   outputStartId: number;
   endId?: number;
   expanded?: boolean;
+  /** Live presentation observed while running; `FOLDED` only in older transcripts. */
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
   activities?: SecondaryActivity[];
@@ -69,6 +71,7 @@ export class OutputBuffer {
   private welcome?: WelcomeSnapshot;
   /** Presentation-only history header settings from /transcript. */
   private transcriptAppearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
+  private outputFolding: OutputFoldingMode = 'smart';
   /** Presentation-only idle frame; never serialized into transcripts. */
   private welcomeFrame: WelcomeCatFrame = 'open';
   private readonly parser: AnsiOutputParser;
@@ -140,6 +143,11 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
+  }
+
+  /** Applies to commands that finish from now on; existing blocks keep their state. */
+  setOutputFolding(mode: OutputFoldingMode): void {
+    this.outputFolding = mode;
   }
 
   setTranscriptAppearance(appearance: TranscriptAppearance): void {
@@ -220,12 +228,17 @@ export class OutputBuffer {
 
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
-    let expanded = true;
-    if (mode === 'FOLDED' || this.active.activities.length > 0) expanded = false;
+    const output = this.parser.snapshotPlain(this.active.outputStart);
+    // Activity-bearing parents keep their own disclosure; otherwise the fold
+    // policy decides from the finished output. Presentation only.
+    const autoFolded = this.active.activities.length === 0 && this.outputFolding === 'smart'
+      && evaluateFold({command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
+        ...(this.classifier ? {facts: this.classifier.streamFacts} : {})}).fold;
+    const expanded = this.active.activities.length === 0 && !autoFolded;
 
     const record: CompletedCommand = {
       command: this.active.command,
-      output: this.parser.snapshotPlain(this.active.outputStart),
+      output,
       lifecycleText: '',
       exitCode,
       startId: this.active.start,
@@ -287,6 +300,7 @@ export class OutputBuffer {
       ...this.completed.flatMap(command => command.activities ?? []),
       ...(this.active?.activities ?? []),
     ]) activitiesByStart.set(activity.outputStartId, activity);
+    const ownerOf = this.blockOwnership();
 
     for (let i = 0; i < lines.length; i++) {
       if (i < skipUntil) continue;
@@ -297,7 +311,11 @@ export class OutputBuffer {
 
       const historicalContext = this.historicalContexts.get(i);
       const header = historicalContext && renderHistoricalContext(historicalContext, width, this.transcriptAppearance);
-      if (header) result.push(header);
+      if (header) {
+        const owner = ownerOf(i);
+        if (owner !== undefined) header.blockStartId = owner;
+        result.push(header);
+      }
 
       const cmd = this.completed.find(c => c.outputStartId === i);
       if (cmd && cmd.endId !== undefined && cmd.endId > cmd.outputStartId) {
@@ -313,11 +331,20 @@ export class OutputBuffer {
           const isFoldable = hiddenLines > 10 || !cmd.expanded;
           if (isFoldable) {
             if (!cmd.expanded) {
-              const plain = foldHint(`${hiddenLines} lines hidden · Ctrl+O`, '›', width);
+              // Collapsed: keep the head and tail of the stored output visible
+              // around the disclosure row; the full output is never altered.
+              const commandIndex = this.completed.indexOf(cmd);
+              const {head, tail} = foldWindow(hiddenLines);
+              const pushLines = (from: number, to: number) => {
+                for (let line = from; line < to; line += 1) {
+                  for (const row of wrapStyledLine(lines[line] ?? '', width)) result.push({...row, lineIndex: line, commandIndex});
+                }
+              };
+              pushLines(cmd.outputStartId, cmd.outputStartId + head);
+              const plain = foldHint(`${hiddenLines - head - tail} lines hidden · Ctrl+O`, '›', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
-              result.push({
-                ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex: this.completed.indexOf(cmd)
-              });
+              result.push({ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
+              pushLines(cmd.endId - tail, cmd.endId);
               skipUntil = cmd.endId;
               continue;
             } else {
@@ -373,7 +400,50 @@ export class OutputBuffer {
         if (activity.expanded) appendActivityOutput(result, lines, activity, width);
       }
     }
+    for (const row of result) {
+      if (row.isHistoricalHeader || row.lineIndex === undefined || row.lineIndex < 0) continue;
+      const owner = ownerOf(row.lineIndex);
+      if (owner !== undefined) row.blockStartId = owner;
+    }
     return result;
+  }
+
+  /**
+   * Maps a source line to the startId of the command block that owns it.
+   * Blocks span [startId, endId) from the command records; the running
+   * command owns everything from its start onward.
+   */
+  private blockOwnership(): (lineIndex: number) => number | undefined {
+    const blocks = [
+      ...this.completed.map(command => ({start: command.startId, end: command.endId ?? Number.POSITIVE_INFINITY})),
+      ...(this.active ? [{start: this.active.start, end: Number.POSITIVE_INFINITY}] : []),
+    ].filter(block => this.lineTypes.get(block.start) === 'command').sort((a, b) => a.start - b.start);
+    return lineIndex => {
+      let low = 0;
+      let high = blocks.length - 1;
+      let found: {start: number; end: number} | undefined;
+      while (low <= high) {
+        const middle = (low + high) >> 1;
+        if (blocks[middle]!.start <= lineIndex) { found = blocks[middle]; low = middle + 1; } else high = middle - 1;
+      }
+      return found && lineIndex < found.end ? found.start : undefined;
+    };
+  }
+
+  /**
+   * One-row sticky rendering of a block's submitted command: the start of the
+   * stored command row, ANSI-safe truncated with an ellipsis when it is wider
+   * than the viewport or continues onto more rows. Never stored anywhere.
+   */
+  stickyHeaderRow(startId: number, width: number): string | undefined {
+    if (width <= 0 || this.lineTypes.get(startId) !== 'command') return undefined;
+    const lines = this.parser.allLines();
+    const line = lines[startId];
+    if (!line) return undefined;
+    const ansi = wrapStyledLine(line, Number.MAX_SAFE_INTEGER)[0]?.ansi ?? '';
+    const continues = this.lineTypes.get(startId + 1) === 'command' && this.blockOwnership()(startId + 1) === startId;
+    if (continues && displayWidth(ansi) < width) return `${ansi}${foreground(UI_COLORS.secondary)}…\u001B[0m`;
+    return truncateAnsi(ansi, width);
   }
 
   toggleExpanded(commandIndex: number): void {
@@ -467,12 +537,19 @@ interface HistoricalSegment {
   background?: Rgb;
   /** Legacy headers carry pre-muted colors that must not be archived twice. */
   preMuted?: boolean;
+  compact?: boolean;
+  shape?: PowerlineShape;
+  fade?: PowerlineShape | 'off';
+  placement?: 'right';
+  /** Rich Git color mode the segment was captured under. */
+  gitColors?: GitColorMode;
 }
 
 function historyColor(color: Rgb | undefined, fallback: Rgb, part: 'foreground' | 'background', segment: HistoricalSegment,
   appearance: TranscriptAppearance): Rgb | undefined {
   if (appearance.historyColors === 'theme' && isPromptRole(segment.role)) {
-    return archiveColor(NATIVE_PROMPT_THEMES[appearance.historyTheme].colors(segment.role)[part], part);
+    // Recolored history keeps the captured Rich Git mode; old snapshots followed the theme.
+    return archiveColor(promptRoleColors(segment.role, appearance.historyTheme, segment.gitColors ?? 'followTheme')[part], part);
   }
   if (!color) return part === 'foreground' ? fallback : undefined;
   if (appearance.historyColors === 'grayscale') return grayscaleArchiveColor(color, part);
@@ -493,22 +570,43 @@ function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[]
 }
 
 /** The prompt part of a historical header, colored per the transcript appearance. */
-function historicalPrompt(context: HistoricalContextSnapshot, width: number, appearance: TranscriptAppearance): string {
+/** Divider cells kept between a historical left prompt and its right context. */
+const RIGHT_CONTEXT_MIN_DIVIDER = 2;
+
+/** A historical prompt: its left part, plus right-aligned context when the snapshot recorded any. */
+function historicalPrompt(context: HistoricalContextSnapshot, width: number, appearance: TranscriptAppearance): string | {left: string; right: string} {
   const snapshot = context.prompt;
   const segments: HistoricalSegment[] = snapshot
-    ? snapshot.segments.map(segment => ({...segment, text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}))
+    ? snapshot.segments.map(segment => ({...segment, gitColors: snapshot.gitColors,
+      text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}))
     : legacySegments(context);
   if (!snapshot || snapshot.segments.every(segment => segment.geometry === 'powerline')) {
     const blocks: PowerlineBlock[] = segments.map(segment => ({
       text: segment.text,
       foreground: historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance)!,
       background: historyColor(segment.background, ARCHIVE_BLOCK_COLOR, 'background', segment, appearance) ?? ARCHIVE_BLOCK_COLOR,
+      ...(segment.compact ? {compact: true} : {}),
+      ...(segment.shape ? {geometry: segment.shape} : {}),
+      ...(segment.fade ? {fade: segment.fade} : {}),
     }));
     if (!snapshot) return fitPowerlineBlocks(blocks, 1, 1, width, true);
     const gap = snapshot.gap ?? 1;
-    return fitPowerlineBlocks(blocks, gap, snapshot.spacing ?? 1, width,
-      normalizeEdgeStyle(snapshot.endStyle, 'flat'), snapshot.gapEnabled ?? gap > 0,
-      normalizeEdgeStyle(snapshot.startStyle, 'wedge'), normalizeConnectorStyle(snapshot.connector));
+    const connector = normalizeConnectorStyle(snapshot.connector);
+    const endStyle = normalizeEdgeStyle(snapshot.endStyle, 'flat');
+    const startStyle = normalizeEdgeStyle(snapshot.startStyle, 'wedge');
+    const gapEnabled = snapshot.gapEnabled ?? gap > 0;
+    const spacing = snapshot.spacing ?? 1;
+    // Snapshots without a connector fade predate it and rendered solid connectors.
+    const fade = snapshot.connectorFade === undefined ? undefined
+      : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), connector);
+    const fadeColors = normalizeConnectorFadeColors(snapshot.connectorFadeColors);
+    const left = fitPowerlineBlocks(blocks.filter((_, index) => segments[index]!.placement !== 'right'), gap, spacing, width,
+      endStyle, gapEnabled, startStyle, connector, fade, fadeColors);
+    const right = blocks.filter((_, index) => segments[index]!.placement === 'right');
+    if (right.length === 0) return left;
+    return {left, right: fitRightPowerlineBlocks(right, width - displayWidth(left) - 1 - RIGHT_CONTEXT_MIN_DIVIDER,
+      candidate => renderPowerlineBlocks(candidate, gap, spacing, endStyle, gapEnabled, startStyle, connector, fade, fadeColors,
+        snapshot.mirrorRight ? 'mirrored' : 'normal'))};
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),
@@ -530,11 +628,19 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
     const line = repeatToWidth(divider.glyph, width);
     return {ansi: `${divider.color}${line}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
-  const prompt = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
-  if (!appearance.divider) return {ansi: `${prompt}\u001B[0m`, plain: stripAnsi(prompt), isHistoricalHeader: true};
-  const remaining = Math.max(0, width - displayWidth(prompt) - 1);
+  const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
+  const prompt = typeof parts === 'string' ? parts : parts.left;
+  const right = typeof parts === 'string' || !parts.right ? '' : parts.right;
+  const rightWidth = right ? displayWidth(right) + 1 : 0;
+  if (!appearance.divider) {
+    const pad = right ? ' '.repeat(Math.max(1, width - displayWidth(prompt) - displayWidth(right))) : '';
+    const ansi = right ? `${prompt}\u001B[0m${pad}${right}\u001B[0m` : `${prompt}\u001B[0m`;
+    return {ansi, plain: stripAnsi(ansi), isHistoricalHeader: true};
+  }
+  const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
-  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m`, plain: `${stripAnsi(prompt)} ${fill}`, isHistoricalHeader: true};
+  const rightAnsi = right ? ` ${right}\u001B[0m` : '';
+  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {

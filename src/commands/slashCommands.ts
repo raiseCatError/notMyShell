@@ -9,10 +9,16 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
+  {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
+  {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
+  {name: '/status', insertion: '/status', description: 'Show NMSh status'},
+  {name: '/syntax', insertion: '/syntax', description: 'Configure syntax highlighting'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
+  {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
+  {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
@@ -23,10 +29,13 @@ export type ParsedSlashCommand =
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
   | {kind: 'prompt'}
+  | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
+  | {kind: 'syntax'}
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
   | {kind: 'version'}
+  | {kind: 'update'; apply: boolean}
   | {kind: 'clear'}
   | {kind: 'resume'}
   | {kind: 'help'}
@@ -39,10 +48,15 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
+  if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
+  if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
+  if (/^\/syntax\s*$/u.test(input)) return {kind: 'syntax'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
+  const update = /^\/update(?:\s+(apply))?\s*$/u.exec(input);
+  if (update) return {kind: 'update', apply: update[1] === 'apply'};
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};

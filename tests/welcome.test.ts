@@ -9,6 +9,7 @@ import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js'
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, WELCOME_BLINK_GAPS_MS, welcomeBlinkDelay} from '../src/output/Welcome.js';
 import {HistoryViewport} from '../src/output/viewport.js';
 import {TranscriptStore} from '../src/sessions/TranscriptStore.js';
+import {createResumeBrowser} from '../src/sessions/ResumeBrowser.js';
 import {displayWidth} from '../src/util/text.js';
 
 const identity = {version: '0.2.0', commit: 'abcdef0', branch: 'dev'};
@@ -128,8 +129,7 @@ test('/clear begins a new welcome at live cwd; /resume restores the archived one
     const sessions = await new TranscriptStore(directory).list();
     assert.equal(sessions.length, 1);
     assert.deepEqual(sessions[0]?.transcript.welcome, first);
-    app['resumeSessions'] = sessions;
-    app['selectedSuggestion'] = 0;
+    app['resumeBrowser'] = createResumeBrowser(await new TranscriptStore(directory).listSummaries());
     Object.defineProperty(app, 'render', {value: () => {}});
     await app['resumeSelectedSession']();
     assert.deepEqual(app['output'].transcript().welcome, first);

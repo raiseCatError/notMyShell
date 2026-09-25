@@ -20,12 +20,13 @@ export function getCurrentGlyphMode(): GlyphMode {
 
 export const GLYPHS = {
   get branch() { return getCurrentGlyphMode() === 'nerd' ? '' : 'git:'; },
-  get success() { return getCurrentGlyphMode() === 'nerd' ? '✔' : '✓'; },
-  get failure() { return getCurrentGlyphMode() === 'nerd' ? '✘' : '×'; },
-  get info() { return getCurrentGlyphMode() === 'nerd' ? '⎿' : '›'; },
+  get success() { return getCurrentGlyphMode() === 'nerd' ? '✔' : '+'; },
+  get failure() { return getCurrentGlyphMode() === 'nerd' ? '✘' : 'x'; },
+  get info() { return getCurrentGlyphMode() === 'nerd' ? '⎿' : '>'; },
   get selection() { return getCurrentGlyphMode() === 'nerd' ? '›' : '>'; },
-  get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : '↓'; },
-  get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '─'; },
+  get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'; },
+  get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '-'; },
+  get search() { return getCurrentGlyphMode() === 'nerd' ? '\uF002' : '/'; },
   get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
   // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.
   get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
@@ -62,7 +63,7 @@ export function powerlineShapeGlyphs(shape: PowerlineShape): {open: string; clos
   }
 }
 
-export type ModuleIconId = 'gitBranch' | 'node' | 'go' | 'python' | 'docker';
+export type ModuleIconId = 'gitBranch' | 'node' | 'go' | 'python' | 'docker' | 'kubernetes';
 
 /** Nerd Font module icons; empty in safe glyph mode so text stays self-describing. */
 export function moduleIcon(id: ModuleIconId): string {
@@ -73,5 +74,6 @@ export function moduleIcon(id: ModuleIconId): string {
     case 'go': return '\ue627';
     case 'python': return '\ue606';
     case 'docker': return '\uf308';
+    case 'kubernetes': return '\u{f10fe}';
   }
 }

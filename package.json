@@ -1,6 +1,6 @@
 {
   "name": "nmsh",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "A cleaner terminal frontend for zsh with persistent input, autocomplete, semantic highlighting, scrollable history, and better command feedback.",
   "private": true,
   "main": "dist/index.js",

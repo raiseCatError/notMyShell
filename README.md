@@ -79,19 +79,27 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 
 ### Prompt
 - NMSh Native prompt (default) with Lavender Native, Brand / Semantic, Cool First, Warm First, and Grayscale themes
-- Independent Start / Connector / Gap / End geometry (wedge, flat, rounded, slanted, and fading outer edges), icons On/Off, and a module manager: `/prompt`
-- Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor and never rewrites their configuration
+- Independent Start / Connector / Connector fade / Gap / End geometry (wedge, flat, rounded, slanted, and fading outer edges), icons On/Off, and a module manager: `/prompt` → Main Prompt
+- Rich Git state (staged, modified, untracked, conflicts, ahead/behind/diverged, operations, clean) with its own Enabled, Colors (Semantic default, Follow theme, Grayscale), Geometry, and Connector fade settings: `/prompt` → Rich Git
+- Right-side prompt context: any module can sit left or right (`/prompt` → Modules, `P`); the right side mirrors its geometry to face left by default (`M`) and is the first thing to go on narrow terminals
+- Show-on-command modules: Kubernetes and Docker context (and optionally toolchains) appear only while a relevant command such as `kubectl` or `docker` is typed; typed text is never executed to decide
+- Width-aware path shortening keeps the repository name and current directory whole while abbreviating parents as the terminal narrows
+- Terminal glyph style (Nerd Font or Safe/ASCII) is chosen on first run and can be changed in `/config` (Glyph style) or previewed under `/settings` → Settings → Glyph style. Existing v0.3 configurations keep Nerd Font styling; `NMSH_ICONS=nerd|safe` overrides the saved choice for the current process.
+- Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor. The Starship module editor changes only reviewed settings, with a backup of an existing config.
 - One-line or two-line composer layouts
 
 ### Interface
 - Command lifecycle rows with activity animation and nested Node TAP activity
 - Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
-- `/clear` archives the view and `/resume` restores it, on the same live zsh
+- Smart output folding: long, repetitive successful output collapses to its first and last lines around `› N lines hidden · Ctrl+O`, while failures and useful output stay expanded; `/copy` and `/resume` always keep the full output (Config → Output folding: Smart / Never)
+- Sticky command headers keep the current command visible while scrolling
+- NMSh checkpoints the local presentation session during use; `/clear` starts a fresh view and `/resume` browses retained sessions without rewinding live zsh state
 - `/zsh` hands off to an ordinary interactive zsh
 - Rich paste atoms for large multiline pastes
 - `/copy` and `/copy N` for instant clipboard access
 - `/history` interactive search
 - `/version`, `/appearance`, and `/keyboard` integrations
+- `/settings` (alias `/config`) edits NMSh preferences and `/status` shows runtime status, while direct commands such as `/prompt` and `/transcript` remain available
 
 ### Interactive Apps
 - Safe passthrough yielding for full-screen applications like `fzf`, `vim`, `nano`, and `less`.
@@ -109,6 +117,8 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 Highlighting is entirely NMSh-native and non-blocking. A fast lexical layer tokenizes the input, while an asynchronous semantic bridge queries your real zsh environment to classify command tokens.
 
 NMSh safely queries metadata (`whence -w`) and never executes partially typed input.
+
+`/syntax` (also under `/settings` → Syntax) turns highlighting on or off and picks its colors: follow the prompt theme (default; with Starship or Powerlevel10k this means the saved NMSh Native palette), choose any Native theme independently, or Grayscale, which keeps categories apart through lightness, weight, and underline. Live preview rows show the result before saving. Submitted commands keep the look they were entered with; raw command output is never recolored and `/copy` stays plain text.
 
 <div align="center">
   <picture>
@@ -167,6 +177,12 @@ After linking, run the CLI from anywhere:
 nmsh
 ```
 
+### Updating
+
+`/update` checks GitHub for the latest stable release and shows current → available, a short release summary, and the exact plan. `/update apply` then installs that release. NMSh updates a source checkout of this repository only when the checkout is clean, its `origin` is this repository, the fetched release tag matches the commit GitHub reports, and moving to the tag is a fast-forward. It then runs `npm install` and `npm run build` and verifies the new build identity. If anything fails, it restores the previous commit and rebuilds it. Otherwise it explains why and prints the manual steps. It never pulls arbitrary branches, discards changes, or touches your settings, transcripts, or shell profile. Restart NMSh afterwards to use the new version.
+
+Background checks are off by default; turn them on in `/settings` → Config → Update checks (Daily or Weekly). When a newer release appears, you get one quiet line per release. No credentials or telemetry are involved.
+
 ## Ghostty Setup
 
 For the most robust startup experience in Ghostty, configure it to run NMSh using absolute paths. GUI applications on macOS sometimes have unpredictable `PATH` resolution.
@@ -217,7 +233,7 @@ The `/appearance` slash command provides an interactive UI to adjust Ghostty's w
 
 - **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
 - **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
-- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Theme-aware highlighting is planned for v0.4.
+- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Highlighting colors are theme-aware via `/syntax`.
 - **Completion:** The completion bridge is not full parity with a configured interactive zsh, and native `fzf-tab` is not supported yet ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
 - **Nested activity:** Only directly observed Node TAP v13 streams produce nested activity rows.
 - **Powerlevel10k provider:** The right prompt, instant prompt, gitstatus daemon, and p10k settings defined only in `.zshrc` are not reproduced.
