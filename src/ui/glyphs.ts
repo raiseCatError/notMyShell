@@ -63,7 +63,7 @@ export function powerlineShapeGlyphs(shape: PowerlineShape): {open: string; clos
   }
 }
 
-export type ModuleIconId = 'gitBranch' | 'node' | 'go' | 'python' | 'docker';
+export type ModuleIconId = 'gitBranch' | 'node' | 'go' | 'python' | 'docker' | 'kubernetes';
 
 /** Nerd Font module icons; empty in safe glyph mode so text stays self-describing. */
 export function moduleIcon(id: ModuleIconId): string {
@@ -74,5 +74,6 @@ export function moduleIcon(id: ModuleIconId): string {
     case 'go': return '\ue627';
     case 'python': return '\ue606';
     case 'docker': return '\uf308';
+    case 'kubernetes': return '\u{f10fe}';
   }
 }

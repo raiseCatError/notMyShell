@@ -17,8 +17,11 @@ export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus';
-export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
+/** `onCommand`: shown only while the typed command is one the module is about (show-on-command). */
+export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand';
+/** Modules whose condition can be switched to show-on-command. */
+export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
 export type NativeEndStyle = PowerlineEdgeStyle;
 export type NativeStartStyle = PowerlineEdgeStyle;
@@ -195,14 +198,16 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
     {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
+    {id: 'kubeContext', visible: true, condition: 'onCommand'},
+    {id: 'dockerContext', visible: true, condition: 'onCommand'},
   ],
   separator: '',
   gap: 1,
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus']);
-const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -285,6 +290,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       id,
       visible: typeof item.visible === 'boolean' ? item.visible : fallback.visible,
       condition: typeof item.condition === 'string' && CONDITIONS.has(item.condition as ContextCondition)
+        && (item.condition !== 'onCommand' || ON_COMMAND_MODULES.has(id))
         ? item.condition as ContextCondition
         : fallback.condition,
     };
@@ -323,11 +329,14 @@ export function savePromptConfiguration(configuration: PromptConfiguration, path
 
 export function hasVisibleContextModule(
   configuration: PromptConfiguration,
-  context?: {branch?: string; exitStatus?: number},
+  context?: {branch?: string; exitStatus?: number; commandWords?: readonly string[]},
+  /** Whether an on-command module is relevant to the typed command. */
+  onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
-    && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0));
+    && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)
+    && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? [])));
 }
 
 /**

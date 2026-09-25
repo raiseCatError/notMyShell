@@ -15,7 +15,7 @@ import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from
 import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {buildContextLine, buildInlineContextPrefix, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -27,6 +27,7 @@ import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerle
 import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
+import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import {ShellSession} from '../shell/ShellSession.js';
@@ -95,6 +96,7 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
+  private readonly commandContexts = new CommandContextCache(() => this.render());
   private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
   private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
   private starshipStatus?: StarshipStatus;
@@ -708,7 +710,7 @@ export class TerminalApp {
       }
       this.render();
     }, {cwd: this.shellCwd, project: contextAtSubmission.project, branch: contextAtSubmission.branch,
-      prompt: this.currentPromptSnapshot()});
+      prompt: this.currentPromptSnapshot(command)});
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
@@ -1066,13 +1068,26 @@ export class TerminalApp {
     this.render();
   }
 
-  private currentPromptSnapshot(): PromptSnapshot {
+  /**
+   * Prompt context plus show-on-command state from the editor buffer. The
+   * text is only tokenized; lookups are cached reads that never block typing.
+   */
+  private promptContext(command = this.editor.text): PromptContext {
+    const words = commandWords(command);
+    const wanted = (id: CommandContextId) => this.promptConfiguration.modules.some(module => module.id === id && module.visible
+      && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
+    const kubeContext = wanted('kubeContext') ? this.commandContexts.get('kubeContext') : undefined;
+    const dockerContext = wanted('dockerContext') ? this.commandContexts.get('dockerContext') : undefined;
+    return {...this.context, commandWords: words, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
+  }
+
+  private currentPromptSnapshot(command?: string): PromptSnapshot {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return {provider: this.effectivePromptProvider, layout: this.promptConfiguration.composerLayout,
         segments: structuredClone(this.externalPrompt.segments), cwd: this.context.cwd,
         ...(this.context.branch ? {branch: this.context.branch} : {})};
     }
-    return nativePromptSnapshot(this.context, this.promptConfiguration);
+    return nativePromptSnapshot(this.promptContext(command), this.promptConfiguration);
   }
 
   private starshipEnvironment(configuration: PromptConfiguration): NodeJS.ProcessEnv {
@@ -1403,10 +1418,10 @@ export class TerminalApp {
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
       providerRow = this.externalPromptRow(preview, width, previewConfig.composerLayout === 'oneLine' ? 'composer' : previewConfig.placement);
     } else if (previewConfig.composerLayout === 'oneLine') {
-      const prefix = buildInlineContextPrefix(this.context, width, previewConfig);
+      const prefix = buildInlineContextPrefix(this.promptContext(), width, previewConfig);
       return [boundary, `${prefix}command`, boundary];
     } else {
-      providerRow = buildContextLine(this.context, width, previewConfig, previewConfig.placement);
+      providerRow = buildContextLine(this.promptContext(), width, previewConfig, previewConfig.placement);
     }
     if (previewConfig.composerLayout === 'oneLine') {
       const prefix = previewConfig.provider !== 'nmsh'
@@ -1739,14 +1754,14 @@ export class TerminalApp {
 
   private hasVisibleProviderPrompt(): boolean {
     if (this.effectivePromptProvider !== 'nmsh') return Boolean(this.externalPrompt?.text.trim());
-    return hasVisibleContextModule(this.promptConfiguration, this.context);
+    return hasVisibleContextModule(this.promptConfiguration, this.promptContext(), isOnCommandRelevant);
   }
 
   private currentPromptLine(width: number): string {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement);
     }
-    return buildContextLine(this.context, width, this.promptConfiguration);
+    return buildContextLine(this.promptContext(), width, this.promptConfiguration);
   }
 
   /**
@@ -2094,7 +2109,7 @@ export class TerminalApp {
       const maxWidth = Math.max(0, columns - 1);
       return `${truncateAnsi(this.externalPrompt.ansi, maxWidth)}${RESET} `;
     }
-    return buildInlineContextPrefix(this.context, columns, this.promptConfiguration);
+    return buildInlineContextPrefix(this.promptContext(), columns, this.promptConfiguration);
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
