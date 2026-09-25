@@ -17,6 +17,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
+  {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
+  {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
@@ -33,6 +35,7 @@ export type ParsedSlashCommand =
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
   | {kind: 'version'}
+  | {kind: 'update'; apply: boolean}
   | {kind: 'clear'}
   | {kind: 'resume'}
   | {kind: 'help'}
@@ -52,6 +55,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
+  const update = /^\/update(?:\s+(apply))?\s*$/u.exec(input);
+  if (update) return {kind: 'update', apply: update[1] === 'apply'};
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
