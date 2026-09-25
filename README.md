@@ -113,6 +113,8 @@ Highlighting is entirely NMSh-native and non-blocking. A fast lexical layer toke
 
 NMSh safely queries metadata (`whence -w`) and never executes partially typed input.
 
+`/syntax` (also under `/settings` → Syntax) turns highlighting on or off and picks its colors: follow the prompt theme (default; with Starship or Powerlevel10k this means the saved NMSh Native palette), choose any Native theme independently, or Grayscale, which keeps categories apart through lightness, weight, and underline. Live preview rows show the result before saving. Submitted commands keep the look they were entered with; raw command output is never recolored and `/copy` stays plain text.
+
 <div align="center">
   <picture>
     <img alt="Syntax highlighting demo" src="assets/readme/syntax-demo.svg" width="600">
@@ -220,7 +222,7 @@ The `/appearance` slash command provides an interactive UI to adjust Ghostty's w
 
 - **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
 - **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
-- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Theme-aware highlighting is planned for v0.4.
+- **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Highlighting colors are theme-aware via `/syntax`.
 - **Completion:** The completion bridge is not full parity with a configured interactive zsh, and native `fzf-tab` is not supported yet ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
 - **Nested activity:** Only directly observed Node TAP v13 streams produce nested activity rows.
 - **Powerlevel10k provider:** The right prompt, instant prompt, gitstatus daemon, and p10k settings defined only in `.zshrc` are not reproduced.

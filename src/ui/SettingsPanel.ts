@@ -48,7 +48,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'keyboard';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'keyboard';
 
 interface SettingsRowBase {
   id: string;
@@ -105,6 +105,11 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'historyColors', label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.transcript.historyColors, set: (config, historyColors) => withTranscript(config, {historyColors})}),
+  {id: 'syntaxHighlighting', label: 'Syntax highlighting', description: 'Color commands while typing and in new history', category: 'Syntax',
+    control: 'boolean', get: config => config.syntax.highlighting, set: (config, highlighting) => ({...config, syntax: {...config.syntax, highlighting}})},
+  enumRow({id: 'syntaxColors', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
+    values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
+    get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -113,10 +118,11 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'glyphPreview', label: 'Glyph style', description: 'Compare Nerd Font and safe symbols', category: 'General', control: 'child', destination: 'glyph'},
   {id: 'prompt', label: 'Prompt', description: 'Provider, theme, layout, and modules', category: 'Prompt', control: 'child', destination: 'prompt'},
   {id: 'transcript', label: 'Transcript', description: 'History colors, dividers, and prompt snapshots', category: 'Transcript', control: 'child', destination: 'transcript'},
+  {id: 'syntax', label: 'Syntax', description: 'Editor highlighting and syntax colors', category: 'Syntax', control: 'child', destination: 'syntax'},
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
 ];
 
-export const PLANNED_AREAS = ['Layout', 'Blocks', 'Syntax', 'Tools', 'Completion', 'Chroma', 'Updates'] as const;
+export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma', 'Updates'] as const;
 
 export function visibleSettingsRows(state: SettingsPanelState): SettingsRow[] {
   const view = settingsView(state);

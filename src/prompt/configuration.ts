@@ -111,6 +111,28 @@ export function normalizeTranscriptAppearance(value: unknown): TranscriptAppeara
   };
 }
 
+export type SyntaxColorMode = HistoryColorMode;
+export const SYNTAX_COLOR_MODES: readonly SyntaxColorMode[] = ['followPrompt', 'theme', 'grayscale'];
+
+/** Editor and submitted-command syntax presentation; raw PTY output is never recolored. */
+export interface SyntaxAppearance {
+  highlighting: boolean;
+  colors: SyntaxColorMode;
+  /** Used when `colors` is `theme`. */
+  theme: NativePaletteId;
+}
+
+export const DEFAULT_SYNTAX_APPEARANCE: SyntaxAppearance = {highlighting: true, colors: 'followPrompt', theme: 'lavender'};
+
+export function normalizeSyntaxAppearance(value: unknown): SyntaxAppearance {
+  if (!isRecord(value)) return {...DEFAULT_SYNTAX_APPEARANCE};
+  return {
+    highlighting: typeof value.highlighting === 'boolean' ? value.highlighting : true,
+    colors: SYNTAX_COLOR_MODES.includes(value.colors as SyntaxColorMode) ? value.colors as SyntaxColorMode : 'followPrompt',
+    theme: normalizePaletteId(value.theme),
+  };
+}
+
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
@@ -139,6 +161,7 @@ export interface PromptConfiguration {
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
   powerlevel10k: {themePath: string | null; configPath: string | null};
   transcript: TranscriptAppearance;
+  syntax: SyntaxAppearance;
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
   modules: ContextModuleConfig[];
@@ -159,6 +182,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
+  syntax: {...DEFAULT_SYNTAX_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
   modules: [
@@ -212,6 +236,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
+  const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
     startStyle, connector, endStyle, palette, icons,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
@@ -239,7 +264,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       glyphStyle, glyphChoiceComplete, sessionRetention,
-      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, placement, composerLayout, spacing, gap, separator};
+      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -270,7 +295,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, nmsh, transcript, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, nmsh, transcript, syntax, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 

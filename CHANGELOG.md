@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `/settings` and `/config` open one shared panel on its Config view; `/status` opens it on Status. ←/→ switch between Settings (entry points to the Appearance, Glyph style, Prompt, Transcript, and Keyboard panels, plus planned v0.4 areas), Status (read-only build, shell, prompt, and session-journal facts), and Config (a compact, aligned list of real settings with a bordered search field). In Config, ←/→ or Enter/Space change the selected value and save it immediately; `/` focuses search, Esc clears it, then closes.
 - Continuous local presentation-session checkpoints with retention of 1000 unpinned sessions by default, plus `/resume` search and date navigation.
 - Reusable elapsed-time task progress with a per-character travelling shimmer, factual completion states, and bounded diagnostic details; Starship Homebrew installation uses it.
+- `/syntax` panel (also under `/settings` → Syntax): Highlighting On/Off and Colors Follow prompt theme (default, unchanged appearance on Lavender Native) / Choose theme / Grayscale, with live preview rows. Submitted commands keep their original styling; PTY output and `/copy` are unaffected.
 - A focused Starship module editor in `/prompt` that previews changes through Starship's own CLI, preserves unrelated config, and backs up existing files before applying reviewed changes.
 
 ## [0.3.0] - 2026-09-24

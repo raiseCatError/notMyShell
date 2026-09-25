@@ -84,7 +84,7 @@ test('Settings view opens the glyph preview, which returns to Settings on Esc', 
   assert.equal(app['settingsPanelState']!.view, 'settings');
 }));
 
-test('Transcript and Keyboard entries open their live panels and return to Settings', () => withApp(app => {
+test('Transcript, Syntax, and Keyboard entries open their live panels and return to Settings', () => withApp(app => {
   app['settingsPanelState'] = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 3, glyphStyle: 'nerd', onboarding: false};
   app['handleKey']({kind: 'enter'});
   assert.ok(app['transcriptPanelState']);
@@ -93,11 +93,18 @@ test('Transcript and Keyboard entries open their live panels and return to Setti
   assert.equal(app['settingsPanelState']!.contentIndex, 3);
 
   app['settingsPanelState']!.contentIndex = 4;
+  app['handleKey']({kind: 'enter'});
+  assert.ok(app['syntaxPanelState'], 'Syntax opens the /syntax panel');
+  app['handleKey']({kind: 'escape'});
+  assert.equal(app['syntaxPanelState'], undefined);
+  assert.equal(app['settingsPanelState']!.contentIndex, 4);
+
+  app['settingsPanelState']!.contentIndex = 5;
   app['startKeyboard'] = async () => { app['keyboardState'] = {selectedIndex: 0}; };
   app['handleKey']({kind: 'enter'});
   assert.ok(app['keyboardState']);
   app['handleKey']({kind: 'escape'});
-  assert.equal(app['settingsPanelState']!.contentIndex, 4);
+  assert.equal(app['settingsPanelState']!.contentIndex, 5);
 }));
 
 test('Config Prompt provider row opens the prompt panel and returns to Config', () => withApp(app => {
