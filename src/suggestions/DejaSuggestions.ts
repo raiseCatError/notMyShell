@@ -18,7 +18,8 @@ export class DejaSuggestions implements SuggestionProvider {
   readonly id = 'deja' as const;
   private readonly cache = new Map<string, Suggestion[]>();
 
-  constructor(private readonly binary: string, private readonly env: NodeJS.ProcessEnv = process.env) {}
+  constructor(private readonly binary: string, private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly timeoutMs = QUERY_TIMEOUT_MS) {}
 
   async query(context: SuggestionContext): Promise<Suggestion[]> {
     const previous = context.previous[0] ?? '';
@@ -26,7 +27,7 @@ export class DejaSuggestions implements SuggestionProvider {
     const cached = this.cache.get(key);
     if (cached) return cached;
     const result = await runExternal(this.binary, ['query', '--buffer', context.buffer, '--dir', context.cwd, '--prev', previous, '--json'],
-      {timeoutMs: QUERY_TIMEOUT_MS, maxBytes: 64 * 1024, env: this.env});
+      {timeoutMs: this.timeoutMs, maxBytes: 64 * 1024, env: this.env});
     if (!result.ok) throw new Error(`deja query ${result.error ?? 'failed'}`);
     const suggestions = parseDejaResponse(result.stdout);
     this.cache.set(key, suggestions);

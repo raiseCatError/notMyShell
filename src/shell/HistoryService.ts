@@ -13,12 +13,10 @@ const ATUIN_FORMAT = '{time}\t{exit}\t{directory}\t{command}';
  */
 export class HistoryService {
   private entries: CommandEntry[] = [];
-  readonly ready: Promise<void>;
 
-  constructor(load = true, private readonly env: NodeJS.ProcessEnv = process.env) {
-    this.ready = load ? this.reload() : Promise.resolve();
-  }
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
 
+  /** Loads (or reloads) history; callers start it once the app is running. */
   async reload(): Promise<void> {
     const atuin = findExecutable('atuin', this.env.PATH ?? '');
     if (atuin) {

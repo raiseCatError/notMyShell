@@ -26,7 +26,7 @@ const context = (buffer: string) => ({buffer, cwd: '/work/app', previous: ['git 
 test('Deja is queried through its public CLI with buffer, dir and prev as argv, and parsed from JSON', async () => {
   await withFakeDeja(`printf '%s\\n' "$@" > "$(dirname "$0")/args"
 printf '{"suggestion":"git commit -m wip","alternatives":["git checkout main","gco"]}\\n'`, async (binary, directory) => {
-    const deja = new DejaSuggestions(binary);
+    const deja = new DejaSuggestions(binary, process.env, 5000);
     const result = await deja.query(context('git c'));
     assert.deepEqual(result.map(item => item.text), ['git commit -m wip', 'git checkout main', 'gco']);
     assert.ok(result.every(item => item.source === 'deja'));
