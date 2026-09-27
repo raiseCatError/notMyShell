@@ -31,8 +31,13 @@ export interface FoldDecision {
   reasons: string[];
 }
 
-export type OutputFoldingMode = 'smart' | 'never';
-export const OUTPUT_FOLDING_MODES: readonly OutputFoldingMode[] = ['smart', 'never'];
+/**
+ * `never` (shown as Off) never auto-folds; `smart` is the conservative
+ * policy below; `always` folds every completed command with foldable
+ * output, failures included, because the user asked for it explicitly.
+ */
+export type OutputFoldingMode = 'never' | 'smart' | 'always';
+export const OUTPUT_FOLDING_MODES: readonly OutputFoldingMode[] = ['never', 'smart', 'always'];
 
 /** Output at or below this many lines never auto-folds. */
 export const MIN_AUTO_FOLD_LINES = 30;
@@ -121,6 +126,18 @@ export function evaluateFold(input: FoldInput): FoldDecision {
   if (hint.bias) add(hint.bias, hint.reason!);
 
   return {fold: score >= FOLD_THRESHOLD, score, reasons};
+}
+
+/** Output long enough that the collapsed head/tail preview still hides lines. */
+export function isFoldable(lineCount: number): boolean {
+  return foldWindow(lineCount).head > 0;
+}
+
+/** Whether a finished block starts collapsed under the selected mode. Presentation only. */
+export function shouldAutoFold(mode: OutputFoldingMode, input: FoldInput): boolean {
+  if (mode === 'never') return false;
+  if (mode === 'always') return isFoldable(input.lineCount);
+  return evaluateFold(input).fold;
 }
 
 /**

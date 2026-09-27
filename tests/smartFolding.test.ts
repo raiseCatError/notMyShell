@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {evaluateFold, foldWindow, FOLD_HEAD_LINES, FOLD_TAIL_LINES, MIN_AUTO_FOLD_LINES} from '../src/output/FoldPolicy.js';
+import {evaluateFold, foldWindow, FOLD_HEAD_LINES, FOLD_TAIL_LINES, isFoldable, MIN_AUTO_FOLD_LINES, OUTPUT_FOLDING_MODES, shouldAutoFold} from '../src/output/FoldPolicy.js';
+import {SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
 import {OutputBuffer, type SecondaryActivity} from '../src/output/OutputBuffer.js';
 import {CommandClassifier} from '../src/output/Classifier.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src/prompt/configuration.js';
@@ -116,7 +117,7 @@ test('ANSI output stays raw in storage and styled in head/tail rows', () => {
   assert.ok(rows.every(row => !row.plain.includes('\u001B')));
 });
 
-test('Output folding Never keeps everything expanded; Smart is the default', () => {
+test('Output folding Off (never) keeps everything expanded; Smart is the default', () => {
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.outputFolding, 'smart');
   assert.equal(normalizePromptConfiguration({outputFolding: 'never'}).outputFolding, 'never');
   assert.equal(normalizePromptConfiguration({outputFolding: 'aggressive'}).outputFolding, 'smart');
@@ -124,6 +125,37 @@ test('Output folding Never keeps everything expanded; Smart is the default', () 
   output.setOutputFolding('never');
   run(output, './generate', repetitive(400));
   assert.equal(output.recent(1)!.expanded, true);
+});
+
+test('Output folding modes: Off/Smart/Always persist as never/smart/always and appear in that order', () => {
+  assert.deepEqual(OUTPUT_FOLDING_MODES, ['never', 'smart', 'always']);
+  assert.equal(normalizePromptConfiguration({outputFolding: 'always'}).outputFolding, 'always');
+  assert.equal(normalizePromptConfiguration({outputFolding: 'smart'}).outputFolding, 'smart');
+  const row = SETTINGS_ROWS.find(candidate => candidate.id === 'outputFolding')!;
+  assert.ok(row.control === 'enum');
+  assert.deepEqual(row.options, ['Off', 'Smart', 'Always']);
+  assert.equal(row.select(DEFAULT_PROMPT_CONFIGURATION, 2).outputFolding, 'always');
+});
+
+test('Always folds every foldable block, failures and varied output included; short output stays open', () => {
+  const output = new OutputBuffer();
+  output.setOutputFolding('always');
+  const varied = lines(40, index => `unique line ${index * 7919} ${'x'.repeat(index % 5)}`);
+  run(output, 'cat notes.txt', varied);
+  run(output, 'make', `${varied}\nerror: build failed`, 2);
+  run(output, 'ls', lines(FOLD_HEAD_LINES + FOLD_TAIL_LINES + 4, index => `f${index}`));
+  assert.equal(output.recent(3)!.expanded, false, 'varied output folds under Always');
+  assert.equal(output.recent(2)!.expanded, false, 'failures fold under Always');
+  assert.equal(output.recent(1)!.expanded, true, 'too short for a head/tail preview');
+  assert.equal(isFoldable(FOLD_HEAD_LINES + FOLD_TAIL_LINES + 5), true);
+  assert.equal(shouldAutoFold('smart', {command: 'make', output: varied, exitCode: 2, lineCount: 40}), false, 'Smart unchanged');
+  const rows = output.wrapped(80);
+  const hint = rows.find(row => row.isFoldHint && row.commandIndex === 1)!;
+  assert.match(hint.plain, /lines hidden · Ctrl\+O/u);
+  assert.ok(rows.some(row => row.plain === 'error: build failed'), 'tail stays visible');
+  output.toggleExpanded(1);
+  assert.equal(output.recent(2)!.expanded, true, 'manual expansion still wins');
+  assert.ok(output.recent(2)!.output.includes('unique line 0'), 'full output preserved for /copy');
 });
 
 test('activity-bearing commands keep their own disclosure', () => {
