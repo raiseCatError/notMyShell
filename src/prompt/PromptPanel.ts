@@ -28,6 +28,7 @@ import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
+import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
 export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 export interface PromptPanelState {
@@ -61,10 +62,16 @@ const ACCENT = foreground(UI_COLORS.accent);
 const SUBTLE = foreground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal', 'wide'];
-export const PROVIDER_ORDER: readonly PromptProviderId[] = ['nmsh', 'starship', 'powerlevel10k'];
+/** Prompt providers on the shared provider descriptor (#134). */
+export const PROMPT_PROVIDERS: readonly ProviderDescriptor<PromptProviderId>[] = [
+  {id: 'nmsh', family: 'prompt', label: 'NMSh Native', kind: 'native', description: 'built-in themes, geometry, and modules'},
+  {id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', executable: 'starship', description: 'use its themes/configuration'},
+  {id: 'powerlevel10k', family: 'prompt', label: 'Powerlevel10k', kind: 'external', description: 'use your ~/.p10k.zsh left prompt'},
+];
+export const PROVIDER_ORDER: readonly PromptProviderId[] = PROMPT_PROVIDERS.map(provider => provider.id);
 
 export function providerLabel(provider: PromptProviderId): string {
-  return provider === 'nmsh' ? 'NMSh Native' : provider === 'starship' ? 'Starship' : 'Powerlevel10k';
+  return PROMPT_PROVIDERS.find(descriptor => descriptor.id === provider)?.label ?? provider;
 }
 
 const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'fadeColors', 'gap', 'end', 'icons', 'modules'] as const;
@@ -317,13 +324,9 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   const item = (index: number, text: string) => `${index === state.selectedIndex ? ACCENT : SECONDARY}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
   if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
-    const descriptions: Record<PromptProviderId, string> = {
-      nmsh: 'NMSh Native · built-in themes, geometry, and modules',
-      starship: 'Starship · use its themes/configuration',
-      powerlevel10k: 'Powerlevel10k · use your ~/.p10k.zsh left prompt',
-    };
-    PROVIDER_ORDER.forEach((provider, index) => rows.push(item(index,
-      `${descriptions[provider]}${state.draft.provider === provider ? '  ●' : ''}${state.saved?.provider === provider ? '  ✓ saved' : ''}`)));
+    // Prompt providers report detection in their own steps, so the list carries no badge.
+    PROMPT_PROVIDERS.forEach((provider, index) => rows.push(item(index,
+      providerRowText(provider, {draft: state.draft.provider, saved: state.saved?.provider, status: 'none'}))));
   } else if (state.step === 'starship') {
     rows.push(`${PRIMARY}Starship${RESET}`);
     if (state.starshipStatus?.installed) {
