@@ -9,6 +9,7 @@ import {
   type TranscriptAppearance,
 } from '../prompt/configuration.js';
 import {providerLabel} from '../prompt/PromptPanel.js';
+import {welcomeProvider} from '../output/WelcomeProviders.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
@@ -50,7 +51,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'keyboard';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'keyboard' | 'welcome';
 
 interface SettingsRowBase {
   id: string;
@@ -118,6 +119,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
     get: config => config.updateChecks, set: (config, updateChecks) => ({...config, updateChecks})}),
+  {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
+    control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -128,6 +131,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'transcript', label: 'Transcript', description: 'History colors, dividers, and prompt snapshots', category: 'Transcript', control: 'child', destination: 'transcript'},
   {id: 'syntax', label: 'Syntax', description: 'Editor highlighting and syntax colors', category: 'Syntax', control: 'child', destination: 'syntax'},
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
+  {id: 'welcome', label: 'Welcome', description: 'Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
 ];
 
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;

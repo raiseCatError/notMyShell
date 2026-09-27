@@ -1,7 +1,7 @@
 import {homedir} from 'node:os';
 import type {BuildIdentity} from '../buildInfo.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
-import {displayWidth, repeatToWidth, truncateText} from '../util/text.js';
+import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import type {WrappedRow} from './viewport.js';
 
 const RESET = '\u001B[0m';
@@ -18,6 +18,10 @@ export interface WelcomeSnapshot {
   identity: BuildIdentity;
   cwd: string;
   shell: 'zsh';
+  /** External welcome captured once at session start; absent means Vespyr. */
+  provider?: 'fastfetch' | 'neofetch';
+  /** SGR-only rows the external provider printed. */
+  captured?: string[];
 }
 
 export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string): WelcomeSnapshot {
@@ -122,6 +126,7 @@ function versionLabel(version: string): string {
 /** Presentation-only rows, generated from a semantic snapshot on every width change. */
 export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: WelcomeCatFrame = 'open'): WrappedRow[] {
   if (width <= 0) return [];
+  if (snapshot.captured) return renderCapturedWelcome(snapshot.captured, width);
   const identity = snapshot.identity;
   const metadata: Span[][] = [
     [
@@ -156,4 +161,19 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
   rows.push({plain: line, ansi: `${foreground(DIVIDER)}${line}${RESET}`});
   // All rows belong to ordinary scrollback; none have a PTY line index.
   return rows.filter(row => displayWidth(row.plain) <= width);
+}
+
+/** Below this width an external welcome is hidden rather than clipped into noise. */
+export const MIN_CAPTURED_WELCOME_WIDTH = 24;
+
+/** Captured fetch-tool rows are clipped, never wrapped, and end with the welcome divider. */
+function renderCapturedWelcome(captured: readonly string[], width: number): WrappedRow[] {
+  if (width < MIN_CAPTURED_WELCOME_WIDTH) return [];
+  const rows = captured.map(line => {
+    const ansi = truncateAnsi(line, width);
+    return {ansi: `${ansi}${RESET}`, plain: stripAnsi(ansi)};
+  });
+  const line = repeatToWidth('─', width);
+  rows.push({plain: line, ansi: `${foreground(DIVIDER)}${line}${RESET}`});
+  return rows;
 }

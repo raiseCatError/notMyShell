@@ -42,7 +42,10 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && typeof transcript.welcome.identity.version === 'string'
     && typeof transcript.welcome.identity.commit === 'string'
     && (transcript.welcome.identity.branch === undefined || typeof transcript.welcome.identity.branch === 'string')
-    && (transcript.welcome.identity.dirty === undefined || typeof transcript.welcome.identity.dirty === 'boolean')))
+    && (transcript.welcome.identity.dirty === undefined || typeof transcript.welcome.identity.dirty === 'boolean')
+    && (transcript.welcome.provider === undefined || transcript.welcome.provider === 'fastfetch' || transcript.welcome.provider === 'neofetch')
+    && (transcript.welcome.captured === undefined
+      || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)
     && transcript.records.every(record => record && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
