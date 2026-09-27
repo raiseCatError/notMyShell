@@ -14,6 +14,9 @@ import {
   type PowerlineShape,
 } from './powerline.js';
 
+export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'none';
+export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'none'];
+
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 export type GlyphStyle = 'nerd' | 'safe';
@@ -158,6 +161,8 @@ export interface PromptConfiguration {
   updateChecks: UpdateCheckFrequency;
   /** Whether long, boring finished output starts collapsed. Presentation only. */
   outputFolding: OutputFoldingMode;
+  /** What new presentation sessions show at the top; archived sessions keep theirs. */
+  welcome: WelcomeProviderId;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -198,6 +203,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionRetention: 1000,
   updateChecks: 'off',
   outputFolding: 'smart',
+  welcome: 'vespyr',
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true},
@@ -250,6 +256,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
     ? value.updateChecks as UpdateCheckFrequency : 'off';
   const outputFolding: OutputFoldingMode = value.outputFolding === 'never' ? 'never' : 'smart';
+  const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
+    ? value.welcome as WelcomeProviderId : 'vespyr';
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -292,7 +300,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding,
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
   }
 
@@ -333,7 +341,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, nmsh, transcript, syntax, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, nmsh, transcript, syntax, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 

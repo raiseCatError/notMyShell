@@ -12,7 +12,11 @@ import {CompletionService, type CompletionCandidate} from '../shell/CompletionSe
 import {HistoryService} from '../shell/HistoryService.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
-import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
+import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
+import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
+import {clearProviderDetection, detectProvider} from '../providers/providers.js';
+import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
+  type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
 import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
@@ -110,6 +114,12 @@ export class TerminalApp {
   private p10kStatus?: Powerlevel10kStatus;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
+  /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
+  private providerPanelState?: ProviderPanelState;
+  /** Captured previews per external welcome provider, fetched once per panel. */
+  private welcomePreviews = new Map<string, string[]>();
+  /** Bumped by every new or restored presentation so a late capture never lands in the wrong one. */
+  private welcomeGeneration = 0;
   private syntaxPanelState?: SyntaxPanelState;
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
@@ -155,7 +165,7 @@ export class TerminalApp {
 
   constructor() {
     setIconStyle(this.promptConfiguration.glyphStyle);
-    this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.initialCwd));
+    this.startWelcome(this.initialCwd);
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     const dimensions = this.dimensions();
@@ -264,6 +274,10 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         this.saveSyntaxSettings();
       } else if (handleSyntaxPanelKey(key, this.syntaxPanelState)) this.render();
+      return;
+    }
+    if (this.providerPanelState) {
+      void this.handleProviderPanelKey(key, this.providerPanelState);
       return;
     }
     if (this.transcriptPanelState) {
@@ -893,7 +907,7 @@ export class TerminalApp {
     }
     this.output.clearPresentation();
     this.presentationStartCwd = this.shellCwd;
-    this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.presentationStartCwd));
+    this.startWelcome(this.presentationStartCwd);
     this.historyViewport.latest();
     try { await this.journal?.start(); this.journalActive = Boolean(this.journal); } catch {
       this.journalActive = false;
@@ -932,6 +946,7 @@ export class TerminalApp {
       return;
     }
     this.output.restoreTranscript(restored.transcript);
+    this.welcomeGeneration += 1;
     this.presentationStartCwd = selected.startCwd;
     this.resumeBrowser = undefined;
     this.historyViewport.latest();
@@ -1472,7 +1487,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.syntaxPanelState || this.settingsPanelState
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.syntaxPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
@@ -1483,6 +1498,10 @@ export class TerminalApp {
     }
     if (this.syntaxPanelState) {
       return framePanel(renderSyntaxPanel(this.syntaxPanelState, columns, this.promptConfiguration.nmsh.palette, this.dimensions().rows - 4), columns);
+    }
+    if (this.providerPanelState) {
+      return framePanel(renderProviderPanel(this.providerPanelState, columns, this.providerPreview(this.providerPanelState, columns - 2),
+        this.dimensions().rows - 4), columns);
     }
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
@@ -1631,6 +1650,7 @@ export class TerminalApp {
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
+    else if (destination === 'welcome') this.startProviderPanel('welcome');
     else void this.startKeyboard();
   }
 
@@ -1687,6 +1707,98 @@ export class TerminalApp {
     this.output.setTranscriptAppearance(next.transcript);
     this.output.setOutputFolding(next.outputFolding);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
+  }
+
+  /**
+   * Starts the welcome for a new presentation. External providers are
+   * captured once in the background; failure falls back to Vespyr quietly.
+   */
+  private startWelcome(cwd: string): void {
+    const generation = ++this.welcomeGeneration;
+    const provider = this.promptConfiguration.welcome;
+    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd));
+    if (provider === 'none') return;
+    if (provider === 'vespyr') { vespyr(); return; }
+    void captureWelcome(provider, cwd).then(result => {
+      if (generation !== this.welcomeGeneration || this.stopped) return;
+      if (result.ok) this.output.setWelcome({...createWelcomeSnapshot(this.buildIdentity, cwd), provider, captured: result.lines});
+      else {
+        vespyr();
+        this.output.addHistoryLine(`${SUBTLE}${welcomeProvider(provider).label} welcome ${result.reason}; showing Vespyr.${RESET}`);
+      }
+      this.render();
+    });
+  }
+
+  private startProviderPanel(family: 'welcome'): void {
+    const state = createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome);
+    this.providerPanelState = state;
+    this.welcomePreviews.clear();
+    for (const provider of state.providers) {
+      void detectProvider(provider).then(status => {
+        state.statuses[provider.id] = status;
+        if (this.providerPanelState === state) this.render();
+      });
+    }
+  }
+
+  /** The highlighted provider rendered by its own family; captures are cached per panel. */
+  private providerPreview(state: ProviderPanelState, width: number): string[] {
+    const selected = providerPanelSelection(state);
+    if (selected.id === 'none') return [`${SUBTLE}No welcome; new sessions start at the first command.${RESET}`];
+    if (selected.id === 'vespyr') return renderWelcome(createWelcomeSnapshot(this.buildIdentity, this.shellCwd), width).map(row => row.ansi);
+    if (state.statuses[selected.id]?.state !== 'installed') return [];
+    const cached = this.welcomePreviews.get(selected.id);
+    if (cached) return cached;
+    this.welcomePreviews.set(selected.id, [`${SUBTLE}Running ${selected.label}…${RESET}`]);
+    void captureWelcome(selected.id as 'fastfetch' | 'neofetch', this.shellCwd).then(result => {
+      this.welcomePreviews.set(selected.id, result.ok
+        ? renderWelcome({...createWelcomeSnapshot(this.buildIdentity, this.shellCwd), captured: result.lines}, width).map(row => row.ansi)
+        : [`${SUBTLE}${selected.label} failed: ${result.reason}${RESET}`]);
+      if (this.providerPanelState === state) this.render();
+    });
+    return this.welcomePreviews.get(selected.id)!;
+  }
+
+  private async handleProviderPanelKey(key: Key, state: ProviderPanelState): Promise<void> {
+    if (state.step === 'installProgress') return;
+    if (key.kind === 'escape' || key.kind === 'interrupt') {
+      if (state.step === 'installConfirm') state.step = 'list';
+      else { this.providerPanelState = undefined; this.returnFromPanel(); }
+    } else if (key.kind === 'enter') {
+      const selected = providerPanelSelection(state);
+      if (state.step === 'installConfirm' && selected.install) {
+        state.step = 'installProgress';
+        state.task = new TaskProgress(`Installing ${selected.label}`, () => this.render(), Date.now(), selected.label);
+        this.render();
+        const outcome = await state.task.run(selected.install.command, [...selected.install.args]);
+        if (this.stopped) return;
+        clearProviderDetection();
+        state.statuses[selected.id] = await detectProvider(selected);
+        state.step = 'list';
+        state.message = outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed'
+          ? `${selected.label} installed.` : `${selected.label} was not installed. ${state.task.state.error ?? ''}`.trim();
+      } else {
+        const action = providerPanelEnterAction(state);
+        if (action === 'installConfirm') state.step = 'installConfirm';
+        else if (action === 'unavailable') state.message = `${selected.label} is not available on this system.`;
+        else this.saveProviderChoice(state);
+      }
+    } else if (!handleProviderPanelKey(key, state)) return;
+    this.render();
+  }
+
+  private saveProviderChoice(state: ProviderPanelState): void {
+    const selected = providerPanelSelection(state);
+    const next = {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']};
+    try {
+      savePromptConfiguration(next);
+      this.promptConfiguration = next;
+      this.providerPanelState = undefined;
+      this.output.addHistoryLine(`${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`);
+    } catch (error) {
+      state.message = `Could not save: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 
   private startTranscriptSettings(): void {
