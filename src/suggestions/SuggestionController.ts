@@ -164,6 +164,11 @@ export class SuggestionController {
     this.fallback?.record?.(entry);
   }
 
+  /** Re-query the current buffer, e.g. after a provider finished loading its data. */
+  refresh(): void {
+    this.queried = undefined;
+  }
+
   reset(): void {
     this.abort?.abort();
     this.sequence += 1;
