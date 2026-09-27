@@ -1,4 +1,4 @@
-import type {ComposerLayout, ContextPlacement} from '../prompt/configuration.js';
+import type {ComposerLayout, ComposerPosition, ContextPlacement} from '../prompt/configuration.js';
 import {calculateScreenLayout} from './layout.js';
 
 /**
@@ -48,6 +48,10 @@ export interface ScreenPlanInput {
   composerLayout: ComposerLayout;
   /** Rows of an active full-width panel; undefined when no panel owns the screen. */
   panelRows?: number;
+  /** Dock Bottom (default) or Dock Top. */
+  composerPosition?: ComposerPosition;
+  /** Presented transcript rows; Dock Top uses it to keep activity next to the newest output. */
+  transcriptRows?: number;
 }
 
 export interface ScreenPlan {
@@ -59,8 +63,9 @@ export interface ScreenPlan {
   /** Visible editor rows (0 while a panel owns the screen). */
   inputHeight: number;
   suggestionCount: number;
-  /** Rows given to the shell PTY: the transcript viewport height (v0.4 Bottom behavior). */
+  /** Rows given to the shell PTY: the transcript capacity (the viewport height under Dock Bottom). */
   ptyRows: number;
+  composerPosition: ComposerPosition;
   panelActive: boolean;
 }
 
@@ -72,13 +77,14 @@ export interface RegionHit {
 
 export function planScreen(input: ScreenPlanInput): ScreenPlan {
   const rows = Math.max(1, input.rows);
+  const top = input.composerPosition === 'top';
   if (input.panelRows !== undefined) {
-    // Panel takeover: the panel pins to the bottom edge and the transcript keeps the rest.
+    // Panel takeover: the panel pins to the composer's edge and the transcript keeps the rest.
     const panelHeight = Math.min(rows, Math.max(0, input.panelRows));
-    return build(rows, [
-      ['transcript', rows - panelHeight],
-      ['panel', panelHeight],
-    ], {inputHeight: 0, suggestionCount: 0, panelActive: true});
+    const panel: Array<[RegionKind, number]> = [['panel', panelHeight]];
+    const transcript: Array<[RegionKind, number]> = [['transcript', rows - panelHeight]];
+    return build(rows, top ? [...panel, ...transcript] : [...transcript, ...panel],
+      {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: top ? 'top' : 'bottom'});
   }
   const layout = calculateScreenLayout(
     rows,
@@ -91,6 +97,25 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     input.hasVisibleContext,
     input.composerLayout,
   );
+  if (top) {
+    // Dock Top: composer, its menus, then a chronological transcript. The transcript
+    // region is only as tall as its rows, so jump and activity follow the newest output;
+    // the PTY still gets the full capacity so it never resizes as output grows.
+    const capacity = layout.outputHeight;
+    const shown = input.transcriptRows === undefined ? capacity : Math.min(capacity, Math.max(0, input.transcriptRows));
+    const plan = build(rows, [
+      ['composerBorder', Number(layout.showComposerTopBorder)],
+      ['prompt', Number(layout.showPrompt)],
+      ['input', layout.inputHeight],
+      ['separator', Number(layout.showSeparator)],
+      ['suggestions', layout.suggestionCount],
+      ['gap', Number(layout.showGap)],
+      ['transcript', shown],
+      ['jump', Number(layout.showJump)],
+      ['activity', layout.showLiveActivity ? 2 : 0],
+    ], {inputHeight: layout.inputHeight, suggestionCount: layout.suggestionCount, panelActive: false, composerPosition: 'top'});
+    return {...plan, ptyRows: capacity};
+  }
   return build(rows, [
     ['transcript', layout.outputHeight],
     ['gap', Number(layout.showGap)],
@@ -102,13 +127,13 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     ['prompt', Number(layout.showPrompt)],
     ['input', layout.inputHeight],
     ['separator', Number(layout.showSeparator)],
-  ], {inputHeight: layout.inputHeight, suggestionCount: layout.suggestionCount, panelActive: false});
+  ], {inputHeight: layout.inputHeight, suggestionCount: layout.suggestionCount, panelActive: false, composerPosition: 'bottom'});
 }
 
 function build(
   rows: number,
   stack: Array<[RegionKind, number]>,
-  extra: Pick<ScreenPlan, 'inputHeight' | 'suggestionCount' | 'panelActive'>,
+  extra: Pick<ScreenPlan, 'inputHeight' | 'suggestionCount' | 'panelActive' | 'composerPosition'>,
 ): ScreenPlan {
   const regions: Region[] = [];
   let transcript: Region = {kind: 'transcript', top: 0, height: 0};
