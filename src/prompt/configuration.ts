@@ -3,6 +3,7 @@ import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {UPDATE_CHECK_FREQUENCIES, type UpdateCheckFrequency} from '../update/update.js';
 import type {OutputFoldingMode} from '../output/FoldPolicy.js';
+import {SUGGESTION_PROVIDER_IDS, type SuggestionProviderId} from '../suggestions/types.js';
 import {
   normalizeConnectorFadeColors,
   resolveFadeColors,
@@ -163,6 +164,8 @@ export interface PromptConfiguration {
   outputFolding: OutputFoldingMode;
   /** What new presentation sessions show at the top; archived sessions keep theirs. */
   welcome: WelcomeProviderId;
+  /** Ghost-text suggestion provider; external providers fall back to Native. */
+  suggestions: SuggestionProviderId;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -204,6 +207,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   updateChecks: 'off',
   outputFolding: 'smart',
   welcome: 'vespyr',
+  suggestions: 'nmsh',
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true},
@@ -259,6 +263,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
   const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
     ? value.welcome as WelcomeProviderId : 'vespyr';
+  const suggestions: SuggestionProviderId = SUGGESTION_PROVIDER_IDS.includes(value.suggestions as SuggestionProviderId)
+    ? value.suggestions as SuggestionProviderId : 'nmsh';
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -301,7 +307,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome,
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
   }
 
@@ -342,7 +348,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, nmsh, transcript, syntax, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, nmsh, transcript, syntax, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
 }
 

@@ -10,6 +10,9 @@ import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
+import {SuggestionController} from '../suggestions/SuggestionController.js';
+import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
+import {historyIgnorePattern, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
@@ -97,6 +100,11 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
+  private readonly nativeSuggestions = new NativeSuggestions(() => this.historyService.getAll(), historyIgnorePattern(process.env.HISTORY_IGNORE));
+  private readonly suggestions = new SuggestionController(() => this.render(),
+    reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
+  /** Commands submitted this session, most recent first: the sequence context for suggestions. */
+  private readonly submittedCommands: string[] = [];
   private readonly transcriptStore = new TranscriptStore();
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
@@ -122,7 +130,7 @@ export class TerminalApp {
   private welcomeGeneration = 0;
   private syntaxPanelState?: SyntaxPanelState;
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
@@ -166,6 +174,7 @@ export class TerminalApp {
   constructor() {
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.startWelcome(this.initialCwd);
+    this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     const dimensions = this.dimensions();
@@ -517,6 +526,11 @@ export class TerminalApp {
       return;
     }
 
+    if (!this.running && this.handleSuggestionKey(key)) {
+      this.selectedSuggestion = 0;
+      return;
+    }
+
     // History search navigates its own matches; other slash text navigates slash commands.
     const suggestions = this.historySearchActive
       ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
@@ -746,7 +760,7 @@ export class TerminalApp {
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, startId};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
     });
@@ -1063,6 +1077,9 @@ export class TerminalApp {
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     const completedRecord = this.output.complete(exitCode);
+    this.suggestions.record({command: command.command, cwd: command.cwd, exitCode, at: command.startedAt, previous: this.submittedCommands[0]});
+    this.submittedCommands.unshift(command.command);
+    if (this.submittedCommands.length > 50) this.submittedCommands.length = 50;
     if (!command.cleared) {
       const outputText = completedRecord?.output ?? '';
       const facts = extractFacts(command.command, outputText);
@@ -1650,7 +1667,7 @@ export class TerminalApp {
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
-    else if (destination === 'welcome') this.startProviderPanel('welcome');
+    else if (destination === 'welcome' || destination === 'suggestions') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
 
@@ -1730,8 +1747,65 @@ export class TerminalApp {
     });
   }
 
-  private startProviderPanel(family: 'welcome'): void {
-    const state = createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome);
+  /** Suggestions apply to plain shell input at the end of the buffer only. */
+  private suggestionGhost(): string | undefined {
+    const text = this.editor.text;
+    if (this.editor.hasPasteAtoms || this.historySearchActive || text.startsWith('/')) {
+      this.suggestions.reset();
+      return undefined;
+    }
+    this.suggestions.update({buffer: text, cwd: this.shellCwd, previous: this.submittedCommands, now: Date.now()});
+    return this.suggestions.ghost(text);
+  }
+
+  /**
+   * Suggestion keys never steal an existing binding: word-right only accepts
+   * at the end of the buffer, Ctrl+N/Ctrl+P were unbound, and Up/Down/Enter
+   * act on alternatives only while that list is open.
+   */
+  private handleSuggestionKey(key: Key): boolean {
+    const buffer = this.editor.text;
+    const atEnd = this.editor.cursorIndex === graphemes(buffer).length && !this.editor.hasPasteAtoms;
+    if (key.kind === 'suggestNext' || key.kind === 'suggestPrevious') {
+      this.suggestions.cycle(key.kind === 'suggestNext' ? 1 : -1);
+      return true;
+    }
+    if (this.suggestions.alternativesOpen) {
+      if (key.kind === 'up' || key.kind === 'down') {
+        this.suggestions.cycle(key.kind === 'down' ? 1 : -1);
+        return true;
+      }
+      if (key.kind === 'right' || key.kind === 'lineEnd' || key.kind === 'bufferEnd' || key.kind === 'complete' || key.kind === 'enter') {
+        const text = this.suggestions.acceptance(buffer);
+        this.suggestions.alternativesOpen = false;
+        if (text) {
+          this.editor.clear();
+          this.editor.insert(text);
+        }
+        return true;
+      }
+      if (key.kind === 'escape') return this.suggestions.dismiss(buffer);
+      return false;
+    }
+    if (key.kind === 'wordRight' && atEnd) {
+      const word = this.suggestions.nextWord(buffer);
+      if (!word) return false;
+      this.editor.insert(word);
+      return true;
+    }
+    if (key.kind === 'escape') return this.suggestions.dismiss(buffer);
+    return false;
+  }
+
+  private applySuggestionProvider(): void {
+    const id = this.promptConfiguration.suggestions;
+    this.suggestions.setProvider(id === 'none' ? undefined : this.nativeSuggestions, this.nativeSuggestions);
+  }
+
+  private startProviderPanel(family: 'welcome' | 'suggestions'): void {
+    const state: ProviderPanelState = family === 'welcome'
+      ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
+      : createProviderPanel(family, 'Suggestions', SUGGESTION_PROVIDERS, this.promptConfiguration.suggestions);
     this.providerPanelState = state;
     this.welcomePreviews.clear();
     for (const provider of state.providers) {
@@ -1745,6 +1819,10 @@ export class TerminalApp {
   /** The highlighted provider rendered by its own family; captures are cached per panel. */
   private providerPreview(state: ProviderPanelState, width: number): string[] {
     const selected = providerPanelSelection(state);
+    if (state.family === 'suggestions') {
+      if (selected.id === 'none') return [`${SUBTLE}No ghost text while typing.${RESET}`];
+      return [`${ACCENT}${GLYPHS.prompt}${RESET} git st${SECONDARY}atus${RESET}   ${SUBTLE}→ / End accept · Alt+→ next word · Ctrl+N/P alternatives · Esc dismiss${RESET}`];
+    }
     if (selected.id === 'none') return [`${SUBTLE}No welcome; new sessions start at the first command.${RESET}`];
     if (selected.id === 'vespyr') return renderWelcome(createWelcomeSnapshot(this.buildIdentity, this.shellCwd), width).map(row => row.ansi);
     if (state.statuses[selected.id]?.state !== 'installed') return [];
@@ -1790,12 +1868,17 @@ export class TerminalApp {
 
   private saveProviderChoice(state: ProviderPanelState): void {
     const selected = providerPanelSelection(state);
-    const next = {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']};
+    const next = state.family === 'welcome'
+      ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
+      : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
     try {
       savePromptConfiguration(next);
       this.promptConfiguration = next;
       this.providerPanelState = undefined;
-      this.output.addHistoryLine(`${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`);
+      if (state.family === 'suggestions') this.applySuggestionProvider();
+      this.output.addHistoryLine(state.family === 'welcome'
+        ? `${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`
+        : `${SUCCESS}Suggestions · ${selected.label}.${RESET}`);
     } catch (error) {
       state.message = `Could not save: ${error instanceof Error ? error.message : String(error)}`;
     }
@@ -2021,6 +2104,8 @@ export class TerminalApp {
     if (this.running || this.settingsPanelActive) return [];
     if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
     if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
+    const alternatives = this.suggestions.alternatives();
+    if (alternatives.items.length > 0) return alternatives.items.map(item => ({name: item.text, description: ''}));
     return this.shellSuggestions;
   }
 
@@ -2056,7 +2141,7 @@ export class TerminalApp {
     const availableSuggestions = this.composerSuggestions();
     const panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns) : undefined;
     const promptLine = this.currentPromptLine(columns);
-    this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
+    this.editor.ghost = this.suggestionGhost();
     const fullInput = this.layoutEditorInput(columns);
     const plan = this.planFrame(columns, rows, fullInput, availableSuggestions.length, panelRows?.length);
     const input = plan.panelActive

@@ -41,14 +41,4 @@ export class HistoryService {
   }
 
   getAll(): string[] { return this.history; }
-  
-  suggest(prefix: string): string | undefined {
-    if (!prefix || prefix.trim().length === 0) return undefined;
-    for (let i = this.history.length - 1; i >= 0; i--) {
-      if (this.history[i].startsWith(prefix) && this.history[i] !== prefix) {
-        return this.history[i];
-      }
-    }
-    return undefined;
-  }
 }
