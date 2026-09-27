@@ -39,7 +39,7 @@ import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} fr
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
-import {shimmerText, shimmerTextWithColors} from '../status/shimmer.js';
+import {shimmerText} from '../status/shimmer.js';
 import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
@@ -1961,51 +1961,14 @@ export class TerminalApp {
     const outputHeight = plan.transcript.height;
     const wrapped = this.output.wrapped(columns);
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
-      let finalAnsi = row.ansi;
-      if (row.isLiveActivity && row.activityStartedAt !== undefined) {
-        finalAnsi = `${shimmerTextWithColors(row.plain, Date.now() - row.activityStartedAt, false,
-          {red: 148, green: 155, blue: 166}, {red: 248, green: 250, blue: 252})}${RESET}`;
-      }
-      const applyBg = (bg: string) => {
-        return `${bg}${finalAnsi.replaceAll('\u001B[0m', '\u001B[0m' + bg)}${bg}\u001B[K${RESET}`;
-      };
-
-      if (row.isFoldHint) {
-        const isHovered = this.hoveredLineIndex === row.lineIndex;
-        const isFocused = row.activityId
-          ? this.focusedActivityId === row.activityId
-          : row.commandIndex !== undefined
-            ? this.focusedCommandIndex === row.commandIndex
-            : this.focusedLineIndex === row.lineIndex;
-        if (isHovered || isFocused) {
-          const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
-          if (!row.isLiveActivity) {
-            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
-          }
-          finalAnsi = applyBg(bg);
-        }
-      } else if (row.lineIndex !== undefined) {
-        const type = this.output.lineTypes.get(row.lineIndex);
-        if (type === 'command') {
-          // Subtle background for command
-          finalAnsi = applyBg(`\u001B[48;2;38;38;48m`);
-        } else if (type === 'metadata') {
-          const isHovered = this.hoveredLineIndex === row.lineIndex;
-          const isFocused = this.focusedLineIndex === row.lineIndex;
-          if (isHovered || isFocused) {
-            // Brighten on hover/focus
-            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
-            const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
-            finalAnsi = applyBg(bg);
-          }
-        }
-      }
-      return finalAnsi;
-    });
+    const presenter = this.output.presenter;
+    const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
+      focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId, now: Date.now()};
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row =>
+      presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction));
     const sticky = this.stickyHeader(wrapped, viewStart);
     const stickyRow = sticky && this.output.stickyHeaderRow(sticky.startId, columns);
-    if (stickyRow && visible.length > 0) visible[0] = `\u001B[48;2;38;38;48m${stickyRow.replaceAll(RESET, `${RESET}\u001B[48;2;38;38;48m`)}\u001B[K${RESET}`;
+    if (stickyRow && visible.length > 0) visible[0] = presenter.stickyHeaderSurface(stickyRow);
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
 
