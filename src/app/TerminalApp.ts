@@ -12,7 +12,7 @@ import {CompletionService, type CompletionCandidate} from '../shell/CompletionSe
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
-import {historyIgnorePattern, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
+import {ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
@@ -100,7 +100,7 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
-  private readonly nativeSuggestions = new NativeSuggestions(() => this.historyService.getAll(), historyIgnorePattern(process.env.HISTORY_IGNORE));
+  private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
     reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
   /** Commands submitted this session, most recent first: the sequence context for suggestions. */
@@ -175,6 +175,13 @@ export class TerminalApp {
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
+    void this.historyService.ready.then(async () => {
+      if (this.stopped) return;
+      await this.nativeSuggestions.loadInChunks(this.historyService.getEntries());
+      if (this.stopped) return;
+      this.suggestions.refresh();
+      this.render();
+    });
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     const dimensions = this.dimensions();
@@ -1754,7 +1761,8 @@ export class TerminalApp {
       this.suggestions.reset();
       return undefined;
     }
-    this.suggestions.update({buffer: text, cwd: this.shellCwd, previous: this.submittedCommands, now: Date.now()});
+    this.suggestions.update({buffer: text, cwd: this.shellCwd, previous: this.submittedCommands, now: Date.now()},
+      this.promptConfiguration.suggestionsOnEmpty && !this.running);
     return this.suggestions.ghost(text);
   }
 

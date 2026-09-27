@@ -125,6 +125,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
     control: 'child', destination: 'suggestions',
     value: config => SUGGESTION_PROVIDERS.find(provider => provider.id === config.suggestions)?.label ?? config.suggestions},
+  {id: 'suggestionsOnEmpty', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
+    control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */

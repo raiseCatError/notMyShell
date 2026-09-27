@@ -76,6 +76,12 @@ export function historyIgnorePattern(pattern: string | undefined): RegExp | unde
   }
 }
 
+/** HISTORY_IGNORE and zsh-autosuggestions' ignore pattern, when exported to NMSh. */
+export function ignorePatternFromEnv(env: NodeJS.ProcessEnv = process.env): RegExp | undefined {
+  const patterns = [env.HISTORY_IGNORE, env.ZSH_AUTOSUGGEST_HISTORY_IGNORE].map(historyIgnorePattern).filter(Boolean) as RegExp[];
+  return patterns.length > 1 ? new RegExp(patterns.map(pattern => pattern.source).join('|'), 'u') : patterns[0];
+}
+
 /** Commands that are never suggested or learned: blank, leading space, or matching HISTORY_IGNORE. */
 export function isPrivateCommand(command: string, ignore?: RegExp): boolean {
   if (!command.trim() || /^\s/u.test(command)) return true;

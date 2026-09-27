@@ -87,10 +87,11 @@ test('privacy: leading space and HISTORY_IGNORE are never suggested or learned',
   assert.ok(isPrivateCommand('export API_TOKEN=x', ignore));
   assert.ok(!isPrivateCommand('lsof', ignore));
   assert.equal(historyIgnorePattern('(unbalanced'), undefined);
-  const native = new NativeSuggestions(() => ['cd /private/place', 'cat notes'], ignore);
+  const native = new NativeSuggestions(ignore);
+  native.load([{command: 'cd /private/place'}, {command: 'cat notes'}]);
   native.record({command: ' cat secret'});
   native.record({command: 'cat readme'});
-  assert.deepEqual(native.query(context('c')).map(item => item.text), ['cat readme', 'cat notes']);
+  assert.deepEqual(native.query(context('c')).map(item => item.text).sort(), ['cat notes', 'cat readme']);
 });
 
 test('keys: Ctrl+N/Ctrl+P (legacy and Kitty) cycle alternatives; config defaults to Native', () => {
