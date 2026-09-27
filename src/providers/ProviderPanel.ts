@@ -75,6 +75,7 @@ export function renderProviderPanel(state: ProviderPanelState, columns: number, 
       {draft: selected.id, saved: state.saved, status: state.statuses[provider.id]})}${RESET}`);
   });
   const footer = [
+    ...(selected.setup ? ['', `${SUBTLE}${selected.setup}${RESET}`] : []),
     ...(state.message ? ['', `${SECONDARY}${state.message}${RESET}`] : []),
     '', renderControls([['↑↓', 'preview'], ['Enter', 'use'], ['Esc', 'cancel']]),
   ];

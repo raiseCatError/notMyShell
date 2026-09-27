@@ -30,6 +30,8 @@ export interface ProviderDescriptor<Id extends string = string> {
   legacy?: boolean;
   /** Offered only with explicit confirmation. */
   install?: ProviderInstall;
+  /** One-line setup note shown while the provider is highlighted. */
+  setup?: string;
 }
 
 export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy';
