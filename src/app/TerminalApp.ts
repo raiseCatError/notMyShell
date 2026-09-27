@@ -12,12 +12,13 @@ import {CompletionService, type CompletionCandidate} from '../shell/CompletionSe
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
+import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
 import {ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, resolveProvider} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
@@ -1805,9 +1806,19 @@ export class TerminalApp {
     return false;
   }
 
+  /** External providers are detected in the background; Native answers until then and whenever they are unusable. */
   private applySuggestionProvider(): void {
     const id = this.promptConfiguration.suggestions;
     this.suggestions.setProvider(id === 'none' ? undefined : this.nativeSuggestions, this.nativeSuggestions);
+    if (id !== 'deja') return;
+    const descriptor = SUGGESTION_PROVIDERS.find(provider => provider.id === 'deja')!;
+    void detectProvider(descriptor).then(status => {
+      if (this.stopped || this.promptConfiguration.suggestions !== 'deja') return;
+      const resolved = resolveProvider(SUGGESTION_PROVIDERS, 'deja', status, 'nmsh');
+      if (resolved.id === 'deja' && status.binary) this.suggestions.setProvider(new DejaSuggestions(status.binary), this.nativeSuggestions);
+      else if (resolved.notice) this.output.addHistoryLine(`${SUBTLE}${resolved.notice}${RESET}`);
+      this.render();
+    });
   }
 
   private startProviderPanel(family: 'welcome' | 'suggestions'): void {
