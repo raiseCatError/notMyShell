@@ -20,6 +20,7 @@ export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fa
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
+export type ComposerPosition = 'bottom' | 'top';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
@@ -193,6 +194,8 @@ export interface PromptConfiguration {
   syntax: SyntaxAppearance;
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
+  /** Dock Bottom (default) or Dock Top; independent of transcript presentation. */
+  composerPosition: ComposerPosition;
   modules: ContextModuleConfig[];
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
@@ -220,6 +223,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   syntax: {...DEFAULT_SYNTAX_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
+  composerPosition: 'bottom',
   modules: [
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
@@ -299,6 +303,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
   const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
+  const composerPosition: ComposerPosition = value.composerPosition === 'top' ? 'top' : 'bottom';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
     ? Math.max(0, Math.min(3, Math.round(value.spacing)))
     : DEFAULT_PROMPT_CONFIGURATION.spacing;
@@ -312,7 +317,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, suggestionsOnEmpty,
-      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
+      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, composerPosition, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -353,7 +358,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   });
 
   return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, suggestionsOnEmpty, nmsh, transcript, syntax, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, modules, separator, spacing, gap};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {

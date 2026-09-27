@@ -42,7 +42,7 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
-import {displayWidth, repeatToWidth, truncateAnsi, truncateText} from '../util/text.js';
+import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
@@ -176,13 +176,6 @@ export class TerminalApp {
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
-    void this.historyService.ready.then(async () => {
-      if (this.stopped) return;
-      await this.nativeSuggestions.loadInChunks(this.historyService.getEntries());
-      if (this.stopped) return;
-      this.suggestions.refresh();
-      this.render();
-    });
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     const dimensions = this.dimensions();
@@ -234,6 +227,7 @@ export class TerminalApp {
       this.render();
     }, STATUS_REFRESH_MS);
     this.scheduleWelcomeBlink();
+    void this.loadHistory();
     this.render();
     void this.quietUpdateCheck();
     const exitCode = await this.done;
@@ -1755,6 +1749,16 @@ export class TerminalApp {
     });
   }
 
+  /** History loads in the background after startup; suggestions refine once it is indexed. */
+  private async loadHistory(): Promise<void> {
+    await this.historyService.reload();
+    if (this.stopped) return;
+    await this.nativeSuggestions.loadInChunks(this.historyService.getEntries());
+    if (this.stopped) return;
+    this.suggestions.refresh();
+    this.render();
+  }
+
   /** Suggestions apply to plain shell input at the end of the buffer only. */
   private suggestionGhost(): string | undefined {
     const text = this.editor.text;
@@ -2139,13 +2143,16 @@ export class TerminalApp {
     suggestions = this.composerSuggestions().length,
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
+    const transcriptRows = this.output.wrapped(columns).length;
     return planScreen({
       rows,
       inputRows: fullInput.allRows.length,
       suggestions,
       running: Boolean(this.running),
       detached: this.historyViewport.detached,
-      hasOutput: this.output.wrapped(columns).length > 0,
+      hasOutput: transcriptRows > 0,
+      composerPosition: this.promptConfiguration.composerPosition,
+      transcriptRows,
       contextPlacement: this.promptConfiguration.placement,
       hasVisibleContext: this.hasVisibleProviderPrompt(),
       composerLayout: this.promptConfiguration.composerLayout,
@@ -2231,7 +2238,9 @@ export class TerminalApp {
         case 'transcript': return visible;
         case 'gap': return [];
         case 'jump': return [this.jumpAffordance(columns)];
-        case 'panel': return panelRows ?? [];
+        // Panels frame their composer-side edge: under Dock Top the frame line moves below the panel.
+        case 'panel': return plan.composerPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
+          ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
           return truncateAnsi(
@@ -2239,7 +2248,12 @@ export class TerminalApp {
             columns,
           );
         });
-        case 'activity': return this.running ? [truncateAnsi(this.currentActivity(), columns), ''] : [];
+        // The spacer sits between the newest output and the activity line in both positions.
+        case 'activity': {
+          if (!this.running) return [];
+          const activity = truncateAnsi(this.currentActivity(), columns);
+          return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
+        }
         case 'composerBorder': return [separator];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
