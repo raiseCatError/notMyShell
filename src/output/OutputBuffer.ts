@@ -5,7 +5,7 @@ import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
-import {evaluateFold, type OutputFoldingMode} from './FoldPolicy.js';
+import {shouldAutoFold, type OutputFoldingMode} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
@@ -224,9 +224,9 @@ export class OutputBuffer {
     const output = this.parser.snapshotPlain(this.active.outputStart);
     // Activity-bearing parents keep their own disclosure; otherwise the fold
     // policy decides from the finished output. Presentation only.
-    const autoFolded = this.active.activities.length === 0 && this.outputFolding === 'smart'
-      && evaluateFold({command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
-        ...(this.classifier ? {facts: this.classifier.streamFacts} : {})}).fold;
+    const autoFolded = this.active.activities.length === 0
+      && shouldAutoFold(this.outputFolding, {command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
+        ...(this.classifier ? {facts: this.classifier.streamFacts} : {})});
     const expanded = this.active.activities.length === 0 && !autoFolded;
 
     const record: CompletedCommand = {

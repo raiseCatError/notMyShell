@@ -255,7 +255,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       ? value.sessionRetention as SessionRetention : 1000;
   const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
     ? value.updateChecks as UpdateCheckFrequency : 'off';
-  const outputFolding: OutputFoldingMode = value.outputFolding === 'never' ? 'never' : 'smart';
+  // Off persists as `never`, so v0.4 configs load unchanged.
+  const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
   const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
     ? value.welcome as WelcomeProviderId : 'vespyr';
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
