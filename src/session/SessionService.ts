@@ -26,6 +26,8 @@ interface ManagedSession {
   /** The one writable frontend; undefined while detached. */
   controller?: Send;
   running?: {command: string; since: number};
+  /** When zsh last returned to its prompt. */
+  idleSince: number;
   screen: AlternateScreenTracker;
   /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
   resizes: number;
@@ -63,8 +65,46 @@ export class AlternateScreenTracker {
     return kept;
   }
 
-  reset(): void { this.active = false; this.carry = ''; }
+  reset(): void { this.active = false; this.carry = ''; this.modes.clear(); this.keypad = false; }
+
+  private readonly modes = new Map<number, boolean>();
+  private keypad = false;
+
+  /**
+   * Track the input-affecting terminal modes the foreground app set (mouse
+   * reporting, bracketed paste, application cursor keys and keypad, focus
+   * events, cursor visibility). They were sent to whichever terminal was
+   * attached then; a reattaching frontend replays them from here.
+   */
+  observeModes(data: string): void {
+    const text = this.modeCarry + data;
+    for (const match of text.matchAll(DEC_MODE)) {
+      for (const param of match[1]!.split(';')) {
+        const mode = Number(param);
+        if (TRACKED_MODES.has(mode)) this.modes.set(mode, match[2] === 'h');
+      }
+    }
+    for (const match of text.matchAll(KEYPAD)) this.keypad = match[1] === '=';
+    const escape = text.lastIndexOf('\u001b');
+    this.modeCarry = escape !== -1 && text.length - escape < 16 ? text.slice(escape) : '';
+  }
+
+  private modeCarry = '';
+
+  /** Sequences that put a fresh terminal into the app's current input modes. */
+  restoreSequence(): string {
+    let sequence = '';
+    for (const [mode, on] of this.modes) {
+      if (mode === 25) { if (!on) sequence += '\u001b[?25l'; } else if (on) sequence += `\u001b[?${mode}h`;
+    }
+    return this.keypad ? `${sequence}\u001b=` : sequence;
+  }
 }
+
+const DEC_MODE = /\u001b\[\?([\d;]+)([hl])/g;
+const KEYPAD = /\u001b([=>])/g;
+/** DECCKM, cursor visibility, mouse protocols, focus events, bracketed paste. */
+const TRACKED_MODES = new Set([1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004]);
 
 /** Delay between the two resizes that force a fullscreen app to repaint on attach. */
 const REDRAW_NUDGE_MS = 40;
@@ -74,7 +114,11 @@ export interface SessionServiceOptions {
   /** Exit if no frontend connects within this window after startup. */
   startupIdleMs?: number;
   backlogLimits?: BacklogLimits;
+  /** Live sessions allowed at once; detached ones are never ended to make room. */
+  maxSessions?: number;
 }
+
+export const DEFAULT_MAX_SESSIONS = 16;
 
 function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
@@ -123,7 +167,7 @@ export class SessionService {
   private info(session: ManagedSession): SessionInfo {
     const {record, running} = session;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
-      ...(running ? {running: running.command, runningSince: running.since} : {}),
+      ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
       ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {})};
   }
 
@@ -182,6 +226,10 @@ export class SessionService {
         switch (message.type) {
           case 'create':
             if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
+            if (this.sessions.size >= (this.options.maxSessions ?? DEFAULT_MAX_SESSIONS)) {
+              send({type: 'error', code: 'limit', message: `${this.sessions.size} live sessions are already running (the limit); end one or kill a detached one from /resume`});
+              break;
+            }
             try {
               owned = this.create(message.cwd, message.env, message.columns, message.rows, send);
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid});
@@ -199,6 +247,7 @@ export class SessionService {
             const info = this.info(session);
             const {backlog} = session;
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.active ? 1 : 0,
+              ...(session.screen.active && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
               ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
             // Everything the journal does not have yet, then the live stream continues.
@@ -277,7 +326,7 @@ export class SessionService {
     const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
     const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
       state: 'attached', protocolVersion: PROTOCOL_VERSION};
-    const session: ManagedSession = {record, shell, controller: send, screen: new AlternateScreenTracker(), resizes: 0,
+    const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits)};
     this.sessions.set(record.id, session);
     // Every event is retained until a frontend journal acknowledges it, and
@@ -288,6 +337,7 @@ export class SessionService {
     };
     shell.on('data', data => {
       const at = Date.now();
+      session.screen.observeModes(data);
       const kept = session.screen.push(data);
       if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
       else session.controller?.({type: 'output', data});
@@ -300,6 +350,7 @@ export class SessionService {
     shell.on('prompt', marker => {
       record.cwd = marker.cwd;
       session.running = undefined;
+      session.idleSince = Date.now();
       session.screen.reset();
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
     });

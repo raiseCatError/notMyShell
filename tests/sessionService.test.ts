@@ -1,16 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {connect, type Socket} from 'node:net';
+import {connect, createServer, type Socket} from 'node:net';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {SessionService} from '../src/session/SessionService.js';
 import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
-import {connectSession} from '../src/session/connectSession.js';
+import {connectSession, listLiveSessions} from '../src/session/connectSession.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage} from '../src/session/SessionProtocol.js';
 import {socketPathFor} from '../src/session/runtimeDir.js';
 import type {SessionClient} from '../src/session/SessionClient.js';
 import type {ShellMarker} from '../src/shell/ShellProtocol.js';
+import {inForeground, uniqueSleep} from './helpers/processState.js';
 
 function scratch(prefix: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -99,13 +100,17 @@ test('service starts on demand, gives the shell the frontend env and cwd, and ex
     assert.ok(output.includes('\u001b[?1049h\u001b[2J\u001b[?1049l'), 'full-screen bytes pass through raw');
 
     prompt = nextPrompt(client);
-    client.submit('sleep 30');
-    setTimeout(() => client.interrupt(), 300);
+    const interrupted = uniqueSleep(1);
+    client.submit(`sleep ${interrupted}`);
+    await until(() => inForeground(interrupted), 15000);
+    client.interrupt();
     assert.notEqual((await prompt).exitCode, 0);
 
     prompt = nextPrompt(client);
-    client.submit('sleep 30');
-    setTimeout(() => client.write('\u001a'), 300);
+    const suspended = uniqueSleep(2);
+    client.submit(`sleep ${suspended}`);
+    await until(() => inForeground(suspended), 15000);
+    client.write('\u001a');
     assert.ok((await prompt).exitCode > 128);
     prompt = nextPrompt(client);
     client.submit('jobs; kill %1');
@@ -118,6 +123,7 @@ test('service starts on demand, gives the shell the frontend env and cwd, and ex
     await until(() => !existsSync(socketPathFor(runtimeDir)));
   } finally {
     connection.client.kill();
+    rmSync(dirname(runtimeDir), {recursive: true, force: true});
     rmSync(home, {recursive: true, force: true});
     rmSync(workdir, {recursive: true, force: true});
   }
@@ -229,4 +235,30 @@ test('frontend falls back to an in-process shell when the service is unavailable
   assert.equal(disabled.mode, 'in-process');
   assert.equal(disabled.notice, undefined);
   rmSync(insecure, {recursive: true, force: true});
+  rmSync(dirname(dir), {recursive: true, force: true});
+});
+
+test('a service that closes the connection while exiting counts as having no live sessions', async () => {
+  const runtimeDir = scratch('nmsh-exiting-');
+  const exiting = createServer(socket => socket.destroy());
+  await new Promise<void>(resolve => exiting.listen(socketPathFor(runtimeDir), resolve));
+  try {
+    assert.deepEqual(await listLiveSessions({runtimeDir}), []);
+  } finally {
+    await new Promise<void>(resolve => exiting.close(() => resolve()));
+    rmSync(runtimeDir, {recursive: true, force: true});
+  }
+});
+
+test('the service remembers a fullscreen app\'s input modes so a reattaching terminal can restore them', async () => {
+  const {AlternateScreenTracker} = await import('../src/session/SessionService.js');
+  const screen = new AlternateScreenTracker();
+  // Split across reads, combined parameters, later changes and keypad mode.
+  for (const chunk of ['\u001b[?1049h\u001b[?1', '000;1006h\u001b[?2004h\u001b[?25l\u001b[?1h\u001b=', 'x\u001b[?2004l']) {
+    screen.observeModes(chunk);
+    screen.push(chunk);
+  }
+  assert.equal(screen.restoreSequence(), '\u001b[?1000h\u001b[?1006h\u001b[?25l\u001b[?1h\u001b=');
+  screen.reset();
+  assert.equal(screen.restoreSequence(), '', 'the app ending clears its modes');
 });

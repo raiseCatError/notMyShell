@@ -76,6 +76,8 @@ import {createResumeBrowser, describeLiveSession, navigateResume, resumeDayLabel
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 import {listLiveSessions} from '../session/connectSession.js';
 import {killAndArchive} from '../session/liveSessions.js';
+import {recoverEndedSessions} from '../session/recovery.js';
+import {defaultRuntimeDir} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -205,7 +207,15 @@ export class TerminalApp {
     this.session.on('prompt', (marker, stamp) => { if (this.inStream(stamp)) this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at); });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at); });
     this.session.on('replayed', summary => this.finishReplay(summary));
-    this.session.on('exit', event => { this.shellEnded = true; this.stop(event.exitCode); });
+    this.session.on('exit', event => {
+      this.shellEnded = true;
+      if (event.lost) {
+        // Recorded in the journal before it closes; nothing claims the shell survived.
+        this.lostServiceConnection = true;
+        this.output.addFrontendInteraction('session', 'Lost the connection to the NMSh session service; this live session has ended.', ERROR);
+      }
+      this.stop(event.exitCode);
+    });
     this.sessionMode = connection?.mode ?? 'in-process';
     this.sessionId = connection?.sessionId;
     if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
@@ -218,6 +228,8 @@ export class TerminalApp {
   private replaying = false;
   /** The shell itself ended; the journal is no longer linked to a live session. */
   private shellEnded = false;
+  /** Set when the service vanished under an attached session; reported after the screen is restored. */
+  lostServiceConnection = false;
   /** Commands the replay completed, for the reattach summary. */
   private replayedCompletions = 0;
   private attachedSession?: AttachedSession;
@@ -278,15 +290,21 @@ export class TerminalApp {
     if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
     if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.passthrough = true;
+      this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
     }
     this.scheduleJournal();
     this.render();
   }
 
+  /** The reattached fullscreen app's own terminal modes, which this terminal never received. */
+  private attachedModes = '';
+
   private enterAttachedPassthrough(): void {
-    // Reattached into a fullscreen app: hand it the whole terminal again.
-    this.renderer.suspendForPassthrough();
+    // Reattached into a fullscreen app: hand it the whole terminal again,
+    // including the mouse/paste/cursor-key modes it set before the detach.
+    this.renderer.suspendForPassthrough(this.attachedModes);
+    this.attachedModes = '';
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
   }
@@ -1215,6 +1233,10 @@ export class TerminalApp {
 
   private async openResumePicker(): Promise<void> {
     try {
+      // Anything that ended while no window watched is archived before listing.
+      if (this.sessionMode === 'service') {
+        try { await recoverEndedSessions(defaultRuntimeDir(), this.transcriptStore); } catch { /* best effort */ }
+      }
       const sessions = (await this.transcriptStore.listSummaries()).filter(session => session.id !== this.journal?.id);
       // LIVE comes from the service itself, so a dead shell is never listed as live.
       let live: SessionInfo[] = [];

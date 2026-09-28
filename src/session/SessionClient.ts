@@ -19,7 +19,8 @@ export interface SessionClientEvents {
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
-  exit: [{exitCode: number; signal?: number}];
+  /** lost: the connection to the service dropped without the shell's exit being reported. */
+  exit: [{exitCode: number; signal?: number; lost?: boolean}];
 }
 
 /**
@@ -54,6 +55,8 @@ export interface AttachedSession {
   cwd: string;
   /** Nonzero while the foreground app holds the alternate screen. */
   fullscreen: number;
+  /** Terminal input modes the fullscreen app set (mouse, bracketed paste, ...), to restore on reattach. */
+  modes?: string;
   running?: string;
   runningSince?: number;
   /** Journal the previous frontend kept for this session, and how far it got. */

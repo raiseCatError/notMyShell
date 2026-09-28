@@ -1,4 +1,5 @@
-import {chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {connect} from 'node:net';
+import {chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -11,10 +12,10 @@ const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
 
 export const strip = (value: string) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[=>()][0-9A-B]?/g, '');
 
-export async function until(check: () => boolean | Promise<boolean>, timeoutMs = 15000, what = 'condition'): Promise<void> {
+export async function until(check: () => boolean | Promise<boolean>, timeoutMs = 15000, what: string | (() => string) = 'condition'): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${typeof what === 'function' ? what() : what}`);
     await new Promise(resolve => setTimeout(resolve, 25));
   }
 }
@@ -59,14 +60,29 @@ export class LiveSandbox {
     return frontend;
   }
 
+  private async anyServiceListening(): Promise<boolean> {
+    if (!existsSync(this.runtime)) return false;
+    const sockets = readdirSync(this.runtime).filter(name => name.endsWith('.sock')).map(name => join(this.runtime, name));
+    const live = await Promise.all(sockets.map(path => new Promise<boolean>(resolve => {
+      const probe = connect(path);
+      probe.once('connect', () => { probe.destroy(); resolve(true); });
+      probe.once('error', () => resolve(false));
+    })));
+    return live.includes(true);
+  }
+
   /** Kill every frontend and every live shell so the service exits too. */
   async dispose(): Promise<void> {
     for (const frontend of this.frontends) frontend.pty.kill('SIGKILL');
     try {
       for (const session of await this.sessions()) { try { process.kill(session.pid, 'SIGKILL'); } catch {} }
       await until(async () => (await this.sessions()).length === 0, 10000, 'sessions to end');
+      // Wait for the service to exit so it is not still writing into the sandbox
+      // while it is removed. A SIGKILLed service leaves a stale socket file, so
+      // the condition is "nothing accepts connections", not "no socket files".
+      await until(async () => !(await this.anyServiceListening()), 10000, 'service exit');
     } finally {
-      rmSync(this.root, {recursive: true, force: true});
+      rmSync(this.root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
     }
   }
 }
@@ -85,7 +101,7 @@ export class Frontend {
 
   async waitFor(pattern: RegExp, from = 0, timeoutMs = 20000): Promise<void> {
     await until(() => pattern.test(strip(this.output.slice(from))), timeoutMs,
-      `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
+      () => `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
   }
 
   async run(command: string, expect: RegExp): Promise<void> {

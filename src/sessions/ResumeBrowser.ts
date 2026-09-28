@@ -65,7 +65,7 @@ export function describeLiveSession(session: SessionInfo, now: number): string {
   const state = session.state === 'attached' ? 'attached in another window' : 'detached';
   const activity = session.running
     ? `running ${session.running.replace(/\s+/gu, ' ').slice(0, 60)} · ${formatAge(now - (session.runningSince ?? now))}`
-    : 'idle';
+    : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}`;
   return `${session.cwd} · ${state} · ${activity} · started ${formatAge(now - session.createdAt)} ago`;
 }
 

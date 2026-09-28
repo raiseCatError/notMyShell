@@ -123,9 +123,12 @@ export class StreamBacklog {
     return [...spooled, ...this.memory.filter(event => event.seq > this.acked)];
   }
 
-  /** Persist everything with the shell's end, so the spool can be archived later. */
+  /**
+   * Persist everything with the shell's end, so the spool can be archived
+   * later. Always written: the exit record is how recovery tells an ordinary
+   * exit from a service that died.
+   */
   finish(exitCode: number, at: number): void {
-    if (this.memory.length === 0 && !this.spooled) return;
     this.spill();
     this.write([{kind: 'exit', exitCode, at}]);
   }
@@ -139,6 +142,7 @@ export class StreamBacklog {
   private spill(): void {
     const records: SpoolRecord[] = [];
     if (!this.spooled) {
+      // The runtime directory is private (0700); the spool directory is too.
       mkdirSync(dirname(this.spoolPath), {recursive: true, mode: 0o700});
       this.spooled = true;
       this.spoolSize = 0;

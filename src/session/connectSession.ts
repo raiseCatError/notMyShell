@@ -61,7 +61,10 @@ export async function listLiveSessions(options: {env?: NodeJS.ProcessEnv; runtim
     return await listSessions(socketPathFor(runtimeDir));
   } catch (error) {
     const code = (error as {code?: string}).code;
-    if (code === 'ENOENT' || code === 'ECONNREFUSED') return [];
+    // A service drops connections (closed / EPIPE / ECONNRESET, depending on
+    // timing) only while exiting, which it does only once it has no sessions
+    // left: treat that window like no service at all.
+    if (code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'closed' || code === 'EPIPE' || code === 'ECONNRESET') return [];
     throw error;
   }
 }
@@ -77,7 +80,8 @@ function startService(runtimeDir: string, command: {command: string; args: strin
   // The service needs no user environment of its own: each session receives
   // the launching frontend's env in its create message.
   const serviceEnv: NodeJS.ProcessEnv = {PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, [RUNTIME_DIR_ENV]: runtimeDir,
-    NMSH_BACKLOG_MEMORY_BYTES: env.NMSH_BACKLOG_MEMORY_BYTES, NMSH_BACKLOG_SPOOL_BYTES: env.NMSH_BACKLOG_SPOOL_BYTES};
+    NMSH_BACKLOG_MEMORY_BYTES: env.NMSH_BACKLOG_MEMORY_BYTES, NMSH_BACKLOG_SPOOL_BYTES: env.NMSH_BACKLOG_SPOOL_BYTES,
+    NMSH_MAX_SESSIONS: env.NMSH_MAX_SESSIONS};
   const child = spawn(command.command, command.args, {detached: true, stdio: 'ignore', env: serviceEnv});
   child.on('error', () => {});
   child.unref();
@@ -121,6 +125,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process',
-      notice: `Session service unavailable (${reason}); running the shell in-process.`};
+      notice: `Session service unavailable (${reason}); running the shell in-process. `
+        + 'Closing this window ends its shell: it cannot be detached or reattached.'};
   }
 }
