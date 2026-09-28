@@ -42,7 +42,7 @@ import {CommandContextCache, commandWords, type CommandContextId} from '../promp
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
-import type {SessionClient} from '../session/SessionClient.js';
+import type {SessionClient, SessionConnection} from '../session/SessionClient.js';
 import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
@@ -180,7 +180,7 @@ export class TerminalApp {
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
 
-  constructor() {
+  constructor(connection?: SessionConnection) {
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
@@ -188,7 +188,9 @@ export class TerminalApp {
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     const dimensions = this.dimensions();
-    this.session = new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
+    this.session = connection?.client
+      ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
+    if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     this.semanticService = new SemanticService(this.initialCwd);
     this.done = new Promise(resolve => {
       this.finish = resolve;

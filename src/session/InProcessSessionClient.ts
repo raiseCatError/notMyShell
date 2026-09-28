@@ -1,6 +1,6 @@
 import {EventEmitter} from 'node:events';
 import {ShellSession} from '../shell/ShellSession.js';
-import type {SessionClient, SessionClientEvents, SessionOptions} from './SessionClient.js';
+import {SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
 
 type ShellLike = Pick<ShellSession, 'submit' | 'write' | 'interrupt' | 'endInput' | 'resize' | 'kill' | 'on'>;
 
@@ -25,5 +25,6 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
 }
 
 function defaultShell(options: SessionOptions): ShellSession {
-  return new ShellSession(options.cwd, options.columns, options.rows);
+  return new ShellSession(options.cwd, options.columns, options.rows, process.env.HOME || '',
+    {...process.env, [SESSION_MODE_ENV]: 'in-process'});
 }

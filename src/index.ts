@@ -34,7 +34,10 @@ if (isVersionInvocation(process.argv.slice(2))) {
   process.exitCode = 1;
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
-  const app = new TerminalApp();
+  const {connectSession} = await import('./session/connectSession.js');
+  const connection = await connectSession({cwd: process.cwd(), columns: process.stdout.columns || 80,
+    rows: Math.max(2, (process.stdout.rows || 24) - 4)});
+  const app = new TerminalApp(connection);
   const exitCode = await app.run();
   process.exitCode = app.isOrdinaryZshHandoffRequested
     ? await startOrdinaryZsh(app.ordinaryZshHandoffCwd)
