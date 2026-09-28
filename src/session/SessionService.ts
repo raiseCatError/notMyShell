@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
 import {ShellSession} from '../shell/ShellSession.js';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage} from './SessionProtocol.js';
+import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor} from './runtimeDir.js';
 
@@ -13,14 +13,44 @@ export interface SessionRecord {
   pid: number;
   cwd: string;
   createdAt: string;
-  attached: boolean;
+  state: SessionState;
   protocolVersion: number;
 }
+
+type Send = (message: ServerMessage) => void;
 
 interface ManagedSession {
   record: SessionRecord;
   shell: ShellSession;
+  /** The one writable frontend; undefined while detached. */
+  controller?: Send;
+  running?: {command: string; since: number};
+  screen: AlternateScreenTracker;
+  /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
+  resizes: number;
 }
+
+// DECSET/DECRST 1049, 1047 and 47: the alternate-screen switches.
+const ALT_SCREEN = /\u001b\[\?(?:1049|1047|47)([hl])/g;
+
+/** Follows whether the PTY's foreground app is on the alternate screen. */
+export class AlternateScreenTracker {
+  active = false;
+  private carry = '';
+
+  push(data: string): void {
+    const text = this.carry + data;
+    for (const match of text.matchAll(ALT_SCREEN)) this.active = match[1] === 'h';
+    // Keep a tail so a sequence split across reads is still seen.
+    const escape = text.lastIndexOf('\u001b');
+    this.carry = escape !== -1 && text.length - escape < 8 ? text.slice(escape) : '';
+  }
+
+  reset(): void { this.active = false; this.carry = ''; }
+}
+
+/** Delay between the two resizes that force a fullscreen app to repaint on attach. */
+const REDRAW_NUDGE_MS = 40;
 
 export interface SessionServiceOptions {
   runtimeDir: string;
@@ -39,9 +69,11 @@ function canConnect(path: string): Promise<boolean> {
 }
 
 /**
- * Local per-user service owning PTY + managed zsh sessions. Until detach and
- * reattach exist, a session lives exactly as long as the frontend connection
- * that created it, and the service exits once it has no sessions or clients.
+ * Local per-user service owning PTY + managed zsh sessions. A session is
+ * attached to at most one frontend connection; losing that connection for any
+ * reason (window close, crash, SIGKILL) detaches it, and the shell keeps
+ * running until zsh itself exits or a frontend terminates it. The service
+ * exits once it has no sessions and no clients.
  */
 export class SessionService {
   readonly socketPath: string;
@@ -60,6 +92,12 @@ export class SessionService {
 
   get registry(): SessionRecord[] {
     return [...this.sessions.values()].map(session => ({...session.record}));
+  }
+
+  private info(session: ManagedSession): SessionInfo {
+    const {record, running} = session;
+    return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
+      ...(running ? {running: running.command, runningSince: running.since} : {})};
   }
 
   async start(): Promise<void> {
@@ -116,7 +154,7 @@ export class SessionService {
         }
         switch (message.type) {
           case 'create':
-            if (owned) { send({type: 'error', code: 'state', message: 'session already created'}); break; }
+            if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
             try {
               owned = this.create(message.cwd, message.env, message.columns, message.rows, send);
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid});
@@ -124,8 +162,34 @@ export class SessionService {
               send({type: 'error', code: 'spawn', message: error instanceof Error ? error.message : String(error)});
             }
             break;
+          case 'attach': {
+            if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
+            const session = this.sessions.get(message.sessionId);
+            if (!session) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            if (session.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            owned = session;
+            this.bind(session, send);
+            const info = this.info(session);
+            send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.active ? 1 : 0,
+              ...(info.running ? {running: info.running, runningSince: info.runningSince} : {})});
+            this.redraw(session, message.columns, message.rows);
+            break;
+          }
+          case 'detach':
+            if (owned) {
+              const id = owned.record.id;
+              this.detach(owned, send);
+              owned = undefined;
+              send({type: 'detached', sessionId: id});
+            }
+            break;
+          case 'list':
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
+            break;
           case 'input': owned?.shell.write(message.data); break;
-          case 'resize': owned?.shell.resize(message.columns, message.rows); break;
+          case 'resize':
+            if (owned) { owned.resizes += 1; owned.shell.resize(message.columns, message.rows); }
+            break;
           case 'terminate': owned?.shell.kill(); break;
           default: send({type: 'error', code: 'unsupported', message: `unsupported message ${message.type}`});
         }
@@ -134,26 +198,59 @@ export class SessionService {
     socket.on('error', () => {});
     socket.on('close', () => {
       this.connections.delete(socket);
-      // No detach yet: a frontend going away ends its shell, as it always has.
-      if (owned && this.sessions.has(owned.record.id)) owned.shell.kill();
+      // The frontend is gone however it left (even SIGKILL): detach, never kill.
+      if (owned) this.detach(owned, send);
       this.maybeShutdown();
     });
   }
 
-  private create(cwd: string, env: Record<string, string>, columns: number, rows: number,
-    send: (message: ServerMessage) => void): ManagedSession {
+  private bind(session: ManagedSession, send: Send): void {
+    session.controller = send;
+    session.record.state = 'attached';
+  }
+
+  private detach(session: ManagedSession, send: Send): void {
+    if (session.controller !== send) return;
+    session.controller = undefined;
+    session.record.state = 'detached';
+  }
+
+  /**
+   * Adopt the attaching frontend's size. A fullscreen app only repaints on a
+   * real size change, so step through a neighbouring size first: each step
+   * delivers SIGWINCH and the final one lands on the new frontend's size.
+   */
+  private redraw(session: ManagedSession, columns: number, rows: number): void {
+    session.shell.resize(columns, rows > 2 ? rows - 1 : rows + 1);
+    const generation = session.resizes;
+    setTimeout(() => {
+      if (this.sessions.has(session.record.id) && session.resizes === generation) session.shell.resize(columns, rows);
+    }, REDRAW_NUDGE_MS);
+  }
+
+  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send): ManagedSession {
     // The shell gets the launching frontend's environment and cwd, never the
     // service's own startup state. The env is opaque: it is not stored or logged.
     const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
     const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
-      attached: true, protocolVersion: PROTOCOL_VERSION};
-    const session = {record, shell};
+      state: 'attached', protocolVersion: PROTOCOL_VERSION};
+    const session: ManagedSession = {record, shell, controller: send, screen: new AlternateScreenTracker(), resizes: 0};
     this.sessions.set(record.id, session);
-    shell.on('data', data => send({type: 'output', data}));
-    shell.on('prompt', marker => { record.cwd = marker.cwd; send({type: 'prompt', exitCode: marker.exitCode, cwd: marker.cwd}); });
+    shell.on('data', data => {
+      session.screen.push(data);
+      session.controller?.({type: 'output', data});
+    });
+    shell.on('exec', command => { session.running = {command, since: Date.now()}; });
+    shell.on('prompt', marker => {
+      record.cwd = marker.cwd;
+      session.running = undefined;
+      session.screen.reset();
+      session.controller?.({type: 'prompt', exitCode: marker.exitCode, cwd: marker.cwd});
+    });
     shell.on('exit', event => {
       this.sessions.delete(record.id);
-      send({type: 'exit', exitCode: event.exitCode, ...(event.signal ? {signal: event.signal} : {})});
+      session.controller?.({type: 'exit', exitCode: event.exitCode, ...(event.signal ? {signal: event.signal} : {})});
+      session.controller = undefined;
       this.maybeShutdown();
     });
     return session;

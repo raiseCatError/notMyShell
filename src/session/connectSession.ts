@@ -2,7 +2,8 @@ import {spawn} from 'node:child_process';
 import {extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {InProcessSessionClient} from './InProcessSessionClient.js';
-import {SocketSessionClient} from './SocketSessionClient.js';
+import {SocketSessionClient, listSessions} from './SocketSessionClient.js';
+import type {SessionInfo} from './SessionProtocol.js';
 import {type SessionConnection, type SessionOptions} from './SessionClient.js';
 import {RUNTIME_DIR_ENV, defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from './runtimeDir.js';
 
@@ -14,6 +15,44 @@ export interface ConnectSessionOptions extends SessionOptions {
   /** Command used to start the service on demand. */
   serviceCommand?: {command: string; args: string[]};
   timeoutMs?: number;
+}
+
+export class AttachError extends Error {
+  constructor(message: string, readonly code: string) { super(message); }
+}
+
+/**
+ * Reattach a live session owned by the running service. Unlike creating a
+ * session there is no fallback: the session lives in the service or nowhere.
+ */
+export async function attachSession(sessionId: string, options: ConnectSessionOptions): Promise<SessionConnection> {
+  const env = options.env ?? process.env;
+  const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(env);
+  try {
+    ensurePrivateRuntimeDir(runtimeDir);
+    const client = await SocketSessionClient.connect({cwd: options.cwd, columns: options.columns, rows: options.rows,
+      socketPath: socketPathFor(runtimeDir), env: {}, attach: sessionId, timeoutMs: options.timeoutMs ?? 5000});
+    return {client, mode: 'service', sessionId: client.sessionId, attached: client.attachedSession};
+  } catch (error) {
+    const code = (error as {code?: string}).code ?? 'error';
+    const reason = code === 'ENOENT' || code === 'ECONNREFUSED' ? 'no session service is running'
+      : code === 'unknown' ? `no live session ${sessionId}`
+      : code === 'attached' ? `session ${sessionId} is attached to another NMSh window`
+      : error instanceof Error ? error.message : String(error);
+    throw new AttachError(reason, code);
+  }
+}
+
+/** Live sessions of the running service, or none when no service runs. */
+export async function listLiveSessions(options: {env?: NodeJS.ProcessEnv; runtimeDir?: string} = {}): Promise<SessionInfo[]> {
+  const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(options.env ?? process.env);
+  try {
+    return await listSessions(socketPathFor(runtimeDir));
+  } catch (error) {
+    const code = (error as {code?: string}).code;
+    if (code === 'ENOENT' || code === 'ECONNREFUSED') return [];
+    throw error;
+  }
 }
 
 function defaultServiceCommand(): {command: string; args: string[]} {
@@ -55,7 +94,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
       try {
         const client = await SocketSessionClient.connect({...sessionOptions, socketPath, env: shellEnv,
           timeoutMs: Math.max(100, deadline - Date.now())});
-        return {client, mode: 'service'};
+        return {client, mode: 'service', sessionId: client.sessionId};
       } catch (error) {
         const code = (error as {code?: string}).code;
         const retryable = code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'closed';

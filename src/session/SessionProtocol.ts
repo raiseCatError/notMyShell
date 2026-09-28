@@ -9,14 +9,16 @@
  * rejected instead of partially applied.
  */
 
-export const PROTOCOL_VERSION = 1;
+// v2: a frontend going away detaches its session instead of ending it.
+export const PROTOCOL_VERSION = 2;
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
 export type ClientMessage =
   | {type: 'hello'; version: number; client: string}
   | {type: 'create'; cwd: string; env: Record<string, string>; columns: number; rows: number}
-  | {type: 'attach'; sessionId: string}
-  | {type: 'detach'; sessionId: string}
+  | {type: 'attach'; sessionId: string; columns: number; rows: number}
+  | {type: 'detach'}
+  | {type: 'list'}
   | {type: 'input'; data: string}
   | {type: 'resize'; columns: number; rows: number}
   | {type: 'terminate'};
@@ -25,11 +27,27 @@ export type ServerMessage =
   | {type: 'welcome'; version: number; service: string}
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
-  | {type: 'attached'; sessionId: string}
+  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; running?: string; runningSince?: number}
   | {type: 'detached'; sessionId: string}
+  | {type: 'sessions'; sessions: SessionInfo[]}
   | {type: 'output'; data: string}
   | {type: 'prompt'; exitCode: number; cwd: string}
   | {type: 'exit'; exitCode: number; signal?: number};
+
+/** Lifecycle of a live session. Ended sessions leave the registry entirely. */
+export type SessionState = 'attached' | 'detached';
+
+/** What the service reports about a live session; never its environment. */
+export interface SessionInfo {
+  id: string;
+  pid: number;
+  state: SessionState;
+  cwd: string;
+  createdAt: number;
+  /** Foreground command line reported by zsh preexec, while one runs. */
+  running?: string;
+  runningSince?: number;
+}
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
 
@@ -41,21 +59,24 @@ export function encodeMessage(message: ProtocolMessage): string {
   return `${JSON.stringify({v: PROTOCOL_VERSION, ...message})}\n`;
 }
 
-type Shape = Record<string, 'string' | 'int' | 'env' | 'int?'>;
+type Kind = 'string' | 'int' | 'env' | 'int?' | 'string?' | 'sessions';
+type Shape = Record<string, Kind>;
 
 const SHAPES: Record<string, Shape> = {
   hello: {version: 'int', client: 'string'},
   create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int'},
-  attach: {sessionId: 'string'},
-  detach: {sessionId: 'string'},
+  attach: {sessionId: 'string', columns: 'int', rows: 'int'},
+  detach: {},
+  list: {},
   input: {data: 'string'},
   resize: {columns: 'int', rows: 'int'},
   terminate: {},
   welcome: {version: 'int', service: 'string'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
-  attached: {sessionId: 'string'},
+  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', running: 'string?', runningSince: 'int?'},
   detached: {sessionId: 'string'},
+  sessions: {sessions: 'sessions'},
   output: {data: 'string'},
   prompt: {exitCode: 'int', cwd: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
@@ -64,6 +85,33 @@ const SHAPES: Record<string, Shape> = {
 function isEnv(value: unknown): value is Record<string, string> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   return Object.values(value).every(entry => typeof entry === 'string');
+}
+
+const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
+  running: 'string?', runningSince: 'int?'};
+
+function validField(kind: Kind, value: unknown): boolean {
+  switch (kind) {
+    case 'string': return typeof value === 'string';
+    case 'env': return isEnv(value);
+    case 'sessions': return Array.isArray(value) && value.every(entry => decodeShape(INFO_SHAPE, entry) !== undefined
+      && ((entry as SessionInfo).state === 'attached' || (entry as SessionInfo).state === 'detached'));
+    default: return Number.isSafeInteger(value);
+  }
+}
+
+function decodeShape(shape: Shape, raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const decoded: Record<string, unknown> = {};
+  for (const [field, kind] of Object.entries(shape)) {
+    const value = record[field];
+    if ((kind === 'int?' || kind === 'string?') && value === undefined) continue;
+    if (!validField(kind === 'string?' ? 'string' : kind, value)) return undefined;
+    decoded[field] = kind === 'env' ? {...(value as Record<string, string>)}
+      : kind === 'sessions' ? (value as unknown[]).map(entry => decodeShape(INFO_SHAPE, entry)) : value;
+  }
+  return decoded;
 }
 
 /** Decode one frame (without its trailing newline). */
@@ -79,18 +127,9 @@ export function decodeMessage(frame: string): DecodeResult {
   if (record.v !== PROTOCOL_VERSION) return {ok: false, error: `unsupported protocol version ${String(record.v)}`};
   const type = record.type;
   if (typeof type !== 'string' || !Object.hasOwn(SHAPES, type)) return {ok: false, error: `unknown message type ${String(type)}`};
-  const shape = SHAPES[type]!;
-  const message: Record<string, unknown> = {type};
-  for (const [field, kind] of Object.entries(shape)) {
-    const value = record[field];
-    if (kind === 'int?' && value === undefined) continue;
-    const valid = kind === 'string' ? typeof value === 'string'
-      : kind === 'env' ? isEnv(value)
-      : Number.isSafeInteger(value);
-    if (!valid) return {ok: false, error: `invalid field ${field} for ${type}`};
-    message[field] = kind === 'env' ? {...(value as Record<string, string>)} : value;
-  }
-  return {ok: true, message: message as ProtocolMessage};
+  const fields = decodeShape(SHAPES[type]!, record);
+  if (!fields) return {ok: false, error: `invalid fields for ${type}`};
+  return {ok: true, message: {type, ...fields} as ProtocolMessage};
 }
 
 /**

@@ -5,7 +5,9 @@ export interface ShellMarker {
 
 export type ProtocolEvent =
   | {kind: 'data'; data: string}
-  | {kind: 'marker'; marker: ShellMarker};
+  | {kind: 'marker'; marker: ShellMarker}
+  /** zsh preexec: a command line is about to run in the foreground. */
+  | {kind: 'exec'; command: string};
 
 export class ShellProtocolDecoder {
   private readonly prefix: string;
@@ -38,6 +40,10 @@ export class ShellProtocolDecoder {
       if (end === -1) break;
       const payload = this.buffered.slice(this.prefix.length, end);
       this.buffered = this.buffered.slice(end + 1);
+      if (payload.startsWith('exec;')) {
+        events.push({kind: 'exec', command: payload.slice(5)});
+        continue;
+      }
       const separator = payload.indexOf(';');
       const statusText = separator === -1 ? payload : payload.slice(0, separator);
       const cwd = separator === -1 ? '' : payload.slice(separator + 1);

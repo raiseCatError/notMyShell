@@ -6,16 +6,21 @@ import {PROTOCOL_VERSION, FrameDecoder, decodeMessage, encodeMessage, type Proto
 const samples: ProtocolMessage[] = [
   {type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh'},
   {type: 'create', cwd: '/tmp/x y', env: {A: '1', 'WEIRD KEY': 'v\n\u0000'}, columns: 80, rows: 24},
-  {type: 'attach', sessionId: 's1'},
-  {type: 'detach', sessionId: 's1'},
+  {type: 'attach', sessionId: 's1', columns: 90, rows: 30},
+  {type: 'detach'},
+  {type: 'list'},
   {type: 'input', data: 'ls\r\u0003\u001a\u0004'},
   {type: 'resize', columns: 120, rows: 40},
   {type: 'terminate'},
   {type: 'welcome', version: PROTOCOL_VERSION, service: 'nmshd'},
   {type: 'error', code: 'version', message: 'nope'},
   {type: 'created', sessionId: 's1', pid: 42},
-  {type: 'attached', sessionId: 's1'},
+  {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 0},
+  {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 1, running: 'vim x', runningSince: 1700000000000},
   {type: 'detached', sessionId: 's1'},
+  {type: 'sessions', sessions: []},
+  {type: 'sessions', sessions: [{id: 's1', pid: 42, state: 'detached', cwd: '/w', createdAt: 1, running: 'sleep 9', runningSince: 2},
+    {id: 's2', pid: 43, state: 'attached', cwd: '/', createdAt: 3}]},
   {type: 'output', data: '\u001b[?1049h\u001b[31mred\u001b[0m\r\n\u0007\u001b]777;x\u0007😀'},
   {type: 'prompt', exitCode: 130, cwd: '/tmp'},
   {type: 'exit', exitCode: 0},
@@ -23,8 +28,12 @@ const samples: ProtocolMessage[] = [
 ];
 
 test('protocol version is explicit on every frame', () => {
-  assert.equal(PROTOCOL_VERSION, 1);
+  assert.equal(PROTOCOL_VERSION, 2);
   assert.equal(JSON.parse(encodeMessage({type: 'terminate'})).v, PROTOCOL_VERSION);
+});
+
+test('v1 frames are refused: a v1 service ends shells on disconnect, so it must never serve a v2 frontend', () => {
+  assert.equal(decodeMessage('{"v":1,"type":"hello","version":1,"client":"nmsh"}').ok, false);
 });
 
 test('every message round-trips unchanged, including control and escape bytes', () => {
@@ -37,12 +46,18 @@ test('every message round-trips unchanged, including control and escape bytes', 
 
 test('malformed and incompatible frames are rejected without partial state', () => {
   for (const frame of ['', '{', 'null', '[]', '"x"', '{"type":"input","data":"x"}',
-    '{"v":2,"type":"input","data":"x"}', '{"v":1,"type":"bogus"}', '{"v":1,"type":"__proto__"}',
-    '{"v":1,"type":"input","data":5}', '{"v":1,"type":"resize","columns":1.5,"rows":2}',
-    '{"v":1,"type":"create","cwd":"/","env":{"A":1},"columns":1,"rows":1}']) {
+    '{"v":3,"type":"input","data":"x"}', '{"v":2,"type":"bogus"}', '{"v":2,"type":"__proto__"}',
+    '{"v":2,"type":"input","data":5}', '{"v":2,"type":"resize","columns":1.5,"rows":2}',
+    '{"v":2,"type":"create","cwd":"/","env":{"A":1},"columns":1,"rows":1}',
+    '{"v":2,"type":"attach","sessionId":"s"}',
+    '{"v":2,"type":"sessions","sessions":{}}',
+    '{"v":2,"type":"sessions","sessions":[{"id":"s","pid":1,"state":"zombie","cwd":"/","createdAt":1}]}',
+    '{"v":2,"type":"sessions","sessions":[{"id":"s","pid":"1","state":"attached","cwd":"/","createdAt":1}]}']) {
     assert.equal(decodeMessage(frame).ok, false, frame);
   }
-  const decoded = decodeMessage('{"v":1,"type":"input","data":"x","extra":{"__proto__":{"polluted":1}}}');
+  const listed = decodeMessage('{"v":2,"type":"sessions","sessions":[{"id":"s","pid":1,"state":"detached","cwd":"/","createdAt":1,"env":{"SECRET":"x"}}]}');
+  assert.deepEqual(listed, {ok: true, message: {type: 'sessions', sessions: [{id: 's', pid: 1, state: 'detached', cwd: '/', createdAt: 1}]}});
+  const decoded = decodeMessage('{"v":2,"type":"input","data":"x","extra":{"__proto__":{"polluted":1}}}');
   assert.deepEqual(decoded, {ok: true, message: {type: 'input', data: 'x'}});
   assert.equal(({} as Record<string, unknown>).polluted, undefined);
 });

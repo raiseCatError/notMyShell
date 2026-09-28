@@ -16,12 +16,14 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     this.shell.on('exit', event => this.emit('exit', event));
   }
 
+  start(): void {}
   submit(command: string): void { this.shell.submit(command); }
   write(data: string): void { this.shell.write(data); }
   interrupt(): void { this.shell.interrupt(); }
   endInput(): void { this.shell.endInput(); }
   resize(columns: number, rows: number): void { this.shell.resize(columns, rows); }
   kill(): void { this.shell.kill(); }
+  detach(): void { this.shell.kill(); }
 }
 
 function defaultShell(options: SessionOptions): ShellSession {
