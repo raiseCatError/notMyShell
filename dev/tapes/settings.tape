@@ -4,14 +4,14 @@ Require zsh
 Output dev/tapes/output/settings.gif
 Set Shell "zsh"
 Set Width 1200
-Set Height 720
+Set Height 650
 Set FontSize 18
 Set TypingSpeed 60ms
 
 Hide
 Type "npm run dev" Enter
-Sleep 2s
+Wait+Screen /notMyShell/
 Type "/settings" Enter
-Sleep 2s
+Wait+Screen /Search settings/
 Show
 Sleep 2s
