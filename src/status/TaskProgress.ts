@@ -1,4 +1,5 @@
 import {spawn, type ChildProcessByStdio} from 'node:child_process';
+import {environmentFor, resolveCommand, STANDARD_TOOL_DIRECTORIES} from '../providers/providers.js';
 import type {Readable} from 'node:stream';
 import {formatDuration} from './commandTiming.js';
 import {shimmerText} from './shimmer.js';
@@ -73,7 +74,13 @@ export class TaskProgress {
         resolve(this.state);
       };
       try {
-        const child = spawn(command, args, {stdio: ['ignore', 'pipe', 'pipe'], env: process.env});
+        const binary = resolveCommand(command);
+        if (!binary) {
+          finish(`${command} was not found on PATH or in ${STANDARD_TOOL_DIRECTORIES.join(', ')}.`);
+          return;
+        }
+        // argv only, never a shell string; the tool's directory joins PATH for its own subprocesses.
+        const child = spawn(binary, args, {stdio: ['ignore', 'pipe', 'pipe'], env: environmentFor(binary)});
         this.child = child;
         child.stdout.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));
         child.stderr.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));

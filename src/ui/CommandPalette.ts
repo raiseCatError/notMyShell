@@ -72,11 +72,22 @@ export function paletteItems(): PaletteItem[] {
 export interface PaletteState {
   query: string;
   selectedIndex: number;
+  /** First visible result; moves only when the selection would leave the window. */
+  viewportStart: number;
   items: readonly PaletteItem[];
 }
 
+/** Clamp selection and scroll the minimum needed to keep it visible in `height` rows. */
+export function reconcilePaletteViewport(state: PaletteState, count: number, height: number): void {
+  const rows = Math.max(1, height);
+  state.selectedIndex = count === 0 ? 0 : Math.max(0, Math.min(count - 1, state.selectedIndex));
+  if (state.selectedIndex < state.viewportStart) state.viewportStart = state.selectedIndex;
+  else if (state.selectedIndex >= state.viewportStart + rows) state.viewportStart = state.selectedIndex - rows + 1;
+  state.viewportStart = Math.max(0, Math.min(state.viewportStart, Math.max(0, count - rows)));
+}
+
 export function createPalette(items: readonly PaletteItem[] = paletteItems()): PaletteState {
-  return {query: '', selectedIndex: 0, items};
+  return {query: '', selectedIndex: 0, viewportStart: 0, items};
 }
 
 /** Recent entries first when empty; otherwise substring before fuzzy, then recency. */
@@ -104,9 +115,9 @@ export function handlePaletteKey(key: Key, state: PaletteState, recent: readonly
   if (key.kind === 'enter') return visible[Math.min(state.selectedIndex, visible.length - 1)];
   if (key.kind === 'up') state.selectedIndex = visible.length ? (state.selectedIndex - 1 + visible.length) % visible.length : 0;
   else if (key.kind === 'down') state.selectedIndex = visible.length ? (state.selectedIndex + 1) % visible.length : 0;
-  else if (key.kind === 'text' || key.kind === 'paste') { state.query += key.value.replace(/[\r\n]/gu, ''); state.selectedIndex = 0; }
-  else if (key.kind === 'backspace') { state.query = [...state.query].slice(0, -1).join(''); state.selectedIndex = 0; }
-  else if (key.kind === 'deleteWord' || key.kind === 'deleteLineBefore') { state.query = ''; state.selectedIndex = 0; }
+  else if (key.kind === 'text' || key.kind === 'paste') { state.query += key.value.replace(/[\r\n]/gu, ''); state.selectedIndex = 0; state.viewportStart = 0; }
+  else if (key.kind === 'backspace') { state.query = [...state.query].slice(0, -1).join(''); state.selectedIndex = 0; state.viewportStart = 0; }
+  else if (key.kind === 'deleteWord' || key.kind === 'deleteLineBefore') { state.query = ''; state.selectedIndex = 0; state.viewportStart = 0; }
   else return undefined;
   return 'changed';
 }
@@ -122,8 +133,9 @@ export function renderPalette(state: PaletteState, columns: number, rowsAvailabl
   const rows = [`${PRIMARY}  Command palette${RESET}  ${SUBTLE}NMSh actions only${RESET}`,
     `${SECONDARY}  › ${state.query}${ACCENT}▏${RESET}`, ''];
   const budget = Math.max(1, rowsAvailable - rows.length - 2);
-  const selected = Math.min(state.selectedIndex, Math.max(0, visible.length - 1));
-  const start = Math.max(0, Math.min(selected - budget + 1, visible.length - budget));
+  reconcilePaletteViewport(state, visible.length, budget);
+  const selected = state.selectedIndex;
+  const start = state.viewportStart;
   if (visible.length === 0) rows.push(`${SUBTLE}  No matching NMSh action${RESET}`);
   visible.slice(start, start + budget).forEach((item, offset) => {
     const active = start + offset === selected;

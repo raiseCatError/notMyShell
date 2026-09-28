@@ -22,7 +22,7 @@ import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider, resolveProvider} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, resolveCommand, resolveProvider} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
@@ -1431,7 +1431,7 @@ export class TerminalApp {
           state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('starship');
         }
       } else if (state.selectedIndex === 0) {
-        const hasHomebrew = (process.env.PATH ?? '').split(delimiter).some(directory => existsSync(join(directory, 'brew')));
+        const hasHomebrew = resolveCommand('brew') !== undefined;
         if (process.platform !== 'darwin' || !hasHomebrew) {
           state.message = 'Homebrew was not found. Install Starship using the official guide, then reopen /prompt.';
         } else {
@@ -2355,6 +2355,7 @@ export class TerminalApp {
 
     this.renderer.render({
       rows: frameRows,
+      columns,
       cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
       cursorVisible: !plan.panelActive,
