@@ -5,14 +5,26 @@ import {
   adjustSettingsRow, isInlineEditable, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
   settingsView, statusLineCount, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
   type SettingsView, type StatusSections,
+  SETTINGS_ENTRIES,
+  SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
+import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
+import {SuggestionController} from '../suggestions/SuggestionController.js';
+import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
+import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
+import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
+import {ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
-import {createWelcomeSnapshot, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
+import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
+import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
+import {clearProviderDetection, detectProvider, resolveCommand, resolveProvider} from '../providers/providers.js';
+import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
+  type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
 import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
@@ -34,17 +46,17 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
-import {displayWidth, repeatToWidth, truncateAnsi, truncateText} from '../util/text.js';
+import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
-import {shimmerText, shimmerTextWithColors} from '../status/shimmer.js';
+import {shimmerText} from '../status/shimmer.js';
 import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS} from '../ui/palette.js';
-import {calculateScreenLayout} from './layout.js';
+import {cursorScreenRow, planScreen, regionAt, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
@@ -58,6 +70,8 @@ import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptSto
 import {SessionJournal} from '../sessions/SessionJournal.js';
 import {createResumeBrowser, navigateResume, resumeDayLabel, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 
+/** Editor text that marks interactive history search. */
+const HISTORY_SEARCH = '/history ';
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
 const SUBTLE = foreground(UI_COLORS.subtle);
@@ -91,6 +105,11 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly session: ShellSession;
   private readonly historyService = new HistoryService();
+  private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
+  private readonly suggestions = new SuggestionController(() => this.render(),
+    reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
+  /** Commands submitted this session, most recent first: the sequence context for suggestions. */
+  private readonly submittedCommands: string[] = [];
   private readonly transcriptStore = new TranscriptStore();
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
@@ -108,9 +127,18 @@ export class TerminalApp {
   private p10kStatus?: Powerlevel10kStatus;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
+  /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
+  private providerPanelState?: ProviderPanelState;
+  private paletteState?: PaletteState;
+  /** Palette entry ids used this session, most recent first. */
+  private paletteRecent: string[] = [];
+  /** Captured previews per external welcome provider, fetched once per panel. */
+  private welcomePreviews = new Map<string, string[]>();
+  /** Bumped by every new or restored presentation so a late capture never lands in the wrong one. */
+  private welcomeGeneration = 0;
   private syntaxPanelState?: SyntaxPanelState;
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
@@ -153,9 +181,11 @@ export class TerminalApp {
 
   constructor() {
     setIconStyle(this.promptConfiguration.glyphStyle);
-    this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.initialCwd));
+    this.startWelcome(this.initialCwd);
+    this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
+    this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     const dimensions = this.dimensions();
     this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
     this.semanticService = new SemanticService(this.initialCwd);
@@ -205,6 +235,7 @@ export class TerminalApp {
       this.render();
     }, STATUS_REFRESH_MS);
     this.scheduleWelcomeBlink();
+    void this.loadHistory();
     this.render();
     void this.quietUpdateCheck();
     const exitCode = await this.done;
@@ -249,6 +280,24 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.paletteState) {
+      const state = this.paletteState;
+      if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'palette') this.paletteState = undefined;
+      else {
+        const result = handlePaletteKey(key, state, this.paletteRecent);
+        if (result && result !== 'changed') {
+          this.paletteState = undefined;
+          void this.runPaletteItem(result).then(() => this.render());
+        }
+      }
+      this.render();
+      return;
+    }
+    if (key.kind === 'palette') {
+      if (!this.running) this.openPalette();
+      this.render();
+      return;
+    }
     if (this.settingsPanelState) {
       this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
@@ -262,6 +311,10 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         this.saveSyntaxSettings();
       } else if (handleSyntaxPanelKey(key, this.syntaxPanelState)) this.render();
+      return;
+    }
+    if (this.providerPanelState) {
+      void this.handleProviderPanelKey(key, this.providerPanelState);
       return;
     }
     if (this.transcriptPanelState) {
@@ -355,23 +408,21 @@ export class TerminalApp {
     }
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
-      const fullInput = this.layoutEditorInput(columns);
-      const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-      const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
-      if (key.y && key.y <= layout.outputHeight) {
+      // Hit-test against the same plan render paints; Shift+mouse never reaches here (native selection).
+      const plan = this.planFrame(columns, rows);
+      const hit = key.y ? regionAt(plan, screenRowFromTerminal(key.y)) : undefined;
+      if (hit?.region.kind === 'transcript') {
+        const outputHeight = plan.transcript.height;
         const wrapped = this.output.wrapped(columns);
-        const viewStart = this.historyViewport.resolve(wrapped.length, layout.outputHeight);
+        const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
+        const localVisibleIndex = hit.localRow;
 
-        // Exact same top-aligned calculation as render().
-        const topPadding = 0;
-
-        const localVisibleIndex = key.y - 1 - topPadding;
-
+        // The sticky header paints over the transcript region's first row.
         const sticky = localVisibleIndex === 0 ? this.stickyHeader(wrapped, viewStart) : undefined;
         if (sticky) {
           // The sticky overlay owns the top row: a click jumps to the block's real header.
           if (key.kind === 'mouseClick') {
-            this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, sticky.targetIndex - viewStart);
+            this.historyViewport.scrollLines(wrapped.length, outputHeight, sticky.targetIndex - viewStart);
             this.hoveredLineIndex = undefined;
             this.render();
           } else if (this.hoveredLineIndex !== undefined) {
@@ -467,7 +518,7 @@ export class TerminalApp {
     if (key.kind === 'historySearch') {
       if (!this.running) {
         this.editor.clear();
-        this.editor.insert('/history ');
+        this.editor.insert(HISTORY_SEARCH);
       }
       return;
     }
@@ -503,7 +554,15 @@ export class TerminalApp {
       return;
     }
 
-    const suggestions = this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
+    if (!this.running && this.handleSuggestionKey(key)) {
+      this.selectedSuggestion = 0;
+      return;
+    }
+
+    // History search navigates its own matches; other slash text navigates slash commands.
+    const suggestions = this.historySearchActive
+      ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
+      : this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
     if (key.kind === 'up' && suggestions.length > 0) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
@@ -568,9 +627,7 @@ export class TerminalApp {
         }
 
         const {columns, rows} = this.dimensions();
-        const fullInput = this.layoutEditorInput(columns);
-        const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 3 : this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : this.shellSuggestions.length);
-        const layout = calculateScreenLayout(rows, fullInput.allRows.length, overlayRows, Boolean(this.running), this.historyViewport.detached, this.output.wrapped(columns).length > 0, this.promptConfiguration.placement, this.hasVisibleProviderPrompt(), this.promptConfiguration.composerLayout);
+        const outputHeight = this.planFrame(columns, rows).transcript.height;
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
@@ -579,9 +636,9 @@ export class TerminalApp {
             ? r.commandIndex === this.focusedCommandIndex && r.isFoldHint
             : r.lineIndex === this.focusedLineIndex);
         if (wrappedIndex !== -1) {
-          this.historyViewport.resolve(wrapped.length, layout.outputHeight);
-          if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + layout.outputHeight) {
-             this.historyViewport.scrollLines(wrapped.length, layout.outputHeight, wrappedIndex - this.historyViewport.start - Math.floor(layout.outputHeight / 2));
+          this.historyViewport.resolve(wrapped.length, outputHeight);
+          if (wrappedIndex < this.historyViewport.start || wrappedIndex >= this.historyViewport.start + outputHeight) {
+             this.historyViewport.scrollLines(wrapped.length, outputHeight, wrappedIndex - this.historyViewport.start - Math.floor(outputHeight / 2));
           }
         }
 
@@ -670,10 +727,95 @@ export class TerminalApp {
     }
   }
 
+  /**
+   * Enter in history search: bare `/history` opens the search; otherwise the
+   * selected match is restored into the editor (not run). With no match the
+   * search stays open unchanged. Nothing is written to zsh or the transcript.
+   */
+  private submitHistorySearch(query: string, searching: boolean): void {
+    const selected = searching ? this.historyMatches(query)[this.selectedSuggestion] ?? this.historyMatches(query)[0] : undefined;
+    if (selected) this.applySuggestion(selected);
+    else {
+      this.editor.insert(`${HISTORY_SEARCH}${query}`);
+      this.selectedSuggestion = 0;
+    }
+  }
+
   private applySuggestion(suggestion: {insertion: string}): void {
     this.editor.clear();
     this.editor.insert(suggestion.insertion);
     this.selectedSuggestion = 0;
+  }
+
+  /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
+  private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
+    if (slash.kind === 'copy') await this.copyRecent(slash.index);
+    else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
+    else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
+    else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
+    else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
+    else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
+    else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
+    else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
+    else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
+    else if (slash.kind === 'clear') await this.startFreshPresentation();
+    else if (slash.kind === 'resume') await this.openResumePicker();
+    else if (slash.kind === 'help') this.showHelp(command);
+    else if (slash.kind === 'history') this.submitHistorySearch(slash.query, command.startsWith(HISTORY_SEARCH));
+    else if (slash.kind === 'palette') this.openPalette();
+    else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
+  }
+
+  private openPalette(): void {
+    if (this.settingsPanelActive) return;
+    this.paletteState = createPalette();
+  }
+
+  /** Executes only the declared NMSh action of the chosen entry. */
+  private async runPaletteItem(item: PaletteItem): Promise<void> {
+    this.paletteRecent = [item.id, ...this.paletteRecent.filter(id => id !== item.id)].slice(0, 20);
+    const action = item.action;
+    const config = structuredClone(this.promptConfiguration);
+    switch (action.kind) {
+      case 'slash': {
+        const slash = parseSlashCommand(action.command);
+        if (slash) await this.runSlash(action.command, slash);
+        break;
+      }
+      case 'open': {
+        this.openSettingsPanel('settings');
+        const index = SETTINGS_ENTRIES.findIndex(entry => entry.control === 'child' && entry.destination === action.destination);
+        this.openSettingsDestination(action.destination, 'settings', Math.max(0, index), this.settingsPanelState!);
+        break;
+      }
+      case 'config':
+        this.openSettingsPanel('config');
+        this.settingsPanelState!.contentIndex = Math.max(0, SETTINGS_ROWS.findIndex(row => row.id === action.rowId));
+        break;
+      case 'toggleComposerPosition':
+        config.composerPosition = config.composerPosition === 'top' ? 'bottom' : 'top';
+        this.applySettingsConfiguration(config);
+        break;
+      case 'toggleTranscriptPresentation':
+        config.transcriptPresentation = config.transcriptPresentation === 'chat' ? 'normal' : 'chat';
+        this.applySettingsConfiguration(config);
+        break;
+      case 'cycleOutputFolding':
+        config.outputFolding = OUTPUT_FOLDING_MODES[(OUTPUT_FOLDING_MODES.indexOf(config.outputFolding) + 1) % OUTPUT_FOLDING_MODES.length]!;
+        this.applySettingsConfiguration(config);
+        break;
+      case 'theme':
+        config.nmsh.palette = action.palette;
+        this.applySettingsConfiguration(config);
+        break;
+      case 'latest':
+        this.historyViewport.latest();
+        break;
+      case 'toggleDetails':
+        this.output.toggleMostRelevant();
+        break;
+    }
   }
 
   private async submit(): Promise<void> {
@@ -683,20 +825,7 @@ export class TerminalApp {
 
     const slash = parseSlashCommand(command);
     if (slash) {
-      if (slash.kind === 'copy') await this.copyRecent(slash.index);
-      else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
-      else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
-      else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
-      else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
-      else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
-      else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
-      else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
-      else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
-      else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
-      else if (slash.kind === 'clear') await this.startFreshPresentation();
-      else if (slash.kind === 'resume') await this.openResumePicker();
-      else if (slash.kind === 'help') this.showHelp(command);
-      else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
+      await this.runSlash(command, slash);
       this.render();
       return;
     }
@@ -716,7 +845,7 @@ export class TerminalApp {
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, startId};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
     });
@@ -877,7 +1006,7 @@ export class TerminalApp {
     }
     this.output.clearPresentation();
     this.presentationStartCwd = this.shellCwd;
-    this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, this.presentationStartCwd));
+    this.startWelcome(this.presentationStartCwd);
     this.historyViewport.latest();
     try { await this.journal?.start(); this.journalActive = Boolean(this.journal); } catch {
       this.journalActive = false;
@@ -916,6 +1045,7 @@ export class TerminalApp {
       return;
     }
     this.output.restoreTranscript(restored.transcript);
+    this.welcomeGeneration += 1;
     this.presentationStartCwd = selected.startCwd;
     this.resumeBrowser = undefined;
     this.historyViewport.latest();
@@ -1032,6 +1162,9 @@ export class TerminalApp {
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     const completedRecord = this.output.complete(exitCode);
+    this.suggestions.record({command: command.command, cwd: command.cwd, exitCode, at: command.startedAt, previous: this.submittedCommands[0]});
+    this.submittedCommands.unshift(command.command);
+    if (this.submittedCommands.length > 50) this.submittedCommands.length = 50;
     if (!command.cleared) {
       const outputText = completedRecord?.output ?? '';
       const facts = extractFacts(command.command, outputText);
@@ -1298,7 +1431,7 @@ export class TerminalApp {
           state.step = 'provider'; state.selectedIndex = PROVIDER_ORDER.indexOf('starship');
         }
       } else if (state.selectedIndex === 0) {
-        const hasHomebrew = (process.env.PATH ?? '').split(delimiter).some(directory => existsSync(join(directory, 'brew')));
+        const hasHomebrew = resolveCommand('brew') !== undefined;
         if (process.platform !== 'darwin' || !hasHomebrew) {
           state.message = 'Homebrew was not found. Install Starship using the official guide, then reopen /prompt.';
         } else {
@@ -1456,7 +1589,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.syntaxPanelState || this.settingsPanelState
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
@@ -1467,6 +1600,13 @@ export class TerminalApp {
     }
     if (this.syntaxPanelState) {
       return framePanel(renderSyntaxPanel(this.syntaxPanelState, columns, this.promptConfiguration.nmsh.palette, this.dimensions().rows - 4), columns);
+    }
+    if (this.paletteState) {
+      return framePanel(renderPalette(this.paletteState, columns, Math.min(18, this.dimensions().rows - 4), this.paletteRecent), columns);
+    }
+    if (this.providerPanelState) {
+      return framePanel(renderProviderPanel(this.providerPanelState, columns, this.providerPreview(this.providerPanelState, columns - 2),
+        this.dimensions().rows - 4), columns);
     }
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
@@ -1615,6 +1755,7 @@ export class TerminalApp {
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
+    else if (destination === 'welcome' || destination === 'suggestions') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
 
@@ -1670,7 +1811,187 @@ export class TerminalApp {
     setIconStyle(next.glyphStyle);
     this.output.setTranscriptAppearance(next.transcript);
     this.output.setOutputFolding(next.outputFolding);
+    this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
+  }
+
+  /**
+   * Starts the welcome for a new presentation. External providers are
+   * captured once in the background; failure falls back to Vespyr quietly.
+   */
+  private startWelcome(cwd: string): void {
+    const generation = ++this.welcomeGeneration;
+    const provider = this.promptConfiguration.welcome;
+    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd));
+    if (provider === 'none') return;
+    if (provider === 'vespyr') { vespyr(); return; }
+    void captureWelcome(provider, cwd).then(result => {
+      if (generation !== this.welcomeGeneration || this.stopped) return;
+      if (result.ok) this.output.setWelcome({...createWelcomeSnapshot(this.buildIdentity, cwd), provider, captured: result.lines});
+      else {
+        vespyr();
+        this.output.addHistoryLine(`${SUBTLE}${welcomeProvider(provider).label} welcome ${result.reason}; showing Vespyr.${RESET}`);
+      }
+      this.render();
+    });
+  }
+
+  /** History loads in the background after startup; suggestions refine once it is indexed. */
+  private async loadHistory(): Promise<void> {
+    await this.historyService.reload();
+    if (this.stopped) return;
+    await this.nativeSuggestions.loadInChunks(this.historyService.getEntries());
+    if (this.stopped) return;
+    this.suggestions.refresh();
+    this.render();
+  }
+
+  /** Suggestions apply to plain shell input at the end of the buffer only. */
+  private suggestionGhost(): string | undefined {
+    const text = this.editor.text;
+    if (this.editor.hasPasteAtoms || this.historySearchActive || text.startsWith('/')) {
+      this.suggestions.reset();
+      return undefined;
+    }
+    this.suggestions.update({buffer: text, cwd: this.shellCwd, previous: this.submittedCommands, now: Date.now()},
+      this.promptConfiguration.suggestionsOnEmpty && !this.running);
+    return this.suggestions.ghost(text);
+  }
+
+  /**
+   * Suggestion keys never steal an existing binding: word-right only accepts
+   * at the end of the buffer, Ctrl+N/Ctrl+P were unbound, and Up/Down/Enter
+   * act on alternatives only while that list is open.
+   */
+  private handleSuggestionKey(key: Key): boolean {
+    const buffer = this.editor.text;
+    const atEnd = this.editor.cursorIndex === graphemes(buffer).length && !this.editor.hasPasteAtoms;
+    if (key.kind === 'suggestNext' || key.kind === 'suggestPrevious') {
+      this.suggestions.cycle(key.kind === 'suggestNext' ? 1 : -1);
+      return true;
+    }
+    if (this.suggestions.alternativesOpen) {
+      if (key.kind === 'up' || key.kind === 'down') {
+        this.suggestions.cycle(key.kind === 'down' ? 1 : -1);
+        return true;
+      }
+      if (key.kind === 'right' || key.kind === 'lineEnd' || key.kind === 'bufferEnd' || key.kind === 'complete' || key.kind === 'enter') {
+        const text = this.suggestions.acceptance(buffer);
+        this.suggestions.alternativesOpen = false;
+        if (text) {
+          this.editor.clear();
+          this.editor.insert(text);
+        }
+        return true;
+      }
+      if (key.kind === 'escape') return this.suggestions.dismiss(buffer);
+      return false;
+    }
+    if (key.kind === 'wordRight' && atEnd) {
+      const word = this.suggestions.nextWord(buffer);
+      if (!word) return false;
+      this.editor.insert(word);
+      return true;
+    }
+    if (key.kind === 'escape') return this.suggestions.dismiss(buffer);
+    return false;
+  }
+
+  /** External providers are detected in the background; Native answers until then and whenever they are unusable. */
+  private applySuggestionProvider(): void {
+    const id = this.promptConfiguration.suggestions;
+    this.suggestions.setProvider(id === 'none' ? undefined : this.nativeSuggestions, this.nativeSuggestions);
+    if (id !== 'deja') return;
+    const descriptor = SUGGESTION_PROVIDERS.find(provider => provider.id === 'deja')!;
+    void detectProvider(descriptor).then(status => {
+      if (this.stopped || this.promptConfiguration.suggestions !== 'deja') return;
+      const resolved = resolveProvider(SUGGESTION_PROVIDERS, 'deja', status, 'nmsh');
+      if (resolved.id === 'deja' && status.binary) this.suggestions.setProvider(new DejaSuggestions(status.binary), this.nativeSuggestions);
+      else if (resolved.notice) this.output.addHistoryLine(`${SUBTLE}${resolved.notice}${RESET}`);
+      this.render();
+    });
+  }
+
+  private startProviderPanel(family: 'welcome' | 'suggestions'): void {
+    const state: ProviderPanelState = family === 'welcome'
+      ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
+      : createProviderPanel(family, 'Suggestions', SUGGESTION_PROVIDERS, this.promptConfiguration.suggestions);
+    this.providerPanelState = state;
+    this.welcomePreviews.clear();
+    for (const provider of state.providers) {
+      void detectProvider(provider).then(status => {
+        state.statuses[provider.id] = status;
+        if (this.providerPanelState === state) this.render();
+      });
+    }
+  }
+
+  /** The highlighted provider rendered by its own family; captures are cached per panel. */
+  private providerPreview(state: ProviderPanelState, width: number): string[] {
+    const selected = providerPanelSelection(state);
+    if (state.family === 'suggestions') {
+      if (selected.id === 'none') return [`${SUBTLE}No ghost text while typing.${RESET}`];
+      return [`${ACCENT}${GLYPHS.prompt}${RESET} git st${SECONDARY}atus${RESET}   ${SUBTLE}→ / End accept · Alt+→ next word · Ctrl+N/P alternatives · Esc dismiss${RESET}`];
+    }
+    if (selected.id === 'none') return [`${SUBTLE}No welcome; new sessions start at the first command.${RESET}`];
+    if (selected.id === 'vespyr') return renderWelcome(createWelcomeSnapshot(this.buildIdentity, this.shellCwd), width).map(row => row.ansi);
+    if (state.statuses[selected.id]?.state !== 'installed') return [];
+    const cached = this.welcomePreviews.get(selected.id);
+    if (cached) return cached;
+    this.welcomePreviews.set(selected.id, [`${SUBTLE}Running ${selected.label}…${RESET}`]);
+    void captureWelcome(selected.id as 'fastfetch' | 'neofetch', this.shellCwd).then(result => {
+      this.welcomePreviews.set(selected.id, result.ok
+        ? renderWelcome({...createWelcomeSnapshot(this.buildIdentity, this.shellCwd), captured: result.lines}, width).map(row => row.ansi)
+        : [`${SUBTLE}${selected.label} failed: ${result.reason}${RESET}`]);
+      if (this.providerPanelState === state) this.render();
+    });
+    return this.welcomePreviews.get(selected.id)!;
+  }
+
+  private async handleProviderPanelKey(key: Key, state: ProviderPanelState): Promise<void> {
+    if (state.step === 'installProgress') return;
+    if (key.kind === 'escape' || key.kind === 'interrupt') {
+      if (state.step === 'installConfirm') state.step = 'list';
+      else { this.providerPanelState = undefined; this.returnFromPanel(); }
+    } else if (key.kind === 'enter') {
+      const selected = providerPanelSelection(state);
+      if (state.step === 'installConfirm' && selected.install) {
+        state.step = 'installProgress';
+        state.task = new TaskProgress(`Installing ${selected.label}`, () => this.render(), Date.now(), selected.label);
+        this.render();
+        const outcome = await state.task.run(selected.install.command, [...selected.install.args]);
+        if (this.stopped) return;
+        clearProviderDetection();
+        state.statuses[selected.id] = await detectProvider(selected);
+        state.step = 'list';
+        state.message = outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed'
+          ? `${selected.label} installed.` : `${selected.label} was not installed. ${state.task.state.error ?? ''}`.trim();
+      } else {
+        const action = providerPanelEnterAction(state);
+        if (action === 'installConfirm') state.step = 'installConfirm';
+        else if (action === 'unavailable') state.message = `${selected.label} is not available on this system.`;
+        else this.saveProviderChoice(state);
+      }
+    } else if (!handleProviderPanelKey(key, state)) return;
+    this.render();
+  }
+
+  private saveProviderChoice(state: ProviderPanelState): void {
+    const selected = providerPanelSelection(state);
+    const next = state.family === 'welcome'
+      ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
+      : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
+    try {
+      savePromptConfiguration(next);
+      this.promptConfiguration = next;
+      this.providerPanelState = undefined;
+      if (state.family === 'suggestions') this.applySuggestionProvider();
+      this.output.addHistoryLine(state.family === 'welcome'
+        ? `${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`
+        : `${SUCCESS}Suggestions · ${selected.label}.${RESET}`);
+    } catch (error) {
+      state.message = `Could not save: ${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 
   private startTranscriptSettings(): void {
@@ -1805,45 +2126,26 @@ export class TerminalApp {
   }
 
   private scroll(direction: -1 | 1): void {
-    const {columns, rows} = this.dimensions();
-    const input = this.layoutEditorInput(columns);
-    const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
-    const outputHeight = Math.max(1, calculateScreenLayout(
-      rows,
-      input.allRows.length,
-      overlayRows,
-      Boolean(this.running),
-      this.historyViewport.detached,
-      this.output.wrapped(columns).length > 0,
-      this.promptConfiguration.placement,
-      this.hasVisibleProviderPrompt(),
-      this.promptConfiguration.composerLayout,
-    ).outputHeight);
+    const {columns} = this.dimensions();
+    const outputHeight = this.transcriptViewportHeight();
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
     this.historyViewport.page(total, outputHeight, direction);
   }
 
   private scrollLines(amount: number): void {
-    const {columns, rows} = this.dimensions();
-    const input = this.layoutEditorInput(columns);
-    const overlayRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : this.appearanceState ? 7 : (this.keyboardState ? 6 : (this.editor.hasPasteAtoms ? 0 : slashSuggestions(this.editor.text).length));
-    const outputHeight = Math.max(1, calculateScreenLayout(
-      rows,
-      input.allRows.length,
-      overlayRows,
-      Boolean(this.running),
-      this.historyViewport.detached,
-      this.output.wrapped(columns).length > 0,
-      this.promptConfiguration.placement,
-      this.hasVisibleProviderPrompt(),
-      this.promptConfiguration.composerLayout,
-    ).outputHeight);
+    const {columns} = this.dimensions();
+    const outputHeight = this.transcriptViewportHeight();
     const total = this.output.wrapped(columns).length;
     this.historyViewport.resolve(total, outputHeight);
     this.historyViewport.scrollLines(total, outputHeight, amount);
   }
 
+  /** Scroll paging needs at least one row even when the plan leaves the transcript empty. */
+  private transcriptViewportHeight(): number {
+    const {columns, rows} = this.dimensions();
+    return Math.max(1, this.planFrame(columns, rows).transcript.height);
+  }
 
   private formatCommandAnsi(command: string, startId: number | null, sgr = this.syntaxSgr): string[] {
     const inputChars = graphemes(command);
@@ -1896,143 +2198,87 @@ export class TerminalApp {
     return lines;
   }
 
+  /** Interactive history search is the editor state `/history <query>`; it never reaches zsh or the transcript. */
+  private get historySearchActive(): boolean {
+    return !this.editor.hasPasteAtoms && this.editor.text.startsWith(HISTORY_SEARCH);
+  }
+
+  private historyMatches(query: string): Array<{name: string; insertion: string; description: string}> {
+    const q = query.toLowerCase();
+    return this.historyService.getAll().filter(h => h.toLowerCase().includes(q))
+      .slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
+  }
+
+  /** Composer suggestion rows for the current editor state; the same list render paints and geometry counts. */
+  private composerSuggestions(): any[] {
+    if (this.running || this.settingsPanelActive) return [];
+    if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
+    if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
+    const alternatives = this.suggestions.alternatives();
+    if (alternatives.items.length > 0) return alternatives.items.map(item => ({name: item.text, description: ''}));
+    return this.shellSuggestions;
+  }
+
+  /**
+   * The one screen plan for the current state. Render, hit-testing, scroll,
+   * focus, cursor and PTY sizing all call this instead of counting rows.
+   */
+  private planFrame(
+    columns: number,
+    rows: number,
+    fullInput = this.layoutEditorInput(columns),
+    suggestions = this.composerSuggestions().length,
+    panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
+  ): ScreenPlan {
+    const transcriptRows = this.output.wrapped(columns).length;
+    return planScreen({
+      rows,
+      inputRows: fullInput.allRows.length,
+      suggestions,
+      running: Boolean(this.running),
+      detached: this.historyViewport.detached,
+      hasOutput: transcriptRows > 0,
+      composerPosition: this.promptConfiguration.composerPosition,
+      transcriptRows,
+      contextPlacement: this.promptConfiguration.placement,
+      hasVisibleContext: this.hasVisibleProviderPrompt(),
+      composerLayout: this.promptConfiguration.composerLayout,
+      panelRows,
+    });
+  }
+
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough) return;
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
-    const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
-
-    let availableSuggestions: any[] = [];
-    if (!this.running) {
-      if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/history ')) {
-        const q = this.editor.text.substring(9).toLowerCase();
-        const matches = this.historyService.getAll().filter(h => h.toLowerCase().includes(q));
-        availableSuggestions = matches.slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
-      } else if (isSlash) {
-        availableSuggestions = this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
-      } else {
-        availableSuggestions = this.shellSuggestions;
-      }
-    }
-
-    if (this.settingsPanelActive) availableSuggestions = [];
-    const promptPanelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : 0;
-    const overlayRows = this.settingsPanelActive ? promptPanelRows : this.appearanceState ? 7 : (this.keyboardState ? 6 : availableSuggestions.length);
+    const availableSuggestions = this.composerSuggestions();
+    const panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns) : undefined;
     const promptLine = this.currentPromptLine(columns);
-    this.editor.ghost = this.editor.hasPasteAtoms ? undefined : this.historyService.suggest(this.editor.text);
+    this.editor.ghost = this.suggestionGhost();
     const fullInput = this.layoutEditorInput(columns);
-    const calculatedLayout = calculateScreenLayout(
-      rows,
-      fullInput.allRows.length,
-      overlayRows,
-      Boolean(this.running),
-      this.historyViewport.detached,
-      this.output.wrapped(columns).length > 0,
-      this.promptConfiguration.placement,
-      this.hasVisibleProviderPrompt(),
-      this.promptConfiguration.composerLayout,
-    );
-    const layout = this.settingsPanelActive ? {
-      ...calculatedLayout,
-      outputHeight: Math.max(0, rows - promptPanelRows),
-      inputHeight: 0,
-      suggestionCount: 0,
-      showJump: false,
-      showLiveActivity: false,
-      showPrompt: false,
-      showComposerTopBorder: false,
-      showSeparator: false,
-      showGap: false,
-    } : calculatedLayout;
-    const input = this.settingsPanelActive
+    const plan = this.planFrame(columns, rows, fullInput, availableSuggestions.length, panelRows?.length);
+    const input = plan.panelActive
       ? {...fullInput, rows: [], caretRow: 0, caretColumn: 0}
-      : this.layoutEditorInput(columns, layout.inputHeight);
+      : this.layoutEditorInput(columns, plan.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
-    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, layout.suggestionCount);
-    const outputHeight = layout.outputHeight;
-    if (this.lastPtyRows !== outputHeight || this.lastPtyColumns !== columns) {
-      this.lastPtyRows = outputHeight;
+    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, plan.suggestionCount);
+    if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
+      this.lastPtyRows = plan.ptyRows;
       this.lastPtyColumns = columns;
-      this.session.resize(columns, outputHeight);
+      this.session.resize(columns, plan.ptyRows);
     }
 
+    const outputHeight = plan.transcript.height;
     const wrapped = this.output.wrapped(columns);
     const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
-      let finalAnsi = row.ansi;
-      if (row.isLiveActivity && row.activityStartedAt !== undefined) {
-        finalAnsi = `${shimmerTextWithColors(row.plain, Date.now() - row.activityStartedAt, false,
-          {red: 148, green: 155, blue: 166}, {red: 248, green: 250, blue: 252})}${RESET}`;
-      }
-      const applyBg = (bg: string) => {
-        return `${bg}${finalAnsi.replaceAll('\u001B[0m', '\u001B[0m' + bg)}${bg}\u001B[K${RESET}`;
-      };
-
-      if (row.isFoldHint) {
-        const isHovered = this.hoveredLineIndex === row.lineIndex;
-        const isFocused = row.activityId
-          ? this.focusedActivityId === row.activityId
-          : row.commandIndex !== undefined
-            ? this.focusedCommandIndex === row.commandIndex
-            : this.focusedLineIndex === row.lineIndex;
-        if (isHovered || isFocused) {
-          const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
-          if (!row.isLiveActivity) {
-            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
-          }
-          finalAnsi = applyBg(bg);
-        }
-      } else if (row.lineIndex !== undefined) {
-        const type = this.output.lineTypes.get(row.lineIndex);
-        if (type === 'command') {
-          // Subtle background for command
-          finalAnsi = applyBg(`\u001B[48;2;38;38;48m`);
-        } else if (type === 'metadata') {
-          const isHovered = this.hoveredLineIndex === row.lineIndex;
-          const isFocused = this.focusedLineIndex === row.lineIndex;
-          if (isHovered || isFocused) {
-            // Brighten on hover/focus
-            finalAnsi = row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
-            const bg = isFocused ? `\u001B[48;2;60;60;80m` : `\u001B[48;2;45;45;55m`;
-            finalAnsi = applyBg(bg);
-          }
-        }
-      }
-      return finalAnsi;
-    });
+    const presenter = this.output.presenter;
+    const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
+      focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId, now: Date.now()};
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row =>
+      presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction));
     const sticky = this.stickyHeader(wrapped, viewStart);
-    const stickyRow = sticky && this.output.stickyHeaderRow(sticky.startId, columns);
-    if (stickyRow && visible.length > 0) visible[0] = `\u001B[48;2;38;38;48m${stickyRow.replaceAll(RESET, `${RESET}\u001B[48;2;38;38;48m`)}\u001B[K${RESET}`;
-    const frameRows = [...visible];
-    while (frameRows.length < outputHeight) frameRows.push('');
-    if (layout.showGap) frameRows.push('');
-
-    if (layout.showJump) frameRows.push(this.jumpAffordance(columns));
-    if (this.settingsPanelActive) {
-      frameRows.push(...this.settingsPanelRows(columns));
-    } else if (this.appearanceState) {
-      for (const row of renderAppearancePanel(this.appearanceState, columns)) {
-        frameRows.push(row);
-      }
-    } else if (this.keyboardState) {
-      for (const row of renderKeyboardPanel(this.keyboardState, columns)) {
-        frameRows.push(row);
-      }
-    } else {
-      for (const [visibleIndex, suggestion] of suggestionView.items.entries()) {
-        const selected = suggestionView.start + visibleIndex === effectiveSelection;
-        frameRows.push(truncateAnsi(
-          `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
-          columns,
-        ));
-      }
-    }
-    if (layout.showLiveActivity && this.running) {
-      frameRows.push(truncateAnsi(this.currentActivity(), columns));
-      frameRows.push('');
-    }
-    if (layout.showComposerTopBorder) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
-    if (layout.showPrompt) frameRows.push(promptLine);
+    const stickyRow = sticky && this.output.presentSticky(sticky.startId, columns);
+    if (stickyRow && visible.length > 0) visible[0] = stickyRow;
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
 
@@ -2047,7 +2293,7 @@ export class TerminalApp {
       }
     }
 
-    for (const row of input.rows) {
+    const inputRows = input.rows.map(row => {
       const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
@@ -2069,26 +2315,50 @@ export class TerminalApp {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
       const line = truncateAnsi(`${prefix}${textStyled}${suffix}`, columns);
-      frameRows.push(row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line);
+      return row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line;
+    });
+
+    // The plan decides where each region lives; this only decides what paints into it.
+    const separator = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`;
+    const regionRows = (region: Region): string[] => {
+      switch (region.kind) {
+        case 'transcript': return visible;
+        case 'gap': return [];
+        case 'jump': return [this.jumpAffordance(columns)];
+        // Panels frame their composer-side edge: under Dock Top the frame line moves below the panel.
+        case 'panel': return plan.composerPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
+          ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
+        case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
+          const selected = suggestionView.start + visibleIndex === effectiveSelection;
+          return truncateAnsi(
+            `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
+            columns,
+          );
+        });
+        // The spacer sits between the newest output and the activity line in both positions.
+        case 'activity': {
+          if (!this.running) return [];
+          const activity = truncateAnsi(this.currentActivity(), columns);
+          return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
+        }
+        case 'composerBorder': return [separator];
+        case 'prompt': return [promptLine];
+        case 'input': return inputRows;
+        case 'separator': return [separator];
+      }
+    };
+    const frameRows = new Array<string>(plan.rows).fill('');
+    for (const region of plan.regions) {
+      const content = regionRows(region);
+      for (let index = 0; index < region.height; index += 1) frameRows[region.top + index] = content[index] ?? '';
     }
-    if (layout.showSeparator) frameRows.push(`${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`);
 
     this.renderer.render({
-      rows: frameRows.slice(0, rows),
-      cursorRow: Math.min(
-        rows,
-        outputHeight
-          + Number(layout.showGap)
-          + Number(layout.showJump)
-          + (this.appearanceState ? 7 : (this.keyboardState ? 6 : suggestionView.items.length))
-          + (layout.showLiveActivity ? 2 : 0)
-          + Number(layout.showComposerTopBorder)
-          + Number(layout.showPrompt)
-          + input.caretRow
-          + 1,
-      ),
+      rows: frameRows,
+      columns,
+      cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
-      cursorVisible: !this.settingsPanelActive,
+      cursorVisible: !plan.panelActive,
     });
   }
 

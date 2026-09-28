@@ -9,6 +9,9 @@ import {
   type TranscriptAppearance,
 } from '../prompt/configuration.js';
 import {providerLabel} from '../prompt/PromptPanel.js';
+import {welcomeProvider} from '../output/WelcomeProviders.js';
+import {PROMPT_STYLES, PROMPT_STYLE_LABELS} from '../prompt/powerline.js';
+import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
@@ -50,7 +53,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'keyboard';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'keyboard' | 'welcome' | 'suggestions';
 
 interface SettingsRowBase {
   id: string;
@@ -112,12 +115,28 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'syntaxColors', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
-  enumRow({id: 'outputFolding', label: 'Output folding', description: 'Collapse long, repetitive successful output; failures stay open', category: 'Transcript',
-    values: OUTPUT_FOLDING_MODES, labels: ['Smart', 'Never'],
+  enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look: Powerline, Soft, Minimal, or Outline', category: 'Prompt',
+    values: PROMPT_STYLES, labels: PROMPT_STYLES.map(style => PROMPT_STYLE_LABELS[style]),
+    get: config => config.nmsh.style, set: (config, style) => ({...config, nmsh: {...config.nmsh, style}})}),
+  enumRow({id: 'composerPosition', label: 'Composer position', description: 'Dock the composer at the bottom or the top', category: 'Layout',
+    values: ['bottom', 'top'] as const, labels: ['Bottom', 'Top'],
+    get: config => config.composerPosition, set: (config, composerPosition) => ({...config, composerPosition})}),
+  enumRow({id: 'transcriptPresentation', label: 'Transcript presentation', description: 'Normal rows, or Chat with commands on the right', category: 'Layout',
+    values: ['normal', 'chat'] as const, labels: ['Normal', 'Chat'],
+    get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
+  enumRow({id: 'outputFolding', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
+    values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
   enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
     get: config => config.updateChecks, set: (config, updateChecks) => ({...config, updateChecks})}),
+  {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
+    control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
+  {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
+    control: 'child', destination: 'suggestions',
+    value: config => SUGGESTION_PROVIDERS.find(provider => provider.id === config.suggestions)?.label ?? config.suggestions},
+  {id: 'suggestionsOnEmpty', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
+    control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -128,6 +147,8 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'transcript', label: 'Transcript', description: 'History colors, dividers, and prompt snapshots', category: 'Transcript', control: 'child', destination: 'transcript'},
   {id: 'syntax', label: 'Syntax', description: 'Editor highlighting and syntax colors', category: 'Syntax', control: 'child', destination: 'syntax'},
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
+  {id: 'welcome', label: 'Welcome', description: 'Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
+  {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
 ];
 
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;

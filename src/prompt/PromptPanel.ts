@@ -17,7 +17,7 @@ import {
   ON_COMMAND_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
-import {fadeColorChoices, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
+import {fadeColorChoices, POWERLINE_EDGE_STYLES, POWERLINE_SHAPES, PROMPT_STYLES, PROMPT_STYLE_LABELS, type ConnectorFadeColors, type PowerlineEdgeStyle, type PowerlineShape} from './powerline.js';
 import {renderControls} from '../ui/controls.js';
 import {renderTabStrip} from '../ui/PanelShell.js';
 import type {StarshipStatus} from './starship.js';
@@ -28,6 +28,7 @@ import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
+import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
 export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 export interface PromptPanelState {
@@ -61,13 +62,20 @@ const ACCENT = foreground(UI_COLORS.accent);
 const SUBTLE = foreground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal', 'wide'];
-export const PROVIDER_ORDER: readonly PromptProviderId[] = ['nmsh', 'starship', 'powerlevel10k'];
+/** Prompt providers on the shared provider descriptor (#134). */
+export const PROMPT_PROVIDERS: readonly ProviderDescriptor<PromptProviderId>[] = [
+  {id: 'nmsh', family: 'prompt', label: 'NMSh Native', kind: 'native', description: 'built-in themes, geometry, and modules'},
+  {id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', executable: 'starship', description: 'use its themes/configuration'},
+  {id: 'powerlevel10k', family: 'prompt', label: 'Powerlevel10k', kind: 'external', description: 'use your ~/.p10k.zsh left prompt'},
+];
+export const PROVIDER_ORDER: readonly PromptProviderId[] = PROMPT_PROVIDERS.map(provider => provider.id);
 
 export function providerLabel(provider: PromptProviderId): string {
-  return provider === 'nmsh' ? 'NMSh Native' : provider === 'starship' ? 'Starship' : 'Powerlevel10k';
+  return PROMPT_PROVIDERS.find(descriptor => descriptor.id === provider)?.label ?? provider;
 }
 
-const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'fadeColors', 'gap', 'end', 'icons', 'modules'] as const;
+// Style is appended so existing row positions stay stable.
+const APPEARANCE_ROWS = ['theme', 'start', 'connector', 'connectorFade', 'fadeColors', 'gap', 'end', 'icons', 'modules', 'style'] as const;
 export const APPEARANCE_MODULES_ROW = APPEARANCE_ROWS.indexOf('modules');
 /** Rich Git's own settings; each edits inline with ←/→ (Space also toggles Enabled). */
 const RICH_GIT_ROWS = ['gitEnabled', 'gitColors', 'gitGeometry', 'gitConnectorFade'] as const;
@@ -166,6 +174,7 @@ export function describePromptConfiguration(configuration: PromptConfiguration):
     `gap ${nativeGapChoice(configuration)}`,
     `${edgeStyleLabel(nmsh.endStyle).toLowerCase()} end`,
     `icons ${nmsh.icons === 'off' ? 'off' : 'on'}`,
+    ...(nmsh.style !== 'powerline' ? [`${PROMPT_STYLE_LABELS[nmsh.style].toLowerCase()} style`] : []),
   ].join(' · ');
 }
 
@@ -296,6 +305,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
         case 'gap': applyNativeGapChoice(state.draft, cycle(GAP_CHOICES, nativeGapChoice(state.draft), delta)); break;
         case 'end': nmsh.endStyle = cycle(POWERLINE_EDGE_STYLES, nmsh.endStyle, delta); break;
         case 'icons': nmsh.icons = nmsh.icons === 'off' ? 'nerd' : 'off'; break;
+        case 'style': nmsh.style = cycle(PROMPT_STYLES, nmsh.style, delta); break;
         default: return false;
       }
     }
@@ -317,13 +327,9 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   const item = (index: number, text: string) => `${index === state.selectedIndex ? ACCENT : SECONDARY}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
   if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
-    const descriptions: Record<PromptProviderId, string> = {
-      nmsh: 'NMSh Native · built-in themes, geometry, and modules',
-      starship: 'Starship · use its themes/configuration',
-      powerlevel10k: 'Powerlevel10k · use your ~/.p10k.zsh left prompt',
-    };
-    PROVIDER_ORDER.forEach((provider, index) => rows.push(item(index,
-      `${descriptions[provider]}${state.draft.provider === provider ? '  ●' : ''}${state.saved?.provider === provider ? '  ✓ saved' : ''}`)));
+    // Prompt providers report detection in their own steps, so the list carries no badge.
+    PROMPT_PROVIDERS.forEach((provider, index) => rows.push(item(index,
+      providerRowText(provider, {draft: state.draft.provider, saved: state.saved?.provider, status: 'none'}))));
   } else if (state.step === 'starship') {
     rows.push(`${PRIMARY}Starship${RESET}`);
     if (state.starshipStatus?.installed) {
@@ -458,6 +464,8 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       rows.push(row(6, `End             ${value(edgeStyleLabel(draft.endStyle), saved && edgeStyleLabel(saved.endStyle))}`));
       rows.push(row(7, `Icons           ${value(iconLabel(draft.icons), saved && iconLabel(saved.icons))}`));
       rows.push(row(8, `Modules         ${visibleModules} of ${state.draft.modules.length} shown ›`));
+      const styleNote = draft.style === 'powerline' ? '' : `  ${SUBTLE}${draft.style === 'soft' ? 'rounded, separated' : 'no filled blocks'}`;
+      rows.push(row(9, `Style           ${value(PROMPT_STYLE_LABELS[draft.style], saved && PROMPT_STYLE_LABELS[saved.style])}${styleNote}`));
     }
     if (themePreviews.length && view === 'main') {
       rows.push('');

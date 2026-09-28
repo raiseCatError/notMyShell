@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.4.0 — Shell Intelligence & Extensibility](https://github.com/raiseCatError/notMyShell/releases/tag/v0.4.0) |
+| **Current release** | [v0.5.0 — Interaction & Intelligence](https://github.com/raiseCatError/notMyShell/releases/tag/v0.5.0) |
 | **Development branch** | `dev` |
-| **Next direction** | [#79 Interaction layout modes](https://github.com/raiseCatError/notMyShell/issues/79) (design/research) |
+| **Next direction** | [#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132) and [#125](https://github.com/raiseCatError/notMyShell/issues/125) persistent live sessions (planned) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -62,14 +62,25 @@ The final release candidate also included the passive-hover selection fix.
 | [#16](https://github.com/raiseCatError/notMyShell/issues/16) | Compatible user zsh hooks (zoxide, Atuin) preserved |
 | [#74](https://github.com/raiseCatError/notMyShell/issues/74) | Update discovery and safe `/update` |
 
-## Next — Interaction Layout Modes
+## Released — v0.5.0 Interaction & Intelligence
 
-[#79](https://github.com/raiseCatError/notMyShell/issues/79) is the next planned design/research direction. It is not implemented. It explores two independent axes over the same real shell and session semantics:
+[Milestone #4](https://github.com/raiseCatError/notMyShell/milestone/4) shipped after final human validation in Ghostty. Release notes are in [CHANGELOG.md](CHANGELOG.md).
 
-- **Composer placement:** Dock Bottom (today), Dock Top, or Flow / Classic Terminal.
-- **Transcript presentation:** Normal transcript or Chat presentation.
+### Shipped scope
 
-Any placement can combine with any presentation. Shell execution, raw PTY output, `/copy`, persistence, and passthrough stay unchanged.
+| Issue | Implemented scope |
+|---|---|
+| [#122](https://github.com/raiseCatError/notMyShell/issues/122) | Transcript presenter: one row pipeline for every layout and presentation |
+| [#134](https://github.com/raiseCatError/notMyShell/issues/134), [#135](https://github.com/raiseCatError/notMyShell/issues/135) | Shared provider framework; Welcome providers (Vespyr, Fastfetch, Neofetch legacy, None) |
+| [#136](https://github.com/raiseCatError/notMyShell/issues/136) | Output folding Off / Smart / Always |
+| [#137](https://github.com/raiseCatError/notMyShell/issues/137), [#138](https://github.com/raiseCatError/notMyShell/issues/138), [#139](https://github.com/raiseCatError/notMyShell/issues/139) | Suggestion providers, NMSh Native Suggestions v2, optional Deja provider |
+| [#123](https://github.com/raiseCatError/notMyShell/issues/123), [#124](https://github.com/raiseCatError/notMyShell/issues/124) | Dock Top composer position; Chat transcript presentation |
+| [#146](https://github.com/raiseCatError/notMyShell/issues/146) | Command palette |
+| [#149](https://github.com/raiseCatError/notMyShell/issues/149) | Native prompt styles: Powerline, Soft, Minimal, Outline |
+
+## Next — Flow / Classic and Persistent Sessions
+
+[#79](https://github.com/raiseCatError/notMyShell/issues/79) layout work continues with Flow / Classic composer mode ([#132](https://github.com/raiseCatError/notMyShell/issues/132)) and a `/layout` gallery ([#133](https://github.com/raiseCatError/notMyShell/issues/133)). Persistent live sessions are planned in [#125](https://github.com/raiseCatError/notMyShell/issues/125)–[#131](https://github.com/raiseCatError/notMyShell/issues/131). None of these are implemented yet.
 
 ## Backlog — Research and Future Features
 

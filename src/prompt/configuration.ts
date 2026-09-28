@@ -3,6 +3,7 @@ import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {UPDATE_CHECK_FREQUENCIES, type UpdateCheckFrequency} from '../update/update.js';
 import type {OutputFoldingMode} from '../output/FoldPolicy.js';
+import {SUGGESTION_PROVIDER_IDS, type SuggestionProviderId} from '../suggestions/types.js';
 import {
   normalizeConnectorFadeColors,
   resolveFadeColors,
@@ -12,10 +13,17 @@ import {
   type PowerlineConnectorStyle,
   type PowerlineEdgeStyle,
   type PowerlineShape,
+  normalizePromptStyle,
+  type PromptStyle,
 } from './powerline.js';
+
+export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'none';
+export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'none'];
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
+export type ComposerPosition = 'bottom' | 'top';
+export type TranscriptPresentation = 'normal' | 'chat';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
@@ -158,6 +166,12 @@ export interface PromptConfiguration {
   updateChecks: UpdateCheckFrequency;
   /** Whether long, boring finished output starts collapsed. Presentation only. */
   outputFolding: OutputFoldingMode;
+  /** What new presentation sessions show at the top; archived sessions keep theirs. */
+  welcome: WelcomeProviderId;
+  /** Ghost-text suggestion provider; external providers fall back to Native. */
+  suggestions: SuggestionProviderId;
+  /** Predict a whole command on an empty prompt from the previous one. */
+  suggestionsOnEmpty: boolean;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -165,6 +179,8 @@ export interface PromptConfiguration {
     endStyle: NativeEndStyle;
     palette: NativePaletteId;
     icons: NativeIconMode;
+    /** Visual style over the same semantic segments; missing in older configs means Powerline. */
+    style: PromptStyle;
     connectorFade: ConnectorFadeStyle;
     /** Which neighbor(s) color the faded transition zones; missing in older configs, meaning Previous. */
     connectorFadeColors: ConnectorFadeColors;
@@ -183,6 +199,10 @@ export interface PromptConfiguration {
   syntax: SyntaxAppearance;
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
+  /** Dock Bottom (default) or Dock Top; independent of transcript presentation. */
+  composerPosition: ComposerPosition;
+  /** Normal or Chat rows; presentation only and independent of composer position. */
+  transcriptPresentation: TranscriptPresentation;
   modules: ContextModuleConfig[];
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
@@ -198,7 +218,10 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionRetention: 1000,
   updateChecks: 'off',
   outputFolding: 'smart',
-  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
+  welcome: 'vespyr',
+  suggestions: 'nmsh',
+  suggestionsOnEmpty: false,
+  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true},
   starship: {configPath: null},
@@ -207,6 +230,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   syntax: {...DEFAULT_SYNTAX_APPEARANCE},
   placement: 'header',
   composerLayout: 'twoLine',
+  composerPosition: 'bottom',
+  transcriptPresentation: 'normal',
   modules: [
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
@@ -249,7 +274,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       ? value.sessionRetention as SessionRetention : 1000;
   const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
     ? value.updateChecks as UpdateCheckFrequency : 'off';
-  const outputFolding: OutputFoldingMode = value.outputFolding === 'never' ? 'never' : 'smart';
+  // Off persists as `never`, so v0.4 configs load unchanged.
+  const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
+  const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
+    ? value.welcome as WelcomeProviderId : 'vespyr';
+  const suggestions: SuggestionProviderId = SUGGESTION_PROVIDER_IDS.includes(value.suggestions as SuggestionProviderId)
+    ? value.suggestions as SuggestionProviderId : 'nmsh';
+  const suggestionsOnEmpty = value.suggestionsOnEmpty === true;
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -262,11 +293,12 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const startStyle = normalizeEdgeStyle(nativeValue.startStyle, 'wedge');
   const connector = normalizeConnectorStyle(nativeValue.connector);
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
+  const style = normalizePromptStyle(nativeValue.style);
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
-    startStyle, connector, endStyle, palette, icons,
+    startStyle, connector, endStyle, palette, icons, style,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
     connectorFadeColors: normalizeConnectorFadeColors(nativeValue.connectorFadeColors),
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
@@ -280,6 +312,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
   const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
+  const composerPosition: ComposerPosition = value.composerPosition === 'top' ? 'top' : 'bottom';
+  const transcriptPresentation: TranscriptPresentation = value.transcriptPresentation === 'chat' ? 'chat' : 'normal';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
     ? Math.max(0, Math.min(3, Math.round(value.spacing)))
     : DEFAULT_PROMPT_CONFIGURATION.spacing;
@@ -292,8 +326,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding,
-      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, spacing, gap, separator};
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, suggestionsOnEmpty,
+      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -333,8 +367,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, nmsh, transcript, syntax, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, modules, separator, spacing, gap};
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, suggestionsOnEmpty, nmsh, transcript, syntax, powerlevel10k,
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {

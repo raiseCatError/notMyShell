@@ -93,8 +93,8 @@ For substantial implementation work:
 Key references:
 - [ROADMAP.md](ROADMAP.md) — product direction and issue index
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
-- [v0.4.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.4.0) — current stable release
-- [#79 Interaction layout modes](https://github.com/raiseCatError/notMyShell/issues/79) — next planned design direction (see [ROADMAP.md](ROADMAP.md))
+- [v0.5.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.5.0) — current stable release
+- [#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132) — next planned direction (see [ROADMAP.md](ROADMAP.md))
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board
 - [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
 - [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions

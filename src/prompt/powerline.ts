@@ -1,5 +1,5 @@
 import {background, foreground, type RgbColor} from '../ui/palette.js';
-import {GLYPHS, powerlineShapeGlyphs, type PowerlineShape} from '../ui/glyphs.js';
+import {getCurrentGlyphMode, GLYPHS, powerlineShapeGlyphs, type PowerlineShape} from '../ui/glyphs.js';
 import {fadePromptColor} from './snapshot.js';
 import {displayWidth, truncateText} from '../util/text.js';
 
@@ -25,7 +25,23 @@ export const POWERLINE_EDGE_STYLES: readonly PowerlineEdgeStyle[] = [
 ];
 export const POWERLINE_SHAPES: readonly PowerlineShape[] = ['wedge', 'flat', 'rounded', 'slash', 'backslash'];
 
+/**
+ * Native prompt visual styles. All render from the same semantic blocks and
+ * colors: Powerline uses the configured geometry; Soft is Powerline with
+ * rounded caps and separated segments; Minimal and Outline draw text in
+ * each segment's color without filled backgrounds.
+ */
+export type PromptStyle = 'powerline' | 'soft' | 'minimal' | 'outline';
+export const PROMPT_STYLES: readonly PromptStyle[] = ['powerline', 'soft', 'minimal', 'outline'];
+export const PROMPT_STYLE_LABELS: Record<PromptStyle, string> = {powerline: 'Powerline', soft: 'Soft', minimal: 'Minimal', outline: 'Outline'};
+
+export function normalizePromptStyle(value: unknown): PromptStyle {
+  return PROMPT_STYLES.includes(value as PromptStyle) ? value as PromptStyle : 'powerline';
+}
+
 export interface PowerlineBlock {
+  /** Visual style; every block of one prompt carries the same one. Missing means Powerline. */
+  style?: PromptStyle;
   text: string;
   foreground: RgbColor;
   background: RgbColor;
@@ -329,6 +345,17 @@ export function renderPowerlineBlocks(
   orientation: PowerlineOrientation = 'normal',
 ): string {
   if (modules.length === 0) return `${RESET}${NEUTRAL_BACKGROUND}`;
+  const style = modules[0]!.style ?? 'powerline';
+  if (style === 'minimal' || style === 'outline') return renderTextStyle(modules, style, gapEnabled ? gap : 0, spacing);
+  if (style === 'soft') {
+    // Soft: the same painter with rounded caps, always separated, no fades.
+    startStyle = 'rounded';
+    endStyle = 'rounded';
+    connector = 'rounded';
+    connectorFade = undefined;
+    gap = Math.max(1, gap);
+    gapEnabled = true;
+  }
   if (orientation === 'mirrored') {
     const reflected = paintPowerlineBlocks([...modules].reverse(), gap, spacing, endStyle, gapEnabled, startStyle, connector, connectorFade, fadeColors);
     return `${serializeReflected(reflected)}${RESET}${NEUTRAL_BACKGROUND}`;
@@ -398,6 +425,32 @@ function paintPowerlineBlocks(
   renderEnd(paint, modules[modules.length - 1]!.background, normalizeEndStyle(endStyle));
   paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
   return paint.cells;
+}
+
+/** A segment color lifted toward white so it reads as text on a dark terminal background. */
+function textTone(color: RgbColor): RgbColor {
+  const lift = (channel: number) => Math.round(channel + (255 - channel) * 0.45);
+  return {red: lift(color.red), green: lift(color.green), blue: lift(color.blue)};
+}
+
+/**
+ * Minimal and Outline: no filled backgrounds. Segment colors become text
+ * tones; Outline adds thin caps (Nerd half-circle outlines, Safe parentheses).
+ * Symmetric, so mirrored right context renders the same way.
+ */
+function renderTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | 'outline', gap: number, spacing: number): string {
+  const safe = getCurrentGlyphMode() === 'safe';
+  const [open, close] = safe ? ['(', ')'] : ['\uE0B7', '\uE0B5'];
+  const pad = ' '.repeat(Math.max(0, Math.min(3, Math.trunc(spacing))));
+  const separator = ' '.repeat(style === 'minimal' ? Math.max(2, gap + 1) : Math.max(1, gap));
+  const parts = modules.map(block => {
+    const tone = foreground(textTone(block.background));
+    const text = block.compact ? (safe ? '*' : '●') : block.text;
+    return style === 'minimal'
+      ? `${tone}${text}`
+      : `${tone}${open}${pad}${text}${pad}${close}`;
+  });
+  return `${RESET}${NEUTRAL_BACKGROUND}${parts.join(`${RESET}${NEUTRAL_BACKGROUND}${separator}`)}${RESET}${NEUTRAL_BACKGROUND}`;
 }
 
 /** Fit complete segment transitions to the cell budget, omitting decorations first. */

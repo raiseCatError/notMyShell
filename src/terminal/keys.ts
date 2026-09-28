@@ -5,7 +5,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -85,6 +85,11 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
   ['\u001B[99;5u', 'interrupt'], // Kitty Ctrl+C
   ['\u001B[100;5u', 'eof'], // Kitty Ctrl+D
+  // Command palette: Ctrl+Shift+P and Cmd+Shift+P need CSI-u reporting (plain Ctrl+Shift+P is Ctrl+P); F1 is the legacy fallback.
+  ['\u001B[112;6u', 'palette'], ['\u001B[80;6u', 'palette'], ['\u001B[112;10u', 'palette'], ['\u001B[80;10u', 'palette'],
+  ['\u001BOP', 'palette'], ['\u001B[11~', 'palette'],
+  ['\u001B[110;5u', 'suggestNext'], // Kitty Ctrl+N
+  ['\u001B[112;5u', 'suggestPrevious'], // Kitty Ctrl+P
   ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)
   ['\u001B[79;5u', 'toggleDetails'], // Kitty Ctrl+O (uppercase O)
 ];
@@ -151,6 +156,8 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
+    else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N
+    else if (value === '\u0010') keys.push({kind: 'suggestPrevious'} as Key); // Ctrl+P
     else if (codePoint >= 0x20 && codePoint !== 0x7f) keys.push({kind: 'text', value} as Key);
   }
   return keys;
