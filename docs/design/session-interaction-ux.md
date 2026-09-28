@@ -93,6 +93,24 @@ While a parent is running, its activity timeline is rendered at the end of the a
 
 First-run onboarding asks for NMSh Native or Starship (NMSh is preselected), then the independent two-line/one-line composer choice. NMSh Native then shows an appearance step for theme, start, connector, gap, end, icons, and a module manager (Space shows/hides, Shift+↑↓ reorders, ←→ changes the exit-status condition; custom module colors are preserved), with a live preview from the real renderer and a one-row preview of every theme (the gallery is omitted on short terminals). Theme rows use the draft's real geometry over a synthetic preview-only context (project, cwd, git, Node, Go, Python, Docker) so every role is visible; the live prompt still shows only detected modules. The panel shows the saved configuration as `Current`, marks each changed value with its saved value, and labels the preview `unsaved preview` or `matches current`; nothing is applied until Enter saves. Every step ends with a consistent controls row listing its keys. Starship setup reports binary version and config path, supports existing/default configuration and truthful preset guidance, and offers an explicit Homebrew install confirmation on macOS when available. Both provider paths ask for composer layout. Escape can skip; completion and choices persist in the existing prompt config. `/prompt` reopens the same settings flow. Switching providers retains inactive provider settings and never edits Starship config or the user's ordinary `.zshrc`.
 
+## Live-session recovery, updates and limits
+
+Live sessions are owned by the per-user session service (`nmshd`), which listens on a Unix socket in a private (`0700`) runtime directory. Each protocol version has its own socket (`nmshd.sock` for v1, `nmshd-v<N>.sock` afterwards).
+
+- **Updates:** after an update, the older service keeps running the sessions it owns until they end. A newer frontend starts or attaches only through a service that speaks its own protocol. While a service of another version is reachable, the newer frontend does not archive, attach to or end that service's sessions, because it cannot verify them. It says so once at launch.
+- **Sessions that end with no window attached:** at launch, NMSh compares unfinished journals and output spools against the sessions its service reports. It archives each session that is gone so it appears in `/resume`, with a factual note:
+  - If the shell exited while detached, the note gives its exit code, and the output captured while detached is kept.
+  - If the service died or the machine restarted, the note says the shell and anything running in it could not be recovered.
+  A spool is claimed by renaming it before archiving, so two launches never archive the same session twice. If archiving fails, the spool is kept for the next launch.
+- **Service death under an attached window:** the frontend reports that it lost the service, archives the transcript, and exits. It never claims the session survived.
+- **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
+- **Idle age:** `/resume` shows how long each idle live session has been at its prompt.
+
+Known limitations:
+- Nothing running in a shell survives the service being killed or the machine restarting. Only the transcript and the output captured so far are kept.
+- Sessions owned by an older service version can't be attached from a newer frontend. They stay listed as unverified until they end.
+- Recovery runs at launch and when `/resume` opens. A session that ends while another window is open is archived the next time either of those happens.
+
 ## Current scope and planned follow-up
 
 - Implemented onboarding configures prompt provider (NMSh Native, Starship, or Powerlevel10k), composer layout, and Native appearance (theme, start, connector, gap, end, icons, modules), with real-renderer previews. The next onboarding scope is optional tool discovery/setup for zoxide, fzf, and Atuin, offering Recommended / Choose individually / Skip. Any installer that modifies the system requires explicit confirmation. Starship remains an optional prompt provider. NMSh replaces the UI roles of zsh-autosuggestions and zsh-syntax-highlighting; neither is a required dependency. This v0.4 work is tracked in #9.

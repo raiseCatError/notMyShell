@@ -123,16 +123,20 @@ test('a service of another protocol version is left alone and reported; nothing 
   try {
     const a = await started(sandbox);
     await a.run('echo OWNED-BY-SOMEONE', /OWNED-BY-SOMEONE/);
+    // The journal is written asynchronously; kill only once it holds the command.
+    await until(async () => (await archives(sandbox)).some(s => s.live && lineText(s).includes('OWNED-BY-SOMEONE')), 15000, 'journaled');
     a.pty.kill('SIGKILL');
     await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'detached');
     killService(sandbox);
     await new Promise<void>(resolve => old.listen(socketPathFor(sandbox.runtime, 1), resolve));
     const b = sandbox.launch();
     await b.waitFor(/another NMSh version is still running its own live sessions/);
-    assert.ok((await archives(sandbox)).some(s => s.live && lineText(s).includes('OWNED-BY-SOMEONE')), 'not archived while unverifiable');
+    const after = await archives(sandbox);
+    assert.ok(after.some(s => s.live && lineText(s).includes('OWNED-BY-SOMEONE')),
+      `not archived while unverifiable: ${JSON.stringify(after.map(s => ({live: Boolean(s.live), ended: s.endedAt ?? null, has: lineText(s).includes('OWNED-BY-SOMEONE')})))}`);
     assert.ok(existsSync(socketPathFor(sandbox.runtime, 1)), 'the other service socket is untouched');
   } finally {
-    old.close();
+    await new Promise<void>(resolve => old.close(() => resolve()));
     await sandbox.dispose();
   }
 });
@@ -213,11 +217,20 @@ test('mouse reports reach a fullscreen app in passthrough, including after reatt
     await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'detached');
     const b = sandbox.launch(['--attach', id]);
     await until(async () => (await sandbox.sessions())[0]?.state === 'attached', 15000, 'attached');
-    await new Promise(resolve => setTimeout(resolve, 200));
+    // Resend until the reattached frontend is back in passthrough; the report is
+    // idempotent for the fixture, so this waits on the condition, not a delay.
     mark = b.mark;
-    b.pty.write('\u001b[<0;9;3M');
-    await b.waitFor(/GOT "\\u001b\[<0;9;3M"/, mark);
+    await until(() => {
+      if (/GOT "\\u001b\[<0;9;3M"/.test(strip(b.output.slice(mark)))) return true;
+      b.pty.write('\u001b[<0;9;3M');
+      return false;
+    }, 15000, 'mouse report after reattach');
+    mark = b.mark;
     b.pty.write('q');
+    // Type the next command only once NMSh has left passthrough and redrawn
+    // its composer; keys typed earlier still belong to the fullscreen app.
+    await until(() => b.output.indexOf('\u001b[?1049l', mark) !== -1, 15000, 'fullscreen exit');
+    await b.waitFor(/❯/, b.output.indexOf('\u001b[?1049l', mark));
     await b.run('echo MOUSE-DONE', /MOUSE-DONE/);
   } finally {
     await sandbox.dispose();

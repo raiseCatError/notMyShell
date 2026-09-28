@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {spawnSync} from 'node:child_process';
 import nodePty from 'node-pty';
 import {KeyDecoder, decodeKeys} from '../src/terminal/keys.js';
 
@@ -15,6 +16,13 @@ test('Ctrl+Z decodes to suspend in raw and Kitty forms without disturbing Ctrl+C
   const decoder = new KeyDecoder();
   assert.deepEqual([...decoder.push('\u001b[122'), ...decoder.push(';5u')], [{kind: 'suspend'}]);
 });
+
+/** ps state of the uniquely-named sleep, e.g. `S+` while it owns the terminal, `T` when stopped. */
+function sleepState(duration: string): string {
+  const pid = spawnSync('pgrep', ['-f', `^sleep ${duration}$`], {encoding: 'utf8'}).stdout.trim().split('\n')[0];
+  if (!pid) return '';
+  return spawnSync('ps', ['-o', 'stat=', '-p', pid], {encoding: 'utf8'}).stdout.trim();
+}
 
 const strip = (value: string) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007]*\u0007|\u001b[=>()][0-9A-B]?/g, '');
 
@@ -62,10 +70,19 @@ async function jobControlThroughFrontend(mode: 'service' | 'in-process', ctrlZ: 
     pty.write('-kept\r');
     await waitFor(/idle-kept/, mark);
 
+    // A unique duration lets the test find this sleep and wait until it is the
+    // terminal's foreground job before sending Ctrl+Z, instead of guessing a delay.
+    const duration = `30.${process.pid}${ctrlZ.length}${mode.length}`;
+    const until = async (check: () => boolean, what: string) => {
+      const deadline = Date.now() + 20000;
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what} in ${mode}`);
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+    };
     mark = output.length;
-    pty.write('sleep 30\r');
-    await waitFor(/sleep 30/, mark);
-    await new Promise(resolve => setTimeout(resolve, 500));
+    pty.write(`sleep ${duration}\r`);
+    await until(() => sleepState(duration).includes('+'), 'sleep in the foreground');
     mark = output.length;
     pty.write(ctrlZ);
     await waitFor(/suspended/, mark);
@@ -77,7 +94,7 @@ async function jobControlThroughFrontend(mode: 'service' | 'in-process', ctrlZ: 
     mark = output.length;
     pty.write('fg\r');
     await waitFor(/continued/, mark);
-    await new Promise(resolve => setTimeout(resolve, 300));
+    await until(() => { const state = sleepState(duration); return state.includes('+') && !state.includes('T'); }, 'sleep resumed in the foreground');
     pty.write('\u0003');
     mark = output.length;
     pty.write('echo JOBCOUNT=$(jobs | wc -l | tr -d " ")\r');

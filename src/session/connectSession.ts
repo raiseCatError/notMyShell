@@ -61,7 +61,10 @@ export async function listLiveSessions(options: {env?: NodeJS.ProcessEnv; runtim
     return await listSessions(socketPathFor(runtimeDir));
   } catch (error) {
     const code = (error as {code?: string}).code;
-    if (code === 'ENOENT' || code === 'ECONNREFUSED') return [];
+    // A service drops connections (closed / EPIPE / ECONNRESET, depending on
+    // timing) only while exiting, which it does only once it has no sessions
+    // left: treat that window like no service at all.
+    if (code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'closed' || code === 'EPIPE' || code === 'ECONNRESET') return [];
     throw error;
   }
 }
