@@ -1,8 +1,17 @@
-import {access, chmod, mkdir, open, readdir, readFile, rename, unlink} from 'node:fs/promises';
+import {access, chmod, link, mkdir, open, readdir, readFile, rename, unlink, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {OutputTranscript} from '../output/OutputBuffer.js';
+
+/** Another live process holds this transcript's lock. */
+export class TranscriptBusyError extends Error {
+  constructor(id: string) { super(`transcript ${id} is being written by another NMSh process`); }
+}
+
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
 
 function validRgb(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
@@ -201,6 +210,51 @@ export class TranscriptStore {
     const session = this.create(input);
     await this.save(session);
     return session;
+  }
+
+  /**
+   * Run `task` holding this transcript's cross-process lock, so writers that
+   * finalize or checkpoint a live journal never interleave. The lock file is
+   * created atomically (hard link of a file already holding our pid); one whose
+   * owner process is gone is taken over. Throws TranscriptBusyError when a live
+   * owner still holds it after `waitMs`.
+   */
+  async withLock<T>(id: string, task: () => Promise<T>, waitMs = 0): Promise<T> {
+    if (!/^[\w-]+$/u.test(id)) throw new Error('Invalid session id');
+    await this.prepare();
+    const lock = join(this.directory, `${id}.lock`);
+    const mine = `${lock}.${randomUUID()}`;
+    await writeFile(mine, `${process.pid}\n`, {mode: 0o600, flag: 'wx'});
+    const deadline = Date.now() + waitMs;
+    try {
+      for (;;) {
+        try { await link(mine, lock); break; } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+        const owner = Number.parseInt(await readFile(lock, 'utf8').catch(() => ''), 10);
+        if (Number.isSafeInteger(owner) && owner > 0 && !processAlive(owner)) {
+          // Move the stale lock aside before removing it, so a lock another
+          // launch has just taken over is never deleted by mistake.
+          const aside = `${lock}.${randomUUID()}.stale`;
+          try {
+            await rename(lock, aside);
+            const moved = Number.parseInt(await readFile(aside, 'utf8'), 10);
+            if (moved !== owner) await link(aside, lock).catch(() => {});
+            await unlink(aside);
+          } catch { /* another launch cleared it first */ }
+          continue;
+        }
+        if (Date.now() >= deadline) throw new TranscriptBusyError(id);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } finally {
+      await unlink(mine).catch(() => {});
+    }
+    try {
+      return await task();
+    } finally {
+      await unlink(lock).catch(() => {});
+    }
   }
 
   async load(id: string): Promise<TranscriptSession> {

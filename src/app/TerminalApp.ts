@@ -290,15 +290,21 @@ export class TerminalApp {
     if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
     if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.passthrough = true;
+      this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
     }
     this.scheduleJournal();
     this.render();
   }
 
+  /** The reattached fullscreen app's own terminal modes, which this terminal never received. */
+  private attachedModes = '';
+
   private enterAttachedPassthrough(): void {
-    // Reattached into a fullscreen app: hand it the whole terminal again.
-    this.renderer.suspendForPassthrough();
+    // Reattached into a fullscreen app: hand it the whole terminal again,
+    // including the mouse/paste/cursor-key modes it set before the detach.
+    this.renderer.suspendForPassthrough(this.attachedModes);
+    this.attachedModes = '';
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
   }

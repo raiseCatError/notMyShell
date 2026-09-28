@@ -65,10 +65,11 @@ export class TerminalRenderer {
     this.previousCursor = cursor;
   }
 
-  suspendForPassthrough(): void {
+  /** `restore` re-applies the foreground app's own terminal modes, e.g. after reattaching to it. */
+  suspendForPassthrough(restore = ''): void {
     if (!this.active) return;
     // Pop kitty mode while still on the alt screen
-    this.write('\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[2J\u001B[H');
+    this.write(`\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[2J\u001B[H${restore}`);
     this.previous = [];
     this.previousCursor = undefined;
   }

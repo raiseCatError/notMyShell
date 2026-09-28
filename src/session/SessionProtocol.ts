@@ -31,7 +31,7 @@ export type ServerMessage =
   | {type: 'welcome'; version: number; service: string}
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
-  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; running?: string; runningSince?: number;
+  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
     journalId?: string; ackedSeq: number}
   | {type: 'detached'; sessionId: string}
   | {type: 'sessions'; sessions: SessionInfo[]}
@@ -94,7 +94,7 @@ const SHAPES: Record<string, Shape> = {
   welcome: {version: 'int', service: 'string'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
-  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', running: 'string?', runningSince: 'int?',
+  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
     journalId: 'string?', ackedSeq: 'int'},
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},

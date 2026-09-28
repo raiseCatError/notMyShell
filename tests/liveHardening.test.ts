@@ -153,6 +153,7 @@ test('the live-session limit falls back factually and never ends detached sessio
     pids.push(...(await sandbox.sessions()).map(s => s.pid));
     const third = sandbox.launch(['--new']);
     await third.waitFor(/live sessions are already running \(the limit\)/);
+    await third.waitFor(/cannot be detached or reattached/);
     await third.run('echo MODE=$NMSH_SESSION_MODE', /MODE=in-process/);
     assert.ok(pids.every(processAlive));
     assert.equal((await sandbox.sessions()).length, 2);
@@ -225,6 +226,12 @@ test('mouse reports reach a fullscreen app in passthrough, including after reatt
       b.pty.write('\u001b[<0;9;3M');
       return false;
     }, 15000, 'mouse report after reattach');
+    // Injected reports only prove forwarding. The host terminal must also be
+    // told to generate them again: after the frontend's own mouse-off, the
+    // app's modes have to be re-enabled on this new terminal.
+    const hostBound = b.output.slice(b.output.lastIndexOf('\u001b[?1000l'));
+    assert.ok(hostBound.includes('\u001b[?1000h') && hostBound.includes('\u001b[?1006h'),
+      'the reattached terminal is put back into the app\'s mouse reporting modes');
     mark = b.mark;
     b.pty.write('q');
     // Type the next command only once NMSh has left passthrough and redrawn

@@ -101,9 +101,10 @@ Live sessions are owned by the per-user session service (`nmshd`), which listens
 - **Sessions that end with no window attached:** at launch, NMSh compares unfinished journals and output spools against the sessions its service reports. It archives each session that is gone so it appears in `/resume`, with a factual note:
   - If the shell exited while detached, the note gives its exit code, and the output captured while detached is kept.
   - If the service died or the machine restarted, the note says the shell and anything running in it could not be recovered.
-  A spool is claimed by renaming it before archiving, so two launches never archive the same session twice. If archiving fails, the spool is kept for the next launch.
+  Launch recovery and Kill Session share one ownership boundary. The journal is locked across processes (a lock left by a dead process is taken over), the spool is claimed by renaming it, and a journal that is already ended is never rewritten from a leftover spool. So a session is archived exactly once, and a second launch never overwrites a complete archive with a journal-only one. Live journal checkpoints take the same lock. If archiving fails, or a launch crashes while holding a claim, the spool is put back for the next launch.
+- **Reattaching to a fullscreen app:** the service remembers the terminal modes the app turned on (mouse reporting, bracketed paste, application cursor keys and keypad, focus events, hidden cursor). A reattaching window re-applies them, so mouse and paste keep working in `vim`, `htop`, `less` and similar apps.
 - **Service death under an attached window:** the frontend reports that it lost the service, archives the transcript, and exits. It never claims the session survived.
-- **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
+- **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. That window's shell ends when the window closes; it cannot be detached or reattached. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
 - **Idle age:** `/resume` shows how long each idle live session has been at its prompt.
 
 Known limitations:

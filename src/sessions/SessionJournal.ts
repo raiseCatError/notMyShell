@@ -59,7 +59,10 @@ export class SessionJournal {
       commandCount: snapshot.transcript.records.length,
       preview: snapshot.transcript.records[0]?.command.replace(/\s+/gu, ' ').slice(0, 100) ?? ''};
     this.current = session;
-    this.pending = this.pending.catch(() => {}).then(() => this.store.save(session, this.retention));
+    // A live journal can also be finalized by launch recovery or Kill Session in
+    // another process; checkpoint it under the same lock so writes never interleave.
+    const save = () => this.store.save(session, this.retention);
+    this.pending = this.pending.catch(() => {}).then(() => session.live ? this.store.withLock(session.id, save, 5000) : save());
     await this.pending;
     this.onSaved(session);
   }

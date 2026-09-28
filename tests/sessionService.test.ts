@@ -11,6 +11,7 @@ import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage} from 
 import {socketPathFor} from '../src/session/runtimeDir.js';
 import type {SessionClient} from '../src/session/SessionClient.js';
 import type {ShellMarker} from '../src/shell/ShellProtocol.js';
+import {inForeground, uniqueSleep} from './helpers/processState.js';
 
 function scratch(prefix: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -99,13 +100,17 @@ test('service starts on demand, gives the shell the frontend env and cwd, and ex
     assert.ok(output.includes('\u001b[?1049h\u001b[2J\u001b[?1049l'), 'full-screen bytes pass through raw');
 
     prompt = nextPrompt(client);
-    client.submit('sleep 30');
-    setTimeout(() => client.interrupt(), 300);
+    const interrupted = uniqueSleep(1);
+    client.submit(`sleep ${interrupted}`);
+    await until(() => inForeground(interrupted), 15000);
+    client.interrupt();
     assert.notEqual((await prompt).exitCode, 0);
 
     prompt = nextPrompt(client);
-    client.submit('sleep 30');
-    setTimeout(() => client.write('\u001a'), 300);
+    const suspended = uniqueSleep(2);
+    client.submit(`sleep ${suspended}`);
+    await until(() => inForeground(suspended), 15000);
+    client.write('\u001a');
     assert.ok((await prompt).exitCode > 128);
     prompt = nextPrompt(client);
     client.submit('jobs; kill %1');
@@ -243,4 +248,17 @@ test('a service that closes the connection while exiting counts as having no liv
     await new Promise<void>(resolve => exiting.close(() => resolve()));
     rmSync(runtimeDir, {recursive: true, force: true});
   }
+});
+
+test('the service remembers a fullscreen app\'s input modes so a reattaching terminal can restore them', async () => {
+  const {AlternateScreenTracker} = await import('../src/session/SessionService.js');
+  const screen = new AlternateScreenTracker();
+  // Split across reads, combined parameters, later changes and keypad mode.
+  for (const chunk of ['\u001b[?1049h\u001b[?1', '000;1006h\u001b[?2004h\u001b[?25l\u001b[?1h\u001b=', 'x\u001b[?2004l']) {
+    screen.observeModes(chunk);
+    screen.push(chunk);
+  }
+  assert.equal(screen.restoreSequence(), '\u001b[?1000h\u001b[?1006h\u001b[?25l\u001b[?1h\u001b=');
+  screen.reset();
+  assert.equal(screen.restoreSequence(), '', 'the app ending clears its modes');
 });

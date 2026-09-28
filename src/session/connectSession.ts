@@ -125,6 +125,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process',
-      notice: `Session service unavailable (${reason}); running the shell in-process.`};
+      notice: `Session service unavailable (${reason}); running the shell in-process. `
+        + 'Closing this window ends its shell: it cannot be detached or reattached.'};
   }
 }
