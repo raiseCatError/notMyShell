@@ -5,12 +5,16 @@ import {
   adjustSettingsRow, isInlineEditable, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
   settingsView, statusLineCount, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
   type SettingsView, type StatusSections,
+  SETTINGS_ENTRIES,
+  SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
+import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
+import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
 import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
 import {ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
@@ -125,6 +129,9 @@ export class TerminalApp {
   private transcriptPanelState?: TranscriptPanelState;
   /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
   private providerPanelState?: ProviderPanelState;
+  private paletteState?: PaletteState;
+  /** Palette entry ids used this session, most recent first. */
+  private paletteRecent: string[] = [];
   /** Captured previews per external welcome provider, fetched once per panel. */
   private welcomePreviews = new Map<string, string[]>();
   /** Bumped by every new or restored presentation so a late capture never lands in the wrong one. */
@@ -273,6 +280,24 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.paletteState) {
+      const state = this.paletteState;
+      if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'palette') this.paletteState = undefined;
+      else {
+        const result = handlePaletteKey(key, state, this.paletteRecent);
+        if (result && result !== 'changed') {
+          this.paletteState = undefined;
+          void this.runPaletteItem(result).then(() => this.render());
+        }
+      }
+      this.render();
+      return;
+    }
+    if (key.kind === 'palette') {
+      if (!this.running) this.openPalette();
+      this.render();
+      return;
+    }
     if (this.settingsPanelState) {
       this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
@@ -722,6 +747,77 @@ export class TerminalApp {
     this.selectedSuggestion = 0;
   }
 
+  /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
+  private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
+    if (slash.kind === 'copy') await this.copyRecent(slash.index);
+    else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
+    else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
+    else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
+    else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
+    else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
+    else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
+    else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
+    else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
+    else if (slash.kind === 'clear') await this.startFreshPresentation();
+    else if (slash.kind === 'resume') await this.openResumePicker();
+    else if (slash.kind === 'help') this.showHelp(command);
+    else if (slash.kind === 'history') this.submitHistorySearch(slash.query, command.startsWith(HISTORY_SEARCH));
+    else if (slash.kind === 'palette') this.openPalette();
+    else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
+  }
+
+  private openPalette(): void {
+    if (this.settingsPanelActive) return;
+    this.paletteState = createPalette();
+  }
+
+  /** Executes only the declared NMSh action of the chosen entry. */
+  private async runPaletteItem(item: PaletteItem): Promise<void> {
+    this.paletteRecent = [item.id, ...this.paletteRecent.filter(id => id !== item.id)].slice(0, 20);
+    const action = item.action;
+    const config = structuredClone(this.promptConfiguration);
+    switch (action.kind) {
+      case 'slash': {
+        const slash = parseSlashCommand(action.command);
+        if (slash) await this.runSlash(action.command, slash);
+        break;
+      }
+      case 'open': {
+        this.openSettingsPanel('settings');
+        const index = SETTINGS_ENTRIES.findIndex(entry => entry.control === 'child' && entry.destination === action.destination);
+        this.openSettingsDestination(action.destination, 'settings', Math.max(0, index), this.settingsPanelState!);
+        break;
+      }
+      case 'config':
+        this.openSettingsPanel('config');
+        this.settingsPanelState!.contentIndex = Math.max(0, SETTINGS_ROWS.findIndex(row => row.id === action.rowId));
+        break;
+      case 'toggleComposerPosition':
+        config.composerPosition = config.composerPosition === 'top' ? 'bottom' : 'top';
+        this.applySettingsConfiguration(config);
+        break;
+      case 'toggleTranscriptPresentation':
+        config.transcriptPresentation = config.transcriptPresentation === 'chat' ? 'normal' : 'chat';
+        this.applySettingsConfiguration(config);
+        break;
+      case 'cycleOutputFolding':
+        config.outputFolding = OUTPUT_FOLDING_MODES[(OUTPUT_FOLDING_MODES.indexOf(config.outputFolding) + 1) % OUTPUT_FOLDING_MODES.length]!;
+        this.applySettingsConfiguration(config);
+        break;
+      case 'theme':
+        config.nmsh.palette = action.palette;
+        this.applySettingsConfiguration(config);
+        break;
+      case 'latest':
+        this.historyViewport.latest();
+        break;
+      case 'toggleDetails':
+        this.output.toggleMostRelevant();
+        break;
+    }
+  }
+
   private async submit(): Promise<void> {
     const command = this.editor.text;
     this.editor.clear();
@@ -729,21 +825,7 @@ export class TerminalApp {
 
     const slash = parseSlashCommand(command);
     if (slash) {
-      if (slash.kind === 'copy') await this.copyRecent(slash.index);
-      else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
-      else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
-      else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
-      else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
-      else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
-      else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
-      else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
-      else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
-      else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
-      else if (slash.kind === 'clear') await this.startFreshPresentation();
-      else if (slash.kind === 'resume') await this.openResumePicker();
-      else if (slash.kind === 'help') this.showHelp(command);
-      else if (slash.kind === 'history') this.submitHistorySearch(slash.query, command.startsWith(HISTORY_SEARCH));
-      else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
+      await this.runSlash(command, slash);
       this.render();
       return;
     }
@@ -1507,7 +1589,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.syntaxPanelState || this.settingsPanelState
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
@@ -1518,6 +1600,9 @@ export class TerminalApp {
     }
     if (this.syntaxPanelState) {
       return framePanel(renderSyntaxPanel(this.syntaxPanelState, columns, this.promptConfiguration.nmsh.palette, this.dimensions().rows - 4), columns);
+    }
+    if (this.paletteState) {
+      return framePanel(renderPalette(this.paletteState, columns, Math.min(18, this.dimensions().rows - 4), this.paletteRecent), columns);
     }
     if (this.providerPanelState) {
       return framePanel(renderProviderPanel(this.providerPanelState, columns, this.providerPreview(this.providerPanelState, columns - 2),
