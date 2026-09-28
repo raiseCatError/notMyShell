@@ -1,8 +1,13 @@
 import {chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import nodePty, {type IPty} from 'node-pty';
 import {listLiveSessions} from '../../src/session/connectSession.js';
+import {TranscriptStore} from '../../src/sessions/TranscriptStore.js';
+
+const TSX = import.meta.resolve('tsx');
+const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
 
 export const strip = (value: string) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[=>()][0-9A-B]?/g, '');
 
@@ -26,7 +31,7 @@ export class LiveSandbox {
   readonly runtime = join(this.root, 'r');
   private readonly frontends: Frontend[] = [];
 
-  constructor(config: Record<string, unknown> = {}) {
+  constructor(config: Record<string, unknown> = {}, private readonly extraEnv: Record<string, string> = {}) {
     mkdirSync(this.home);
     mkdirSync(join(this.config, 'nmsh'), {recursive: true});
     mkdirSync(this.runtime, {mode: 0o700});
@@ -37,14 +42,19 @@ export class LiveSandbox {
 
   get env(): NodeJS.ProcessEnv {
     return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, NMSH_RUNTIME_DIR: this.runtime,
-      TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: ''};
+      TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '', ...this.extraEnv};
   }
 
   sessions() { return listLiveSessions({runtimeDir: this.runtime}); }
 
+  /** The journals frontends in this sandbox wrote. */
+  transcripts() { return new TranscriptStore(join(this.config, 'nmsh', 'sessions')); }
+
   launch(args: string[] = [], size = {cols: 100, rows: 30}): Frontend {
-    const frontend = new Frontend(nodePty.spawn(process.execPath, ['--import=tsx', 'src/index.ts', ...args],
-      {cwd: process.cwd(), ...size, env: this.env as Record<string, string>}));
+    // Run outside the repository: a SIGKILLed frontend must never leave git
+    // state (index.lock from a prompt's git status) behind in the checkout.
+    const frontend = new Frontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, ENTRY, ...args],
+      {cwd: this.home, ...size, env: this.env as Record<string, string>}));
     this.frontends.push(frontend);
     return frontend;
   }

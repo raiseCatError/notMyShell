@@ -110,7 +110,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       ? {type: 'attach', sessionId: options.attach, columns: options.columns, rows: options.rows}
       : {type: 'create', cwd: options.cwd, env: options.env, columns: options.columns, rows: options.rows};
     const {value, socket, decoder, rest} = await request<AttachedSession>(options.socketPath, options.timeoutMs ?? 5000, first, message => {
-      if (message.type === 'created') return {sessionId: message.sessionId, pid: message.pid, cwd: options.cwd, fullscreen: 0};
+      if (message.type === 'created') return {sessionId: message.sessionId, pid: message.pid, cwd: options.cwd, fullscreen: 0, ackedSeq: 0};
       if (message.type === 'attached') {
         const {type: _type, ...attached} = message;
         return attached;
@@ -146,8 +146,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   }
 
   private receive(message: ServerMessage): void {
-    if (message.type === 'output') this.emit('data', message.data);
-    else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd});
+    if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
+    else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd}, {seq: message.seq, at: message.at});
+    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at});
+    else if (message.type === 'replayed') this.emit('replayed', {truncatedBytes: message.truncatedBytes});
     else if (message.type === 'exit') {
       this.finish(message.exitCode, message.signal);
       this.socket.end();
@@ -173,6 +175,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.send({type: 'terminate'});
     this.socket.end();
   }
+  ack(seq: number, journalId: string): void { this.send({type: 'ack', seq, journalId}); }
   detach(): void {
     this.detaching = true;
     this.send({type: 'detach'});

@@ -10,6 +10,12 @@ export function formatAge(ms: number): string {
   return `${Math.floor(hours / 24)}d`;
 }
 
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Plain factual listing for `nmsh --sessions`: one live session per line. */
 export function formatSessionList(sessions: readonly SessionInfo[], now: number): string {
   if (sessions.length === 0) return 'No live NMSh sessions.\n';

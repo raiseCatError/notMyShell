@@ -42,7 +42,7 @@ import {CommandContextCache, commandWords, type CommandContextId} from '../promp
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
-import type {AttachedSession, SessionClient, SessionConnection} from '../session/SessionClient.js';
+import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
 import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
@@ -67,7 +67,9 @@ import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '..
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
 import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
-import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
+import {TranscriptStore, type LiveLink, type TranscriptSession} from '../sessions/TranscriptStore.js';
+import {formatBytes} from '../session/sessionList.js';
+import type {PresentationMode} from '../output/PresentationMode.js';
 import {SessionJournal} from '../sessions/SessionJournal.js';
 import {createResumeBrowser, navigateResume, resumeDayLabel, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 
@@ -195,40 +197,147 @@ export class TerminalApp {
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
-    this.session.on('data', data => this.onShellData(data));
-    this.session.on('prompt', marker => this.onShellPrompt(marker.exitCode, marker.cwd));
-    this.session.on('exit', event => this.stop(event.exitCode));
+    this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
+    this.session.on('prompt', (marker, stamp) => { if (this.inStream(stamp)) this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at); });
+    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at); });
+    this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('exit', event => { this.shellEnded = true; this.stop(event.exitCode); });
     this.sessionMode = connection?.mode ?? 'in-process';
     this.sessionId = connection?.sessionId;
-    if (connection?.attached) this.adoptAttachedSession(connection.attached);
+    if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
     this.session.start();
+  }
+
+  /** Last shell stream event reflected in the transcript (service sessions). */
+  private streamSeq = 0;
+  /** Between reattach and the end of the backlog: rebuild the transcript quietly. */
+  private replaying = false;
+  /** The shell itself ended; the journal is no longer linked to a live session. */
+  private shellEnded = false;
+  /** Commands the replay completed, for the reattach summary. */
+  private replayedCompletions = 0;
+  private attachedSession?: AttachedSession;
+  private continuedJournal?: TranscriptSession;
+  private rendererEntered = false;
+
+  /** Drop stream events the transcript already has (exactly-once replay). */
+  private inStream(stamp: StreamStamp): boolean {
+    if (stamp.seq === undefined) return true;
+    if (stamp.seq <= this.streamSeq) return false;
+    this.streamSeq = stamp.seq;
+    return true;
   }
 
   private readonly sessionMode: 'service' | 'in-process';
   private readonly sessionId?: string;
 
   /**
-   * A reattached shell is already running: take over its cwd and any
-   * foreground command without re-running startup against it. A fullscreen
-   * command goes straight back to passthrough; the service's attach resize
-   * makes the app repaint itself.
+   * A reattached shell is already running: never re-run startup against it.
+   * The previous frontend's journal is the transcript; the service then
+   * replays only the stream events that journal lacks, through the same
+   * handlers live output uses, and finishReplay() settles the final state.
    */
-  private adoptAttachedSession(attached: AttachedSession): void {
+  private beginReattach(attached: AttachedSession, journal: TranscriptSession | undefined): void {
+    this.attachedSession = attached;
+    this.replaying = true;
     this.shellCwd = attached.cwd;
-    this.output.addFrontendInteraction('session', `Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid}).`, INFO);
-    if (!attached.running) return;
-    const command = attached.running;
-    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), () => this.render(),
+    this.streamSeq = attached.ackedSeq;
+    if (!journal) return;
+    this.continuedJournal = journal;
+    this.welcomeGeneration += 1;
+    this.output.restoreTranscript(journal.transcript);
+    this.presentationStartCwd = journal.startCwd;
+    if (journal.live) {
+      this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
+      const running = journal.live.running;
+      if (running) {
+        this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
+        this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
+          startId: running.startId, cwd: running.cwd};
+      }
+    }
+  }
+
+  private finishReplay(summary: {truncatedBytes: number}): void {
+    const attached = this.attachedSession;
+    if (!this.replaying || !attached) return;
+    this.replaying = false;
+    const parts = [`Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid})`];
+    const completed = this.replayedCompletions;
+    if (completed > 0) parts.push(`${completed} command${completed === 1 ? '' : 's'} completed while detached`);
+    this.output.addFrontendInteraction('session', `${parts.join(' · ')}.`, INFO);
+    if (summary.truncatedBytes > 0) {
+      this.output.addFrontendInteraction('session',
+        `${formatBytes(summary.truncatedBytes)} of output produced while detached exceeded the retention limit and was not kept.`, ERROR);
+    }
+    // Without a journal the running command is known only from the service.
+    if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
+    if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+      this.passthrough = true;
+      if (this.rendererEntered) this.enterAttachedPassthrough();
+    }
+    this.scheduleJournal();
+    this.render();
+  }
+
+  private enterAttachedPassthrough(): void {
+    // Reattached into a fullscreen app: hand it the whole terminal again.
+    this.renderer.suspendForPassthrough();
+    const dimensions = this.dimensions();
+    this.session.resize(dimensions.columns, dimensions.rows);
+  }
+
+  private onActiveModeChange(mode: PresentationMode): void {
+    if (this.replaying) return;
+    if (mode === 'PASSTHROUGH' && !this.passthrough) {
+      this.passthrough = true;
+      this.renderer.suspendForPassthrough();
+      const dimensions = this.dimensions();
+      this.session.resize(dimensions.columns, dimensions.rows);
+    }
+    this.render();
+  }
+
+  /**
+   * zsh started a command line this frontend did not submit (it began while
+   * detached, or came from type-ahead): give it its own transcript block.
+   */
+  private onShellExec(command: string, at = Date.now()): void {
+    if (this.running) return;
+    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
-    this.running = {command, startedAt: attached.runningSince ?? Date.now(), interrupted: false, cleared: false, startId, cwd: this.shellCwd};
-    this.passthrough = attached.fullscreen !== 0 || shouldPassthrough(command);
+    this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
+    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.scheduleJournal();
+    if (!this.replaying) this.render();
+  }
+
+  private scheduleJournal(): void {
+    void this.journal?.flush().catch(() => {
+      this.output.addFrontendInteraction('/resume', 'Could not persist the current session.', ERROR);
+    });
+  }
+
+  private liveLink(): LiveLink | undefined {
+    if (!this.sessionId || this.shellEnded) return undefined;
+    const running = this.running;
+    const outputStartId = this.output.activeOutputStartId;
+    return {sessionId: this.sessionId, seq: this.streamSeq,
+      ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
+        cwd: running.cwd, startId: running.startId, outputStartId}} : {})};
   }
 
   async run(): Promise<number> {
     this.journal = new SessionJournal(this.transcriptStore, this.promptConfiguration.sessionRetention,
-      () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript()}),
-      () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR));
-    try { await this.journal.start(); this.journalActive = true; } catch {
+      () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript(), live: this.liveLink()}),
+      () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR),
+      // Durable now: the service may forget these stream events.
+      saved => { if (saved.live) this.session.ack(saved.live.seq, saved.id); });
+    try {
+      if (this.continuedJournal) await this.journal.continue(this.continuedJournal);
+      else await this.journal.start();
+      this.journalActive = true;
+    } catch {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
     }
     if (!this.promptConfiguration.glyphChoiceComplete) {
@@ -239,12 +348,8 @@ export class TerminalApp {
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
     }
     this.renderer.enter();
-    if (this.passthrough) {
-      // Reattached into a fullscreen app: hand it the whole terminal again.
-      this.renderer.suspendForPassthrough();
-      const dimensions = this.dimensions();
-      this.session.resize(dimensions.columns, dimensions.rows);
-    }
+    this.rendererEntered = true;
+    if (this.passthrough) this.enterAttachedPassthrough();
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -1184,13 +1289,13 @@ export class TerminalApp {
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
         process.stdout.write(data);
-      } else {
+      } else if (!this.replaying) {
         this.render();
       }
     }
   }
 
-  private onShellPrompt(exitCode: number, cwd: string): void {
+  private onShellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
     this.shellCwd = cwd;
     this.context.exitStatus = exitCode;
     if (!this.running) {
@@ -1200,7 +1305,8 @@ export class TerminalApp {
     }
 
     const command = this.running;
-    const completedAt = new Date();
+    if (this.replaying) this.replayedCompletions += 1;
+    const completedAt = new Date(at);
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     const completedRecord = this.output.complete(exitCode);
@@ -2482,6 +2588,7 @@ export class TerminalApp {
 
     this.shellHandoffCwd = decision.cwd;
     this.shellHandoffRequested = true;
+    this.shellEnded = true;
     this.session.kill();
     this.stop(0);
   }

@@ -21,17 +21,28 @@ export type ClientMessage =
   | {type: 'list'}
   | {type: 'input'; data: string}
   | {type: 'resize'; columns: number; rows: number}
+  /** Everything up to seq is durable in the frontend journal journalId. */
+  | {type: 'ack'; seq: number; journalId: string}
   | {type: 'terminate'};
 
 export type ServerMessage =
   | {type: 'welcome'; version: number; service: string}
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
-  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; running?: string; runningSince?: number}
+  | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; running?: string; runningSince?: number;
+    journalId?: string; ackedSeq: number}
   | {type: 'detached'; sessionId: string}
   | {type: 'sessions'; sessions: SessionInfo[]}
-  | {type: 'output'; data: string}
-  | {type: 'prompt'; exitCode: number; cwd: string}
+  /**
+   * Shell stream events carry a per-session sequence number and the time the
+   * service observed them, so a reattaching frontend can replay what it
+   * missed exactly once with the original timing.
+   */
+  | {type: 'output'; data: string; seq?: number; at?: number}
+  | {type: 'exec'; command: string; seq: number; at: number}
+  | {type: 'prompt'; exitCode: number; cwd: string; seq?: number; at?: number}
+  /** End of the backlog sent after attach. */
+  | {type: 'replayed'; truncatedBytes: number}
   | {type: 'exit'; exitCode: number; signal?: number};
 
 /** Lifecycle of a live session. Ended sessions leave the registry entirely. */
@@ -70,15 +81,19 @@ const SHAPES: Record<string, Shape> = {
   list: {},
   input: {data: 'string'},
   resize: {columns: 'int', rows: 'int'},
+  ack: {seq: 'int', journalId: 'string'},
   terminate: {},
   welcome: {version: 'int', service: 'string'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
-  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', running: 'string?', runningSince: 'int?'},
+  attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', running: 'string?', runningSince: 'int?',
+    journalId: 'string?', ackedSeq: 'int'},
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},
-  output: {data: 'string'},
-  prompt: {exitCode: 'int', cwd: 'string'},
+  output: {data: 'string', seq: 'int?', at: 'int?'},
+  exec: {command: 'string', seq: 'int', at: 'int'},
+  prompt: {exitCode: 'int', cwd: 'string', seq: 'int?', at: 'int?'},
+  replayed: {truncatedBytes: 'int'},
   exit: {exitCode: 'int', signal: 'int?'},
 };
 
