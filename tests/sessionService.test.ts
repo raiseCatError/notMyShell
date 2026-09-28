@@ -70,7 +70,9 @@ test('service starts on demand, gives the shell the frontend env and cwd, and ex
 
     let output = '';
     client.on('data', data => { output += data; });
-    assert.equal((await nextPrompt(client)).cwd, workdir);
+    const first = nextPrompt(client);
+    client.start();
+    assert.equal((await first).cwd, workdir);
 
     let prompt = nextPrompt(client);
     client.submit('echo "$NMSH_TEST_SECRET/$NMSH_SESSION_MODE/$PWD"');
@@ -139,7 +141,7 @@ test('handshake, version mismatch, framing, containment, registry, and disconnec
     old.socket.write(`${JSON.stringify({v: PROTOCOL_VERSION, type: 'hello', version: 0, client: 'old'})}\n`);
     const mismatch = await old.waitFor('error');
     assert.equal(mismatch.type === 'error' && mismatch.code, 'version');
-    assert.match(mismatch.type === 'error' ? mismatch.message : '', /protocol 1/);
+    assert.match(mismatch.type === 'error' ? mismatch.message : '', /protocol 2/);
 
     const frames = encodeMessage({type: 'hello', version: PROTOCOL_VERSION, client: 'test'})
       + encodeMessage({type: 'create', cwd: home, env: {HOME: home, PATH: process.env.PATH ?? '', SECRET_X: 'hidden'}, columns: 80, rows: 24});
@@ -152,9 +154,9 @@ test('handshake, version mismatch, framing, containment, registry, and disconnec
 
     const [record] = service.registry;
     assert.ok(record);
-    assert.deepEqual(Object.keys(record).sort(), ['attached', 'createdAt', 'cwd', 'id', 'pid', 'protocolVersion']);
+    assert.deepEqual(Object.keys(record).sort(), ['createdAt', 'cwd', 'id', 'pid', 'protocolVersion', 'state']);
     assert.equal(record.cwd, home);
-    assert.equal(record.attached, true);
+    assert.equal(record.state, 'attached');
     assert.ok(record.pid > 0);
     assert.doesNotMatch(JSON.stringify(service.registry), /hidden/);
 
@@ -162,7 +164,27 @@ test('handshake, version mismatch, framing, containment, registry, and disconnec
     await until(() => peer.messages.some(m => m.type === 'output' && m.data.includes('contained-2')));
     assert.ok(peer.messages.some(m => m.type === 'error' && m.code === 'malformed'));
 
+    // Losing the connection detaches; it never ends the shell.
     peer.socket.destroy();
+    await until(() => service.registry[0]?.state === 'detached');
+    const shellPid = service.registry[0]!.pid;
+    process.kill(shellPid, 0);
+
+    const lister = new RawPeer(service.socketPath);
+    lister.socket.write(encodeMessage({type: 'hello', version: PROTOCOL_VERSION, client: 'test'}) + encodeMessage({type: 'list'}));
+    const listed = await lister.waitFor('sessions');
+    assert.deepEqual(listed.type === 'sessions' && listed.sessions.map(s => [s.id, s.state, s.pid]), [[record.id, 'detached', shellPid]]);
+    assert.doesNotMatch(JSON.stringify(listed), /hidden/);
+    lister.socket.destroy();
+
+    const owner = new RawPeer(service.socketPath);
+    owner.socket.write(encodeMessage({type: 'hello', version: PROTOCOL_VERSION, client: 'test'})
+      + encodeMessage({type: 'attach', sessionId: record.id, columns: 70, rows: 20}));
+    const attached = await owner.waitFor('attached');
+    assert.equal(attached.type === 'attached' && attached.pid, shellPid);
+    owner.socket.write(encodeMessage({type: 'terminate'}));
+    await owner.waitFor('exit');
+    owner.socket.destroy();
     await service.done;
     assert.equal(service.registry.length, 0);
     assert.equal(existsSync(service.socketPath), false);

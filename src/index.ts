@@ -24,8 +24,23 @@ function startOrdinaryZsh(cwd?: string): Promise<number> {
   });
 }
 
-if (isVersionInvocation(process.argv.slice(2))) {
+const args = process.argv.slice(2);
+const attachIndex = args.indexOf('--attach');
+
+if (isVersionInvocation(args)) {
   process.stdout.write(`${formatBuildIdentity(readBuildIdentity())}\n`);
+} else if (args.includes('--sessions')) {
+  const {listLiveSessions} = await import('./session/connectSession.js');
+  const {formatSessionList} = await import('./session/sessionList.js');
+  try {
+    process.stdout.write(formatSessionList(await listLiveSessions(), Date.now()));
+  } catch (error) {
+    process.stderr.write(`NMSh could not list live sessions: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  }
+} else if (attachIndex !== -1 && !args[attachIndex + 1]) {
+  process.stderr.write('Usage: nmsh --attach <session-id>   (see nmsh --sessions)\n');
+  process.exitCode = 2;
 } else if (isManagedNmshEnvironment()) {
   process.stderr.write(`${NESTED_NMSH_MESSAGE}\n`);
   process.exitCode = 1;
@@ -34,9 +49,15 @@ if (isVersionInvocation(process.argv.slice(2))) {
   process.exitCode = 1;
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
-  const {connectSession} = await import('./session/connectSession.js');
-  const connection = await connectSession({cwd: process.cwd(), columns: process.stdout.columns || 80,
-    rows: Math.max(2, (process.stdout.rows || 24) - 4)});
+  const {attachSession, connectSession} = await import('./session/connectSession.js');
+  const size = {cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)};
+  let connection;
+  try {
+    connection = attachIndex === -1 ? await connectSession(size) : await attachSession(args[attachIndex + 1]!, size);
+  } catch (error) {
+    process.stderr.write(`NMSh could not attach: ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  }
   const app = new TerminalApp(connection);
   const exitCode = await app.run();
   process.exitCode = app.isOrdinaryZshHandoffRequested

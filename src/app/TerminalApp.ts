@@ -42,7 +42,7 @@ import {CommandContextCache, commandWords, type CommandContextId} from '../promp
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
-import type {SessionClient, SessionConnection} from '../session/SessionClient.js';
+import type {AttachedSession, SessionClient, SessionConnection} from '../session/SessionClient.js';
 import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
@@ -198,6 +198,30 @@ export class TerminalApp {
     this.session.on('data', data => this.onShellData(data));
     this.session.on('prompt', marker => this.onShellPrompt(marker.exitCode, marker.cwd));
     this.session.on('exit', event => this.stop(event.exitCode));
+    this.sessionMode = connection?.mode ?? 'in-process';
+    this.sessionId = connection?.sessionId;
+    if (connection?.attached) this.adoptAttachedSession(connection.attached);
+    this.session.start();
+  }
+
+  private readonly sessionMode: 'service' | 'in-process';
+  private readonly sessionId?: string;
+
+  /**
+   * A reattached shell is already running: take over its cwd and any
+   * foreground command without re-running startup against it. A fullscreen
+   * command goes straight back to passthrough; the service's attach resize
+   * makes the app repaint itself.
+   */
+  private adoptAttachedSession(attached: AttachedSession): void {
+    this.shellCwd = attached.cwd;
+    this.output.addFrontendInteraction('session', `Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid}).`, INFO);
+    if (!attached.running) return;
+    const command = attached.running;
+    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), () => this.render(),
+      {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
+    this.running = {command, startedAt: attached.runningSince ?? Date.now(), interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.passthrough = attached.fullscreen !== 0 || shouldPassthrough(command);
   }
 
   async run(): Promise<number> {
@@ -215,6 +239,12 @@ export class TerminalApp {
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
     }
     this.renderer.enter();
+    if (this.passthrough) {
+      // Reattached into a fullscreen app: hand it the whole terminal again.
+      this.renderer.suspendForPassthrough();
+      const dimensions = this.dimensions();
+      this.session.resize(dimensions.columns, dimensions.rows);
+    }
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -277,8 +307,10 @@ export class TerminalApp {
     this.render();
   };
 
+  // The frontend is going away (window closed, SIGHUP/SIGTERM); the shell was
+  // not asked to end, so a service-backed session stays alive, detached.
   private readonly onTerminate = (): void => {
-    this.session.kill();
+    this.session.detach();
     this.stop(0);
   };
 
@@ -1789,6 +1821,7 @@ export class TerminalApp {
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
         {label: 'Shell', value: 'zsh (/bin/zsh)'},
+        {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
         {label: 'Terminal size', value: `${columns}×${rows}`},
