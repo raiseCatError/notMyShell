@@ -178,6 +178,7 @@ export class TerminalApp {
     this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
+    this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     const dimensions = this.dimensions();
     this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
     this.semanticService = new SemanticService(this.initialCwd);
@@ -1725,6 +1726,7 @@ export class TerminalApp {
     setIconStyle(next.glyphStyle);
     this.output.setTranscriptAppearance(next.transcript);
     this.output.setOutputFolding(next.outputFolding);
+    this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
   }
 
@@ -2190,8 +2192,8 @@ export class TerminalApp {
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row =>
       presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction));
     const sticky = this.stickyHeader(wrapped, viewStart);
-    const stickyRow = sticky && this.output.stickyHeaderRow(sticky.startId, columns);
-    if (stickyRow && visible.length > 0) visible[0] = presenter.stickyHeaderSurface(stickyRow);
+    const stickyRow = sticky && this.output.presentSticky(sticky.startId, columns);
+    if (stickyRow && visible.length > 0) visible[0] = stickyRow;
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
 

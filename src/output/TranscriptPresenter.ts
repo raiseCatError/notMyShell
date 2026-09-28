@@ -25,6 +25,23 @@ const COMMAND_SURFACE = '\u001B[48;2;38;38;48m';
 const HOVER_SURFACE = '\u001B[48;2;45;45;55m';
 const FOCUS_SURFACE = '\u001B[48;2;60;60;80m';
 
+/** Transcript presentation: Normal rows, or Chat with right-aligned command blocks. */
+export type TranscriptLayout = 'normal' | 'chat';
+/** Below this width Chat falls back to stacked Normal rows. */
+export const CHAT_MIN_WIDTH = 60;
+
+/** The bounded column chat command blocks and their headers live in, or undefined when too narrow. */
+export function chatColumn(width: number): number | undefined {
+  if (width < CHAT_MIN_WIDTH) return undefined;
+  return Math.min(width - 8, Math.max(32, Math.min(100, Math.round(width * 0.66))));
+}
+
+function indentRow(row: WrappedRow, indent: number): WrappedRow {
+  if (indent <= 0) return row;
+  const pad = ' '.repeat(indent);
+  return {...row, ansi: `${pad}${row.ansi}`, plain: `${pad}${row.plain}`, indent};
+}
+
 /**
  * Read-only view of what the transcript contains. `OutputBuffer` owns the
  * data; the presenter only turns it into rows.
@@ -59,6 +76,15 @@ export interface RowInteraction {
 export class TranscriptPresenter {
   private appearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
   private welcomeFrame: WelcomeCatFrame = 'open';
+  private layout: TranscriptLayout = 'normal';
+
+  setLayout(layout: TranscriptLayout): void {
+    this.layout = layout;
+  }
+
+  get transcriptLayout(): TranscriptLayout {
+    return this.layout;
+  }
 
   setAppearance(appearance: TranscriptAppearance): void {
     this.appearance = {...appearance};
@@ -70,6 +96,20 @@ export class TranscriptPresenter {
 
   rows(view: TranscriptView, width: number): WrappedRow[] {
     const {lines, completed, active, visualGaps, historicalContexts, welcome, ownerOf} = view;
+    const column = this.layout === 'chat' ? chatColumn(width) : undefined;
+    // A chat command block is right-aligned as a whole: its widest wrapped row sets the left edge.
+    const blockWidths = new Map<number, number>();
+    const commandBlockWidth = (line: number): number => {
+      const start = ownerOf(line) ?? line;
+      const cached = blockWidths.get(start);
+      if (cached !== undefined) return cached;
+      let widest = 0;
+      for (let index = start; view.lineTypes.get(index) === 'command' && (ownerOf(index) ?? index) === start; index += 1) {
+        for (const row of wrapStyledLine(lines[index] ?? [], column!)) widest = Math.max(widest, displayWidth(row.plain));
+      }
+      blockWidths.set(start, widest);
+      return widest;
+    };
         const result: WrappedRow[] = welcome ? renderWelcome(welcome, width, this.welcomeFrame) : [];
     let skipUntil = -1;
     const activitiesByStart = new Map<number, SecondaryActivity>();
@@ -86,7 +126,9 @@ export class TranscriptPresenter {
       }
 
       const historicalContext = historicalContexts.get(i);
-      const header = historicalContext && renderHistoricalContext(historicalContext, width, this.appearance);
+      // Chat: the header (prompt snapshot + local divider) spans the command column on the right.
+      const rendered = historicalContext && renderHistoricalContext(historicalContext, column ?? width, this.appearance);
+      const header = rendered && column ? indentRow(rendered, width - displayWidth(rendered.plain)) : rendered;
       if (header) {
         const owner = ownerOf(i);
         if (owner !== undefined) header.blockStartId = owner;
@@ -151,7 +193,10 @@ export class TranscriptPresenter {
       }
 
       const parentDisclosure = completed.find(command => command.activities?.length && command.endId === i);
-      const wrappedRows = wrapStyledLine(lines[i], parentDisclosure ? Math.max(1, width - 2) : width);
+      const chatCommand = column !== undefined && view.lineTypes.get(i) === 'command';
+      const wrappedRows = chatCommand
+        ? wrapStyledLine(lines[i], column!).map(row => indentRow(row, width - commandBlockWidth(i)))
+        : wrapStyledLine(lines[i], parentDisclosure ? Math.max(1, width - 2) : width);
       const cmdIndex = completed.findIndex(c => c.startId <= i);
       if (parentDisclosure && wrappedRows.length > 0) {
         const finalRow = wrappedRows[wrappedRows.length - 1];
@@ -200,8 +245,16 @@ export class TranscriptPresenter {
   }
 
   /** The sticky header painted on the command surface. */
-  stickyHeaderSurface(row: string): string {
-    return `${COMMAND_SURFACE}${row.replaceAll(RESET, `${RESET}${COMMAND_SURFACE}`)}\u001B[K${RESET}`;
+  stickyHeaderSurface(row: string, indent = 0): string {
+    return `${' '.repeat(indent)}${COMMAND_SURFACE}${row.replaceAll(RESET, `${RESET}${COMMAND_SURFACE}`)}\u001B[K${RESET}`;
+  }
+
+  /** The finished sticky row for a block, aligned like the block's command rows. */
+  presentSticky(view: TranscriptView, startId: number, width: number): string | undefined {
+    const column = this.layout === 'chat' ? chatColumn(width) : undefined;
+    const row = this.stickyHeaderRow(view, startId, column ?? width);
+    if (row === undefined) return undefined;
+    return this.stickyHeaderSurface(row, column === undefined ? 0 : Math.max(0, width - displayWidth(row)));
   }
 
   /** Final ANSI for a visible row: live shimmer, command surface, hover and focus treatment. */
@@ -211,7 +264,12 @@ export class TranscriptPresenter {
       finalAnsi = `${shimmerTextWithColors(row.plain, interaction.now - row.activityStartedAt, false,
         {red: 148, green: 155, blue: 166}, {red: 248, green: 250, blue: 252})}${RESET}`;
     }
-    const applyBg = (bg: string) => `${bg}${finalAnsi.replaceAll(RESET, RESET + bg)}${bg}\u001B[K${RESET}`;
+    // Chat rows carry leading alignment padding that stays outside any surface.
+    const pad = ' '.repeat(row.indent ?? 0);
+    const applyBg = (bg: string) => {
+      const content = pad && finalAnsi.startsWith(pad) ? finalAnsi.slice(pad.length) : finalAnsi;
+      return `${pad}${bg}${content.replaceAll(RESET, RESET + bg)}${bg}\u001B[K${RESET}`;
+    };
     const brighten = () => row.ansi.replaceAll(SECONDARY, PRIMARY).replaceAll(SUBTLE, SECONDARY);
 
     if (row.isFoldHint) {

@@ -325,6 +325,11 @@ export class OutputBuffer {
     };
   }
 
+  /** The finished, aligned sticky row for a block. */
+  presentSticky(startId: number, width: number): string | undefined {
+    return this.presenter.presentSticky(this.view(), startId, width);
+  }
+
   /** One-row sticky rendering of a block's submitted command (see the presenter). */
   stickyHeaderRow(startId: number, width: number): string | undefined {
     return this.presenter.stickyHeaderRow(this.view(), startId, width);
