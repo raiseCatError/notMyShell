@@ -4,9 +4,8 @@ import {connect, createServer, type Server, type Socket} from 'node:net';
 import {ShellSession} from '../shell/ShellSession.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
-import {ensurePrivateRuntimeDir, socketPathFor} from './runtimeDir.js';
+import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
 import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
-import {join} from 'node:path';
 
 export const SERVICE_NAME = 'nmshd';
 
@@ -77,10 +76,6 @@ export interface SessionServiceOptions {
   backlogLimits?: BacklogLimits;
 }
 
-export function spoolPathFor(runtimeDir: string, sessionId: string): string {
-  return join(runtimeDir, 'spool', `${sessionId}.jsonl`);
-}
-
 function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
     case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
@@ -128,7 +123,8 @@ export class SessionService {
   private info(session: ManagedSession): SessionInfo {
     const {record, running} = session;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
-      ...(running ? {running: running.command, runningSince: running.since} : {})};
+      ...(running ? {running: running.command, runningSince: running.since} : {}),
+      ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {})};
   }
 
   async start(): Promise<void> {
@@ -228,6 +224,15 @@ export class SessionService {
             if (owned) { owned.resizes += 1; owned.shell.resize(message.columns, message.rows); }
             break;
           case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
+          case 'kill': {
+            const target = this.sessions.get(message.sessionId);
+            if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            // Never pull a shell out from under a frontend that is using it.
+            if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+            target.shell.kill();
+            break;
+          }
           case 'terminate': owned?.shell.kill(); break;
           default: send({type: 'error', code: 'unsupported', message: `unsupported message ${message.type}`});
         }

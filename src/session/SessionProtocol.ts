@@ -23,6 +23,8 @@ export type ClientMessage =
   | {type: 'resize'; columns: number; rows: number}
   /** Everything up to seq is durable in the frontend journal journalId. */
   | {type: 'ack'; seq: number; journalId: string}
+  /** End a detached session this connection does not control (Kill Session). */
+  | {type: 'kill'; sessionId: string}
   | {type: 'terminate'};
 
 export type ServerMessage =
@@ -43,6 +45,7 @@ export type ServerMessage =
   | {type: 'prompt'; exitCode: number; cwd: string; seq?: number; at?: number}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
+  | {type: 'killed'; sessionId: string}
   | {type: 'exit'; exitCode: number; signal?: number};
 
 /** Lifecycle of a live session. Ended sessions leave the registry entirely. */
@@ -58,6 +61,8 @@ export interface SessionInfo {
   /** Foreground command line reported by zsh preexec, while one runs. */
   running?: string;
   runningSince?: number;
+  /** Journal of the session's most recent frontend, as it last acknowledged. */
+  journalId?: string;
 }
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
@@ -82,6 +87,7 @@ const SHAPES: Record<string, Shape> = {
   input: {data: 'string'},
   resize: {columns: 'int', rows: 'int'},
   ack: {seq: 'int', journalId: 'string'},
+  kill: {sessionId: 'string'},
   terminate: {},
   welcome: {version: 'int', service: 'string'},
   error: {code: 'string', message: 'string'},
@@ -94,6 +100,7 @@ const SHAPES: Record<string, Shape> = {
   exec: {command: 'string', seq: 'int', at: 'int'},
   prompt: {exitCode: 'int', cwd: 'string', seq: 'int?', at: 'int?'},
   replayed: {truncatedBytes: 'int'},
+  killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
 };
 
@@ -103,7 +110,7 @@ function isEnv(value: unknown): value is Record<string, string> {
 }
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
-  running: 'string?', runningSince: 'int?'};
+  running: 'string?', runningSince: 'int?', journalId: 'string?'};
 
 function validField(kind: Kind, value: unknown): boolean {
   switch (kind) {

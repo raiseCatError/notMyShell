@@ -77,9 +77,14 @@ export class SessionJournal {
     }
   }
 
-  async close(): Promise<void> {
+  /**
+   * Stop journaling. A detaching frontend leaves its live session's journal
+   * open (not ended): the next frontend continues it.
+   */
+  async close(ended = true): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    await this.finish();
+    if (ended) await this.finish();
+    else await this.flush();
   }
 }

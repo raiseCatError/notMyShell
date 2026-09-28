@@ -17,6 +17,11 @@ export function socketPathFor(runtimeDir: string): string {
   return join(runtimeDir, 'nmshd.sock');
 }
 
+/** Where the service spools a session's stream events its journal does not have yet. */
+export function spoolPathFor(runtimeDir: string, sessionId: string): string {
+  return join(runtimeDir, 'spool', `${sessionId}.jsonl`);
+}
+
 /**
  * Create (if needed) and verify the runtime directory: a real directory, not a
  * symlink, owned by this user, with no group/other permissions. Anything else
