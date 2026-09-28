@@ -547,6 +547,13 @@ export class TerminalApp {
       }
       return;
     }
+    if (key.kind === 'suspend') {
+      // Job control belongs to zsh: forward ^Z so it stops the foreground job.
+      // With no foreground command there is nothing to suspend, so the idle
+      // composer ignores it rather than treating it as text, undo, or exit.
+      if (this.running) this.session.write('\u001A');
+      return;
+    }
     if (key.kind === 'selectAll') {
       if (!this.running) this.editor.selectAll();
       return;
