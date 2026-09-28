@@ -11,10 +11,10 @@ const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
 
 export const strip = (value: string) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[=>()][0-9A-B]?/g, '');
 
-export async function until(check: () => boolean | Promise<boolean>, timeoutMs = 15000, what = 'condition'): Promise<void> {
+export async function until(check: () => boolean | Promise<boolean>, timeoutMs = 15000, what: string | (() => string) = 'condition'): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!(await check())) {
-    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${typeof what === 'function' ? what() : what}`);
     await new Promise(resolve => setTimeout(resolve, 25));
   }
 }
@@ -85,7 +85,7 @@ export class Frontend {
 
   async waitFor(pattern: RegExp, from = 0, timeoutMs = 20000): Promise<void> {
     await until(() => pattern.test(strip(this.output.slice(from))), timeoutMs,
-      `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
+      () => `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
   }
 
   async run(command: string, expect: RegExp): Promise<void> {

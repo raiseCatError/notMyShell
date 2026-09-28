@@ -60,6 +60,20 @@ if (isVersionInvocation(args)) {
   let target: string | undefined = attachIndex === -1 ? undefined : args[attachIndex + 1];
   let explicit = target !== undefined;
   let notice: string | undefined;
+  if (process.env[SESSION_SERVICE_ENV] !== '0') {
+    // Sessions that ended with no window attached become ordinary archives.
+    const {recoverEndedSessions} = await import('./session/recovery.js');
+    const {defaultRuntimeDir} = await import('./session/runtimeDir.js');
+    const {TranscriptStore} = await import('./sessions/TranscriptStore.js');
+    try {
+      const recovered = await recoverEndedSessions(defaultRuntimeDir(), new TranscriptStore());
+      if (recovered.archived.length > 0) {
+        notice = `${recovered.archived.length} live session${recovered.archived.length === 1 ? '' : 's'} ended while no NMSh window was attached; see /resume.`;
+      } else if (recovered.skipped === 'another NMSh session service version is running') {
+        notice = 'A session service from another NMSh version is still running its own live sessions; they continue until they end but cannot be attached from this version.';
+      }
+    } catch { /* recovery is best effort and never blocks launch */ }
+  }
   if (!explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
     let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
     try { live = await listLiveSessions(); } catch { /* no usable service: start fresh */ }
@@ -90,10 +104,13 @@ if (isVersionInvocation(args)) {
     if (notice) connection = {...connection, notice: [connection.notice, notice].filter(Boolean).join(' ')};
     const app = new TerminalApp(connection);
     const exitCode = await app.run();
+    if (app.lostServiceConnection) {
+      process.stderr.write('NMSh lost the connection to its session service; the live session ended and its transcript was archived.\n');
+    }
+    notice = undefined;
     if (app.switchTarget) {
       target = app.switchTarget;
       explicit = false;
-      notice = undefined;
       continue;
     }
     process.exitCode = app.isOrdinaryZshHandoffRequested

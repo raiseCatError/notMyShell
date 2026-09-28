@@ -47,7 +47,11 @@ function parseLive(value: unknown): LiveLink | undefined {
     ...(validRunning ? {running: running as unknown as NonNullable<LiveLink['running']>} : {})};
 }
 
-export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview' | 'live'> & {project: string};
+export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview' | 'live'> & {
+  project: string;
+  /** Set while this journal presents a live service session. */
+  liveSessionId?: string;
+};
 
 interface TranscriptFile extends TranscriptSession {
   schemaVersion: number;
@@ -139,6 +143,7 @@ function summary(session: TranscriptSession): TranscriptSummary {
     startCwd: session.startCwd, finalCwd: session.finalCwd,
     pinned: session.pinned === true, ...(session.endedAt ? {endedAt: session.endedAt} : {}),
     ...(session.journaled ? {journaled: true} : {}),
+    ...(session.live ? {liveSessionId: session.live.sessionId} : {}),
     project: session.transcript.records[0]?.historicalContext?.project ?? ''};
 }
 

@@ -77,7 +77,8 @@ function startService(runtimeDir: string, command: {command: string; args: strin
   // The service needs no user environment of its own: each session receives
   // the launching frontend's env in its create message.
   const serviceEnv: NodeJS.ProcessEnv = {PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, [RUNTIME_DIR_ENV]: runtimeDir,
-    NMSH_BACKLOG_MEMORY_BYTES: env.NMSH_BACKLOG_MEMORY_BYTES, NMSH_BACKLOG_SPOOL_BYTES: env.NMSH_BACKLOG_SPOOL_BYTES};
+    NMSH_BACKLOG_MEMORY_BYTES: env.NMSH_BACKLOG_MEMORY_BYTES, NMSH_BACKLOG_SPOOL_BYTES: env.NMSH_BACKLOG_SPOOL_BYTES,
+    NMSH_MAX_SESSIONS: env.NMSH_MAX_SESSIONS};
   const child = spawn(command.command, command.args, {detached: true, stdio: 'ignore', env: serviceEnv});
   child.on('error', () => {});
   child.unref();

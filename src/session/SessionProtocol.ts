@@ -61,6 +61,8 @@ export interface SessionInfo {
   /** Foreground command line reported by zsh preexec, while one runs. */
   running?: string;
   runningSince?: number;
+  /** When the shell last became idle at its prompt; absent while a command runs. */
+  idleSince?: number;
   /** Journal of the session's most recent frontend, as it last acknowledged. */
   journalId?: string;
 }
@@ -110,7 +112,7 @@ function isEnv(value: unknown): value is Record<string, string> {
 }
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
-  running: 'string?', runningSince: 'int?', journalId: 'string?'};
+  running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?'};
 
 function validField(kind: Kind, value: unknown): boolean {
   switch (kind) {

@@ -1,4 +1,5 @@
-import {lstatSync, mkdirSync} from 'node:fs';
+import {lstatSync, mkdirSync, readdirSync} from 'node:fs';
+import {PROTOCOL_VERSION} from './SessionProtocol.js';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -13,8 +14,21 @@ export function defaultRuntimeDir(env: NodeJS.ProcessEnv = process.env): string 
   return env[RUNTIME_DIR_ENV] || join(tmpdir(), `nmsh-${uid()}`);
 }
 
-export function socketPathFor(runtimeDir: string): string {
-  return join(runtimeDir, 'nmshd.sock');
+/**
+ * Each protocol version has its own service socket. After an update the old
+ * service keeps serving the sessions it owns until they end, while new
+ * frontends start (and only ever attach through) a service they speak to.
+ */
+export function socketPathFor(runtimeDir: string, version = PROTOCOL_VERSION): string {
+  return join(runtimeDir, version === 1 ? 'nmshd.sock' : `nmshd-v${version}.sock`);
+}
+
+/** Socket paths of services speaking other protocol versions (v1 used the unversioned name). */
+export function otherServiceSockets(runtimeDir: string): string[] {
+  let names: string[];
+  try { names = readdirSync(runtimeDir); } catch { return []; }
+  const current = socketPathFor(runtimeDir);
+  return names.filter(name => /^nmshd(?:-v\d+)?\.sock$/u.test(name)).map(name => join(runtimeDir, name)).filter(path => path !== current);
 }
 
 /** Where the service spools a session's stream events its journal does not have yet. */

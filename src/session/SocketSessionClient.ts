@@ -140,7 +140,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.pending = () => deliver(pending);
     this.socket.on('data', chunk => deliver(decoder.push(String(chunk))));
     this.socket.on('error', () => {});
-    this.socket.on('close', () => { if (!this.detaching) this.finish(1); });
+    this.socket.on('close', () => { if (!this.detaching) this.finish(1, undefined, true); });
   }
 
   private pending?: () => void;
@@ -163,11 +163,12 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     }
   }
 
-  private finish(exitCode: number, signal?: number): void {
+  private finish(exitCode: number, signal?: number, lost = false): void {
     if (this.exited) return;
     this.exited = true;
-    this.emit('exit', signal === undefined ? {exitCode} : {exitCode, signal});
+    this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
+
 
   private send(message: ClientMessage): void {
     if (!this.socket.destroyed && this.socket.writable) this.socket.write(encodeMessage(message));

@@ -26,6 +26,8 @@ interface ManagedSession {
   /** The one writable frontend; undefined while detached. */
   controller?: Send;
   running?: {command: string; since: number};
+  /** When zsh last returned to its prompt. */
+  idleSince: number;
   screen: AlternateScreenTracker;
   /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
   resizes: number;
@@ -74,7 +76,11 @@ export interface SessionServiceOptions {
   /** Exit if no frontend connects within this window after startup. */
   startupIdleMs?: number;
   backlogLimits?: BacklogLimits;
+  /** Live sessions allowed at once; detached ones are never ended to make room. */
+  maxSessions?: number;
 }
+
+export const DEFAULT_MAX_SESSIONS = 16;
 
 function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
@@ -123,7 +129,7 @@ export class SessionService {
   private info(session: ManagedSession): SessionInfo {
     const {record, running} = session;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
-      ...(running ? {running: running.command, runningSince: running.since} : {}),
+      ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
       ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {})};
   }
 
@@ -182,6 +188,10 @@ export class SessionService {
         switch (message.type) {
           case 'create':
             if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
+            if (this.sessions.size >= (this.options.maxSessions ?? DEFAULT_MAX_SESSIONS)) {
+              send({type: 'error', code: 'limit', message: `${this.sessions.size} live sessions are already running (the limit); end one or kill a detached one from /resume`});
+              break;
+            }
             try {
               owned = this.create(message.cwd, message.env, message.columns, message.rows, send);
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid});
@@ -277,7 +287,7 @@ export class SessionService {
     const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
     const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
       state: 'attached', protocolVersion: PROTOCOL_VERSION};
-    const session: ManagedSession = {record, shell, controller: send, screen: new AlternateScreenTracker(), resizes: 0,
+    const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits)};
     this.sessions.set(record.id, session);
     // Every event is retained until a frontend journal acknowledges it, and
@@ -300,6 +310,7 @@ export class SessionService {
     shell.on('prompt', marker => {
       record.cwd = marker.cwd;
       session.running = undefined;
+      session.idleSince = Date.now();
       session.screen.reset();
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
     });

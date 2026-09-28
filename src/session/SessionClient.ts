@@ -19,7 +19,8 @@ export interface SessionClientEvents {
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
-  exit: [{exitCode: number; signal?: number}];
+  /** lost: the connection to the service dropped without the shell's exit being reported. */
+  exit: [{exitCode: number; signal?: number; lost?: boolean}];
 }
 
 /**
