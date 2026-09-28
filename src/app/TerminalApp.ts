@@ -198,7 +198,6 @@ export class TerminalApp {
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
-    if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     this.semanticService = new SemanticService(this.initialCwd);
     this.done = new Promise(resolve => {
       this.finish = resolve;
@@ -219,6 +218,8 @@ export class TerminalApp {
     this.sessionMode = connection?.mode ?? 'in-process';
     this.sessionId = connection?.sessionId;
     if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
+    // After any restored transcript, or reattaching would erase the launch notice.
+    if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     this.session.start();
   }
 

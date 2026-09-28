@@ -2,22 +2,32 @@ import {killSession} from './SocketSessionClient.js';
 import {finalizeLiveSession} from './recovery.js';
 import {defaultRuntimeDir, socketPathFor} from './runtimeDir.js';
 import type {SessionInfo} from './SessionProtocol.js';
+import type {LiveSessionMultiple, LiveSessionStartup} from '../prompt/configuration.js';
 import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
 
 export type LaunchPlan =
   | {kind: 'new'}
-  | {kind: 'attach'; session: SessionInfo}
+  /** One detached session and the startup setting is Ask. */
+  | {kind: 'ask'; session: SessionInfo}
+  /** Resume these, newest first: the first in this window, the rest in new windows. */
+  | {kind: 'attach'; sessions: SessionInfo[]}
   | {kind: 'pick'; sessions: SessionInfo[]};
 
+export interface StartupPolicy {
+  startup: LiveSessionStartup;
+  multiple: LiveSessionMultiple;
+}
+
 /**
- * What a plain `nmsh` launch does. Only detached sessions are candidates:
- * one attached elsewhere is never taken over, so it leads to a new session.
+ * What a plain `nmsh` launch does. Only detached sessions are candidates: one
+ * attached elsewhere is never taken over. Never skips restoring at startup and
+ * ends nothing; every session stays available through /resume.
  */
-export function planLaunch(sessions: readonly SessionInfo[]): LaunchPlan {
-  const detached = sessions.filter(session => session.state === 'detached');
-  if (detached.length === 0) return {kind: 'new'};
-  if (detached.length === 1) return {kind: 'attach', session: detached[0]!};
-  return {kind: 'pick', sessions: [...detached].sort((a, b) => b.createdAt - a.createdAt)};
+export function planLaunch(sessions: readonly SessionInfo[], policy: StartupPolicy = {startup: 'ask', multiple: 'ask'}): LaunchPlan {
+  const detached = sessions.filter(session => session.state === 'detached').sort((a, b) => b.createdAt - a.createdAt);
+  if (detached.length === 0 || policy.startup === 'never') return {kind: 'new'};
+  if (detached.length === 1) return policy.startup === 'always' ? {kind: 'attach', sessions: detached} : {kind: 'ask', session: detached[0]!};
+  return policy.multiple === 'open-all' ? {kind: 'attach', sessions: detached} : {kind: 'pick', sessions: detached};
 }
 
 export interface KillOptions {

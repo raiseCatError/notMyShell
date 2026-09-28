@@ -43,7 +43,9 @@ export class LiveSandbox {
 
   get env(): NodeJS.ProcessEnv {
     return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, NMSH_RUNTIME_DIR: this.runtime,
-      TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '', ...this.extraEnv};
+      TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '',
+      // A host NMSh cannot open windows in, so tests never launch real terminal windows.
+      TERM_PROGRAM: 'nmsh-test', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', ...this.extraEnv};
   }
 
   sessions() { return listLiveSessions({runtimeDir: this.runtime}); }

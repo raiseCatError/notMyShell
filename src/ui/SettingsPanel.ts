@@ -1,5 +1,6 @@
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
+import {LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP} from '../prompt/configuration.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
   type DividerDensity,
@@ -130,6 +131,12 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
     get: config => config.updateChecks, set: (config, updateChecks) => ({...config, updateChecks})}),
+  enumRow({id: 'liveSessionStartup', label: 'Startup restore', description: 'Resume a detached live session at launch: Ask, Always, or Never (never ends none)', category: 'Sessions',
+    values: LIVE_SESSION_STARTUP, labels: ['Ask', 'Always', 'Never'],
+    get: config => config.liveSessionStartup, set: (config, liveSessionStartup) => ({...config, liveSessionStartup})}),
+  enumRow({id: 'liveSessionMultiple', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
+    values: LIVE_SESSION_MULTIPLE, labels: ['Ask which', 'Open all'],
+    get: config => config.liveSessionMultiple, set: (config, liveSessionMultiple) => ({...config, liveSessionMultiple})}),
   {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
     control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',

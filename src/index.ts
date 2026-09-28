@@ -50,7 +50,6 @@ if (isVersionInvocation(args)) {
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
   const {attachSession, connectSession, listLiveSessions, SESSION_SERVICE_ENV} = await import('./session/connectSession.js');
-  const {planLaunch} = await import('./session/liveSessions.js');
   const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)});
   const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -77,13 +76,26 @@ if (isVersionInvocation(args)) {
   if (!explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
     let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
     try { live = await listLiveSessions(); } catch { /* no usable service: start fresh */ }
-    const plan = planLaunch(live);
-    if (plan.kind === 'attach') target = plan.session.id;
-    else if (plan.kind === 'pick') {
-      const {runStartupPicker} = await import('./session/StartupPicker.js');
-      const choice = await runStartupPicker(plan.sessions);
-      if (choice.kind === 'attach') target = choice.sessionId;
-    }
+    const {restoreAtStartup} = await import('./session/startupRestore.js');
+    const picker = await import('./session/StartupPicker.js');
+    const {detectTerminalHost} = await import('./host/terminalHost.js');
+    const {loadPromptConfiguration, savePromptConfiguration} = await import('./prompt/configuration.js');
+    const config = loadPromptConfiguration();
+    const restored = await restoreAtStartup(live, {
+      policy: {startup: config.liveSessionStartup, multiple: config.liveSessionMultiple},
+      saveStartup: startup => {
+        try { savePromptConfiguration({...loadPromptConfiguration(), liveSessionStartup: startup}); } catch { /* keep going; applies this launch */ }
+      },
+      askOne: session => picker.runStartupScreen(columns => picker.renderSinglePrompt(session, columns, Date.now()), picker.singlePromptKey),
+      pick: sessions => {
+        const state = picker.createMultiPicker(sessions);
+        return picker.runStartupScreen(columns => picker.renderMultiPicker(state, columns, Date.now()), key => picker.multiPickerKey(state, key));
+      },
+      host: detectTerminalHost(),
+      selfCommand: [process.execPath, ...process.execArgv.filter(arg => !arg.startsWith('--inspect')), process.argv[1]!],
+    });
+    target = restored.target;
+    notice = [notice, restored.notice].filter(Boolean).join(' ') || undefined;
   }
 
   // The loop lets /resume switch this window to another live session.

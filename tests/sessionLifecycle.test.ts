@@ -36,7 +36,8 @@ test('SIGKILLed frontend detaches; the same shell keeps running and a new fronte
     // A running command gated on a file, so nothing depends on timing.
     const gate = join(sandbox.home, 'go');
     first.pty.write(`while [ ! -f ${gate} ]; do sleep 0.05; done; echo RELEASED-$$\r`);
-    await until(async () => (await sandbox.sessions())[0]?.running !== undefined, 15000, 'running command');
+    // Wait for this command specifically: the previous echo can still be `running` until its prompt arrives.
+    await until(async () => /RELEASED/.test((await sandbox.sessions())[0]?.running ?? ''), 15000, 'running command');
     first.pty.kill('SIGKILL');
 
     const detached = await waitState(sandbox, 'detached');

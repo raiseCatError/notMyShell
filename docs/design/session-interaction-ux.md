@@ -105,6 +105,19 @@ Live sessions are owned by the per-user session service (`nmshd`), which listens
 - **Reattaching to a fullscreen app:** the service remembers the terminal modes the app turned on (mouse reporting, bracketed paste, application cursor keys and keypad, focus events, hidden cursor). A reattaching window re-applies them, so mouse and paste keep working in `vim`, `htop`, `less` and similar apps.
 - **Service death under an attached window:** the frontend reports that it lost the service, archives the transcript, and exits. It never claims the session survived.
 - **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. That window's shell ends when the window closes; it cannot be detached or reattached. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
+- **Startup restore:** two settings in Config → Sessions.
+  - **Startup restore:** Ask (default), Always or Never.
+    - Ask: with one detached session, the launch shows its directory, what it is running and its age, then offers Resume (R/Enter), Not now (N/Esc), Always resume (A) or Don't resume at startup (D). A and D also save the setting.
+    - Never only skips restoring at launch. It never ends a session, and `/resume`, detach and reattach are unaffected.
+  - **Multiple detached sessions:** Ask which (default) or Open all.
+    - The picker uses ↑↓ to move, Space to select, A to select all (A again clears), and Enter to resume the selected sessions. Esc, or Enter with nothing selected, starts fresh.
+  - Neither screen has a destructive key: killing stays a confirmed `/resume` action. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
+  - When several sessions are restored, this window attaches the first. Each other one opens in a new window of the host terminal, running `nmsh --attach <id>`:
+    - Ghostty on macOS: `open -na Ghostty.app --args -e …`. Ghostty has no API to open a window in the running instance, so this starts a separate Ghostty instance.
+    - Ghostty on Linux: `ghostty -e`.
+    - Terminal.app: AppleScript `do script`. macOS asks once for Automation permission.
+    - kitty: `kitten @ launch --type=os-window`, which needs kitty remote control.
+    - Hosts without a way to open windows (VS Code, Zed, others), or a launcher that fails: the remaining sessions keep running, and this window names the `nmsh --attach` command for each one.
 - **Idle age:** `/resume` shows how long each idle live session has been at its prompt.
 
 Known limitations:
