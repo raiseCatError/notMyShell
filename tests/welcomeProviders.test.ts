@@ -8,7 +8,7 @@ import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js'
 import {createWelcomeSnapshot, MIN_CAPTURED_WELCOME_WIDTH, renderWelcome} from '../src/output/Welcome.js';
 import {captureWelcome, flattenTerminalOutput, WELCOME_PROVIDERS} from '../src/output/WelcomeProviders.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
-import {clearProviderDetection} from '../src/providers/providers.js';
+import {clearProviderDetection, resolveCommand} from '../src/providers/providers.js';
 import {TranscriptStore} from '../src/sessions/TranscriptStore.js';
 import {createResumeBrowser} from '../src/sessions/ResumeBrowser.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
@@ -65,7 +65,10 @@ test('a hanging or missing fetch tool fails within the timeout instead of blocki
     assert.ok(Date.now() - started < 4000);
   });
   clearProviderDetection();
-  assert.deepEqual(await captureWelcome('fastfetch', tmpdir(), {PATH: '/nonexistent-nmsh'}), {ok: false, reason: 'not installed'});
+  // Homebrew's standard prefixes are searched too, so "missing" needs a tool absent from both.
+  if (!resolveCommand('fastfetch', '/nonexistent-nmsh')) {
+    assert.deepEqual(await captureWelcome('fastfetch', tmpdir(), {PATH: '/nonexistent-nmsh'}), {ok: false, reason: 'not installed'});
+  }
 });
 
 test('captured welcome rows are clipped, hidden when narrow, and stay out of copy and commands', () => {
