@@ -1,11 +1,23 @@
 import type {EventEmitter} from 'node:events';
 import type {ShellMarker} from '../shell/ShellProtocol.js';
+import type {TranscriptSession} from '../sessions/TranscriptStore.js';
+
+/** Position of an event in a service session's stream, when it has one. */
+export interface StreamStamp {
+  seq?: number;
+  /** When the service observed the event (epoch ms). */
+  at?: number;
+}
 
 export interface SessionClientEvents {
   /** PTY output with NMSh protocol markers already removed. */
-  data: [string];
+  data: [string, StreamStamp];
   /** A command boundary: the prompt is ready, with the last exit code and cwd. */
-  prompt: [ShellMarker];
+  prompt: [ShellMarker, StreamStamp];
+  /** zsh is about to run a command line (preexec). */
+  exec: [string, StreamStamp];
+  /** The backlog sent after a reattach has been delivered. */
+  replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
   exit: [{exitCode: number; signal?: number}];
 }
@@ -31,6 +43,8 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
    * frontend, so it ends.
    */
   detach(): void;
+  /** Stream events up to seq are durable in journalId; the service may drop them. */
+  ack(seq: number, journalId: string): void;
 }
 
 /** State of a live session this frontend attached to rather than created. */
@@ -42,6 +56,9 @@ export interface AttachedSession {
   fullscreen: number;
   running?: string;
   runningSince?: number;
+  /** Journal the previous frontend kept for this session, and how far it got. */
+  journalId?: string;
+  ackedSeq: number;
 }
 
 export interface SessionOptions {
@@ -59,6 +76,8 @@ export interface SessionConnection {
   sessionId?: string;
   /** Present when this connection reattached an existing live session. */
   attached?: AttachedSession;
+  /** The previous frontend's journal for the reattached session, when readable. */
+  journal?: TranscriptSession;
   /** Set when the service was unavailable and the shell runs in-process. */
   notice?: string;
 }

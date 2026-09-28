@@ -5,6 +5,8 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor} from './runtimeDir.js';
+import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
+import {join} from 'node:path';
 
 export const SERVICE_NAME = 'nmshd';
 
@@ -28,6 +30,8 @@ interface ManagedSession {
   screen: AlternateScreenTracker;
   /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
   resizes: number;
+  seq: number;
+  backlog: StreamBacklog;
 }
 
 // DECSET/DECRST 1049, 1047 and 47: the alternate-screen switches.
@@ -38,12 +42,26 @@ export class AlternateScreenTracker {
   active = false;
   private carry = '';
 
-  push(data: string): void {
+  /**
+   * Observe a chunk and return the part of it that belongs to the ordinary
+   * transcript: what a fullscreen app draws on the alternate screen is
+   * repainted on reattach, never replayed as transcript text.
+   */
+  push(data: string): string {
     const text = this.carry + data;
-    for (const match of text.matchAll(ALT_SCREEN)) this.active = match[1] === 'h';
+    let kept = '';
+    let from = this.carry.length;
+    for (const match of text.matchAll(ALT_SCREEN)) {
+      const index = match.index;
+      if (!this.active && index >= from) kept += text.slice(from, index);
+      from = Math.max(from, index + match[0].length);
+      this.active = match[1] === 'h';
+    }
+    if (!this.active) kept += text.slice(from);
     // Keep a tail so a sequence split across reads is still seen.
     const escape = text.lastIndexOf('\u001b');
     this.carry = escape !== -1 && text.length - escape < 8 ? text.slice(escape) : '';
+    return kept;
   }
 
   reset(): void { this.active = false; this.carry = ''; }
@@ -56,6 +74,19 @@ export interface SessionServiceOptions {
   runtimeDir: string;
   /** Exit if no frontend connects within this window after startup. */
   startupIdleMs?: number;
+  backlogLimits?: BacklogLimits;
+}
+
+export function spoolPathFor(runtimeDir: string, sessionId: string): string {
+  return join(runtimeDir, 'spool', `${sessionId}.jsonl`);
+}
+
+function toMessage(event: BacklogEvent): ServerMessage {
+  switch (event.kind) {
+    case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
+    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at};
+    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at};
+  }
 }
 
 export class ServiceAlreadyRunningError extends Error {}
@@ -170,8 +201,14 @@ export class SessionService {
             owned = session;
             this.bind(session, send);
             const info = this.info(session);
+            const {backlog} = session;
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.active ? 1 : 0,
-              ...(info.running ? {running: info.running, runningSince: info.runningSince} : {})});
+              ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
+              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
+            // Everything the journal does not have yet, then the live stream continues.
+            const missed = backlog.events();
+            for (const event of missed) send(toMessage(event));
+            send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
             this.redraw(session, message.columns, message.rows);
             break;
           }
@@ -190,6 +227,7 @@ export class SessionService {
           case 'resize':
             if (owned) { owned.resizes += 1; owned.shell.resize(message.columns, message.rows); }
             break;
+          case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
           case 'terminate': owned?.shell.kill(); break;
           default: send({type: 'error', code: 'unsupported', message: `unsupported message ${message.type}`});
         }
@@ -234,21 +272,38 @@ export class SessionService {
     const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
     const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
       state: 'attached', protocolVersion: PROTOCOL_VERSION};
-    const session: ManagedSession = {record, shell, controller: send, screen: new AlternateScreenTracker(), resizes: 0};
+    const session: ManagedSession = {record, shell, controller: send, screen: new AlternateScreenTracker(), resizes: 0,
+      seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits)};
     this.sessions.set(record.id, session);
+    // Every event is retained until a frontend journal acknowledges it, and
+    // sent live when a frontend is attached.
+    const emit = (event: BacklogEvent, live: ServerMessage = toMessage(event)) => {
+      session.backlog.append(event);
+      session.controller?.(live);
+    };
     shell.on('data', data => {
-      session.screen.push(data);
-      session.controller?.({type: 'output', data});
+      const at = Date.now();
+      const kept = session.screen.push(data);
+      if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
+      else session.controller?.({type: 'output', data});
     });
-    shell.on('exec', command => { session.running = {command, since: Date.now()}; });
+    shell.on('exec', command => {
+      const at = Date.now();
+      session.running = {command, since: at};
+      emit({kind: 'exec', seq: ++session.seq, at, command});
+    });
     shell.on('prompt', marker => {
       record.cwd = marker.cwd;
       session.running = undefined;
       session.screen.reset();
-      session.controller?.({type: 'prompt', exitCode: marker.exitCode, cwd: marker.cwd});
+      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
     });
     shell.on('exit', event => {
       this.sessions.delete(record.id);
+      // Detached: keep what the journal lacks on disk for archiving. Attached:
+      // the frontend journal is authoritative and the backlog goes.
+      if (session.controller) session.backlog.dispose();
+      else session.backlog.finish(event.exitCode, Date.now());
       session.controller?.({type: 'exit', exitCode: event.exitCode, ...(event.signal ? {signal: event.signal} : {})});
       session.controller = undefined;
       this.maybeShutdown();

@@ -1,10 +1,11 @@
-import {TranscriptStore, type TranscriptSession} from './TranscriptStore.js';
+import {TranscriptStore, type LiveLink, type TranscriptSession} from './TranscriptStore.js';
 import type {OutputTranscript} from '../output/OutputBuffer.js';
 
 export interface JournalSnapshot {
   startCwd: string;
   finalCwd: string;
   transcript: OutputTranscript;
+  live?: LiveLink;
 }
 
 /** Serializes atomic checkpoints; rendering and keystrokes never wait for disk IO. */
@@ -19,6 +20,8 @@ export class SessionJournal {
     private readonly retention: number | null,
     private readonly snapshot: () => JournalSnapshot,
     private readonly onError: (error: unknown) => void,
+    /** Called with each checkpoint once it is durable. */
+    private readonly onSaved: (session: TranscriptSession) => void = () => {},
   ) {}
 
   get id(): string | undefined { return this.current?.id; }
@@ -26,6 +29,14 @@ export class SessionJournal {
   async start(): Promise<void> {
     this.closed = false;
     this.current = this.store.create({...this.snapshot(), journaled: true});
+    await this.flush();
+  }
+
+  /** Keep writing an existing journal (a reattached live session) instead of starting a new one. */
+  async continue(existing: TranscriptSession): Promise<void> {
+    this.closed = false;
+    const {endedAt: _endedAt, ...open} = existing;
+    this.current = {...open, journaled: true};
     await this.flush();
   }
 
@@ -43,12 +54,14 @@ export class SessionJournal {
     this.timer = undefined;
     if (!this.current) return;
     const snapshot = this.snapshot();
-    const session: TranscriptSession = {...this.current, ...snapshot,
+    const {live: _previous, ...current} = this.current;
+    const session: TranscriptSession = {...current, ...snapshot,
       commandCount: snapshot.transcript.records.length,
       preview: snapshot.transcript.records[0]?.command.replace(/\s+/gu, ' ').slice(0, 100) ?? ''};
     this.current = session;
     this.pending = this.pending.catch(() => {}).then(() => this.store.save(session, this.retention));
     await this.pending;
+    this.onSaved(session);
   }
 
   async finish(): Promise<void> {

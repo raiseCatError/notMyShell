@@ -125,12 +125,12 @@ test('concurrent attaches to one detached session: exactly one wins', async () =
     await waitState(sandbox, 'detached');
 
     for (let round = 0; round < 5; round += 1) {
-      const options = {cwd: sandbox.home, columns: 80, rows: 24, runtimeDir: sandbox.runtime};
+      const options = {cwd: sandbox.home, columns: 80, rows: 24, runtimeDir: sandbox.runtime, timeoutMs: 20000};
       const results = await Promise.allSettled(Array.from({length: 4}, () => attachSession(id, options)));
       const winners = results.filter(result => result.status === 'fulfilled');
       assert.equal(winners.length, 1, `round ${round}`);
       for (const result of results) {
-        if (result.status === 'rejected') assert.match(String(result.reason), /attached to another/);
+        if (result.status === 'rejected') assert.match(String(result.reason), /attached to another/, String(result.reason));
       }
       const winner = (winners[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof attachSession>>>).value;
       assert.equal(winner.attached?.pid, pid);

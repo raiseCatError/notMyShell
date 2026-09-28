@@ -23,10 +23,31 @@ export interface TranscriptSession {
   pinned?: boolean;
   endedAt?: string;
   journaled?: boolean;
+  /** Link to the live service session this journal presents, while it is live. */
+  live?: LiveLink;
   transcript: OutputTranscript;
 }
 
-export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview'> & {project: string};
+export interface LiveLink {
+  sessionId: string;
+  /** Last shell stream event reflected in this transcript. */
+  seq: number;
+  /** The command in flight when this checkpoint was taken. */
+  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number};
+}
+
+function parseLive(value: unknown): LiveLink | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const live = value as Record<string, unknown>;
+  if (typeof live.sessionId !== 'string' || !Number.isSafeInteger(live.seq)) return undefined;
+  const running = live.running as Record<string, unknown> | undefined;
+  const validRunning = running && typeof running.command === 'string' && typeof running.cwd === 'string'
+    && ['startedAt', 'startId', 'outputStartId'].every(key => Number.isSafeInteger(running[key]));
+  return {sessionId: live.sessionId, seq: live.seq as number,
+    ...(validRunning ? {running: running as unknown as NonNullable<LiveLink['running']>} : {})};
+}
+
+export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview' | 'live'> & {project: string};
 
 interface TranscriptFile extends TranscriptSession {
   schemaVersion: number;
@@ -108,6 +129,7 @@ function parseSession(text: string): TranscriptSession {
     pinned: file.pinned === true,
     ...(typeof file.endedAt === 'string' ? {endedAt: file.endedAt} : {}),
     ...(file.journaled === true ? {journaled: true} : {}),
+    ...(parseLive(file.live) ? {live: parseLive(file.live)} : {}),
     transcript: file.transcript,
   };
 }
