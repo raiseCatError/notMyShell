@@ -10,6 +10,7 @@ import {
 } from '../prompt/configuration.js';
 import {providerLabel} from '../prompt/PromptPanel.js';
 import {welcomeProvider} from '../output/WelcomeProviders.js';
+import {PROMPT_STYLES, PROMPT_STYLE_LABELS} from '../prompt/powerline.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
@@ -114,6 +115,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'syntaxColors', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
+  enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look: Powerline, Soft, Minimal, or Outline', category: 'Prompt',
+    values: PROMPT_STYLES, labels: PROMPT_STYLES.map(style => PROMPT_STYLE_LABELS[style]),
+    get: config => config.nmsh.style, set: (config, style) => ({...config, nmsh: {...config.nmsh, style}})}),
   enumRow({id: 'composerPosition', label: 'Composer position', description: 'Dock the composer at the bottom or the top', category: 'Layout',
     values: ['bottom', 'top'] as const, labels: ['Bottom', 'Top'],
     get: config => config.composerPosition, set: (config, composerPosition) => ({...config, composerPosition})}),

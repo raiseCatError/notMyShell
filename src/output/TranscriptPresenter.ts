@@ -6,7 +6,7 @@ import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from
 import {formatDuration} from '../status/commandTiming.js';
 import {shimmerTextWithColors} from '../status/shimmer.js';
 import {homedir} from 'node:os';
-import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizePromptStyle, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {foldWindow} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor} from '../prompt/snapshot.js';
@@ -405,7 +405,9 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
       text: segment.text.replace(/[\u0000-\u001F\u007F-\u009F]/g, ' ')}))
     : legacySegments(context);
   if (!snapshot || snapshot.segments.every(segment => segment.geometry === 'powerline')) {
+    const style = snapshot?.style ? normalizePromptStyle(snapshot.style) : undefined;
     const blocks: PowerlineBlock[] = segments.map(segment => ({
+      ...(style && style !== 'powerline' ? {style} : {}),
       text: segment.text,
       foreground: historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance)!,
       background: historyColor(segment.background, ARCHIVE_BLOCK_COLOR, 'background', segment, appearance) ?? ARCHIVE_BLOCK_COLOR,
