@@ -30,3 +30,13 @@ export interface SessionOptions {
   columns: number;
   rows: number;
 }
+
+/** Exported into the managed shell so users can see which mode owns it. */
+export const SESSION_MODE_ENV = 'NMSH_SESSION_MODE';
+
+export interface SessionConnection {
+  client: SessionClient;
+  mode: 'service' | 'in-process';
+  /** Set when the service was unavailable and the shell runs in-process. */
+  notice?: string;
+}

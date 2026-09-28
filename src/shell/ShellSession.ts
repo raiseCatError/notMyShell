@@ -18,7 +18,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private zdotdir: string;
   private ready = false;
 
-  constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '') {
+  constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env) {
     super();
     const token = randomBytes(12).toString('hex');
     this.protocol = new ShellProtocolDecoder(token);
@@ -98,14 +98,14 @@ add-zsh-hook preexec nmsh_preexec
     this.zdotdir = zdotdir;
 
     this.pty = spawn('/bin/zsh', ['-i'], {
-      name: process.env.TERM || 'xterm-256color',
+      name: env.TERM || 'xterm-256color',
       cols: Math.max(2, columns),
       rows: Math.max(2, rows),
       cwd,
       env: {
-        ...process.env,
+        ...env,
         ZDOTDIR: zdotdir,
-        TERM: process.env.TERM || 'xterm-256color',
+        TERM: env.TERM || 'xterm-256color',
         PAGER: 'cat',
         GIT_PAGER: 'cat',
       } as Record<string, string>,
@@ -127,6 +127,10 @@ add-zsh-hook preexec nmsh_preexec
       }
       this.zdotdir = '';
     }
+  }
+
+  get pid(): number {
+    return this.pty.pid;
   }
 
   submit(command: string): void {
