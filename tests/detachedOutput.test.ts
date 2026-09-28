@@ -8,7 +8,7 @@ import {socketPathFor} from '../src/session/runtimeDir.js';
 import {serializeCopyPayload} from '../src/output/OutputBuffer.js';
 import type {TranscriptSession} from '../src/sessions/TranscriptStore.js';
 import {LiveSandbox, processAlive, strip, until, type Frontend} from './helpers/liveFrontend.js';
-import {spoolPathFor} from '../src/session/SessionService.js';
+import {spoolPathFor} from '../src/session/runtimeDir.js';
 import {readSpool} from '../src/session/StreamBacklog.js';
 
 /**
@@ -129,9 +129,11 @@ test('several commands, a failure and a cd while no frontend is attached', async
 });
 
 test('high-volume detached output: complete within limits, factual marker beyond them', async () => {
-  const sandbox = new LiveSandbox({}, {NMSH_BACKLOG_MEMORY_BYTES: '65536', NMSH_BACKLOG_SPOOL_BYTES: '1048576'});
+  // Small limits exercise both the spool and truncation paths without writing
+  // hundreds of megabytes of transcript.
+  const sandbox = new LiveSandbox({}, {NMSH_BACKLOG_MEMORY_BYTES: '8192', NMSH_BACKLOG_SPOOL_BYTES: '65536'});
   try {
-    for (const [lines, truncated] of [[20000, false], [400000, true]] as const) {
+    for (const [lines, truncated] of [[8000, false], [40000, true]] as const) {
       const first = sandbox.launch();
       await first.waitFor(/❯/);
       const gate = join(sandbox.home, `gate-${lines}`);

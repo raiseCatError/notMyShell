@@ -49,18 +49,56 @@ if (isVersionInvocation(args)) {
   process.exitCode = 1;
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
-  const {attachSession, connectSession} = await import('./session/connectSession.js');
-  const size = {cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)};
-  let connection;
-  try {
-    connection = attachIndex === -1 ? await connectSession(size) : await attachSession(args[attachIndex + 1]!, size);
-  } catch (error) {
-    process.stderr.write(`NMSh could not attach: ${error instanceof Error ? error.message : String(error)}\n`);
-    process.exit(1);
+  const {attachSession, connectSession, listLiveSessions, SESSION_SERVICE_ENV} = await import('./session/connectSession.js');
+  const {planLaunch} = await import('./session/liveSessions.js');
+  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)});
+  const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
+  // Which session this launch attaches, if any. --attach is explicit and
+  // fails loudly; discovery only ever picks a detached session, and --new
+  // skips it.
+  let target: string | undefined = attachIndex === -1 ? undefined : args[attachIndex + 1];
+  let explicit = target !== undefined;
+  let notice: string | undefined;
+  if (!explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
+    let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
+    try { live = await listLiveSessions(); } catch { /* no usable service: start fresh */ }
+    const plan = planLaunch(live);
+    if (plan.kind === 'attach') target = plan.session.id;
+    else if (plan.kind === 'pick') {
+      const {runStartupPicker} = await import('./session/StartupPicker.js');
+      const choice = await runStartupPicker(plan.sessions);
+      if (choice.kind === 'attach') target = choice.sessionId;
+    }
   }
-  const app = new TerminalApp(connection);
-  const exitCode = await app.run();
-  process.exitCode = app.isOrdinaryZshHandoffRequested
-    ? await startOrdinaryZsh(app.ordinaryZshHandoffCwd)
-    : exitCode;
+
+  // The loop lets /resume switch this window to another live session.
+  for (;;) {
+    let connection;
+    if (target) {
+      try {
+        connection = await attachSession(target, size());
+      } catch (error) {
+        if (explicit) {
+          process.stderr.write(`NMSh could not attach: ${errorText(error)}\n`);
+          process.exit(1);
+        }
+        notice = `Could not reattach (${errorText(error)}); started a new session.`;
+      }
+    }
+    connection ??= await connectSession(size());
+    if (notice) connection = {...connection, notice: [connection.notice, notice].filter(Boolean).join(' ')};
+    const app = new TerminalApp(connection);
+    const exitCode = await app.run();
+    if (app.switchTarget) {
+      target = app.switchTarget;
+      explicit = false;
+      notice = undefined;
+      continue;
+    }
+    process.exitCode = app.isOrdinaryZshHandoffRequested
+      ? await startOrdinaryZsh(app.ordinaryZshHandoffCwd)
+      : exitCode;
+    break;
+  }
 }

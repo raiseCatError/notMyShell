@@ -70,8 +70,12 @@ import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHando
 import {TranscriptStore, type LiveLink, type TranscriptSession} from '../sessions/TranscriptStore.js';
 import {formatBytes} from '../session/sessionList.js';
 import type {PresentationMode} from '../output/PresentationMode.js';
+import type {SessionInfo} from '../session/SessionProtocol.js';
 import {SessionJournal} from '../sessions/SessionJournal.js';
-import {createResumeBrowser, navigateResume, resumeDayLabel, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
+import {createResumeBrowser, describeLiveSession, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
+  visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
+import {listLiveSessions} from '../session/connectSession.js';
+import {killAndArchive} from '../session/liveSessions.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -377,7 +381,7 @@ export class TerminalApp {
     this.render();
     void this.quietUpdateCheck();
     const exitCode = await this.done;
-    try { await this.journal.close(); } catch {
+    try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
     }
     return exitCode;
@@ -415,6 +419,7 @@ export class TerminalApp {
   // The frontend is going away (window closed, SIGHUP/SIGTERM); the shell was
   // not asked to end, so a service-backed session stays alive, detached.
   private readonly onTerminate = (): void => {
+    this.detaching = this.sessionMode === 'service';
     this.session.detach();
     this.stop(0);
   };
@@ -524,12 +529,21 @@ export class TerminalApp {
     }
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
+      if (browser.confirmKill) {
+        if (key.kind === 'enter') void this.killSelectedLiveSession();
+        else if (key.kind === 'escape' || key.kind === 'interrupt') browser.confirmKill = undefined;
+        this.render();
+        return;
+      }
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.resumeBrowser = undefined;
+      } else if (key.kind === 'deleteLineAfter') {
+        const selection = resumeSelection(browser);
+        if (selection?.kind === 'live' && selection.session.state === 'detached') browser.confirmKill = selection.session.id;
       } else if (key.kind === 'up') {
         browser.selectedIndex = Math.max(0, browser.selectedIndex - 1);
       } else if (key.kind === 'down') {
-        browser.selectedIndex = Math.max(0, Math.min(visibleResumeSessions(browser).length - 1, browser.selectedIndex + 1));
+        browser.selectedIndex = Math.max(0, Math.min(resumeRowCount(browser) - 1, browser.selectedIndex + 1));
       } else if (key.kind === 'left' || key.kind === 'right') {
         navigateResume(browser, 'week', key.kind === 'left' ? -1 : 1);
       } else if (key.kind === 'selectLeft' || key.kind === 'selectRight') {
@@ -541,7 +555,9 @@ export class TerminalApp {
         browser.query = browser.query.slice(0, -1);
         browser.selectedIndex = 0;
       } else if (key.kind === 'enter') {
-        void this.resumeSelectedSession();
+        const selection = resumeSelection(browser);
+        if (selection?.kind === 'live') this.switchToLiveSession(selection.session.id, selection.session.state);
+        else void this.resumeSelectedSession();
       }
       this.render();
       return;
@@ -1161,14 +1177,56 @@ export class TerminalApp {
     }
   }
 
+  /** Session id the launcher should attach after this frontend detaches. */
+  switchTarget?: string;
+  private detaching = false;
+
+  /**
+   * LIVE rows attach: this frontend detaches its own session (it keeps
+   * running) and the launcher reattaches the selected one.
+   */
+  private switchToLiveSession(sessionId: string, state: 'attached' | 'detached'): void {
+    if (state === 'attached') {
+      this.resumeBrowser = undefined;
+      this.output.addFrontendInteraction('/resume', 'That session is attached in another NMSh window; it was not taken over.', INFO);
+      return;
+    }
+    this.switchTarget = sessionId;
+    this.detaching = true;
+    this.session.detach();
+    this.stop(0);
+  }
+
+  private async killSelectedLiveSession(): Promise<void> {
+    const browser = this.resumeBrowser;
+    const target = browser?.live.find(session => session.id === browser.confirmKill);
+    if (!browser || !target) return;
+    browser.confirmKill = undefined;
+    try {
+      await killAndArchive(target, {store: this.transcriptStore});
+      browser.live = browser.live.filter(session => session.id !== target.id);
+      browser.selectedIndex = Math.min(browser.selectedIndex, Math.max(0, resumeRowCount(browser) - 1));
+      this.output.addFrontendInteraction('/resume', `Killed the session in ${target.cwd}; its transcript was archived.`, INFO);
+    } catch (error) {
+      this.output.addFrontendInteraction('/resume', `Could not kill that session: ${error instanceof Error ? error.message : String(error)}.`, ERROR);
+    }
+    this.render();
+  }
+
   private async openResumePicker(): Promise<void> {
     try {
       const sessions = (await this.transcriptStore.listSummaries()).filter(session => session.id !== this.journal?.id);
-      if (sessions.length === 0) {
-        this.output.addFrontendInteraction('/resume', 'No archived NMSh transcript sessions were found.', INFO);
+      // LIVE comes from the service itself, so a dead shell is never listed as live.
+      let live: SessionInfo[] = [];
+      if (this.sessionMode === 'service') {
+        try { live = (await listLiveSessions()).filter(session => session.id !== this.sessionId); } catch { /* service unreachable: archives only */ }
+      }
+      if (sessions.length === 0 && live.length === 0) {
+        this.output.addFrontendInteraction('/resume', 'No live sessions or archived NMSh transcripts were found.', INFO);
         return;
       }
-      const browser = createResumeBrowser(sessions);
+      const liveJournals = new Set(live.flatMap(session => session.journalId ? [session.journalId] : []));
+      const browser = createResumeBrowser(sessions, live, liveJournals);
       this.resumeBrowser = browser;
       void this.indexResumeCommands(browser);
     } catch {
@@ -1179,8 +1237,9 @@ export class TerminalApp {
   private async resumeSelectedSession(): Promise<void> {
     const browser = this.resumeBrowser;
     if (!browser) return;
-    const selected = visibleResumeSessions(browser)[browser.selectedIndex];
-    if (!selected) return;
+    const selection = resumeSelection(browser);
+    if (selection?.kind !== 'archived') return;
+    const selected = selection.session;
     let restored: TranscriptSession;
     try {
       restored = await this.transcriptStore.load(selected.id);
@@ -1765,11 +1824,21 @@ export class TerminalApp {
       const canMove = (unit: 'week' | 'month', direction: -1 | 1) =>
         navigateResume({...browser}, unit, direction);
       const week = new Date(browser.week).toLocaleDateString();
+      const live = visibleLiveSessions(browser);
       const rows = [`${PRIMARY}  Resume session${RESET}`,
-        `${SECONDARY}  Search: ${browser.query || '_'}${browser.indexing ? `  ${SUBTLE}(indexing commands…)${SECONDARY}` : ''}${RESET}`,
-        `${SUBTLE}  Week of ${week} · ← ${canMove('week', -1) ? 'previous week' : '—'} · → ${canMove('week', 1) ? 'next week' : '—'}${RESET}`, ''];
+        `${SECONDARY}  Search: ${browser.query || '_'}${browser.indexing ? `  ${SUBTLE}(indexing commands…)${SECONDARY}` : ''}${RESET}`, ''];
+      if (live.length > 0) {
+        const now = Date.now();
+        rows.push(`${SUBTLE}  LIVE${RESET}`);
+        live.forEach((session, index) => {
+          const selected = index === browser.selectedIndex;
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ● ${describeLiveSession(session, now)}${RESET}`, columns));
+        });
+        rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
+      }
+      rows.push(`${SUBTLE}  Week of ${week} · ← ${canMove('week', -1) ? 'previous week' : '—'} · → ${canMove('week', 1) ? 'next week' : '—'}${RESET}`, '');
       const budget = Math.max(1, this.dimensions().rows - 7);
-      const start = Math.max(0, browser.selectedIndex - 2);
+      const start = Math.max(0, browser.selectedIndex - live.length - 2);
       let lastDay = '';
       for (let index = start; index < sessions.length && rows.length < budget + 4; index++) {
         const session = sessions[index]!;
@@ -1777,13 +1846,19 @@ export class TerminalApp {
         if (day !== lastDay && rows.length + 1 < budget + 4) rows.push(`${SUBTLE}  ${day}${RESET}`);
         if (rows.length >= budget + 4) break;
         lastDay = day;
-        const selected = index === browser.selectedIndex;
+        const selected = index + live.length === browser.selectedIndex;
         const time = new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
         const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
         rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${session.project || 'notMyShell'} · ${session.finalCwd} · ${session.commandCount} commands${interrupted}${RESET}`, columns));
       }
-      if (sessions.length === 0) rows.push(`${SUBTLE}  No matching sessions${RESET}`);
-      rows.push('', `${SUBTLE}  ↑↓ move · ←→ week · Shift+←→ month · Enter restore · Esc close${RESET}`);
+      if (sessions.length === 0) rows.push(`${SUBTLE}  No matching archived sessions${RESET}`);
+      const confirming = browser.live.find(session => session.id === browser.confirmKill);
+      if (confirming) {
+        rows.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
+      } else {
+        const selectedLive = resumeSelection(browser)?.kind === 'live';
+        rows.push('', `${SUBTLE}  ↑↓ move · ←→ week · Shift+←→ month · Enter ${selectedLive ? 'attach' : 'restore transcript'}${selectedLive ? ' · Ctrl+K kill' : ''} · Esc close${RESET}`);
+      }
       return framePanel(rows, columns);
     }
     if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);

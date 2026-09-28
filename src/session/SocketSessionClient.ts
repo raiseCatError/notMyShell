@@ -75,6 +75,13 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
   });
 }
 
+/** End a detached session; resolves once the shell has exited and its spool is final. */
+export async function killSession(socketPath: string, sessionId: string, timeoutMs = 5000): Promise<void> {
+  const {socket} = await request(socketPath, timeoutMs, {type: 'kill', sessionId},
+    message => (message.type === 'killed' ? true : undefined));
+  socket.end();
+}
+
 /** Live sessions the service at socketPath currently owns. */
 export async function listSessions(socketPath: string, timeoutMs = 3000): Promise<SessionInfo[]> {
   const {value, socket} = await request(socketPath, timeoutMs, {type: 'list'},
