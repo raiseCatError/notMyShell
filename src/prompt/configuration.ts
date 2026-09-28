@@ -13,6 +13,8 @@ import {
   type PowerlineConnectorStyle,
   type PowerlineEdgeStyle,
   type PowerlineShape,
+  normalizePromptStyle,
+  type PromptStyle,
 } from './powerline.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'none';
@@ -177,6 +179,8 @@ export interface PromptConfiguration {
     endStyle: NativeEndStyle;
     palette: NativePaletteId;
     icons: NativeIconMode;
+    /** Visual style over the same semantic segments; missing in older configs means Powerline. */
+    style: PromptStyle;
     connectorFade: ConnectorFadeStyle;
     /** Which neighbor(s) color the faded transition zones; missing in older configs, meaning Previous. */
     connectorFadeColors: ConnectorFadeColors;
@@ -217,7 +221,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   welcome: 'vespyr',
   suggestions: 'nmsh',
   suggestionsOnEmpty: false,
-  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
+  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true},
   starship: {configPath: null},
@@ -289,11 +293,12 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const startStyle = normalizeEdgeStyle(nativeValue.startStyle, 'wedge');
   const connector = normalizeConnectorStyle(nativeValue.connector);
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
+  const style = normalizePromptStyle(nativeValue.style);
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
-    startStyle, connector, endStyle, palette, icons,
+    startStyle, connector, endStyle, palette, icons, style,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
     connectorFadeColors: normalizeConnectorFadeColors(nativeValue.connectorFadeColors),
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,

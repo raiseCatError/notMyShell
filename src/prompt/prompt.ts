@@ -14,7 +14,7 @@ import {
 import {homedir} from 'node:os';
 import {COMMAND_CONTEXT_TRIGGERS, matchesCommand, TOOLCHAIN_TRIGGERS} from './commandContext.js';
 import {displayPath, PATH_DISPLAY_LEVELS} from './pathDisplay.js';
-import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape} from './powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape, type PromptStyle} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
@@ -32,6 +32,7 @@ function safePromptText(value: string): string {
 interface RenderedModule {
   id: ContextModuleConfig['id'];
   role: PromptRole;
+  style?: PromptStyle;
   text: string;
   foreground: RgbColor;
   background: RgbColor;
@@ -301,6 +302,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     // Per-module custom colors are for the module's identity, not its Git states.
     const custom = !isGitStateRole(segment.role);
     return {
+      ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
       id: segment.module.id,
       role: segment.role,
       text: segment.text,
@@ -330,6 +332,7 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     provider: 'nmsh',
     layout: configuration.composerLayout,
     segments,
+    ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
     endStyle: configuration.nmsh.endStyle,
     startStyle: configuration.nmsh.startStyle,
     connector: configuration.nmsh.connector,
