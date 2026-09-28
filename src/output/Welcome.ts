@@ -1,5 +1,6 @@
 import {homedir} from 'node:os';
 import type {BuildIdentity} from '../buildInfo.js';
+import type {WelcomeProviderId} from '../prompt/configuration.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import type {WrappedRow} from './viewport.js';
@@ -19,7 +20,7 @@ export interface WelcomeSnapshot {
   cwd: string;
   shell: 'zsh';
   /** External welcome captured once at session start; absent means Vespyr. */
-  provider?: 'fastfetch' | 'neofetch';
+  provider?: Exclude<WelcomeProviderId, 'vespyr' | 'none'>;
   /** SGR-only rows the external provider printed. */
   captured?: string[];
 }
