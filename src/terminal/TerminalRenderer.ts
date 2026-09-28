@@ -1,8 +1,23 @@
+import {displayWidth} from '../util/text.js';
+
 export interface TerminalFrame {
   rows: string[];
   cursorRow: number;
   cursorColumn: number;
   cursorVisible?: boolean;
+  /** Viewport width; lets the renderer keep rows that fill the last column intact. */
+  columns?: number;
+}
+
+/**
+ * A row that already reaches the final column leaves the terminal in its
+ * pending-wrap state with the cursor still on that cell, so a trailing
+ * erase-to-end-of-line (surface fills use `CSI K`) would erase the last
+ * visible character. Full-width rows need no fill, so their EL is dropped.
+ */
+export function rowForTerminal(row: string, columns: number | undefined): string {
+  if (!columns || !row.includes('\u001B[') || displayWidth(row) < columns) return row;
+  return row.replace(/\u001B\[0?K/gu, '');
 }
 
 export class TerminalRenderer {
@@ -41,7 +56,7 @@ export class TerminalRenderer {
     let output = '\u001B[?25l';
     for (const index of changedRows) {
       const next = frame.rows[index] ?? '';
-      output += `\u001B[${index + 1};1H\u001B[2K${next}\u001B[0m`;
+      output += `\u001B[${index + 1};1H\u001B[2K${rowForTerminal(next, frame.columns)}\u001B[0m`;
     }
     output += `\u001B[${frame.cursorRow};${frame.cursorColumn}H`;
     if (cursor.visible) output += '\u001B[?25h';
