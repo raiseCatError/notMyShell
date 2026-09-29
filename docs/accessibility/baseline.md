@@ -34,3 +34,9 @@ These are environment controls. A persisted setting would change the public conf
 ## Screen readers
 
 NMSh redraws full-screen frames in the alternate screen. Terminals expose that to assistive technology inconsistently, so NMSh cannot guarantee screen-reader-friendly output. What it does provide is text-carried state and no pointer requirement; behavior with a specific terminal and reader has not been verified.
+
+## Motion
+
+`motion/motion.ts` is a pure engine: profiles per semantic state (`waiting`, `processing`, `streaming`, `transition`, `completion`, `failure`) sampled at an elapsed time. Reduced motion holds every profile still. It never schedules timers, changes width or touches PTY output.
+
+The shimmer (`status/shimmer.ts`) samples the `processing`/`streaming` profiles. The one existing activity timer is already bounded (100 ms), cleared on exit, and its renders are suppressed during passthrough, so no shared scheduler was added; one should arrive with a second animated consumer. `waiting`, `transition`, `completion` and `failure` have no consumer yet.
