@@ -195,7 +195,11 @@ test('handshake, version mismatch, framing, containment, registry, and disconnec
     assert.equal(service.registry.length, 0);
     assert.equal(existsSync(service.socketPath), false);
   } finally {
+    // Shells ended by close() still write their spool afterwards; wait so the directory stays removed.
+    const pids = service.registry.map(session => session.pid);
     await service.close();
+    await until(() => pids.every(pid => { try { process.kill(pid, 0); return false; } catch { return true; } }));
+    await new Promise(resolve => setTimeout(resolve, 50));
     rmSync(runtimeDir, {recursive: true, force: true});
     rmSync(home, {recursive: true, force: true});
   }
