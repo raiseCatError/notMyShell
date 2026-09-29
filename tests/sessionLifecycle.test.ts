@@ -152,13 +152,15 @@ test('reattach into a fullscreen app resumes passthrough and makes it repaint at
     writeFileSync(fixture, [
       `printf '\\e[?1049h'`,
       `trap 'printf "\\e[H\\e[2JREDRAW %s\\n" "$(stty size)"' WINCH`,
+      `printf 'TRAP-READY\\n'`,
       `while [ ! -f ${stop} ]; do sleep 0.05; done`,
       `printf '\\e[?1049l'`,
     ].join('\n'));
     const first = sandbox.launch();
     await first.waitFor(/❯/);
     first.pty.write(`zsh ${fixture}\r`);
-    await until(async () => (await sandbox.sessions())[0]?.running !== undefined, 15000, 'fixture running');
+    // Detach only once the fixture's WINCH trap is installed, or the reattach resize can arrive before it.
+    await first.waitFor(/TRAP-READY/);
     const {id} = (await sandbox.sessions())[0]!;
     first.pty.kill('SIGKILL');
     await waitState(sandbox, 'detached');

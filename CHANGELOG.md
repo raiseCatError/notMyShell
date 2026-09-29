@@ -19,6 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. Detached sessions are never ended to make room.
 
 ### Fixed
+- After Ctrl+Z, `jobs` could list a stray `suspended (tty output)` job. NMSh's own prompt hook ran `stty` as a job, and it could be stopped when it ran before zsh had taken the terminal back. The hooks now change terminal modes outside job control.
 - The session service no longer crashes when a window resize races a shell's exit. node-pty could throw `EBADF` for a PTY that had just closed, which inside nmshd would have ended every live session. Other resize failures are now reported to that window instead of ending the service.
 - A launch notice (for example, sessions archived while no window was attached) is no longer erased when the window reattaches to a live session.
 

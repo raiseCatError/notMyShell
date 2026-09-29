@@ -71,6 +71,16 @@ export TERM=\$nmsh_orig_term
 export NMSH_ACTIVE=1
 unsetopt zle prompt_cr prompt_sp
 
+# Hooks run right after a job stops or ends, sometimes before zsh has taken the
+# terminal back. As an ordinary job, stty could then be stopped by SIGTTOU and
+# left in the user's job table ("suspended (tty output) stty -echo"). Run it
+# outside job control and immune to SIGTTOU so the mode change is simply applied.
+function nmsh_tty_echo {
+  setopt localoptions localtraps nomonitor
+  trap '' TTOU
+  stty \$1 2>/dev/null
+}
+
 function nmsh_precmd {
   local nmsh_status=$?
   # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
@@ -84,12 +94,12 @@ function nmsh_precmd {
   # still blanks last. Their prompt-spacing options must not return either.
   precmd_functions=(\${precmd_functions:#nmsh_precmd} nmsh_precmd)
   unsetopt prompt_cr prompt_sp
-  stty -echo 2>/dev/null
+  nmsh_tty_echo -echo
   printf '\\e]777;nmsh;${token};%d;%s\\a' "\$nmsh_status" "\$PWD"
 }
 
 function nmsh_preexec {
-  stty echo 2>/dev/null
+  nmsh_tty_echo echo
   printf '\\e]777;nmsh;${token};exec;%s\\a' "\${1//[[:cntrl:]]/ }"
 }
 
