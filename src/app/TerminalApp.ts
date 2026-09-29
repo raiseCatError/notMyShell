@@ -54,7 +54,7 @@ import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
 import {shimmerText} from '../status/shimmer.js';
-import {isDeterministicPresentation, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
+import {isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
@@ -98,7 +98,7 @@ const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'back
 const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
-const PASTE_ATOM_BACKGROUND = '\u001B[48;2;63;65;82m';
+const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
 const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
@@ -2401,7 +2401,7 @@ export class TerminalApp {
    * change. Blinks are skipped (not queued) while no welcome is present.
    */
   private scheduleWelcomeBlink(): void {
-    if (this.stopped || isDeterministicPresentation()) return;
+    if (this.stopped || isReducedMotion()) return;
     this.welcomeBlinkTimer = setTimeout(() => {
       if (this.stopped) return;
       if (!this.output.hasWelcome || this.passthrough) {
@@ -2680,7 +2680,7 @@ export class TerminalApp {
     const isActive = (Date.now() - this.lastOutputTime) < 750;
     const animationElapsed = presentationAnimationElapsed(elapsed);
     const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
-    return `${shimmerText(parts.phrase, animationElapsed, isDeterministicPresentation() ? false : isActive)}${SECONDARY}${parts.duration}${RESET}`;
+    return `${shimmerText(parts.phrase, animationElapsed, isReducedMotion() ? false : isActive)}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {

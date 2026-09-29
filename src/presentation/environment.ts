@@ -16,7 +16,16 @@ export function presentationCompletionTime(completedAt: Date): Date {
   return isDeterministicPresentation() ? presentationNow() : completedAt;
 }
 
-/** Stable shimmer phase for visual captures without changing measured durations. */
+/**
+ * True when NMSh-owned decorative motion should stay still: the user asked for
+ * reduced motion (NMSH_REDUCED_MOTION=1), or presentation is deterministic.
+ * Measured durations and shell behavior are never affected.
+ */
+export function isReducedMotion(): boolean {
+  return process.env.NMSH_REDUCED_MOTION === '1' || isDeterministicPresentation();
+}
+
+/** Stable shimmer/activity phase when motion is reduced, without changing measured durations. */
 export function presentationAnimationElapsed(elapsedMs: number): number {
-  return isDeterministicPresentation() ? 0 : elapsedMs;
+  return isReducedMotion() ? 0 : elapsedMs;
 }

@@ -1,3 +1,5 @@
+import {colorLevel} from '../presentation/capabilities.js';
+
 export interface RgbColor {
   red: number;
   green: number;
@@ -26,10 +28,13 @@ export const UI_COLORS = {
   selection: {red: 88, green: 96, blue: 145},
 } as const satisfies Record<string, RgbColor>;
 
+/** Color escapes are empty when the terminal is not to be colored (NO_COLOR, TERM=dumb, NMSH_COLOR=none). */
 export function foreground(color: RgbColor): string {
+  if (colorLevel() === 'none') return '';
   return `\u001B[38;2;${color.red};${color.green};${color.blue}m`;
 }
 
 export function background(color: RgbColor): string {
+  if (colorLevel() === 'none') return '';
   return `\u001B[48;2;${color.red};${color.green};${color.blue}m`;
 }
