@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {KeyDecoder, decodeKeys} from '../src/terminal/keys.js';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
-import {inForeground, stopped, uniqueSleep} from './helpers/processState.js';
+import {inForeground, sleepState, stopped, uniqueSleep} from './helpers/processState.js';
 
 test('Ctrl+Z decodes to suspend in raw and Kitty forms without disturbing Ctrl+C/Ctrl+D', () => {
   assert.deepEqual(decodeKeys('\u001a'), [{kind: 'suspend'}]);
@@ -49,7 +49,12 @@ async function jobControlThroughFrontend(mode: 'service' | 'in-process', ctrlZ: 
     app.pty.write('fg\r');
     await app.waitFor(/continued/, mark);
     await until(() => inForeground(duration), 20000, 'sleep resumed in the foreground');
+    mark = app.mark;
     app.pty.write('\u0003');
+    // Type the next command only once the job is gone and its prompt is back:
+    // the tty flushes input queued around an interrupt.
+    await until(() => sleepState(duration) === '', 20000, 'sleep ended');
+    await app.waitFor(/Interrupted/, mark);
     await app.run('echo JOBCOUNT=$(jobs | wc -l | tr -d " ")', /JOBCOUNT=0/);
 
     // Ctrl+D on an empty composer still ends the session and NMSh.
