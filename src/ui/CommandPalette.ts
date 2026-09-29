@@ -52,7 +52,7 @@ export function paletteItems(): PaletteItem[] {
       action: {kind: 'config', rowId: row.id}});
   }
   items.push(
-    {id: 'layout:position', label: 'Toggle composer position', detail: 'Dock the composer at the bottom or the top', category: 'Layout',
+    {id: 'layout:position', label: 'Toggle composer position', detail: 'Cycle Bottom, Top, and Flow after the newest output', category: 'Layout',
       action: {kind: 'toggleComposerPosition'}},
     {id: 'layout:presentation', label: 'Toggle Chat presentation', detail: 'Switch transcript between Normal and Chat', category: 'Layout',
       action: {kind: 'toggleTranscriptPresentation'}},

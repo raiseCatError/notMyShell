@@ -27,7 +27,8 @@ export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fa
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
-export type ComposerPosition = 'bottom' | 'top';
+/** Bottom and Top dock the composer; Flow places it right after the newest output, inside the document. */
+export type ComposerPosition = 'bottom' | 'top' | 'flow';
 export type TranscriptPresentation = 'normal' | 'chat';
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
@@ -327,7 +328,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
   const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
-  const composerPosition: ComposerPosition = value.composerPosition === 'top' ? 'top' : 'bottom';
+  const composerPosition: ComposerPosition = value.composerPosition === 'top' || value.composerPosition === 'flow' ? value.composerPosition : 'bottom';
   const transcriptPresentation: TranscriptPresentation = value.transcriptPresentation === 'chat' ? 'chat' : 'normal';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
     ? Math.max(0, Math.min(3, Math.round(value.spacing)))

@@ -61,6 +61,17 @@ Powerlevel10k has no standalone render command; it is a zsh theme that builds a 
 
 Starship detection respects `STARSHIP_CONFIG`, otherwise the documented `~/.config/starship.toml` default. A missing config uses Starship defaults. Presets use Starship's supported `starship preset <name> -o <path>` command; choose a new path to preserve any existing file. On macOS, NMSh offers `brew install starship` behind a confirmation screen. It does not edit `.zshrc` or run curl-based installers. Starship has no separate official interactive onboarding command, so NMSh presents this small provider setup flow.
 
+## Composer position: Flow
+
+Composer position is Bottom (default), Top or Flow. Bottom and Top dock the composer to an edge. Flow makes the prompt and input part of NMSh's own document, right after the newest output, like a conventional terminal. It is not a switch to the host's scrollback: NMSh keeps its editor, highlighting, suggestions and structured execution.
+
+- **Following:** the composer sits directly after the newest output (with the usual breathing space, or the live activity row while a command runs). It moves down as output grows. Once output fills the screen, it lands where Bottom docks it. The shell PTY always gets the full transcript capacity, so output growth never resizes it.
+- **Scrolling back:** the composer scrolls with the document. A few rows back, it moves down by that many rows and is clipped at the screen edge. A page back, it is off-screen and the cursor is hidden. The history viewport keeps the following capacity as its height, so a small scroll never snaps back to the bottom.
+- **Returning:** typing, pasting, deleting, completing, history search or Enter while scrolled back returns to the newest output first, and the key still applies. Scrolling, paging and mouse movement alone never return. Bottom and Top are unchanged: typing does not move a scrolled view.
+- **Placement rules:** suggestion and completion menus open below the input, like a terminal completion list. Full-width panels (settings, `/resume`, …) pin to the bottom edge, as with Bottom.
+- **Chat:** with Chat presentation, the live composer renders normally and historical commands render right-aligned.
+- **Passthrough:** fullscreen apps get the raw terminal as before. Returning repaints the document and the composer from the plan.
+
 ## Rich text paste
 
 Large multiline text-only pastes appear as one editable logical atom, labeled in current editor order (for example, `[Text #1 · 7 lines]`). Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O optionally unwraps the atom beside the caret back into editable source. Enter submits the exact underlying source of every atom in place, together with typed prefix, interstitial, and suffix text; visual labels are presentation-only and never reach zsh. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
