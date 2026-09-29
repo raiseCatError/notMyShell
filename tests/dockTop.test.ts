@@ -53,7 +53,7 @@ test('composer position persists as bottom (default) or top and is editable in /
   assert.equal(normalizePromptConfiguration({composerPosition: 'left'}).composerPosition, 'bottom');
   const row = SETTINGS_ROWS.find(candidate => candidate.id === 'composerPosition')!;
   assert.ok(row.control === 'enum');
-  assert.deepEqual(row.options, ['Bottom', 'Top']);
+  assert.deepEqual(row.options, ['Bottom', 'Top', 'Flow']);
 });
 
 test('Dock Top render, cursor, mouse hover/click and PTY rows all follow the plan', () => {

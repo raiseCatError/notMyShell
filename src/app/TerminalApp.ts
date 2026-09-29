@@ -88,6 +88,9 @@ const SEPARATOR = foreground(UI_COLORS.separator);
 const ACCENT = foreground(UI_COLORS.accent);
 const SUCCESS = foreground(UI_COLORS.success);
 const ERROR = foreground(UI_COLORS.failure);
+/** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
+const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
+  'deleteLineBefore', 'deleteLineAfter', 'enter', 'newline', 'complete', 'historySearch']);
 const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
@@ -587,7 +590,7 @@ export class TerminalApp {
       const plan = this.planFrame(columns, rows);
       const hit = key.y ? regionAt(plan, screenRowFromTerminal(key.y)) : undefined;
       if (hit?.region.kind === 'transcript') {
-        const outputHeight = plan.transcript.height;
+        const outputHeight = plan.viewportRows;
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
         const localVisibleIndex = hit.localRow;
@@ -688,6 +691,11 @@ export class TerminalApp {
     if (key.kind === 'latest') {
       this.historyViewport.latest();
       return;
+    }
+    // Flow keeps the composer in the document: editing while scrolled back
+    // returns to it first. Scrolling and mouse navigation alone never do.
+    if (this.promptConfiguration.composerPosition === 'flow' && this.historyViewport.detached && FLOW_EDIT_KEYS.has(key.kind)) {
+      this.historyViewport.latest();
     }
 
     if (key.kind === 'historySearch') {
@@ -809,7 +817,7 @@ export class TerminalApp {
         }
 
         const {columns, rows} = this.dimensions();
-        const outputHeight = this.planFrame(columns, rows).transcript.height;
+        const outputHeight = this.planFrame(columns, rows).viewportRows;
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
@@ -976,7 +984,7 @@ export class TerminalApp {
         this.settingsPanelState!.contentIndex = Math.max(0, SETTINGS_ROWS.findIndex(row => row.id === action.rowId));
         break;
       case 'toggleComposerPosition':
-        config.composerPosition = config.composerPosition === 'top' ? 'bottom' : 'top';
+        config.composerPosition = ({bottom: 'top', top: 'flow', flow: 'bottom'} as const)[config.composerPosition];
         this.applySettingsConfiguration(config);
         break;
       case 'toggleTranscriptPresentation':
@@ -2391,7 +2399,7 @@ export class TerminalApp {
   /** Scroll paging needs at least one row even when the plan leaves the transcript empty. */
   private transcriptViewportHeight(): number {
     const {columns, rows} = this.dimensions();
-    return Math.max(1, this.planFrame(columns, rows).transcript.height);
+    return this.planFrame(columns, rows).viewportRows;
   }
 
   private formatCommandAnsi(command: string, startId: number | null, sgr = this.syntaxSgr): string[] {
@@ -2478,7 +2486,7 @@ export class TerminalApp {
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
     const transcriptRows = this.output.wrapped(columns).length;
-    return planScreen({
+    const input = {
       rows,
       inputRows: fullInput.allRows.length,
       suggestions,
@@ -2491,7 +2499,13 @@ export class TerminalApp {
       hasVisibleContext: this.hasVisibleProviderPrompt(),
       composerLayout: this.promptConfiguration.composerLayout,
       panelRows,
-    });
+    };
+    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return planScreen(input);
+    // Flow scrolled back: where the view starts decides how much of the composer
+    // is still on screen, and it is resolved against the following capacity.
+    const following = planScreen({...input, detached: false});
+    const viewStart = this.historyViewport.resolve(transcriptRows, following.viewportRows);
+    return this.historyViewport.detached ? planScreen({...input, viewStart}) : following;
   }
 
   private render(): void {
@@ -2515,9 +2529,10 @@ export class TerminalApp {
       this.session.resize(columns, plan.ptyRows);
     }
 
-    const outputHeight = plan.transcript.height;
     const wrapped = this.output.wrapped(columns);
-    const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
+    const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
+    // Flow's viewport scrolls by its capacity; the region shows only what is on screen.
+    const outputHeight = plan.transcript.height;
     const presenter = this.output.presenter;
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
       focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId, now: Date.now()};
@@ -2605,7 +2620,8 @@ export class TerminalApp {
       columns,
       cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
-      cursorVisible: !plan.panelActive,
+      // Flow can scroll the input row off screen.
+      cursorVisible: !plan.panelActive && plan.inputHeight > 0,
     });
   }
 
