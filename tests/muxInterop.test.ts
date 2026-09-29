@@ -14,7 +14,14 @@ import {inForeground, uniqueSleep} from './helpers/processState.js';
  * otherwise these skip, so CI never depends on them.
  */
 
-const REPO = fileURLToPath(new URL('..', import.meta.url));
+const ENTRY = fileURLToPath(new URL('../src/index.ts', import.meta.url));
+const TSX = import.meta.resolve('tsx');
+/**
+ * NMSh under test runs from the sandbox home, never this checkout: its prompt
+ * runs git status, and a frontend killed mid-status would leave .git/index.lock
+ * behind in the repository.
+ */
+const nmshCommand = (home: string) => `cd ${quote(home)} && exec ${quote(process.execPath)} --import=${quote(TSX)} ${quote(ENTRY)}`;
 const hasTmux = spawnSync('tmux', ['-V']).status === 0;
 const hasScreen = spawnSync('screen', ['-v']).status !== null && spawnSync('which', ['screen']).status === 0;
 const quote = (value: string) => `'${value.replace(/'/gu, `'\\''`)}'`;
@@ -37,7 +44,7 @@ class TmuxPane {
     const env = Object.entries(sandbox.env).filter(([name, value]) => value !== undefined && /^(HOME|XDG_CONFIG_HOME|NMSH_[A-Z_]+|PATH)$/u.test(name))
       .map(([name, value]) => `${name}=${quote(value!)}`).join(' ');
     this.tmux('new-session', '-d', '-x', String(columns), '-y', String(rows), '-s', 'p',
-      `cd ${quote(REPO)} && env ${env} ${quote(process.execPath)} --import=tsx src/index.ts`);
+      `env ${env} sh -c ${quote(nmshCommand(sandbox.home))}`);
   }
   tmux(...args: string[]): string {
     return spawnSync('tmux', ['-L', this.socket, '-f', '/dev/null', ...args], {encoding: 'utf8', env: cleanEnv()}).stdout;
@@ -194,7 +201,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   const env = {...cleanEnv(), ...sandbox.env, TERM: 'xterm-256color'} as Record<string, string>;
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   const pty = nodePty.spawn('screen', ['-q', '-S', name, 'zsh', '-f', '-c',
-    `cd ${quote(REPO)} && exec ${quote(process.execPath)} --import=tsx src/index.ts`], {cwd: REPO, cols: 100, rows: 30, env});
+    nmshCommand(sandbox.home)], {cwd: sandbox.home, cols: 100, rows: 30, env});
   let output = '';
   pty.onData(data => { output += data; });
   const plain = (from: number) => output.slice(from).replace(/\u001b\[[0-9;?>]*[A-Za-z]|\u001b[()][A-Z0-9]|\u001b[=>]/gu, ' ');
