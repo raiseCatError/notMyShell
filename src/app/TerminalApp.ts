@@ -52,6 +52,7 @@ import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} fr
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
+import {editText} from '../ui/formControls.js';
 import {shimmerText} from '../status/shimmer.js';
 import {isDeterministicPresentation, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
@@ -1984,11 +1985,9 @@ export class TerminalApp {
     }
     const view = settingsView(state);
     const row = selectedSettingsRow(state);
-    if (state.searchFocused && key.kind === 'text') {
-      state.searchQuery = (state.searchQuery ?? '') + key.value;
-      state.contentIndex = 0;
-    } else if (state.searchFocused && key.kind === 'backspace') {
-      state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
+    const editedSearch = state.searchFocused ? editText(state.searchQuery ?? '', key) : undefined;
+    if (editedSearch !== undefined) {
+      state.searchQuery = editedSearch;
       state.contentIndex = 0;
     } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
       state.searchFocused = true;

@@ -17,6 +17,7 @@ import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
+import {stepIndex, toggleValue} from './formControls.js';
 import {displayWidth, highlightMatches, truncateAnsi} from '../util/text.js';
 
 /** The three top-level views of the one shared panel behind /settings, /config, and /status. */
@@ -185,9 +186,9 @@ export function isInlineEditable(row: SettingsRow | undefined): boolean {
 
 /** ←/→ on an enum or boolean row; undefined when the row has nothing to change inline. */
 export function adjustSettingsRow(row: SettingsRow, config: PromptConfiguration, delta: -1 | 1): PromptConfiguration | undefined {
-  if (row.control === 'boolean') return row.set(config, !row.get(config));
+  if (row.control === 'boolean') return row.set(config, toggleValue(row.get(config)));
   if (row.control !== 'enum') return undefined;
-  return row.select(config, (row.index(config) + delta + row.options.length) % row.options.length);
+  return row.select(config, stepIndex(row.options.length, row.index(config), delta));
 }
 
 /** Enter/Space: toggle a boolean or step an enum forward. */
