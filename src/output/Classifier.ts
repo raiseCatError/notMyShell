@@ -1,5 +1,6 @@
 import {PresentationMode} from './PresentationMode.js';
 import type {StreamFacts} from './FoldPolicy.js';
+import {AlternateScreenTracker} from '../session/TerminalModes.js';
 
 /**
  * Live presentation of a running command: INLINE, LIVE, or PASSTHROUGH.
@@ -13,6 +14,8 @@ export class CommandClassifier {
   private firstOutputTime = 0;
   private lastOutputTime = 0;
   private hasAltScreen = false;
+  /** Terminal modes the command turned on; input modes mean it is an interactive UI. */
+  private readonly terminalModes = new AlternateScreenTracker();
   private hasCursorMovement = false;
   private hasProgressRewrites = false;
 
@@ -45,6 +48,7 @@ export class CommandClassifier {
     if (chunk.includes('\u001B[?1049h') || chunk.includes('\u001B[?47h')) {
       this.hasAltScreen = true;
     }
+    this.terminalModes.observeModes(chunk);
     if (chunk.includes('\u001B[A') || chunk.includes('\u001B[H') || /\u001B\[[0-9;]*[HfA-D]/.test(chunk)) {
       this.hasCursorMovement = true;
     }
@@ -79,7 +83,11 @@ export class CommandClassifier {
 
     let nextMode: PresentationMode = this.mode;
 
-    if (this.hasAltScreen) {
+    // Evidence the program owns the terminal: the alternate screen, or input
+    // modes only an interactive UI turns on (an inline agent UI, a REPL with
+    // bracketed paste). Output volume, progress rewrites or cursor movement
+    // alone never qualify.
+    if (this.hasAltScreen || this.terminalModes.interactive) {
       nextMode = 'PASSTHROUGH';
     } else if (this.mode !== 'LIVE') {
       if (this.sustainedStreamingScore >= 2 && now - this.startTime >= 2000) {

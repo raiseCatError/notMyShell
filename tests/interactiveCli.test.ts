@@ -1,0 +1,154 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {chmodSync, mkdirSync, writeFileSync} from 'node:fs';
+import {join} from 'node:path';
+import {CommandClassifier} from '../src/output/Classifier.js';
+import {AlternateScreenTracker} from '../src/session/TerminalModes.js';
+import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.js';
+
+/**
+ * Interactive terminal UIs that draw inline (no alternate screen), such as
+ * agent CLIs, must get the terminal from NMSh, whatever their command is
+ * called. The evidence is the terminal input modes they turn on.
+ */
+
+test('input modes, not names or output volume, make a command interactive', () => {
+  const run = (chunks: string[]) => {
+    const classifier = new CommandClassifier(Date.now() - 5000);
+    for (const chunk of chunks) classifier.pushChunk(chunk);
+    return classifier.mode;
+  };
+  assert.equal(run(['Do you trust this folder?\r\n', '\u001b[?2004h\u001b[?25l❯ Yes\r\n  No\r\n']), 'PASSTHROUGH', 'bracketed paste');
+  assert.equal(run(['\u001b[?1000h\u001b[?1006h']), 'PASSTHROUGH', 'mouse reporting');
+  assert.equal(run(['\u001b[?1004h']), 'PASSTHROUGH', 'focus events');
+  assert.equal(run(['\u001b[>1u']), 'PASSTHROUGH', 'kitty keyboard push');
+  assert.equal(run(['\u001b[?20', '04h']), 'PASSTHROUGH', 'split across reads');
+  assert.equal(run(['\u001b[?1049h']), 'PASSTHROUGH', 'alternate screen still works');
+  // Batch output, including progress bars that hide the cursor and move it, never qualifies.
+  const progress = Array.from({length: 30}, (_, index) => `\u001b[?25l\r[${'#'.repeat(index)}] ${index}%\u001b[1A\u001b[2K\u001b[?25h`);
+  assert.notEqual(run([...progress, 'done\r\n']), 'PASSTHROUGH');
+  assert.notEqual(run([Array.from({length: 200}, (_, index) => `line ${index}\n`).join('')]), 'PASSTHROUGH');
+  assert.notEqual(run(['\u001b[?1h\u001b=']), 'PASSTHROUGH', 'cursor-key mode alone (pagers, readline) is not evidence');
+  assert.notEqual(run(['\u001b[?2004l']), 'PASSTHROUGH', 'turning a mode off is not evidence');
+});
+
+test('the mode tracker records interactive input modes and replays them, including kitty keyboard flags', () => {
+  const tracker = new AlternateScreenTracker();
+  tracker.observeModes('\u001b[>1u');
+  tracker.observeModes('\u001b[?2004h\u001b[?25l');
+  assert.equal(tracker.interactive, true);
+  assert.equal(tracker.active, false);
+  assert.equal(tracker.ownsTerminal, true);
+  assert.equal(tracker.restoreSequence(), '\u001b[?2004h\u001b[?25l\u001b[>1u');
+  assert.equal(tracker.push('inline UI output'), '', 'an interactive UI is not transcript text');
+  tracker.observeModes('\u001b[<u');
+  assert.equal(tracker.restoreSequence(), '\u001b[?2004h\u001b[?25l', 'a pop removes the kitty flags');
+  tracker.reset();
+  assert.equal(tracker.interactive, false);
+  assert.equal(tracker.push('ordinary output'), 'ordinary output');
+});
+
+/** An inline picker like an agent's trust prompt: bracketed paste on, no alternate screen, raw keys. */
+function installFakeAgent(sandbox: LiveSandbox): string {
+  const bin = join(sandbox.home, 'bin');
+  mkdirSync(bin, {recursive: true});
+  writeFileSync(join(bin, 'fake-agent.mjs'), `
+process.stdout.write('\\u001b[?2004h\\u001b[?25lDo you trust this folder?\\r\\n');
+let selected = 0;
+const options = ['Yes, I trust it', 'No, exit'];
+const draw = first => {
+  if (!first) process.stdout.write('\\u001b[2A');
+  for (let index = 0; index < options.length; index += 1) process.stdout.write('\\u001b[2K' + (index === selected ? '❯ ' : '  ') + options[index] + '\\r\\n');
+};
+draw(true);
+process.stdin.setRawMode(true);
+// Keys arrive as a byte stream: several can come in one read.
+process.stdin.on('data', data => {
+  let input = data.toString();
+  while (input.length > 0) {
+    if (input.startsWith('\\u001b[B') || input.startsWith('\\u001bOB')) { selected = 1; draw(false); input = input.slice(3); }
+    else if (input.startsWith('\\u001b[A') || input.startsWith('\\u001bOA')) { selected = 0; draw(false); input = input.slice(3); }
+    else if (input.startsWith('\\r')) {
+      process.stdout.write('\\u001b[?2004l\\u001b[?25hPICKED-' + selected + '\\r\\n');
+      process.exit(0);
+    } else input = input.slice(1);
+  }
+});
+`);
+  // A differently named wrapper, like a per-account alias for an agent CLI.
+  writeFileSync(join(bin, 'agent-account2'), `#!/bin/sh\nexec "${process.execPath}" "${join(bin, 'fake-agent.mjs')}" "$@"\n`);
+  chmodSync(join(bin, 'agent-account2'), 0o755);
+  return bin;
+}
+
+async function startedWith(sandbox: LiveSandbox, bin: string): Promise<Frontend> {
+  const app = sandbox.launch();
+  await app.waitFor(/❯/);
+  await app.run(`export PATH="${bin}:$PATH"; echo PATH-SET`, /PATH-SET/);
+  return app;
+}
+
+test('a wrapper that launches an inline interactive UI gets the terminal: keys reach it, then NMSh returns', async () => {
+  const sandbox = new LiveSandbox();
+  try {
+    const bin = installFakeAgent(sandbox);
+    const app = await startedWith(sandbox, bin);
+    const mark = app.mark;
+    app.pty.write('agent-account2\r');
+    await app.waitFor(/Do you trust this folder\?[\s\S]*No, exit/, mark);
+    // Passthrough began: NMSh handed over the terminal (its own bracketed paste off) and replayed the app's modes.
+    await until(() => app.output.indexOf('\u001b[?2004l', mark) !== -1, 15000, 'passthrough');
+    const handedOver = app.output.indexOf('\u001b[?2004l', mark);
+    assert.ok(app.output.indexOf('\u001b[?2004h', handedOver) !== -1, 'the app\'s bracketed paste reached the terminal');
+    app.pty.write('\u001b[B');
+    await app.waitFor(/❯ No, exit/, handedOver);
+    app.pty.write('\r');
+    await app.waitFor(/PICKED-1/, mark);
+    assert.doesNotMatch(strip(app.output.slice(mark)), /\d;2m|\[\?2004h/, 'no control sequences leak as text');
+    await app.run('echo BACK-IN-NMSH', /BACK-IN-NMSH/);
+  } finally {
+    await sandbox.dispose();
+  }
+});
+
+test('an interactive UI that was detached is handed the terminal again on reattach', async () => {
+  const sandbox = new LiveSandbox();
+  try {
+    const bin = installFakeAgent(sandbox);
+    const first = await startedWith(sandbox, bin);
+    const mark = first.mark;
+    first.pty.write('agent-account2\r');
+    await first.waitFor(/Do you trust this folder\?/, mark);
+    await until(async () => (await sandbox.sessions())[0]?.running?.includes('agent-account2') === true, 15000, 'running');
+    const [{id}] = await sandbox.sessions() as [{id: string}];
+    first.pty.kill('SIGKILL');
+    await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'detached');
+
+    const second = sandbox.launch(['--attach', id]);
+    await until(async () => (await sandbox.sessions())[0]?.state === 'attached', 15000, 'reattached');
+    // Handed straight to the program, with its bracketed paste restored.
+    await until(() => second.output.includes('\u001b[?2004l'), 15000, 'passthrough on reattach');
+    assert.ok(second.output.indexOf('\u001b[?2004h', second.output.indexOf('\u001b[?2004l')) !== -1);
+    second.pty.write('\u001b[B');
+    second.pty.write('\r');
+    await second.waitFor(/PICKED-1/);
+    await second.run('echo AFTER-REATTACH', /AFTER-REATTACH/);
+  } finally {
+    await sandbox.dispose();
+  }
+});
+
+test('an ordinary long-running command with progress output stays in NMSh and keeps the composer', async () => {
+  const sandbox = new LiveSandbox();
+  try {
+    const app = sandbox.launch();
+    await app.waitFor(/❯/);
+    const mark = app.mark;
+    app.pty.write(`for i in 1 2 3 4 5 6; do printf '\\e[?25l\\r[%s] working' "$i"; sleep 0.4; done; printf '\\e[?25h\\nPROGRESS-%s\\n' DONE\r`);
+    await app.waitFor(/PROGRESS-DONE/, mark); // assembled at run time, so the echoed command cannot match
+    assert.equal(app.output.indexOf('\u001b[?2004l', mark), -1, 'never handed over the terminal');
+    await app.run('echo STILL-NMSH', /STILL-NMSH/);
+  } finally {
+    await sandbox.dispose();
+  }
+});

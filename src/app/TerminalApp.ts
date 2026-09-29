@@ -64,6 +64,7 @@ import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
+import {AlternateScreenTracker} from '../session/TerminalModes.js';
 import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
@@ -151,6 +152,8 @@ export class TerminalApp {
   private welcomeGeneration = 0;
   private syntaxPanelState?: SyntaxPanelState;
   private layoutPanelState?: LayoutPanelState;
+  /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
+  private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string};
   private hoveredLineIndex?: number;
@@ -319,7 +322,8 @@ export class TerminalApp {
     if (this.replaying) return;
     if (mode === 'PASSTHROUGH' && !this.passthrough) {
       this.passthrough = true;
-      this.renderer.suspendForPassthrough();
+      // Modes the program set in earlier output never reached the terminal; hand them over with it.
+      this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
       const dimensions = this.dimensions();
       this.session.resize(dimensions.columns, dimensions.rows);
     }
@@ -332,6 +336,7 @@ export class TerminalApp {
    */
   private onShellExec(command: string, at = Date.now()): void {
     if (this.running) return;
+    this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
@@ -1034,6 +1039,7 @@ export class TerminalApp {
     }
 
     const contextAtSubmission = this.context;
+    this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
         this.passthrough = true;
@@ -1385,6 +1391,7 @@ export class TerminalApp {
     if (this.passthrough) {
       process.stdout.write(data);
     } else {
+      this.commandModes.observeModes(data);
       this.lastOutputTime = Date.now();
       const wasPassthrough = this.passthrough;
       this.output.write(data);
