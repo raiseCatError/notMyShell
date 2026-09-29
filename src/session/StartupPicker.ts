@@ -1,63 +1,109 @@
-import {KeyDecoder} from '../terminal/keys.js';
+import {homedir} from 'node:os';
+import {KeyDecoder, type Key} from '../terminal/keys.js';
 import type {SessionInfo} from './SessionProtocol.js';
-import {describeLiveSession} from '../sessions/ResumeBrowser.js';
+import {formatAge} from './sessionList.js';
 
-export type PickerChoice = {kind: 'attach'; sessionId: string} | {kind: 'new'};
+// Launch-time restore screens, shown before any session is attached. Neither
+// has a destructive key: killing a live session stays a confirmed /resume action.
 
-export interface PickerState {
-  sessions: SessionInfo[];
-  /** sessions.length selects "New session". */
-  selectedIndex: number;
+const clipTo = (columns: number) => (text: string) => (text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text);
+const tildePath = (path: string, home = homedir()) => (home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path);
+const activity = (session: SessionInfo) => session.running?.replace(/\s+/gu, ' ').slice(0, 60) ?? 'zsh';
+const age = (session: SessionInfo, now: number) => formatAge(now - (session.runningSince ?? session.idleSince ?? session.createdAt));
+
+// ── One detached session ─────────────────────────────────────────────────────
+
+/** resume: attach · not-now: fresh session, this launch only · always/never: also persist the startup setting. */
+export type SinglePromptChoice = 'resume' | 'not-now' | 'always' | 'never';
+
+export function renderSinglePrompt(session: SessionInfo, columns: number, now: number): string[] {
+  const clip = clipTo(columns);
+  return ['NMSh · 1 detached live session', '',
+    clip(`  ${tildePath(session.cwd)}`),
+    clip(`  ${session.running ? `running ${activity(session)}` : 'idle at the prompt'} · ${age(session, now)}`),
+    clip(`  started ${formatAge(now - session.createdAt)} ago`), '',
+    '  R  Resume', '  N  Not now (start a new session; it keeps running)',
+    '  A  Always resume', '  D  Don\'t resume at startup (it keeps running)', '',
+    clip('Enter resume · Esc not now · sessions stay in /resume')];
 }
 
-/** Plain lines for the launch-time restore picker. */
-export function renderPicker(state: PickerState, columns: number, now: number): string[] {
-  const clip = (text: string) => (text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text);
-  const rows = ['NMSh · detached live sessions', ''];
+export function singlePromptKey(key: Key): SinglePromptChoice | undefined {
+  if (key.kind === 'enter') return 'resume';
+  if (key.kind === 'escape' || key.kind === 'interrupt') return 'not-now';
+  if (key.kind !== 'text') return undefined;
+  return ({r: 'resume', n: 'not-now', a: 'always', d: 'never'} as const)[key.value.toLowerCase() as 'r' | 'n' | 'a' | 'd'];
+}
+
+// ── Several detached sessions ────────────────────────────────────────────────
+
+export interface MultiPickerState {
+  sessions: SessionInfo[];
+  cursor: number;
+  selected: Set<string>;
+}
+
+export function createMultiPicker(sessions: SessionInfo[]): MultiPickerState {
+  return {sessions, cursor: 0, selected: new Set()};
+}
+
+export function renderMultiPicker(state: MultiPickerState, columns: number, now: number): string[] {
+  const clip = clipTo(columns);
+  const width = Math.min(32, Math.max(...state.sessions.map(session => tildePath(session.cwd).length), 4));
+  const commandWidth = Math.min(20, Math.max(...state.sessions.map(session => activity(session).length), 3));
+  const rows = [`NMSh · ${state.sessions.length} detached live sessions`, ''];
   state.sessions.forEach((session, index) => {
-    rows.push(clip(`${index === state.selectedIndex ? '›' : ' '} ● ${describeLiveSession(session, now)}`));
+    const mark = state.selected.has(session.id) ? '[x]' : '[ ]';
+    rows.push(clip(`${index === state.cursor ? '›' : ' '} ${mark} ${tildePath(session.cwd).padEnd(width)}  ${activity(session).padEnd(commandWidth)}  ${age(session, now)}`));
   });
-  rows.push(clip(`${state.selectedIndex === state.sessions.length ? '›' : ' '} + New session`), '',
-    '↑↓ move · Enter choose · Esc new session');
+  const count = state.selected.size;
+  rows.push('', clip(`↑↓ move · Space select · A all · Enter resume ${count === 0 ? 'none' : count} · Esc none`),
+    clip('Unselected sessions keep running and stay in /resume.'));
   return rows;
 }
 
-/** Apply one decoded key; returns a choice once the user has made one. */
-export function pickerKey(state: PickerState, kind: string): PickerChoice | undefined {
-  if (kind === 'up') state.selectedIndex = Math.max(0, state.selectedIndex - 1);
-  else if (kind === 'down') state.selectedIndex = Math.min(state.sessions.length, state.selectedIndex + 1);
-  else if (kind === 'escape' || kind === 'interrupt') return {kind: 'new'};
-  else if (kind === 'enter') {
-    const session = state.sessions[state.selectedIndex];
-    return session ? {kind: 'attach', sessionId: session.id} : {kind: 'new'};
+/** Apply one key; returns the ids to resume (in list order) once the user is done, [] for none. */
+export function multiPickerKey(state: MultiPickerState, key: Key): string[] | undefined {
+  const count = state.sessions.length;
+  if (key.kind === 'up') state.cursor = (state.cursor - 1 + count) % count;
+  else if (key.kind === 'down') state.cursor = (state.cursor + 1) % count;
+  else if (key.kind === 'escape' || key.kind === 'interrupt') return [];
+  else if (key.kind === 'enter') return state.sessions.filter(session => state.selected.has(session.id)).map(session => session.id);
+  else if (key.kind === 'text' && key.value === ' ') {
+    const id = state.sessions[state.cursor]!.id;
+    if (!state.selected.delete(id)) state.selected.add(id);
+  } else if (key.kind === 'text' && key.value.toLowerCase() === 'a') {
+    // Toggle like common pickers: select all, or clear once everything is selected.
+    if (state.selected.size === count) state.selected.clear();
+    else for (const session of state.sessions) state.selected.add(session.id);
   }
   return undefined;
 }
 
-/** Interactive picker on the real terminal, shown before any session is attached. */
-export function runStartupPicker(sessions: SessionInfo[]): Promise<PickerChoice> {
-  const state: PickerState = {sessions, selectedIndex: 0};
+// ── Terminal runner ─────────────────────────────────────────────────────────
+
+/** Run a full-screen prompt on the real terminal until `onKey` returns a result. */
+export function runStartupScreen<T>(render: (columns: number) => string[], onKey: (key: Key) => T | undefined): Promise<T> {
   const decoder = new KeyDecoder();
-  const draw = () => {
-    const lines = renderPicker(state, process.stdout.columns || 80, Date.now());
-    process.stdout.write(`\u001b[H\u001b[2J${lines.join('\r\n')}`);
-  };
+  const draw = () => process.stdout.write(`\u001b[H\u001b[2J${render(process.stdout.columns || 80).join('\r\n')}`);
   return new Promise(resolve => {
     const wasRaw = process.stdin.isRaw;
     process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf8');
     process.stdout.write('\u001b[?1049h\u001b[?25l');
     const onData = (data: string) => {
-      // A read of exactly ESC is the Esc key, not the start of a sequence.
-      const kinds = data === '\u001b' ? ['escape'] : decoder.push(data).map(key => key.kind);
-      for (const kind of kinds) {
-        const choice = pickerKey(state, kind);
-        if (choice) {
+      // A read ending in a lone ESC ends with the Esc key, not the start of a
+      // sequence (e.g. Space then Esc typed quickly arrive as one read).
+      const trailingEscape = data.endsWith('\u001b') && !data.endsWith('\u001b\u001b');
+      const keys: Key[] = decoder.push(trailingEscape ? data.slice(0, -1) : data);
+      if (trailingEscape) keys.push({kind: 'escape'});
+      for (const key of keys) {
+        const result = onKey(key);
+        if (result !== undefined) {
           process.stdin.off('data', onData);
           process.stdin.setRawMode(wasRaw);
           process.stdin.pause();
           process.stdout.write('\u001b[?25h\u001b[?1049l');
-          resolve(choice);
+          resolve(result);
           return;
         }
       }

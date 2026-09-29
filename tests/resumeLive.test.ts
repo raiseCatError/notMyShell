@@ -3,8 +3,6 @@ import assert from 'node:assert/strict';
 import {mkdtempSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {planLaunch} from '../src/session/liveSessions.js';
-import {pickerKey, renderPicker} from '../src/session/StartupPicker.js';
 import {createResumeBrowser, describeLiveSession, resumeRowCount, resumeSelection, visibleResumeSessions} from '../src/sessions/ResumeBrowser.js';
 import {archiveLiveSession} from '../src/sessions/archiveLive.js';
 import {TranscriptStore, type TranscriptSummary} from '../src/sessions/TranscriptStore.js';
@@ -13,29 +11,6 @@ import type {SessionInfo} from '../src/session/SessionProtocol.js';
 
 const info = (id: string, state: SessionInfo['state'], extra: Partial<SessionInfo> = {}): SessionInfo =>
   ({id, pid: 100, state, cwd: `/w/${id}`, createdAt: 1_000, ...extra});
-
-test('launch plan: none, one, several detached; attached sessions are never candidates', () => {
-  assert.deepEqual(planLaunch([]), {kind: 'new'});
-  assert.deepEqual(planLaunch([info('a', 'attached')]), {kind: 'new'});
-  assert.deepEqual(planLaunch([info('a', 'attached'), info('b', 'detached')]), {kind: 'attach', session: info('b', 'detached')});
-  const plan = planLaunch([info('old', 'detached', {createdAt: 1}), info('a', 'attached'), info('new', 'detached', {createdAt: 9})]);
-  assert.equal(plan.kind, 'pick');
-  assert.deepEqual(plan.kind === 'pick' && plan.sessions.map(session => session.id), ['new', 'old']);
-});
-
-test('startup picker: choose a session, choose new, or escape to new', () => {
-  const state = {sessions: [info('a', 'detached'), info('b', 'detached', {running: 'npm test', runningSince: 500})], selectedIndex: 0};
-  const lines = renderPicker(state, 120, 61_000);
-  assert.match(lines.join('\n'), /› ● \/w\/a · detached · idle · started 1m ago/);
-  assert.match(lines.join('\n'), /running npm test · 1m/);
-  assert.match(lines.join('\n'), /\+ New session/);
-  pickerKey(state, 'down');
-  assert.deepEqual(pickerKey(state, 'enter'), {kind: 'attach', sessionId: 'b'});
-  pickerKey(state, 'down');
-  pickerKey(state, 'down');
-  assert.deepEqual(pickerKey(state, 'enter'), {kind: 'new'});
-  assert.deepEqual(pickerKey({...state, selectedIndex: 0}, 'escape'), {kind: 'new'});
-});
 
 function summary(id: string, createdAt: string): TranscriptSummary {
   return {id, createdAt, commandCount: 1, startCwd: '/w', finalCwd: '/w', project: 'p', pinned: false, journaled: true, endedAt: createdAt};
