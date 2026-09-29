@@ -2,6 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
 import {ShellSession} from '../shell/ShellSession.js';
+import {SessionEvidence} from './SessionEvidence.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
@@ -33,6 +34,8 @@ interface ManagedSession {
   resizes: number;
   seq: number;
   backlog: StreamBacklog;
+  /** What the foreground program's own output says: recency, title, attention, last exit. */
+  evidence: SessionEvidence;
 }
 
 // DECSET/DECRST 1049, 1047 and 47: the alternate-screen switches.
@@ -166,9 +169,18 @@ export class SessionService {
 
   private info(session: ManagedSession): SessionInfo {
     const {record, running} = session;
+    const evidence = session.evidence.snapshot();
+    // Read only when someone lists sessions; nothing polls the process table.
+    const process = running ? session.shell.foregroundProcess : undefined;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
       ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
-      ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {})};
+      ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {}),
+      ...(process && process !== 'zsh' ? {process} : {}),
+      ...(running && session.screen.active ? {fullscreen: 1} : {}),
+      ...(evidence.lastOutputAt !== undefined ? {lastOutputAt: evidence.lastOutputAt} : {}),
+      ...(evidence.title ? {title: evidence.title} : {}),
+      ...(evidence.attentionSince !== undefined ? {attentionSince: evidence.attentionSince} : {}),
+      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {})};
   }
 
   async start(): Promise<void> {
@@ -268,7 +280,7 @@ export class SessionService {
           case 'list':
             send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
             break;
-          case 'input': owned?.shell.write(message.data); break;
+          case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
           case 'resize':
             if (owned) { owned.resizes += 1; owned.shell.resize(message.columns, message.rows); }
             break;
@@ -327,7 +339,8 @@ export class SessionService {
     const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
       state: 'attached', protocolVersion: PROTOCOL_VERSION};
     const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
-      seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits)};
+      seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
+      evidence: new SessionEvidence()};
     this.sessions.set(record.id, session);
     // Every event is retained until a frontend journal acknowledges it, and
     // sent live when a frontend is attached.
@@ -337,6 +350,7 @@ export class SessionService {
     };
     shell.on('data', data => {
       const at = Date.now();
+      session.evidence.observe(data, at);
       session.screen.observeModes(data);
       const kept = session.screen.push(data);
       if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
@@ -345,12 +359,14 @@ export class SessionService {
     shell.on('exec', command => {
       const at = Date.now();
       session.running = {command, since: at};
+      session.evidence.onExec();
       emit({kind: 'exec', seq: ++session.seq, at, command});
     });
     shell.on('prompt', marker => {
       record.cwd = marker.cwd;
       session.running = undefined;
       session.idleSince = Date.now();
+      session.evidence.onPrompt(marker.exitCode);
       session.screen.reset();
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
     });

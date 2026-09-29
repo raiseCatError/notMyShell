@@ -65,6 +65,19 @@ export interface SessionInfo {
   idleSince?: number;
   /** Journal of the session's most recent frontend, as it last acknowledged. */
   journalId?: string;
+  // Evidence for /resume status (#174); absent from older services, and unknown stays absent.
+  /** Foreground process name while a command runs, when the platform can tell. */
+  process?: string;
+  /** 1 while the running program holds the alternate screen. */
+  fullscreen?: number;
+  /** When the session last produced output. */
+  lastOutputAt?: number;
+  /** Title the running program set for its window (OSC 0/2). */
+  title?: string;
+  /** When the running program asked for attention (terminal notification or bell) and nobody has typed since. */
+  attentionSince?: number;
+  /** Exit code of the last finished command, while idle. */
+  lastExit?: number;
 }
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
@@ -112,7 +125,8 @@ function isEnv(value: unknown): value is Record<string, string> {
 }
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
-  running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?'};
+  running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
+  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?'};
 
 function validField(kind: Kind, value: unknown): boolean {
   switch (kind) {

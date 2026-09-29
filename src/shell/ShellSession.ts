@@ -135,6 +135,11 @@ add-zsh-hook preexec nmsh_preexec
     return this.pty.pid;
   }
 
+  /** Name of the terminal's foreground process, read on demand; undefined if the platform cannot tell. */
+  get foregroundProcess(): string | undefined {
+    try { return this.pty.process || undefined; } catch { return undefined; }
+  }
+
   submit(command: string): void {
     this.pty.write(`${command}\r`);
   }

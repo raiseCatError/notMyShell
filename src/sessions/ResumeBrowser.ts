@@ -1,6 +1,7 @@
 import type {TranscriptSummary} from './TranscriptStore.js';
 import type {SessionInfo} from '../session/SessionProtocol.js';
-import {formatAge} from '../session/sessionList.js';
+import {formatAge, tildePath} from '../session/sessionList.js';
+import {liveStatusParts} from '../session/liveStatus.js';
 
 export interface ResumeBrowserState {
   /** Live service sessions other than this frontend's own; listed first. */
@@ -63,10 +64,7 @@ export function resumeRowCount(state: ResumeBrowserState): number {
 /** Facts only: where, how old, attached or not, and what zsh reports running. */
 export function describeLiveSession(session: SessionInfo, now: number): string {
   const state = session.state === 'attached' ? 'attached in another window' : 'detached';
-  const activity = session.running
-    ? `running ${session.running.replace(/\s+/gu, ' ').slice(0, 60)} · ${formatAge(now - (session.runningSince ?? now))}`
-    : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}`;
-  return `${session.cwd} · ${state} · ${activity} · started ${formatAge(now - session.createdAt)} ago`;
+  return [tildePath(session.cwd), state, ...liveStatusParts(session, now), `started ${formatAge(now - session.createdAt)} ago`].join(' · ');
 }
 
 export function visibleResumeSessions(state: ResumeBrowserState): TranscriptSummary[] {
