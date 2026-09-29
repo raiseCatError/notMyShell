@@ -53,6 +53,7 @@ import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {shimmerText} from '../status/shimmer.js';
+import {isDeterministicPresentation, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
@@ -1420,7 +1421,8 @@ export class TerminalApp {
       const outputText = completedRecord?.output ?? '';
       const facts = extractFacts(command.command, outputText);
       const isInterrupted = command.interrupted || exitCode === 130;
-      const parts = completedActivity(command.command, elapsed, completedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
+      const displayCompletedAt = presentationCompletionTime(completedAt);
+      const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -2393,7 +2395,7 @@ export class TerminalApp {
    * change. Blinks are skipped (not queued) while no welcome is present.
    */
   private scheduleWelcomeBlink(): void {
-    if (this.stopped) return;
+    if (this.stopped || isDeterministicPresentation()) return;
     this.welcomeBlinkTimer = setTimeout(() => {
       if (this.stopped) return;
       if (!this.output.hasWelcome || this.passthrough) {
@@ -2575,7 +2577,8 @@ export class TerminalApp {
     const outputHeight = plan.transcript.height;
     const presenter = this.output.presenter;
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
-      focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId, now: Date.now()};
+      focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId,
+      now: presentationNow().getTime()};
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row =>
       presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction));
     const sticky = this.stickyHeader(wrapped, viewStart);
@@ -2669,8 +2672,9 @@ export class TerminalApp {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
-    const parts = liveActivityParts(this.running.command, elapsed);
-    return `${shimmerText(parts.phrase, elapsed, isActive)}${SECONDARY}${parts.duration}${RESET}`;
+    const animationElapsed = presentationAnimationElapsed(elapsed);
+    const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
+    return `${shimmerText(parts.phrase, animationElapsed, isDeterministicPresentation() ? false : isActive)}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
