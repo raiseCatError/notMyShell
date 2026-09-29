@@ -19,7 +19,7 @@ Before starting work, check:
 
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.5.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.5.0)** — current stable release
+- **[v0.6.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.6.0)** — current stable release
 - **[#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132)** — next planned direction (see [ROADMAP.md](ROADMAP.md))
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
