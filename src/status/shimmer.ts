@@ -1,4 +1,5 @@
 import {graphemes} from '../input/inputLayout.js';
+import {mixRgb} from '../chroma/chroma.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 
 /** Time for the wave to travel one wavelength; independent of text length. */
@@ -28,14 +29,7 @@ export function shimmerIntensity(elapsedMs: number, glyphIndex: number, _textLen
   return SHIMMER_FLOOR + (SHIMMER_CEILING - SHIMMER_FLOOR) * wave;
 }
 
-export function interpolateRgb(from: RgbColor, to: RgbColor, amount: number): RgbColor {
-  const clamped = Math.max(0, Math.min(1, amount));
-  return {
-    red: Math.round(from.red + (to.red - from.red) * clamped),
-    green: Math.round(from.green + (to.green - from.green) * clamped),
-    blue: Math.round(from.blue + (to.blue - from.blue) * clamped),
-  };
-}
+export const interpolateRgb = mixRgb;
 
 export function shimmerText(text: string, elapsedMs: number, isActive: boolean): string {
   return shimmerTextWithColors(text, elapsedMs, isActive, UI_COLORS.workingBase, UI_COLORS.workingPeak);

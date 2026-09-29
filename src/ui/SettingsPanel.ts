@@ -14,6 +14,7 @@ import {providerLabel} from '../prompt/PromptPanel.js';
 import {welcomeProvider} from '../output/WelcomeProviders.js';
 import {PROMPT_STYLES, PROMPT_STYLE_LABELS} from '../prompt/powerline.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
+import {foregroundOf, status, theme} from '../chroma/chroma.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
@@ -309,9 +310,9 @@ function footerText(state: SettingsPanelState, row: SettingsRow | undefined): st
 }
 
 function toneColor(tone: StatusItem['tone']): string {
-  return tone === 'success' ? foreground(UI_COLORS.success)
-    : tone === 'warning' ? foreground(UI_COLORS.failure)
-      : tone === 'muted' ? SUBTLE : PRIMARY;
+  return foregroundOf(tone === 'success' ? status('success')
+    : tone === 'warning' ? status('failure')
+      : theme(tone === 'muted' ? 'subtle' : 'primary'));
 }
 
 function statusLines(sections: StatusSections, columns: number): string[] {

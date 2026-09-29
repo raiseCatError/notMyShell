@@ -1,4 +1,4 @@
-import {colorLevel} from '../presentation/capabilities.js';
+import {colorEscape} from '../chroma/escape.js';
 
 export interface RgbColor {
   red: number;
@@ -28,13 +28,11 @@ export const UI_COLORS = {
   selection: {red: 88, green: 96, blue: 145},
 } as const satisfies Record<string, RgbColor>;
 
-/** Color escapes are empty when the terminal is not to be colored (NO_COLOR, TERM=dumb, NMSH_COLOR=none). */
+/** Color escapes follow the terminal capability: none, 256-color or truecolor (see presentation/capabilities). */
 export function foreground(color: RgbColor): string {
-  if (colorLevel() === 'none') return '';
-  return `\u001B[38;2;${color.red};${color.green};${color.blue}m`;
+  return colorEscape(38, color);
 }
 
 export function background(color: RgbColor): string {
-  if (colorLevel() === 'none') return '';
-  return `\u001B[48;2;${color.red};${color.green};${color.blue}m`;
+  return colorEscape(48, color);
 }

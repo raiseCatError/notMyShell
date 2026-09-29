@@ -9,7 +9,7 @@ Accessibility flows through the shared primitives (`ui/palette`, `ui/glyphs`, `u
 | Setting | Effect |
 | --- | --- |
 | `NO_COLOR=1` (non-empty) or `TERM=dumb` | `foreground()`/`background()` emit nothing. Bold, inverse and glyphs remain. |
-| `NMSH_COLOR=none` / `truecolor` | Explicit override, wins over `NO_COLOR`/`TERM`. |
+| `NMSH_COLOR=none` / `256` / `truecolor` | Explicit override, wins over `NO_COLOR`/`TERM`. `256` maps NMSh colors to the xterm 256 palette. |
 | `NMSH_ICONS=safe` | ASCII-safe glyph set (existing). |
 | `NMSH_REDUCED_MOTION=1` | Shimmer/activity glyph phase and the welcome blink stay still. Durations keep counting. Deterministic presentation implies it. |
 
@@ -29,7 +29,7 @@ These are environment controls. A persisted setting would change the public conf
 
 - Met: keyboard operation in palette, Settings, draft panels; pointer-free navigation; safe glyph set; status glyphs; footer help derived from actions.
 - Known gaps: command-row background bands (`TranscriptPresenter`) are a color-only cue for "this is a command" under `NO_COLOR`; the prompt prefix is the remaining cue. Provider panels (prompt, welcome, suggestions) keep hand-written footers.
-- Not supported: 256-color/16-color downconversion (planned with the Chroma work, #171) and a persisted reduced-motion setting.
+- Not supported: automatic 256-color detection (only explicit `NMSH_COLOR=256`), 16-color output, and a persisted reduced-motion setting.
 
 ## Screen readers
 
