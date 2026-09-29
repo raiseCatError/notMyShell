@@ -40,6 +40,8 @@ export interface SettingsPanelState {
   searchQuery?: string;
   /** Only `/` focuses search; while focused, typing edits the query. */
   searchFocused?: boolean;
+  /** Config also lists advanced rows. */
+  showAdvanced?: boolean;
   glyphStyle: GlyphStyle;
   onboarding: boolean;
 }
@@ -65,6 +67,8 @@ interface SettingsRowBase {
   description: string;
   /** Search also matches the area a row belongs to. */
   category: string;
+  /** Advanced rows stay out of the default Config list until the user asks for them (or searches). */
+  level?: 'advanced';
 }
 
 /**
@@ -105,18 +109,18 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     control: 'child', destination: 'prompt', value: config => providerLabel(config.provider)},
   {id: 'divider', label: 'History divider', description: 'Rule drawn above each past command', category: 'Transcript',
     control: 'boolean', get: config => config.transcript.divider, set: (config, divider) => withTranscript(config, {divider})},
-  enumRow({id: 'dividerDensity', label: 'Divider density', description: 'Spacing around history dividers', category: 'Transcript',
+  enumRow({id: 'dividerDensity', level: 'advanced', label: 'Divider density', description: 'Spacing around history dividers', category: 'Transcript',
     values: DENSITIES, labels: ['Normal', 'Compact'],
     get: config => config.transcript.dividerDensity, set: (config, dividerDensity) => withTranscript(config, {dividerDensity})}),
   {id: 'historicalPrompt', label: 'Prompt snapshots', description: 'Show the prompt each past command ran under', category: 'Transcript',
     control: 'boolean', get: config => config.transcript.historicalPrompt,
     set: (config, historicalPrompt) => withTranscript(config, {historicalPrompt})},
-  enumRow({id: 'historyColors', label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
+  enumRow({id: 'historyColors', level: 'advanced', label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.transcript.historyColors, set: (config, historyColors) => withTranscript(config, {historyColors})}),
   {id: 'syntaxHighlighting', label: 'Syntax highlighting', description: 'Color commands while typing and in new history', category: 'Syntax',
     control: 'boolean', get: config => config.syntax.highlighting, set: (config, highlighting) => ({...config, syntax: {...config.syntax, highlighting}})},
-  enumRow({id: 'syntaxColors', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
+  enumRow({id: 'syntaxColors', level: 'advanced', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
   enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look: Powerline, Soft, Minimal, or Outline', category: 'Prompt',
@@ -128,7 +132,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'transcriptPresentation', label: 'Transcript presentation', description: 'Normal rows, or Chat with commands on the right', category: 'Layout',
     values: TRANSCRIPT_PRESENTATIONS, labels: TRANSCRIPT_PRESENTATIONS.map(presentation => TRANSCRIPT_PRESENTATION_LABELS[presentation]),
     get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
-  enumRow({id: 'outputFolding', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
+  enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
   enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
@@ -137,7 +141,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'liveSessionStartup', label: 'Startup restore', description: 'Resume a detached live session at launch: Ask, Always, or Never (never ends none)', category: 'Sessions',
     values: LIVE_SESSION_STARTUP, labels: ['Ask', 'Always', 'Never'],
     get: config => config.liveSessionStartup, set: (config, liveSessionStartup) => ({...config, liveSessionStartup})}),
-  enumRow({id: 'liveSessionMultiple', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
+  enumRow({id: 'liveSessionMultiple', level: 'advanced', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
     values: LIVE_SESSION_MULTIPLE, labels: ['Ask which', 'Open all'],
     get: config => config.liveSessionMultiple, set: (config, liveSessionMultiple) => ({...config, liveSessionMultiple})}),
   {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
@@ -145,7 +149,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
     control: 'child', destination: 'suggestions',
     value: config => SUGGESTION_PROVIDERS.find(provider => provider.id === config.suggestions)?.label ?? config.suggestions},
-  {id: 'suggestionsOnEmpty', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
+  {id: 'suggestionsOnEmpty', level: 'advanced', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
     control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
 ];
 
@@ -162,6 +166,9 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
 ];
 
+/** Text cue (not color) that a value differs from its default. */
+const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');
+
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;
 
 export function visibleSettingsRows(state: SettingsPanelState): SettingsRow[] {
@@ -169,7 +176,7 @@ export function visibleSettingsRows(state: SettingsPanelState): SettingsRow[] {
   if (view === 'status') return [];
   if (view === 'settings') return [...SETTINGS_ENTRIES];
   const query = state.searchQuery?.trim().toLowerCase();
-  if (!query) return [...SETTINGS_ROWS];
+  if (!query) return SETTINGS_ROWS.filter(row => state.showAdvanced || row.level !== 'advanced');
   return SETTINGS_ROWS.filter(row => [row.label, row.description, row.category].some(text => text.toLowerCase().includes(query)));
 }
 
@@ -195,6 +202,25 @@ export function adjustSettingsRow(row: SettingsRow, config: PromptConfiguration,
 /** Enter/Space: toggle a boolean or step an enum forward. */
 export function toggleSettingsRow(row: SettingsRow, config: PromptConfiguration): PromptConfiguration | undefined {
   return adjustSettingsRow(row, config, 1);
+}
+
+/** True when an inline-editable row differs from the shipped default. */
+export function settingsRowChanged(row: SettingsRow, config: PromptConfiguration): boolean {
+  if (row.control === 'enum') return row.index(config) !== row.index(DEFAULT_PROMPT_CONFIGURATION);
+  if (row.control === 'boolean') return row.get(config) !== row.get(DEFAULT_PROMPT_CONFIGURATION);
+  return false;
+}
+
+/** The row's default display value, for "reset to ..." help. */
+export function settingsRowDefaultLabel(row: SettingsRow): string | undefined {
+  return settingsRowValue(row, DEFAULT_PROMPT_CONFIGURATION);
+}
+
+/** Configuration with only this row reset to its default; undefined when the row has no inline value. */
+export function resetSettingsRow(row: SettingsRow, config: PromptConfiguration): PromptConfiguration | undefined {
+  if (row.control === 'enum') return row.select(config, row.index(DEFAULT_PROMPT_CONFIGURATION));
+  if (row.control === 'boolean') return row.set(config, row.get(DEFAULT_PROMPT_CONFIGURATION));
+  return undefined;
 }
 
 /** Enter on a row that opens something. */
@@ -297,16 +323,18 @@ function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
   return out;
 }
 
-function footerText(state: SettingsPanelState, row: SettingsRow | undefined): string {
+function footerText(state: SettingsPanelState, row: SettingsRow | undefined, changedDefault?: string): string {
   const view = settingsView(state);
   if (state.searchFocused) return '↑↓ results · Enter select · Esc clear';
   if (view === 'status') return '←/→ to switch · ↑↓ to scroll · Esc to close';
   if (state.focus === 'tabs') return '←/→ to switch · ↓ to select · Esc to close';
   const search = view === 'config' ? ' · / to search' : '';
   const escape = state.searchQuery?.trim() ? 'Esc to clear' : 'Esc to close';
-  if (isInlineEditable(row)) return `Enter/Space to change${search} · ${escape}`;
-  if (row) return `Enter to open · ←/→ to switch${search} · ${escape}`;
-  return `←/→ to switch${search} · ${escape}`;
+  const advanced = view === 'config' && !state.searchQuery?.trim() ? ` · A ${state.showAdvanced ? 'hide' : 'show'} advanced` : '';
+  const reset = changedDefault !== undefined ? ` · R reset to ${changedDefault}` : '';
+  if (isInlineEditable(row)) return `Enter/Space to change${reset}${search}${advanced} · ${escape}`;
+  if (row) return `Enter to open · ←/→ to switch${search}${advanced} · ${escape}`;
+  return `←/→ to switch${search}${advanced} · ${escape}`;
 }
 
 function toneColor(tone: StatusItem['tone']): string {
@@ -358,7 +386,8 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   const rows = visibleSettingsRows(state);
   const selectedIndex = Math.min(state.contentIndex ?? 0, Math.max(0, rows.length - 1));
   const selectedRow = tabsFocused ? undefined : rows[selectedIndex];
-  const footer = ['', `${MARGIN}${SUBTLE}${footerText(state, selectedRow)}${RESET}`];
+  const changedDefault = view === 'config' && selectedRow && settingsRowChanged(selectedRow, config) ? settingsRowDefaultLabel(selectedRow) : undefined;
+  const footer = ['', `${MARGIN}${SUBTLE}${footerText(state, selectedRow, changedDefault)}${RESET}`];
   // Separator + header + footer; short terminals drop the footer first.
   const chrome = 1 + header.length + footer.length;
   const tight = maxRows - chrome < 3;
@@ -381,7 +410,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
     const listBudget = Math.max(1, available - 3);
     if (rows.length) {
       body.push(...renderRows(rows, tabsFocused ? undefined : selectedIndex, columns, query,
-        row => settingsRowValue(row, config) ?? '', listBudget));
+        row => `${settingsRowValue(row, config) ?? ''}${settingsRowChanged(row, config) ? ` ${CHANGED_MARK()}` : ''}`, listBudget));
       if (selectedRow && listBudget - rows.length >= 2) {
         body.push('', `${MARGIN}  ${highlightMatches(selectedRow.description, query, SUBTLE, SEARCH_MATCH)}${RESET}`);
       }

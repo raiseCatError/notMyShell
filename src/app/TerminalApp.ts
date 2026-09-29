@@ -2,8 +2,8 @@ import {homedir} from 'node:os';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
-  adjustSettingsRow, isInlineEditable, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
-  settingsView, statusLineCount, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
+  adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
+  settingsView, statusLineCount, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
   type SettingsView, type StatusSections,
   SETTINGS_ENTRIES,
   SETTINGS_ROWS,
@@ -477,7 +477,11 @@ export class TerminalApp {
       return;
     }
     if (this.settingsPanelState) {
-      this.handleSettingsKey(key, this.settingsPanelState);
+      const settingsState = this.settingsPanelState;
+      this.handleSettingsKey(key, settingsState);
+      if (settingsState.section === 'root' && settingsView(settingsState) === 'config') {
+        this.settingsMemory = {contentIndex: settingsState.contentIndex ?? 0, searchQuery: settingsState.searchQuery ?? '', showAdvanced: Boolean(settingsState.showAdvanced)};
+      }
       this.render();
       return;
     }
@@ -1002,8 +1006,7 @@ export class TerminalApp {
         break;
       }
       case 'config':
-        this.openSettingsPanel('config');
-        this.settingsPanelState!.contentIndex = Math.max(0, SETTINGS_ROWS.findIndex(row => row.id === action.rowId));
+        this.focusConfigRow(action.rowId);
         break;
       case 'toggleComposerPosition':
         config.composerPosition = ({bottom: 'top', top: 'flow', flow: 'bottom'} as const)[config.composerPosition];
@@ -1959,9 +1962,23 @@ export class TerminalApp {
     }
   }
 
+  /** Config position, search and advanced toggle survive closing and reopening within one run (never persisted). */
+  private settingsMemory?: {contentIndex: number; searchQuery: string; showAdvanced: boolean};
+
   private openSettingsPanel(view: SettingsView): void {
-    this.settingsPanelState = {section: 'root', view, selectedIndex: 0, contentIndex: 0,
+    const memory = view === 'config' ? this.settingsMemory : undefined;
+    this.settingsPanelState = {section: 'root', view, selectedIndex: 0, contentIndex: memory?.contentIndex ?? 0,
+      searchQuery: memory?.searchQuery, showAdvanced: memory?.showAdvanced,
       glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+  }
+
+  /** Opens Config on a specific row, revealing it if it is an advanced row; clears any remembered search. */
+  private focusConfigRow(rowId: string): void {
+    this.openSettingsPanel('config');
+    const state = this.settingsPanelState!;
+    state.searchQuery = '';
+    state.showAdvanced = state.showAdvanced || SETTINGS_ROWS.find(row => row.id === rowId)?.level === 'advanced';
+    state.contentIndex = Math.max(0, visibleSettingsRows(state).findIndex(row => row.id === rowId));
   }
 
   /**
@@ -1991,6 +2008,11 @@ export class TerminalApp {
     if (editedSearch !== undefined) {
       state.searchQuery = editedSearch;
       state.contentIndex = 0;
+    } else if (key.kind === 'text' && view === 'config' && state.focus !== 'tabs' && !state.searchFocused && key.value.toLowerCase() === 'a' && !state.searchQuery?.trim()) {
+      state.showAdvanced = !state.showAdvanced;
+      state.contentIndex = 0;
+    } else if (key.kind === 'text' && view === 'config' && state.focus !== 'tabs' && !state.searchFocused && key.value.toLowerCase() === 'r' && row) {
+      if (settingsRowChanged(row, this.promptConfiguration)) this.applySettingsConfiguration(resetSettingsRow(row, this.promptConfiguration));
     } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
       state.searchFocused = true;
       state.focus = 'rows';
