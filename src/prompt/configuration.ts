@@ -30,6 +30,11 @@ export type ComposerLayout = 'oneLine' | 'twoLine';
 /** Bottom and Top dock the composer; Flow places it right after the newest output, inside the document. */
 export type ComposerPosition = 'bottom' | 'top' | 'flow';
 export type TranscriptPresentation = 'normal' | 'chat';
+/** Implemented layout choices, shared by Config rows and the /layout showcase. */
+export const COMPOSER_POSITIONS: readonly ComposerPosition[] = ['bottom', 'top', 'flow'];
+export const COMPOSER_POSITION_LABELS: Record<ComposerPosition, string> = {bottom: 'Bottom', top: 'Top', flow: 'Flow'};
+export const TRANSCRIPT_PRESENTATIONS: readonly TranscriptPresentation[] = ['normal', 'chat'];
+export const TRANSCRIPT_PRESENTATION_LABELS: Record<TranscriptPresentation, string> = {normal: 'Normal', chat: 'Chat'};
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';

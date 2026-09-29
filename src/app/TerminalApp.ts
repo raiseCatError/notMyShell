@@ -64,6 +64,7 @@ import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
+import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
 import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
@@ -149,6 +150,7 @@ export class TerminalApp {
   /** Bumped by every new or restored presentation so a late capture never lands in the wrong one. */
   private welcomeGeneration = 0;
   private syntaxPanelState?: SyntaxPanelState;
+  private layoutPanelState?: LayoutPanelState;
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string};
   private hoveredLineIndex?: number;
@@ -468,6 +470,16 @@ export class TerminalApp {
     if (this.settingsPanelState) {
       this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
+      return;
+    }
+    if (this.layoutPanelState) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.layoutPanelState = undefined;
+        this.returnFromPanel();
+        this.render();
+      } else if (key.kind === 'enter') {
+        this.saveLayoutSettings();
+      } else if (handleLayoutPanelKey(key, this.layoutPanelState)) this.render();
       return;
     }
     if (this.syntaxPanelState) {
@@ -945,6 +957,7 @@ export class TerminalApp {
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
+    else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
     else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
     else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
     else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
@@ -1827,7 +1840,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.settingsPanelState
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
@@ -1835,6 +1848,9 @@ export class TerminalApp {
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
         status: settingsView(this.settingsPanelState) === 'status' ? this.statusSections() : undefined});
+    }
+    if (this.layoutPanelState) {
+      return framePanel(renderLayoutPanel(this.layoutPanelState, columns, this.dimensions().rows - 4), columns);
     }
     if (this.syntaxPanelState) {
       return framePanel(renderSyntaxPanel(this.syntaxPanelState, columns, this.promptConfiguration.nmsh.palette, this.dimensions().rows - 4), columns);
@@ -2009,6 +2025,7 @@ export class TerminalApp {
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
+    else if (destination === 'layout') this.startLayoutSettings();
     else if (destination === 'welcome' || destination === 'suggestions') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
@@ -2276,6 +2293,29 @@ export class TerminalApp {
     } catch (error) {
       state.message = `Could not save transcript settings: ${error instanceof Error ? error.message : String(error)}`;
     }
+    this.render();
+  }
+
+  private startLayoutSettings(): void {
+    const {composerPosition, transcriptPresentation} = this.promptConfiguration;
+    this.layoutPanelState = createLayoutPanel({composerPosition, transcriptPresentation});
+  }
+
+  /** Persist the chosen layout and apply it live; the preview itself never touched the real transcript. */
+  private saveLayoutSettings(): void {
+    const state = this.layoutPanelState;
+    if (!state) return;
+    const next = {...structuredClone(this.promptConfiguration), ...state.draft};
+    this.applySettingsConfiguration(next);
+    if (this.promptConfiguration !== next) {
+      state.message = 'Could not save the layout; check that the NMSh configuration directory is writable.';
+      this.render();
+      return;
+    }
+    this.layoutPanelState = undefined;
+    this.historyViewport.latest();
+    this.returnFromPanel();
+    this.output.addHistoryLine(`${SUCCESS}Layout saved.${RESET}`);
     this.render();
   }
 

@@ -72,6 +72,15 @@ Composer position is Bottom (default), Top or Flow. Bottom and Top dock the comp
 - **Chat:** with Chat presentation, the live composer renders normally and historical commands render right-aligned.
 - **Passthrough:** fullscreen apps get the raw terminal as before. Returning repaints the document and the composer from the plan.
 
+## `/layout` showcase
+
+`/layout` (also `/settings` → Config → Layout) previews composer position (Bottom, Top, Flow) × transcript presentation (Normal, Chat) before you choose. It has two rows, Composer position and Transcript: ↑↓ move, ←→ change, Enter saves and applies live, and Esc cancels.
+
+- **Sample content:** a folded build, a multi-line command, a failure and a running command with its activity row. It lives in its own `OutputBuffer` and never runs anything or reaches the transcript, journal or `/copy`. Completion times use a fixed date, so the preview is deterministic.
+- **Real rendering:** the preview goes through the real transcript presenter and `planScreen`, the same geometry the live screen uses. Only the prompt and input text are placeholders.
+- **Size:** the preview is sized to show the whole sample with spare rows, so Flow's prompt visibly follows the output. A short terminal gets a shorter preview in which, just as on a real full screen, Flow looks like Bottom. A caption describes the selected position.
+- **One configuration:** the choices come from the same value lists as the Config rows and the palette toggles, and saving writes the same `composerPosition` and `transcriptPresentation` settings.
+
 ## Rich text paste
 
 Large multiline text-only pastes appear as one editable logical atom, labeled in current editor order (for example, `[Text #1 · 7 lines]`). Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O optionally unwraps the atom beside the caret back into editable source. Enter submits the exact underlying source of every atom in place, together with typed prefix, interstitial, and suffix text; visual labels are presentation-only and never reach zsh. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.

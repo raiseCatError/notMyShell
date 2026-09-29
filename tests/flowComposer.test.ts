@@ -206,10 +206,16 @@ test('Flow end to end: fullscreen apps stay raw, and returning restores the docu
     app.pty.write(`printf '\\e[?1049hFULL-SCREEN'; read -k1 _; printf '\\e[?1049l'\r`);
     await app.waitFor(/FULL-SCREEN/, mark);
     mark = app.mark;
-    app.pty.write('q');
-    // The app leaves the alternate screen itself; then NMSh repaints its composer.
-    await until(() => app.output.indexOf('\u001b[?1049l', mark) !== -1, 15000, 'fullscreen exit');
+    // Resend until the app has taken it: a key typed before NMSh enters
+    // passthrough stays in the composer. The app then leaves the alternate
+    // screen itself, and NMSh repaints its composer.
+    await until(() => {
+      if (app.output.indexOf('\u001b[?1049l', mark) !== -1) return true;
+      app.pty.write('q');
+      return false;
+    }, 15000, 'fullscreen exit');
     await app.waitFor(/❯/, app.output.indexOf('\u001b[?1049l', mark));
+    app.pty.write('\u0015'); // Ctrl+U: drop any q that reached the composer first
     await app.run('echo FLOW-AFTER', /FLOW-AFTER/);
     assert.match(app.output.slice(mark).replace(/\u001b\[[0-9;?]*[A-Za-z]/g, ''), /FLOW-BEFORE/, 'the document was repainted');
   } finally {
