@@ -61,16 +61,40 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
   return {name: program || 'this terminal'};
 }
 
-export type Spawner = (command: string, args: string[]) => Promise<boolean>;
+export type Spawner = (command: string, args: string[], timeoutMs?: number) => Promise<boolean>;
 
-/** Run the launcher detached; resolves whether it started and exited cleanly. */
-export const spawnLauncher: Spawner = (command, args) => new Promise(resolve => {
+/** How long a window launcher may take before its window is treated as not opened. */
+export const LAUNCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Run the launcher and resolve whether it exited cleanly. The child stays
+ * referenced while it is awaited: an unref'd child does not keep the event
+ * loop alive, so startup, which is waiting on it with stdin paused, would end
+ * the process with its top-level await unsettled. A launcher that hangs (for
+ * example on a macOS Automation prompt) counts as failed after the timeout,
+ * so startup continues and names the session's attach command instead.
+ */
+export const spawnLauncher: Spawner = (command, args, timeoutMs = LAUNCH_TIMEOUT_MS) => new Promise(resolve => {
+  let settled = false;
+  const finish = (ok: boolean) => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    resolve(ok);
+  };
+  const timer = setTimeout(() => {
+    finish(false);
+    // Leave a slow launcher running on its own; it no longer holds up NMSh.
+    child?.unref();
+  }, timeoutMs);
+  let child: ReturnType<typeof spawn> | undefined;
   try {
-    const child = spawn(command, args, {stdio: 'ignore', detached: true});
-    child.once('error', () => resolve(false));
-    child.once('exit', code => resolve(code === 0));
-    child.unref();
-  } catch { resolve(false); }
+    child = spawn(command, args, {stdio: 'ignore', detached: true});
+    child.once('error', () => finish(false));
+    child.once('exit', code => finish(code === 0));
+  } catch {
+    finish(false);
+  }
 });
 
 /**

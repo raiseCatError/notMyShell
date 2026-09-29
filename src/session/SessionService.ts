@@ -38,76 +38,8 @@ interface ManagedSession {
   evidence: SessionEvidence;
 }
 
-// DECSET/DECRST 1049, 1047 and 47: the alternate-screen switches.
-const ALT_SCREEN = /\u001b\[\?(?:1049|1047|47)([hl])/g;
-
-/** Follows whether the PTY's foreground app is on the alternate screen. */
-export class AlternateScreenTracker {
-  active = false;
-  private carry = '';
-
-  /**
-   * Observe a chunk and return the part of it that belongs to the ordinary
-   * transcript: what a fullscreen app draws on the alternate screen is
-   * repainted on reattach, never replayed as transcript text.
-   */
-  push(data: string): string {
-    const text = this.carry + data;
-    let kept = '';
-    let from = this.carry.length;
-    for (const match of text.matchAll(ALT_SCREEN)) {
-      const index = match.index;
-      if (!this.active && index >= from) kept += text.slice(from, index);
-      from = Math.max(from, index + match[0].length);
-      this.active = match[1] === 'h';
-    }
-    if (!this.active) kept += text.slice(from);
-    // Keep a tail so a sequence split across reads is still seen.
-    const escape = text.lastIndexOf('\u001b');
-    this.carry = escape !== -1 && text.length - escape < 8 ? text.slice(escape) : '';
-    return kept;
-  }
-
-  reset(): void { this.active = false; this.carry = ''; this.modes.clear(); this.keypad = false; }
-
-  private readonly modes = new Map<number, boolean>();
-  private keypad = false;
-
-  /**
-   * Track the input-affecting terminal modes the foreground app set (mouse
-   * reporting, bracketed paste, application cursor keys and keypad, focus
-   * events, cursor visibility). They were sent to whichever terminal was
-   * attached then; a reattaching frontend replays them from here.
-   */
-  observeModes(data: string): void {
-    const text = this.modeCarry + data;
-    for (const match of text.matchAll(DEC_MODE)) {
-      for (const param of match[1]!.split(';')) {
-        const mode = Number(param);
-        if (TRACKED_MODES.has(mode)) this.modes.set(mode, match[2] === 'h');
-      }
-    }
-    for (const match of text.matchAll(KEYPAD)) this.keypad = match[1] === '=';
-    const escape = text.lastIndexOf('\u001b');
-    this.modeCarry = escape !== -1 && text.length - escape < 16 ? text.slice(escape) : '';
-  }
-
-  private modeCarry = '';
-
-  /** Sequences that put a fresh terminal into the app's current input modes. */
-  restoreSequence(): string {
-    let sequence = '';
-    for (const [mode, on] of this.modes) {
-      if (mode === 25) { if (!on) sequence += '\u001b[?25l'; } else if (on) sequence += `\u001b[?${mode}h`;
-    }
-    return this.keypad ? `${sequence}\u001b=` : sequence;
-  }
-}
-
-const DEC_MODE = /\u001b\[\?([\d;]+)([hl])/g;
-const KEYPAD = /\u001b([=>])/g;
-/** DECCKM, cursor visibility, mouse protocols, focus events, bracketed paste. */
-const TRACKED_MODES = new Set([1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004]);
+export {AlternateScreenTracker} from './TerminalModes.js';
+import {AlternateScreenTracker} from './TerminalModes.js';
 
 /** Delay between the two resizes that force a fullscreen app to repaint on attach. */
 const REDRAW_NUDGE_MS = 40;
@@ -258,8 +190,8 @@ export class SessionService {
             this.bind(session, send);
             const info = this.info(session);
             const {backlog} = session;
-            send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.active ? 1 : 0,
-              ...(session.screen.active && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
+            send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
+              ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
               ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
             // Everything the journal does not have yet, then the live stream continues.

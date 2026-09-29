@@ -53,7 +53,7 @@ export interface AttachedSession {
   sessionId: string;
   pid: number;
   cwd: string;
-  /** Nonzero while the foreground app holds the alternate screen. */
+  /** Nonzero while the foreground app owns the terminal: the alternate screen, or an interactive UI (input modes on). */
   fullscreen: number;
   /** Terminal input modes the fullscreen app set (mouse, bracketed paste, ...), to restore on reattach. */
   modes?: string;
