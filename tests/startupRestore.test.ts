@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {planLaunch} from '../src/session/liveSessions.js';
 import {createMultiPicker, multiPickerKey, renderMultiPicker, renderSinglePrompt, singlePromptKey} from '../src/session/StartupPicker.js';
 import {restoreAtStartup, type StartupRestoreDeps} from '../src/session/startupRestore.js';
-import {detectTerminalHost, openWindows, shellQuote, type TerminalHost} from '../src/host/terminalHost.js';
+import {GHOSTTY_NEW_WINDOW_SCRIPT, detectTerminalHost, openWindows, shellQuote, type TerminalHost} from '../src/host/terminalHost.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import type {SessionInfo} from '../src/session/SessionProtocol.js';
 import type {Key} from '../src/terminal/keys.js';
@@ -85,7 +85,7 @@ test('multi picker: move, Space toggles, A selects all then clears, Enter resume
 test('host detection only offers new windows where the host supports it', () => {
   const ghosttyMac = detectTerminalHost({TERM_PROGRAM: 'ghostty'}, 'darwin');
   assert.deepEqual(ghosttyMac.newWindow?.(['/n/node', '/n/i.js', '--attach', 'x']),
-    {command: 'open', args: ['-na', 'Ghostty.app', '--args', '-e', '/n/node', '/n/i.js', '--attach', 'x']});
+    {command: 'osascript', args: [...GHOSTTY_NEW_WINDOW_SCRIPT.flatMap(line => ['-e', line]), '/n/node', '/n/i.js', '--attach', 'x']});
   assert.deepEqual(detectTerminalHost({TERM_PROGRAM: 'ghostty'}, 'linux').newWindow?.(['nmsh']), {command: 'ghostty', args: ['-e', 'nmsh']});
   const terminal = detectTerminalHost({TERM_PROGRAM: 'Apple_Terminal'}, 'darwin').newWindow?.(['/a b/node', "it's"]);
   assert.equal(terminal?.command, 'osascript');
@@ -96,6 +96,39 @@ test('host detection only offers new windows where the host supports it', () => 
   assert.equal(detectTerminalHost({}, 'darwin').newWindow, undefined);
   assert.equal(shellQuote('/plain/path'), '/plain/path');
   assert.equal(shellQuote('a b'), "'a b'");
+});
+
+test('Ghostty on macOS opens windows in the running app through its AppleScript API, with data only in argv', async () => {
+  const script = GHOSTTY_NEW_WINDOW_SCRIPT.join('\n');
+  assert.match(script, /^on run argv$/m);
+  assert.match(script, /quoted form of \(word_ as text\)/, 'each word is shell-quoted by AppleScript');
+  assert.match(script, /tell application "Ghostty"\nset cfg to new surface configuration\nset command of cfg to commandLine\nnew window with configuration cfg/);
+  assert.doesNotMatch(script, /open -na|Ghostty\.app/, 'never a separate app instance');
+
+  const host = detectTerminalHost({TERM_PROGRAM: 'ghostty'}, 'darwin');
+  const hostile = ['/Apps/My "NMSh"/node', "it's; rm -rf ~", '--attach', 'id"\ntell application "Finder" to quit'];
+  const launch = host.newWindow!(hostile);
+  const scriptArgs = launch.args.slice(0, GHOSTTY_NEW_WINDOW_SCRIPT.length * 2);
+  assert.deepEqual(launch.args.slice(scriptArgs.length), hostile, 'values are passed through untouched as argv');
+  for (const value of hostile) assert.ok(!scriptArgs.some(arg => arg.includes(value)), 'no value is interpolated into the script');
+
+  const calls: string[][] = [];
+  const ok = await openWindows(host, [['node', 'nmsh', '--attach', 's2']], async (command, args) => { calls.push([command, ...args]); return true; });
+  assert.deepEqual(ok, []);
+  assert.equal(calls[0]![0], 'osascript');
+  assert.deepEqual(calls[0]!.slice(-4), ['node', 'nmsh', '--attach', 's2']);
+
+  // AppleScript disabled, Automation denied, or Ghostty refusing: osascript exits non-zero.
+  const denied = await openWindows(host, [['node', 'nmsh', '--attach', 's2']], async () => false);
+  assert.deepEqual(denied, [['node', 'nmsh', '--attach', 's2']], 'the session is reported back, not lost');
+});
+
+test('a denied Ghostty launch leaves the session detached and names its attach command', async () => {
+  const live = [info('s1', 'detached', {createdAt: 2}), info('s2', 'detached', {createdAt: 1})];
+  const result = await restoreAtStartup(live, deps({policy: {startup: 'ask', multiple: 'open-all'},
+    host: detectTerminalHost({TERM_PROGRAM: 'ghostty'}, 'darwin'), spawner: async command => command !== 'osascript'}));
+  assert.equal(result.target, 's1');
+  assert.match(result.notice ?? '', /could not be opened in new Ghostty windows; they keep running[\s\S]*nmsh --attach s2/);
 });
 
 test('openWindows reports every command it could not open, without real GUI windows', async () => {

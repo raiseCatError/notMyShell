@@ -19,12 +19,33 @@ export function shellQuote(value: string): string {
 
 const appleScriptString = (value: string) => `"${value.replace(/\\/gu, '\\\\').replace(/"/gu, '\\"')}"`;
 
+/**
+ * Fixed script for Ghostty on macOS: builds a shell command from its argv with
+ * `quoted form of` (POSIX quoting) and opens a window running it in the
+ * running Ghostty instance. Fails (non-zero exit) if AppleScript is disabled,
+ * Automation permission is denied, or Ghostty rejects the request.
+ */
+export const GHOSTTY_NEW_WINDOW_SCRIPT = [
+  'on run argv',
+  'set commandLine to ""',
+  'repeat with word_ in argv',
+  'set commandLine to commandLine & quoted form of (word_ as text) & " "',
+  'end repeat',
+  'tell application "Ghostty"',
+  'set cfg to new surface configuration',
+  'set command of cfg to commandLine',
+  'new window with configuration cfg',
+  'end tell',
+  'end run',
+] as const;
+
 export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): TerminalHost {
   const program = env.TERM_PROGRAM ?? '';
   if (program === 'ghostty' || env.GHOSTTY_RESOURCES_DIR) {
     return {name: 'Ghostty', newWindow: argv => platform === 'darwin'
-      // No scripting API opens a window in the running instance; this starts a new Ghostty instance.
-      ? {command: 'open', args: ['-na', 'Ghostty.app', '--args', '-e', ...argv]}
+      // Ghostty's AppleScript API opens a normal window in the running app. The
+      // command words arrive as osascript argv, never inside the script text.
+      ? {command: 'osascript', args: [...GHOSTTY_NEW_WINDOW_SCRIPT.flatMap(line => ['-e', line]), ...argv]}
       : {command: 'ghostty', args: ['-e', ...argv]}};
   }
   if (program === 'Apple_Terminal' && platform === 'darwin') {
