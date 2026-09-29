@@ -13,6 +13,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
   {name: '/syntax', insertion: '/syntax', description: 'Configure syntax highlighting'},
+  {name: '/layout', insertion: '/layout', description: 'Preview and choose composer position and transcript presentation'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
@@ -33,6 +34,7 @@ export type ParsedSlashCommand =
   | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
+  | {kind: 'layout'}
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
   | {kind: 'version'}
@@ -54,6 +56,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
   if (/^\/syntax\s*$/u.test(input)) return {kind: 'syntax'};
+  if (/^\/layout\s*$/u.test(input)) return {kind: 'layout'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
