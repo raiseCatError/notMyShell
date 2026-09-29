@@ -93,10 +93,11 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 - Command lifecycle rows with activity animation and nested Node TAP activity
 - Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
 - Output folding (Config → Output folding: Off / Smart / Always): long output collapses to its first and last lines around `› N lines hidden · Ctrl+O`; Smart keeps failures and useful output expanded; `/copy` and `/resume` always keep the full output
-- Dock Top or Bottom composer (Config → Composer position) and Normal or Chat transcript presentation (Config → Transcript presentation), in any combination
+- Composer position Bottom, Top, or Flow (Config → Composer position). Flow places the prompt and input right after the newest output, like a conventional terminal, and they scroll with it. Combine any position with Normal or Chat transcript presentation (Config → Transcript presentation). `/layout` (also Config → Layout) previews every combination with sample content before you choose.
 - Welcome providers: Vespyr (default), Fastfetch, Neofetch (legacy, if installed), or None (`/settings` → Welcome)
 - Command palette: `/palette`, F1, or Ctrl+Shift+P (Cmd+Shift+P where the terminal reports it) to search NMSh commands, settings, and actions
 - Sticky command headers keep the current command visible while scrolling
+- **Live sessions:** closing a window detaches its shell instead of ending it, and running commands keep going. Come back through the startup prompt (Config → Sessions: Ask, Always or Never), `/resume` (LIVE sessions with their status, above archived transcripts), or `nmsh --attach <id>` (`nmsh --sessions` lists them). `exit`, Ctrl+D and `/zsh` end a session.
 - NMSh checkpoints the local presentation session during use; `/clear` starts a fresh view and `/resume` browses retained sessions without rewinding live zsh state
 - `/zsh` hands off to an ordinary interactive zsh
 - Rich paste atoms for large multiline pastes

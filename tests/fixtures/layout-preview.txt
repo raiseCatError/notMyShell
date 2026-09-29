@@ -1,0 +1,216 @@
+=== bottom / normal
+|❯ npm run build
+|compiled module 1/40
+|compiled module 2/40
+|compiled module 3/40
+|32 lines hidden · Ctrl+O  ›
+|compiled module 36/40
+|compiled module 37/40
+|compiled module 38/40
+|compiled module 39/40
+|compiled module 40/40
+|
+|✔ Completed · 2.4s · 09:41
+|
+|❯ for f in *.log
+|  do gzip "$f"
+|  done
+|
+|✔ Completed · 310 ms · 09:41
+|
+|❯ cat missing.txt
+|cat: missing.txt: No such file or directory
+|
+|✘ Command failed · exit 1 · 8 ms · 09:41
+|
+|❯ npm test
+|▶ suite
+|  ✔ renders the layout (3ms)
+|
+|
+|
+|✳ Running npm test · 12.0s
+|
+| ~/Projects/demo  main
+|❯ git push
+|────────────────────────────────────────────────────────────
+=== bottom / chat
+|                                             ❯ npm run build
+|compiled module 1/40
+|compiled module 2/40
+|compiled module 3/40
+|32 lines hidden · Ctrl+O  ›
+|compiled module 36/40
+|compiled module 37/40
+|compiled module 38/40
+|compiled module 39/40
+|compiled module 40/40
+|
+|✔ Completed · 2.4s · 09:41
+|
+|                                            ❯ for f in *.log
+|                                              do gzip "$f"
+|                                              done
+|
+|✔ Completed · 310 ms · 09:41
+|
+|                                           ❯ cat missing.txt
+|cat: missing.txt: No such file or directory
+|
+|✘ Command failed · exit 1 · 8 ms · 09:41
+|
+|                                                  ❯ npm test
+|▶ suite
+|  ✔ renders the layout (3ms)
+|
+|
+|
+|✳ Running npm test · 12.0s
+|
+| ~/Projects/demo  main
+|❯ git push
+|────────────────────────────────────────────────────────────
+=== top / normal
+| ~/Projects/demo  main
+|❯ git push
+|────────────────────────────────────────────────────────────
+|❯ npm run build
+|compiled module 1/40
+|compiled module 2/40
+|compiled module 3/40
+|32 lines hidden · Ctrl+O  ›
+|compiled module 36/40
+|compiled module 37/40
+|compiled module 38/40
+|compiled module 39/40
+|compiled module 40/40
+|
+|✔ Completed · 2.4s · 09:41
+|
+|❯ for f in *.log
+|  do gzip "$f"
+|  done
+|
+|✔ Completed · 310 ms · 09:41
+|
+|❯ cat missing.txt
+|cat: missing.txt: No such file or directory
+|
+|✘ Command failed · exit 1 · 8 ms · 09:41
+|
+|❯ npm test
+|▶ suite
+|  ✔ renders the layout (3ms)
+|
+|✳ Running npm test · 12.0s
+|
+|
+|
+=== top / chat
+| ~/Projects/demo  main
+|❯ git push
+|────────────────────────────────────────────────────────────
+|                                             ❯ npm run build
+|compiled module 1/40
+|compiled module 2/40
+|compiled module 3/40
+|32 lines hidden · Ctrl+O  ›
+|compiled module 36/40
+|compiled module 37/40
+|compiled module 38/40
+|compiled module 39/40
+|compiled module 40/40
+|
+|✔ Completed · 2.4s · 09:41
+|
+|                                            ❯ for f in *.log
+|                                              do gzip "$f"
+|                                              done
+|
+|✔ Completed · 310 ms · 09:41
+|
+|                                           ❯ cat missing.txt
+|cat: missing.txt: No such file or directory
+|
+|✘ Command failed · exit 1 · 8 ms · 09:41
+|
+|                                                  ❯ npm test
+|▶ suite
+|  ✔ renders the layout (3ms)
+|
+|✳ Running npm test · 12.0s
+|
+|
+|
+=== flow / normal
+|❯ npm run build
+|compiled module 1/40
+|compiled module 2/40
+|compiled module 3/40
+|32 lines hidden · Ctrl+O  ›
+|compiled module 36/40
+|compiled module 37/40
+|compiled module 38/40
+|compiled module 39/40
+|compiled module 40/40
+|
+|✔ Completed · 2.4s · 09:41
+|
+|❯ for f in *.log
+|  do gzip "$f"
+|  done
+|
+|✔ Completed · 310 ms · 09:41
+|
+|❯ cat missing.txt
+|cat: missing.txt: No such file or directory
+|
+|✘ Command failed · exit 1 · 8 ms · 09:41
+|
+|❯ npm test
+|▶ suite
+|  ✔ renders the layout (3ms)
+|✳ Running npm test · 12.0s
+|
+| ~/Projects/demo  main
+|❯ git push
+|────────────────────────────────────────────────────────────
+|
+|
+|
+=== flow / chat
+|                                             ❯ npm run build
+|compiled module 1/40
+|compiled module 2/40
+|compiled module 3/40
+|32 lines hidden · Ctrl+O  ›
+|compiled module 36/40
+|compiled module 37/40
+|compiled module 38/40
+|compiled module 39/40
+|compiled module 40/40
+|
+|✔ Completed · 2.4s · 09:41
+|
+|                                            ❯ for f in *.log
+|                                              do gzip "$f"
+|                                              done
+|
+|✔ Completed · 310 ms · 09:41
+|
+|                                           ❯ cat missing.txt
+|cat: missing.txt: No such file or directory
+|
+|✘ Command failed · exit 1 · 8 ms · 09:41
+|
+|                                                  ❯ npm test
+|▶ suite
+|  ✔ renders the layout (3ms)
+|✳ Running npm test · 12.0s
+|
+| ~/Projects/demo  main
+|❯ git push
+|────────────────────────────────────────────────────────────
+|
+|
+|

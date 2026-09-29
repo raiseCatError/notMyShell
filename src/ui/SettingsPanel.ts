@@ -1,5 +1,7 @@
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
+import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
+  TRANSCRIPT_PRESENTATION_LABELS} from '../prompt/configuration.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
   type DividerDensity,
@@ -53,7 +55,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'keyboard' | 'welcome' | 'suggestions';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions';
 
 interface SettingsRowBase {
   id: string;
@@ -118,11 +120,11 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look: Powerline, Soft, Minimal, or Outline', category: 'Prompt',
     values: PROMPT_STYLES, labels: PROMPT_STYLES.map(style => PROMPT_STYLE_LABELS[style]),
     get: config => config.nmsh.style, set: (config, style) => ({...config, nmsh: {...config.nmsh, style}})}),
-  enumRow({id: 'composerPosition', label: 'Composer position', description: 'Dock the composer at the bottom or the top', category: 'Layout',
-    values: ['bottom', 'top'] as const, labels: ['Bottom', 'Top'],
+  enumRow({id: 'composerPosition', label: 'Composer position', description: 'Dock the composer at the bottom or top, or Flow it after the newest output', category: 'Layout',
+    values: COMPOSER_POSITIONS, labels: COMPOSER_POSITIONS.map(position => COMPOSER_POSITION_LABELS[position]),
     get: config => config.composerPosition, set: (config, composerPosition) => ({...config, composerPosition})}),
   enumRow({id: 'transcriptPresentation', label: 'Transcript presentation', description: 'Normal rows, or Chat with commands on the right', category: 'Layout',
-    values: ['normal', 'chat'] as const, labels: ['Normal', 'Chat'],
+    values: TRANSCRIPT_PRESENTATIONS, labels: TRANSCRIPT_PRESENTATIONS.map(presentation => TRANSCRIPT_PRESENTATION_LABELS[presentation]),
     get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
   enumRow({id: 'outputFolding', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
@@ -130,6 +132,12 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
     get: config => config.updateChecks, set: (config, updateChecks) => ({...config, updateChecks})}),
+  enumRow({id: 'liveSessionStartup', label: 'Startup restore', description: 'Resume a detached live session at launch: Ask, Always, or Never (never ends none)', category: 'Sessions',
+    values: LIVE_SESSION_STARTUP, labels: ['Ask', 'Always', 'Never'],
+    get: config => config.liveSessionStartup, set: (config, liveSessionStartup) => ({...config, liveSessionStartup})}),
+  enumRow({id: 'liveSessionMultiple', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
+    values: LIVE_SESSION_MULTIPLE, labels: ['Ask which', 'Open all'],
+    get: config => config.liveSessionMultiple, set: (config, liveSessionMultiple) => ({...config, liveSessionMultiple})}),
   {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
     control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
@@ -149,6 +157,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
   {id: 'welcome', label: 'Welcome', description: 'Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
   {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
+  {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
 ];
 
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;

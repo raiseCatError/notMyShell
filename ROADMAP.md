@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.5.0 — Interaction & Intelligence](https://github.com/raiseCatError/notMyShell/releases/tag/v0.5.0) |
+| **Current release** | [v0.6.0 — Sessions & Continuity](https://github.com/raiseCatError/notMyShell/releases/tag/v0.6.0) |
 | **Development branch** | `dev` |
-| **Next direction** | [#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132) and [#125](https://github.com/raiseCatError/notMyShell/issues/125) persistent live sessions (planned) |
+| **Next direction** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/milestone/6) (planned) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -78,9 +78,20 @@ The final release candidate also included the passive-hover selection fix.
 | [#146](https://github.com/raiseCatError/notMyShell/issues/146) | Command palette |
 | [#149](https://github.com/raiseCatError/notMyShell/issues/149) | Native prompt styles: Powerline, Soft, Minimal, Outline |
 
-## Next — Flow / Classic and Persistent Sessions
+## Released — v0.6.0 Sessions & Continuity
 
-[#79](https://github.com/raiseCatError/notMyShell/issues/79) layout work continues with Flow / Classic composer mode ([#132](https://github.com/raiseCatError/notMyShell/issues/132)) and a `/layout` gallery ([#133](https://github.com/raiseCatError/notMyShell/issues/133)). Persistent live sessions are planned in [#125](https://github.com/raiseCatError/notMyShell/issues/125)–[#131](https://github.com/raiseCatError/notMyShell/issues/131). None of these are implemented yet.
+[Milestone #5](https://github.com/raiseCatError/notMyShell/milestone/5) shipped after physical QA of Flow, `/resume`, multi-session restore, Terminal.app startup, inline interactive UIs and Claude detach/reattach. Release notes are in [CHANGELOG.md](CHANGELOG.md). tmux, Zellij and VS Code were not physically re-verified for this release; see [multiplexer interoperability notes](docs/architecture/multiplexer-interop.md).
+
+### Shipped scope
+
+| Issue | Implemented scope |
+|---|---|
+| [#125](https://github.com/raiseCatError/notMyShell/issues/125)–[#131](https://github.com/raiseCatError/notMyShell/issues/131) | Persistent live sessions: protocol, session service, detach/reattach, detached output capture, `/resume` Live + Archived, hardening |
+| [#197](https://github.com/raiseCatError/notMyShell/issues/197) | User-controlled startup restore and multi-session picker |
+| [#174](https://github.com/raiseCatError/notMyShell/issues/174) | Agent-aware live session status |
+| [#175](https://github.com/raiseCatError/notMyShell/issues/175) | Multiplexer interoperability research notes |
+| [#132](https://github.com/raiseCatError/notMyShell/issues/132), [#133](https://github.com/raiseCatError/notMyShell/issues/133) | Flow composer position; `/layout` showcase |
+| [#199](https://github.com/raiseCatError/notMyShell/issues/199), [#206](https://github.com/raiseCatError/notMyShell/issues/206), [#211](https://github.com/raiseCatError/notMyShell/issues/211), [#212](https://github.com/raiseCatError/notMyShell/issues/212) | Physical-QA fixes: resize on closed PTY, stray suspended job, inline interactive UIs, multi-session restore |
 
 ## Backlog — Research and Future Features
 

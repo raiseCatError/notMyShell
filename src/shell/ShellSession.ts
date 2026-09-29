@@ -9,7 +9,13 @@ import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
 interface SessionEvents {
   data: [string];
   prompt: [ShellMarker];
+  exec: [string];
   exit: [{ exitCode: number; signal?: number }];
+}
+
+/** node-pty's error for an ioctl on a PTY whose descriptor is already closed. */
+export function isClosedPtyError(error: unknown): boolean {
+  return error instanceof Error && /\bEBADF\b/u.test(error.message);
 }
 
 export class ShellSession extends EventEmitter<SessionEvents> {
@@ -17,8 +23,10 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly protocol: ShellProtocolDecoder;
   private zdotdir: string;
   private ready = false;
+  /** Set once the shell has exited or its PTY is closed; resizes after that are no-ops. */
+  private exited = false;
 
-  constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '') {
+  constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env) {
     super();
     const token = randomBytes(12).toString('hex');
     this.protocol = new ShellProtocolDecoder(token);
@@ -63,6 +71,16 @@ export TERM=\$nmsh_orig_term
 export NMSH_ACTIVE=1
 unsetopt zle prompt_cr prompt_sp
 
+# Hooks run right after a job stops or ends, sometimes before zsh has taken the
+# terminal back. As an ordinary job, stty could then be stopped by SIGTTOU and
+# left in the user's job table ("suspended (tty output) stty -echo"). Run it
+# outside job control and immune to SIGTTOU so the mode change is simply applied.
+function nmsh_tty_echo {
+  setopt localoptions localtraps nomonitor
+  trap '' TTOU
+  stty \$1 2>/dev/null
+}
+
 function nmsh_precmd {
   local nmsh_status=$?
   # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
@@ -76,12 +94,13 @@ function nmsh_precmd {
   # still blanks last. Their prompt-spacing options must not return either.
   precmd_functions=(\${precmd_functions:#nmsh_precmd} nmsh_precmd)
   unsetopt prompt_cr prompt_sp
-  stty -echo 2>/dev/null
+  nmsh_tty_echo -echo
   printf '\\e]777;nmsh;${token};%d;%s\\a' "\$nmsh_status" "\$PWD"
 }
 
 function nmsh_preexec {
-  stty echo 2>/dev/null
+  nmsh_tty_echo echo
+  printf '\\e]777;nmsh;${token};exec;%s\\a' "\${1//[[:cntrl:]]/ }"
 }
 
 # Compose with whatever the user's config/plugins already installed instead
@@ -98,14 +117,14 @@ add-zsh-hook preexec nmsh_preexec
     this.zdotdir = zdotdir;
 
     this.pty = spawn('/bin/zsh', ['-i'], {
-      name: process.env.TERM || 'xterm-256color',
+      name: env.TERM || 'xterm-256color',
       cols: Math.max(2, columns),
       rows: Math.max(2, rows),
       cwd,
       env: {
-        ...process.env,
+        ...env,
         ZDOTDIR: zdotdir,
-        TERM: process.env.TERM || 'xterm-256color',
+        TERM: env.TERM || 'xterm-256color',
         PAGER: 'cat',
         GIT_PAGER: 'cat',
       } as Record<string, string>,
@@ -113,6 +132,7 @@ add-zsh-hook preexec nmsh_preexec
 
     this.pty.onData(data => this.receive(data));
     this.pty.onExit(event => {
+      this.exited = true;
       this.cleanup();
       this.emit('exit', event);
     });
@@ -127,6 +147,15 @@ add-zsh-hook preexec nmsh_preexec
       }
       this.zdotdir = '';
     }
+  }
+
+  get pid(): number {
+    return this.pty.pid;
+  }
+
+  /** Name of the terminal's foreground process, read on demand; undefined if the platform cannot tell. */
+  get foregroundProcess(): string | undefined {
+    try { return this.pty.process || undefined; } catch { return undefined; }
   }
 
   submit(command: string): void {
@@ -145,8 +174,21 @@ add-zsh-hook preexec nmsh_preexec
     this.pty.write('\u0004');
   }
 
+  /**
+   * Resize the PTY. A resize can legitimately race the shell's teardown: a
+   * frontend may send one just before it hears of the exit, and node-pty closes
+   * the PTY's descriptor before it reports the exit. Once the shell is gone
+   * there is nothing to resize, so that case is ignored; any other failure
+   * still throws.
+   */
   resize(columns: number, rows: number): void {
-    this.pty.resize(Math.max(2, columns), Math.max(2, rows));
+    if (this.exited) return;
+    try {
+      this.pty.resize(Math.max(2, columns), Math.max(2, rows));
+    } catch (error) {
+      if (!isClosedPtyError(error)) throw error;
+      this.exited = true;
+    }
   }
 
   kill(): void {
@@ -158,6 +200,8 @@ add-zsh-hook preexec nmsh_preexec
     for (const event of this.protocol.push(data)) {
       if (event.kind === 'data') {
         if (this.ready) this.emit('data', event.data);
+      } else if (event.kind === 'exec') {
+        if (this.ready) this.emit('exec', event.command);
       } else if (!this.ready) {
         this.ready = true;
         this.emit('prompt', event.marker);

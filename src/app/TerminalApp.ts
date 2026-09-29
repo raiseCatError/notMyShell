@@ -42,7 +42,8 @@ import {CommandContextCache, commandWords, type CommandContextId} from '../promp
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
-import {ShellSession} from '../shell/ShellSession.js';
+import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
+import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
@@ -63,12 +64,22 @@ import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
 import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
+import {AlternateScreenTracker} from '../session/TerminalModes.js';
+import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
 import {chooseShellHandoff, type ShellHandoffDecision} from '../shell/ShellHandoff.js';
-import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
+import {TranscriptStore, type LiveLink, type TranscriptSession} from '../sessions/TranscriptStore.js';
+import {formatBytes} from '../session/sessionList.js';
+import type {PresentationMode} from '../output/PresentationMode.js';
+import type {SessionInfo} from '../session/SessionProtocol.js';
 import {SessionJournal} from '../sessions/SessionJournal.js';
-import {createResumeBrowser, navigateResume, resumeDayLabel, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
+import {createResumeBrowser, describeLiveSession, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
+  visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
+import {listLiveSessions} from '../session/connectSession.js';
+import {killAndArchive} from '../session/liveSessions.js';
+import {recoverEndedSessions} from '../session/recovery.js';
+import {defaultRuntimeDir} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -79,6 +90,9 @@ const SEPARATOR = foreground(UI_COLORS.separator);
 const ACCENT = foreground(UI_COLORS.accent);
 const SUCCESS = foreground(UI_COLORS.success);
 const ERROR = foreground(UI_COLORS.failure);
+/** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
+const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
+  'deleteLineBefore', 'deleteLineAfter', 'enter', 'newline', 'complete', 'historySearch']);
 const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
@@ -103,7 +117,7 @@ export class TerminalApp {
   });
   private readonly tapActivityObserver = new TapActivityObserver();
   private readonly historyViewport = new HistoryViewport();
-  private readonly session: ShellSession;
+  private readonly session: SessionClient;
   private readonly historyService = new HistoryService();
   private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
@@ -137,6 +151,9 @@ export class TerminalApp {
   /** Bumped by every new or restored presentation so a late capture never lands in the wrong one. */
   private welcomeGeneration = 0;
   private syntaxPanelState?: SyntaxPanelState;
+  private layoutPanelState?: LayoutPanelState;
+  /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
+  private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string};
   private hoveredLineIndex?: number;
@@ -179,7 +196,7 @@ export class TerminalApp {
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
 
-  constructor() {
+  constructor(connection?: SessionConnection) {
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
@@ -187,21 +204,173 @@ export class TerminalApp {
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     const dimensions = this.dimensions();
-    this.session = new ShellSession(this.initialCwd, dimensions.columns, Math.max(2, dimensions.rows - 4));
+    this.session = connection?.client
+      ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
     this.semanticService = new SemanticService(this.initialCwd);
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
-    this.session.on('data', data => this.onShellData(data));
-    this.session.on('prompt', marker => this.onShellPrompt(marker.exitCode, marker.cwd));
-    this.session.on('exit', event => this.stop(event.exitCode));
+    this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
+    this.session.on('prompt', (marker, stamp) => { if (this.inStream(stamp)) this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at); });
+    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at); });
+    this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('exit', event => {
+      this.shellEnded = true;
+      if (event.lost) {
+        // Recorded in the journal before it closes; nothing claims the shell survived.
+        this.lostServiceConnection = true;
+        this.output.addFrontendInteraction('session', 'Lost the connection to the NMSh session service; this live session has ended.', ERROR);
+      }
+      this.stop(event.exitCode);
+    });
+    this.sessionMode = connection?.mode ?? 'in-process';
+    this.sessionId = connection?.sessionId;
+    if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
+    // After any restored transcript, or reattaching would erase the launch notice.
+    if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
+    this.session.start();
+  }
+
+  /** Last shell stream event reflected in the transcript (service sessions). */
+  private streamSeq = 0;
+  /** Between reattach and the end of the backlog: rebuild the transcript quietly. */
+  private replaying = false;
+  /** The shell itself ended; the journal is no longer linked to a live session. */
+  private shellEnded = false;
+  /** Set when the service vanished under an attached session; reported after the screen is restored. */
+  lostServiceConnection = false;
+  /** Commands the replay completed, for the reattach summary. */
+  private replayedCompletions = 0;
+  private attachedSession?: AttachedSession;
+  private continuedJournal?: TranscriptSession;
+  private rendererEntered = false;
+
+  /** Drop stream events the transcript already has (exactly-once replay). */
+  private inStream(stamp: StreamStamp): boolean {
+    if (stamp.seq === undefined) return true;
+    if (stamp.seq <= this.streamSeq) return false;
+    this.streamSeq = stamp.seq;
+    return true;
+  }
+
+  private readonly sessionMode: 'service' | 'in-process';
+  private readonly sessionId?: string;
+
+  /**
+   * A reattached shell is already running: never re-run startup against it.
+   * The previous frontend's journal is the transcript; the service then
+   * replays only the stream events that journal lacks, through the same
+   * handlers live output uses, and finishReplay() settles the final state.
+   */
+  private beginReattach(attached: AttachedSession, journal: TranscriptSession | undefined): void {
+    this.attachedSession = attached;
+    this.replaying = true;
+    this.shellCwd = attached.cwd;
+    this.streamSeq = attached.ackedSeq;
+    if (!journal) return;
+    this.continuedJournal = journal;
+    this.welcomeGeneration += 1;
+    this.output.restoreTranscript(journal.transcript);
+    this.presentationStartCwd = journal.startCwd;
+    if (journal.live) {
+      this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
+      const running = journal.live.running;
+      if (running) {
+        this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
+        this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
+          startId: running.startId, cwd: running.cwd};
+      }
+    }
+  }
+
+  private finishReplay(summary: {truncatedBytes: number}): void {
+    const attached = this.attachedSession;
+    if (!this.replaying || !attached) return;
+    this.replaying = false;
+    const parts = [`Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid})`];
+    const completed = this.replayedCompletions;
+    if (completed > 0) parts.push(`${completed} command${completed === 1 ? '' : 's'} completed while detached`);
+    this.output.addFrontendInteraction('session', `${parts.join(' · ')}.`, INFO);
+    if (summary.truncatedBytes > 0) {
+      this.output.addFrontendInteraction('session',
+        `${formatBytes(summary.truncatedBytes)} of output produced while detached exceeded the retention limit and was not kept.`, ERROR);
+    }
+    // Without a journal the running command is known only from the service.
+    if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
+    if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+      this.passthrough = true;
+      this.attachedModes = attached.modes ?? '';
+      if (this.rendererEntered) this.enterAttachedPassthrough();
+    }
+    this.scheduleJournal();
+    this.render();
+  }
+
+  /** The reattached fullscreen app's own terminal modes, which this terminal never received. */
+  private attachedModes = '';
+
+  private enterAttachedPassthrough(): void {
+    // Reattached into a fullscreen app: hand it the whole terminal again,
+    // including the mouse/paste/cursor-key modes it set before the detach.
+    this.renderer.suspendForPassthrough(this.attachedModes);
+    this.attachedModes = '';
+    const dimensions = this.dimensions();
+    this.session.resize(dimensions.columns, dimensions.rows);
+  }
+
+  private onActiveModeChange(mode: PresentationMode): void {
+    if (this.replaying) return;
+    if (mode === 'PASSTHROUGH' && !this.passthrough) {
+      this.passthrough = true;
+      // Modes the program set in earlier output never reached the terminal; hand them over with it.
+      this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
+      const dimensions = this.dimensions();
+      this.session.resize(dimensions.columns, dimensions.rows);
+    }
+    this.render();
+  }
+
+  /**
+   * zsh started a command line this frontend did not submit (it began while
+   * detached, or came from type-ahead): give it its own transcript block.
+   */
+  private onShellExec(command: string, at = Date.now()): void {
+    if (this.running) return;
+    this.commandModes.reset();
+    const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
+      {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
+    this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
+    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.scheduleJournal();
+    if (!this.replaying) this.render();
+  }
+
+  private scheduleJournal(): void {
+    void this.journal?.flush().catch(() => {
+      this.output.addFrontendInteraction('/resume', 'Could not persist the current session.', ERROR);
+    });
+  }
+
+  private liveLink(): LiveLink | undefined {
+    if (!this.sessionId || this.shellEnded) return undefined;
+    const running = this.running;
+    const outputStartId = this.output.activeOutputStartId;
+    return {sessionId: this.sessionId, seq: this.streamSeq,
+      ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
+        cwd: running.cwd, startId: running.startId, outputStartId}} : {})};
   }
 
   async run(): Promise<number> {
     this.journal = new SessionJournal(this.transcriptStore, this.promptConfiguration.sessionRetention,
-      () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript()}),
-      () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR));
-    try { await this.journal.start(); this.journalActive = true; } catch {
+      () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript(), live: this.liveLink()}),
+      () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR),
+      // Durable now: the service may forget these stream events.
+      saved => { if (saved.live) this.session.ack(saved.live.seq, saved.id); });
+    try {
+      if (this.continuedJournal) await this.journal.continue(this.continuedJournal);
+      else await this.journal.start();
+      this.journalActive = true;
+    } catch {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
     }
     if (!this.promptConfiguration.glyphChoiceComplete) {
@@ -212,6 +381,8 @@ export class TerminalApp {
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
     }
     this.renderer.enter();
+    this.rendererEntered = true;
+    if (this.passthrough) this.enterAttachedPassthrough();
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -239,7 +410,7 @@ export class TerminalApp {
     this.render();
     void this.quietUpdateCheck();
     const exitCode = await this.done;
-    try { await this.journal.close(); } catch {
+    try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
     }
     return exitCode;
@@ -274,8 +445,11 @@ export class TerminalApp {
     this.render();
   };
 
+  // The frontend is going away (window closed, SIGHUP/SIGTERM); the shell was
+  // not asked to end, so a service-backed session stays alive, detached.
   private readonly onTerminate = (): void => {
-    this.session.kill();
+    this.detaching = this.sessionMode === 'service';
+    this.session.detach();
     this.stop(0);
   };
 
@@ -301,6 +475,16 @@ export class TerminalApp {
     if (this.settingsPanelState) {
       this.handleSettingsKey(key, this.settingsPanelState);
       this.render();
+      return;
+    }
+    if (this.layoutPanelState) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.layoutPanelState = undefined;
+        this.returnFromPanel();
+        this.render();
+      } else if (key.kind === 'enter') {
+        this.saveLayoutSettings();
+      } else if (handleLayoutPanelKey(key, this.layoutPanelState)) this.render();
       return;
     }
     if (this.syntaxPanelState) {
@@ -384,12 +568,21 @@ export class TerminalApp {
     }
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
+      if (browser.confirmKill) {
+        if (key.kind === 'enter') void this.killSelectedLiveSession();
+        else if (key.kind === 'escape' || key.kind === 'interrupt') browser.confirmKill = undefined;
+        this.render();
+        return;
+      }
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.resumeBrowser = undefined;
+      } else if (key.kind === 'deleteLineAfter') {
+        const selection = resumeSelection(browser);
+        if (selection?.kind === 'live' && selection.session.state === 'detached') browser.confirmKill = selection.session.id;
       } else if (key.kind === 'up') {
         browser.selectedIndex = Math.max(0, browser.selectedIndex - 1);
       } else if (key.kind === 'down') {
-        browser.selectedIndex = Math.max(0, Math.min(visibleResumeSessions(browser).length - 1, browser.selectedIndex + 1));
+        browser.selectedIndex = Math.max(0, Math.min(resumeRowCount(browser) - 1, browser.selectedIndex + 1));
       } else if (key.kind === 'left' || key.kind === 'right') {
         navigateResume(browser, 'week', key.kind === 'left' ? -1 : 1);
       } else if (key.kind === 'selectLeft' || key.kind === 'selectRight') {
@@ -401,7 +594,9 @@ export class TerminalApp {
         browser.query = browser.query.slice(0, -1);
         browser.selectedIndex = 0;
       } else if (key.kind === 'enter') {
-        void this.resumeSelectedSession();
+        const selection = resumeSelection(browser);
+        if (selection?.kind === 'live') this.switchToLiveSession(selection.session.id, selection.session.state);
+        else void this.resumeSelectedSession();
       }
       this.render();
       return;
@@ -412,7 +607,7 @@ export class TerminalApp {
       const plan = this.planFrame(columns, rows);
       const hit = key.y ? regionAt(plan, screenRowFromTerminal(key.y)) : undefined;
       if (hit?.region.kind === 'transcript') {
-        const outputHeight = plan.transcript.height;
+        const outputHeight = plan.viewportRows;
         const wrapped = this.output.wrapped(columns);
         const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
         const localVisibleIndex = hit.localRow;
@@ -514,6 +709,11 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    // Flow keeps the composer in the document: editing while scrolled back
+    // returns to it first. Scrolling and mouse navigation alone never do.
+    if (this.promptConfiguration.composerPosition === 'flow' && this.historyViewport.detached && FLOW_EDIT_KEYS.has(key.kind)) {
+      this.historyViewport.latest();
+    }
 
     if (key.kind === 'historySearch') {
       if (!this.running) {
@@ -542,6 +742,13 @@ export class TerminalApp {
         this.editor.clear();
         this.selectedSuggestion = 0;
       }
+      return;
+    }
+    if (key.kind === 'suspend') {
+      // Job control belongs to zsh: forward ^Z so it stops the foreground job.
+      // With no foreground command there is nothing to suspend, so the idle
+      // composer ignores it rather than treating it as text, undo, or exit.
+      if (this.running) this.session.write('\u001A');
       return;
     }
     if (key.kind === 'selectAll') {
@@ -627,7 +834,7 @@ export class TerminalApp {
         }
 
         const {columns, rows} = this.dimensions();
-        const outputHeight = this.planFrame(columns, rows).transcript.height;
+        const outputHeight = this.planFrame(columns, rows).viewportRows;
 
         const wrapped = this.output.wrapped(columns);
         const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
@@ -755,6 +962,7 @@ export class TerminalApp {
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
+    else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
     else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
     else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
     else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
@@ -794,7 +1002,7 @@ export class TerminalApp {
         this.settingsPanelState!.contentIndex = Math.max(0, SETTINGS_ROWS.findIndex(row => row.id === action.rowId));
         break;
       case 'toggleComposerPosition':
-        config.composerPosition = config.composerPosition === 'top' ? 'bottom' : 'top';
+        config.composerPosition = ({bottom: 'top', top: 'flow', flow: 'bottom'} as const)[config.composerPosition];
         this.applySettingsConfiguration(config);
         break;
       case 'toggleTranscriptPresentation':
@@ -831,6 +1039,7 @@ export class TerminalApp {
     }
 
     const contextAtSubmission = this.context;
+    this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
         this.passthrough = true;
@@ -1014,14 +1223,60 @@ export class TerminalApp {
     }
   }
 
+  /** Session id the launcher should attach after this frontend detaches. */
+  switchTarget?: string;
+  private detaching = false;
+
+  /**
+   * LIVE rows attach: this frontend detaches its own session (it keeps
+   * running) and the launcher reattaches the selected one.
+   */
+  private switchToLiveSession(sessionId: string, state: 'attached' | 'detached'): void {
+    if (state === 'attached') {
+      this.resumeBrowser = undefined;
+      this.output.addFrontendInteraction('/resume', 'That session is attached in another NMSh window; it was not taken over.', INFO);
+      return;
+    }
+    this.switchTarget = sessionId;
+    this.detaching = true;
+    this.session.detach();
+    this.stop(0);
+  }
+
+  private async killSelectedLiveSession(): Promise<void> {
+    const browser = this.resumeBrowser;
+    const target = browser?.live.find(session => session.id === browser.confirmKill);
+    if (!browser || !target) return;
+    browser.confirmKill = undefined;
+    try {
+      await killAndArchive(target, {store: this.transcriptStore});
+      browser.live = browser.live.filter(session => session.id !== target.id);
+      browser.selectedIndex = Math.min(browser.selectedIndex, Math.max(0, resumeRowCount(browser) - 1));
+      this.output.addFrontendInteraction('/resume', `Killed the session in ${target.cwd}; its transcript was archived.`, INFO);
+    } catch (error) {
+      this.output.addFrontendInteraction('/resume', `Could not kill that session: ${error instanceof Error ? error.message : String(error)}.`, ERROR);
+    }
+    this.render();
+  }
+
   private async openResumePicker(): Promise<void> {
     try {
+      // Anything that ended while no window watched is archived before listing.
+      if (this.sessionMode === 'service') {
+        try { await recoverEndedSessions(defaultRuntimeDir(), this.transcriptStore); } catch { /* best effort */ }
+      }
       const sessions = (await this.transcriptStore.listSummaries()).filter(session => session.id !== this.journal?.id);
-      if (sessions.length === 0) {
-        this.output.addFrontendInteraction('/resume', 'No archived NMSh transcript sessions were found.', INFO);
+      // LIVE comes from the service itself, so a dead shell is never listed as live.
+      let live: SessionInfo[] = [];
+      if (this.sessionMode === 'service') {
+        try { live = (await listLiveSessions()).filter(session => session.id !== this.sessionId); } catch { /* service unreachable: archives only */ }
+      }
+      if (sessions.length === 0 && live.length === 0) {
+        this.output.addFrontendInteraction('/resume', 'No live sessions or archived NMSh transcripts were found.', INFO);
         return;
       }
-      const browser = createResumeBrowser(sessions);
+      const liveJournals = new Set(live.flatMap(session => session.journalId ? [session.journalId] : []));
+      const browser = createResumeBrowser(sessions, live, liveJournals);
       this.resumeBrowser = browser;
       void this.indexResumeCommands(browser);
     } catch {
@@ -1032,8 +1287,9 @@ export class TerminalApp {
   private async resumeSelectedSession(): Promise<void> {
     const browser = this.resumeBrowser;
     if (!browser) return;
-    const selected = visibleResumeSessions(browser)[browser.selectedIndex];
-    if (!selected) return;
+    const selection = resumeSelection(browser);
+    if (selection?.kind !== 'archived') return;
+    const selected = selection.session;
     let restored: TranscriptSession;
     try {
       restored = await this.transcriptStore.load(selected.id);
@@ -1135,6 +1391,7 @@ export class TerminalApp {
     if (this.passthrough) {
       process.stdout.write(data);
     } else {
+      this.commandModes.observeModes(data);
       this.lastOutputTime = Date.now();
       const wasPassthrough = this.passthrough;
       this.output.write(data);
@@ -1142,13 +1399,13 @@ export class TerminalApp {
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
         process.stdout.write(data);
-      } else {
+      } else if (!this.replaying) {
         this.render();
       }
     }
   }
 
-  private onShellPrompt(exitCode: number, cwd: string): void {
+  private onShellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
     this.shellCwd = cwd;
     this.context.exitStatus = exitCode;
     if (!this.running) {
@@ -1158,7 +1415,8 @@ export class TerminalApp {
     }
 
     const command = this.running;
-    const completedAt = new Date();
+    if (this.replaying) this.replayedCompletions += 1;
+    const completedAt = new Date(at);
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     const completedRecord = this.output.complete(exitCode);
@@ -1589,7 +1847,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.settingsPanelState
+    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
@@ -1597,6 +1855,9 @@ export class TerminalApp {
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
         status: settingsView(this.settingsPanelState) === 'status' ? this.statusSections() : undefined});
+    }
+    if (this.layoutPanelState) {
+      return framePanel(renderLayoutPanel(this.layoutPanelState, columns, this.dimensions().rows - 4), columns);
     }
     if (this.syntaxPanelState) {
       return framePanel(renderSyntaxPanel(this.syntaxPanelState, columns, this.promptConfiguration.nmsh.palette, this.dimensions().rows - 4), columns);
@@ -1617,11 +1878,21 @@ export class TerminalApp {
       const canMove = (unit: 'week' | 'month', direction: -1 | 1) =>
         navigateResume({...browser}, unit, direction);
       const week = new Date(browser.week).toLocaleDateString();
+      const live = visibleLiveSessions(browser);
       const rows = [`${PRIMARY}  Resume session${RESET}`,
-        `${SECONDARY}  Search: ${browser.query || '_'}${browser.indexing ? `  ${SUBTLE}(indexing commands…)${SECONDARY}` : ''}${RESET}`,
-        `${SUBTLE}  Week of ${week} · ← ${canMove('week', -1) ? 'previous week' : '—'} · → ${canMove('week', 1) ? 'next week' : '—'}${RESET}`, ''];
+        `${SECONDARY}  Search: ${browser.query || '_'}${browser.indexing ? `  ${SUBTLE}(indexing commands…)${SECONDARY}` : ''}${RESET}`, ''];
+      if (live.length > 0) {
+        const now = Date.now();
+        rows.push(`${SUBTLE}  LIVE${RESET}`);
+        live.forEach((session, index) => {
+          const selected = index === browser.selectedIndex;
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ● ${describeLiveSession(session, now)}${RESET}`, columns));
+        });
+        rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
+      }
+      rows.push(`${SUBTLE}  Week of ${week} · ← ${canMove('week', -1) ? 'previous week' : '—'} · → ${canMove('week', 1) ? 'next week' : '—'}${RESET}`, '');
       const budget = Math.max(1, this.dimensions().rows - 7);
-      const start = Math.max(0, browser.selectedIndex - 2);
+      const start = Math.max(0, browser.selectedIndex - live.length - 2);
       let lastDay = '';
       for (let index = start; index < sessions.length && rows.length < budget + 4; index++) {
         const session = sessions[index]!;
@@ -1629,13 +1900,19 @@ export class TerminalApp {
         if (day !== lastDay && rows.length + 1 < budget + 4) rows.push(`${SUBTLE}  ${day}${RESET}`);
         if (rows.length >= budget + 4) break;
         lastDay = day;
-        const selected = index === browser.selectedIndex;
+        const selected = index + live.length === browser.selectedIndex;
         const time = new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
         const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
         rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${session.project || 'notMyShell'} · ${session.finalCwd} · ${session.commandCount} commands${interrupted}${RESET}`, columns));
       }
-      if (sessions.length === 0) rows.push(`${SUBTLE}  No matching sessions${RESET}`);
-      rows.push('', `${SUBTLE}  ↑↓ move · ←→ week · Shift+←→ month · Enter restore · Esc close${RESET}`);
+      if (sessions.length === 0) rows.push(`${SUBTLE}  No matching archived sessions${RESET}`);
+      const confirming = browser.live.find(session => session.id === browser.confirmKill);
+      if (confirming) {
+        rows.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
+      } else {
+        const selectedLive = resumeSelection(browser)?.kind === 'live';
+        rows.push('', `${SUBTLE}  ↑↓ move · ←→ week · Shift+←→ month · Enter ${selectedLive ? 'attach' : 'restore transcript'}${selectedLive ? ' · Ctrl+K kill' : ''} · Esc close${RESET}`);
+      }
       return framePanel(rows, columns);
     }
     if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);
@@ -1755,6 +2032,7 @@ export class TerminalApp {
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
+    else if (destination === 'layout') this.startLayoutSettings();
     else if (destination === 'welcome' || destination === 'suggestions') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
@@ -1779,6 +2057,7 @@ export class TerminalApp {
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
         {label: 'Shell', value: 'zsh (/bin/zsh)'},
+        {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
         {label: 'Terminal size', value: `${columns}×${rows}`},
@@ -2024,6 +2303,29 @@ export class TerminalApp {
     this.render();
   }
 
+  private startLayoutSettings(): void {
+    const {composerPosition, transcriptPresentation} = this.promptConfiguration;
+    this.layoutPanelState = createLayoutPanel({composerPosition, transcriptPresentation});
+  }
+
+  /** Persist the chosen layout and apply it live; the preview itself never touched the real transcript. */
+  private saveLayoutSettings(): void {
+    const state = this.layoutPanelState;
+    if (!state) return;
+    const next = {...structuredClone(this.promptConfiguration), ...state.draft};
+    this.applySettingsConfiguration(next);
+    if (this.promptConfiguration !== next) {
+      state.message = 'Could not save the layout; check that the NMSh configuration directory is writable.';
+      this.render();
+      return;
+    }
+    this.layoutPanelState = undefined;
+    this.historyViewport.latest();
+    this.returnFromPanel();
+    this.output.addHistoryLine(`${SUCCESS}Layout saved.${RESET}`);
+    this.render();
+  }
+
   private startSyntaxSettings(): void {
     const saved = structuredClone(this.promptConfiguration.syntax);
     this.syntaxPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved};
@@ -2144,7 +2446,7 @@ export class TerminalApp {
   /** Scroll paging needs at least one row even when the plan leaves the transcript empty. */
   private transcriptViewportHeight(): number {
     const {columns, rows} = this.dimensions();
-    return Math.max(1, this.planFrame(columns, rows).transcript.height);
+    return this.planFrame(columns, rows).viewportRows;
   }
 
   private formatCommandAnsi(command: string, startId: number | null, sgr = this.syntaxSgr): string[] {
@@ -2231,7 +2533,7 @@ export class TerminalApp {
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
     const transcriptRows = this.output.wrapped(columns).length;
-    return planScreen({
+    const input = {
       rows,
       inputRows: fullInput.allRows.length,
       suggestions,
@@ -2244,7 +2546,13 @@ export class TerminalApp {
       hasVisibleContext: this.hasVisibleProviderPrompt(),
       composerLayout: this.promptConfiguration.composerLayout,
       panelRows,
-    });
+    };
+    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return planScreen(input);
+    // Flow scrolled back: where the view starts decides how much of the composer
+    // is still on screen, and it is resolved against the following capacity.
+    const following = planScreen({...input, detached: false});
+    const viewStart = this.historyViewport.resolve(transcriptRows, following.viewportRows);
+    return this.historyViewport.detached ? planScreen({...input, viewStart}) : following;
   }
 
   private render(): void {
@@ -2268,9 +2576,10 @@ export class TerminalApp {
       this.session.resize(columns, plan.ptyRows);
     }
 
-    const outputHeight = plan.transcript.height;
     const wrapped = this.output.wrapped(columns);
-    const viewStart = this.historyViewport.resolve(wrapped.length, outputHeight);
+    const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
+    // Flow's viewport scrolls by its capacity; the region shows only what is on screen.
+    const outputHeight = plan.transcript.height;
     const presenter = this.output.presenter;
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
       focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId, now: Date.now()};
@@ -2358,7 +2667,8 @@ export class TerminalApp {
       columns,
       cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
-      cursorVisible: !plan.panelActive,
+      // Flow can scroll the input row off screen.
+      cursorVisible: !plan.panelActive && plan.inputHeight > 0,
     });
   }
 
@@ -2439,6 +2749,7 @@ export class TerminalApp {
 
     this.shellHandoffCwd = decision.cwd;
     this.shellHandoffRequested = true;
+    this.shellEnded = true;
     this.session.kill();
     this.stop(0);
   }
