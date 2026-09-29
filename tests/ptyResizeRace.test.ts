@@ -22,6 +22,18 @@ function scratch(prefix: string): string {
   return dir;
 }
 
+/**
+ * Close the service and wait for its shells to exit: a shell that ends after
+ * close still writes its spool (the exit record), which would otherwise
+ * recreate the runtime directory after the test removed it.
+ */
+async function closeAndDrain(service: SessionService): Promise<void> {
+  const pids = service.registry.map(session => session.pid);
+  await service.close();
+  await until(() => pids.every(pid => { try { process.kill(pid, 0); return false; } catch { return true; } }), 10000, 'shells exited');
+  await new Promise(resolve => setTimeout(resolve, 50));
+}
+
 const prompt = (shell: ShellSession) => new Promise<void>(resolve => shell.once('prompt', () => resolve()));
 const exit = (shell: ShellSession) => new Promise<void>(resolve => shell.once('exit', () => resolve()));
 
@@ -138,7 +150,7 @@ test('nmshd survives resizes that race a shell\'s exit; other sessions keep work
     bystander.send({type: 'input', data: 'echo SIZE-$(stty size | tr " " x)\r'});
     await until(() => /SIZE-33x111/u.test(bystander.output()), 15000, 'ordinary resize still reaches the shell');
   } finally {
-    await service.close();
+    await closeAndDrain(service);
     rmSync(runtimeDir, {recursive: true, force: true});
     rmSync(home, {recursive: true, force: true});
   }
@@ -160,7 +172,7 @@ test('an unexpected resize error is reported to that client instead of ending nm
     await until(() => /STILL-ALIVE/u.test(peer.output()), 15000, 'session still usable');
     assert.equal(existsSync(service.socketPath), true);
   } finally {
-    await service.close();
+    await closeAndDrain(service);
     rmSync(runtimeDir, {recursive: true, force: true});
     rmSync(home, {recursive: true, force: true});
   }
