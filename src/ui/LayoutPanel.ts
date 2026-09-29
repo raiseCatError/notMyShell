@@ -11,7 +11,7 @@ import {
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import type {Key} from '../terminal/keys.js';
 import {truncateAnsi, repeatToWidth} from '../util/text.js';
-import {renderControls} from './controls.js';
+import {DRAFT_PANEL_ACTIONS, renderActionHelp} from './actions.js';
 import {GLYPHS} from './glyphs.js';
 import {foreground, UI_COLORS} from './palette.js';
 
@@ -159,7 +159,7 @@ export function renderLayoutPanel(state: LayoutPanelState, columns: number, rows
     const selected = index === state.selectedIndex;
     out.push(`${selected ? `${ACCENT}›` : ' '} ${selected ? ACCENT : SECONDARY}${labels[row]}${RESET}`);
   });
-  const controls = ['', renderControls([['↑↓', 'move'], ['←→', 'change'], ['Enter', 'save'], ['Esc', 'cancel']])];
+  const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
   const header = ['', `${PRIMARY}Preview${RESET}  ${layoutDraftChanged(state) ? `${ACCENT}unsaved preview` : `${SUBTLE}matches current`}${RESET}  ${SUBTLE}sample content; nothing runs${RESET}`,
     `  ${SUBTLE}${POSITION_CAPTIONS[draft.composerPosition]}${RESET}`];
   const message = state.message ? [`${SECONDARY}${state.message}${RESET}`] : [];
