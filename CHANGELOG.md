@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-29
+
+Sessions & Continuity: persistent live sessions you can detach from and reattach to, a Flow composer, and a `/layout` showcase.
+
 ### Added
 - **Persistent live sessions:** zsh now runs in a small per-user session service (`nmshd`, started on demand over a private Unix socket), so closing a window **detaches** its shell instead of ending it. Running commands keep going. `exit`, Ctrl+D and `/zsh` still end the session. `NMSH_SESSION_SERVICE=0` runs the shell in-process as before.
 - **Reattach:** get back to a detached session from the startup prompt, from `/resume` (LIVE sessions are listed above ARCHIVED transcripts; Enter attaches, and Ctrl+K kills after confirmation), or with `nmsh --attach <id>`. `nmsh --sessions` lists live sessions, and `nmsh --new` always starts a fresh one. A session attached in another window is never taken over.
