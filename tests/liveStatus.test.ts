@@ -120,7 +120,8 @@ test('end to end: a CLI’s own title and notification reach /resume across deta
 
     const viewer = sandbox.launch(['--new']);
     await viewer.waitFor(/❯/);
-    await viewer.run('sleep 30 &', /❯/);
+    // Wait for the command to finish: /resume is refused while one runs.
+    await viewer.run('sleep 30 & echo BG-STARTED', /BG-STARTED[\s\S]*Completed/);
     const mark = viewer.mark;
     viewer.pty.write('/resume\r');
     await viewer.waitFor(/Claude Code · needs attention[\s\S]*Fake agent: ready/, mark);

@@ -282,7 +282,7 @@ export class SessionService {
             break;
           case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
           case 'resize':
-            if (owned) { owned.resizes += 1; owned.shell.resize(message.columns, message.rows); }
+            if (owned) { owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
             break;
           case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
           case 'kill': {
@@ -325,11 +325,25 @@ export class SessionService {
    * delivers SIGWINCH and the final one lands on the new frontend's size.
    */
   private redraw(session: ManagedSession, columns: number, rows: number): void {
-    session.shell.resize(columns, rows > 2 ? rows - 1 : rows + 1);
+    this.resize(session, columns, rows > 2 ? rows - 1 : rows + 1, session.controller);
     const generation = session.resizes;
     setTimeout(() => {
-      if (this.sessions.has(session.record.id) && session.resizes === generation) session.shell.resize(columns, rows);
+      if (this.sessions.has(session.record.id) && session.resizes === generation) this.resize(session, columns, rows, session.controller);
     }, REDRAW_NUDGE_MS);
+  }
+
+  /**
+   * Resize one session's PTY without letting a failure escape into the
+   * service: nmshd owns every live session, so one session's PTY error must
+   * never end the others. ShellSession already ignores the benign teardown
+   * race; anything else is reported to the client that caused it.
+   */
+  private resize(session: ManagedSession, columns: number, rows: number, send?: Send): void {
+    try {
+      session.shell.resize(columns, rows);
+    } catch (error) {
+      send?.({type: 'error', code: 'resize', message: `could not resize the session: ${error instanceof Error ? error.message : String(error)}`});
+    }
   }
 
   private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send): ManagedSession {
