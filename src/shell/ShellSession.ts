@@ -13,11 +13,18 @@ interface SessionEvents {
   exit: [{ exitCode: number; signal?: number }];
 }
 
+/** node-pty's error for an ioctl on a PTY whose descriptor is already closed. */
+export function isClosedPtyError(error: unknown): boolean {
+  return error instanceof Error && /\bEBADF\b/u.test(error.message);
+}
+
 export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly pty: IPty;
   private readonly protocol: ShellProtocolDecoder;
   private zdotdir: string;
   private ready = false;
+  /** Set once the shell has exited or its PTY is closed; resizes after that are no-ops. */
+  private exited = false;
 
   constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env) {
     super();
@@ -115,6 +122,7 @@ add-zsh-hook preexec nmsh_preexec
 
     this.pty.onData(data => this.receive(data));
     this.pty.onExit(event => {
+      this.exited = true;
       this.cleanup();
       this.emit('exit', event);
     });
@@ -156,8 +164,21 @@ add-zsh-hook preexec nmsh_preexec
     this.pty.write('\u0004');
   }
 
+  /**
+   * Resize the PTY. A resize can legitimately race the shell's teardown: a
+   * frontend may send one just before it hears of the exit, and node-pty closes
+   * the PTY's descriptor before it reports the exit. Once the shell is gone
+   * there is nothing to resize, so that case is ignored; any other failure
+   * still throws.
+   */
   resize(columns: number, rows: number): void {
-    this.pty.resize(Math.max(2, columns), Math.max(2, rows));
+    if (this.exited) return;
+    try {
+      this.pty.resize(Math.max(2, columns), Math.max(2, rows));
+    } catch (error) {
+      if (!isClosedPtyError(error)) throw error;
+      this.exited = true;
+    }
   }
 
   kill(): void {
