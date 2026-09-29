@@ -138,6 +138,13 @@ Live sessions are owned by the per-user session service (`nmshd`), which listens
     - Terminal.app: AppleScript `do script`. macOS asks once for Automation permission.
     - kitty: `kitten @ launch --type=os-window`, which needs kitty remote control.
     - Hosts without a way to open windows (VS Code, Zed, others), or a launcher that fails: the remaining sessions keep running, and this window names the `nmsh --attach` command for each one.
+- **Live status (#174):** `/resume` LIVE rows and `nmsh --list` show evidence-based status for each live session. The service gathers it from the session's own output and reads it only when sessions are listed. Nothing polls, and nothing reads the screen.
+  - What runs and for how long. The foreground process is shown when it differs from the command (for example `process node` for `npm test`). A known interactive CLI (Claude Code, Codex, Aider, Gemini CLI, OpenCode, Goose, …) gets its display name. The table only supplies names: every program gets the same states.
+  - Output recency: *active* if the session wrote in the last 10 s, otherwise *quiet* for how long.
+  - *needs attention*: the running program asked for it with a terminal notification (OSC 9 excluding progress, OSC 777 notify) or a bell. It clears when someone types into the session or the command ends.
+  - *fullscreen* while the program holds the alternate screen, and the window title it set (OSC 0/2, sanitized and bounded).
+  - While idle: how long, and whether the last command succeeded or failed with its exit code.
+  - NMSh never claims what a program is doing or waiting for (thinking, approval, input). What the stream does not say is not shown. Status lives in the service, so it survives detach and reattach. Older services omit it, and the rows simply show less.
 - **Idle age:** `/resume` shows how long each idle live session has been at its prompt.
 
 Known limitations:
