@@ -53,6 +53,8 @@ import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
+import {helpMarkdown} from '../help/helpContent.js';
+import {renderMarkdownText} from '../help/markdown.js';
 import {shimmerText} from '../status/shimmer.js';
 import {isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
@@ -1384,9 +1386,9 @@ export class TerminalApp {
   }
 
   private showHelp(command: string): void {
-    const summary = slashCommands.map(item => `${item.name} — ${item.description}`).join(' · ');
-    const helpText = `${summary}\n\n${INFO}✻ Large multiline paste is one editable atom; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.\n✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
-    this.output.addFrontendInteraction(command, helpText, ACCENT);
+    const helpText = renderMarkdownText(helpMarkdown(), {columns: Math.max(20, this.dimensions().columns - 6),
+      hyperlinks: false}); // the transcript cell model has no OSC 8 support
+    this.output.addFrontendInteraction(command, helpText, INFO);
   }
 
   private onShellData(data: string): void {
