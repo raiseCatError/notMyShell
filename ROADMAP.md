@@ -6,7 +6,7 @@
 |---|---|
 | **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
 | **Development branch** | `dev` |
-| **Next direction** | Not yet defined; see the Backlog below and open issues |
+| **Next direction** | [v0.8.0 — Command Intelligence & Navigation](https://github.com/raiseCatError/notMyShell/milestone/8), in development |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -111,6 +111,14 @@ The final release candidate also included the passive-hover selection fix.
 | [#171](https://github.com/raiseCatError/notMyShell/issues/171) | Chroma shared color roles, gradients and fallback |
 | [#172](https://github.com/raiseCatError/notMyShell/issues/172) | Semantic motion engine; shimmer migrated onto it |
 | [#173](https://github.com/raiseCatError/notMyShell/issues/173) | Deterministic presentation mode |
+
+## In development — v0.8.0 Command Intelligence & Navigation
+
+[Milestone #8](https://github.com/raiseCatError/notMyShell/milestone/8) contains #140, #141, #142, #143, #144, #145, #147 and #152. The [architecture and implemented scope](docs/design/command-intelligence.md) describe the unmerged review stack; the [physical-QA checklist](docs/qa/v0.8.0-physical-qa.md) remains pending. Package version stays at 0.7.0 during development.
+
+Native structured completion, command-level history, reusable optional pickers, explicit directory navigation and conservative edit-only corrections build on the released UI foundation. External completion sources remain research; #52 stays parked. #155 / #193 supply measurements without absorbing the full performance issue into this milestone.
+
+The earlier milestone #7 now represents unscheduled Discoverability & Integrations; its unrelated scope remains separate.
 
 ## Backlog — Research and Future Features
 
