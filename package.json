@@ -12,7 +12,7 @@
     "predev": "node scripts/ensure-node-pty-helper.mjs",
     "nmsh": "node dist/index.js",
     "test": "node --import=tsx --test tests/**/*.test.ts",
-    "bench": "tsx scripts/benchmarks.ts",
+    "bench": "node --import=tsx scripts/benchmarks.ts",
     "dev": "tsx src/index.ts",
     "build": "tsc -p tsconfig.json && node scripts/write-build-info.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"

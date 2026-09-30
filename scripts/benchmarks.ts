@@ -5,6 +5,9 @@ import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {CommandEditor} from '../src/input/CommandEditor.js';
 import {layoutInput} from '../src/input/inputLayout.js';
 import {Highlighter} from '../src/input/Highlighter.js';
+import {planScreen} from '../src/app/screenPlan.js';
+import {encodeMessage, FrameDecoder} from '../src/session/SessionProtocol.js';
+import {parseZshHistory} from '../src/shell/HistoryService.js';
 import {NativeSuggestions} from '../src/suggestions/NativeSuggestions.js';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
 
@@ -25,6 +28,9 @@ const semanticCache = new Map<string, 'executable' | 'builtin'>();
 for (const name of ['git', 'npm', 'rg', 'zsh', 'print']) semanticCache.set(name, 'executable');
 const editorCharacters = Array.from(editorText);
 const suggestionCounts = [10_000, 100_000];
+const histories = new Map<number, CommandEntry[]>();
+const historyFiles = new Map<number, string>();
+const protocolFrames = Array.from({length: 400}, (_, seq) => encodeMessage({type: 'output', data: ansiPayload.slice(0, 256), seq, at: 1000 + seq})).join('');
 const transcripts = new Map<number, OutputBuffer>();
 const suggestions = new Map<number, {provider: NativeSuggestions; queries: SuggestionContext[]}>();
 
@@ -49,6 +55,13 @@ function transcript(count: number): OutputBuffer {
 
 function setup(): void {
   const requested = selected.length === 0 ? ['suggestions', 'transcript'] : selected;
+  if (selected.length === 0 || selected.some(name => name.includes('history'))) {
+    for (const count of suggestionCounts) {
+      const entries = generatedHistory(count);
+      histories.set(count, entries);
+      historyFiles.set(count, entries.map(entry => `: ${entry.at! / 1000}:1;${entry.command}`).join('\n'));
+    }
+  }
   if (requested.some(name => name.includes('suggestions'))) {
     for (const count of suggestionCounts) {
       const provider = new NativeSuggestions();
@@ -69,6 +82,30 @@ function setup(): void {
 }
 
 const benchmarks: Benchmark[] = [
+  ...suggestionCounts.map(count => ({
+    name: `history/current-text-scan-${count}`,
+    run: () => histories.get(count)!.map(entry => entry.command).filter(command => command.toLowerCase().includes('nonexistent')).slice(0, 100),
+    units: count, unitName: 'entries',
+  })),
+  ...suggestionCounts.map(count => ({
+    name: `history/zsh-import-${count}`,
+    run: () => parseZshHistory(historyFiles.get(count)!),
+    units: count, unitName: 'entries',
+  })),
+  {
+    name: 'session/frame-decode-400',
+    run: () => {
+      const decoder = new FrameDecoder();
+      for (let index = 0; index < protocolFrames.length; index += 4096) decoder.push(protocolFrames.slice(index, index + 4096));
+    },
+    units: 400, unitName: 'frames',
+  },
+  ...(['bottom', 'top', 'flow'] as const).map(composerPosition => ({
+    name: `composer/screen-plan-${composerPosition}`,
+    run: () => planScreen({rows: 24, inputRows: 8, suggestions: 500, running: false, detached: false,
+      hasOutput: true, contextPlacement: 'composer', hasVisibleContext: true, composerLayout: 'twoLine',
+      composerPosition, transcriptRows: 100_000}),
+  })),
   {
     name: 'editor/edit-layout-highlight',
     run: () => {
