@@ -19,6 +19,7 @@ import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
 import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
+import {openPicker, PICKER_PROVIDERS, type PickerHandoff} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
@@ -137,6 +138,8 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private completionGeneration = 0;
+  private pickerOpening = false;
+  private pickerAbort?: AbortController;
   private historyQuery?: string;
   private historyQueryAbort?: AbortController;
   private historyResults: HistoryEntry[] = [];
@@ -742,8 +745,7 @@ export class TerminalApp {
     }
     if (key.kind === 'historySearch') {
       if (!this.running) {
-        this.editor.clear();
-        this.editor.insert(HISTORY_SEARCH);
+        void this.openHistoryPicker('');
       }
       return;
     }
@@ -996,6 +998,59 @@ export class TerminalApp {
     }
   }
 
+  private async openHistoryPicker(query: string): Promise<void> {
+    if (this.running || this.externalPassthrough || this.pickerOpening) return;
+    this.pickerOpening = true;
+    try {
+      const original = this.editor.text;
+      const native = () => this.applySuggestion({insertion: `${HISTORY_SEARCH}${query}`});
+      const candidates = this.promptConfiguration.picker === 'native' ? [] : (await this.historyService.search(query)).map(entry => ({
+        id: entry.id, label: entry.command, value: entry.command, description: entry.cwd,
+      }));
+      if (this.stopped || this.running || this.editor.text !== original) return;
+      const result = await openPicker(this.promptConfiguration.picker, candidates, native, this.pickerHandoff);
+      if (this.stopped) return;
+      if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
+      if (result?.kind === 'fallback') this.output.addFrontendInteraction('/history', result.reason, INFO);
+      this.render();
+    } finally { this.pickerOpening = false; }
+  }
+
+  /** External pickers temporarily own the host terminal, never the managed shell PTY. */
+  private readonly pickerHandoff: PickerHandoff = async run => {
+    if (!process.stdin.isTTY || !process.stdout.isTTY || this.running || this.passthrough || this.externalPassthrough)
+      return {kind: 'fallback', reason: 'A free interactive terminal is required; using Native'};
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    const ignoreInterrupt = () => { /* The foreground picker handles Ctrl+C. */ };
+    this.externalPassthrough = true;
+    let detached = false;
+    let released = false;
+    let left = false;
+    try {
+      process.stdin.off('data', this.onInput); process.stdin.pause(); detached = true;
+      process.stdin.setRawMode(false); released = true;
+      this.renderer.leave(); left = true;
+      process.on('SIGINT', ignoreInterrupt);
+      process.on('SIGWINCH', abort);
+      this.pickerAbort = controller;
+      return await run(controller.signal);
+    } catch (error) { return {kind: 'fallback', reason: `Picker failed: ${String(error)}; using Native`}; }
+    finally {
+      process.off('SIGINT', ignoreInterrupt); process.off('SIGWINCH', abort);
+      this.pickerAbort = undefined;
+      if (!this.stopped) {
+        if (left) this.renderer.enter();
+        if (released) process.stdin.setRawMode(true);
+        this.keyDecoder.reset();
+        if (detached) { process.stdin.on('data', this.onInput); process.stdin.resume(); }
+        this.renderer.invalidate();
+      }
+      this.externalPassthrough = false;
+      this.render();
+    }
+  };
+
   private applySuggestion(suggestion: {insertion: string}): void {
     this.editor.clear();
     this.editor.insert(suggestion.insertion);
@@ -1018,7 +1073,10 @@ export class TerminalApp {
     else if (slash.kind === 'clear') await this.startFreshPresentation();
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'help') this.showHelp(command);
-    else if (slash.kind === 'history') this.submitHistorySearch(slash.query, command.startsWith(HISTORY_SEARCH));
+    else if (slash.kind === 'history') {
+      if (command.startsWith(HISTORY_SEARCH)) this.submitHistorySearch(slash.query, true);
+      else await this.openHistoryPicker(slash.query);
+    }
     else if (slash.kind === 'palette') this.openPalette();
     else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
   }
@@ -2105,7 +2163,7 @@ export class TerminalApp {
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
     else if (destination === 'layout') this.startLayoutSettings();
-    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history') this.startProviderPanel(destination);
+    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
 
@@ -2272,9 +2330,10 @@ export class TerminalApp {
     });
   }
 
-  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history'): void {
+  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker'): void {
     const state: ProviderPanelState = family === 'welcome'
       ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
+      : family === 'picker' ? createProviderPanel(family, 'Picker', PICKER_PROVIDERS, this.promptConfiguration.picker)
       : family === 'history' ? createProviderPanel(family, 'Command history', HISTORY_PROVIDERS, this.promptConfiguration.history)
       : createProviderPanel(family, 'Suggestions', SUGGESTION_PROVIDERS, this.promptConfiguration.suggestions);
     this.providerPanelState = state;
@@ -2290,6 +2349,7 @@ export class TerminalApp {
   /** The highlighted provider rendered by its own family; captures are cached per panel. */
   private providerPreview(state: ProviderPanelState, width: number): string[] {
     const selected = providerPanelSelection(state);
+    if (state.family === 'picker') return [`${SUBTLE}Selections restore the composer; cancel leaves it unchanged. Missing or failing tools use Native.${RESET}`];
     if (state.family === 'history') return [`${SUBTLE}${selected.id === 'atuin' ? 'Read-only local history; existing hooks unchanged; no sync.' : 'Shell-approved journal metadata and imported zsh history.'}${RESET}`];
     if (state.family === 'suggestions') {
       if (selected.id === 'none') return [`${SUBTLE}No ghost text while typing.${RESET}`];
@@ -2342,6 +2402,7 @@ export class TerminalApp {
     const selected = providerPanelSelection(state);
     const next = state.family === 'welcome'
       ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
+      : state.family === 'picker' ? {...structuredClone(this.promptConfiguration), picker: selected.id as PromptConfiguration['picker']}
       : state.family === 'history' ? {...structuredClone(this.promptConfiguration), history: selected.id as PromptConfiguration['history']}
       : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
     try {
@@ -2871,6 +2932,7 @@ export class TerminalApp {
     this.renderer.leave();
     this.completionService.cancel();
     this.historyQueryAbort?.abort();
+    this.pickerAbort?.abort();
     this.historyService.dispose();
     this.semanticService.kill();
     this.finish(exitCode);
