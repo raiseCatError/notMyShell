@@ -2,8 +2,8 @@ import {homedir} from 'node:os';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
-  adjustSettingsRow, isInlineEditable, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
-  settingsView, statusLineCount, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
+  adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
+  settingsView, statusLineCount, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
   type SettingsView, type StatusSections,
   SETTINGS_ENTRIES,
   SETTINGS_ROWS,
@@ -52,7 +52,11 @@ import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} fr
 import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
+import {editText} from '../ui/formControls.js';
+import {helpMarkdown} from '../help/helpContent.js';
+import {renderMarkdownText} from '../help/markdown.js';
 import {shimmerText} from '../status/shimmer.js';
+import {isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
@@ -96,7 +100,7 @@ const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'back
 const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
-const PASTE_ATOM_BACKGROUND = '\u001B[48;2;63;65;82m';
+const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
 const STATUS_REFRESH_MS = 100;
 
 export class TerminalApp {
@@ -473,7 +477,11 @@ export class TerminalApp {
       return;
     }
     if (this.settingsPanelState) {
-      this.handleSettingsKey(key, this.settingsPanelState);
+      const settingsState = this.settingsPanelState;
+      this.handleSettingsKey(key, settingsState);
+      if (settingsState.section === 'root' && settingsView(settingsState) === 'config') {
+        this.settingsMemory = {contentIndex: settingsState.contentIndex ?? 0, searchQuery: settingsState.searchQuery ?? '', showAdvanced: Boolean(settingsState.showAdvanced)};
+      }
       this.render();
       return;
     }
@@ -998,8 +1006,7 @@ export class TerminalApp {
         break;
       }
       case 'config':
-        this.openSettingsPanel('config');
-        this.settingsPanelState!.contentIndex = Math.max(0, SETTINGS_ROWS.findIndex(row => row.id === action.rowId));
+        this.focusConfigRow(action.rowId);
         break;
       case 'toggleComposerPosition':
         config.composerPosition = ({bottom: 'top', top: 'flow', flow: 'bottom'} as const)[config.composerPosition];
@@ -1382,9 +1389,9 @@ export class TerminalApp {
   }
 
   private showHelp(command: string): void {
-    const summary = slashCommands.map(item => `${item.name} — ${item.description}`).join(' · ');
-    const helpText = `${summary}\n\n${INFO}✻ Large multiline paste is one editable atom; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.\n✻ Portable Select-All: Alt+A\n✻ VS Code Cmd+A Keybinding JSON:\n  { "key": "cmd+a", "command": "workbench.action.terminal.sendSequence", "args": { "text": "\\u001b[97;9u" }, "when": "terminalFocus" }${RESET}`;
-    this.output.addFrontendInteraction(command, helpText, ACCENT);
+    const helpText = renderMarkdownText(helpMarkdown(), {columns: Math.max(20, this.dimensions().columns - 6),
+      hyperlinks: false}); // the transcript cell model has no OSC 8 support
+    this.output.addFrontendInteraction(command, helpText, INFO);
   }
 
   private onShellData(data: string): void {
@@ -1427,7 +1434,8 @@ export class TerminalApp {
       const outputText = completedRecord?.output ?? '';
       const facts = extractFacts(command.command, outputText);
       const isInterrupted = command.interrupted || exitCode === 130;
-      const parts = completedActivity(command.command, elapsed, completedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
+      const displayCompletedAt = presentationCompletionTime(completedAt);
+      const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -1954,9 +1962,23 @@ export class TerminalApp {
     }
   }
 
+  /** Config position, search and advanced toggle survive closing and reopening within one run (never persisted). */
+  private settingsMemory?: {contentIndex: number; searchQuery: string; showAdvanced: boolean};
+
   private openSettingsPanel(view: SettingsView): void {
-    this.settingsPanelState = {section: 'root', view, selectedIndex: 0, contentIndex: 0,
+    const memory = view === 'config' ? this.settingsMemory : undefined;
+    this.settingsPanelState = {section: 'root', view, selectedIndex: 0, contentIndex: memory?.contentIndex ?? 0,
+      searchQuery: memory?.searchQuery, showAdvanced: memory?.showAdvanced,
       glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+  }
+
+  /** Opens Config on a specific row, revealing it if it is an advanced row; clears any remembered search. */
+  private focusConfigRow(rowId: string): void {
+    this.openSettingsPanel('config');
+    const state = this.settingsPanelState!;
+    state.searchQuery = '';
+    state.showAdvanced = state.showAdvanced || SETTINGS_ROWS.find(row => row.id === rowId)?.level === 'advanced';
+    state.contentIndex = Math.max(0, visibleSettingsRows(state).findIndex(row => row.id === rowId));
   }
 
   /**
@@ -1982,12 +2004,15 @@ export class TerminalApp {
     }
     const view = settingsView(state);
     const row = selectedSettingsRow(state);
-    if (state.searchFocused && key.kind === 'text') {
-      state.searchQuery = (state.searchQuery ?? '') + key.value;
+    const editedSearch = state.searchFocused ? editText(state.searchQuery ?? '', key) : undefined;
+    if (editedSearch !== undefined) {
+      state.searchQuery = editedSearch;
       state.contentIndex = 0;
-    } else if (state.searchFocused && key.kind === 'backspace') {
-      state.searchQuery = (state.searchQuery ?? '').slice(0, -1);
+    } else if (key.kind === 'text' && view === 'config' && state.focus !== 'tabs' && !state.searchFocused && key.value.toLowerCase() === 'a' && !state.searchQuery?.trim()) {
+      state.showAdvanced = !state.showAdvanced;
       state.contentIndex = 0;
+    } else if (key.kind === 'text' && view === 'config' && state.focus !== 'tabs' && !state.searchFocused && key.value.toLowerCase() === 'r' && row) {
+      if (settingsRowChanged(row, this.promptConfiguration)) this.applySettingsConfiguration(resetSettingsRow(row, this.promptConfiguration));
     } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
       state.searchFocused = true;
       state.focus = 'rows';
@@ -2400,7 +2425,7 @@ export class TerminalApp {
    * change. Blinks are skipped (not queued) while no welcome is present.
    */
   private scheduleWelcomeBlink(): void {
-    if (this.stopped) return;
+    if (this.stopped || isReducedMotion()) return;
     this.welcomeBlinkTimer = setTimeout(() => {
       if (this.stopped) return;
       if (!this.output.hasWelcome || this.passthrough) {
@@ -2582,7 +2607,8 @@ export class TerminalApp {
     const outputHeight = plan.transcript.height;
     const presenter = this.output.presenter;
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
-      focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId, now: Date.now()};
+      focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId,
+      now: presentationNow().getTime()};
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row =>
       presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction));
     const sticky = this.stickyHeader(wrapped, viewStart);
@@ -2676,8 +2702,9 @@ export class TerminalApp {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
-    const parts = liveActivityParts(this.running.command, elapsed);
-    return `${shimmerText(parts.phrase, elapsed, isActive)}${SECONDARY}${parts.duration}${RESET}`;
+    const animationElapsed = presentationAnimationElapsed(elapsed);
+    const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
+    return `${shimmerText(parts.phrase, animationElapsed, isReducedMotion() ? false : isActive)}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {

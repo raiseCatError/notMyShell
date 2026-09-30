@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {parseSlashCommand, slashCommands} from '../src/commands/slashCommands.js';
 import {createPalette, filterPalette, handlePaletteKey, paletteItems, renderPalette} from '../src/ui/CommandPalette.js';
-import {SETTINGS_ENTRIES, SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
+import {SETTINGS_ENTRIES, SETTINGS_ROWS, visibleSettingsRows} from '../src/ui/SettingsPanel.js';
 import {decodeKeys} from '../src/terminal/keys.js';
 import {stripAnsi} from '../src/util/text.js';
 
@@ -77,7 +77,7 @@ test('the palette opens, runs only the chosen action, and never executes shell t
     app['handleKey']({kind: 'enter'});
     await new Promise(resolve => setTimeout(resolve, 10));
     assert.equal(app['settingsPanelState']?.view, 'config');
-    assert.equal(SETTINGS_ROWS[app['settingsPanelState']!.contentIndex!]!.id, 'composerPosition');
+    assert.equal(visibleSettingsRows(app['settingsPanelState']!)[app['settingsPanelState']!.contentIndex!]!.id, 'composerPosition');
     app['settingsPanelState'] = undefined;
 
     app['handleKey']({kind: 'palette'});

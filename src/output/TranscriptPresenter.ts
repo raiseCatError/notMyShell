@@ -1,6 +1,6 @@
 import {type StyledLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {background, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
@@ -21,9 +21,9 @@ const SECONDARY = foreground(UI_COLORS.secondary);
 const SUBTLE = foreground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 /** Row surfaces: submitted command rows, hovered and focused disclosure rows. */
-const COMMAND_SURFACE = '\u001B[48;2;38;38;48m';
-const HOVER_SURFACE = '\u001B[48;2;45;45;55m';
-const FOCUS_SURFACE = '\u001B[48;2;60;60;80m';
+const COMMAND_SURFACE = background({red: 38, green: 38, blue: 48});
+const HOVER_SURFACE = background({red: 45, green: 45, blue: 55});
+const FOCUS_SURFACE = background({red: 60, green: 60, blue: 80});
 
 /** Transcript presentation: Normal rows, or Chat with right-aligned command blocks. */
 export type TranscriptLayout = 'normal' | 'chat';
@@ -470,7 +470,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {
-  const fg = foregroundColor ? `\u001B[38;2;${foregroundColor.red};${foregroundColor.green};${foregroundColor.blue}m` : '';
-  const bg = backgroundColor ? `\u001B[48;2;${backgroundColor.red};${backgroundColor.green};${backgroundColor.blue}m` : '\u001B[49m';
+  const fg = foregroundColor ? foreground(foregroundColor) : '';
+  const bg = backgroundColor ? background(backgroundColor) : '\u001B[49m';
   return `${fg}${bg}`;
 }

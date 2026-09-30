@@ -9,13 +9,13 @@ export function activityGlyph(elapsedMs: number): string {
   return frames[Math.floor(Math.max(0, elapsedMs) / ACTIVITY_GLYPH_INTERVAL_MS) % frames.length];
 }
 
-export function liveActivityParts(command: string, elapsedMs: number): {phrase: string; duration: string} {
+export function liveActivityParts(command: string, elapsedMs: number, animationElapsedMs = elapsedMs): {phrase: string; duration: string} {
   let flattenedCommand = command.trim().replace(/\r?\n/g, ' ⏎ ');
   if (flattenedCommand.length > 50) {
     flattenedCommand = flattenedCommand.slice(0, 49) + '…';
   }
   return {
-    phrase: `${activityGlyph(elapsedMs)} Running ${flattenedCommand}`,
+    phrase: `${activityGlyph(animationElapsedMs)} Running ${flattenedCommand}`,
     duration: ` · ${formatDuration(elapsedMs)}`,
   };
 }
