@@ -15,7 +15,10 @@ export class NativeCompletionSource implements CompletionSource {
     // Capture the token's parent context once, then fuzzy-filter locally while typing.
     // Keep the legacy whitespace replacement boundary until quoted-token support is designed.
     const start = context.buffer.lastIndexOf(' ') + 1;
-    const parent = context.buffer.slice(0, start);
+    const token = context.buffer.slice(start);
+    const pathPrefix = token.includes('/') ? token.slice(0, token.lastIndexOf('/') + 1) : '';
+    // Keep path components in the capture context; stripping them loses nested directory candidates.
+    const parent = /[\\'"]/u.test(token) ? context.buffer : context.buffer.slice(0, start) + pathPrefix;
     const key = JSON.stringify([context.cwd, parent]);
     const cached = this.cache.get(key);
     let output: string;

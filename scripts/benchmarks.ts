@@ -10,7 +10,7 @@ import {HistoryIndex} from '../src/shell/HistoryIndex.js';
 import {filterCompletions, parseNativeCompletions} from '../src/shell/completion.js';
 import {planScreen} from '../src/app/screenPlan.js';
 import {encodeMessage, FrameDecoder} from '../src/session/SessionProtocol.js';
-import {parseZshHistory} from '../src/shell/HistoryService.js';
+import {parseZshHistory, indexImportedHistory} from '../src/shell/HistoryService.js';
 import {NativeSuggestions} from '../src/suggestions/NativeSuggestions.js';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
 
@@ -93,6 +93,7 @@ const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, i
 
 const directoryServices = new Map(suggestionCounts.map(count => [count, new DirectoryService()]));
 const benchmarks: Benchmark[] = [
+  ...suggestionCounts.map(count => ({name: `history/index-import-${count}`, run: () => indexImportedHistory(new HistoryIndex(), histories.get(count)!, 'zsh'), samples: 5, warmup: 1, units: count, unitName: 'entries'})),
   ...suggestionCounts.map(count => ({name: `navigation/rank-${count}`, run: () => rankDirectories(historyIndexes.get(count)!.all()), units: count, unitName: 'entries'})),
   ...suggestionCounts.map(count => ({name: `navigation/cached-query-${count}`, run: () => directoryServices.get(count)!.query(historyIndexes.get(count)!.all(), 'pr7', 'native')})),
   ...suggestionCounts.map(count => ({name: `history/structured-query-${count}`,

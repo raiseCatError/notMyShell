@@ -101,6 +101,7 @@ function nmsh_precmd {
 function nmsh_preexec {
   nmsh_tty_echo echo
   local nmsh_history_allowed=1
+  [[ \$1 == [[:space:]]* ]] && nmsh_history_allowed=0
   [[ -n \$HISTORY_IGNORE && \$1 == \${~HISTORY_IGNORE} ]] && nmsh_history_allowed=0
   printf '\\e]777;nmsh;${token};exec2;%d;%s\\a' "\$nmsh_history_allowed" "\${1//[[:cntrl:]]/ }"
 }
