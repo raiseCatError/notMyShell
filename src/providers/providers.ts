@@ -99,7 +99,8 @@ export interface ExternalResult {
  * host TTY) so a timeout kills everything it started. Never throws.
  */
 export function runExternal(binary: string, args: readonly string[], options: {timeoutMs?: number; maxBytes?: number;
-  env?: NodeJS.ProcessEnv; cwd?: string} = {}): Promise<ExternalResult> {
+  env?: NodeJS.ProcessEnv; cwd?: string; signal?: AbortSignal} = {}): Promise<ExternalResult> {
+  if (options.signal?.aborted) return Promise.resolve({ok: false, stdout: '', error: 'cancelled'});
   const maxBytes = options.maxBytes ?? 256 * 1024;
   return new Promise(resolve => {
     let child: ReturnType<typeof spawn>;
@@ -116,12 +117,16 @@ export function runExternal(binary: string, args: readonly string[], options: {t
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       if (child.exitCode === null && child.signalCode === null && child.pid) {
         try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already gone. */ }
       }
       resolve(result);
     };
+    const abort = () => finish({ok: false, stdout: '', error: 'cancelled'});
     const timer = setTimeout(() => finish({ok: false, stdout: '', error: 'timed out'}), options.timeoutMs ?? 2000);
+    options.signal?.addEventListener('abort', abort, {once: true});
+    if (options.signal?.aborted) abort();
     child.stdout!.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxBytes) finish({ok: false, stdout: '', error: 'output too large'});

@@ -2795,6 +2795,7 @@ export class TerminalApp {
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
     process.stdin.pause();
     this.renderer.leave();
+    this.completionService.cancel();
     this.semanticService.kill();
     this.finish(exitCode);
   }

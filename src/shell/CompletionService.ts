@@ -1,58 +1,50 @@
-import { execFile } from 'node:child_process';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {runExternal} from '../providers/providers.js';
+import {dirname, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {parseNativeCompletions, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
+export type {CompletionCandidate} from './completion.js';
+const script = join(dirname(fileURLToPath(import.meta.url)), 'capture.zsh');
 
-export interface CompletionCandidate {
-  name: string;
-  insertion: string;
-  description: string;
+/** Existing isolated capture source; no composer text is submitted to the managed shell. */
+export class NativeCompletionSource implements CompletionSource {
+  readonly id = 'zsh-native';
+
+  async query(context: CompletionContext, signal: AbortSignal): Promise<CompletionCandidate[]> {
+    const result = await runExternal('zsh', [script, context.buffer], {
+      cwd: context.cwd, env: process.env, signal, timeoutMs: 1500, maxBytes: 1024 * 1024,
+    });
+    return result.ok && !signal.aborted ? parseNativeCompletions(result.stdout, context) : [];
+  }
+
 }
 
+/** Owns request lifetime independently of any completion source or UI. */
 export class CompletionService {
-  private activeRequest: ReturnType<typeof execFile> | undefined;
+  private active?: AbortController;
+  private generation = 0;
+
+  constructor(private readonly source: CompletionSource = new NativeCompletionSource()) {}
+
+  cancel(): void {
+    this.generation += 1;
+    this.active?.abort();
+    this.active = undefined;
+  }
 
   async suggest(input: string, cwd: string): Promise<CompletionCandidate[]> {
-    if (!input || input.trim().length === 0) return [];
-    
-    if (this.activeRequest) {
-      this.activeRequest.kill();
+    this.cancel();
+    if (!input.trim()) return [];
+    const generation = this.generation;
+    const active = new AbortController();
+    this.active = active;
+    try {
+      const candidates = await this.source.query({buffer: input, cwd}, active.signal);
+      return generation === this.generation && !active.signal.aborted ? candidates : [];
+    } catch {
+      return [];
+    } finally {
+      if (this.active === active) this.active = undefined;
     }
-
-    return new Promise((resolve) => {
-      const script = join(__dirname, 'capture.zsh');
-      const proc = execFile('zsh', [script, input], { cwd, env: process.env }, (error, stdout) => {
-        if (error && error.signal === 'SIGTERM') {
-          resolve([]);
-          return;
-        }
-        if (!stdout) {
-          resolve([]);
-          return;
-        }
-
-        const lines = stdout.split('\n').filter(l => l.trim().length > 0);
-        const candidates: CompletionCandidate[] = [];
-        
-        const lastSpace = input.lastIndexOf(' ');
-        const base = lastSpace === -1 ? '' : input.substring(0, lastSpace + 1);
-
-        for (const line of lines) {
-          const splitIndex = line.indexOf(' -- ');
-          if (splitIndex !== -1) {
-            const name = line.substring(0, splitIndex).trim();
-            const desc = line.substring(splitIndex + 4).trim();
-            candidates.push({ name, insertion: base + name, description: desc });
-          } else {
-            const name = line.trim();
-            candidates.push({ name, insertion: base + name, description: '' });
-          }
-        }
-        resolve(candidates);
-      });
-      this.activeRequest = proc;
-    });
   }
 }
