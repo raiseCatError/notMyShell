@@ -7,6 +7,8 @@ import {join} from 'node:path';
 import {InProcessSessionClient} from '../src/session/InProcessSessionClient.js';
 import type {SessionClient} from '../src/session/SessionClient.js';
 import type {ShellMarker} from '../src/shell/ShellProtocol.js';
+import {inForeground, uniqueSleep} from './helpers/processState.js';
+import {until} from './helpers/liveFrontend.js';
 
 class FakeShell extends EventEmitter {
   calls: unknown[][] = [];
@@ -71,13 +73,17 @@ test('InProcessSessionClient drives a real managed zsh end to end', async () => 
     assert.match(output, /31 101/);
 
     prompt = nextPrompt(client);
-    client.submit('sleep 30');
-    setTimeout(() => client!.interrupt(), 300);
+    const interrupted = uniqueSleep(1);
+    client.submit(`sleep ${interrupted}`);
+    await until(() => inForeground(interrupted), 15000, 'sleep in the foreground');
+    client!.interrupt();
     assert.notEqual((await prompt).exitCode, 0);
 
     prompt = nextPrompt(client);
-    client.submit('sleep 30');
-    setTimeout(() => client!.write('\u001a'), 300);
+    const suspended = uniqueSleep(2);
+    client.submit(`sleep ${suspended}`);
+    await until(() => inForeground(suspended), 15000, 'sleep in the foreground');
+    client!.write('\u001a');
     assert.ok((await prompt).exitCode > 128, "suspended by SIGTSTP");
     prompt = nextPrompt(client);
     client.submit('jobs; kill %1');

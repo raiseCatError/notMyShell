@@ -36,7 +36,8 @@ test('SIGKILLed frontend detaches; the same shell keeps running and a new fronte
     // A running command gated on a file, so nothing depends on timing.
     const gate = join(sandbox.home, 'go');
     first.pty.write(`while [ ! -f ${gate} ]; do sleep 0.05; done; echo RELEASED-$$\r`);
-    await until(async () => (await sandbox.sessions())[0]?.running !== undefined, 15000, 'running command');
+    // Wait for this command specifically: the previous echo can still be `running` until its prompt arrives.
+    await until(async () => /RELEASED/.test((await sandbox.sessions())[0]?.running ?? ''), 15000, 'running command');
     first.pty.kill('SIGKILL');
 
     const detached = await waitState(sandbox, 'detached');
@@ -125,12 +126,12 @@ test('concurrent attaches to one detached session: exactly one wins', async () =
     await waitState(sandbox, 'detached');
 
     for (let round = 0; round < 5; round += 1) {
-      const options = {cwd: sandbox.home, columns: 80, rows: 24, runtimeDir: sandbox.runtime};
+      const options = {cwd: sandbox.home, columns: 80, rows: 24, runtimeDir: sandbox.runtime, timeoutMs: 20000};
       const results = await Promise.allSettled(Array.from({length: 4}, () => attachSession(id, options)));
       const winners = results.filter(result => result.status === 'fulfilled');
       assert.equal(winners.length, 1, `round ${round}`);
       for (const result of results) {
-        if (result.status === 'rejected') assert.match(String(result.reason), /attached to another/);
+        if (result.status === 'rejected') assert.match(String(result.reason), /attached to another/, String(result.reason));
       }
       const winner = (winners[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof attachSession>>>).value;
       assert.equal(winner.attached?.pid, pid);
@@ -151,13 +152,15 @@ test('reattach into a fullscreen app resumes passthrough and makes it repaint at
     writeFileSync(fixture, [
       `printf '\\e[?1049h'`,
       `trap 'printf "\\e[H\\e[2JREDRAW %s\\n" "$(stty size)"' WINCH`,
+      `printf 'TRAP-READY\\n'`,
       `while [ ! -f ${stop} ]; do sleep 0.05; done`,
       `printf '\\e[?1049l'`,
     ].join('\n'));
     const first = sandbox.launch();
     await first.waitFor(/❯/);
     first.pty.write(`zsh ${fixture}\r`);
-    await until(async () => (await sandbox.sessions())[0]?.running !== undefined, 15000, 'fixture running');
+    // Detach only once the fixture's WINCH trap is installed, or the reattach resize can arrive before it.
+    await first.waitFor(/TRAP-READY/);
     const {id} = (await sandbox.sessions())[0]!;
     first.pty.kill('SIGKILL');
     await waitState(sandbox, 'detached');

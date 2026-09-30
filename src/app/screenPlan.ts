@@ -48,10 +48,12 @@ export interface ScreenPlanInput {
   composerLayout: ComposerLayout;
   /** Rows of an active full-width panel; undefined when no panel owns the screen. */
   panelRows?: number;
-  /** Dock Bottom (default) or Dock Top. */
+  /** Dock Bottom (default), Dock Top, or Flow. */
   composerPosition?: ComposerPosition;
-  /** Presented transcript rows; Dock Top uses it to keep activity next to the newest output. */
+  /** Presented transcript rows; Dock Top and Flow use it to keep what follows next to the newest output. */
   transcriptRows?: number;
+  /** Flow while scrolled back: the first transcript row in view (the composer follows the transcript's end). */
+  viewStart?: number;
 }
 
 export interface ScreenPlan {
@@ -65,6 +67,12 @@ export interface ScreenPlan {
   suggestionCount: number;
   /** Rows given to the shell PTY: the transcript capacity (the viewport height under Dock Bottom). */
   ptyRows: number;
+  /**
+   * Height the history viewport resolves and scrolls by. The transcript region's
+   * height, except in Flow, where the composer scrolls with the document and
+   * the viewport keeps the following capacity so scrolling back never snaps.
+   */
+  viewportRows: number;
   composerPosition: ComposerPosition;
   panelActive: boolean;
 }
@@ -83,8 +91,9 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     const panelHeight = Math.min(rows, Math.max(0, input.panelRows));
     const panel: Array<[RegionKind, number]> = [['panel', panelHeight]];
     const transcript: Array<[RegionKind, number]> = [['transcript', rows - panelHeight]];
+    // Flow pins panels to the bottom edge, like Bottom.
     return build(rows, top ? [...panel, ...transcript] : [...transcript, ...panel],
-      {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: top ? 'top' : 'bottom'});
+      {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: input.composerPosition ?? 'bottom'});
   }
   const layout = calculateScreenLayout(
     rows,
@@ -116,6 +125,36 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     ], {inputHeight: layout.inputHeight, suggestionCount: layout.suggestionCount, panelActive: false, composerPosition: 'top'});
     return {...plan, ptyRows: capacity};
   }
+  if (input.composerPosition === 'flow') {
+    // Flow: the composer is part of the document, right after the newest output.
+    // Geometry is measured as if following, so the PTY never resizes as output
+    // grows or the view scrolls back.
+    const followLayout = input.detached
+      ? calculateScreenLayout(rows, input.inputRows, input.suggestions, input.running, false, input.hasOutput,
+        input.contextPlacement, input.hasVisibleContext, input.composerLayout)
+      : layout;
+    const capacity = followLayout.outputHeight;
+    const total = Math.max(0, input.transcriptRows ?? capacity);
+    // Following: the newest rows up to capacity. Scrolled back: from viewStart to
+    // the end of output, and whatever composer rows still fit are clipped below.
+    const shown = input.detached
+      ? Math.min(rows, Math.max(0, total - (input.viewStart ?? 0)))
+      : Math.min(capacity, total);
+    const plan = build(rows, [
+      ['transcript', shown],
+      ['gap', Number(followLayout.showGap)],
+      ['activity', followLayout.showLiveActivity ? 2 : 0],
+      ['composerBorder', Number(followLayout.showComposerTopBorder)],
+      ['prompt', Number(followLayout.showPrompt)],
+      ['input', followLayout.inputHeight],
+      ['separator', Number(followLayout.showSeparator)],
+      // Menus open below the input, as a conventional terminal's completion list does.
+      ['suggestions', followLayout.suggestionCount],
+    ], {inputHeight: followLayout.inputHeight, suggestionCount: followLayout.suggestionCount, panelActive: false, composerPosition: 'flow'});
+    // Only what is on screen: a composer scrolled partly off shows its first rows.
+    return {...plan, ptyRows: capacity, viewportRows: Math.max(1, capacity),
+      inputHeight: regionOf(plan, 'input')?.height ?? 0, suggestionCount: regionOf(plan, 'suggestions')?.height ?? 0};
+  }
   return build(rows, [
     ['transcript', layout.outputHeight],
     ['gap', Number(layout.showGap)],
@@ -145,7 +184,7 @@ function build(
     if (height > 0) regions.push(region);
     top += height;
   }
-  return {rows, regions, transcript, ptyRows: transcript.height, ...extra};
+  return {rows, regions, transcript, ptyRows: transcript.height, viewportRows: Math.max(1, transcript.height), ...extra};
 }
 
 export function regionOf(plan: ScreenPlan, kind: RegionKind): Region | undefined {

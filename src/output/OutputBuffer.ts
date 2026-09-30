@@ -181,6 +181,17 @@ export class OutputBuffer {
     return startId;
   }
 
+  /**
+   * Re-open the command a restored transcript was still running: its header
+   * and output lines are already in the transcript, so only the active block
+   * is re-established and new output continues it.
+   */
+  resumeActive(command: string, startId: number, outputStartId: number, onModeChange?: (mode: PresentationMode) => void): void {
+    this.active = {command, start: startId, outputStart: outputStartId,
+      historicalContext: this.historicalContexts.get(startId), activities: []};
+    this.classifier = new CommandClassifier(Date.now(), onModeChange);
+  }
+
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
     for (let i = 0; i < formattedLines.length; i++) {
       this.parser.replaceLine(startId + i, formattedLines[i] ?? '');

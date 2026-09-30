@@ -4,9 +4,9 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.5.0 — Interaction & Intelligence](https://github.com/raiseCatError/notMyShell/releases/tag/v0.5.0) |
+| **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
 | **Development branch** | `dev` |
-| **Next direction** | [#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132) and [#125](https://github.com/raiseCatError/notMyShell/issues/125) persistent live sessions (planned) |
+| **Next direction** | Not yet defined; see the Backlog below and open issues |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -78,9 +78,39 @@ The final release candidate also included the passive-hover selection fix.
 | [#146](https://github.com/raiseCatError/notMyShell/issues/146) | Command palette |
 | [#149](https://github.com/raiseCatError/notMyShell/issues/149) | Native prompt styles: Powerline, Soft, Minimal, Outline |
 
-## Next — Flow / Classic and Persistent Sessions
+## Released — v0.6.0 Sessions & Continuity
 
-[#79](https://github.com/raiseCatError/notMyShell/issues/79) layout work continues with Flow / Classic composer mode ([#132](https://github.com/raiseCatError/notMyShell/issues/132)) and a `/layout` gallery ([#133](https://github.com/raiseCatError/notMyShell/issues/133)). Persistent live sessions are planned in [#125](https://github.com/raiseCatError/notMyShell/issues/125)–[#131](https://github.com/raiseCatError/notMyShell/issues/131). None of these are implemented yet.
+[Milestone #5](https://github.com/raiseCatError/notMyShell/milestone/5) shipped after physical QA of Flow, `/resume`, multi-session restore, Terminal.app startup, inline interactive UIs and Claude detach/reattach. Release notes are in [CHANGELOG.md](CHANGELOG.md). tmux, Zellij and VS Code were not physically re-verified for this release; see [multiplexer interoperability notes](docs/architecture/multiplexer-interop.md).
+
+### Shipped scope
+
+| Issue | Implemented scope |
+|---|---|
+| [#125](https://github.com/raiseCatError/notMyShell/issues/125)–[#131](https://github.com/raiseCatError/notMyShell/issues/131) | Persistent live sessions: protocol, session service, detach/reattach, detached output capture, `/resume` Live + Archived, hardening |
+| [#197](https://github.com/raiseCatError/notMyShell/issues/197) | User-controlled startup restore and multi-session picker |
+| [#174](https://github.com/raiseCatError/notMyShell/issues/174) | Agent-aware live session status |
+| [#175](https://github.com/raiseCatError/notMyShell/issues/175) | Multiplexer interoperability research notes |
+| [#132](https://github.com/raiseCatError/notMyShell/issues/132), [#133](https://github.com/raiseCatError/notMyShell/issues/133) | Flow composer position; `/layout` showcase |
+| [#199](https://github.com/raiseCatError/notMyShell/issues/199), [#206](https://github.com/raiseCatError/notMyShell/issues/206), [#211](https://github.com/raiseCatError/notMyShell/issues/211), [#212](https://github.com/raiseCatError/notMyShell/issues/212) | Physical-QA fixes: resize on closed PTY, stray suspended job, inline interactive UIs, multi-session restore |
+
+## Released — v0.7.0 UI Foundation & Customization
+
+[Milestone #6](https://github.com/raiseCatError/notMyShell/milestone/6) shipped after physical QA of Settings v2, generated help, color and motion modes, surfaces, and Flow/Chat regressions. Release notes are in [CHANGELOG.md](CHANGELOG.md). Screen-reader behavior is unverified; see [accessibility baseline](docs/accessibility/baseline.md).
+
+### Shipped scope
+
+| Issue | Implemented scope |
+|---|---|
+| [#164](https://github.com/raiseCatError/notMyShell/issues/164) | notMyUI internal toolkit and acceptance documentation |
+| [#165](https://github.com/raiseCatError/notMyShell/issues/165) | Surface primitives: frames, fills, layout |
+| [#166](https://github.com/raiseCatError/notMyShell/issues/166) | Shared actions and generated contextual help |
+| [#167](https://github.com/raiseCatError/notMyShell/issues/167) | Shared form controls |
+| [#168](https://github.com/raiseCatError/notMyShell/issues/168) | Authored Markdown renderer and `/help` |
+| [#169](https://github.com/raiseCatError/notMyShell/issues/169) | Settings v2: simple/advanced view, changed markers, reset, remembered position |
+| [#170](https://github.com/raiseCatError/notMyShell/issues/170) | Accessibility baseline, no-color and reduced-motion modes |
+| [#171](https://github.com/raiseCatError/notMyShell/issues/171) | Chroma shared color roles, gradients and fallback |
+| [#172](https://github.com/raiseCatError/notMyShell/issues/172) | Semantic motion engine; shimmer migrated onto it |
+| [#173](https://github.com/raiseCatError/notMyShell/issues/173) | Deterministic presentation mode |
 
 ## Backlog — Research and Future Features
 

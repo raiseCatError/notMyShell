@@ -2,9 +2,11 @@ import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
 import {ShellSession} from '../shell/ShellSession.js';
+import {SessionEvidence} from './SessionEvidence.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
-import {ensurePrivateRuntimeDir, socketPathFor} from './runtimeDir.js';
+import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
+import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
 
 export const SERVICE_NAME = 'nmshd';
 
@@ -25,29 +27,19 @@ interface ManagedSession {
   /** The one writable frontend; undefined while detached. */
   controller?: Send;
   running?: {command: string; since: number};
+  /** When zsh last returned to its prompt. */
+  idleSince: number;
   screen: AlternateScreenTracker;
   /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
   resizes: number;
+  seq: number;
+  backlog: StreamBacklog;
+  /** What the foreground program's own output says: recency, title, attention, last exit. */
+  evidence: SessionEvidence;
 }
 
-// DECSET/DECRST 1049, 1047 and 47: the alternate-screen switches.
-const ALT_SCREEN = /\u001b\[\?(?:1049|1047|47)([hl])/g;
-
-/** Follows whether the PTY's foreground app is on the alternate screen. */
-export class AlternateScreenTracker {
-  active = false;
-  private carry = '';
-
-  push(data: string): void {
-    const text = this.carry + data;
-    for (const match of text.matchAll(ALT_SCREEN)) this.active = match[1] === 'h';
-    // Keep a tail so a sequence split across reads is still seen.
-    const escape = text.lastIndexOf('\u001b');
-    this.carry = escape !== -1 && text.length - escape < 8 ? text.slice(escape) : '';
-  }
-
-  reset(): void { this.active = false; this.carry = ''; }
-}
+export {AlternateScreenTracker} from './TerminalModes.js';
+import {AlternateScreenTracker} from './TerminalModes.js';
 
 /** Delay between the two resizes that force a fullscreen app to repaint on attach. */
 const REDRAW_NUDGE_MS = 40;
@@ -56,6 +48,19 @@ export interface SessionServiceOptions {
   runtimeDir: string;
   /** Exit if no frontend connects within this window after startup. */
   startupIdleMs?: number;
+  backlogLimits?: BacklogLimits;
+  /** Live sessions allowed at once; detached ones are never ended to make room. */
+  maxSessions?: number;
+}
+
+export const DEFAULT_MAX_SESSIONS = 16;
+
+function toMessage(event: BacklogEvent): ServerMessage {
+  switch (event.kind) {
+    case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
+    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at};
+    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at};
+  }
 }
 
 export class ServiceAlreadyRunningError extends Error {}
@@ -96,8 +101,18 @@ export class SessionService {
 
   private info(session: ManagedSession): SessionInfo {
     const {record, running} = session;
+    const evidence = session.evidence.snapshot();
+    // Read only when someone lists sessions; nothing polls the process table.
+    const process = running ? session.shell.foregroundProcess : undefined;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
-      ...(running ? {running: running.command, runningSince: running.since} : {})};
+      ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
+      ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {}),
+      ...(process && process !== 'zsh' ? {process} : {}),
+      ...(running && session.screen.active ? {fullscreen: 1} : {}),
+      ...(evidence.lastOutputAt !== undefined ? {lastOutputAt: evidence.lastOutputAt} : {}),
+      ...(evidence.title ? {title: evidence.title} : {}),
+      ...(evidence.attentionSince !== undefined ? {attentionSince: evidence.attentionSince} : {}),
+      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {})};
   }
 
   async start(): Promise<void> {
@@ -155,6 +170,10 @@ export class SessionService {
         switch (message.type) {
           case 'create':
             if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
+            if (this.sessions.size >= (this.options.maxSessions ?? DEFAULT_MAX_SESSIONS)) {
+              send({type: 'error', code: 'limit', message: `${this.sessions.size} live sessions are already running (the limit); end one or kill a detached one from /resume`});
+              break;
+            }
             try {
               owned = this.create(message.cwd, message.env, message.columns, message.rows, send);
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid});
@@ -170,8 +189,15 @@ export class SessionService {
             owned = session;
             this.bind(session, send);
             const info = this.info(session);
-            send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.active ? 1 : 0,
-              ...(info.running ? {running: info.running, runningSince: info.runningSince} : {})});
+            const {backlog} = session;
+            send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
+              ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
+              ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
+              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
+            // Everything the journal does not have yet, then the live stream continues.
+            const missed = backlog.events();
+            for (const event of missed) send(toMessage(event));
+            send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
             this.redraw(session, message.columns, message.rows);
             break;
           }
@@ -186,10 +212,20 @@ export class SessionService {
           case 'list':
             send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
             break;
-          case 'input': owned?.shell.write(message.data); break;
+          case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
           case 'resize':
-            if (owned) { owned.resizes += 1; owned.shell.resize(message.columns, message.rows); }
+            if (owned) { owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
             break;
+          case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
+          case 'kill': {
+            const target = this.sessions.get(message.sessionId);
+            if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            // Never pull a shell out from under a frontend that is using it.
+            if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+            target.shell.kill();
+            break;
+          }
           case 'terminate': owned?.shell.kill(); break;
           default: send({type: 'error', code: 'unsupported', message: `unsupported message ${message.type}`});
         }
@@ -221,11 +257,25 @@ export class SessionService {
    * delivers SIGWINCH and the final one lands on the new frontend's size.
    */
   private redraw(session: ManagedSession, columns: number, rows: number): void {
-    session.shell.resize(columns, rows > 2 ? rows - 1 : rows + 1);
+    this.resize(session, columns, rows > 2 ? rows - 1 : rows + 1, session.controller);
     const generation = session.resizes;
     setTimeout(() => {
-      if (this.sessions.has(session.record.id) && session.resizes === generation) session.shell.resize(columns, rows);
+      if (this.sessions.has(session.record.id) && session.resizes === generation) this.resize(session, columns, rows, session.controller);
     }, REDRAW_NUDGE_MS);
+  }
+
+  /**
+   * Resize one session's PTY without letting a failure escape into the
+   * service: nmshd owns every live session, so one session's PTY error must
+   * never end the others. ShellSession already ignores the benign teardown
+   * race; anything else is reported to the client that caused it.
+   */
+  private resize(session: ManagedSession, columns: number, rows: number, send?: Send): void {
+    try {
+      session.shell.resize(columns, rows);
+    } catch (error) {
+      send?.({type: 'error', code: 'resize', message: `could not resize the session: ${error instanceof Error ? error.message : String(error)}`});
+    }
   }
 
   private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send): ManagedSession {
@@ -234,21 +284,44 @@ export class SessionService {
     const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
     const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
       state: 'attached', protocolVersion: PROTOCOL_VERSION};
-    const session: ManagedSession = {record, shell, controller: send, screen: new AlternateScreenTracker(), resizes: 0};
+    const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
+      seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
+      evidence: new SessionEvidence()};
     this.sessions.set(record.id, session);
+    // Every event is retained until a frontend journal acknowledges it, and
+    // sent live when a frontend is attached.
+    const emit = (event: BacklogEvent, live: ServerMessage = toMessage(event)) => {
+      session.backlog.append(event);
+      session.controller?.(live);
+    };
     shell.on('data', data => {
-      session.screen.push(data);
-      session.controller?.({type: 'output', data});
+      const at = Date.now();
+      session.evidence.observe(data, at);
+      session.screen.observeModes(data);
+      const kept = session.screen.push(data);
+      if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
+      else session.controller?.({type: 'output', data});
     });
-    shell.on('exec', command => { session.running = {command, since: Date.now()}; });
+    shell.on('exec', command => {
+      const at = Date.now();
+      session.running = {command, since: at};
+      session.evidence.onExec();
+      emit({kind: 'exec', seq: ++session.seq, at, command});
+    });
     shell.on('prompt', marker => {
       record.cwd = marker.cwd;
       session.running = undefined;
+      session.idleSince = Date.now();
+      session.evidence.onPrompt(marker.exitCode);
       session.screen.reset();
-      session.controller?.({type: 'prompt', exitCode: marker.exitCode, cwd: marker.cwd});
+      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
     });
     shell.on('exit', event => {
       this.sessions.delete(record.id);
+      // Detached: keep what the journal lacks on disk for archiving. Attached:
+      // the frontend journal is authoritative and the backlog goes.
+      if (session.controller) session.backlog.dispose();
+      else session.backlog.finish(event.exitCode, Date.now());
       session.controller?.({type: 'exit', exitCode: event.exitCode, ...(event.signal ? {signal: event.signal} : {})});
       session.controller = undefined;
       this.maybeShutdown();

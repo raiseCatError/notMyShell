@@ -4,6 +4,7 @@ import {fileURLToPath} from 'node:url';
 import {InProcessSessionClient} from './InProcessSessionClient.js';
 import {SocketSessionClient, listSessions} from './SocketSessionClient.js';
 import type {SessionInfo} from './SessionProtocol.js';
+import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
 import {type SessionConnection, type SessionOptions} from './SessionClient.js';
 import {RUNTIME_DIR_ENV, defaultRuntimeDir, ensurePrivateRuntimeDir, socketPathFor} from './runtimeDir.js';
 
@@ -15,6 +16,7 @@ export interface ConnectSessionOptions extends SessionOptions {
   /** Command used to start the service on demand. */
   serviceCommand?: {command: string; args: string[]};
   timeoutMs?: number;
+  transcriptStore?: TranscriptStore;
 }
 
 export class AttachError extends Error {
@@ -32,7 +34,16 @@ export async function attachSession(sessionId: string, options: ConnectSessionOp
     ensurePrivateRuntimeDir(runtimeDir);
     const client = await SocketSessionClient.connect({cwd: options.cwd, columns: options.columns, rows: options.rows,
       socketPath: socketPathFor(runtimeDir), env: {}, attach: sessionId, timeoutMs: options.timeoutMs ?? 5000});
-    return {client, mode: 'service', sessionId: client.sessionId, attached: client.attachedSession};
+    const attached = client.attachedSession;
+    let journal: TranscriptSession | undefined;
+    if (attached?.journalId) {
+      // An unreadable journal still lets the shell reattach; the replay then starts from the service backlog.
+      try {
+        const loaded = await (options.transcriptStore ?? new TranscriptStore()).load(attached.journalId);
+        if (loaded.live?.sessionId === attached.sessionId) journal = loaded;
+      } catch { /* fall through */ }
+    }
+    return {client, mode: 'service', sessionId: client.sessionId, attached, ...(journal ? {journal} : {})};
   } catch (error) {
     const code = (error as {code?: string}).code ?? 'error';
     const reason = code === 'ENOENT' || code === 'ECONNREFUSED' ? 'no session service is running'
@@ -50,7 +61,10 @@ export async function listLiveSessions(options: {env?: NodeJS.ProcessEnv; runtim
     return await listSessions(socketPathFor(runtimeDir));
   } catch (error) {
     const code = (error as {code?: string}).code;
-    if (code === 'ENOENT' || code === 'ECONNREFUSED') return [];
+    // A service drops connections (closed / EPIPE / ECONNRESET, depending on
+    // timing) only while exiting, which it does only once it has no sessions
+    // left: treat that window like no service at all.
+    if (code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'closed' || code === 'EPIPE' || code === 'ECONNRESET') return [];
     throw error;
   }
 }
@@ -65,7 +79,9 @@ function defaultServiceCommand(): {command: string; args: string[]} {
 function startService(runtimeDir: string, command: {command: string; args: string[]}, env: NodeJS.ProcessEnv): void {
   // The service needs no user environment of its own: each session receives
   // the launching frontend's env in its create message.
-  const serviceEnv: NodeJS.ProcessEnv = {PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, [RUNTIME_DIR_ENV]: runtimeDir};
+  const serviceEnv: NodeJS.ProcessEnv = {PATH: env.PATH, HOME: env.HOME, TMPDIR: env.TMPDIR, [RUNTIME_DIR_ENV]: runtimeDir,
+    NMSH_BACKLOG_MEMORY_BYTES: env.NMSH_BACKLOG_MEMORY_BYTES, NMSH_BACKLOG_SPOOL_BYTES: env.NMSH_BACKLOG_SPOOL_BYTES,
+    NMSH_MAX_SESSIONS: env.NMSH_MAX_SESSIONS};
   const child = spawn(command.command, command.args, {detached: true, stdio: 'ignore', env: serviceEnv});
   child.on('error', () => {});
   child.unref();
@@ -109,6 +125,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process',
-      notice: `Session service unavailable (${reason}); running the shell in-process.`};
+      notice: `Session service unavailable (${reason}); running the shell in-process. `
+        + 'Closing this window ends its shell: it cannot be detached or reattached.'};
   }
 }
