@@ -1,46 +1,65 @@
 import {readFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
-import {findExecutable, runExternal} from '../providers/providers.js';
+import {resolveCommand, runExternal} from '../providers/providers.js';
 import {HistoryIndex, historyId, journalHistory, type HistoryEntry} from './HistoryIndex.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import {Worker} from 'node:worker_threads';
 import type {CommandEntry} from '../suggestions/types.js';
 
-const ATUIN_FORMAT = '{time}\t{exit}\t{directory}\t{command}';
+import {ATUIN_METADATA_FORMAT, type HistoryProviderId} from './historyProviders.js';
+
 
 /**
  * Local shell history, loaded once in the background so startup and
- * keystrokes never wait for it. Atuin (with cwd, exit and time) when
- * installed, otherwise $HISTFILE.
+ * keystrokes never wait for it. Native is the default; Atuin is read-only
+ * and queried only when explicitly selected.
  */
 export class HistoryService {
   private entries: CommandEntry[] = [];
   private worker?: Worker;
+  private request?: AbortController;
+  private generation = 0;
+  status: {selected: HistoryProviderId; active: HistoryProviderId; detail?: string} = {selected: 'native', active: 'native'};
   private readonly lifetime = new AbortController();
-  readonly index = new HistoryIndex(join(nmshConfigDirectory(), 'history-deletions.json'));
+  readonly index: HistoryIndex;
 
-  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {}
-
-  /** Loads (or reloads) history; callers start it once the app is running. */
-  dispose(): void { this.lifetime.abort(); void this.worker?.terminate(); }
-
-  async reload(): Promise<void> {
-    if (this.lifetime.signal.aborted) return;
-    await this.index.loadDeletions();
-    await this.loadSource();
-    this.entries.forEach((entry, index) => this.index.add({...entry, id: historyId('shell', `${entry.at ?? 0}:${entry.command}`), source: 'zsh'}));
-    await this.loadJournals();
-    this.index.all();
+  constructor(private readonly env: NodeJS.ProcessEnv = process.env) {
+    this.index = new HistoryIndex(join(nmshConfigDirectory(env), 'history-deletions.json'));
   }
 
-  private loadJournals(): Promise<void> {
+  /** Loads (or reloads) history; callers start it once the app is running. */
+  dispose(): void { this.lifetime.abort(); this.request?.abort(); void this.worker?.terminate(); }
+
+  async reload(provider: HistoryProviderId = 'native'): Promise<boolean> {
+    if (this.lifetime.signal.aborted) return false;
+    const generation = ++this.generation;
+    this.request?.abort();
+    const request = new AbortController();
+    this.request = request;
+    void this.worker?.terminate();
+    await this.index.loadDeletions();
+    const loaded = await this.loadSource(provider, request.signal);
+    if (generation !== this.generation || request.signal.aborted) return false;
+    this.entries = loaded.entries;
+    this.status = {selected: provider, active: loaded.source === 'atuin' ? 'atuin' : 'native', detail: loaded.detail};
+    this.index.clearImported();
+    this.entries.forEach(entry => this.index.add({...entry, id: 'id' in entry && typeof entry.id === 'string' ? entry.id
+      : historyId(loaded.source, `${entry.at ?? 0}:${entry.command}`), source: loaded.source}));
+    await this.loadJournals(generation);
+    if (generation !== this.generation || request.signal.aborted) return false;
+    this.index.all();
+    return true;
+  }
+
+  private loadJournals(generation: number): Promise<void> {
     return new Promise((resolve, reject) => {
       const worker = new Worker(new URL('../../scripts/read-command-history.cjs', import.meta.url),
-        {workerData: {directory: join(nmshConfigDirectory(), 'sessions')}});
+        {workerData: {directory: join(nmshConfigDirectory(this.env), 'sessions')}});
       this.worker = worker;
       worker.on('message', (batch: {session: string; records: CompletedCommand[]}) => {
+        if (generation !== this.generation || this.lifetime.signal.aborted) return;
         for (const record of batch.records) this.record(record, batch.session);
       });
       worker.once('error', reject);
@@ -59,22 +78,21 @@ export class HistoryService {
 
   search(query: string, signal?: AbortSignal): Promise<HistoryEntry[]> { return this.index.search(query, signal); }
 
-  private async loadSource(): Promise<void> {
-    const atuin = findExecutable('atuin', this.env.PATH ?? '');
-    if (atuin) {
-      const result = await runExternal(atuin, ['history', 'list', '--format', ATUIN_FORMAT, '--print0', '--timezone', '+0'],
-        {timeoutMs: 15000, maxBytes: 128 * 1024 * 1024, env: this.env, signal: this.lifetime.signal});
-      if (result.ok) {
-        this.entries = parseAtuinHistory(result.stdout);
-        return;
-      }
+  private async loadSource(provider: HistoryProviderId, signal: AbortSignal): Promise<{entries: CommandEntry[]; source: 'zsh' | 'atuin'; detail?: string}> {
+    let detail: string | undefined;
+    if (provider === 'atuin') {
+      const atuin = resolveCommand('atuin', this.env.PATH ?? '', []);
+      if (atuin) {
+        const result = await runExternal(atuin, ['history', 'list', '--format', ATUIN_METADATA_FORMAT, '--print0', '--timezone', '+0'],
+          {timeoutMs: 15000, maxBytes: 128 * 1024 * 1024, env: this.env, signal});
+        if (result.ok) return {entries: await parseAtuinMetadataInChunks(result.stdout), source: 'atuin'};
+        detail = `Atuin unavailable (${result.error ?? 'query failed'}); using Native`;
+      } else detail = 'Atuin is not installed; using Native';
     }
     try {
-      const path = this.env.HISTFILE || join(homedir(), '.zsh_history');
-      this.entries = await parseZshHistoryInChunks(await readFile(path));
-    } catch {
-      this.entries = [];
-    }
+      const path = this.env.HISTFILE || join(this.env.HOME ?? homedir(), '.zsh_history');
+      return {entries: await parseZshHistoryInChunks(await readFile(path)), source: 'zsh', detail};
+    } catch { return {entries: [], source: 'zsh', detail}; }
   }
 
   /** Commands, oldest first. */
@@ -145,4 +163,35 @@ export async function parseZshHistoryInChunks(content: Uint8Array | string): Pro
     if (entries.length % 2048 === 0) await new Promise<void>(resolve => setImmediate(resolve));
   }
   return entries;
+}
+
+
+/** Atuin's public CLI formats duration in its largest unit (approximate metadata). */
+function* atuinMetadataEntries(output: string): Generator<HistoryEntry> {
+  for (const record of output.split('\0')) {
+    const [version, uuid, time, exit, cwd, duration, session, ...command] = record.split('\u001f');
+    if (version !== 'nmsh-v1' || !uuid || !time || !/^\d+$/u.test(exit ?? '')) continue;
+    const text = command.join('\u001f').replace(/\n+$/u, '');
+    if (!text.trim() || /^\s/u.test(text)) continue;
+    const at = Date.parse(`${time.trim().replace(' ', 'T')}Z`);
+    const match = /^(\d+(?:\.\d+)?)\s*(ns|µs|μs|us|ms|s|m|h|d)$/u.exec(duration ?? '');
+    const units: Record<string, number> = {ns: 0.000001, 'µs': 0.001, 'μs': 0.001, us: 0.001, ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000};
+    yield {id: historyId('atuin', uuid), source: 'atuin', command: text, exitCode: Number(exit),
+      ...(Number.isFinite(at) ? {at} : {}),
+      ...(cwd && cwd !== 'unknown' ? {cwd} : {}), ...(session ? {session} : {}),
+      ...(match ? {durationMs: Number(match[1]) * units[match[2]!]!} : {})};
+  }
+ }
+
+export function parseAtuinMetadata(output: string): HistoryEntry[] {
+  return [...atuinMetadataEntries(output)].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
+}
+
+async function parseAtuinMetadataInChunks(output: string): Promise<HistoryEntry[]> {
+  const entries: HistoryEntry[] = [];
+  for (const entry of atuinMetadataEntries(output)) {
+    entries.push(entry);
+    if (entries.length % 2048 === 0) await new Promise<void>(resolve => setImmediate(resolve));
+  }
+  return entries.sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
 }

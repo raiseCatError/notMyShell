@@ -19,6 +19,7 @@ import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
 import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
+import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
@@ -2104,7 +2105,7 @@ export class TerminalApp {
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
     else if (destination === 'layout') this.startLayoutSettings();
-    else if (destination === 'welcome' || destination === 'suggestions') this.startProviderPanel(destination);
+    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
 
@@ -2139,6 +2140,7 @@ export class TerminalApp {
         {label: 'Composer', value: layoutLabel(config)},
         {label: 'Glyph style', value: config.glyphStyle === 'nerd' ? 'Nerd Font' : 'Safe / ASCII'},
         {label: 'Syntax', value: !config.syntax.highlighting ? 'Off' : config.syntax.colors === 'followPrompt' ? 'Follow prompt theme' : config.syntax.colors === 'theme' ? 'Choose theme' : 'Grayscale'},
+        {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
         {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
       ],
       [
@@ -2188,7 +2190,10 @@ export class TerminalApp {
 
   /** History loads in the background after startup; suggestions refine once it is indexed. */
   private async loadHistory(): Promise<void> {
-    try { await this.historyService.reload(); } catch {
+    this.historyQuery = undefined;
+    this.historyQueryAbort?.abort();
+    this.historyResults = [];
+    try { if (!await this.historyService.reload(this.promptConfiguration.history)) return; } catch {
       if (this.stopped) return;
       this.output.addFrontendInteraction('/history', 'Command history is unavailable; check local storage.', ERROR);
       return;
@@ -2267,9 +2272,10 @@ export class TerminalApp {
     });
   }
 
-  private startProviderPanel(family: 'welcome' | 'suggestions'): void {
+  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history'): void {
     const state: ProviderPanelState = family === 'welcome'
       ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
+      : family === 'history' ? createProviderPanel(family, 'Command history', HISTORY_PROVIDERS, this.promptConfiguration.history)
       : createProviderPanel(family, 'Suggestions', SUGGESTION_PROVIDERS, this.promptConfiguration.suggestions);
     this.providerPanelState = state;
     this.welcomePreviews.clear();
@@ -2284,6 +2290,7 @@ export class TerminalApp {
   /** The highlighted provider rendered by its own family; captures are cached per panel. */
   private providerPreview(state: ProviderPanelState, width: number): string[] {
     const selected = providerPanelSelection(state);
+    if (state.family === 'history') return [`${SUBTLE}${selected.id === 'atuin' ? 'Read-only local history; existing hooks unchanged; no sync.' : 'Shell-approved journal metadata and imported zsh history.'}${RESET}`];
     if (state.family === 'suggestions') {
       if (selected.id === 'none') return [`${SUBTLE}No ghost text while typing.${RESET}`];
       return [`${ACCENT}${GLYPHS.prompt}${RESET} git st${SECONDARY}atus${RESET}   ${SUBTLE}→ / End accept · Alt+→ next word · Ctrl+N/P alternatives · Esc dismiss${RESET}`];
@@ -2335,15 +2342,17 @@ export class TerminalApp {
     const selected = providerPanelSelection(state);
     const next = state.family === 'welcome'
       ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
+      : state.family === 'history' ? {...structuredClone(this.promptConfiguration), history: selected.id as PromptConfiguration['history']}
       : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
     try {
       savePromptConfiguration(next);
       this.promptConfiguration = next;
       this.providerPanelState = undefined;
       if (state.family === 'suggestions') this.applySuggestionProvider();
+      if (state.family === 'history') void this.loadHistory();
       this.output.addHistoryLine(state.family === 'welcome'
         ? `${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`
-        : `${SUCCESS}Suggestions · ${selected.label}.${RESET}`);
+        : `${SUCCESS}${state.title} · ${selected.label}.${RESET}`);
     } catch (error) {
       state.message = `Could not save: ${error instanceof Error ? error.message : String(error)}`;
     }

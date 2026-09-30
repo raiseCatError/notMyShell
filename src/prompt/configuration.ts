@@ -8,6 +8,7 @@ export type LiveSessionStartup = typeof LIVE_SESSION_STARTUP[number];
 export const LIVE_SESSION_MULTIPLE = ['ask', 'open-all'] as const;
 export type LiveSessionMultiple = typeof LIVE_SESSION_MULTIPLE[number];
 import type {OutputFoldingMode} from '../output/FoldPolicy.js';
+import type {HistoryProviderId} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDER_IDS, type SuggestionProviderId} from '../suggestions/types.js';
 import {
   normalizeConnectorFadeColors,
@@ -185,6 +186,8 @@ export interface PromptConfiguration {
   welcome: WelcomeProviderId;
   /** Ghost-text suggestion provider; external providers fall back to Native. */
   suggestions: SuggestionProviderId;
+  /** Native default; Atuin is an explicit local read-only source. */
+  history: HistoryProviderId;
   /** Predict a whole command on an empty prompt from the previous one. */
   suggestionsOnEmpty: boolean;
   nmsh: {
@@ -237,6 +240,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   outputFolding: 'smart',
   welcome: 'vespyr',
   suggestions: 'nmsh',
+  history: 'native',
   suggestionsOnEmpty: false,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
@@ -301,6 +305,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? value.welcome as WelcomeProviderId : 'vespyr';
   const suggestions: SuggestionProviderId = SUGGESTION_PROVIDER_IDS.includes(value.suggestions as SuggestionProviderId)
     ? value.suggestions as SuggestionProviderId : 'nmsh';
+  const history: HistoryProviderId = value.history === 'atuin' ? 'atuin' : 'native';
   const suggestionsOnEmpty = value.suggestionsOnEmpty === true;
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
@@ -347,7 +352,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, suggestionsOnEmpty,
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, suggestionsOnEmpty,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
   }
 
@@ -388,7 +393,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, suggestionsOnEmpty, nmsh, transcript, syntax, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, suggestionsOnEmpty, nmsh, transcript, syntax, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
 }
 

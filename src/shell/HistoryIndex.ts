@@ -84,6 +84,11 @@ export class HistoryIndex {
     this.revision += 1;
   }
 
+  clearImported(): void {
+    for (const [id, entry] of this.entries) if (entry.source !== 'nmsh') this.entries.delete(id);
+    this.revision += 1;
+  }
+
   add(entry: HistoryEntry): void {
     if (isPrivateCommand(entry.command) || this.deleted.has(entry.id)) return;
     this.entries.set(entry.id, entry);

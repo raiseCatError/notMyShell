@@ -13,6 +13,7 @@ import {
 import {providerLabel} from '../prompt/PromptPanel.js';
 import {welcomeProvider} from '../output/WelcomeProviders.js';
 import {PROMPT_STYLES, PROMPT_STYLE_LABELS} from '../prompt/powerline.js';
+import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foregroundOf, status, theme} from '../chroma/chroma.js';
 import {foreground, UI_COLORS} from './palette.js';
@@ -59,7 +60,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history';
 
 interface SettingsRowBase {
   id: string;
@@ -149,6 +150,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',
     control: 'child', destination: 'suggestions',
     value: config => SUGGESTION_PROVIDERS.find(provider => provider.id === config.suggestions)?.label ?? config.suggestions},
+  {id: 'history', label: 'Command history provider', description: 'Native journals and zsh history, or explicit local read-only Atuin', category: 'History',
+    control: 'child', destination: 'history', value: config => HISTORY_PROVIDERS.find(provider => provider.id === config.history)?.label ?? config.history},
   {id: 'suggestionsOnEmpty', level: 'advanced', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
     control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
 ];

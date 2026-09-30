@@ -7,7 +7,7 @@ import {delimiter, join} from 'node:path';
  * runtime interface (prompt render, welcome render, suggestion query, ...);
  * this module only describes providers and how their availability looks.
  */
-export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions';
+export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions' | 'history';
 export type ProviderKind = 'native' | 'external' | 'none';
 
 export interface ProviderInstall {
