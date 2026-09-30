@@ -51,3 +51,24 @@ export function parseNativeCompletions(output: string, context: CompletionContex
   }
   return result;
 }
+
+/** Stable subsequence ranking. Exact/prefix matches lead; ties retain source order. */
+export function filterCompletions(candidates: readonly CompletionCandidate[], query: string): CompletionCandidate[] {
+  const needle = query.toLowerCase();
+  if (!needle) return [...candidates];
+  const scored: Array<{candidate: CompletionCandidate; score: number; index: number}> = [];
+  candidates.forEach((candidate, index) => {
+    const text = candidate.value.toLowerCase();
+    let position = -1;
+    let gaps = 0;
+    for (const character of needle) {
+      const next = text.indexOf(character, position + 1);
+      if (next === -1) return;
+      gaps += next - position - 1;
+      position = next;
+    }
+    const score = text === needle ? -2000 : text.startsWith(needle) ? -1000 + text.length : gaps + text.length;
+    scored.push({candidate, score, index});
+  });
+  return scored.sort((a, b) => a.score - b.score || a.index - b.index).map(item => item.candidate);
+}

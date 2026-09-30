@@ -5,6 +5,7 @@ import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {CommandEditor} from '../src/input/CommandEditor.js';
 import {layoutInput} from '../src/input/inputLayout.js';
 import {Highlighter} from '../src/input/Highlighter.js';
+import {filterCompletions, parseNativeCompletions} from '../src/shell/completion.js';
 import {planScreen} from '../src/app/screenPlan.js';
 import {encodeMessage, FrameDecoder} from '../src/session/SessionProtocol.js';
 import {parseZshHistory} from '../src/shell/HistoryService.js';
@@ -81,7 +82,10 @@ function setup(): void {
   }
 }
 
+const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, index) => `--option-${index} -- description ${index}`).join('\n'), {buffer: 'tool ', cwd: '/work'});
+
 const benchmarks: Benchmark[] = [
+  {name: 'completion/filter-500', run: () => filterCompletions(completionFixture, 'op4'), units: 500, unitName: 'candidates'},
   ...suggestionCounts.map(count => ({
     name: `history/current-text-scan-${count}`,
     run: () => histories.get(count)!.map(entry => entry.command).filter(command => command.toLowerCase().includes('nonexistent')).slice(0, 100),

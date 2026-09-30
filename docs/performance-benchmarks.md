@@ -35,3 +35,5 @@ Measured on macOS arm64, Node 26.8.1, 8GiB RAM; informational single-machine res
 | Transcript JSON snapshot, 100k | 459.95 | 878.17 |
 
 Full transcript wrapping and snapshot serialization exceed the editor-frame target. They are whole-transcript workloads, not evidence that bounded history search needs a native helper. Avoid performing them as part of completion/history queries. Startup/socket latency is not measured here.
+
+Structured completion filtering (500 candidates) measured p50 0.06ms / p95 0.13ms. A direct native-source probe measured cold Git parent-context capture at 226.64ms and command capture at 84.10ms. These cold operations are asynchronous and exceed the 50ms investigation target; warm parent-context results are cached for two seconds (32 contexts maximum) and locally filtered. Results are invalidated by buffer/cwd generation before rendering. Capture execution remains bounded to 1.5 seconds and 1MiB output.

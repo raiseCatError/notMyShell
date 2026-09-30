@@ -11,6 +11,8 @@ import {
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
+import {renderCompletion, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
+import {resolveAction} from '../ui/actions.js';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
@@ -132,6 +134,7 @@ export class TerminalApp {
   private readonly completionService = new CompletionService();
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
+  private completionGeneration = 0;
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
   private readonly commandContexts = new CommandContextCache(() => this.render());
   private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
@@ -769,6 +772,26 @@ export class TerminalApp {
       return;
     }
 
+    if (!this.running && !this.historySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
+      && !this.suggestions.alternativesOpen) {
+      const action = resolveAction(COMPLETION_ACTIONS, key);
+      if (action?.id === 'move') {
+        this.selectedSuggestion = (this.selectedSuggestion + (key.kind === 'down' ? 1 : -1) + this.shellSuggestions.length) % this.shellSuggestions.length;
+        return;
+      }
+      if (action?.id === 'insert') {
+        const candidate = this.shellSuggestions[this.selectedSuggestion] ?? this.shellSuggestions[0];
+        if (candidate) this.applySuggestion(candidate);
+        return;
+      }
+      if (action?.id === 'cancel') {
+        this.completionGeneration += 1;
+        this.completionService.cancel();
+        this.shellSuggestions = [];
+        return;
+      }
+    }
+
     if (!this.running && this.handleSuggestionKey(key)) {
       this.selectedSuggestion = 0;
       return;
@@ -920,24 +943,22 @@ export class TerminalApp {
 
 
   private async fetchSuggestions(): Promise<void> {
-    if (this.running || this.editor.hasPasteAtoms || this.editor.text.startsWith('/')) {
-      this.shellSuggestions = [];
-      return;
-    }
     const input = this.editor.text;
-    if (input === this.lastSuggestionInput) return;
-    this.lastSuggestionInput = input;
-
-    if (input.trim().length === 0) {
-      this.shellSuggestions = [];
-      this.render();
-      return;
-    }
-
-    const comps = await this.completionService.suggest(input, this.context.cwd);
-    if (this.editor.text === input) {
+    const cwd = this.context.cwd;
+    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim());
+    const key = eligible ? JSON.stringify([input, cwd]) : '';
+    if (key === this.lastSuggestionInput) return;
+    this.lastSuggestionInput = key;
+    const generation = ++this.completionGeneration;
+    this.completionService.cancel();
+    // Clear before the next frame: results for another buffer must never flash.
+    this.shellSuggestions = [];
+    this.selectedSuggestion = 0;
+    if (!eligible) return;
+    const comps = await this.completionService.suggest(input, cwd);
+    if (!this.stopped && generation === this.completionGeneration && this.editor.text === input && this.context.cwd === cwd
+      && !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms) {
       this.shellSuggestions = comps;
-      this.selectedSuggestion = 0;
       this.render();
     }
   }
@@ -2665,6 +2686,7 @@ export class TerminalApp {
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
+          if ('source' in suggestion && 'replacement' in suggestion) return renderCompletion(suggestion, selected, columns);
           return truncateAnsi(
             `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
             columns,

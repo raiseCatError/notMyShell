@@ -1,7 +1,7 @@
 import {runExternal} from '../providers/providers.js';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {parseNativeCompletions, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
+import {filterCompletions, parseNativeCompletions, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
 
 export type {CompletionCandidate} from './completion.js';
 const script = join(dirname(fileURLToPath(import.meta.url)), 'capture.zsh');
@@ -9,12 +9,27 @@ const script = join(dirname(fileURLToPath(import.meta.url)), 'capture.zsh');
 /** Existing isolated capture source; no composer text is submitted to the managed shell. */
 export class NativeCompletionSource implements CompletionSource {
   readonly id = 'zsh-native';
+  private readonly cache = new Map<string, {at: number; output: string}>();
 
   async query(context: CompletionContext, signal: AbortSignal): Promise<CompletionCandidate[]> {
-    const result = await runExternal('zsh', [script, context.buffer], {
-      cwd: context.cwd, env: process.env, signal, timeoutMs: 1500, maxBytes: 1024 * 1024,
-    });
-    return result.ok && !signal.aborted ? parseNativeCompletions(result.stdout, context) : [];
+    // Capture the token's parent context once, then fuzzy-filter locally while typing.
+    // Keep the legacy whitespace replacement boundary until quoted-token support is designed.
+    const start = context.buffer.lastIndexOf(' ') + 1;
+    const parent = context.buffer.slice(0, start);
+    const key = JSON.stringify([context.cwd, parent]);
+    const cached = this.cache.get(key);
+    let output: string;
+    if (cached && Date.now() - cached.at < 2000) output = cached.output;
+    else {
+      const result = await runExternal('zsh', [script, parent], {
+        cwd: context.cwd, env: process.env, signal, timeoutMs: 1500, maxBytes: 1024 * 1024,
+      });
+      if (!result.ok || signal.aborted) return [];
+      output = result.stdout;
+      if (this.cache.size >= 32) this.cache.delete(this.cache.keys().next().value!);
+      this.cache.set(key, {at: Date.now(), output});
+    }
+    return signal.aborted ? [] : filterCompletions(parseNativeCompletions(output, context), context.buffer.slice(start));
   }
 
 }
