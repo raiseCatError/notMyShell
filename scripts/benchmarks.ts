@@ -5,6 +5,7 @@ import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {CommandEditor} from '../src/input/CommandEditor.js';
 import {layoutInput} from '../src/input/inputLayout.js';
 import {Highlighter} from '../src/input/Highlighter.js';
+import {rankDirectories, DirectoryService} from '../src/shell/DirectoryService.js';
 import {HistoryIndex} from '../src/shell/HistoryIndex.js';
 import {filterCompletions, parseNativeCompletions} from '../src/shell/completion.js';
 import {planScreen} from '../src/app/screenPlan.js';
@@ -58,7 +59,7 @@ function transcript(count: number): OutputBuffer {
 
 function setup(): void {
   const requested = selected.length === 0 ? ['suggestions', 'transcript'] : selected;
-  if (selected.length === 0 || selected.some(name => name.includes('history'))) {
+  if (selected.length === 0 || selected.some(name => name.includes('history') || name.includes('navigation'))) {
     for (const count of suggestionCounts) {
       const entries = generatedHistory(count);
       histories.set(count, entries);
@@ -90,7 +91,10 @@ function setup(): void {
 
 const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, index) => `--option-${index} -- description ${index}`).join('\n'), {buffer: 'tool ', cwd: '/work'});
 
+const directoryServices = new Map(suggestionCounts.map(count => [count, new DirectoryService()]));
 const benchmarks: Benchmark[] = [
+  ...suggestionCounts.map(count => ({name: `navigation/rank-${count}`, run: () => rankDirectories(historyIndexes.get(count)!.all()), units: count, unitName: 'entries'})),
+  ...suggestionCounts.map(count => ({name: `navigation/cached-query-${count}`, run: () => directoryServices.get(count)!.query(historyIndexes.get(count)!.all(), 'pr7', 'native')})),
   ...suggestionCounts.map(count => ({name: `history/structured-query-${count}`,
     run: () => historyIndexes.get(count)!.search('cwd:/work/project-7 exit:failure duration:>1s nonexistent'), units: count, unitName: 'entries'})),
   {name: 'completion/filter-500', run: () => filterCompletions(completionFixture, 'op4'), units: 500, unitName: 'candidates'},

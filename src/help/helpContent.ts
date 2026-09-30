@@ -18,6 +18,12 @@ Use /history with plain text or combine cwd:, project:, exit:, before:, after:, 
 
 Enter or Tab restores the selected command without executing it. Ctrl+X removes the selected record from NMSh search. Session transcripts and the original zsh/Atuin history remain intact; deletion is remembered locally.
 
+## Directory navigation
+
+Use /dirs or the command palette to find recorded directories. Native ranks frequency and recency from approved command history. Select with arrows and Enter or Tab to insert a literal cd command, then press Enter separately to run it in zsh. Ordinary cd keeps its normal behavior.
+
+Config offers optional zoxide ranking and optional fzf/Television pickers. zoxide reads a temporary copy of the existing database; hooks and the original database remain unchanged. Missing or failing tools use Native.
+
 ## Tips
 
 - A large multiline paste is **one editable atom**; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.

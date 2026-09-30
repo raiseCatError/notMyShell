@@ -39,3 +39,16 @@ Full transcript wrapping and snapshot serialization exceed the editor-frame targ
 Structured completion filtering (500 candidates) measured p50 0.06ms / p95 0.13ms. A direct native-source probe measured cold Git parent-context capture at 226.64ms and command capture at 84.10ms. These cold operations are asynchronous and exceed the 50ms investigation target; warm parent-context results are cached for two seconds (32 contexts maximum) and locally filtered. Results are invalidated by buffer/cwd generation before rendering. Capture execution remains bounded to 1.5 seconds and 1MiB output.
 
 Structured history queries with combined cwd/exit/duration/text filters and no matches (full scan) measured p50/p95 1.39/4.25ms at 10k and 11.38/11.70ms at 100k. Queries yield every 2,048 entries and stop after at most 100 results in the composer. Journal JSON loading/projection runs in a worker to keep whole-transcript parsing off the editor thread; zsh import yields between batches. Index setup and sorting are distinct from these warm-query measurements.
+
+### Directory ranking (v0.8 navigation)
+
+Same macOS arm64 / Node 26.8.1 host, 20 samples after 3 warmups. Native aggregation yields every 2,048 history records, caches by the immutable history snapshot, and decays visit contributions over seven days.
+
+| Workload | p50 | p95 |
+| --- | --- | --- |
+| Rank 10k records | 0.65 ms | 1.61 ms |
+| Rank 100k records | 6.56 ms | 9.26 ms |
+| Cached fuzzy query from 10k history | 0.04 ms | 0.05 ms |
+| Cached fuzzy query from 100k history | 0.02 ms | 0.03 ms |
+
+These fixtures contain 80 unique directories. They measure native work, not private zoxide database latency or external picker rendering. zoxide queries use a bounded temporary database copy because upstream query sorts and saves its database.

@@ -24,6 +24,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
+  {name: '/dirs', insertion: '/dirs ', description: 'Find a directory; insert a visible cd command'},
   {name: '/history', insertion: '/history ', description: 'Search history'},
 ];
 
@@ -43,6 +44,7 @@ export type ParsedSlashCommand =
   | {kind: 'resume'}
   | {kind: 'help'}
   | {kind: 'palette'}
+  | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
 
@@ -66,6 +68,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
+  const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);
+  if (directories) return {kind: 'directories', query: (directories[1] ?? '').trim()};
   const history = /^\/history(?:\s+([\s\S]*))?$/u.exec(input);
   if (history) return {kind: 'history', query: (history[1] ?? '').trim()};
   return {kind: 'unknown', input};

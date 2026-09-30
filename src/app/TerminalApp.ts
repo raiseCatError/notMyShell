@@ -19,6 +19,7 @@ import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
 import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
+import {DirectoryService, directoryCommand, NAVIGATION_PROVIDERS, type DirectoryCandidate} from '../shell/DirectoryService.js';
 import {openPicker, PICKER_PROVIDERS, type PickerHandoff} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
@@ -92,6 +93,7 @@ import {defaultRuntimeDir} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
+const DIRECTORY_SEARCH = '/dirs ';
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
 const SUBTLE = foreground(UI_COLORS.subtle);
@@ -138,6 +140,10 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private completionGeneration = 0;
+  private readonly directoryService = new DirectoryService();
+  private directoryQuery?: string;
+  private directoryQueryAbort?: AbortController;
+  private directoryResults: DirectoryCandidate[] = [];
   private pickerOpening = false;
   private pickerAbort?: AbortController;
   private historyQuery?: string;
@@ -788,7 +794,7 @@ export class TerminalApp {
       return;
     }
 
-    if (!this.running && !this.historySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
+    if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
       && !this.suggestions.alternativesOpen) {
       const action = resolveAction(COMPLETION_ACTIONS, key);
       if (action?.id === 'move') {
@@ -814,7 +820,7 @@ export class TerminalApp {
     }
 
     // History search navigates its own matches; other slash text navigates slash commands.
-    const suggestions = this.historySearchActive
+    const suggestions = this.directorySearchActive ? this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length)) : this.historySearchActive
       ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
       : this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
@@ -829,7 +835,7 @@ export class TerminalApp {
         if (suggestion) this.applySuggestion(suggestion);
       } else if (action === 'slash-suggestion') {
         const slash = suggestions[Math.min(this.selectedSuggestion, suggestions.length - 1)];
-        if (slash) this.applySuggestion({insertion: slash.name});
+        if (slash) this.applySuggestion({insertion: this.historySearchActive || this.directorySearchActive ? slash.insertion : slash.name});
       }
       return;
     } else if (key.kind === 'text') {
@@ -960,6 +966,9 @@ export class TerminalApp {
 
   private async fetchSuggestions(): Promise<void> {
     const input = this.editor.text;
+    if (!this.directorySearchActive && this.directoryQuery !== undefined) {
+      this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = [];
+    }
     if (!this.historySearchActive && this.historyQuery !== undefined) {
       this.historyQueryAbort?.abort();
       this.historyQuery = undefined;
@@ -1012,6 +1021,25 @@ export class TerminalApp {
       if (this.stopped) return;
       if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
       if (result?.kind === 'fallback') this.output.addFrontendInteraction('/history', result.reason, INFO);
+      this.render();
+    } finally { this.pickerOpening = false; }
+  }
+
+  private async openDirectoryPicker(query: string): Promise<void> {
+    if (this.running || this.externalPassthrough || this.pickerOpening) return;
+    this.pickerOpening = true;
+    try {
+      const original = this.editor.text;
+      const native = () => this.applySuggestion({insertion: `${DIRECTORY_SEARCH}${query}`});
+      const directories = this.promptConfiguration.picker === 'native' ? [] : await this.directoryService.query(
+        this.historyService.index.all(), query, this.promptConfiguration.navigation);
+      if (this.stopped || this.running || this.editor.text !== original) return;
+      const result = await openPicker(this.promptConfiguration.picker, directories.map(item => ({
+        id: item.path, label: item.path, description: item.project, value: directoryCommand(item.path),
+      })), native, this.pickerHandoff);
+      if (this.stopped) return;
+      if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
+      if (result?.kind === 'fallback') this.output.addFrontendInteraction('/dirs', result.reason, INFO);
       this.render();
     } finally { this.pickerOpening = false; }
   }
@@ -1076,6 +1104,12 @@ export class TerminalApp {
     else if (slash.kind === 'history') {
       if (command.startsWith(HISTORY_SEARCH)) this.submitHistorySearch(slash.query, true);
       else await this.openHistoryPicker(slash.query);
+    }
+    else if (slash.kind === 'directories') {
+      if (command.startsWith(DIRECTORY_SEARCH)) {
+        const selected = this.directoryMatches(slash.query)[this.selectedSuggestion];
+        this.applySuggestion({insertion: selected?.insertion ?? `${DIRECTORY_SEARCH}${slash.query}`});
+      } else await this.openDirectoryPicker(slash.query);
     }
     else if (slash.kind === 'palette') this.openPalette();
     else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
@@ -1529,6 +1563,8 @@ export class TerminalApp {
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
       completedRecord.historyEligible = command.historyAllowed === 1 && !isPrivateCommand(command.command, ignorePatternFromEnv());
+      this.directoryQuery = undefined;
+      this.directoryQueryAbort?.abort();
       this.historyService.record(completedRecord, this.journal?.id ?? this.sessionId ?? 'current');
       this.historyQuery = undefined;
     }
@@ -2163,7 +2199,7 @@ export class TerminalApp {
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
     else if (destination === 'layout') this.startLayoutSettings();
-    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker') this.startProviderPanel(destination);
+    else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
 
@@ -2198,6 +2234,8 @@ export class TerminalApp {
         {label: 'Composer', value: layoutLabel(config)},
         {label: 'Glyph style', value: config.glyphStyle === 'nerd' ? 'Nerd Font' : 'Safe / ASCII'},
         {label: 'Syntax', value: !config.syntax.highlighting ? 'Off' : config.syntax.colors === 'followPrompt' ? 'Follow prompt theme' : config.syntax.colors === 'theme' ? 'Choose theme' : 'Grayscale'},
+        {label: 'Directory navigation', value: this.directoryService.status.detail ?? this.directoryService.status.active},
+        {label: 'Picker', value: this.promptConfiguration.picker},
         {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
         {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
       ],
@@ -2330,9 +2368,10 @@ export class TerminalApp {
     });
   }
 
-  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker'): void {
+  private startProviderPanel(family: 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'): void {
     const state: ProviderPanelState = family === 'welcome'
       ? createProviderPanel(family, 'Welcome', WELCOME_PROVIDERS, this.promptConfiguration.welcome)
+      : family === 'navigation' ? createProviderPanel(family, 'Directory navigation', NAVIGATION_PROVIDERS, this.promptConfiguration.navigation)
       : family === 'picker' ? createProviderPanel(family, 'Picker', PICKER_PROVIDERS, this.promptConfiguration.picker)
       : family === 'history' ? createProviderPanel(family, 'Command history', HISTORY_PROVIDERS, this.promptConfiguration.history)
       : createProviderPanel(family, 'Suggestions', SUGGESTION_PROVIDERS, this.promptConfiguration.suggestions);
@@ -2349,6 +2388,7 @@ export class TerminalApp {
   /** The highlighted provider rendered by its own family; captures are cached per panel. */
   private providerPreview(state: ProviderPanelState, width: number): string[] {
     const selected = providerPanelSelection(state);
+    if (state.family === 'navigation') return [`${SUBTLE}Find with /dirs; selecting inserts a visible cd command. Press Enter separately to navigate.${RESET}`];
     if (state.family === 'picker') return [`${SUBTLE}Selections restore the composer; cancel leaves it unchanged. Missing or failing tools use Native.${RESET}`];
     if (state.family === 'history') return [`${SUBTLE}${selected.id === 'atuin' ? 'Read-only local history; existing hooks unchanged; no sync.' : 'Shell-approved journal metadata and imported zsh history.'}${RESET}`];
     if (state.family === 'suggestions') {
@@ -2402,6 +2442,7 @@ export class TerminalApp {
     const selected = providerPanelSelection(state);
     const next = state.family === 'welcome'
       ? {...structuredClone(this.promptConfiguration), welcome: selected.id as PromptConfiguration['welcome']}
+      : state.family === 'navigation' ? {...structuredClone(this.promptConfiguration), navigation: selected.id as PromptConfiguration['navigation']}
       : state.family === 'picker' ? {...structuredClone(this.promptConfiguration), picker: selected.id as PromptConfiguration['picker']}
       : state.family === 'history' ? {...structuredClone(this.promptConfiguration), history: selected.id as PromptConfiguration['history']}
       : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
@@ -2411,6 +2452,7 @@ export class TerminalApp {
       this.providerPanelState = undefined;
       if (state.family === 'suggestions') this.applySuggestionProvider();
       if (state.family === 'history') void this.loadHistory();
+      if (state.family === 'navigation') { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
       this.output.addHistoryLine(state.family === 'welcome'
         ? `${SUCCESS}Welcome · ${selected.label} · shown on launch and /clear.${RESET}`
         : `${SUCCESS}${state.title} · ${selected.label}.${RESET}`);
@@ -2651,6 +2693,26 @@ export class TerminalApp {
     return !this.editor.hasPasteAtoms && this.editor.text.startsWith(HISTORY_SEARCH);
   }
 
+  private get directorySearchActive(): boolean {
+    return !this.editor.hasPasteAtoms && this.editor.text.startsWith(DIRECTORY_SEARCH);
+  }
+
+  private directoryMatches(query: string): Array<{name: string; insertion: string; description: string}> {
+    if (query !== this.directoryQuery) {
+      this.directoryQuery = query;
+      this.directoryQueryAbort?.abort();
+      const active = new AbortController();
+      this.directoryQueryAbort = active;
+      this.directoryResults = [];
+      void this.directoryService.query(this.historyService.index.all(), query, this.promptConfiguration.navigation, active.signal).then(items => {
+        if (this.stopped || active.signal.aborted || this.directoryQuery !== query) return;
+        this.directoryResults = items; this.selectedSuggestion = 0; this.render();
+      }).catch(() => {});
+    }
+    return this.directoryResults.map(item => ({name: item.path, insertion: directoryCommand(item.path),
+      description: [item.project, item.visits === undefined ? 'zoxide' : `${item.visits} visits`].filter(Boolean).join(' · ')}));
+  }
+
   private historyMatches(query: string): Array<{id: string; name: string; insertion: string; description: string}> {
     if (query !== this.historyQuery) {
       this.historyQuery = query;
@@ -2673,6 +2735,7 @@ export class TerminalApp {
   /** Composer suggestion rows for the current editor state; the same list render paints and geometry counts. */
   private composerSuggestions(): any[] {
     if (this.running || this.settingsPanelActive) return [];
+    if (this.directorySearchActive) return this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length));
     if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
     if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
     const alternatives = this.suggestions.alternatives();
@@ -2932,6 +2995,7 @@ export class TerminalApp {
     this.renderer.leave();
     this.completionService.cancel();
     this.historyQueryAbort?.abort();
+    this.directoryQueryAbort?.abort();
     this.pickerAbort?.abort();
     this.historyService.dispose();
     this.semanticService.kill();

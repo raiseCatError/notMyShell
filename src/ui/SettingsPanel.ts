@@ -13,6 +13,7 @@ import {
 import {providerLabel} from '../prompt/PromptPanel.js';
 import {welcomeProvider} from '../output/WelcomeProviders.js';
 import {PROMPT_STYLES, PROMPT_STYLE_LABELS} from '../prompt/powerline.js';
+import {NAVIGATION_PROVIDERS} from '../shell/DirectoryService.js';
 import {PICKER_PROVIDERS} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
@@ -61,7 +62,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation';
 
 interface SettingsRowBase {
   id: string;
@@ -155,6 +156,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     control: 'child', destination: 'history', value: config => HISTORY_PROVIDERS.find(provider => provider.id === config.history)?.label ?? config.history},
   {id: 'picker', label: 'Picker provider', description: 'Native composer search, fzf, or Television; selections never execute', category: 'History',
     control: 'child', destination: 'picker', value: config => PICKER_PROVIDERS.find(provider => provider.id === config.picker)?.label ?? config.picker},
+  {id: 'navigation', label: 'Directory navigation', description: 'Native command-history frecency or read-only zoxide snapshot', category: 'History',
+    control: 'child', destination: 'navigation', value: config => NAVIGATION_PROVIDERS.find(provider => provider.id === config.navigation)?.label ?? config.navigation},
   {id: 'suggestionsOnEmpty', level: 'advanced', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
     control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
 ];
