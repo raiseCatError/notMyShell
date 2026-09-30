@@ -8,7 +8,7 @@ import {
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import type {CommandType} from '../shell/SemanticService.js';
 import type {Key} from '../terminal/keys.js';
-import {renderControls} from '../ui/controls.js';
+import {DRAFT_PANEL_ACTIONS, renderActionHelp} from '../ui/actions.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
@@ -127,7 +127,7 @@ export function renderSyntaxPanel(state: SyntaxPanelState, columns: number, prom
   const preview = ['', `${PRIMARY}Preview${RESET}  ${syntaxDraftChanged(state) ? `${ACCENT}unsaved preview` : `${SUBTLE}matches current`}${RESET}`,
     ...SYNTAX_PREVIEW_LINES.map(line => `  ${ACCENT}${GLYPHS.prompt}${RESET} ${renderSyntaxPreviewLine(line, draft, promptPalette)}`)];
   if (state.message) preview.push(`${SECONDARY}${state.message}${RESET}`);
-  const controls = ['', renderControls([['↑↓', 'move'], ['←→', 'change'], ['Enter', 'save'], ['Esc', 'cancel']])];
+  const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
 
   const includeGallery = out.length + gallery.length + preview.length + controls.length <= rowsAvailable;
   return [...out, ...(includeGallery ? gallery : []), ...preview, ...controls].map(row => truncateAnsi(row, columns));

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-01
+
+UI Foundation & Customization: a shared internal UI toolkit (notMyUI), Chroma color roles, reduced-presentation modes, Markdown-authored help, and Settings v2.
+
+### Added
+- **notMyUI toolkit:** an internal presentation and interaction foundation for NMSh-owned surfaces (not a published package). [docs/architecture/notmyui.md](docs/architecture/notmyui.md) maps each primitive to its real consumers and lists what is deliberately not built.
+- **Shared actions and contextual help:** panel and palette actions share one model (identity, label, key, enabled state), and footer help is derived from it, so it stays in step with what a panel can actually do.
+- **Shared form controls:** toggles, selects, multi-selects, text fields and confirmations are reusable controls that report proposals while the feature layer persists. Settings rows and Settings search use them.
+- **Accessibility baseline:** `NO_COLOR` (or `TERM=dumb`) stops NMSh-generated color escapes while bold, inverse and glyphs remain. `NMSH_COLOR=none|256|truecolor` overrides the color level explicitly. `NMSH_REDUCED_MOTION=1` holds the shimmer and the welcome blink still while durations keep counting. Focus, changed and error states are also carried by text or glyphs, not color alone. See [docs/accessibility/baseline.md](docs/accessibility/baseline.md) for criteria and known gaps.
+- **Deterministic presentation:** `NMSH_DETERMINISTIC=1` fixes the displayed completion time, the shimmer and activity phase, and the welcome blink for repeatable captures, and implies reduced motion. Shell behavior, PTY output and measured durations stay real. See [docs/testing/deterministic-presentation.md](docs/testing/deterministic-presentation.md).
+- **Chroma:** shared color roles for NMSh-owned UI in three distinct categories (semantic status, theme and identity colors), plus gradients and curves, with truecolor, 256-color and no-color fallback.
+- **Surface primitives:** frames, fills, padding, insets, width and alignment, used by the shared panel frame.
+- **Semantic motion engine:** a pure engine of motion profiles per state, sampled at an elapsed time. It owns no timers and never changes width. The existing running-command shimmer and activity glyph now run on it.
+- **Authored Markdown and `/help`:** `/help` renders NMSh-authored Markdown (headings, tables, code fences, tips, links). Through the transcript, links appear as `text (url)` rather than clickable hyperlinks.
+- **Settings v2:** a simple and an advanced view, a changed marker on settings that differ from their defaults, reset of the current setting, search, and a remembered position within a run.
+
+### Notes
+- Authored Markdown applies to NMSh-owned content only. Raw PTY output, transcript command output, `/copy` and archived shell data are never interpreted as authored UI content or recolored.
+- Not included: automatic 256-color detection (`NMSH_COLOR=256` selects it), a persisted reduced-motion setting, user key remapping, a shared animation scheduler, Linguist language colors (#176) and transient visual effects (#78). Screen-reader behavior is unverified, and not every surface uses authored Markdown yet.
+
 ## [0.6.0] - 2026-09-29
 
 Sessions & Continuity: persistent live sessions you can detach from and reattach to, a Flow composer, and a `/layout` showcase.

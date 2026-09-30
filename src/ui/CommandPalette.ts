@@ -3,7 +3,7 @@ import {NATIVE_PALETTE_IDS} from '../prompt/configuration.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {fuzzyMatch} from '../suggestions/NativeSuggestions.js';
 import type {Key} from '../terminal/keys.js';
-import {renderControls} from './controls.js';
+import {renderActionHelp, resolveAction, type UiAction} from './actions.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {SEARCH_MATCH, SETTINGS_ENTRIES, SETTINGS_ROWS, type SettingsDestination} from './SettingsPanel.js';
 import {highlightMatches, truncateAnsi} from '../util/text.js';
@@ -109,10 +109,20 @@ export function filterPalette(state: PaletteState, recent: readonly string[] = [
   return scored.sort((a, b) => b.score - a.score || recency(a.item) - recency(b.item)).map(entry => entry.item);
 }
 
+/** Run needs a result to run; move needs more than nothing to move over. */
+export function paletteActions(resultCount: number): UiAction[] {
+  return [
+    {id: 'search', label: 'search', keyLabel: 'type', kinds: []},
+    {id: 'move', label: 'move', keyLabel: '↑↓', kinds: ['up', 'down'], enabled: resultCount > 1},
+    {id: 'run', label: 'run', keyLabel: 'Enter', kinds: ['enter'], enabled: resultCount > 0},
+    {id: 'close', label: 'close', keyLabel: 'Esc', kinds: ['escape']},
+  ];
+}
+
 /** Returns the chosen item on Enter; edits the query and selection otherwise. */
 export function handlePaletteKey(key: Key, state: PaletteState, recent: readonly string[] = []): PaletteItem | 'changed' | undefined {
   const visible = filterPalette(state, recent);
-  if (key.kind === 'enter') return visible[Math.min(state.selectedIndex, visible.length - 1)];
+  if (resolveAction(paletteActions(visible.length), key)?.id === 'run') return visible[Math.min(state.selectedIndex, visible.length - 1)];
   if (key.kind === 'up') state.selectedIndex = visible.length ? (state.selectedIndex - 1 + visible.length) % visible.length : 0;
   else if (key.kind === 'down') state.selectedIndex = visible.length ? (state.selectedIndex + 1) % visible.length : 0;
   else if (key.kind === 'text' || key.kind === 'paste') { state.query += key.value.replace(/[\r\n]/gu, ''); state.selectedIndex = 0; state.viewportStart = 0; }
@@ -142,6 +152,6 @@ export function renderPalette(state: PaletteState, columns: number, rowsAvailabl
     const label = state.query ? highlightMatches(item.label, state.query, active ? ACCENT : SECONDARY, SEARCH_MATCH) : item.label;
     rows.push(`${active ? `${ACCENT}›` : ' '} ${active ? ACCENT : SECONDARY}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
   });
-  rows.push('', renderControls([['type', 'search'], ['↑↓', 'move'], ['Enter', 'run'], ['Esc', 'close']]));
+  rows.push('', renderActionHelp(paletteActions(visible.length)));
   return rows.map(row => truncateAnsi(row, columns));
 }
