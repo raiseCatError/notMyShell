@@ -58,7 +58,8 @@ export const DEFAULT_MAX_SESSIONS = 16;
 function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
     case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
-    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at};
+    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at,
+      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed})};
     case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at};
   }
 }
@@ -302,11 +303,11 @@ export class SessionService {
       if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
       else session.controller?.({type: 'output', data});
     });
-    shell.on('exec', command => {
+    shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       session.running = {command, since: at};
       session.evidence.onExec();
-      emit({kind: 'exec', seq: ++session.seq, at, command});
+      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
     });
     shell.on('prompt', marker => {
       record.cwd = marker.cwd;

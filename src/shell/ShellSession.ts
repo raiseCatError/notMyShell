@@ -9,7 +9,7 @@ import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
 interface SessionEvents {
   data: [string];
   prompt: [ShellMarker];
-  exec: [string];
+  exec: [string, number?];
   exit: [{ exitCode: number; signal?: number }];
 }
 
@@ -100,7 +100,9 @@ function nmsh_precmd {
 
 function nmsh_preexec {
   nmsh_tty_echo echo
-  printf '\\e]777;nmsh;${token};exec;%s\\a' "\${1//[[:cntrl:]]/ }"
+  local nmsh_history_allowed=1
+  [[ -n \$HISTORY_IGNORE && \$1 == \${~HISTORY_IGNORE} ]] && nmsh_history_allowed=0
+  printf '\\e]777;nmsh;${token};exec2;%d;%s\\a' "\$nmsh_history_allowed" "\${1//[[:cntrl:]]/ }"
 }
 
 # Compose with whatever the user's config/plugins already installed instead
@@ -201,7 +203,7 @@ add-zsh-hook preexec nmsh_preexec
       if (event.kind === 'data') {
         if (this.ready) this.emit('data', event.data);
       } else if (event.kind === 'exec') {
-        if (this.ready) this.emit('exec', event.command);
+        if (this.ready) this.emit('exec', event.command, event.historyAllowed);
       } else if (!this.ready) {
         this.ready = true;
         this.emit('prompt', event.marker);

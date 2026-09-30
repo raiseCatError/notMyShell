@@ -4,6 +4,8 @@ import type {TranscriptSession} from '../sessions/TranscriptStore.js';
 
 /** Position of an event in a service session's stream, when it has one. */
 export interface StreamStamp {
+  /** Explicit zsh history eligibility; absent from older services. */
+  historyAllowed?: number;
   seq?: number;
   /** When the service observed the event (epoch ms). */
   at?: number;

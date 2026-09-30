@@ -14,7 +14,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     this.shell = factory(options);
     this.shell.on('data', data => this.emit('data', data, NO_STAMP));
     this.shell.on('prompt', marker => this.emit('prompt', marker, NO_STAMP));
-    this.shell.on('exec', command => this.emit('exec', command, NO_STAMP));
+    this.shell.on('exec', (command, historyAllowed) => this.emit('exec', command, historyAllowed === undefined ? NO_STAMP : {historyAllowed}));
     this.shell.on('exit', event => this.emit('exit', event));
   }
 

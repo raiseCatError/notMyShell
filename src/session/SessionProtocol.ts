@@ -41,7 +41,7 @@ export type ServerMessage =
    * missed exactly once with the original timing.
    */
   | {type: 'output'; data: string; seq?: number; at?: number}
-  | {type: 'exec'; command: string; seq: number; at: number}
+  | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number}
   | {type: 'prompt'; exitCode: number; cwd: string; seq?: number; at?: number}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
@@ -112,7 +112,7 @@ const SHAPES: Record<string, Shape> = {
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
-  exec: {command: 'string', seq: 'int', at: 'int'},
+  exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?'},
   prompt: {exitCode: 'int', cwd: 'string', seq: 'int?', at: 'int?'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},

@@ -19,7 +19,8 @@ import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
 import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
-import {ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
+import type {HistoryEntry} from '../shell/HistoryIndex.js';
+import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
@@ -135,6 +136,9 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private completionGeneration = 0;
+  private historyQuery?: string;
+  private historyQueryAbort?: AbortController;
+  private historyResults: HistoryEntry[] = [];
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
   private readonly commandContexts = new CommandContextCache(() => this.render());
   private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
@@ -162,7 +166,7 @@ export class TerminalApp {
   /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
@@ -219,7 +223,7 @@ export class TerminalApp {
     });
     this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
     this.session.on('prompt', (marker, stamp) => { if (this.inStream(stamp)) this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at); });
-    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at); });
+    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('exit', event => {
       this.shellEnded = true;
@@ -285,7 +289,7 @@ export class TerminalApp {
       if (running) {
         this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
         this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
-          startId: running.startId, cwd: running.cwd};
+          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed};
       }
     }
   }
@@ -341,13 +345,13 @@ export class TerminalApp {
    * zsh started a command line this frontend did not submit (it began while
    * detached, or came from type-ahead): give it its own transcript block.
    */
-  private onShellExec(command: string, at = Date.now()): void {
-    if (this.running) return;
+  private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
+    if (this.running) { this.running.historyAllowed = historyAllowed; return; }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
-    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed};
     this.scheduleJournal();
     if (!this.replaying) this.render();
   }
@@ -364,7 +368,7 @@ export class TerminalApp {
     const outputStartId = this.output.activeOutputStartId;
     return {sessionId: this.sessionId, seq: this.streamSeq,
       ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
-        cwd: running.cwd, startId: running.startId, outputStartId}} : {})};
+        cwd: running.cwd, startId: running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
   }
 
   async run(): Promise<number> {
@@ -726,6 +730,15 @@ export class TerminalApp {
       this.historyViewport.latest();
     }
 
+    if (key.kind === 'historyDelete' && this.historySearchActive) {
+      const entry = this.historyQuery === this.editor.text.substring(HISTORY_SEARCH.length) ? this.historyResults[this.selectedSuggestion] : undefined;
+      if (entry) void this.historyService.index.delete(entry.id).then(() => {
+        this.historyQuery = undefined;
+        this.historyResults = [];
+        this.render();
+      }).catch(() => { this.output.addFrontendInteraction('/history', 'Could not persist history deletion.', ERROR); this.render(); });
+      return;
+    }
     if (key.kind === 'historySearch') {
       if (!this.running) {
         this.editor.clear();
@@ -944,6 +957,11 @@ export class TerminalApp {
 
   private async fetchSuggestions(): Promise<void> {
     const input = this.editor.text;
+    if (!this.historySearchActive && this.historyQuery !== undefined) {
+      this.historyQueryAbort?.abort();
+      this.historyQuery = undefined;
+      this.historyResults = [];
+    }
     const cwd = this.context.cwd;
     const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim());
     const key = eligible ? JSON.stringify([input, cwd]) : '';
@@ -1448,6 +1466,13 @@ export class TerminalApp {
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     const completedRecord = this.output.complete(exitCode);
+    if (completedRecord) {
+      completedRecord.startedAt = command.startedAt;
+      completedRecord.durationMs = Math.max(0, elapsed);
+      completedRecord.historyEligible = command.historyAllowed === 1 && !isPrivateCommand(command.command, ignorePatternFromEnv());
+      this.historyService.record(completedRecord, this.journal?.id ?? this.sessionId ?? 'current');
+      this.historyQuery = undefined;
+    }
     this.suggestions.record({command: command.command, cwd: command.cwd, exitCode, at: command.startedAt, previous: this.submittedCommands[0]});
     this.submittedCommands.unshift(command.command);
     if (this.submittedCommands.length > 50) this.submittedCommands.length = 50;
@@ -2163,7 +2188,12 @@ export class TerminalApp {
 
   /** History loads in the background after startup; suggestions refine once it is indexed. */
   private async loadHistory(): Promise<void> {
-    await this.historyService.reload();
+    try { await this.historyService.reload(); } catch {
+      if (this.stopped) return;
+      this.output.addFrontendInteraction('/history', 'Command history is unavailable; check local storage.', ERROR);
+      return;
+    }
+    this.historyQuery = undefined;
     if (this.stopped) return;
     await this.nativeSuggestions.loadInChunks(this.historyService.getEntries());
     if (this.stopped) return;
@@ -2551,10 +2581,23 @@ export class TerminalApp {
     return !this.editor.hasPasteAtoms && this.editor.text.startsWith(HISTORY_SEARCH);
   }
 
-  private historyMatches(query: string): Array<{name: string; insertion: string; description: string}> {
-    const q = query.toLowerCase();
-    return this.historyService.getAll().filter(h => h.toLowerCase().includes(q))
-      .slice(0, 100).map(m => ({name: m, insertion: m, description: 'History'}));
+  private historyMatches(query: string): Array<{id: string; name: string; insertion: string; description: string}> {
+    if (query !== this.historyQuery) {
+      this.historyQuery = query;
+      this.historyQueryAbort?.abort();
+      const active = new AbortController();
+      this.historyQueryAbort = active;
+      this.historyResults = [];
+      void this.historyService.search(query, active.signal).then(entries => {
+        if (this.stopped || active.signal.aborted || this.historyQuery !== query) return;
+        this.historyResults = entries;
+        this.selectedSuggestion = 0;
+        this.render();
+      }).catch(() => {});
+    }
+    return this.historyResults.map(entry => ({id: entry.id, name: entry.command.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' '), insertion: entry.command,
+      description: [entry.exitCode === undefined ? undefined : `exit ${entry.exitCode}`,
+        entry.durationMs === undefined ? undefined : `${entry.durationMs}ms`, entry.cwd, entry.project].filter(Boolean).join(' · ') || 'History'}));
   }
 
   /** Composer suggestion rows for the current editor state; the same list render paints and geometry counts. */
@@ -2818,6 +2861,8 @@ export class TerminalApp {
     process.stdin.pause();
     this.renderer.leave();
     this.completionService.cancel();
+    this.historyQueryAbort?.abort();
+    this.historyService.dispose();
     this.semanticService.kill();
     this.finish(exitCode);
   }

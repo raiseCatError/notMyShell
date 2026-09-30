@@ -4,7 +4,7 @@ import {dirname} from 'node:path';
 /** One shell stream event as retained for replay. */
 export type BacklogEvent =
   | {kind: 'output'; seq: number; at: number; data: string}
-  | {kind: 'exec'; seq: number; at: number; command: string}
+  | {kind: 'exec'; seq: number; at: number; command: string; historyAllowed?: number}
   | {kind: 'prompt'; seq: number; at: number; exitCode: number; cwd: string};
 
 /** Non-event spool records: journal acknowledgements, truncation and the shell's end. */

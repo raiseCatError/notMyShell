@@ -5,6 +5,7 @@ import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {CommandEditor} from '../src/input/CommandEditor.js';
 import {layoutInput} from '../src/input/inputLayout.js';
 import {Highlighter} from '../src/input/Highlighter.js';
+import {HistoryIndex} from '../src/shell/HistoryIndex.js';
 import {filterCompletions, parseNativeCompletions} from '../src/shell/completion.js';
 import {planScreen} from '../src/app/screenPlan.js';
 import {encodeMessage, FrameDecoder} from '../src/session/SessionProtocol.js';
@@ -12,7 +13,7 @@ import {parseZshHistory} from '../src/shell/HistoryService.js';
 import {NativeSuggestions} from '../src/suggestions/NativeSuggestions.js';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
 
-type Benchmark = {name: string; run: () => void; samples?: number; warmup?: number; units?: number; unitName?: string};
+type Benchmark = {name: string; run: () => unknown; samples?: number; warmup?: number; units?: number; unitName?: string};
 
 const args = new Set(process.argv.slice(2));
 const memory = args.has('--memory');
@@ -29,6 +30,7 @@ const semanticCache = new Map<string, 'executable' | 'builtin'>();
 for (const name of ['git', 'npm', 'rg', 'zsh', 'print']) semanticCache.set(name, 'executable');
 const editorCharacters = Array.from(editorText);
 const suggestionCounts = [10_000, 100_000];
+const historyIndexes = new Map<number, HistoryIndex>();
 const histories = new Map<number, CommandEntry[]>();
 const historyFiles = new Map<number, string>();
 const protocolFrames = Array.from({length: 400}, (_, seq) => encodeMessage({type: 'output', data: ansiPayload.slice(0, 256), seq, at: 1000 + seq})).join('');
@@ -60,6 +62,10 @@ function setup(): void {
     for (const count of suggestionCounts) {
       const entries = generatedHistory(count);
       histories.set(count, entries);
+      const index = new HistoryIndex();
+      entries.forEach((entry, id) => index.add({...entry, id: String(id), source: 'nmsh', project: `project-${id % 80}`, session: `session-${id % 8}`, durationMs: id % 3000}));
+      index.all();
+      historyIndexes.set(count, index);
       historyFiles.set(count, entries.map(entry => `: ${entry.at! / 1000}:1;${entry.command}`).join('\n'));
     }
   }
@@ -85,6 +91,8 @@ function setup(): void {
 const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, index) => `--option-${index} -- description ${index}`).join('\n'), {buffer: 'tool ', cwd: '/work'});
 
 const benchmarks: Benchmark[] = [
+  ...suggestionCounts.map(count => ({name: `history/structured-query-${count}`,
+    run: () => historyIndexes.get(count)!.search('cwd:/work/project-7 exit:failure duration:>1s nonexistent'), units: count, unitName: 'entries'})),
   {name: 'completion/filter-500', run: () => filterCompletions(completionFixture, 'op4'), units: 500, unitName: 'candidates'},
   ...suggestionCounts.map(count => ({
     name: `history/current-text-scan-${count}`,
@@ -176,14 +184,14 @@ function percentile(sorted: number[], value: number): number {
   return sorted[Math.max(0, Math.ceil(value * sorted.length) - 1)]!;
 }
 
-function report(benchmark: Benchmark): void {
+async function report(benchmark: Benchmark): Promise<void> {
   const samples = benchmark.samples ?? sampleDefault;
   const warmup = benchmark.warmup ?? warmupDefault;
-  for (let index = 0; index < warmup; index += 1) benchmark.run();
+  for (let index = 0; index < warmup; index += 1) await benchmark.run();
   const times: number[] = [];
   for (let index = 0; index < samples; index += 1) {
     const start = performance.now();
-    benchmark.run();
+    await benchmark.run();
     times.push(performance.now() - start);
   }
   times.sort((a, b) => a - b);
@@ -201,7 +209,7 @@ if (runnable.length === 0) {
   console.error(`No benchmarks matched: ${selected.join(', ')}`);
   process.exitCode = 1;
 } else {
-  for (const benchmark of runnable) report(benchmark);
+  for (const benchmark of runnable) await report(benchmark);
 }
 if (memory) {
   if (globalThis.gc) globalThis.gc();

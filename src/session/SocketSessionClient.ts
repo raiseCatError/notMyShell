@@ -155,7 +155,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   private receive(message: ServerMessage): void {
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd}, {seq: message.seq, at: message.at});
-    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at});
+    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed});
     else if (message.type === 'replayed') this.emit('replayed', {truncatedBytes: message.truncatedBytes});
     else if (message.type === 'exit') {
       this.finish(message.exitCode, message.signal);
