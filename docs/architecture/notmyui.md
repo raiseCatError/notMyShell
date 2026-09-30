@@ -26,7 +26,9 @@ Shared animation scheduler, user-remappable bindings, surface variants beyond th
 
 See `docs/accessibility/baseline.md` for accessibility criteria and known gaps.
 
-## v0.7 physical QA checklist (not yet performed)
+## v0.7 physical QA record
+
+The v0.7 physical QA pass was completed before release. The items below record the tested areas and known limitations; screen-reader behavior remains unverified.
 
 - Ghostty and Terminal.app: `/settings` Config: `A` advanced, `/` search, `R` reset, changed `•` marker, remembered position after Esc and reopen.
 - Narrow widths (about 24 to 40 columns) for Settings, palette and `/help`.
