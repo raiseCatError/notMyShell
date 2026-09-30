@@ -37,6 +37,7 @@ test('menu shows descriptions, source groups, safe icons and degrades at narrow 
 function appForTest(): TerminalApp {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
+  app['context'].cwd = context.cwd;
   return app;
 }
 function cleanup(app: TerminalApp): void { app['stop'](0); app['session'].kill(); }

@@ -24,6 +24,10 @@ Use /dirs or the command palette to find recorded directories. Native ranks freq
 
 Config offers optional zoxide ranking and optional fzf/Television pickers. zoxide reads a temporary copy of the existing database; hooks and the original database remain unchanged. Missing or failing tools use Native.
 
+## Command correction
+
+After an unambiguous simple command-not-found typo, NMSh may show a local executable correction below the composer. Tab places it in the editor; review and press Enter separately. Esc dismisses it. Complex expressions, ambiguous matches and destructive targets are suppressed. The suggestion is frontend UI and stays out of command output, copy and history.
+
 ## Tips
 
 - A large multiline paste is **one editable atom**; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.

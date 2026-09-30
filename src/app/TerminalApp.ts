@@ -19,6 +19,7 @@ import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
 import {NativeSuggestions} from '../suggestions/NativeSuggestions.js';
 import {DejaSuggestions} from '../suggestions/DejaSuggestions.js';
+import {CommandCorrectionService, CORRECTION_ACTIONS, renderCorrection, type CommandCorrection} from '../shell/CommandCorrection.js';
 import {DirectoryService, directoryCommand, NAVIGATION_PROVIDERS, type DirectoryCandidate} from '../shell/DirectoryService.js';
 import {openPicker, PICKER_PROVIDERS, type PickerHandoff} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
@@ -140,6 +141,9 @@ export class TerminalApp {
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private completionGeneration = 0;
+  private readonly correctionService = new CommandCorrectionService();
+  private correction?: CommandCorrection;
+  private correctionAbort?: AbortController;
   private readonly directoryService = new DirectoryService();
   private directoryQuery?: string;
   private directoryQueryAbort?: AbortController;
@@ -767,6 +771,7 @@ export class TerminalApp {
       return;
     }
     if (key.kind === 'interrupt') {
+      this.clearCorrection();
       if (this.running) {
         this.running.interrupted = true;
         this.editor.clear();
@@ -792,6 +797,21 @@ export class TerminalApp {
       if (this.running || this.editor.text.length === 0) this.session.endInput();
       else if (!this.running) this.editor.delete();
       return;
+    }
+
+    if (this.correction && !this.running && this.editor.text.length === 0) {
+      const action = resolveAction(CORRECTION_ACTIONS, key);
+      if (action?.id === 'insert') {
+        this.applySuggestion(this.correction);
+        this.clearCorrection();
+        return;
+      }
+      if (action?.id === 'dismiss') { this.clearCorrection(); return; }
+    }
+    if (key.kind === 'text' || key.kind === 'paste' || key.kind === 'enter') this.clearCorrection();
+    // Input can contain several decoded keys before the next render; guard stale candidates here too.
+    if (this.shellSuggestions.some(candidate => candidate.context && (candidate.context.buffer !== this.editor.text || candidate.context.cwd !== this.context.cwd))) {
+      this.shellSuggestions = []; this.completionGeneration += 1; this.completionService.cancel();
     }
 
     if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
@@ -1166,6 +1186,7 @@ export class TerminalApp {
   }
 
   private async submit(): Promise<void> {
+    this.clearCorrection();
     const command = this.editor.text;
     this.editor.clear();
     if (!command.trim()) return;
@@ -1582,6 +1603,7 @@ export class TerminalApp {
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
+    if (!this.replaying && !command.interrupted && !command.cleared) void this.suggestCorrection(command.command, exitCode, completedRecord?.output ?? '').catch(() => {});
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the completed command.', ERROR);
     });
@@ -2693,6 +2715,21 @@ export class TerminalApp {
     return !this.editor.hasPasteAtoms && this.editor.text.startsWith(HISTORY_SEARCH);
   }
 
+  private clearCorrection(): void {
+    this.correctionAbort?.abort(); this.correctionAbort = undefined; this.correction = undefined;
+  }
+
+  private async suggestCorrection(command: string, exitCode: number, output: string): Promise<void> {
+    this.clearCorrection();
+    if (exitCode !== 127 || this.editor.text || this.running) return;
+    const active = new AbortController();
+    this.correctionAbort = active;
+    const correction = await this.correctionService.suggest(command, exitCode, output, active.signal);
+    if (!this.stopped && !active.signal.aborted && !this.editor.text && !this.running && this.correctionAbort === active) {
+      this.correction = correction; this.render();
+    }
+  }
+
   private get directorySearchActive(): boolean {
     return !this.editor.hasPasteAtoms && this.editor.text.startsWith(DIRECTORY_SEARCH);
   }
@@ -2735,6 +2772,7 @@ export class TerminalApp {
   /** Composer suggestion rows for the current editor state; the same list render paints and geometry counts. */
   private composerSuggestions(): any[] {
     if (this.running || this.settingsPanelActive) return [];
+    if (this.correction && this.editor.text.length === 0) return [this.correction];
     if (this.directorySearchActive) return this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length));
     if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
     if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
@@ -2862,6 +2900,7 @@ export class TerminalApp {
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
+          if ('correction' in suggestion) return renderCorrection(suggestion, columns);
           if ('source' in suggestion && 'replacement' in suggestion) return renderCompletion(suggestion, selected, columns);
           return truncateAnsi(
             `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
@@ -2995,6 +3034,7 @@ export class TerminalApp {
     this.renderer.leave();
     this.completionService.cancel();
     this.historyQueryAbort?.abort();
+    this.clearCorrection();
     this.directoryQueryAbort?.abort();
     this.pickerAbort?.abort();
     this.historyService.dispose();
