@@ -259,6 +259,7 @@ export class TerminalApp {
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
+    this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});

@@ -32,3 +32,26 @@ configuration is not applied automatically.
   the shared startup query reports support.
 - [ ] Reattach Ghostty → Terminal.app → Kitty → iTerm2 → WezTerm where available:
   new frontend capabilities, same shell cwd/exports, no stale input modes.
+
+## OSC 8 additions (#150)
+
+All checks below remain pending physical host validation. Test on available
+hosts; installing every terminal is unnecessary. Repeat capable checks after
+reattaching from a capable host to a baseline host and back.
+
+- Print `https://example.com/path?x=1` and `http://example.com`; visible text must
+  match, with clickable targets only when the attachment supports hyperlinks.
+- From a command cwd containing `file.txt`, print `file.txt`, `./file.txt` and a
+  missing path. Existing paths open the correct local file; missing paths stay
+  plain. Change cwd and inspect the old command to verify its original context.
+- In a GitHub repository with an explicit origin, print `#123`, `#tag` and
+  `#123abc`. Only the numeric reference links. Outside a known repository all
+  stay plain. GitHub resolves PR numbers through the issue URL.
+- Print a program-owned OSC 8 label followed by an unlinked URL. Resize narrowly
+  and expand/fold output. Program target and generated target remain distinct;
+  no link extends into neighboring rows or the editor.
+- Compare `/copy`, exported transcript/journal and command history before/after
+  enabling `NMSH_HYPERLINKS`; no generated OSC 8 appears in stored/copy text.
+- Ghostty, iTerm2, Kitty and WezTerm: check host click modifiers and selection.
+  Terminal.app, unknown hosts and tmux baseline: text remains plain unless the
+  explicit `NMSH_HYPERLINKS=1` override is used; no escape garbage appears.
