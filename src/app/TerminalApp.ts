@@ -2528,7 +2528,7 @@ export class TerminalApp {
     const cached = this.welcomePreviews.get(selected.id);
     if (cached) return cached;
     this.welcomePreviews.set(selected.id, [`${SUBTLE}Running ${selected.label}…${RESET}`]);
-    void captureWelcome(selected.id as 'fastfetch' | 'neofetch', this.shellCwd).then(result => {
+    void captureWelcome(selected.id as Exclude<PromptConfiguration['welcome'], 'vespyr' | 'none'>, this.shellCwd).then(result => {
       this.welcomePreviews.set(selected.id, result.ok
         ? renderWelcome({...createWelcomeSnapshot(this.buildIdentity, this.shellCwd), captured: result.lines}, width).map(row => row.ansi)
         : [`${SUBTLE}${selected.label} failed: ${result.reason}${RESET}`]);

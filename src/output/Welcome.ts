@@ -1,4 +1,6 @@
 import {homedir} from 'node:os';
+import {colorLevel} from '../presentation/capabilities.js';
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import type {BuildIdentity} from '../buildInfo.js';
 import type {WelcomeProviderId} from '../prompt/configuration.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
@@ -158,7 +160,7 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
     const spacer = ' '.repeat(gutter);
     rows.push({plain: `${prefix.plain}${spacer}${text.plain}`, ansi: `${prefix.ansi}${spacer}${text.ansi}`});
   }
-  const line = repeatToWidth('─', width);
+  const line = repeatToWidth(getCurrentGlyphMode() === 'safe' ? '-' : '─', width);
   rows.push({plain: line, ansi: `${foreground(DIVIDER)}${line}${RESET}`});
   // All rows belong to ordinary scrollback; none have a PTY line index.
   return rows.filter(row => displayWidth(row.plain) <= width);
@@ -171,7 +173,7 @@ export const MIN_CAPTURED_WELCOME_WIDTH = 24;
 function renderCapturedWelcome(captured: readonly string[], width: number): WrappedRow[] {
   if (width < MIN_CAPTURED_WELCOME_WIDTH) return [];
   const rows = captured.map(line => {
-    const ansi = truncateAnsi(line, width);
+    const ansi = truncateAnsi(colorLevel() === 'none' ? stripAnsi(line) : line, width);
     return {ansi: `${ansi}${RESET}`, plain: stripAnsi(ansi)};
   });
   const line = repeatToWidth('─', width);

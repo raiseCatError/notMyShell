@@ -120,6 +120,20 @@ test('captured welcome rows are clipped, hidden when narrow, and stay out of cop
   assert.deepEqual(output.transcript().welcome?.captured, snapshot.captured);
 });
 
+test('external welcome presentation respects NO_COLOR without changing stored capture', () => {
+  const old = process.env.NO_COLOR;
+  process.env.NO_COLOR = '1';
+  try {
+    const captured = ['\u001B[31mexternal\u001B[0m'];
+    const snapshot = {...createWelcomeSnapshot(identity, '/tmp'), captured};
+    assert.ok(renderWelcome(snapshot, 40).every(row => !/\u001B\[[0-9;]*[34]8;|\u001B\[31m/u.test(row.ansi)));
+    assert.equal(snapshot.captured[0], captured[0]);
+  } finally {
+    if (old === undefined) delete process.env.NO_COLOR;
+    else process.env.NO_COLOR = old;
+  }
+});
+
 test('/resume keeps the archived external welcome and a late capture never overwrites it', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nmsh-welcome-resume-'));
   const app = new TerminalApp();

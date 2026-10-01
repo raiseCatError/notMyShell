@@ -210,7 +210,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'transcript', label: 'Transcript', description: 'History colors, dividers, and prompt snapshots', category: 'Transcript', control: 'child', destination: 'transcript'},
   {id: 'syntax', label: 'Syntax', description: 'Editor highlighting and syntax colors', category: 'Syntax', control: 'child', destination: 'syntax'},
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
-  {id: 'welcome', label: 'Welcome', description: 'Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
+  {id: 'welcome', label: 'Welcome', description: 'Native, optional external fetch provider, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
   {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
 ];
