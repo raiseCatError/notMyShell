@@ -1,8 +1,23 @@
+import {displayWidth} from '../util/text.js';
+
 export interface TerminalFrame {
   rows: string[];
   cursorRow: number;
   cursorColumn: number;
   cursorVisible?: boolean;
+  /** Viewport width; lets the renderer keep rows that fill the last column intact. */
+  columns?: number;
+}
+
+/**
+ * A row that already reaches the final column leaves the terminal in its
+ * pending-wrap state with the cursor still on that cell, so a trailing
+ * erase-to-end-of-line (surface fills use `CSI K`) would erase the last
+ * visible character. Full-width rows need no fill, so their EL is dropped.
+ */
+export function rowForTerminal(row: string, columns: number | undefined): string {
+  if (!columns || !row.includes('\u001B[') || displayWidth(row) < columns) return row;
+  return row.replace(/\u001B\[0?K/gu, '');
 }
 
 export class TerminalRenderer {
@@ -16,7 +31,7 @@ export class TerminalRenderer {
     if (this.active) return;
     this.active = true;
     // Push alt screen FIRST, then push kitty mode onto the alt screen's stack
-    this.write('\u001B[?1049h\u001B[>1u\u001B[?2004h\u001B[?1000h\u001B[?1003h\u001B[?1006h\u001B[?25l\u001B[2J\u001B[H');
+    this.write('\u001B[?1049h\u001B[>1u\u001B[?1004h\u001B[?2004h\u001B[?1000h\u001B[?1003h\u001B[?1006h\u001B[?25l\u001B[2J\u001B[H');
   }
 
   render(frame: TerminalFrame): void {
@@ -41,7 +56,7 @@ export class TerminalRenderer {
     let output = '\u001B[?25l';
     for (const index of changedRows) {
       const next = frame.rows[index] ?? '';
-      output += `\u001B[${index + 1};1H\u001B[2K${next}\u001B[0m`;
+      output += `\u001B[${index + 1};1H\u001B[2K${rowForTerminal(next, frame.columns)}\u001B[0m`;
     }
     output += `\u001B[${frame.cursorRow};${frame.cursorColumn}H`;
     if (cursor.visible) output += '\u001B[?25h';
@@ -50,10 +65,11 @@ export class TerminalRenderer {
     this.previousCursor = cursor;
   }
 
-  suspendForPassthrough(): void {
+  /** `restore` re-applies the foreground app's own terminal modes, e.g. after reattaching to it. */
+  suspendForPassthrough(restore = ''): void {
     if (!this.active) return;
     // Pop kitty mode while still on the alt screen
-    this.write('\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[2J\u001B[H');
+    this.write(`\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?1004l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[2J\u001B[H${restore}`);
     this.previous = [];
     this.previousCursor = undefined;
   }
@@ -63,7 +79,7 @@ export class TerminalRenderer {
     this.previous = [];
     this.previousCursor = undefined;
     // Push kitty mode back onto the alt screen
-    this.write('\u001B[>1u\u001B[?1000h\u001B[?1003h\u001B[?1006h\u001B[?2004h\u001B[?25l\u001B[2J\u001B[H');
+    this.write('\u001B[>1u\u001B[?1000h\u001B[?1003h\u001B[?1006h\u001B[?1004h\u001B[?2004h\u001B[?25l\u001B[2J\u001B[H');
   }
 
   invalidate(): void {
@@ -77,6 +93,6 @@ export class TerminalRenderer {
     this.previous = [];
     this.previousCursor = undefined;
     // Pop kitty mode first, THEN leave alt screen
-    this.write('\u001B[0m\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[?1049l');
+    this.write('\u001B[0m\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?1004l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[?1049l');
   }
 }

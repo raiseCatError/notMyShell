@@ -19,8 +19,8 @@ Before starting work, check:
 
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.4.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.4.0)** — current stable release
-- **[#79 Interaction layout modes](https://github.com/raiseCatError/notMyShell/issues/79)** — next planned design direction (see [ROADMAP.md](ROADMAP.md))
+- **[v0.7.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0)** — current stable release
+- **[#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132)** — next planned direction (see [ROADMAP.md](ROADMAP.md))
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model

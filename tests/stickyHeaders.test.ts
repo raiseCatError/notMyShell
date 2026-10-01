@@ -199,6 +199,9 @@ test('panels and passthrough suppress sticky; closing restores it', () => {
 
 test('rendered frame shows one sticky row over the top without duplicating the header', () => {
   const app = appWithBlocks();
+  // Independent of the developer's saved presentation and composer position.
+  app['output'].presenter.setLayout('normal');
+  app['promptConfiguration'].composerPosition = 'bottom';
   try {
     const frames: string[][] = [];
     app['renderer'].render = ((frame: {rows: string[]}) => { frames.push(frame.rows); }) as never;

@@ -1,14 +1,17 @@
 export type Key =
+  | {kind: 'focusIn' | 'focusOut'}
   | {kind: 'text'; value: string}
   | {kind: 'paste'; value: string}
   | {kind: 'deleteWord' | 'deleteLineBefore' | 'deleteLineAfter' | 'wordLeft' | 'wordRight' | 'selectWordLeft' | 'selectWordRight'} 
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'suggestNext' | 'suggestPrevious'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch' | 'historyDelete'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  ['\u001B[I', 'focusIn'],
+  ['\u001B[O', 'focusOut'],
   // Kitty keyboard protocol (CSI > 1 u, enabled by TerminalRenderer on entry;
   // Ghostty honors it) encodes Escape as its functional key code (27) rather
   // than a lone raw ESC byte. Without these, Escape falls through to the
@@ -80,11 +83,17 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001BOB', 'down'],
   ['\u001B[97;5u', 'lineHome'], // Kitty Ctrl+A
   ['\u001B[101;5u', 'lineEnd'], // Kitty Ctrl+E
+  ['\u001B[120;5u', 'historyDelete'], // Ctrl+X: only active in command history
   ['\u001B[119;5u', 'deleteWord'], // Kitty Ctrl+W
   ['\u001B[117;5u', 'deleteLineBefore'], // Kitty Ctrl+U
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
   ['\u001B[99;5u', 'interrupt'], // Kitty Ctrl+C
   ['\u001B[100;5u', 'eof'], // Kitty Ctrl+D
+  ['\u001B[122;5u', 'suspend'], // Kitty Ctrl+Z
+  ['\u001B[90;5u', 'suspend'], // Kitty Ctrl+Z (uppercase Z)
+  // Command palette: Ctrl+Shift+P and Cmd+Shift+P need CSI-u reporting (plain Ctrl+Shift+P is Ctrl+P); F1 is the legacy fallback.
+  ['\u001B[112;6u', 'palette'], ['\u001B[80;6u', 'palette'], ['\u001B[112;10u', 'palette'], ['\u001B[80;10u', 'palette'],
+  ['\u001BOP', 'palette'], ['\u001B[11~', 'palette'],
   ['\u001B[110;5u', 'suggestNext'], // Kitty Ctrl+N
   ['\u001B[112;5u', 'suggestPrevious'], // Kitty Ctrl+P
   ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)
@@ -143,6 +152,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u007F' || value === '\b') keys.push({kind: 'backspace'} as Key);
     else if (value === '\u0003') keys.push({kind: 'interrupt'} as Key);
     else if (value === '\u0004') keys.push({kind: 'eof'} as Key);
+    else if (value === '\u001A') keys.push({kind: 'suspend'} as Key); // Ctrl+Z
     else if (value === '\u0007') keys.push({kind: 'latest'} as Key);
     else if (value === '\t') keys.push({kind: 'complete'} as Key);
     else if (value === '\u0017') keys.push({kind: 'deleteWord'} as Key); // Ctrl+W
@@ -151,6 +161,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0001') keys.push({kind: 'lineHome'} as Key); // Ctrl+A
     else if (value === '\u0005') keys.push({kind: 'lineEnd'} as Key); // Ctrl+E
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
+    else if (value === '\u0018') keys.push({kind: 'historyDelete'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N
