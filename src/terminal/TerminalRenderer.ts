@@ -1,3 +1,4 @@
+import {BASELINE_CAPABILITIES, type TerminalCapabilities} from '../host/capabilities.js';
 import {displayWidth} from '../util/text.js';
 
 export interface TerminalFrame {
@@ -25,17 +26,38 @@ export class TerminalRenderer {
   private active = false;
   private previousCursor?: {row: number; column: number; visible: boolean};
 
-  constructor(private readonly write: (data: string) => unknown = data => process.stdout.write(data)) {}
+  private suspended = false;
+  constructor(private readonly write: (data: string) => unknown = data => process.stdout.write(data),
+    private capabilities: Readonly<TerminalCapabilities> = BASELINE_CAPABILITIES) {}
+
+  /** Resolve before entry; an attached foreground app owns its own modes. */
+  setCapabilities(capabilities: Readonly<TerminalCapabilities>): void {
+    if (this.active) throw new Error('Host capabilities must be resolved before renderer entry');
+    this.capabilities = capabilities;
+  }
+
+  private inputModes(enable: boolean): string {
+    const suffix = enable ? 'h' : 'l';
+    let modes = this.capabilities.kittyKeyboard ? (enable ? '\u001B[>1u' : '\u001B[<u') : '';
+    modes += `\u001B[?1004${suffix}\u001B[?2004${suffix}`;
+    if (this.capabilities.mouseReporting && this.capabilities.clickSupport) {
+      modes += `\u001B[?1000${suffix}`;
+      if (this.capabilities.mouseMovement) modes += `\u001B[?1003${suffix}`;
+      modes += `\u001B[?1006${suffix}`;
+    }
+    return modes;
+  }
 
   enter(): void {
     if (this.active) return;
     this.active = true;
     // Push alt screen FIRST, then push kitty mode onto the alt screen's stack
-    this.write('\u001B[?1049h\u001B[>1u\u001B[?1004h\u001B[?2004h\u001B[?1000h\u001B[?1003h\u001B[?1006h\u001B[?25l\u001B[2J\u001B[H');
+    this.suspended = false;
+    this.write(`\u001B[?1049h${this.inputModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
   }
 
   render(frame: TerminalFrame): void {
-    if (!this.active) return;
+    if (!this.active || this.suspended) return;
     const maximum = Math.max(this.previous.length, frame.rows.length);
     const changedRows: number[] = [];
     for (let index = 0; index < maximum; index += 1) {
@@ -60,26 +82,31 @@ export class TerminalRenderer {
     }
     output += `\u001B[${frame.cursorRow};${frame.cursorColumn}H`;
     if (cursor.visible) output += '\u001B[?25h';
-    this.write(output);
+    if (this.capabilities.synchronizedOutput) {
+      try { this.write(`\u001B[?2026h${output}`); }
+      finally { this.write('\u001B[?2026l'); }
+    } else this.write(output);
     this.previous = [...frame.rows];
     this.previousCursor = cursor;
   }
 
   /** `restore` re-applies the foreground app's own terminal modes, e.g. after reattaching to it. */
   suspendForPassthrough(restore = ''): void {
-    if (!this.active) return;
+    if (!this.active || this.suspended) return;
+    this.suspended = true;
     // Pop kitty mode while still on the alt screen
-    this.write(`\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?1004l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[2J\u001B[H${restore}`);
+    this.write(`${this.inputModes(false)}\u001B[?25h\u001B[2J\u001B[H${restore}`);
     this.previous = [];
     this.previousCursor = undefined;
   }
 
   resumeAfterPassthrough(): void {
-    if (!this.active) return;
+    if (!this.active || !this.suspended) return;
+    this.suspended = false;
     this.previous = [];
     this.previousCursor = undefined;
     // Push kitty mode back onto the alt screen
-    this.write('\u001B[>1u\u001B[?1000h\u001B[?1003h\u001B[?1006h\u001B[?1004h\u001B[?2004h\u001B[?25l\u001B[2J\u001B[H');
+    this.write(`${this.inputModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
   }
 
   invalidate(): void {
@@ -93,6 +120,6 @@ export class TerminalRenderer {
     this.previous = [];
     this.previousCursor = undefined;
     // Pop kitty mode first, THEN leave alt screen
-    this.write('\u001B[0m\u001B[?1006l\u001B[?1003l\u001B[?1000l\u001B[?1004l\u001B[?2004l\u001B[?25h\u001B[<u\u001B[?1049l');
+    this.write(`\u001B[0m${this.suspended ? '' : this.inputModes(false)}\u001B[?25h\u001B[?1049l`);
   }
 }

@@ -5,7 +5,7 @@ import {chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'nod
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import nodePty from 'node-pty';
-import {spawnLauncher} from '../src/host/terminalHost.js';
+import {detectTerminalHost, spawnLauncher} from '../src/host/terminalHost.js';
 import {restoreAtStartup} from '../src/session/startupRestore.js';
 import type {SessionInfo} from '../src/session/SessionProtocol.js';
 import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
@@ -35,7 +35,7 @@ test('launcher results: clean exit, failure, missing command, and a launcher tha
 
 function deps(spawned: string[][], spawner = async (_c: string, args: string[]) => { spawned.push(args); return true; }) {
   return {policy: {startup: 'ask' as const, multiple: 'ask' as const}, saveStartup: () => {}, askOne: async () => 'not-now' as const,
-    host: {name: 'Terminal', newWindow: (argv: readonly string[]) => ({command: 'osascript', args: [...argv]})},
+    host: {capabilities: detectTerminalHost({}).capabilities, name: 'Terminal', newWindow: (argv: readonly string[]) => ({command: 'osascript', args: [...argv]})},
     selfCommand: ['node', '/nmsh'], spawner};
 }
 

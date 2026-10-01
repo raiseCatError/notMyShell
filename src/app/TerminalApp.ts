@@ -1,3 +1,5 @@
+import {detectTerminalHost} from '../host/terminalHost.js';
+import {probeHost} from '../host/probe.js';
 import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type SessionPreset} from '../session/SessionPresets.js';
 import {createPresetPanel, presetPanelKey, renderPresetPanel, type PresetPanel} from '../session/PresetPanel.js';
 import {MiseProjectService, detectMiseProject} from '../tools/MiseProject.js';
@@ -131,7 +133,8 @@ export class TerminalApp {
   private shellCwd = this.initialCwd;
   private terminalFocus: TerminalFocus = 'unknown';
   private readonly notificationService = createNotificationService();
-  private readonly renderer = new TerminalRenderer();
+  private readonly host = detectTerminalHost();
+  private readonly renderer = new TerminalRenderer(undefined, this.host.capabilities);
   private readonly editor = new CommandEditor();
   private readonly highlighter = new Highlighter();
   private readonly semanticService: SemanticService;
@@ -418,6 +421,25 @@ export class TerminalApp {
   }
 
   async run(): Promise<number> {
+    let earlyInput = '';
+    // A reattached interactive program owns terminal queries and replies.
+    if (!this.passthrough && process.stdin.isTTY && process.stdout.isTTY) {
+      this.originalRawMode = process.stdin.isRaw;
+      process.stdin.setRawMode(true);
+      process.stdin.setEncoding('utf8');
+      const resolved = await probeHost(this.host.capabilities, {
+        write: data => process.stdout.write(data),
+        listen: receive => {
+          process.stdin.on('data', receive);
+          process.stdin.resume();
+          return () => { process.stdin.off('data', receive); process.stdin.pause(); };
+        },
+      });
+      process.stdin.setRawMode(this.originalRawMode);
+      this.host.capabilities = resolved.capabilities;
+      this.renderer.setCapabilities(resolved.capabilities);
+      earlyInput = resolved.input;
+    }
     this.journal = new SessionJournal(this.transcriptStore, this.promptConfiguration.sessionRetention,
       () => ({startCwd: this.presentationStartCwd, finalCwd: this.shellCwd, transcript: this.output.transcript(), live: this.liveLink()}),
       () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR),
@@ -449,6 +471,7 @@ export class TerminalApp {
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
+    if (earlyInput) this.onInput(earlyInput);
     process.stdout.on('resize', this.onResize);
     process.on('SIGTSTP', this.onSuspend);
     process.on('SIGCONT', this.onContinue);
@@ -2527,9 +2550,7 @@ export class TerminalApp {
     const {columns, rows} = this.dimensions();
     const home = homedir();
     const tilde = (path: string) => path === home ? '~' : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
-    const terminal = process.env.TERM_PROGRAM
-      ? `${process.env.TERM_PROGRAM}${process.env.TERM_PROGRAM_VERSION ? ` ${process.env.TERM_PROGRAM_VERSION}` : ''}`
-      : undefined;
+    const terminal = this.host.name;
     const active = this.effectivePromptProvider;
     return [
       [
@@ -2539,6 +2560,7 @@ export class TerminalApp {
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
+        {label: 'Host capabilities', value: Object.entries(this.host.capabilities).filter(([, value]) => value === true).map(([key]) => key).join(', ') || 'baseline'},
         {label: 'Terminal size', value: `${columns}×${rows}`},
       ],
       [
