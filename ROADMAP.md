@@ -7,7 +7,7 @@
 | **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
 | **Development branch** | `dev` |
 | **Next direction** | [v0.8.0 — Command Intelligence & Navigation](https://github.com/raiseCatError/notMyShell/milestone/8), in development |
-| **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), incomplete and unmerged |
+| **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), development-complete, unmerged; physical QA pending |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -134,13 +134,16 @@ and #253 (mise awareness) are also included. #176/#177/#178 moved from the
 unscheduled grouping; #179/#180 remain there. The stack consumes the pinned
 final v0.8 head without modifying or merging it; package version remains 0.7.0.
 
-Current review order: #251 → #182 → #181 → #183 → #254 → draft #255.
-Linguist identity, external welcome adapters, deterministic VHS tooling and
-supported Starship configuration are implemented. Tools discovery/install work
-is checkpointed as a draft. Mise implementation and session presets remain pending;
-no final milestone acceptance is claimed. Local disk exhaustion interrupted
-verification/continuation. See the [checkpoint](docs/development/v0.9.0-checkpoint.md)
+Review order: #251 → #182 → #181 → #183 → #254 → #255 → #256 (#253)
+→ #257 (#153) → final acceptance on `docs/v09-final-acceptance`.
+Linguist identity, external welcome adapters, deterministic VHS tooling,
+supported Starship configuration, Tools discovery/install, consent-based optional
+mise awareness and new-live-session presets are implemented in the unmerged stack.
+The ENOSPC checkpoint was resumed and #255 local verification passed; it is ready
+for review. See the [final development record](docs/development/v0.9.0-final-acceptance.md)
 and [single additive QA checklist](docs/qa/v0.9.0-physical-qa.md).
+Physical QA remains pending, issues remain open, version remains 0.7.0, and v0.9
+has not shipped. No unrelated backlog or release preparation is included.
 
 ## Backlog — Research and Future Features
 
