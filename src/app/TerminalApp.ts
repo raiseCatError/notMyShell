@@ -952,8 +952,11 @@ export class TerminalApp {
     }
     if (key.kind === 'text' || key.kind === 'paste' || key.kind === 'enter') this.clearCorrection();
     // Input can contain several decoded keys before the next render; guard stale candidates here too.
-    if (this.shellSuggestions.some(candidate => candidate.context && (candidate.context.buffer !== this.editor.text || candidate.context.cwd !== this.context.cwd))) {
+    if (this.shellSuggestions.some(candidate => candidate.context && (candidate.context.buffer !== this.editor.text || candidate.context.cwd !== this.context.cwd
+      || candidate.context.cursor !== undefined && candidate.context.cursor !== this.completionCursor
+      || candidate.context.expiresAt !== undefined && Date.now() >= candidate.context.expiresAt))) {
       this.shellSuggestions = []; this.completionGeneration += 1; this.completionService.cancel();
+      this.lastSuggestionInput = '';
     }
 
     if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
@@ -965,7 +968,10 @@ export class TerminalApp {
       }
       if (action?.id === 'insert') {
         const candidate = this.shellSuggestions[this.selectedSuggestion] ?? this.shellSuggestions[0];
-        if (candidate) this.applySuggestion(candidate);
+        if (candidate) {
+          if (this.promptConfiguration.picker !== 'native' && this.shellSuggestions.length > 1) void this.openCompletionPicker();
+          else this.applySuggestion(candidate);
+        }
         return;
       }
       if (action?.id === 'cancel') {
@@ -1138,8 +1144,9 @@ export class TerminalApp {
       this.historyResults = [];
     }
     const cwd = this.context.cwd;
+    const cursor = this.completionCursor;
     const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim());
-    const key = eligible ? JSON.stringify([input, cwd]) : '';
+    const key = eligible ? JSON.stringify([input, cursor, cwd]) : '';
     if (key === this.lastSuggestionInput) return;
     this.lastSuggestionInput = key;
     const generation = ++this.completionGeneration;
@@ -1148,12 +1155,36 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.selectedSuggestion = 0;
     if (!eligible) return;
-    const comps = await this.completionService.suggest(input, cwd);
+    const comps = await this.completionService.suggest(input, cwd, cursor);
     if (!this.stopped && generation === this.completionGeneration && this.editor.text === input && this.context.cwd === cwd
-      && !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms) {
+      && this.completionCursor === cursor && !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms) {
       this.shellSuggestions = comps;
       this.render();
     }
+  }
+
+  private get completionCursor(): number {
+    return graphemes(this.editor.text).slice(0, this.editor.cursorIndex).join('').length;
+  }
+
+  private async openCompletionPicker(): Promise<void> {
+    if (this.running || this.externalPassthrough || this.pickerOpening) return;
+    const candidates = [...this.shellSuggestions];
+    const original = this.editor.text;
+    const cursor = this.completionCursor;
+    const cwd = this.context.cwd;
+    this.pickerOpening = true;
+    try {
+      const native = () => { /* Keep the existing native menu on fallback. */ };
+      const result = await openPicker(this.promptConfiguration.picker, candidates.map((candidate, index) => ({
+        id: String(index), label: candidate.display, description: candidate.description, value: candidate.insertion,
+      })), native, this.pickerHandoff);
+      if (!this.stopped && !this.running && this.editor.text === original && this.completionCursor === cursor && this.context.cwd === cwd
+        && result?.kind === 'selected') {
+        const selected = candidates[Number(result.candidate.id)];
+        if (selected && selected.insertion === result.candidate.value) this.applySuggestion(selected);
+      }
+    } finally { this.pickerOpening = false; }
   }
 
   /**
@@ -1243,9 +1274,13 @@ export class TerminalApp {
     }
   };
 
-  private applySuggestion(suggestion: {insertion: string}): void {
+  private applySuggestion(suggestion: {insertion: string; insertionCursor?: number}): void {
     this.editor.clear();
     this.editor.insert(suggestion.insertion);
+    if (suggestion.insertionCursor !== undefined) {
+      const trailing = graphemes(suggestion.insertion.slice(suggestion.insertionCursor)).length;
+      for (let i = 0; i < trailing; i++) this.editor.moveLeft();
+    }
     this.selectedSuggestion = 0;
   }
 
@@ -1728,6 +1763,9 @@ export class TerminalApp {
   }
 
   private onShellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
+    this.completionService.invalidate();
+    this.shellSuggestions = [];
+    this.lastSuggestionInput = '';
     this.shellCwd = cwd;
     this.presetShellReady = true;
     this.context.exitStatus = exitCode;
@@ -3336,7 +3374,7 @@ export class TerminalApp {
     process.stdin.pause();
     this.terminalFocus = 'unknown';
     this.renderer.leave();
-    this.completionService.cancel();
+    this.completionService.dispose();
     this.historyQueryAbort?.abort();
     this.clearCorrection();
     this.directoryQueryAbort?.abort();

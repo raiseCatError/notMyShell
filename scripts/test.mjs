@@ -32,7 +32,7 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
     }
     // Crash fixtures own their nested TMPDIR. Ordinary lifecycle leaks at the
     // suite root are a failure, reported BEFORE cleanup rather than hidden.
-    leftovers = readdirSync(root).filter(name => /^nmsh-(?:semantic|zdotdir)-/u.test(name));
+    leftovers = readdirSync(root).filter(name => /^nmsh-(?:semantic|zdotdir|completion)-/u.test(name));
     if (leftovers.length) report(`Test lifecycle leaked ${leftovers.length} semantic/zsh temp directories: ${leftovers.join(', ')}`);
     return {code: leftovers.length || interrupted ? 1 : code, root, leftovers};
   } finally {

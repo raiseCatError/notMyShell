@@ -13,6 +13,11 @@ import {planScreen} from '../src/app/screenPlan.js';
 import {encodeMessage, FrameDecoder} from '../src/session/SessionProtocol.js';
 import {parseZshHistory, indexImportedHistory} from '../src/shell/HistoryService.js';
 import {NativeSuggestions} from '../src/suggestions/NativeSuggestions.js';
+import {ConfiguredCompletionSource, parseConfiguredCompletions} from '../src/shell/ConfiguredCompletion.js';
+import {NativeCompletionSource, ShellCompletionSource} from '../src/shell/CompletionService.js';
+import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
 
 type Benchmark = {name: string; run: () => unknown; samples?: number; warmup?: number; units?: number; unitName?: string};
@@ -100,6 +105,18 @@ function setup(): void {
 }
 
 const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, index) => `--option-${index} -- description ${index}`).join('\n'), {buffer: 'tool ', cwd: '/work'});
+const configuredWire = Array.from({length: 4096}, (_, i) => [`value${i}`, `value${i}`, 'description', 'group', '', '', 'argument'].join('\0') + '\0').join('');
+let completionHome: string | undefined;
+let configuredSource: ConfiguredCompletionSource | undefined;
+function configuredFixture(): {home: string; source: ConfiguredCompletionSource} {
+  if (!completionHome) {
+    completionHome = mkdtempSync(join(tmpdir(), 'nmsh-completion-bench-'));
+    writeFileSync(join(completionHome, '.zshrc'), `autoload -Uz compinit\ncompinit -D\n_bench() { compadd -- alpha alpine; }\ncompdef _bench bench\n`);
+    writeFileSync(join(completionHome, 'alpha.txt'), '');
+    configuredSource = new ConfiguredCompletionSource({env: {...process.env, HOME: completionHome}});
+  }
+  return {home: completionHome, source: configuredSource!};
+}
 
 const directoryServices = new Map(suggestionCounts.map(count => [count, new DirectoryService()]));
 const benchmarks: Benchmark[] = [
@@ -116,6 +133,32 @@ const benchmarks: Benchmark[] = [
   ...suggestionCounts.map(count => ({name: `history/structured-query-${count}`,
     run: () => historyIndexes.get(count)!.search('cwd:/work/project-7 exit:failure duration:>1s nonexistent'), units: count, unitName: 'entries'})),
   {name: 'completion/filter-500', run: () => filterCompletions(completionFixture, 'op4'), units: 500, unitName: 'candidates'},
+  {name: 'completion/configured-parse-4096', run: () => parseConfiguredCompletions(configuredWire, {buffer: 'bench v', cwd: '/'}), units: 4096, unitName: 'candidates'},
+  {name: 'completion/configured-cold', samples: 5, warmup: 0, run: async () => {
+    const {home, source} = configuredFixture(); source.dispose();
+    const values = await source.query({buffer: 'bench al', cwd: home}, new AbortController().signal);
+    if (!values.length) throw new Error('Configured cold benchmark returned no candidates');
+    return values;
+  }},
+  {name: 'completion/configured-warm', run: async () => {
+    const {home, source} = configuredFixture();
+    const values = await source.query({buffer: 'bench al', cwd: home}, new AbortController().signal);
+    if (!values.length) throw new Error('Configured warm benchmark returned no candidates');
+    return values;
+  }},
+  {name: 'completion/configured-files', run: async () => {
+    const {home, source} = configuredFixture();
+    return source.query({buffer: 'cat al', cwd: home}, new AbortController().signal);
+  }},
+  {name: 'completion/configured-cancel', run: async () => {
+    const {home, source} = configuredFixture(); const controller = new AbortController();
+    const result = source.query({buffer: 'bench al', cwd: home}, controller.signal); controller.abort(); return result;
+  }},
+  {name: 'completion/native-fallback', samples: 5, run: async () => {
+    const {home} = configuredFixture();
+    const source = new ShellCompletionSource({id: 'unavailable', query: async () => []}, new NativeCompletionSource());
+    return source.query({buffer: 'cat al', cwd: home}, new AbortController().signal);
+  }},
   ...suggestionCounts.map(count => ({
     name: `history/current-text-scan-${count}`,
     run: () => histories.get(count)!.map(entry => entry.command).filter(command => command.toLowerCase().includes('nonexistent')).slice(0, 100),
@@ -226,12 +269,14 @@ async function report(benchmark: Benchmark): Promise<void> {
 console.log(`NMSh benchmark harness | Node ${process.version} | ${platform()} ${arch()} | ${totalmem()} bytes RAM`);
 console.log('Fixtures: seeded command histories, generated ANSI and Unicode lines; timings are informational.');
 setup();
+process.on('exit', () => { configuredSource?.dispose(); if (completionHome) rmSync(completionHome, {recursive: true, force: true}); });
 const runnable = benchmarks.filter(benchmark => selected.length === 0 || selected.some(name => benchmark.name.includes(name)));
 if (runnable.length === 0) {
   console.error(`No benchmarks matched: ${selected.join(', ')}`);
   process.exitCode = 1;
 } else {
-  for (const benchmark of runnable) await report(benchmark);
+  try { for (const benchmark of runnable) await report(benchmark); }
+  finally { configuredSource?.dispose(); if (completionHome) rmSync(completionHome, {recursive: true, force: true}); }
 }
 if (memory) {
   if (globalThis.gc) globalThis.gc();

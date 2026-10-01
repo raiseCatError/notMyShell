@@ -1,4 +1,5 @@
 import {enrichCompletion} from './CommandKnowledge.js';
+import {ConfiguredCompletionSource} from './ConfiguredCompletion.js';
 import {runExternal} from '../providers/providers.js';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -25,7 +26,7 @@ export class NativeCompletionSource implements CompletionSource {
     let output: string;
     if (cached && Date.now() - cached.at < 2000) output = cached.output;
     else {
-      const result = await runExternal('zsh', [script, parent], {
+      const result = await runExternal('zsh', ['-f', script, parent], {
         cwd: context.cwd, env: process.env, signal, timeoutMs: 1500, maxBytes: 1024 * 1024,
       });
       if (!result.ok || signal.aborted) return [];
@@ -38,12 +39,32 @@ export class NativeCompletionSource implements CompletionSource {
 
 }
 
+/** One completion pipeline, with native availability when configured knowledge fails. */
+export class ShellCompletionSource implements CompletionSource {
+  readonly id = 'shell';
+  constructor(private readonly configured: CompletionSource = new ConfiguredCompletionSource(),
+    private readonly native: CompletionSource = new NativeCompletionSource()) {}
+  async query(context: CompletionContext, signal: AbortSignal): Promise<CompletionCandidate[]> {
+    try {
+      const values = await this.configured.query(context, signal);
+      if (values.length || signal.aborted) return values;
+    } catch { /* Native remains available. */ }
+    if (signal.aborted) return [];
+    if ((context.cursor ?? context.buffer.length) !== context.buffer.length) return [];
+    return this.native.query(context, signal);
+  }
+  dispose(): void { this.configured.dispose?.(); this.native.dispose?.(); }
+}
+
 /** Owns request lifetime independently of any completion source or UI. */
 export class CompletionService {
   private active?: AbortController;
   private generation = 0;
 
-  constructor(private readonly source: CompletionSource = new NativeCompletionSource()) {}
+  constructor(private readonly source: CompletionSource = new ShellCompletionSource()) {}
+
+  dispose(): void { this.cancel(); this.source.dispose?.(); }
+  invalidate(): void { this.dispose(); }
 
   cancel(): void {
     this.generation += 1;
@@ -51,14 +72,14 @@ export class CompletionService {
     this.active = undefined;
   }
 
-  async suggest(input: string, cwd: string): Promise<CompletionCandidate[]> {
+  async suggest(input: string, cwd: string, cursor = input.length): Promise<CompletionCandidate[]> {
     this.cancel();
     if (!input.trim()) return [];
     const generation = this.generation;
     const active = new AbortController();
     this.active = active;
     try {
-      const candidates = await this.source.query({buffer: input, cwd}, active.signal);
+      const candidates = await this.source.query({buffer: input, cwd, cursor}, active.signal);
       return generation === this.generation && !active.signal.aborted ? candidates : [];
     } catch {
       return [];
