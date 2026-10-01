@@ -2,7 +2,15 @@ import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {UPDATE_CHECK_FREQUENCIES, type UpdateCheckFrequency} from '../update/update.js';
+
+export const LIVE_SESSION_STARTUP = ['ask', 'always', 'never'] as const;
+export type LiveSessionStartup = typeof LIVE_SESSION_STARTUP[number];
+export const LIVE_SESSION_MULTIPLE = ['ask', 'open-all'] as const;
+export type LiveSessionMultiple = typeof LIVE_SESSION_MULTIPLE[number];
 import type {OutputFoldingMode} from '../output/FoldPolicy.js';
+import type {NavigationProviderId} from '../shell/DirectoryService.js';
+import type {PickerProviderId} from '../pickers/Picker.js';
+import type {HistoryProviderId} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDER_IDS, type SuggestionProviderId} from '../suggestions/types.js';
 import {
   normalizeConnectorFadeColors,
@@ -13,14 +21,23 @@ import {
   type PowerlineConnectorStyle,
   type PowerlineEdgeStyle,
   type PowerlineShape,
+  normalizePromptStyle,
+  type PromptStyle,
 } from './powerline.js';
 
-export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'none';
-export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'none'];
+export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
+export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
 
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
-export type ComposerPosition = 'bottom' | 'top';
+/** Bottom and Top dock the composer; Flow places it right after the newest output, inside the document. */
+export type ComposerPosition = 'bottom' | 'top' | 'flow';
+export type TranscriptPresentation = 'normal' | 'chat';
+/** Implemented layout choices, shared by Config rows and the /layout showcase. */
+export const COMPOSER_POSITIONS: readonly ComposerPosition[] = ['bottom', 'top', 'flow'];
+export const COMPOSER_POSITION_LABELS: Record<ComposerPosition, string> = {bottom: 'Bottom', top: 'Top', flow: 'Flow'};
+export const TRANSCRIPT_PRESENTATIONS: readonly TranscriptPresentation[] = ['normal', 'chat'];
+export const TRANSCRIPT_PRESENTATION_LABELS: Record<TranscriptPresentation, string> = {normal: 'Normal', chat: 'Chat'};
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
@@ -151,6 +168,44 @@ export function normalizeSyntaxAppearance(value: unknown): SyntaxAppearance {
   };
 }
 
+export type NotificationFocusPolicy = 'suppress' | 'notify';
+
+/** Command-completion notifications; read at completion time, never snapshotted at start. */
+export interface NotificationSettings {
+  enabled: boolean;
+  /** Minimum elapsed command time, in seconds, before a completion notifies. */
+  thresholdSeconds: number;
+  onSuccess: boolean;
+  onFailure: boolean;
+  /** Suppress: a definitely-focused terminal notifies nothing. Notify: focus is ignored. */
+  whenFocused: NotificationFocusPolicy;
+}
+
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  thresholdSeconds: 60,
+  onSuccess: true,
+  onFailure: true,
+  whenFocused: 'suppress',
+};
+
+/** One day; longer thresholds are almost certainly a typo. */
+export const MAX_NOTIFICATION_THRESHOLD_SECONDS = 86_400;
+
+export function normalizeNotificationSettings(value: unknown): NotificationSettings {
+  if (!isRecord(value)) return {...DEFAULT_NOTIFICATION_SETTINGS};
+  const threshold = value.thresholdSeconds;
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    thresholdSeconds: typeof threshold === 'number' && Number.isFinite(threshold) && threshold >= 1
+      ? Math.min(MAX_NOTIFICATION_THRESHOLD_SECONDS, Math.round(threshold))
+      : DEFAULT_NOTIFICATION_SETTINGS.thresholdSeconds,
+    onSuccess: typeof value.onSuccess === 'boolean' ? value.onSuccess : true,
+    onFailure: typeof value.onFailure === 'boolean' ? value.onFailure : true,
+    whenFocused: value.whenFocused === 'notify' ? 'notify' : 'suppress',
+  };
+}
+
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
@@ -161,12 +216,20 @@ export interface PromptConfiguration {
   sessionRetention: SessionRetention;
   /** Background release checks are opt-in; `/update` always checks on request. */
   updateChecks: UpdateCheckFrequency;
+  /** Whether launch restores a detached live session: ask, always, or never (never only skips; it ends nothing). */
+  liveSessionStartup: LiveSessionStartup;
+  /** With several detached live sessions at launch: ask which, or open them all. */
+  liveSessionMultiple: LiveSessionMultiple;
   /** Whether long, boring finished output starts collapsed. Presentation only. */
   outputFolding: OutputFoldingMode;
   /** What new presentation sessions show at the top; archived sessions keep theirs. */
   welcome: WelcomeProviderId;
   /** Ghost-text suggestion provider; external providers fall back to Native. */
   suggestions: SuggestionProviderId;
+  /** Native default; Atuin is an explicit local read-only source. */
+  history: HistoryProviderId;
+  picker: PickerProviderId;
+  navigation: NavigationProviderId;
   /** Predict a whole command on an empty prompt from the previous one. */
   suggestionsOnEmpty: boolean;
   nmsh: {
@@ -176,6 +239,8 @@ export interface PromptConfiguration {
     endStyle: NativeEndStyle;
     palette: NativePaletteId;
     icons: NativeIconMode;
+    /** Visual style over the same semantic segments; missing in older configs means Powerline. */
+    style: PromptStyle;
     connectorFade: ConnectorFadeStyle;
     /** Which neighbor(s) color the faded transition zones; missing in older configs, meaning Previous. */
     connectorFadeColors: ConnectorFadeColors;
@@ -190,12 +255,15 @@ export interface PromptConfiguration {
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
   powerlevel10k: {themePath: string | null; configPath: string | null};
+  notifications: NotificationSettings;
   transcript: TranscriptAppearance;
   syntax: SyntaxAppearance;
   placement: ContextPlacement;
   composerLayout: ComposerLayout;
   /** Dock Bottom (default) or Dock Top; independent of transcript presentation. */
   composerPosition: ComposerPosition;
+  /** Normal or Chat rows; presentation only and independent of composer position. */
+  transcriptPresentation: TranscriptPresentation;
   modules: ContextModuleConfig[];
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
@@ -210,11 +278,17 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphChoiceComplete: false,
   sessionRetention: 1000,
   updateChecks: 'off',
+  liveSessionStartup: 'ask',
+  liveSessionMultiple: 'ask',
+  notifications: {...DEFAULT_NOTIFICATION_SETTINGS},
   outputFolding: 'smart',
   welcome: 'vespyr',
   suggestions: 'nmsh',
+  history: 'native',
+  picker: 'native',
+  navigation: 'native',
   suggestionsOnEmpty: false,
-  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd',
+  nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true},
   starship: {configPath: null},
@@ -224,6 +298,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   placement: 'header',
   composerLayout: 'twoLine',
   composerPosition: 'bottom',
+  transcriptPresentation: 'normal',
   modules: [
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
@@ -266,12 +341,19 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       ? value.sessionRetention as SessionRetention : 1000;
   const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
     ? value.updateChecks as UpdateCheckFrequency : 'off';
+  const liveSessionStartup: LiveSessionStartup = LIVE_SESSION_STARTUP.includes(value.liveSessionStartup as LiveSessionStartup)
+    ? value.liveSessionStartup as LiveSessionStartup : 'ask';
+  const liveSessionMultiple: LiveSessionMultiple = LIVE_SESSION_MULTIPLE.includes(value.liveSessionMultiple as LiveSessionMultiple)
+    ? value.liveSessionMultiple as LiveSessionMultiple : 'ask';
   // Off persists as `never`, so v0.4 configs load unchanged.
   const outputFolding: OutputFoldingMode = value.outputFolding === 'never' || value.outputFolding === 'always' ? value.outputFolding : 'smart';
   const welcome: WelcomeProviderId = WELCOME_PROVIDER_IDS.includes(value.welcome as WelcomeProviderId)
     ? value.welcome as WelcomeProviderId : 'vespyr';
   const suggestions: SuggestionProviderId = SUGGESTION_PROVIDER_IDS.includes(value.suggestions as SuggestionProviderId)
     ? value.suggestions as SuggestionProviderId : 'nmsh';
+  const navigation: NavigationProviderId = value.navigation === 'zoxide' ? 'zoxide' : 'native';
+  const picker: PickerProviderId = value.picker === 'fzf' || value.picker === 'television' ? value.picker : 'native';
+  const history: HistoryProviderId = value.history === 'atuin' ? 'atuin' : 'native';
   const suggestionsOnEmpty = value.suggestionsOnEmpty === true;
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
@@ -285,11 +367,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const startStyle = normalizeEdgeStyle(nativeValue.startStyle, 'wedge');
   const connector = normalizeConnectorStyle(nativeValue.connector);
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
+  const style = normalizePromptStyle(nativeValue.style);
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
+  const notifications = normalizeNotificationSettings(value.notifications);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
-    startStyle, connector, endStyle, palette, icons,
+    startStyle, connector, endStyle, palette, icons, style,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
     connectorFadeColors: normalizeConnectorFadeColors(nativeValue.connectorFadeColors),
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
@@ -303,7 +387,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
   const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
-  const composerPosition: ComposerPosition = value.composerPosition === 'top' ? 'top' : 'bottom';
+  const composerPosition: ComposerPosition = value.composerPosition === 'top' || value.composerPosition === 'flow' ? value.composerPosition : 'bottom';
+  const transcriptPresentation: TranscriptPresentation = value.transcriptPresentation === 'chat' ? 'chat' : 'normal';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
     ? Math.max(0, Math.min(3, Math.round(value.spacing)))
     : DEFAULT_PROMPT_CONFIGURATION.spacing;
@@ -316,8 +401,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, suggestionsOnEmpty,
-      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, composerPosition, spacing, gap, separator};
+      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -357,8 +442,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, outputFolding, welcome, suggestions, suggestionsOnEmpty, nmsh, transcript, syntax, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, modules, separator, spacing, gap};
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, nmsh, transcript, syntax, notifications, powerlevel10k,
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {

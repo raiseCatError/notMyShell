@@ -61,6 +61,26 @@ Powerlevel10k has no standalone render command; it is a zsh theme that builds a 
 
 Starship detection respects `STARSHIP_CONFIG`, otherwise the documented `~/.config/starship.toml` default. A missing config uses Starship defaults. Presets use Starship's supported `starship preset <name> -o <path>` command; choose a new path to preserve any existing file. On macOS, NMSh offers `brew install starship` behind a confirmation screen. It does not edit `.zshrc` or run curl-based installers. Starship has no separate official interactive onboarding command, so NMSh presents this small provider setup flow.
 
+## Composer position: Flow
+
+Composer position is Bottom (default), Top or Flow. Bottom and Top dock the composer to an edge. Flow makes the prompt and input part of NMSh's own document, right after the newest output, like a conventional terminal. It is not a switch to the host's scrollback: NMSh keeps its editor, highlighting, suggestions and structured execution.
+
+- **Following:** the composer sits directly after the newest output (with the usual breathing space, or the live activity row while a command runs). It moves down as output grows. Once output fills the screen, it lands where Bottom docks it. The shell PTY always gets the full transcript capacity, so output growth never resizes it.
+- **Scrolling back:** the composer scrolls with the document. A few rows back, it moves down by that many rows and is clipped at the screen edge. A page back, it is off-screen and the cursor is hidden. The history viewport keeps the following capacity as its height, so a small scroll never snaps back to the bottom.
+- **Returning:** typing, pasting, deleting, completing, history search or Enter while scrolled back returns to the newest output first, and the key still applies. Scrolling, paging and mouse movement alone never return. Bottom and Top are unchanged: typing does not move a scrolled view.
+- **Placement rules:** suggestion and completion menus open below the input, like a terminal completion list. Full-width panels (settings, `/resume`, …) pin to the bottom edge, as with Bottom.
+- **Chat:** with Chat presentation, the live composer renders normally and historical commands render right-aligned.
+- **Passthrough:** fullscreen apps get the raw terminal as before. Returning repaints the document and the composer from the plan.
+
+## `/layout` showcase
+
+`/layout` (also `/settings` → Config → Layout) previews composer position (Bottom, Top, Flow) × transcript presentation (Normal, Chat) before you choose. It has two rows, Composer position and Transcript: ↑↓ move, ←→ change, Enter saves and applies live, and Esc cancels.
+
+- **Sample content:** a folded build, a multi-line command, a failure and a running command with its activity row. It lives in its own `OutputBuffer` and never runs anything or reaches the transcript, journal or `/copy`. Completion times use a fixed date, so the preview is deterministic.
+- **Real rendering:** the preview goes through the real transcript presenter and `planScreen`, the same geometry the live screen uses. Only the prompt and input text are placeholders.
+- **Size:** the preview is sized to show the whole sample with spare rows, so Flow's prompt visibly follows the output. A short terminal gets a shorter preview in which, just as on a real full screen, Flow looks like Bottom. A caption describes the selected position.
+- **One configuration:** the choices come from the same value lists as the Config rows and the palette toggles, and saving writes the same `composerPosition` and `transcriptPresentation` settings.
+
 ## Rich text paste
 
 Large multiline text-only pastes appear as one editable logical atom, labeled in current editor order (for example, `[Text #1 · 7 lines]`). Small pastes remain ordinary text. Cursor movement and adjacent deletion treat an atom as one unit; Ctrl+O optionally unwraps the atom beside the caret back into editable source. Enter submits the exact underlying source of every atom in place, together with typed prefix, interstitial, and suffix text; visual labels are presentation-only and never reach zsh. Bracketed paste and multiline submission remain supported. Image clipboard behavior is out of scope.
@@ -92,6 +112,53 @@ While a parent is running, its activity timeline is rendered at the end of the a
 ## Onboarding
 
 First-run onboarding asks for NMSh Native or Starship (NMSh is preselected), then the independent two-line/one-line composer choice. NMSh Native then shows an appearance step for theme, start, connector, gap, end, icons, and a module manager (Space shows/hides, Shift+↑↓ reorders, ←→ changes the exit-status condition; custom module colors are preserved), with a live preview from the real renderer and a one-row preview of every theme (the gallery is omitted on short terminals). Theme rows use the draft's real geometry over a synthetic preview-only context (project, cwd, git, Node, Go, Python, Docker) so every role is visible; the live prompt still shows only detected modules. The panel shows the saved configuration as `Current`, marks each changed value with its saved value, and labels the preview `unsaved preview` or `matches current`; nothing is applied until Enter saves. Every step ends with a consistent controls row listing its keys. Starship setup reports binary version and config path, supports existing/default configuration and truthful preset guidance, and offers an explicit Homebrew install confirmation on macOS when available. Both provider paths ask for composer layout. Escape can skip; completion and choices persist in the existing prompt config. `/prompt` reopens the same settings flow. Switching providers retains inactive provider settings and never edits Starship config or the user's ordinary `.zshrc`.
+
+## Live sessions
+
+The frontend talks to its shell only through a `SessionClient` using a versioned, newline-delimited JSON protocol (#126). By default the shell and its PTY live in a per-user session service, `nmshd`. The frontend starts it on demand, and it listens on a Unix socket in a private (`0700`) runtime directory (#127). Each new session receives the launching frontend's environment and working directory. If the service can't be used, the frontend runs the shell in-process and says so. `NMSH_SESSION_SERVICE=0` forces in-process mode, and `NMSH_SESSION_MODE` in the shell shows which mode is active.
+
+- **Detach (#128):** closing the window (SIGHUP/SIGTERM, or the frontend disappearing) detaches the session: its shell and any running command keep going. `exit`, Ctrl+D and `/zsh` end it. The service exits once it has no sessions and no windows.
+- **Reattach (#128, #130, #197):** through the startup prompt, `/resume` (LIVE rows above ARCHIVED ones: Enter attaches, and Ctrl+K kills after confirmation), or `nmsh --attach <id>`. `nmsh --sessions` lists live sessions, and `nmsh --new` skips restoring. Only one window is attached to a session at a time, and an attached session is never offered or taken over.
+- **Detached output (#129):** output produced while detached is kept in memory (1 MB) and then spooled to disk in the runtime directory (up to 64 MB; `NMSH_BACKLOG_MEMORY_BYTES`, `NMSH_BACKLOG_SPOOL_BYTES`). The reattaching window continues the session's journal and appends what it missed, noting commands that completed while detached and anything beyond the limit. A fullscreen app is nudged to repaint at the new window's size.
+
+## Live-session recovery, updates and limits
+
+Live sessions are owned by the per-user session service (`nmshd`), which listens on a Unix socket in a private (`0700`) runtime directory. Each protocol version has its own socket (`nmshd.sock` for v1, `nmshd-v<N>.sock` afterwards).
+
+- **Updates:** after an update, the older service keeps running the sessions it owns until they end. A newer frontend starts or attaches only through a service that speaks its own protocol. While a service of another version is reachable, the newer frontend does not archive, attach to or end that service's sessions, because it cannot verify them. It says so once at launch.
+- **Sessions that end with no window attached:** at launch, NMSh compares unfinished journals and output spools against the sessions its service reports. It archives each session that is gone so it appears in `/resume`, with a factual note:
+  - If the shell exited while detached, the note gives its exit code, and the output captured while detached is kept.
+  - If the service died or the machine restarted, the note says the shell and anything running in it could not be recovered.
+  Launch recovery and Kill Session share one ownership boundary. The journal is locked across processes (a lock left by a dead process is taken over), the spool is claimed by renaming it, and a journal that is already ended is never rewritten from a leftover spool. So a session is archived exactly once, and a second launch never overwrites a complete archive with a journal-only one. Live journal checkpoints take the same lock. If archiving fails, or a launch crashes while holding a claim, the spool is put back for the next launch.
+- **Reattaching to a fullscreen app:** the service remembers the terminal modes the app turned on (mouse reporting, bracketed paste, application cursor keys and keypad, focus events, hidden cursor). A reattaching window re-applies them, so mouse and paste keep working in `vim`, `htop`, `less` and similar apps.
+- **Service death under an attached window:** the frontend reports that it lost the service, archives the transcript, and exits. It never claims the session survived.
+- **Session limit:** at most 16 live sessions per service (`NMSH_MAX_SESSIONS`). When the limit is reached, a new window falls back to an in-process shell with a notice. That window's shell ends when the window closes; it cannot be detached or reattached. Detached sessions are never ended to make room; end one, or kill it from `/resume`.
+- **Startup restore:** two settings in Config → Sessions.
+  - **Startup restore:** Ask (default), Always or Never.
+    - Ask: with one detached session, the launch shows its directory, what it is running and its age, then offers Resume (R/Enter), Not now (N/Esc), Always resume (A) or Don't resume at startup (D). A and D also save the setting.
+    - Never only skips restoring at launch. It never ends a session, and `/resume`, detach and reattach are unaffected.
+  - **Multiple detached sessions:** Ask which (default) or Open all.
+    - The picker uses ↑↓ to move, Space to select, A to select all (A again clears), and Enter to resume the selected sessions. Esc, or Enter with nothing selected, starts fresh.
+  - Neither screen has a destructive key: killing stays a confirmed `/resume` action. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
+  - When several sessions are restored, this window attaches the first. Each other one opens in a new window of the host terminal, running `nmsh --attach <id>`:
+    - Ghostty on macOS: Ghostty's AppleScript API (`new surface configuration`, then `new window with configuration`). It opens a normal window in the running Ghostty app. The command words are passed as `osascript` arguments and shell-quoted with `quoted form of`, never written into the script. macOS asks once for Automation permission. If AppleScript is disabled or permission is denied, NMSh names the session's `nmsh --attach` command instead.
+    - Ghostty on Linux: `ghostty -e`.
+    - Terminal.app: AppleScript `do script`. macOS asks once for Automation permission.
+    - kitty: `kitten @ launch --type=os-window`, which needs kitty remote control.
+    - Hosts without a way to open windows (VS Code, Zed, others), or a launcher that fails: the remaining sessions keep running, and this window names the `nmsh --attach` command for each one.
+- **Live status (#174):** `/resume` LIVE rows and `nmsh --sessions` show evidence-based status for each live session. The service gathers it from the session's own output and reads it only when sessions are listed. Nothing polls, and nothing reads the screen.
+  - What runs and for how long. The foreground process is shown when it differs from the command (for example `process node` for `npm test`). A known interactive CLI (Claude Code, Codex, Aider, Gemini CLI, OpenCode, Goose, …) gets its display name. The table only supplies names: every program gets the same states.
+  - Output recency: *active* if the session wrote in the last 10 s, otherwise *quiet* for how long.
+  - *needs attention*: the running program asked for it with a terminal notification (OSC 9 excluding progress, OSC 777 notify) or a bell. It clears when someone types into the session or the command ends.
+  - *fullscreen* while the program holds the alternate screen, and the window title it set (OSC 0/2, sanitized and bounded).
+  - While idle: how long, and whether the last command succeeded or failed with its exit code.
+  - NMSh never claims what a program is doing or waiting for (thinking, approval, input). What the stream does not say is not shown. Status lives in the service, so it survives detach and reattach. Older services omit it, and the rows simply show less.
+- **Idle age:** `/resume` shows how long each idle live session has been at its prompt.
+
+Known limitations:
+- Nothing running in a shell survives the service being killed or the machine restarting. Only the transcript and the output captured so far are kept.
+- Sessions owned by an older service version can't be attached from a newer frontend. They stay listed as unverified until they end.
+- Recovery runs at launch and when `/resume` opens. A session that ends while another window is open is archived the next time either of those happens.
 
 ## Current scope and planned follow-up
 

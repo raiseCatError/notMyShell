@@ -77,7 +77,7 @@ test('search field is bordered, inset, and shows focus with a caret and accent b
 });
 
 test('Config rows are compact, single-line, with aligned values and a pointer', () => {
-  const rows = plain(renderSettingsPanel(config({contentIndex: 2}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
+  const rows = plain(renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
   const list = rows.filter(row => /^ {2}[› ] (Glyph style|Prompt provider|History divider|Divider density|Prompt snapshots|History colors)/u.test(row));
   assert.equal(list.length, 6);
   const first = rows.indexOf(list[0]!);
@@ -86,7 +86,7 @@ test('Config rows are compact, single-line, with aligned values and a pointer', 
   assert.equal(new Set(valueStarts).size, 1, `values align: ${list.join('|')}`);
   assert.match(list[2]!, /^ {2}› History divider\s+true$/u);
   assert.match(list[0]!, /^ {4}Glyph style\s+Nerd Font$/u, 'enum values are plain, not ‹ › wrapped');
-  const styled = renderSettingsPanel(config({contentIndex: 2}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION});
+  const styled = renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION});
   const accent = foreground(UI_COLORS.accent);
   const selected = styled.find(row => stripAnsi(row).includes('› History divider'))!;
   assert.ok(selected.includes(`\u001B[1m${accent}History divider`), 'selected label is bold accent');
@@ -109,8 +109,8 @@ test('search highlights matches restrainedly, distinct from the selected row', (
 
 test('footer follows Claude-style phrasing for the focused control', () => {
   const footer = (state: SettingsPanelState) => stripAnsi(renderSettingsPanel(state, 120).at(-1)!).trim();
-  assert.equal(footer(config()), 'Enter/Space to change · / to search · Esc to close');
-  assert.equal(footer(config({contentIndex: 1})), 'Enter to open · ←/→ to switch · / to search · Esc to close');
+  assert.equal(footer(config()), 'Enter/Space to change · / to search · A show advanced · Esc to close');
+  assert.equal(footer(config({contentIndex: 1})), 'Enter to open · ←/→ to switch · / to search · A show advanced · Esc to close');
   assert.equal(footer(config({searchFocused: true, searchQuery: 'x'})), '↑↓ results · Enter select · Esc clear');
   assert.equal(footer(config({view: 'status'})), '←/→ to switch · ↑↓ to scroll · Esc to close');
   assert.ok(!footer(config()).includes('Tab'));
@@ -138,6 +138,7 @@ test('Left/Right change an enum inline and persist it; Enter changes too', () =>
 
 test('Space and Enter toggle a real boolean; values stay shared with Status', () => withApp(async (app, path) => {
   app['openSettingsPanel']('config');
+  app['settingsPanelState']!.showAdvanced = true;
   app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'text', value: ' '});
@@ -200,7 +201,7 @@ test('panel chrome never enters transcript, resume data, or copy payload', () =>
 test('narrow widths keep values visible and never overflow', () => {
   for (const columns of [24, 32, 40]) {
     for (const [contentIndex, value] of [[0, 'Nerd Font'], [5, 'Follow prompt'], [2, 'true']] as const) {
-      const rows = renderSettingsPanel(config({contentIndex}), columns, 40);
+      const rows = renderSettingsPanel(config({contentIndex, showAdvanced: true}), columns, 40);
       for (const line of rows) assert.ok(displayWidth(line) <= columns, `${columns}: ${stripAnsi(line)}`);
       assert.ok(rows.some(line => stripAnsi(line).includes(value)), `${columns}: ${value}`);
     }

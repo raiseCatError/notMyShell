@@ -124,6 +124,8 @@ test('Status is read-only, uses no secrets, and marks unknown build identity qui
     for (const key of [{kind: 'down'}, {kind: 'enter'}, {kind: 'text', value: ' '}, {kind: 'text', value: '/'}] as const) app['handleKey'](key);
     assert.equal(JSON.stringify(app['promptConfiguration']), before);
     assert.equal(app['settingsPanelState']!.searchFocused, undefined, '/ does not search in Status');
+    // Additional provider status may overflow one screen. Verify the first viewport explicitly.
+    app['settingsPanelState']!.contentIndex = 0;
     const rows = app['settingsPanelRows'](80).map(stripAnsi).join('\n');
     assert.match(rows, /Version:/u);
     assert.match(rows, /Session journal:\s+(active|inactive)/u);

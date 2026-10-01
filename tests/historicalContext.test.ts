@@ -8,6 +8,8 @@ test('TerminalApp captures cwd at command submission for its historical header',
   // Independent of the developer's saved prompt settings.
   app['promptConfiguration'] = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   app['shellCwd'] = '/tmp';
+  // Independent of the developer's saved presentation (Chat would right-align the header).
+  app['output'].presenter.setLayout('normal');
   app['context'] = {...app['context'], cwd: '/tmp', project: 'tmp'};
   app['editor'].insert('pwd');
   app['session'].submit = () => {};

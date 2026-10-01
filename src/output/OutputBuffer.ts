@@ -32,6 +32,10 @@ export interface SecondaryActivity {
 }
 
 export interface CompletedCommand {
+  /** Only explicitly eligible commands enter command history; transcript retention is separate. */
+  historyEligible?: boolean;
+  startedAt?: number;
+  durationMs?: number;
   command: string;
   output: string;
   lifecycleText: string;
@@ -181,6 +185,17 @@ export class OutputBuffer {
     return startId;
   }
 
+  /**
+   * Re-open the command a restored transcript was still running: its header
+   * and output lines are already in the transcript, so only the active block
+   * is re-established and new output continues it.
+   */
+  resumeActive(command: string, startId: number, outputStartId: number, onModeChange?: (mode: PresentationMode) => void): void {
+    this.active = {command, start: startId, outputStart: outputStartId,
+      historicalContext: this.historicalContexts.get(startId), activities: []};
+    this.classifier = new CommandClassifier(Date.now(), onModeChange);
+  }
+
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
     for (let i = 0; i < formattedLines.length; i++) {
       this.parser.replaceLine(startId + i, formattedLines[i] ?? '');
@@ -323,6 +338,11 @@ export class OutputBuffer {
       }
       return found && lineIndex < found.end ? found.start : undefined;
     };
+  }
+
+  /** The finished, aligned sticky row for a block. */
+  presentSticky(startId: number, width: number): string | undefined {
+    return this.presenter.presentSticky(this.view(), startId, width);
   }
 
   /** One-row sticky rendering of a block's submitted command (see the presenter). */

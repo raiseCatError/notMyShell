@@ -7,7 +7,7 @@ import {delimiter, join} from 'node:path';
  * runtime interface (prompt render, welcome render, suggestion query, ...);
  * this module only describes providers and how their availability looks.
  */
-export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions';
+export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation';
 export type ProviderKind = 'native' | 'external' | 'none';
 
 export interface ProviderInstall {
@@ -59,6 +59,34 @@ export function findExecutable(name: string, pathValue = process.env.PATH ?? '')
   return undefined;
 }
 
+/**
+ * Package-manager prefixes NMSh also checks when the frontend's PATH lacks
+ * them (e.g. launched from a GUI whose environment never ran `brew shellenv`):
+ * Apple Silicon Homebrew, Intel Homebrew, Linuxbrew. Only fixed, well-known
+ * install locations; never anything user- or network-supplied.
+ */
+export const STANDARD_TOOL_DIRECTORIES: readonly string[] = ['/opt/homebrew/bin', '/usr/local/bin', '/home/linuxbrew/.linuxbrew/bin'];
+
+/**
+ * The one executable resolver for NMSh-owned tasks and provider detection:
+ * PATH first, then the standard package-manager prefixes. Returns an absolute
+ * path to spawn with argv, or undefined when the tool genuinely is missing.
+ */
+export function resolveCommand(name: string, pathValue = process.env.PATH ?? '',
+  fallbacks: readonly string[] = STANDARD_TOOL_DIRECTORIES): string | undefined {
+  if (name.includes('/')) {
+    try { accessSync(name, constants.X_OK); return name; } catch { return undefined; }
+  }
+  return findExecutable(name, pathValue) ?? findExecutable(name, fallbacks.join(delimiter));
+}
+
+/** PATH for a spawned tool: the tool's own directory first, so e.g. brew finds its siblings. */
+export function environmentFor(binary: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const directory = binary.slice(0, binary.lastIndexOf('/'));
+  const path = env.PATH ?? '';
+  return directory && !path.split(delimiter).includes(directory) ? {...env, PATH: [directory, path].filter(Boolean).join(delimiter)} : env;
+}
+
 export interface ExternalResult {
   ok: boolean;
   stdout: string;
@@ -71,7 +99,8 @@ export interface ExternalResult {
  * host TTY) so a timeout kills everything it started. Never throws.
  */
 export function runExternal(binary: string, args: readonly string[], options: {timeoutMs?: number; maxBytes?: number;
-  env?: NodeJS.ProcessEnv; cwd?: string} = {}): Promise<ExternalResult> {
+  env?: NodeJS.ProcessEnv; cwd?: string; signal?: AbortSignal} = {}): Promise<ExternalResult> {
+  if (options.signal?.aborted) return Promise.resolve({ok: false, stdout: '', error: 'cancelled'});
   const maxBytes = options.maxBytes ?? 256 * 1024;
   return new Promise(resolve => {
     let child: ReturnType<typeof spawn>;
@@ -88,12 +117,16 @@ export function runExternal(binary: string, args: readonly string[], options: {t
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       if (child.exitCode === null && child.signalCode === null && child.pid) {
         try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already gone. */ }
       }
       resolve(result);
     };
+    const abort = () => finish({ok: false, stdout: '', error: 'cancelled'});
     const timer = setTimeout(() => finish({ok: false, stdout: '', error: 'timed out'}), options.timeoutMs ?? 2000);
+    options.signal?.addEventListener('abort', abort, {once: true});
+    if (options.signal?.aborted) abort();
     child.stdout!.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxBytes) finish({ok: false, stdout: '', error: 'output too large'});
@@ -116,7 +149,7 @@ export function detectProvider(descriptor: ProviderDescriptor, pathValue = proce
   const cached = detectionCache.get(key);
   if (cached) return cached;
   const pending = (async (): Promise<ProviderStatus> => {
-    const binary = findExecutable(descriptor.executable!, pathValue);
+    const binary = resolveCommand(descriptor.executable!, pathValue);
     if (!binary) return {state: 'missing'};
     if (!descriptor.versionArgs) return {state: 'installed', binary};
     const result = await runExternal(binary, descriptor.versionArgs, {timeoutMs: 1500, maxBytes: 16 * 1024});

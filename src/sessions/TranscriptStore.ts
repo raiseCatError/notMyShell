@@ -1,8 +1,17 @@
-import {access, chmod, mkdir, open, readdir, readFile, rename, unlink} from 'node:fs/promises';
+import {access, chmod, link, mkdir, open, readdir, readFile, rename, unlink, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {OutputTranscript} from '../output/OutputBuffer.js';
+
+/** Another live process holds this transcript's lock. */
+export class TranscriptBusyError extends Error {
+  constructor(id: string) { super(`transcript ${id} is being written by another NMSh process`); }
+}
+
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
 
 function validRgb(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
@@ -23,10 +32,35 @@ export interface TranscriptSession {
   pinned?: boolean;
   endedAt?: string;
   journaled?: boolean;
+  /** Link to the live service session this journal presents, while it is live. */
+  live?: LiveLink;
   transcript: OutputTranscript;
 }
 
-export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview'> & {project: string};
+export interface LiveLink {
+  sessionId: string;
+  /** Last shell stream event reflected in this transcript. */
+  seq: number;
+  /** The command in flight when this checkpoint was taken. */
+  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number};
+}
+
+function parseLive(value: unknown): LiveLink | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const live = value as Record<string, unknown>;
+  if (typeof live.sessionId !== 'string' || !Number.isSafeInteger(live.seq)) return undefined;
+  const running = live.running as Record<string, unknown> | undefined;
+  const validRunning = running && typeof running.command === 'string' && typeof running.cwd === 'string'
+    && ['startedAt', 'startId', 'outputStartId'].every(key => Number.isSafeInteger(running[key]));
+  return {sessionId: live.sessionId, seq: live.seq as number,
+    ...(validRunning ? {running: running as unknown as NonNullable<LiveLink['running']>} : {})};
+}
+
+export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview' | 'live'> & {
+  project: string;
+  /** Set while this journal presents a live service session. */
+  liveSessionId?: string;
+};
 
 interface TranscriptFile extends TranscriptSession {
   schemaVersion: number;
@@ -47,7 +81,10 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && (transcript.welcome.captured === undefined
       || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)
-    && transcript.records.every(record => record && typeof record.command === 'string'
+    && transcript.records.every(record => record && (record.historyEligible === undefined || typeof record.historyEligible === 'boolean')
+      && (record.startedAt === undefined || Number.isFinite(record.startedAt))
+      && (record.durationMs === undefined || (Number.isFinite(record.durationMs) && record.durationMs >= 0))
+      && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
       && typeof record.outputStartId === 'number'
@@ -108,6 +145,7 @@ function parseSession(text: string): TranscriptSession {
     pinned: file.pinned === true,
     ...(typeof file.endedAt === 'string' ? {endedAt: file.endedAt} : {}),
     ...(file.journaled === true ? {journaled: true} : {}),
+    ...(parseLive(file.live) ? {live: parseLive(file.live)} : {}),
     transcript: file.transcript,
   };
 }
@@ -117,6 +155,7 @@ function summary(session: TranscriptSession): TranscriptSummary {
     startCwd: session.startCwd, finalCwd: session.finalCwd,
     pinned: session.pinned === true, ...(session.endedAt ? {endedAt: session.endedAt} : {}),
     ...(session.journaled ? {journaled: true} : {}),
+    ...(session.live ? {liveSessionId: session.live.sessionId} : {}),
     project: session.transcript.records[0]?.historicalContext?.project ?? ''};
 }
 
@@ -174,6 +213,51 @@ export class TranscriptStore {
     const session = this.create(input);
     await this.save(session);
     return session;
+  }
+
+  /**
+   * Run `task` holding this transcript's cross-process lock, so writers that
+   * finalize or checkpoint a live journal never interleave. The lock file is
+   * created atomically (hard link of a file already holding our pid); one whose
+   * owner process is gone is taken over. Throws TranscriptBusyError when a live
+   * owner still holds it after `waitMs`.
+   */
+  async withLock<T>(id: string, task: () => Promise<T>, waitMs = 0): Promise<T> {
+    if (!/^[\w-]+$/u.test(id)) throw new Error('Invalid session id');
+    await this.prepare();
+    const lock = join(this.directory, `${id}.lock`);
+    const mine = `${lock}.${randomUUID()}`;
+    await writeFile(mine, `${process.pid}\n`, {mode: 0o600, flag: 'wx'});
+    const deadline = Date.now() + waitMs;
+    try {
+      for (;;) {
+        try { await link(mine, lock); break; } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+        }
+        const owner = Number.parseInt(await readFile(lock, 'utf8').catch(() => ''), 10);
+        if (Number.isSafeInteger(owner) && owner > 0 && !processAlive(owner)) {
+          // Move the stale lock aside before removing it, so a lock another
+          // launch has just taken over is never deleted by mistake.
+          const aside = `${lock}.${randomUUID()}.stale`;
+          try {
+            await rename(lock, aside);
+            const moved = Number.parseInt(await readFile(aside, 'utf8'), 10);
+            if (moved !== owner) await link(aside, lock).catch(() => {});
+            await unlink(aside);
+          } catch { /* another launch cleared it first */ }
+          continue;
+        }
+        if (Date.now() >= deadline) throw new TranscriptBusyError(id);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+    } finally {
+      await unlink(mine).catch(() => {});
+    }
+    try {
+      return await task();
+    } finally {
+      await unlink(lock).catch(() => {});
+    }
   }
 
   async load(id: string): Promise<TranscriptSession> {
