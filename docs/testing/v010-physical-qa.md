@@ -55,3 +55,23 @@ reattaching from a capable host to a baseline host and back.
 - Ghostty, iTerm2, Kitty and WezTerm: check host click modifiers and selection.
   Terminal.app, unknown hosts and tmux baseline: text remains plain unless the
   explicit `NMSH_HYPERLINKS=1` override is used; no escape garbage appears.
+
+## Compatibility additions (#14)
+
+- Run the deterministic fixture modes in `tests/fixtures/compatibility.mjs` from
+  an available host. Finite/noisy commands complete with intact history; streaming
+  stays LIVE through resize and Ctrl+C; interactive modes receive keys/paste and
+  return cleanly. Automated PTY passage does not certify their visual appearance.
+- With tmux mouse enabled, try native Shift selection, Ctrl+J multiline fallback,
+  keyboard disclosure navigation, interactive mouse ownership and bracketed paste.
+  Detach/reconnect the tmux client: the same NMSh remains in the pane. Close the
+  pane and reattach the NMSh live session from another available host: capabilities
+  refresh while shell cwd/environment/state persist.
+- In available Ghostty/Terminal.app/iTerm2/Kitty/WezTerm installations, try ordinary
+  CLI, noisy builds, streaming tools, vim/less/fzf, and available agent CLIs. Check
+  resize, Ctrl+C, Ctrl+Z/fg, clean exit and restored keyboard/mouse/paste modes.
+- zoxide and Atuin require a real configured installation to validate integration;
+  no account/tool-specific behavior is claimed by the deterministic fixture suite.
+
+See [coverage matrix](v010-compatibility.md) for automated vs optional vs pending
+status. All new physical entries remain pending.

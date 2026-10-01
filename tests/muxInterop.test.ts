@@ -240,3 +240,38 @@ test('window-launch host detection inside a multiplexer uses inherited evidence 
   const zellij = detectTerminalHost({ZELLIJ: '0', TERM_PROGRAM: ''}, 'linux');
   assert.equal(zellij.newWindow, undefined);
 });
+
+test('mouse-enabled tmux client detach/reattach preserves one attached NMSh and interactive ownership',
+  {skip: hasTmux ? false : 'tmux is not installed'}, async () => {
+    const sandbox = new LiveSandbox();
+    const pane = new TmuxPane(sandbox);
+    const fixture = fileURLToPath(new URL('./fixtures/compatibility.mjs', import.meta.url));
+    const attach = () => sandbox.trackFrontend(nodePty.spawn('tmux',
+      ['-L', pane.socket, '-f', '/dev/null', 'attach-session', '-t', 'p'], {
+        cwd: sandbox.home, cols: 100, rows: 30,
+        env: {...cleanEnv(), ...sandbox.env, TMUX: ''} as Record<string, string>,
+      }));
+    try {
+      pane.tmux('set-option', '-g', 'mouse', 'on');
+      assert.equal(pane.tmux('show-option', '-gv', 'mouse').trim(), 'on');
+      await pane.waitFor(/❯/);
+      const first = attach();
+      await first.waitFor(/❯/);
+      const [live] = await sandbox.sessions();
+      first.pty.write('\u0002d');
+      await first.waitExit();
+      assert.equal((await sandbox.sessions())[0]!.id, live!.id);
+      assert.equal((await sandbox.sessions())[0]!.state, 'attached', 'tmux owns the surviving frontend');
+      const second = attach();
+      await second.waitFor(/❯/);
+      const mark = second.mark;
+      second.pty.write(`${quote(process.execPath)} ${quote(fixture)} fullscreen\r`);
+      await second.waitFor(/INTERACTIVE-READY-fullscreen/, mark);
+      second.pty.resize(82, 28);
+      await second.waitFor(/INTERACTIVE-SIZE-27x82/, mark); // tmux reserves its status row.
+      second.pty.write('q');
+      await second.waitFor(/INTERACTIVE-EXIT-0/, mark);
+      await pane.run('echo AFTER-TMUX-CLIENT', /AFTER-TMUX-CLIENT/);
+      assert.equal((await sandbox.sessions())[0]!.id, live!.id);
+    } finally { pane.kill(); await sandbox.dispose(); }
+  });

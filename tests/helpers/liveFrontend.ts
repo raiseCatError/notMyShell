@@ -83,13 +83,16 @@ export class LiveSandbox {
   }
 
   /** A mux's outer PTY can exit before its frontend finishes journaling. */
+  private sandboxProcesses: number[] = [];
+
   private hasSandboxProcesses(): boolean {
     // cwd is an open reference too: this catches detached helpers and writers
     // between writes, unlike checking for only an open journal file.
     const result = spawnSync('lsof', ['-t', '+D', this.root], {encoding: 'utf8', timeout: 2000});
     if (result.error) throw result.error;
     if (result.status !== 0 && result.status !== 1) throw new Error('could not inspect sandbox process ownership');
-    return result.stdout.split('\n').some(value => Number(value) > 0 && Number(value) !== process.pid);
+    this.sandboxProcesses = result.stdout.split('\n').map(Number).filter(pid => pid > 0 && pid !== process.pid);
+    return this.sandboxProcesses.length > 0;
   }
 
   /** Kill every frontend and every live shell so the service exits too. */
@@ -103,7 +106,11 @@ export class LiveSandbox {
       // while it is removed. A SIGKILLed service leaves a stale socket file, so
       // the condition is "nothing accepts connections", not "no socket files".
       await until(async () => !(await this.anyServiceListening()), 10000, 'service exit');
-      await until(() => !this.hasSandboxProcesses(), 10000, 'sandbox frontends and helpers to finish');
+      await until(() => !this.hasSandboxProcesses(), 10000, () => {
+        const details = spawnSync('ps', ['-o', 'pid=,ppid=,command=', '-p', this.sandboxProcesses.join(',')],
+          {encoding: 'utf8', timeout: 2000}).stdout.trim();
+        return `sandbox frontends and helpers to finish: ${details}`;
+      });
     } finally {
       rmSync(this.root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
     }
