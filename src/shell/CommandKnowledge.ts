@@ -67,10 +67,14 @@ export function inspectCommand(buffer: string, cursor: number, cwd: string,
   // Restrict knowledge to simple commands. Substitutions, redirects and wrappers are context-only.
   let boundary = -1;
   before.forEach((item, index) => {
-    if (item.type === 'Operator' || item.type === 'Normal' && item.text.includes('\n')) boundary = index;
+    if (item.type === 'Operator' && ['|', '||', '&&', '&', ';', ';;', '(', ')'].includes(item.text)
+      || item.type === 'Normal' && item.text.includes('\n')) boundary = index;
   });
-  const words = before.slice(boundary + 1).filter(item => item.type !== 'Normal');
-  const commandToken = words.find(item => /Command$|^Command$/u.test(item.type));
+  const segment = before.slice(boundary + 1);
+  const words = segment.filter(item => !['Normal', 'Operator', 'Comment'].includes(item.type));
+  // Styling roles do not encode command position for quoted/path words.
+  // The first word after assignments is still a command, even without facts.
+  const commandToken = words.find(item => !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(item.text));
   const command = commandToken?.text ?? '';
   const start = chars.slice(0, token.start).join('').length;
   const end = chars.slice(0, token.end).join('').length;
@@ -78,7 +82,8 @@ export function inspectCommand(buffer: string, cursor: number, cwd: string,
   const word = token.text;
   const candidate = candidates.find(item => item.context.buffer === buffer && item.context.cwd === cwd
     && item.replacement.start === start && item.replacement.end === end && item.value === word);
-  const simple = words[0] === commandToken && !/[\\'"$`]/u.test(word);
+  const simple = words[0] === commandToken && !segment.some(item => item.type === 'Operator')
+    && !/[\\'"$`]/u.test(word) && !/[\\'"$`]/u.test(command);
   const optionsEnded = words.slice(0, -1).some(item => item.text === '--');
   const known = simple && !optionsEnded ? localKnowledge(command, word, commandPosition) : undefined;
   const fact = known?.kind === 'subcommand' && words.length !== 2 ? undefined : known;
