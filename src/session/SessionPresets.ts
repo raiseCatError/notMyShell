@@ -11,7 +11,7 @@ const safeText = (value: unknown, max: number): value is string => typeof value 
 export function validatePreset(value: unknown): SessionPreset {
   if (!object(value) || typeof value.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/u.test(value.name) || value.name.trim() !== value.name) throw new PresetError('Invalid preset name. Use 1–64 letters, numbers, spaces, _ or -.');
   if (!safeText(value.cwd,4096) || !isAbsolute(value.cwd) || /[\r\n\t]/u.test(value.cwd)) throw new PresetError('Preset cwd must be an absolute directory path.');
-  if (!Array.isArray(value.commands) || value.commands.length > 16 || !value.commands.every(command => safeText(command,4096) && command.trim().length > 0 && !command.includes('\r')) || value.commands.join('').length > 16384) throw new PresetError('Invalid startup commands (maximum 16 commands / 16 KiB).');
+  if (!Array.isArray(value.commands) || value.commands.length > 16 || !value.commands.every(command => safeText(command,4096) && command.trim().length > 0 && !command.includes('\r')) || Buffer.byteLength(value.commands.join(''),'utf8') > 16384) throw new PresetError('Invalid startup commands (maximum 16 commands / 16 KiB).');
   if (value.acknowledged !== undefined && (typeof value.acknowledged !== 'string' || !/^[a-f0-9]{64}$/u.test(value.acknowledged))) throw new PresetError('Malformed preset acknowledgement.');
   return {name:value.name, cwd:value.cwd, commands:[...value.commands], ...(value.acknowledged ? {acknowledged:value.acknowledged as string} : {})};
 }
@@ -67,7 +67,9 @@ export class SessionPresetStore {
       if (this.diskContents() !== original) throw new PresetError('Preset storage changed; retry after inspecting it.');
       change(file);
       if (file.presets.length > 100) throw new PresetError('Preset limit reached (100).');
-      writeFileSync(temporary, JSON.stringify(file,null,2)+'\n',{flag:'wx',mode:0o600});
+      const contents = JSON.stringify(file,null,2)+'\n';
+      if (Buffer.byteLength(contents,'utf8') > 256 * 1024) throw new PresetError('Preset storage limit reached (256 KiB); existing presets were preserved.');
+      writeFileSync(temporary,contents,{flag:'wx',mode:0o600});
       this.read(); // Refuse symlinks or a malformed intervening replacement.
       if (this.diskContents() !== original) throw new PresetError('Preset storage changed; retry after inspecting it.');
       renameSync(temporary,this.path);

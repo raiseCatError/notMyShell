@@ -307,3 +307,18 @@ test('failed startup is visible and later commands are not executed', async () =
     assert.equal(readFileSync(target,'utf8'),'{"version":1,"presets":[]}');
   } finally {rmSync(root,{recursive:true,force:true});}
 });
+
+test('preset writes enforce the same byte limit as reads without making existing storage unreadable', () => {
+  const root = mkdtempSync(join(tmpdir(),'preset-bounds-'));
+  try {
+    const store = new SessionPresetStore(root);
+    const commands = Array.from({length:3},()=> 'echo '+ 'x'.repeat(4080));
+    const contents = JSON.stringify({version:1,presets:Array.from({length:21},(_,index)=>({name:`p${index}`,cwd:root,commands}))});
+    writeFileSync(store.path,contents);
+    assert.equal(store.list().length,21);
+    assert.throws(()=>store.create({name:'overflow',cwd:root,commands}),/storage limit/);
+    assert.equal(readFileSync(store.path,'utf8'),contents);
+    assert.equal(store.list().length,21);
+    assert.throws(()=>validatePreset({name:'unicode',cwd:root,commands:Array.from({length:3},()=> 'echo '+ '界'.repeat(4000))}),/16 KiB/);
+  } finally {rmSync(root,{recursive:true,force:true});}
+});
