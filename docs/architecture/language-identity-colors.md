@@ -1,6 +1,6 @@
 # Language identity colors
 
-NMSh exposes GitHub Linguist's language colors as identity data for consumers such as tool cards, project metadata, and palette results. These colors identify a language only. They do not indicate success, warning, failure, focus, or any other UI state. The module is separate from `src/ui/palette.ts`; future Chroma work can adapt these colors for contrast without changing their identity values.
+NMSh exposes GitHub Linguist's language colors as identity data for tool cards and project metadata. These colors identify a language only. They do not indicate success, warning, failure, focus, or any other UI state. `languageIdentity(name)` returns Chroma's existing identity category; `statusMeaning` is always undefined for it. Consumers use Chroma's capability fallback and retain text labels with NO_COLOR. The dataset does not repaint existing prompt themes.
 
 The generated mapping is checked in at `src/languages/linguistLanguageColors.generated.ts`. Normal rendering reads only this local TypeScript data and makes no network request. `languageIdentityColor(name)` normalizes Unicode, case, and whitespace; it recognizes canonical names and aliases published by Linguist. Unknown names return the neutral `UNKNOWN_LANGUAGE_IDENTITY_COLOR` value.
 

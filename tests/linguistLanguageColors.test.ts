@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {languageIdentityColor, normalizeLanguageName, UNKNOWN_LANGUAGE_IDENTITY_COLOR} from '../src/languages/linguistLanguageColors.js';
-import {UI_COLORS} from '../src/ui/palette.js';
+import {languageIdentity} from '../src/languages/linguistLanguageColors.js';
+import {statusMeaning} from '../src/chroma/chroma.js';
 import {parseLanguageColors, renderLanguageColorsModule} from '../scripts/lib/linguistLanguageColors.mjs';
 
 test('known languages and official aliases resolve to Linguist identity colors', () => {
@@ -19,8 +20,10 @@ test('language names normalize case, Unicode, and whitespace; unknown names use 
 });
 
 test('language identity remains separate from semantic status colors', () => {
-  assert.notEqual(languageIdentityColor('TypeScript'), UI_COLORS.success);
-  assert.notEqual(languageIdentityColor('TypeScript'), UI_COLORS.failure);
+  for (const name of ['Python', 'Rust', 'Swift', 'unknown']) {
+    assert.equal(languageIdentity(name).kind, 'identity');
+    assert.equal(statusMeaning(languageIdentity(name)), undefined);
+  }
   assert.equal(UNKNOWN_LANGUAGE_IDENTITY_COLOR, '#8F8A98');
 });
 
