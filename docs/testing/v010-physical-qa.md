@@ -22,3 +22,13 @@ coverage. Do not install every host solely for this checklist.
 
 Every row remains pending until an actual human result is recorded. Host
 configuration is not applied automatically.
+
+- [ ] iTerm2: mouse hover/click and native selection override with current host
+  settings; Ctrl+J fallback; Kitty keyboard only if startup probe confirms it.
+- [ ] Kitty: enhanced keyboard push/pop across TUI exit and detach; Shift
+  selection with mouse reporting; no automatic remote-control configuration.
+- [ ] WezTerm: keyboard encoding with `enable_kitty_keyboard` disabled/enabled;
+  fallback Ctrl+J; configurable Shift selection; synchronized output only when
+  the shared startup query reports support.
+- [ ] Reattach Ghostty → Terminal.app → Kitty → iTerm2 → WezTerm where available:
+  new frontend capabilities, same shell cwd/exports, no stale input modes.

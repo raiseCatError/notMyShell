@@ -33,3 +33,34 @@ actions. Finding a configuration file for a different terminal no longer enables
 those actions. Host-specific guidance and zsh bootstrap terminal hints live under
 `src/host/`; architecture tests pin that boundary. No new preference-management
 feature is introduced.
+
+## Additional passive profiles
+
+| Profile | Kitty keyboard hint | Mouse / movement / clicks | Selection with reporting | OSC 8 / truecolor | Graphics hint | Configuration adapter |
+| --- | --- | --- | --- | --- | --- | --- |
+| iTerm2 | Probe only | Yes | Host selection override (verify settings) | Yes | iTerm2 inline images | None |
+| Kitty | Yes | Yes | Shift | Yes | Kitty | None |
+| WezTerm | Probe only (configuration dependent) | Yes | Shift (configurable) | Yes | iTerm2 inline images | None |
+| Unknown / nested | No | No | Native | No / explicit color evidence | None | None |
+
+All synchronized output remains probe-only. A graphics hint never emits image
+bytes; rich previews remain research-first. WezTerm supports multiple image
+protocols; the single preferred hint is deliberately conservative. Current
+iTerm2 documentation also describes Kitty graphics; older installations retain
+the established inline-image protocol. No graphics version inference is made.
+
+Explicit `TERM_PROGRAM` takes precedence over inherited outer-host variables.
+Missing program evidence may use `xterm-kitty`, `KITTY_WINDOW_ID`, `WEZTERM_PANE`
+or the existing resource hint. Multiplexers and `TERM=dumb` suppress profiles.
+Color overrides retain their existing precedence; hyperlink overrides use the
+existing `NMSH_HYPERLINKS` setting. No preferences are changed for these hosts.
+
+Reattach fixtures switch Ghostty → baseline → Kitty → iTerm2 → WezTerm over one
+real persistent shell. Each frontend resolves fresh input modes while the shell
+retains its original environment. This is protocol coverage, not GUI validation.
+
+Protocol references: [iTerm2 OSC 8](https://iterm2.com/documentation-escape-codes.html),
+[Kitty keyboard](https://sw.kovidgoyal.net/kitty/keyboard-protocol/),
+[WezTerm keyboard configuration](https://wezterm.org/config/key-encoding.html),
+[WezTerm mouse selection](https://wezterm.org/config/mouse.html), and
+[WezTerm graphics features](https://wezterm.org/features.html).
