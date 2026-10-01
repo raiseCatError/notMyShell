@@ -8,6 +8,7 @@
 | **Development branch** | `dev` |
 | **Next direction** | [v0.8.0 — Command Intelligence & Navigation](https://github.com/raiseCatError/notMyShell/milestone/8), in development |
 | **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), development-complete, unmerged; physical QA pending |
+| **Current stacked milestone** | [v0.10.0 — Terminal Hosts & Compatibility](https://github.com/raiseCatError/notMyShell/milestone/10), development acceptance complete as an unmerged stack; [evidence and limitations](docs/testing/v010-acceptance.md), physical QA pending |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
