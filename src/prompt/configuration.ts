@@ -168,6 +168,44 @@ export function normalizeSyntaxAppearance(value: unknown): SyntaxAppearance {
   };
 }
 
+export type NotificationFocusPolicy = 'suppress' | 'notify';
+
+/** Command-completion notifications; read at completion time, never snapshotted at start. */
+export interface NotificationSettings {
+  enabled: boolean;
+  /** Minimum elapsed command time, in seconds, before a completion notifies. */
+  thresholdSeconds: number;
+  onSuccess: boolean;
+  onFailure: boolean;
+  /** Suppress: a definitely-focused terminal notifies nothing. Notify: focus is ignored. */
+  whenFocused: NotificationFocusPolicy;
+}
+
+export const DEFAULT_NOTIFICATION_SETTINGS: NotificationSettings = {
+  enabled: true,
+  thresholdSeconds: 60,
+  onSuccess: true,
+  onFailure: true,
+  whenFocused: 'suppress',
+};
+
+/** One day; longer thresholds are almost certainly a typo. */
+export const MAX_NOTIFICATION_THRESHOLD_SECONDS = 86_400;
+
+export function normalizeNotificationSettings(value: unknown): NotificationSettings {
+  if (!isRecord(value)) return {...DEFAULT_NOTIFICATION_SETTINGS};
+  const threshold = value.thresholdSeconds;
+  return {
+    enabled: typeof value.enabled === 'boolean' ? value.enabled : true,
+    thresholdSeconds: typeof threshold === 'number' && Number.isFinite(threshold) && threshold >= 1
+      ? Math.min(MAX_NOTIFICATION_THRESHOLD_SECONDS, Math.round(threshold))
+      : DEFAULT_NOTIFICATION_SETTINGS.thresholdSeconds,
+    onSuccess: typeof value.onSuccess === 'boolean' ? value.onSuccess : true,
+    onFailure: typeof value.onFailure === 'boolean' ? value.onFailure : true,
+    whenFocused: value.whenFocused === 'notify' ? 'notify' : 'suppress',
+  };
+}
+
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
@@ -217,6 +255,7 @@ export interface PromptConfiguration {
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
   powerlevel10k: {themePath: string | null; configPath: string | null};
+  notifications: NotificationSettings;
   transcript: TranscriptAppearance;
   syntax: SyntaxAppearance;
   placement: ContextPlacement;
@@ -241,6 +280,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   updateChecks: 'off',
   liveSessionStartup: 'ask',
   liveSessionMultiple: 'ask',
+  notifications: {...DEFAULT_NOTIFICATION_SETTINGS},
   outputFolding: 'smart',
   welcome: 'vespyr',
   suggestions: 'nmsh',
@@ -331,6 +371,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const palette = normalizePaletteId(nativeValue.palette);
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
+  const notifications = normalizeNotificationSettings(value.notifications);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
     startStyle, connector, endStyle, palette, icons, style,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
@@ -361,7 +402,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
+      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -401,7 +442,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, nmsh, transcript, syntax, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, nmsh, transcript, syntax, notifications, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
 }
 

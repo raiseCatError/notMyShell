@@ -8,6 +8,7 @@ import {
   type GlyphStyle,
   type HistoryColorMode,
   type PromptConfiguration,
+  type NotificationSettings,
   type TranscriptAppearance,
 } from '../prompt/configuration.js';
 import {providerLabel} from '../prompt/PromptPanel.js';
@@ -83,6 +84,8 @@ export type SettingsRow = SettingsRowBase & (
     select: (config: PromptConfiguration, index: number) => PromptConfiguration}
   | {control: 'boolean'; get: (config: PromptConfiguration) => boolean;
     set: (config: PromptConfiguration, value: boolean) => PromptConfiguration}
+  | {control: 'stepper'; steps: readonly number[]; format: (value: number) => string;
+    get: (config: PromptConfiguration) => number; set: (config: PromptConfiguration, value: number) => PromptConfiguration}
   | {control: 'child'; destination: SettingsDestination; value?: (config: PromptConfiguration) => string}
   | {control: 'action'; actionLabel: string; destination: SettingsDestination}
 );
@@ -103,7 +106,28 @@ const GLYPH_STYLES: readonly GlyphStyle[] = ['nerd', 'safe'];
 const DENSITIES: readonly DividerDensity[] = ['normal', 'compact'];
 const COLOR_MODES: readonly HistoryColorMode[] = ['followPrompt', 'theme', 'grayscale'];
 
+function withNotifications(config: PromptConfiguration, patch: Partial<NotificationSettings>): PromptConfiguration {
+  return {...config, notifications: {...config.notifications, ...patch}};
+}
+
+/** Step to the next preset above (or below) the current value, wrapping at the ends. */
+export function stepPreset(steps: readonly number[], current: number, delta: -1 | 1): number {
+  if (delta === 1) return steps.find(step => step > current) ?? steps[0]!;
+  return [...steps].reverse().find(step => step < current) ?? steps[steps.length - 1]!;
+}
+
+export function formatThreshold(seconds: number): string {
+  if (seconds <= 60) return `${seconds}s`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  return seconds % 60 === 0 ? `${seconds / 60}m` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 /** Config: the flat list of real, inline-editable values (plus the prompt provider, edited in its panel). */
+const NOTIFICATION_CATEGORY = 'Command notifications';
+const ON_OFF = [true, false] as const;
+const FOCUS_POLICIES = ['suppress', 'notify'] as const;
+const NOTIFICATION_THRESHOLD_STEPS = [5, 10, 30, 60, 120, 300, 600, 1800, 3600];
+
 export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
@@ -160,6 +184,22 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     control: 'child', destination: 'navigation', value: config => NAVIGATION_PROVIDERS.find(provider => provider.id === config.navigation)?.label ?? config.navigation},
   {id: 'suggestionsOnEmpty', level: 'advanced', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
     control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
+  enumRow({id: 'notifications', label: 'Notifications', description: 'Notify when a long-running command finishes', category: NOTIFICATION_CATEGORY,
+    values: ON_OFF, labels: ['On', 'Off'],
+    get: config => config.notifications.enabled, set: (config, enabled) => withNotifications(config, {enabled})}),
+  {id: 'notifyAfter', label: 'Notify after', description: 'Minimum command duration before notifying', category: NOTIFICATION_CATEGORY,
+    control: 'stepper', steps: NOTIFICATION_THRESHOLD_STEPS, format: formatThreshold,
+    get: config => config.notifications.thresholdSeconds,
+    set: (config, thresholdSeconds) => withNotifications(config, {thresholdSeconds})},
+  enumRow({id: 'notifyOnSuccess', label: 'On success', description: 'Notify when a long command exits 0', category: NOTIFICATION_CATEGORY,
+    values: ON_OFF, labels: ['On', 'Off'],
+    get: config => config.notifications.onSuccess, set: (config, onSuccess) => withNotifications(config, {onSuccess})}),
+  enumRow({id: 'notifyOnFailure', label: 'On failure', description: 'Notify when a long command fails or is interrupted', category: NOTIFICATION_CATEGORY,
+    values: ON_OFF, labels: ['On', 'Off'],
+    get: config => config.notifications.onFailure, set: (config, onFailure) => withNotifications(config, {onFailure})}),
+  enumRow({id: 'notifyWhenFocused', label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: NOTIFICATION_CATEGORY,
+    values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
+    get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -198,12 +238,13 @@ export function settingsItemCount(state: SettingsPanelState): number {
 }
 
 export function isInlineEditable(row: SettingsRow | undefined): boolean {
-  return row?.control === 'enum' || row?.control === 'boolean';
+  return row?.control === 'enum' || row?.control === 'boolean' || row?.control === 'stepper';
 }
 
 /** ←/→ on an enum or boolean row; undefined when the row has nothing to change inline. */
 export function adjustSettingsRow(row: SettingsRow, config: PromptConfiguration, delta: -1 | 1): PromptConfiguration | undefined {
   if (row.control === 'boolean') return row.set(config, toggleValue(row.get(config)));
+  if (row.control === 'stepper') return row.set(config, stepPreset(row.steps, row.get(config), delta));
   if (row.control !== 'enum') return undefined;
   return row.select(config, stepIndex(row.options.length, row.index(config), delta));
 }
@@ -216,6 +257,7 @@ export function toggleSettingsRow(row: SettingsRow, config: PromptConfiguration)
 /** True when an inline-editable row differs from the shipped default. */
 export function settingsRowChanged(row: SettingsRow, config: PromptConfiguration): boolean {
   if (row.control === 'enum') return row.index(config) !== row.index(DEFAULT_PROMPT_CONFIGURATION);
+  if (row.control === 'stepper') return row.get(config) !== row.get(DEFAULT_PROMPT_CONFIGURATION);
   if (row.control === 'boolean') return row.get(config) !== row.get(DEFAULT_PROMPT_CONFIGURATION);
   return false;
 }
@@ -228,6 +270,7 @@ export function settingsRowDefaultLabel(row: SettingsRow): string | undefined {
 /** Configuration with only this row reset to its default; undefined when the row has no inline value. */
 export function resetSettingsRow(row: SettingsRow, config: PromptConfiguration): PromptConfiguration | undefined {
   if (row.control === 'enum') return row.select(config, row.index(DEFAULT_PROMPT_CONFIGURATION));
+  if (row.control === 'stepper') return row.set(config, row.get(DEFAULT_PROMPT_CONFIGURATION));
   if (row.control === 'boolean') return row.set(config, row.get(DEFAULT_PROMPT_CONFIGURATION));
   return undefined;
 }
@@ -240,6 +283,7 @@ export function settingsRowDestination(row: SettingsRow): SettingsDestination | 
 export function settingsRowValue(row: SettingsRow, config: PromptConfiguration): string | undefined {
   switch (row.control) {
     case 'enum': return row.options[row.index(config)];
+    case 'stepper': return row.format(row.get(config));
     case 'boolean': return row.get(config) ? 'true' : 'false';
     case 'child': return row.value?.(config);
     case 'action': return row.actionLabel;

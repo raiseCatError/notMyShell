@@ -1,4 +1,5 @@
 import {homedir} from 'node:os';
+import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
 import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
@@ -121,6 +122,8 @@ export class TerminalApp {
   private offeredUpdate?: string;
   private readonly initialCwd = process.cwd();
   private shellCwd = this.initialCwd;
+  private terminalFocus: TerminalFocus = 'unknown';
+  private readonly notificationService = createNotificationService();
   private readonly renderer = new TerminalRenderer();
   private readonly editor = new CommandEditor();
   private readonly highlighter = new Highlighter();
@@ -341,6 +344,7 @@ export class TerminalApp {
   private enterAttachedPassthrough(): void {
     // Reattached into a fullscreen app: hand it the whole terminal again,
     // including the mouse/paste/cursor-key modes it set before the detach.
+    this.terminalFocus = 'unknown';
     this.renderer.suspendForPassthrough(this.attachedModes);
     this.attachedModes = '';
     const dimensions = this.dimensions();
@@ -352,6 +356,7 @@ export class TerminalApp {
     if (mode === 'PASSTHROUGH' && !this.passthrough) {
       this.passthrough = true;
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
+      this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
       const dimensions = this.dimensions();
       this.session.resize(dimensions.columns, dimensions.rows);
@@ -420,11 +425,14 @@ export class TerminalApp {
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
     process.stdout.on('resize', this.onResize);
+    process.on('SIGTSTP', this.onSuspend);
+    process.on('SIGCONT', this.onContinue);
     process.once('SIGTERM', this.onTerminate);
     process.once('SIGHUP', this.onTerminate);
     process.on('exit', () => {
       if (!this.stopped) {
         if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+        this.terminalFocus = 'unknown';
         this.renderer.leave();
       }
     });
@@ -482,7 +490,34 @@ export class TerminalApp {
     this.stop(0);
   };
 
+  private frontendSuspended = false;
+  private readonly onSuspend = (): void => {
+    if (this.stopped || this.externalPassthrough) return;
+    this.frontendSuspended = true;
+    this.terminalFocus = 'unknown';
+    this.renderer.leave();
+    if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+    process.stdin.pause();
+    process.kill(process.pid, 'SIGSTOP');
+  };
+
+  private readonly onContinue = (): void => {
+    if (!this.frontendSuspended || this.stopped) return;
+    this.frontendSuspended = false;
+    this.terminalFocus = 'unknown';
+    this.renderer.enter();
+    if (this.passthrough) this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
+    if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    process.stdin.resume();
+    this.keyDecoder.reset();
+    this.onResize();
+  };
+
   private handleKey(key: Key): void {
+    if (key.kind === 'focusIn' || key.kind === 'focusOut') {
+      this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      return;
+    }
     if (this.paletteState) {
       const state = this.paletteState;
       if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'palette') this.paletteState = undefined;
@@ -1098,6 +1133,7 @@ export class TerminalApp {
     try {
       process.stdin.off('data', this.onInput); process.stdin.pause(); detached = true;
       process.stdin.setRawMode(false); released = true;
+      this.terminalFocus = 'unknown';
       this.renderer.leave(); left = true;
       process.on('SIGINT', ignoreInterrupt);
       process.on('SIGWINCH', abort);
@@ -1263,6 +1299,7 @@ export class TerminalApp {
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
         this.passthrough = true;
+        this.terminalFocus = 'unknown';
         this.renderer.suspendForPassthrough();
         const dimensions = this.dimensions();
         this.session.resize(dimensions.columns, dimensions.rows);
@@ -1283,6 +1320,7 @@ export class TerminalApp {
     // Initial static heuristic, but dynamic can override
     this.passthrough = shouldPassthrough(command);
     if (this.passthrough) {
+      this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough();
       const dimensions = this.dimensions();
       this.session.resize(dimensions.columns, dimensions.rows);
@@ -1635,6 +1673,12 @@ export class TerminalApp {
     }
 
     const command = this.running;
+    const notification = {command: command.command, elapsedMs: Math.max(0, at - command.startedAt), exitCode,
+      interrupted: command.interrupted || exitCode === 130};
+    if (!this.replaying && shouldNotify(notification, this.promptConfiguration.notifications, this.terminalFocus)) {
+      // Delivery failures must never affect completion, transcript or journal.
+      try { void this.notificationService.notify(formatCommandNotification(notification)).catch(() => {}); } catch { /* best effort */ }
+    }
     if (this.replaying) this.replayedCompletions += 1;
     const completedAt = new Date(at);
     const elapsed = completedAt.getTime() - command.startedAt;
@@ -1797,6 +1841,7 @@ export class TerminalApp {
       inputDetached = true;
       process.stdin.setRawMode(false);
       rawModeReleased = true;
+      this.terminalFocus = 'unknown';
       this.renderer.leave();
       rendererLeft = true;
       process.on('SIGINT', ignoreInterrupt);
@@ -3098,10 +3143,13 @@ export class TerminalApp {
     this.welcomeBlinkTimer = undefined;
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
+    process.off('SIGTSTP', this.onSuspend);
+    process.off('SIGCONT', this.onContinue);
     process.off('SIGTERM', this.onTerminate);
     process.off('SIGHUP', this.onTerminate);
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
     process.stdin.pause();
+    this.terminalFocus = 'unknown';
     this.renderer.leave();
     this.completionService.cancel();
     this.historyQueryAbort?.abort();
