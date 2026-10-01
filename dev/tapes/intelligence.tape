@@ -1,7 +1,7 @@
 Require node
 Require zsh
 
-Output dev/tapes/output/command.gif
+Output dev/tapes/output/intelligence.gif
 Set Shell "zsh"
 Set Width 1200
 Set Height 650
@@ -12,9 +12,11 @@ Hide
 Type "node dev/tapes/launch.mjs" Enter
 Wait+Screen /notMyShell/
 Show
-Type "echo 'Hello from NMSh'" Enter
-Wait+Screen /Hello from NMSh/
+Type "printf demo" Enter
+Sleep 1s
+Type "/history" Enter
 Sleep 2s
 Hide
+Escape
 Ctrl+D
 Sleep 1s

@@ -1,20 +1,23 @@
 # VHS development demos
 
-These optional VHS tapes capture a welcome, settings navigation, and one ordinary command. They are development/demo tooling only; NMSh does not depend on VHS at runtime, and `npm test` does not invoke it.
+These optional VHS tapes capture welcome, Settings v2, an ordinary command and native history selection. They are development tooling only; NMSh does not depend on VHS at runtime, and `npm test` does not invoke it.
 
 ## Run
 
 From the repository root, install the normal project dependencies if needed, then run:
 
 ```sh
+npm run build
 mkdir -p dev/tapes/output
+vhs validate 'dev/tapes/*.tape'
 vhs dev/tapes/welcome.tape
 vhs dev/tapes/settings.tape
 vhs dev/tapes/command.tape
+vhs dev/tapes/intelligence.tape
 ```
 
 VHS writes GIFs under `dev/tapes/output/`, which is ignored by Git. VHS is not installed automatically. Install it using the instructions in the [official VHS repository](https://github.com/charmbracelet/vhs) if you want to record these demos.
 
-The tapes use real NMSh startup, wall-clock values, and the ambient Vespyr blink. They are illustrative recordings, not deterministic snapshots or CI assertions. The deterministic presentation mode tracked in #173 is not available yet; generated media should be reviewed before sharing and should not be committed as golden output until that mode is implemented.
+The launch helper isolates HOME/preferences, disables update checks, opts out of the session service and uses the current `NMSH_DETERMINISTIC=1` seam. It never edits user config or attaches an existing session. Each tape exits so the helper can remove its private directory. Deterministic presentation freezes decorative motion and the completion clock only; real command durations, scheduling, font, build identity and cwd still vary. Review captures before sharing; these are not pixel goldens.
 
-The tape files are validated with `vhs validate 'dev/tapes/*.tape'`. To regenerate all recordings locally after a change, run each tape command above. Keep tapes short, avoid network access and optional provider binaries, and do not add Chat, Command Palette, or Native Prompt style coverage while those surfaces remain owned by the active v0.5 work.
+Prefer VHS 0.12.1 or later: the previously tested host 0.12.0 binary reported success without materializing recordings. Validation is useful locally; visual-golden CI is deferred because font/host/timing differences would make it fragile. No end-user QA or optional-tool installation is required. Keep captures short and offline.
