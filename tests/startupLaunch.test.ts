@@ -82,6 +82,7 @@ test('built nmsh: Open all from a picker attaches here and launches every other 
       }
       const env = {...sandbox.env, TERM_PROGRAM: 'Apple_Terminal', PATH: `${fakeBin}:${process.env.PATH}`} as Record<string, string>;
       const pty = nodePty.spawn(join(REPO, 'bin/nmsh'), [], {cwd: sandbox.home, cols: 100, rows: 30, env});
+      sandbox.trackFrontend(pty);
       let output = '';
       let exitCode: number | undefined;
       pty.onData(data => { output += data; });
@@ -111,6 +112,7 @@ test('built nmsh starts normally as Terminal.app', {skip: built ? false : 'run n
   try {
     const env = {...sandbox.env, TERM_PROGRAM: 'Apple_Terminal'} as Record<string, string>;
     const pty = nodePty.spawn(join(REPO, 'bin/nmsh'), [], {cwd: sandbox.home, cols: 100, rows: 30, env});
+    sandbox.trackFrontend(pty);
     let output = '';
     pty.onData(data => { output += data; });
     try {

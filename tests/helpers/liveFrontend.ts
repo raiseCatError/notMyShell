@@ -30,10 +30,12 @@ export class LiveSandbox {
   readonly home = join(this.root, 'h');
   readonly config = join(this.root, 'c');
   readonly runtime = join(this.root, 'r');
+  readonly temp = join(this.root, 't');
   private readonly frontends: Frontend[] = [];
 
   constructor(config: Record<string, unknown> = {}, private readonly extraEnv: Record<string, string> = {}) {
     mkdirSync(this.home);
+    mkdirSync(this.temp);
     mkdirSync(join(this.config, 'nmsh'), {recursive: true});
     mkdirSync(this.runtime, {mode: 0o700});
     chmodSync(this.runtime, 0o700);
@@ -43,6 +45,7 @@ export class LiveSandbox {
 
   get env(): NodeJS.ProcessEnv {
     return {...process.env, HOME: this.home, XDG_CONFIG_HOME: this.config, NMSH_RUNTIME_DIR: this.runtime,
+      TMPDIR: this.temp, TMP: this.temp, TEMP: this.temp,
       TERM: 'xterm-256color', NMSH_SESSION_SERVICE: '1', NMSH_ACTIVE: '',
       // A host NMSh cannot open windows in, so tests never launch real terminal windows.
       TERM_PROGRAM: 'nmsh-test', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', ...this.extraEnv};
@@ -56,8 +59,13 @@ export class LiveSandbox {
   launch(args: string[] = [], size = {cols: 100, rows: 30}): Frontend {
     // Run outside the repository: a SIGKILLed frontend must never leave git
     // state (index.lock from a prompt's git status) behind in the checkout.
-    const frontend = new Frontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, ENTRY, ...args],
+    return this.trackFrontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, ENTRY, ...args],
       {cwd: this.home, ...size, env: this.env as Record<string, string>}));
+  }
+
+  /** Include externally launched PTYs in the same lifecycle, e.g. built CLI and screen fixtures. */
+  trackFrontend(pty: IPty): Frontend {
+    const frontend = new Frontend(pty);
     this.frontends.push(frontend);
     return frontend;
   }
@@ -75,8 +83,9 @@ export class LiveSandbox {
 
   /** Kill every frontend and every live shell so the service exits too. */
   async dispose(): Promise<void> {
-    for (const frontend of this.frontends) frontend.pty.kill('SIGKILL');
+    for (const frontend of this.frontends) if (frontend.exitCode === undefined) frontend.pty.kill('SIGKILL');
     try {
+      await Promise.all(this.frontends.map(frontend => frontend.waitExit()));
       for (const session of await this.sessions()) { try { process.kill(session.pid, 'SIGKILL'); } catch {} }
       await until(async () => (await this.sessions()).length === 0, 10000, 'sessions to end');
       // Wait for the service to exit so it is not still writing into the sandbox
@@ -113,6 +122,11 @@ export class Frontend {
   }
 
   async waitExit(timeoutMs = 15000): Promise<number> {
-    return Promise.race([this.exited, new Promise<number>((_, reject) => setTimeout(() => reject(new Error('frontend did not exit')), timeoutMs))]);
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([this.exited, new Promise<number>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('frontend did not exit')), timeoutMs);
+      })]);
+    } finally { if (timer) clearTimeout(timer); }
   }
 }

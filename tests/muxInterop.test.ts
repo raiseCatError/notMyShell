@@ -41,7 +41,7 @@ function cleanEnv(): NodeJS.ProcessEnv {
 class TmuxPane {
   readonly socket = `nmsh-mux-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   constructor(private readonly sandbox: LiveSandbox, columns = 100, rows = 30) {
-    const env = Object.entries(sandbox.env).filter(([name, value]) => value !== undefined && /^(HOME|XDG_CONFIG_HOME|NMSH_[A-Z_]+|PATH)$/u.test(name))
+    const env = Object.entries(sandbox.env).filter(([name, value]) => value !== undefined && /^(HOME|XDG_CONFIG_HOME|TMPDIR|TMP|TEMP|NMSH_[A-Z_]+|PATH)$/u.test(name))
       .map(([name, value]) => `${name}=${quote(value!)}`).join(' ');
     this.tmux('new-session', '-d', '-x', String(columns), '-y', String(rows), '-s', 'p',
       `env ${env} sh -c ${quote(nmshCommand(sandbox.home))}`);
@@ -202,6 +202,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   const pty = nodePty.spawn('screen', ['-q', '-S', name, 'zsh', '-f', '-c',
     nmshCommand(sandbox.home)], {cwd: sandbox.home, cols: 100, rows: 30, env});
+  const frontend = sandbox.trackFrontend(pty);
   let output = '';
   pty.onData(data => { output += data; });
   const plain = (from: number) => output.slice(from).replace(/\u001b\[[0-9;?>]*[A-Za-z]|\u001b[()][A-Z0-9]|\u001b[=>]/gu, ' ');
@@ -223,6 +224,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   } finally {
     pty.kill();
     spawnSync('screen', ['-S', name, '-X', 'quit'], {env: cleanEnv()});
+    await frontend.waitExit();
     await sandbox.dispose();
   }
 });
