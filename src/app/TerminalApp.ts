@@ -2,6 +2,8 @@ import {homedir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
+import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
+import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
@@ -175,6 +177,9 @@ export class TerminalApp {
   private transcriptPanelState?: TranscriptPanelState;
   /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
   private providerPanelState?: ProviderPanelState;
+  private toolConfiguration?: ConfigurationPanel;
+  private toolConfigurationLoading = false;
+  private toolConfigurationGeneration = 0;
   private paletteState?: PaletteState;
   /** Palette entry ids used this session, most recent first. */
   private paletteRecent: string[] = [];
@@ -516,6 +521,23 @@ export class TerminalApp {
   private handleKey(key: Key): void {
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      return;
+    }
+    if (this.toolConfigurationLoading) {
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.toolConfigurationGeneration++;
+        this.toolConfigurationLoading = false;
+        this.returnFromPanel();
+        this.render();
+      }
+      return;
+    }
+    if (this.toolConfiguration) {
+      const state = this.toolConfiguration;
+      void configurationKey(state, key).then(close => {
+        if (close && this.toolConfiguration === state) { this.toolConfiguration = undefined; this.returnFromPanel(); }
+        this.render();
+      });
       return;
     }
     if (this.paletteState) {
@@ -2123,11 +2145,13 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
   private settingsPanelRows(columns: number): string[] {
+    if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
+    if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
         status: settingsView(this.settingsPanelState) === 'status' ? this.statusSections() : undefined});
@@ -2321,13 +2345,33 @@ export class TerminalApp {
     this.panelOriginView = view;
     this.panelOriginRow = rowIndex;
     this.settingsPanelState = undefined;
-    if (destination === 'appearance') void this.startAppearance();
+    if (destination === 'toolConfig') void this.startToolConfiguration('starship');
+    else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
     else if (destination === 'syntax') this.startSyntaxSettings();
     else if (destination === 'layout') this.startLayoutSettings();
     else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation') this.startProviderPanel(destination);
     else void this.startKeyboard();
+  }
+
+  private async startToolConfiguration(id: string): Promise<void> {
+    const generation = ++this.toolConfigurationGeneration;
+    this.toolConfigurationLoading = true;
+    this.render();
+    try {
+      const adapter = await openSupportedConfiguration(id, this.starshipEnvironment(this.promptConfiguration));
+      const state = await createConfigurationPanel(adapter);
+      if (!this.stopped && generation === this.toolConfigurationGeneration) this.toolConfiguration = state;
+    } catch {
+      if (!this.stopped && generation === this.toolConfigurationGeneration) {
+        this.output.addFrontendInteraction('/settings', 'Supported tool configuration is unavailable. Check installation and configuration.', INFO);
+        this.returnFromPanel();
+      }
+    } finally {
+      if (generation === this.toolConfigurationGeneration) this.toolConfigurationLoading = false;
+    }
+    this.render();
   }
 
   /**

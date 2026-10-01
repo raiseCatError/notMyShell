@@ -63,7 +63,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig';
 
 interface SettingsRowBase {
   id: string;
@@ -213,6 +213,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'welcome', label: 'Welcome', description: 'Native, optional external fetch provider, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
   {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
+  {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
 ];
 
 /** Text cue (not color) that a value differs from its default. */
