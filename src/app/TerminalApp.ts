@@ -1,4 +1,6 @@
 import {homedir} from 'node:os';
+import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
+import {paletteItems} from '../ui/CommandPalette.js';
 import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
@@ -658,6 +660,13 @@ export class TerminalApp {
         } else if (localVisibleIndex >= 0) {
           const row = wrapped[viewStart + localVisibleIndex];
           if (row) {
+            const affordance = blockAffordance(row, columns);
+            if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex
+              && affordance && (key.x ?? 0) >= affordance.column && row.blockStartId !== undefined) {
+              this.openBlockPalette(row.blockStartId);
+              this.render();
+              return;
+            }
             if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
               this.output.toggleExpanded(row.commandIndex);
               this.render();
@@ -745,6 +754,14 @@ export class TerminalApp {
     if (this.promptConfiguration.composerPosition === 'flow' && this.historyViewport.detached && FLOW_EDIT_KEYS.has(key.kind)) {
       this.historyViewport.latest();
     }
+
+    if (!this.running && key.kind === 'enter' && this.focusedCommandIndex !== undefined) {
+      const record = this.output.recent(this.focusedCommandIndex + 1);
+      if (record) this.openBlockPalette(record.startId);
+      return;
+    }
+    if (key.kind === 'escape') this.clearBlockFocus();
+    if (FLOW_EDIT_KEYS.has(key.kind) && key.kind !== 'enter') this.clearBlockFocus();
 
     if (key.kind === 'historyDelete' && this.historySearchActive) {
       const entry = this.historyQuery === this.editor.text.substring(HISTORY_SEARCH.length) ? this.historyResults[this.selectedSuggestion] : undefined;
@@ -877,8 +894,9 @@ export class TerminalApp {
         .filter(r => r.isFoldHint && r.lineIndex !== undefined)
         .map(r => ({lineIndex: r.lineIndex as number, activityId: r.activityId, commandIndex: r.commandIndex}));
 
+      const commandRows: Array<{lineIndex: number; activityId?: string; commandIndex?: number}> = this.output.view().completed.map((record, commandIndex) => ({lineIndex: record.startId, commandIndex}));
       const seenTargets = new Set<string>();
-      const focusableRows = [...metadataRows, ...foldHintRows]
+      const focusableRows = [...commandRows, ...metadataRows, ...foldHintRows]
         .filter(target => {
           const key = target.activityId ? `activity:${target.activityId}`
             : target.commandIndex !== undefined ? `command:${target.commandIndex}` : `line:${target.lineIndex}`;
@@ -915,7 +933,7 @@ export class TerminalApp {
         const wrappedIndex = wrapped.findIndex(r => this.focusedActivityId
           ? r.activityId === this.focusedActivityId && r.isFoldHint
           : this.focusedCommandIndex !== undefined
-            ? r.commandIndex === this.focusedCommandIndex && r.isFoldHint
+            ? r.blockStartId === this.output.recent(this.focusedCommandIndex + 1)?.startId
             : r.lineIndex === this.focusedLineIndex);
         if (wrappedIndex !== -1) {
           this.historyViewport.resolve(wrapped.length, outputHeight);
@@ -1139,7 +1157,41 @@ export class TerminalApp {
 
   private openPalette(): void {
     if (this.settingsPanelActive) return;
-    this.paletteState = createPalette();
+    const record = this.focusedCommandIndex === undefined ? this.output.recent(1) : this.output.recent(this.focusedCommandIndex + 1);
+    this.paletteState = createPalette([...paletteItems(), ...(record ? blockPaletteItems(record) : [])]);
+  }
+
+  private clearBlockFocus(): void {
+    this.focusedCommandIndex = undefined;
+    this.focusedLineIndex = undefined;
+    this.focusedActivityId = undefined;
+  }
+
+  private openBlockPalette(startId: number): void {
+    if (this.running || this.settingsPanelActive) return;
+    const record = this.output.view().completed.find(item => item.startId === startId);
+    if (record) this.paletteState = createPalette(blockPaletteItems(record));
+  }
+
+  private async runBlockAction(startId: number, action: BlockActionId): Promise<void> {
+    if (this.running || this.stopped) return;
+    const records = this.output.view().completed;
+    const index = records.findIndex(item => item.startId === startId);
+    const record = records[index];
+    if (!record) return; // A clear/restore must never act on stale screen coordinates.
+    const payload = blockCopyPayload(record, action);
+    if (payload !== undefined) {
+      try { await writeClipboard(payload); }
+      catch { this.output.addFrontendInteraction('/copy', 'Clipboard copy failed', ERROR); }
+    } else if (action === 'fold') this.output.toggleExpanded(index);
+    else if (action === 'edit' || action === 'rerun') {
+      this.clearBlockFocus();
+      this.editor.clear();
+      this.editor.insert(record.command);
+      this.historyViewport.latest();
+      // A real stored shell command must never become an NMSh slash dispatch.
+      if (action === 'rerun' && !parseSlashCommand(record.command)) await this.submit();
+    }
   }
 
   /** Executes only the declared NMSh action of the chosen entry. */
@@ -1148,6 +1200,9 @@ export class TerminalApp {
     const action = item.action;
     const config = structuredClone(this.promptConfiguration);
     switch (action.kind) {
+      case 'block':
+        await this.runBlockAction(action.startId, action.id);
+        break;
       case 'slash': {
         const slash = parseSlashCommand(action.command);
         if (slash) await this.runSlash(action.command, slash);
@@ -2855,8 +2910,12 @@ export class TerminalApp {
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
       focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId,
       now: presentationNow().getTime()};
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row =>
-      presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction));
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
+      const ansi = presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction);
+      const focused = this.focusedCommandIndex !== undefined && row.lineIndex === this.output.recent(this.focusedCommandIndex + 1)?.startId;
+      const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) ? blockAffordance(row, columns) : undefined;
+      return controls ? `${ansi}${RESET}${controls.suffix}` : ansi;
+    });
     const sticky = this.stickyHeader(wrapped, viewStart);
     const stickyRow = sticky && this.output.presentSticky(sticky.startId, columns);
     if (stickyRow && visible.length > 0) visible[0] = stickyRow;
