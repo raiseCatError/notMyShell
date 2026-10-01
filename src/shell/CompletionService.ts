@@ -1,3 +1,4 @@
+import {enrichCompletion} from './CommandKnowledge.js';
 import {runExternal} from '../providers/providers.js';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -32,7 +33,7 @@ export class NativeCompletionSource implements CompletionSource {
       if (this.cache.size >= 32) this.cache.delete(this.cache.keys().next().value!);
       this.cache.set(key, {at: Date.now(), output});
     }
-    return signal.aborted ? [] : filterCompletions(parseNativeCompletions(output, context), context.buffer.slice(start));
+    return signal.aborted ? [] : filterCompletions(parseNativeCompletions(output, context).map(enrichCompletion), context.buffer.slice(start));
   }
 
 }

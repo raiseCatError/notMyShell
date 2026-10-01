@@ -1,4 +1,5 @@
 import {homedir} from 'node:os';
+import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
@@ -138,6 +139,7 @@ export class TerminalApp {
   private readonly submittedCommands: string[] = [];
   private readonly transcriptStore = new TranscriptStore();
   private readonly completionService = new CompletionService();
+  private inspectorVisible = false;
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
   private completionGeneration = 0;
@@ -1178,6 +1180,9 @@ export class TerminalApp {
         break;
       case 'latest':
         this.historyViewport.latest();
+        break;
+      case 'toggleInspector':
+        this.inspectorVisible = !this.inspectorVisible;
         break;
       case 'toggleDetails':
         this.output.toggleMostRelevant();
@@ -2785,6 +2790,11 @@ export class TerminalApp {
    * The one screen plan for the current state. Render, hit-testing, scroll,
    * focus, cursor and PTY sizing all call this instead of counting rows.
    */
+  private inspectorRows(columns: number): string[] {
+    if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms || this.editor.text.startsWith('/')) return [];
+    return renderInspector(inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions), columns);
+  }
+
   private planFrame(
     columns: number,
     rows: number,
@@ -2797,6 +2807,7 @@ export class TerminalApp {
       rows,
       inputRows: fullInput.allRows.length,
       suggestions,
+      inspectorRows: this.inspectorRows(columns).length,
       running: Boolean(this.running),
       detached: this.historyViewport.detached,
       hasOutput: transcriptRows > 0,
@@ -2898,6 +2909,7 @@ export class TerminalApp {
         // Panels frame their composer-side edge: under Dock Top the frame line moves below the panel.
         case 'panel': return plan.composerPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
+        case 'inspector': return this.inspectorRows(columns);
         case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
           if ('correction' in suggestion) return renderCorrection(suggestion, columns);

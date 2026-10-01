@@ -21,7 +21,8 @@ export type PaletteAction =
   | {kind: 'cycleOutputFolding'}
   | {kind: 'theme'; palette: (typeof NATIVE_PALETTE_IDS)[number]}
   | {kind: 'latest'}
-  | {kind: 'toggleDetails'};
+  | {kind: 'toggleDetails'}
+  | {kind: 'toggleInspector'};
 
 export interface PaletteItem {
   id: string;
@@ -36,7 +37,7 @@ const ARGUMENT_COMMANDS = new Set(['/copy N']);
 
 /** The single registry: slash commands, settings pages, Config rows and explicit actions. */
 export function paletteItems(): PaletteItem[] {
-  const items: PaletteItem[] = [];
+  const items: PaletteItem[] = [{id: 'inspector:toggle', label: 'Toggle command inspector', detail: 'Local token knowledge at the composer cursor', category: 'Command', action: {kind: 'toggleInspector'}}];
   for (const command of slashCommands) {
     if (ARGUMENT_COMMANDS.has(command.name)) continue;
     items.push({id: `slash:${command.name}`, label: command.name, detail: command.description, category: 'Command',
