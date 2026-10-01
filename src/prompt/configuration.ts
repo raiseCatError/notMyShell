@@ -209,6 +209,8 @@ export function normalizeNotificationSettings(value: unknown): NotificationSetti
 export interface PromptConfiguration {
   provider: PromptProviderId;
   onboardingComplete: boolean;
+  /** Optional discovery is separate; legacy completed onboarding stays completed. */
+  toolsSetupComplete: boolean;
   /** Missing in v0.3 configs; normalize to nerd to preserve their appearance. */
   glyphStyle: GlyphStyle;
   glyphChoiceComplete: boolean;
@@ -274,6 +276,7 @@ export interface PromptConfiguration {
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   provider: 'nmsh',
   onboardingComplete: false,
+  toolsSetupComplete: false,
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
   sessionRetention: 1000,
@@ -336,6 +339,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const glyphStyle: GlyphStyle = value.glyphStyle === 'safe' ? 'safe' : 'nerd';
   // Existing configured installations keep their v0.3 appearance without a new wizard.
   const glyphChoiceComplete = value.glyphChoiceComplete === true || value.onboardingComplete === true;
+  const toolsSetupComplete = typeof value.toolsSetupComplete === 'boolean' ? value.toolsSetupComplete : value.onboardingComplete === true;
   const sessionRetention: SessionRetention = value.sessionRetention === null
     ? null : [100, 500, 1000, 5000].includes(value.sessionRetention as number)
       ? value.sessionRetention as SessionRetention : 1000;
@@ -401,7 +405,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
   }
 
@@ -442,7 +446,9 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     modules.splice(before === -1 ? modules.length : before, 0, {...fallback});
   });
 
-  return {provider, onboardingComplete: value.onboardingComplete === true, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, nmsh, transcript, syntax, notifications, powerlevel10k,
+  return {provider, onboardingComplete: value.onboardingComplete === true,
+    toolsSetupComplete,
+    glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, nmsh, transcript, syntax, notifications, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
 }
 

@@ -10,6 +10,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
+  {name: '/tools', insertion: '/tools', description: 'Browse optional tools, installation previews and supported configuration'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
   {name: '/syntax', insertion: '/syntax', description: 'Configure syntax highlighting'},
@@ -32,6 +33,7 @@ export type ParsedSlashCommand =
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
   | {kind: 'prompt'}
+  | {kind: 'tools'}
   | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
@@ -54,6 +56,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
+  if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};

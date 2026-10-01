@@ -4,6 +4,7 @@ import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId
 import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
+import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
@@ -178,6 +179,7 @@ export class TerminalApp {
   /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
   private providerPanelState?: ProviderPanelState;
   private toolConfiguration?: ConfigurationPanel;
+  private toolsPanel?: ToolsPanel;
   private toolConfigurationLoading = false;
   private toolConfigurationGeneration = 0;
   private paletteState?: PaletteState;
@@ -418,6 +420,8 @@ export class TerminalApp {
     } else if (!this.promptConfiguration.onboardingComplete) {
       this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    } else if (!this.promptConfiguration.toolsSetupComplete) {
+      this.startTools(true);
     }
     this.renderer.enter();
     this.rendererEntered = true;
@@ -535,9 +539,16 @@ export class TerminalApp {
     if (this.toolConfiguration) {
       const state = this.toolConfiguration;
       void configurationKey(state, key).then(close => {
-        if (close && this.toolConfiguration === state) { this.toolConfiguration = undefined; this.returnFromPanel(); }
+        if (close && this.toolConfiguration === state) {
+          this.toolConfiguration = undefined;
+          if (!this.toolsPanel) this.returnFromPanel();
+        }
         this.render();
       });
+      return;
+    }
+    if (this.toolsPanel) {
+      void this.handleToolsKey(key, this.toolsPanel);
       return;
     }
     if (this.paletteState) {
@@ -1189,6 +1200,7 @@ export class TerminalApp {
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
+    else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
     else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
@@ -2075,6 +2087,7 @@ export class TerminalApp {
       savePromptConfiguration(state.draft);
       this.promptConfiguration = structuredClone(state.draft);
       this.promptPanelState = undefined;
+      if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
       this.panelExternalPrompt = undefined;
       // Turning Rich Git on needs a status probe the last refresh may have skipped.
       if (state.saved?.nmsh.gitEnabled !== state.draft.nmsh.gitEnabled) void this.refreshContext(this.shellCwd);
@@ -2145,13 +2158,14 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
   private settingsPanelRows(columns: number): string[] {
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
+    if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
         status: settingsView(this.settingsPanelState) === 'status' ? this.statusSections() : undefined});
@@ -2345,7 +2359,8 @@ export class TerminalApp {
     this.panelOriginView = view;
     this.panelOriginRow = rowIndex;
     this.settingsPanelState = undefined;
-    if (destination === 'toolConfig') void this.startToolConfiguration('starship');
+    if (destination === 'tools') this.startTools();
+    else if (destination === 'toolConfig') void this.startToolConfiguration('starship');
     else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
     else if (destination === 'transcript') this.startTranscriptSettings();
@@ -2371,6 +2386,35 @@ export class TerminalApp {
     } finally {
       if (generation === this.toolConfigurationGeneration) this.toolConfigurationLoading = false;
     }
+    this.render();
+  }
+
+  private startTools(onboarding = false): void {
+    const config = this.promptConfiguration;
+    const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
+    void refreshTools(state, () => { if (!this.stopped && this.toolsPanel === state) this.render(); });
+  }
+
+  private async handleToolsKey(key: Key, state: ToolsPanel): Promise<void> {
+    if (state.confirm) {
+      await confirmToolInstall(state, key, () => this.render());
+      this.render();
+      return;
+    }
+    const wasOnboarding = state.onboarding !== undefined;
+    const action = toolsKey(state, key);
+    if (wasOnboarding && (action === 'close' || action === 'finishOnboarding')) {
+      this.applySettingsConfiguration({...this.promptConfiguration, toolsSetupComplete: true});
+    }
+    if (action === 'close') { this.toolsPanel = undefined; this.returnFromPanel(); }
+    else if (action === 'configure' && state.detail?.configuration) await this.startToolConfiguration(state.detail.configuration);
+    else if (action === 'provider') {
+      const family = state.detail?.providerFamily;
+      if (family === 'welcome' || family === 'history' || family === 'picker' || family === 'navigation') {
+        this.toolsPanel = undefined;
+        this.startProviderPanel(family);
+      }
+    } else if (action === 'refresh') await refreshTools(state, () => this.render());
     this.render();
   }
 
@@ -3183,6 +3227,8 @@ export class TerminalApp {
     this.stopped = true;
     if (this.activityTimer) clearInterval(this.activityTimer);
     this.promptPanelState?.task?.dispose();
+    this.toolsPanel?.task?.dispose();
+    this.providerPanelState?.task?.dispose();
     if (this.welcomeBlinkTimer) clearTimeout(this.welcomeBlinkTimer);
     this.welcomeBlinkTimer = undefined;
     process.stdin.off('data', this.onInput);

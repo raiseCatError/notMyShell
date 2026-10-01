@@ -3,6 +3,7 @@ import {environmentFor, resolveCommand, STANDARD_TOOL_DIRECTORIES} from '../prov
 import type {Readable} from 'node:stream';
 import {formatDuration} from './commandTiming.js';
 import {shimmerText} from './shimmer.js';
+import {presentationAnimationElapsed} from '../presentation/environment.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 
@@ -29,6 +30,7 @@ export class TaskProgress {
   private timeout?: NodeJS.Timeout;
   private child?: ChildProcessByStdio<null, Readable, Readable>;
   private settled = false;
+  private cancel?: () => void;
 
   constructor(label: string, private readonly onChange: () => void, now = Date.now(), resultLabel?: string) {
     this.state = {label, ...(resultLabel ? {resultLabel} : {}), status: 'running', startedAt: now, details: ''};
@@ -60,6 +62,7 @@ export class TaskProgress {
       const finish = (error?: string) => {
         if (this.settled) return;
         this.settled = true;
+        this.cancel = undefined;
         this.state.status = error ? 'failed' : 'succeeded';
         this.state.error = error;
         this.state.endedAt = Date.now();
@@ -80,17 +83,21 @@ export class TaskProgress {
           return;
         }
         // argv only, never a shell string; the tool's directory joins PATH for its own subprocesses.
-        const child = spawn(binary, args, {stdio: ['ignore', 'pipe', 'pipe'], env: environmentFor(binary)});
+        const child = spawn(binary, args, {stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: environmentFor(binary)});
         this.child = child;
+        const cancel = (reason: string) => {
+          if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already exited. */ } }
+          finish(reason);
+        };
+        this.cancel = () => cancel('Cancelled');
         child.stdout.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));
         child.stderr.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));
         child.once('error', error => finish(error.message));
-        child.once('exit', (code, signal) => finish(code === 0 ? undefined : `Exit ${code ?? signal ?? 'unknown'}`));
+        child.once('close', (code, signal) => finish(code === 0 ? undefined : `Exit ${code ?? signal ?? 'unknown'}`));
         this.timer = setInterval(this.onChange, 100);
         this.timeout = setTimeout(() => {
           this.appendDetails('\nTimed out.\n');
-          child.kill('SIGTERM');
-          finish('Timed out');
+          cancel('Timed out');
         }, timeoutMs);
         this.onChange();
       } catch (error) {
@@ -104,7 +111,7 @@ export class TaskProgress {
     if (this.timeout) clearTimeout(this.timeout);
     this.timer = undefined;
     this.timeout = undefined;
-    this.child?.kill('SIGTERM');
+    this.cancel?.();
   }
 }
 
@@ -121,7 +128,7 @@ export function taskProgressBar(state: TaskSnapshot, now = Date.now(), width = 2
     const count = Math.round(width * state.completed / state.total);
     return fill.repeat(count) + track.repeat(Math.max(0, width - count));
   }
-  const position = Math.floor((now - state.startedAt) / 100) % width;
+  const position = Math.floor(presentationAnimationElapsed(now - state.startedAt) / 100) % width;
   return track.repeat(position) + head + track.repeat(width - position - 1);
 }
 
