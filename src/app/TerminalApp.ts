@@ -27,6 +27,7 @@ import {delimiter, join} from 'node:path';
 import {renderCompletion, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {resolveAction} from '../ui/actions.js';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
+import {classifyShellFailure, parseShellKnowledge} from '../shell/ShellKnowledge.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
 import {createPalette, handlePaletteKey, renderPalette, type PaletteItem, type PaletteState} from '../ui/CommandPalette.js';
@@ -268,7 +269,15 @@ export class TerminalApp {
       this.finish = resolve;
     });
     this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
-    this.session.on('prompt', (marker, stamp) => { if (this.inStream(stamp)) this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at); });
+    this.session.on('prompt', (marker, stamp) => {
+      if (this.inStream(stamp)) {
+        if (marker.knowledge !== undefined) {
+          this.semanticService.applyShellKnowledge(marker.knowledge);
+          this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
+        }
+        this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
+      }
+    });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('exit', event => {
@@ -1806,6 +1815,8 @@ export class TerminalApp {
       const isInterrupted = command.interrupted || exitCode === 130;
       const displayCompletedAt = presentationCompletionTime(completedAt);
       const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
+      const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
+      if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -3111,7 +3122,7 @@ export class TerminalApp {
    */
   private inspectorRows(columns: number): string[] {
     if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms || this.editor.text.startsWith('/')) return [];
-    return renderInspector(inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions), columns);
+    return renderInspector(inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions, this.semanticService.cache), columns);
   }
 
   private planFrame(

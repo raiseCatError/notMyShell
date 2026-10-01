@@ -11,6 +11,34 @@ export interface Token {
   text: string;
 }
 
+const RESERVED = new Set(['if', 'then', 'else', 'elif', 'fi', 'for', 'select', 'while', 'until', 'do', 'done', 'case', 'esac', 'function', 'time', 'repeat', 'coproc', '!', '{', '}']);
+const COMMAND_AFTER = new Set(['if', 'then', 'else', 'elif', 'while', 'until', 'do', 'time', 'coproc', '!', '{']);
+
+/** Keep common expansions together without trying to parse their shell programs. */
+function expansionEnd(characters: string[], start: number): number | undefined {
+  if (characters[start] === '`') {
+    for (let i = start + 1; i < Math.min(characters.length, start + 4096); i++) {
+      if (characters[i] === '\\') { i++; continue; }
+      if (characters[i] === '`') return i + 1;
+    }
+    return;
+  }
+  const open = characters[start + 1];
+  if (characters[start] !== '$' || open !== '(' && open !== '{') return;
+  const close = open === '(' ? ')' : '}';
+  let depth = 1;
+  let quote = '';
+  for (let i = start + 2; i < Math.min(characters.length, start + 4096); i++) {
+    const character = characters[i];
+    if (character === '\\' && quote !== "'") { i++; continue; }
+    if (quote) { if (character === quote) quote = ''; continue; }
+    if (character === "'" || character === '"') { quote = character; continue; }
+    if (character === open && ++depth > 16) return;
+    if (character === close && --depth === 0) return i + 1;
+  }
+  return;
+}
+
 export class Highlighter {
   tokenize(characters: string[], semanticCache: Map<string, CommandType>): Token[] {
     const tokens: Token[] = [];
@@ -18,6 +46,8 @@ export class Highlighter {
     const len = characters.length;
 
     let expectCommand = true;
+    let redirectTarget = false;
+    let condition = false;
 
     while (i < len) {
       const c = characters[i];
@@ -42,8 +72,15 @@ export class Highlighter {
       }
 
       // Operators
-      if ('|&;<>()'.includes(c) || (c === '2' && i + 1 < len && characters[i+1] === '>')) {
+      const redirect = /^(?:\d+)?(?:<<<|<<-|<<|>>|<>|>&|<&|>\||>|<)(?:[0-9-]+)?/u.exec(characters.slice(i, i + 24).join(''))?.[0];
+      if ('|&;<>()'.includes(c) || redirect) {
         const start = i;
+        if (redirect) {
+          i += redirect.length;
+          redirectTarget = !/[0-9-]$/u.test(redirect) || /<<-$/u.test(redirect);
+          tokens.push({type: 'Operator', start, end: i, text: redirect});
+          continue;
+        }
         let op = characters.slice(i, i + 4).join('');
         if (op.startsWith('2>&1')) i += 4;
         else {
@@ -60,8 +97,9 @@ export class Highlighter {
         tokens.push({ type: 'Operator', start, end: i, text });
         
         // Only | && || ; ;; ( ) reset expectCommand. Redirects take an argument.
-        if (['|', '||', '&&', ';', ';;', '(', ')'].includes(text)) {
+        if (['|', '||', '&&', '&', ';', ';;', '(', ')'].includes(text)) {
           expectCommand = true;
+          redirectTarget = false;
         }
         continue;
       }
@@ -75,9 +113,13 @@ export class Highlighter {
 
       while (i < len) {
         const char = characters[i];
-        if (char === '\\') {
-          i += 2;
+        if (char === '\\' && !inSingle) {
+          i = Math.min(len, i + 2);
           continue;
+        }
+        if ((char === '$' || char === '`') && !inSingle) {
+          const end = expansionEnd(characters, i);
+          if (end !== undefined) { i = end; isVar = true; continue; }
         }
         if (char === "'" && !inDouble) {
           inSingle = !inSingle;
@@ -101,13 +143,30 @@ export class Highlighter {
       const word = characters.slice(start, i).join('');
       let type: TokenType = 'Argument';
 
-      if (hasQuotes && (word.startsWith("'") || word.startsWith('"'))) {
+      if (expectCommand && word === '[[') {
+        type = 'KnownCommand'; condition = true; expectCommand = false;
+      } else if (condition && word === ']]') {
+        type = 'KnownCommand'; condition = false; expectCommand = false;
+      } else if (redirectTarget) {
+        type = hasQuotes ? 'String' : word.includes('/') ? 'Path' : 'Argument';
+        redirectTarget = false;
+      } else if (expectCommand && RESERVED.has(word)) {
+        type = 'KnownCommand';
+        expectCommand = COMMAND_AFTER.has(word);
+      } else if (expectCommand && ['alias', 'function'].includes(semanticCache.get(word) ?? '')) {
+        type = semanticCache.get(word) === 'alias' ? 'Alias' : 'Function';
+        expectCommand = false;
+      } else if (expectCommand && /^[a-zA-Z_][a-zA-Z0-9_]*=/.test(word)) {
+        type = 'Argument';
+      } else if (hasQuotes && (word.startsWith("'") || word.startsWith('"'))) {
         type = 'String';
-      } else if (word.startsWith('$')) {
+        expectCommand = false;
+      } else if (word.startsWith('$') || isVar) {
         type = 'Variable';
+        expectCommand = false;
       } else if (word.startsWith('-')) {
         type = 'Flag';
-      } else if (word.includes('/') || word.startsWith('.') || word.startsWith('~')) {
+      } else if (word.includes('/') || word.startsWith('.') || word.startsWith('~') || !hasQuotes && /(?<!\\)[*?\[]/u.test(word)) {
         type = 'Path';
         if (expectCommand) expectCommand = false;
       } else if (expectCommand) {

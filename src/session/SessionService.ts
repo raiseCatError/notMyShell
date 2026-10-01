@@ -60,7 +60,8 @@ function toMessage(event: BacklogEvent): ServerMessage {
     case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
     case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at,
       ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed})};
-    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at};
+    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at,
+      ...(event.knowledge === undefined ? {} : {knowledge: event.knowledge})};
   }
 }
 
@@ -315,7 +316,8 @@ export class SessionService {
       session.idleSince = Date.now();
       session.evidence.onPrompt(marker.exitCode);
       session.screen.reset();
-      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
+      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd,
+        ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge})});
     });
     shell.on('exit', event => {
       this.sessions.delete(record.id);

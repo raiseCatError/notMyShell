@@ -1,5 +1,7 @@
 import {enrichCompletion} from './CommandKnowledge.js';
 import {ConfiguredCompletionSource} from './ConfiguredCompletion.js';
+import type {CommandType} from './SemanticService.js';
+import {completionWord} from './ConfiguredCompletion.js';
 import {runExternal} from '../providers/providers.js';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -75,11 +77,13 @@ export class ShellCompletionSource implements CompletionSource {
 export class CompletionService {
   private active?: AbortController;
   private generation = 0;
+  private shellNames: ReadonlyMap<string, CommandType> = new Map();
 
   constructor(private readonly source: CompletionSource = new ShellCompletionSource()) {}
 
   dispose(): void { this.cancel(); this.source.dispose?.(); }
   invalidate(): void { this.dispose(); }
+  setShellKnowledge(names: ReadonlyMap<string, CommandType>): void { this.cancel(); this.shellNames = new Map(names); }
 
   cancel(): void {
     this.generation += 1;
@@ -95,6 +99,17 @@ export class CompletionService {
     this.active = active;
     try {
       const candidates = await this.source.query({buffer: input, cwd, cursor}, active.signal);
+      const range = completionWord({buffer: input, cwd, cursor});
+      if (range?.start === 0) {
+        const prefix = input.slice(0, cursor);
+        for (const [name, type] of this.shellNames) {
+          if (name.startsWith(prefix) && !candidates.some(candidate => candidate.value === name)) candidates.push({
+            value: name, display: name, name, kind: 'command', description: `${type} in the current shell`, source: 'shell-metadata',
+            replacement: range, context: {buffer: input, cwd, cursor}, insertionCursor: name.length,
+            insertion: name + input.slice(range.end),
+          });
+        }
+      }
       return generation === this.generation && !active.signal.aborted ? candidates : [];
     } catch {
       return [];

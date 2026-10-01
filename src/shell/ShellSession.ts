@@ -2,7 +2,8 @@ import {BOOTSTRAP_TERM_COMPATIBILITY} from '../host/integration.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawn, type IPty } from 'node-pty';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync } from 'node:fs';
+import {MAX_SHELL_KNOWLEDGE_BYTES, shellKnowledgeBootstrap} from './ShellKnowledge.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
@@ -82,6 +83,7 @@ function nmsh_tty_echo {
 
 function nmsh_precmd {
   local nmsh_status=$?
+  nmsh_capture_knowledge
   # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
   # may run before us in precmd_functions and repaint PROMPT/RPROMPT. NMSh
   # owns prompt rendering, so it always has the last word here.
@@ -109,6 +111,7 @@ function nmsh_preexec {
 # of clobbering precmd_functions/preexec_functions: tools like zoxide and
 # Atuin register non-UI hooks (directory tracking, history sync) into these
 # arrays, and overwriting them silently drops that behavior.
+${shellKnowledgeBootstrap(join(zdotdir, '.nmsh-knowledge'))}
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
@@ -206,10 +209,18 @@ add-zsh-hook preexec nmsh_preexec
         if (this.ready) this.emit('exec', event.command, event.historyAllowed);
       } else if (!this.ready) {
         this.ready = true;
-        this.emit('prompt', event.marker);
+        this.emit('prompt', this.withKnowledge(event.marker));
       } else {
-        this.emit('prompt', event.marker);
+        this.emit('prompt', this.withKnowledge(event.marker));
       }
     }
+  }
+
+  private withKnowledge(marker: ShellMarker): ShellMarker {
+    try {
+      const path = join(this.zdotdir, '.nmsh-knowledge');
+      if (statSync(path).size <= MAX_SHELL_KNOWLEDGE_BYTES) return {...marker, knowledge: readFileSync(path, 'utf8')};
+    } catch { /* Older/unavailable metadata leaves isolated classification usable. */ }
+    return marker;
   }
 }

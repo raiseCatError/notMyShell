@@ -42,7 +42,7 @@ export type ServerMessage =
    */
   | {type: 'output'; data: string; seq?: number; at?: number}
   | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number}
-  | {type: 'prompt'; exitCode: number; cwd: string; seq?: number; at?: number}
+  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
   | {type: 'killed'; sessionId: string}
@@ -113,7 +113,7 @@ const SHAPES: Record<string, Shape> = {
   sessions: {sessions: 'sessions'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?'},
-  prompt: {exitCode: 'int', cwd: 'string', seq: 'int?', at: 'int?'},
+  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},

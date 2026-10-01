@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {parseShellKnowledge} from './ShellKnowledge.js';
 
 export type CommandType = 'executable' | 'builtin' | 'alias' | 'function' | 'reserved' | 'unknown';
 
@@ -12,6 +13,17 @@ export class SemanticService {
   public cache = new Map<string, CommandType>();
   private buffer = '';
   private zdotdir: string;
+  private generation = 0;
+  private shellNames?: Map<string, CommandType>;
+
+  applyShellKnowledge(text: string): void {
+    this.generation++;
+    this.shellNames = parseShellKnowledge(text);
+    this.cache.clear();
+    for (const [name, type] of this.shellNames) this.cache.set(name, type);
+    for (const resolve of this.pending.values()) resolve('unknown');
+    this.pending.clear();
+  }
 
   constructor(cwd: string) {
     const home = process.env.HOME || '';
@@ -87,6 +99,7 @@ done\n`);
 
     this.child.stdout!.on('data', (data: Buffer) => {
       this.buffer += data.toString('utf8');
+      if (this.buffer.length > 65536) { this.kill(); return; }
       const lines = this.buffer.split('\n');
       this.buffer = lines.pop() || '';
       for (const line of lines) {
@@ -128,8 +141,17 @@ done\n`);
     }
 
     const id = this.nextId++;
+    const generation = this.generation;
     return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        resolve('unknown');
+      }, 1500);
       this.pending.set(id, (res) => {
+        clearTimeout(timer);
+        if (generation !== this.generation) { resolve('unknown'); return; }
+        if (this.shellNames && (res === 'alias' || res === 'function') && !this.shellNames.has(cmd)) res = 'unknown';
+        if (this.cache.size >= 8192) this.cache.delete(this.cache.keys().next().value!);
         this.cache.set(cmd, res);
         resolve(res);
       });
@@ -138,6 +160,8 @@ done\n`);
       try {
         this.child.stdin!.write(`${id} ${safeCmd}\n`);
       } catch (e) {
+        clearTimeout(timer);
+        this.pending.delete(id);
         resolve('unknown');
       }
     });
@@ -149,6 +173,9 @@ done\n`);
       this.child.stdin?.end();
     } catch (e) { /* ignore */ }
     this.child.kill('SIGKILL');
+    if (this.child.pid) {
+      try { process.kill(-this.child.pid, 'SIGKILL'); } catch { /* Already gone. */ }
+    }
     for (const resolve of this.pending.values()) {
       resolve('unknown');
     }
