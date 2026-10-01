@@ -22,6 +22,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
+  {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
@@ -43,6 +44,7 @@ export type ParsedSlashCommand =
   | {kind: 'version'}
   | {kind: 'update'; apply: boolean}
   | {kind: 'clear'}
+  | {kind: 'presets'}
   | {kind: 'resume'}
   | {kind: 'help'}
   | {kind: 'palette'}
@@ -68,6 +70,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const update = /^\/update(?:\s+(apply))?\s*$/u.exec(input);
   if (update) return {kind: 'update', apply: update[1] === 'apply'};
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
+  if (/^\/presets\s*$/u.test(input)) return {kind: 'presets'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};

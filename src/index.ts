@@ -1,3 +1,4 @@
+import {SessionPresetStore, validatePresetCwd, presetNeedsAcknowledgement, type SessionPreset} from './session/SessionPresets.js';
 import {isVersionInvocation, formatBuildIdentity, readBuildIdentity} from './buildInfo.js';
 import {NESTED_NMSH_MESSAGE, createOrdinaryZshEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
 import {spawn} from 'node:child_process';
@@ -26,9 +27,16 @@ function startOrdinaryZsh(cwd?: string): Promise<number> {
 
 const args = process.argv.slice(2);
 const attachIndex = args.indexOf('--attach');
+const presetIndex = args.indexOf('--preset');
 
 if (isVersionInvocation(args)) {
   process.stdout.write(`${formatBuildIdentity(readBuildIdentity())}\n`);
+} else if (args.includes('--presets')) {
+  try { process.stdout.write(new SessionPresetStore().list().map(preset => `${preset.name}  ${preset.cwd}  ${preset.commands.length} startup command(s)`).join('\n') + '\n'); }
+  catch (error) { process.stderr.write(`${error instanceof Error ? error.message : 'Could not list presets.'}\n`); process.exitCode = 1; }
+} else if (presetIndex !== -1 && (!args[presetIndex+1] || args[presetIndex+1]!.startsWith('--') || attachIndex !== -1)) {
+  process.stderr.write('Usage: nmsh --preset <name> (creates a new session; cannot combine with --attach)\n');
+  process.exitCode = 2;
 } else if (args.includes('--sessions')) {
   const {listLiveSessions} = await import('./session/connectSession.js');
   const {formatSessionList} = await import('./session/sessionList.js');
@@ -53,6 +61,33 @@ if (isVersionInvocation(args)) {
   const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)});
   const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+  let pendingPreset: SessionPreset | undefined;
+  if (presetIndex !== -1) {
+    try {
+      const store = new SessionPresetStore();
+      const preset = store.get(args[presetIndex+1]!);
+      validatePresetCwd(preset);
+      if (process.env[SESSION_SERVICE_ENV] === '0') throw new Error('Presets require the live-session service.');
+      if (presetNeedsAcknowledgement(preset)) {
+        const {createPresetPanel, presetPanelKey, renderPresetPanel} = await import('./session/PresetPanel.js');
+        const {runStartupScreen} = await import('./session/StartupPicker.js');
+        const state = createPresetPanel([preset]);
+        state.detail = preset; state.operation = 'launch'; state.confirm = {choice:'no'};
+        const agreed = await runStartupScreen(columns => renderPresetPanel(state,columns,process.stdout.rows || 24), key => {
+          if (key.kind === 'escape' || key.kind === 'interrupt') return false;
+          const action = presetPanelKey(state,key,process.cwd());
+          if (action === 'launch') return true;
+          if (!state.confirm) return false;
+        });
+        if (!agreed) process.exit(0);
+        pendingPreset = store.acknowledge(preset);
+      } else pendingPreset = preset;
+    } catch (error) {
+      process.stderr.write(`${errorText(error)}\n`);
+      process.exit(1);
+    }
+  }
+
   // Which session this launch attaches, if any. --attach is explicit and
   // fails loudly; discovery only ever picks a detached session, and --new
   // skips it.
@@ -73,7 +108,7 @@ if (isVersionInvocation(args)) {
       }
     } catch { /* recovery is best effort and never blocks launch */ }
   }
-  if (!explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
+  if (!pendingPreset && !explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
     let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
     try { live = await listLiveSessions(); } catch { /* no usable service: start fresh */ }
     const {restoreAtStartup} = await import('./session/startupRestore.js');
@@ -114,12 +149,29 @@ if (isVersionInvocation(args)) {
     }
     connection ??= await connectSession(size());
     if (notice) connection = {...connection, notice: [connection.notice, notice].filter(Boolean).join(' ')};
-    const app = new TerminalApp(connection);
+    if (pendingPreset && connection.mode !== 'service') {
+      connection.client.kill();
+      process.stderr.write('Preset launch requires an available live-session service. Existing sessions were left intact; see nmsh --sessions.\n');
+      process.exit(1);
+    }
+    let app: InstanceType<typeof TerminalApp>;
+    try { app = new TerminalApp(connection, pendingPreset); }
+    catch (error) {
+      connection.client.kill();
+      process.stderr.write(`Could not launch session: ${errorText(error)}\n`);
+      process.exit(1);
+    }
+    pendingPreset = undefined;
     const exitCode = await app.run();
     if (app.lostServiceConnection) {
       process.stderr.write('NMSh lost the connection to its session service; the live session ended and its transcript was archived.\n');
     }
     notice = undefined;
+    if (app.switchPreset) {
+      pendingPreset = app.switchPreset;
+      target = undefined; explicit = false;
+      continue;
+    }
     if (app.switchTarget) {
       target = app.switchTarget;
       explicit = false;

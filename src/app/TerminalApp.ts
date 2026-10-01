@@ -1,3 +1,5 @@
+import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type SessionPreset} from '../session/SessionPresets.js';
+import {createPresetPanel, presetPanelKey, renderPresetPanel, type PresetPanel} from '../session/PresetPanel.js';
 import {MiseProjectService, detectMiseProject} from '../tools/MiseProject.js';
 import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.js';
 import {homedir} from 'node:os';
@@ -181,6 +183,12 @@ export class TerminalApp {
   /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
   private providerPanelState?: ProviderPanelState;
   private toolConfiguration?: ConfigurationPanel;
+  private presetPanel?: PresetPanel;
+  private readonly presetStore = new SessionPresetStore();
+  private presetStartup?: PresetStartup;
+  private presetShellReady = false;
+  private presetFrontendReady = false;
+  switchPreset?: SessionPreset;
   private toolsPanel?: ToolsPanel;
   private misePanel?: MisePanel;
   private readonly miseService = new MiseProjectService();
@@ -239,7 +247,11 @@ export class TerminalApp {
   private readonly done: Promise<number>;
   private finish!: (exitCode: number) => void;
 
-  constructor(connection?: SessionConnection) {
+  constructor(connection?: SessionConnection, preset?: SessionPreset) {
+    if (preset) {
+      if (!connection || connection.mode !== 'service' || connection.attached) throw new Error('Presets require a new live session.');
+      this.presetStartup = new PresetStartup(preset);
+    }
     setIconStyle(this.promptConfiguration.glyphStyle);
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
@@ -418,13 +430,13 @@ export class TerminalApp {
     } catch {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
     }
-    if (!this.promptConfiguration.glyphChoiceComplete) {
+    if (!this.presetStartup && !this.promptConfiguration.glyphChoiceComplete) {
       this.settingsPanelState = {section: 'appearance', selectedIndex: this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1,
         glyphStyle: this.promptConfiguration.glyphStyle, onboarding: true};
-    } else if (!this.promptConfiguration.onboardingComplete) {
+    } else if (!this.presetStartup && !this.promptConfiguration.onboardingComplete) {
       this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
         draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
-    } else if (!this.promptConfiguration.toolsSetupComplete) {
+    } else if (!this.presetStartup && !this.promptConfiguration.toolsSetupComplete) {
       this.startTools(true);
     }
     this.renderer.enter();
@@ -459,6 +471,8 @@ export class TerminalApp {
     void this.loadHistory();
     this.render();
     void this.quietUpdateCheck();
+    this.presetFrontendReady = true;
+    if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
     const exitCode = await this.done;
     try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
@@ -529,6 +543,17 @@ export class TerminalApp {
   private handleKey(key: Key): void {
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
+      return;
+    }
+    if (this.presetStartup?.active) {
+      if (key.kind === 'interrupt') {
+        this.presetStartup.cancel(); this.session.interrupt();
+        this.output.addFrontendInteraction('/presets', 'Preset startup cancelled; remaining commands were not run.', INFO);
+      }
+      return;
+    }
+    if (this.presetPanel) {
+      this.handlePresetKey(key, this.presetPanel);
       return;
     }
     if (this.toolConfigurationLoading) {
@@ -1217,6 +1242,7 @@ export class TerminalApp {
     else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
     else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
     else if (slash.kind === 'clear') await this.startFreshPresentation();
+    else if (slash.kind === 'presets') this.startPresets();
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'history') {
@@ -1323,13 +1349,13 @@ export class TerminalApp {
     }
   }
 
-  private async submit(): Promise<void> {
+  private async submit(realShell = false): Promise<void> {
     this.clearCorrection();
     const command = this.editor.text;
     this.editor.clear();
     if (!command.trim()) return;
 
-    const slash = parseSlashCommand(command);
+    const slash = realShell ? undefined : parseSlashCommand(command);
     if (slash) {
       await this.runSlash(command, slash);
       this.render();
@@ -1707,10 +1733,12 @@ export class TerminalApp {
 
   private onShellPrompt(exitCode: number, cwd: string, at = Date.now()): void {
     this.shellCwd = cwd;
+    this.presetShellReady = true;
     this.context.exitStatus = exitCode;
     if (!this.running) {
       void this.refreshContext(cwd);
       this.render();
+      this.advancePresetStartup(exitCode, cwd);
       return;
     }
 
@@ -1762,6 +1790,7 @@ export class TerminalApp {
     }
     void this.refreshContext(cwd);
     this.render();
+    this.advancePresetStartup(exitCode, cwd);
   }
 
 
@@ -2166,13 +2195,14 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState);
   }
 
   private settingsPanelRows(columns: number): string[] {
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
+    if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
@@ -2396,6 +2426,42 @@ export class TerminalApp {
       if (generation === this.toolConfigurationGeneration) this.toolConfigurationLoading = false;
     }
     this.render();
+  }
+
+  private startPresets(): void {
+    try { this.presetPanel = createPresetPanel(this.presetStore.list()); }
+    catch (error) { this.output.addFrontendInteraction('/presets', error instanceof Error ? error.message : 'Could not read presets.', ERROR); }
+  }
+
+  private handlePresetKey(key: Key, state: PresetPanel): void {
+    const action = presetPanelKey(state, key, this.shellCwd);
+    try {
+      if (action === 'close') this.presetPanel = undefined;
+      else if (action === 'create' && state.form) {
+        const created = this.presetStore.create({name:state.form.name,cwd:state.form.cwd,commands:state.form.commands.split('\n').filter(command=>command.trim())});
+        state.presets = this.presetStore.list(); state.selected = state.presets.findIndex(preset => preset.name === created.name); state.form = undefined; state.message = 'Preset created. Enter inspects it; L launches a new session.';
+      } else if (action === 'delete' && state.detail) {
+        this.presetStore.delete(state.detail.name); state.presets = this.presetStore.list(); state.detail = undefined; state.message = 'Preset deleted; live sessions are unchanged.';
+      } else if (action === 'launch' && state.detail) {
+        if (this.sessionMode !== 'service') throw new Error('Preset launch requires the live-session service. Start a new terminal with nmsh --preset <name>.');
+        // If the stored content changed since inspection, acknowledge rejects it.
+        const current = this.presetStore.get(state.detail.name);
+        if (presetNeedsAcknowledgement(current) && !presetNeedsAcknowledgement(state.detail)) throw new Error('Preset changed; reopen and review it.');
+        this.switchPreset = this.presetStore.acknowledge(state.detail);
+        this.detaching = true; this.session.detach(); this.stop(0);
+      }
+    } catch (error) { state.message = error instanceof Error ? error.message : 'Preset operation failed.'; }
+    if (!this.stopped) this.render();
+  }
+
+  private advancePresetStartup(exitCode: number, cwd: string): void {
+    if (!this.presetFrontendReady || !this.presetShellReady || this.stopped || this.running || !this.presetStartup?.active) return;
+    const next = this.presetStartup.next(exitCode,cwd);
+    if (next && 'error' in next) this.output.addFrontendInteraction('/presets',next.error,ERROR);
+    else if (next) {
+      this.editor.clear(); this.editor.insert(next.command);
+      void this.submit(true);
+    }
   }
 
   private startTools(onboarding = false): void {
@@ -3259,6 +3325,7 @@ export class TerminalApp {
     this.stopped = true;
     if (this.activityTimer) clearInterval(this.activityTimer);
     this.promptPanelState?.task?.dispose();
+    this.presetStartup?.cancel();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
     this.providerPanelState?.task?.dispose();
