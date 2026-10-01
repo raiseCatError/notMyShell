@@ -9,7 +9,8 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
   const root = realpathSync(mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'nt-')));
   let leftovers = [];
   try {
-    const env = {...process.env, TMPDIR: root, TMP: root, TEMP: root};
+    // Existing presentation snapshots pin truecolor; baseline fixtures override this explicitly.
+    const env = {...process.env, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root};
     // A nested runner must not impersonate its parent's test worker.
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, ['--import=tsx', '--test', ...args, ...files], {
