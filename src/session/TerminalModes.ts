@@ -1,10 +1,8 @@
 // DECSET/DECRST 1049, 1047 and 47: the alternate-screen switches.
 const ALT_SCREEN = /\u001b\[\?(?:1049|1047|47)([hl])/g;
-const DEC_MODE = /\u001b\[\?([\d;]+)([hl])/g;
-const KEYPAD = /\u001b([=>])/g;
-// Kitty keyboard protocol: push (CSI > flags u) and pop (CSI < n u).
-const KITTY_PUSH = /\u001b\[>(\d*)u/g;
-const KITTY_POP = /\u001b\[<\d*u/g;
+// Process modes in wire order, including independent main/alternate keyboard stacks.
+const MODE_SEQUENCE = /\u001b\[\?([\d;]+)([hl])|\u001b([=>])|\u001b\[([><])(\d{0,10})u/g;
+const MAX_KEYBOARD_STACK = 32;
 /** DECCKM, cursor visibility, mouse protocols, focus events, bracketed paste. */
 const TRACKED_MODES = new Set([1, 25, 1000, 1002, 1003, 1004, 1005, 1006, 1015, 2004]);
 /**
@@ -58,12 +56,16 @@ export class AlternateScreenTracker {
     this.carry = '';
     this.modes.clear();
     this.keypad = false;
-    this.kittyFlags = undefined;
+    this.modeCarry = '';
+    this.keyboardScreen = 'main';
+    this.keyboardStacks.main.length = 0;
+    this.keyboardStacks.alternate.length = 0;
   }
 
   private readonly modes = new Map<number, boolean>();
   private keypad = false;
-  private kittyFlags?: string;
+  private keyboardScreen: 'main' | 'alternate' = 'main';
+  private readonly keyboardStacks = {main: [] as string[], alternate: [] as string[]};
   private modeCarry = '';
 
   /**
@@ -75,23 +77,34 @@ export class AlternateScreenTracker {
    */
   observeModes(data: string): void {
     const text = this.modeCarry + data;
-    for (const match of text.matchAll(DEC_MODE)) {
-      for (const param of match[1]!.split(';')) {
-        const mode = Number(param);
-        if (!TRACKED_MODES.has(mode)) continue;
-        this.modes.set(mode, match[2] === 'h');
-        if (match[2] === 'h' && INPUT_MODES.has(mode)) this.interactive = true;
+    for (const match of text.matchAll(MODE_SEQUENCE)) {
+      if (match[1] !== undefined) {
+        for (const param of match[1].split(';')) {
+          const mode = Number(param);
+          if ([47, 1047, 1049].includes(mode)) this.keyboardScreen = match[2] === 'h' ? 'alternate' : 'main';
+          if (!TRACKED_MODES.has(mode)) continue;
+          this.modes.set(mode, match[2] === 'h');
+          if (match[2] === 'h' && INPUT_MODES.has(mode)) this.interactive = true;
+        }
+      } else if (match[3] !== undefined) this.keypad = match[3] === '=';
+      else {
+        const stack = this.keyboardStacks[this.keyboardScreen];
+        if (match[4] === '>') {
+          if (stack.length >= MAX_KEYBOARD_STACK) stack.shift();
+          stack.push(match[5] || '0');
+          this.interactive = true;
+        } else {
+          const count = match[5] === '' ? 1 : Number(match[5]);
+          stack.splice(Math.max(0, stack.length - count));
+        }
       }
     }
-    for (const match of text.matchAll(KEYPAD)) this.keypad = match[1] === '=';
-    for (const match of text.matchAll(KITTY_PUSH)) {
-      this.kittyFlags = match[1] || '1';
-      this.interactive = true;
-    }
-    if (KITTY_POP.test(text)) this.kittyFlags = undefined;
-    KITTY_POP.lastIndex = 0;
+    // Retain only an incomplete sequence. Replaying a complete push would
+    // duplicate stack ownership every time the next output chunk arrived.
     const escape = text.lastIndexOf('\u001b');
-    this.modeCarry = escape !== -1 && text.length - escape < 16 ? text.slice(escape) : '';
+    const tail = escape < 0 ? '' : text.slice(escape);
+    this.modeCarry = tail.length < 16 && /^\u001b(?:\[(?:\?[\d;]*|[><]\d*)?)?$/u.test(tail) ? tail : '';
+
   }
 
   /** Sequences that put a fresh terminal into the app's current input modes. */
@@ -101,7 +114,7 @@ export class AlternateScreenTracker {
       if (mode === 25) { if (!on) sequence += '\u001b[?25l'; } else if (on) sequence += `\u001b[?${mode}h`;
     }
     if (this.keypad) sequence += '\u001b=';
-    if (this.kittyFlags) sequence += `\u001b[>${this.kittyFlags}u`;
+    for (const flags of this.keyboardStacks[this.keyboardScreen]) sequence += `\u001b[>${flags}u`;
     return sequence;
   }
 

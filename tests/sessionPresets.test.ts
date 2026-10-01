@@ -186,7 +186,10 @@ test('CLI preset launch creates a distinct live shell, visible cd/ordered transc
     launched.pty.kill('SIGKILL'); await launched.waitExit();
     await until(async()=> (await sandbox.sessions()).find(session=>session.id===created.id)?.state==='detached');
     const attached = sandbox.launch(['--attach',created.id]); await attached.waitFor(/Reattached live session/);
+    const pidMark = attached.mark;
     await attached.run('print -r -- PRESET_PID=$$',new RegExp(`PRESET_PID=${created.pid}`));
+    // Output may precede prompt delivery; /resume is valid only after completion.
+    await attached.waitFor(/Completed/, pidMark);
     await attached.run('/resume',/Resume session/);
     await attached.waitFor(new RegExp(prior.cwd.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     assert.equal((await sandbox.sessions()).find(session=>session.id===prior.id)?.state,'detached');

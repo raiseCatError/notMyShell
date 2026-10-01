@@ -1,6 +1,7 @@
 import {arch, platform, totalmem} from 'node:os';
 import {performance} from 'node:perf_hooks';
-import {AnsiOutputParser} from '../src/output/AnsiOutputParser.js';
+import {HyperlinkPresenter} from '../src/output/Hyperlinks.js';
+import {AnsiOutputParser, type StyledLine} from '../src/output/AnsiOutputParser.js';
 import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {CommandEditor} from '../src/input/CommandEditor.js';
 import {layoutInput} from '../src/input/inputLayout.js';
@@ -57,7 +58,16 @@ function transcript(count: number): OutputBuffer {
   return output;
 }
 
+let hyperlinkLines: StyledLine[] = [];
+const cachedLinks = new HyperlinkPresenter();
+
 function setup(): void {
+  if (selected.length === 0 || selected.some(name => name.includes('hyperlinks'))) {
+    const parser = new AnsiOutputParser();
+    for (let index = 0; index < 1000; index++) parser.write(`link ${index} https://example.com/path/${index} http://example.org/test?q=${index}\n`);
+    hyperlinkLines = parser.allLines();
+    for (const line of hyperlinkLines) cachedLinks.line(line);
+  }
   const requested = selected.length === 0 ? ['suggestions', 'transcript'] : selected;
   if (selected.length === 0 || selected.some(name => name.includes('history') || name.includes('navigation'))) {
     for (const count of suggestionCounts) {
@@ -93,6 +103,13 @@ const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, i
 
 const directoryServices = new Map(suggestionCounts.map(count => [count, new DirectoryService()]));
 const benchmarks: Benchmark[] = [
+  {name: 'hyperlinks/recognize-1000', run: () => {
+    const presenter = new HyperlinkPresenter();
+    for (const line of hyperlinkLines) presenter.line(line);
+  }, units: 1000, unitName: 'lines'},
+  {name: 'hyperlinks/cached-1000', run: () => {
+    for (const line of hyperlinkLines) cachedLinks.line(line);
+  }, units: 1000, unitName: 'lines'},
   ...suggestionCounts.map(count => ({name: `history/index-import-${count}`, run: () => indexImportedHistory(new HistoryIndex(), histories.get(count)!, 'zsh'), samples: 5, warmup: 1, units: count, unitName: 'entries'})),
   ...suggestionCounts.map(count => ({name: `navigation/rank-${count}`, run: () => rankDirectories(historyIndexes.get(count)!.all()), units: count, unitName: 'entries'})),
   ...suggestionCounts.map(count => ({name: `navigation/cached-query-${count}`, run: () => directoryServices.get(count)!.query(historyIndexes.get(count)!.all(), 'pr7', 'native')})),
