@@ -165,15 +165,18 @@ test('CLI preset launch creates a distinct live shell, visible cd/ordered transc
     await until(async()=> (await sandbox.sessions()).some(session=>session.id!==prior.id && !session.running && session.cwd===target));
     const created = (await sandbox.sessions()).find(session=>session.id!==prior.id)!;
     assert.notEqual(created.pid,prior.pid);
-    await launched.run('print -r -- READY_PRESET',/READY_PRESET/);
-    const journals = await sandbox.transcripts().list();
+    // Service idle can precede frontend delivery of its last prompt. Startup
+    // blocks composer keys until that delivery; the completed journal is the
+    // frontend's durable acknowledgement, not merely a service-side snapshot.
     await until(async()=> {
       for (const journal of await sandbox.transcripts().list()) {
         const loaded = await sandbox.transcripts().load(journal.id);
-        if (loaded.live?.sessionId === created.id && loaded.transcript.records.length >= 3) return true;
+        if (loaded.live?.sessionId === created.id && loaded.transcript.records.some(record => record.command === 'print -r -- PRESET_TWO' && record.exitCode === 0)) return true;
       }
       return false;
     });
+    await launched.run('print -r -- READY_PRESET',/READY_PRESET/);
+    const journals = await sandbox.transcripts().list();
     let records: string[] = [];
     for (const journal of await sandbox.transcripts().list()) {
       const loaded = await sandbox.transcripts().load(journal.id);
