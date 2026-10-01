@@ -1,3 +1,5 @@
+import {MiseProjectService, detectMiseProject} from '../tools/MiseProject.js';
+import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.js';
 import {homedir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
@@ -180,6 +182,8 @@ export class TerminalApp {
   private providerPanelState?: ProviderPanelState;
   private toolConfiguration?: ConfigurationPanel;
   private toolsPanel?: ToolsPanel;
+  private misePanel?: MisePanel;
+  private readonly miseService = new MiseProjectService();
   private toolConfigurationLoading = false;
   private toolConfigurationGeneration = 0;
   private paletteState?: PaletteState;
@@ -545,6 +549,10 @@ export class TerminalApp {
         }
         this.render();
       });
+      return;
+    }
+    if (this.misePanel) {
+      void this.handleMiseKey(key, this.misePanel);
       return;
     }
     if (this.toolsPanel) {
@@ -2165,6 +2173,7 @@ export class TerminalApp {
   private settingsPanelRows(columns: number): string[] {
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
+    if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
@@ -2407,6 +2416,10 @@ export class TerminalApp {
       this.applySettingsConfiguration({...this.promptConfiguration, toolsSetupComplete: true});
     }
     if (action === 'close') { this.toolsPanel = undefined; this.returnFromPanel(); }
+    else if (action === 'mise') {
+      const project = detectMiseProject(this.shellCwd);
+      this.misePanel = {project, selected: 0, result: this.miseService.cached(project)};
+    }
     else if (action === 'configure' && state.detail?.configuration) await this.startToolConfiguration(state.detail.configuration);
     else if (action === 'provider') {
       const family = state.detail?.providerFamily;
@@ -2416,6 +2429,25 @@ export class TerminalApp {
       }
     } else if (action === 'refresh') await refreshTools(state, () => this.render());
     this.render();
+  }
+
+  private async handleMiseKey(key: Key, state: MisePanel): Promise<void> {
+    const action = misePanelKey(state, key);
+    if (action === 'close') { this.miseService.cancel(); this.misePanel = undefined; }
+    else if (action === 'inspect') {
+      state.busy = true;
+      this.render();
+      // A fresh identity after explicit consent; no metadata on cwd/render events.
+      state.project = detectMiseProject(this.shellCwd);
+      const result = await this.miseService.inspect(state.project, true, true);
+      if (!this.stopped && this.misePanel === state) { state.result = result; state.selected = 0; state.busy = false; }
+    } else if (action && typeof action === 'object') {
+      this.misePanel = undefined; this.toolsPanel = undefined;
+      this.returnFromPanel();
+      this.editor.clear(); this.editor.insert(action.command);
+      this.historyViewport.latest();
+    }
+    if (!this.stopped) this.render();
   }
 
   /**
@@ -3227,6 +3259,7 @@ export class TerminalApp {
     this.stopped = true;
     if (this.activityTimer) clearInterval(this.activityTimer);
     this.promptPanelState?.task?.dispose();
+    this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
     this.providerPanelState?.task?.dispose();
     if (this.welcomeBlinkTimer) clearTimeout(this.welcomeBlinkTimer);
