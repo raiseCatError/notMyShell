@@ -3,6 +3,8 @@ import {ConfiguredCompletionSource} from './ConfiguredCompletion.js';
 import {runExternal} from '../providers/providers.js';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
 import {filterCompletions, parseNativeCompletions, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
 
 export type {CompletionCandidate} from './completion.js';
@@ -26,9 +28,22 @@ export class NativeCompletionSource implements CompletionSource {
     let output: string;
     if (cached && Date.now() - cached.at < 2000) output = cached.output;
     else {
-      const result = await runExternal('zsh', ['-f', script, parent], {
-        cwd: context.cwd, env: process.env, signal, timeoutMs: 1500, maxBytes: 1024 * 1024,
-      });
+      const root = mkdtempSync(join(tmpdir(), 'nmsh-capture-'));
+      let result;
+      try {
+        result = await runExternal('zsh', ['-f', script, parent], {
+          cwd: context.cwd, env: {...process.env, NMSH_CAPTURE_ROOT: root}, signal, timeoutMs: 1500, maxBytes: 1024 * 1024,
+        });
+      } finally {
+        // zpty children have their own process group; the outer group is insufficient.
+        try {
+          const pid = Number(readFileSync(join(root, 'pid'), 'utf8').trim());
+          if (Number.isSafeInteger(pid) && pid > 1) {
+            try { process.kill(-pid, 'SIGKILL'); } catch { process.kill(pid, 'SIGKILL'); }
+          }
+        } catch { /* Already cleaned by capture, or startup never reached the inner shell. */ }
+        rmSync(root, {recursive: true, force: true});
+      }
       if (!result.ok || signal.aborted) return [];
       output = result.stdout;
       if (this.cache.size >= 32) this.cache.delete(this.cache.keys().next().value!);

@@ -15,6 +15,13 @@ replacement contexts and failed helpers fall back to the existing native source.
 Typing remains asynchronous. Cursor, cwd, buffer and service generation identify
 requests. No history is written. Configuration is trusted executable code, not a
 sandbox; helper isolation protects terminal ownership and managed-shell state.
+Both transports also enforce deadlines inside their zsh parents, so abrupt
+frontend death cannot remove the only timeout. Hidden shells are launched with
+`exec` through zpty, making the recorded PID the inner process-group leader.
+Cancellation kills that group explicitly before removing its private root.
+Native capture uses nonblocking reads and printable per-query framing; configured
+capture keeps bounded NUL records in private files. Suite-root leak checks include
+both completion and native capture roots.
 Config may still have external side effects. No new frontend config evaluation
 or runtime dependency is introduced.
 

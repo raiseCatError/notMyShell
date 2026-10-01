@@ -128,7 +128,9 @@ export class ConfiguredCompletionSource implements CompletionSource {
     this.cwd = cwd;
     this.started = Date.now();
     const child = spawn('/bin/zsh', ['-f', script('configured-completion.zsh')], {cwd, env: {...env,
-      TERM: 'dumb', ZDOTDIR: root, NMSH_COMPLETION_ROOT: root}, detached: true, stdio: ['pipe', 'pipe', 'ignore']});
+      TERM: 'dumb', ZDOTDIR: root, NMSH_COMPLETION_ROOT: root,
+      NMSH_COMPLETION_STARTUP_MS: String(Math.min(this.options.startupMs ?? 1500, 5000)),
+      NMSH_COMPLETION_QUERY_MS: String(Math.min(this.options.queryMs ?? 300, 2000))}, detached: true, stdio: ['pipe', 'pipe', 'ignore']});
     this.child = child;
     child.stdin!.on('error', () => { if (this.child === child) this.reset(); });
     child.on('error', () => { if (this.child === child) this.reset(); });

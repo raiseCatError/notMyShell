@@ -1,19 +1,39 @@
 #!/bin/zsh
 
 zmodload zsh/zpty || { echo 'error: missing module zsh/zpty' >&2; exit 1 }
+zmodload zsh/datetime || exit 1
+typeset -F deadline=$(( EPOCHREALTIME + 1.2 ))
+export NMSH_CAPTURE_DELIMITER="nmsh-capture-$$-$RANDOM-$RANDOM"
+nmsh_capture_cleanup() {
+    if [[ -n $NMSH_CAPTURE_ROOT && -f $NMSH_CAPTURE_ROOT/pid ]]; then
+        local pid=$(< $NMSH_CAPTURE_ROOT/pid)
+        [[ $pid == <-> && $pid -gt 1 ]] && kill -KILL -- -$pid 2>/dev/null
+    fi
+    zpty -d z 2>/dev/null
+    [[ -n $NMSH_CAPTURE_ROOT ]] && command rm -rf -- "$NMSH_CAPTURE_ROOT"
+}
+trap nmsh_capture_cleanup EXIT
+trap 'exit 2' TERM HUP INT
 
 # spawn shell
-zpty z zsh -f -i
+zpty -b z exec zsh -f -i
 
 # line buffer for pty output
 local line
 
 setopt rcquotes
 () {
-    zpty -w z source $1
-    repeat 4; do
-        zpty -r z line
-        [[ $line == ok* ]] && return
+    if [[ -n $NMSH_CAPTURE_ROOT ]]; then
+        zpty -w z "print -r -- \$\$ > ${(q)NMSH_CAPTURE_ROOT}/pid; source ${(q)1}"
+    else
+        zpty -w z source $1
+    fi
+    while (( EPOCHREALTIME < deadline )) && zpty -t z; do
+        if zpty -r z line; then
+            [[ $line == ok* || $line == *$'\nok'* ]] && return
+        else
+            sleep 0.005
+        fi
     done
     echo 'error initializing.' >&2
     exit 2
@@ -30,9 +50,9 @@ bindkey ''^M'' undefined
 bindkey ''^J'' undefined
 bindkey ''^I'' complete-word
 
-# send a line with null-byte at the end before and after completions are output
+# Printable framing survives nonblocking zpty reads (which truncate NUL chunks).
 null-line () {
-    echo -E - $''\0''
+    print -r -- "$NMSH_CAPTURE_DELIMITER"
 }
 compprefuncs=( null-line )
 comppostfuncs=( null-line exit )
@@ -126,8 +146,10 @@ zpty -w z "$*"$'\t'
 
 integer tog=0
 # read from the pty, and parse linewise
-while zpty -r z; do :; done | while IFS= read -r line; do
-    if [[ $line == *$'\0\r' ]]; then
+while (( EPOCHREALTIME < deadline )) && zpty -t z; do
+    if zpty -r z line; then print -rn -- "$line"; else sleep 0.005; fi
+done | while IFS= read -r line; do
+    if [[ $line == *$NMSH_CAPTURE_DELIMITER$'\r' ]]; then
         (( tog++ )) && return 0 || continue
     fi
     # display between toggles
