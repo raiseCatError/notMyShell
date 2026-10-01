@@ -5,7 +5,7 @@ import {
 } from '../prompt/configuration.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import type {Key} from '../terminal/keys.js';
-import {renderControls} from '../ui/controls.js';
+import {DRAFT_PANEL_ACTIONS, renderActionHelp} from '../ui/actions.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
@@ -116,7 +116,7 @@ export function renderTranscriptPanel(state: TranscriptPanelState, columns: numb
     sampleRows.push(`  ${SECONDARY}${GLYPHS.prompt} ${command}${RESET}`, `  ${SUBTLE}${output}${RESET}`);
   }
   if (state.message) sampleRows.push(`${SECONDARY}${state.message}${RESET}`);
-  const controls = ['', renderControls([['↑↓', 'move'], ['←→', 'change'], ['Enter', 'save'], ['Esc', 'cancel']])];
+  const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
 
   // Short terminals keep the editable rows, preview, and controls; the gallery goes first.
   const includeGallery = out.length + gallery.length + sampleRows.length + controls.length <= rowsAvailable;

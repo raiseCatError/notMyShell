@@ -74,7 +74,7 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 
 ### Editor
 - Multiline input and selection
-- Ghost autosuggestions from history
+- Predictive ghost suggestions (NMSh Native: fuzzy, frecency, directory, and sequence ranking; optional Deja provider): → accepts, Alt+→ accepts a word, Ctrl+N / Ctrl+P show alternatives, Esc dismisses
 - **Semantic syntax highlighting** (differentiates executables, builtins, aliases, and functions instantly)
 
 ### Prompt
@@ -86,13 +86,18 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 - Width-aware path shortening keeps the repository name and current directory whole while abbreviating parents as the terminal narrows
 - Terminal glyph style (Nerd Font or Safe/ASCII) is chosen on first run and can be changed in `/config` (Glyph style) or previewed under `/settings` → Settings → Glyph style. Existing v0.3 configurations keep Nerd Font styling; `NMSH_ICONS=nerd|safe` overrides the saved choice for the current process.
 - Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor. The Starship module editor changes only reviewed settings, with a backup of an existing config.
+- Native prompt styles: Powerline, Soft, Minimal, Outline (`/prompt` → Style)
 - One-line or two-line composer layouts
 
 ### Interface
 - Command lifecycle rows with activity animation and nested Node TAP activity
 - Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
-- Smart output folding: long, repetitive successful output collapses to its first and last lines around `› N lines hidden · Ctrl+O`, while failures and useful output stay expanded; `/copy` and `/resume` always keep the full output (Config → Output folding: Smart / Never)
+- Output folding (Config → Output folding: Off / Smart / Always): long output collapses to its first and last lines around `› N lines hidden · Ctrl+O`; Smart keeps failures and useful output expanded; `/copy` and `/resume` always keep the full output
+- Composer position Bottom, Top, or Flow (Config → Composer position). Flow places the prompt and input right after the newest output, like a conventional terminal, and they scroll with it. Combine any position with Normal or Chat transcript presentation (Config → Transcript presentation). `/layout` (also Config → Layout) previews every combination with sample content before you choose.
+- Welcome providers: Vespyr (default), Fastfetch, Neofetch (legacy, if installed), or None (`/settings` → Welcome)
+- Command palette: `/palette`, F1, or Ctrl+Shift+P (Cmd+Shift+P where the terminal reports it) to search NMSh commands, settings, and actions
 - Sticky command headers keep the current command visible while scrolling
+- **Live sessions:** closing a window detaches its shell instead of ending it, and running commands keep going. Come back through the startup prompt (Config → Sessions: Ask, Always or Never), `/resume` (LIVE sessions with their status, above archived transcripts), or `nmsh --attach <id>` (`nmsh --sessions` lists them). `exit`, Ctrl+D and `/zsh` end a session.
 - NMSh checkpoints the local presentation session during use; `/clear` starts a fresh view and `/resume` browses retained sessions without rewinding live zsh state
 - `/zsh` hands off to an ordinary interactive zsh
 - Rich paste atoms for large multiline pastes

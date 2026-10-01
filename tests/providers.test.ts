@@ -94,3 +94,17 @@ test('prompt providers run on the shared descriptor with unchanged labels and ro
   assert.equal(providerRowText(PROMPT_PROVIDERS[1]!, {draft: 'starship', saved: 'nmsh', status: 'none'}),
     'Starship · use its themes/configuration  ●');
 });
+
+
+test('external cancellation is bounded and pre-aborted requests never launch', async () => {
+  const cancelled = new AbortController();
+  cancelled.abort();
+  assert.deepEqual(await runExternal('/nonexistent', [], {signal: cancelled.signal}),
+    {ok: false, stdout: '', error: 'cancelled'});
+  await withTool('sleep 5', async path => {
+    const active = new AbortController();
+    const request = runExternal(join(path, 'nmsh-test-tool'), [], {signal: active.signal});
+    active.abort();
+    assert.deepEqual(await request, {ok: false, stdout: '', error: 'cancelled'});
+  });
+});

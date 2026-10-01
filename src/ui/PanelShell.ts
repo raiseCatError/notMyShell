@@ -1,6 +1,7 @@
 import {background, foreground, UI_COLORS} from './palette.js';
-import {repeatToWidth, truncateAnsi, displayWidth} from '../util/text.js';
-import {GLYPHS} from './glyphs.js';
+import {truncateAnsi, displayWidth} from '../util/text.js';
+import {theme} from '../chroma/chroma.js';
+import {renderSurface} from './surface.js';
 
 const RESET = '\u001B[0m';
 const BOLD = '\u001B[1m';
@@ -51,5 +52,5 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
 
 /** Framing belongs to the live overlay, never to OutputBuffer or an archive. */
 export function framePanel(rows: string[], columns: number): string[] {
-  return [`${foreground(UI_COLORS.separator)}${repeatToWidth(GLYPHS.separator, Math.max(1, columns))}${RESET}`, ...rows];
+  return renderSurface(rows, columns, {frame: 'topLine', frameColor: theme('separator')});
 }

@@ -1,0 +1,363 @@
+import {randomUUID} from 'node:crypto';
+import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
+import {connect, createServer, type Server, type Socket} from 'node:net';
+import {ShellSession} from '../shell/ShellSession.js';
+import {SessionEvidence} from './SessionEvidence.js';
+import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
+import {SESSION_MODE_ENV} from './SessionClient.js';
+import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
+import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
+
+export const SERVICE_NAME = 'nmshd';
+
+export interface SessionRecord {
+  id: string;
+  pid: number;
+  cwd: string;
+  createdAt: string;
+  state: SessionState;
+  protocolVersion: number;
+}
+
+type Send = (message: ServerMessage) => void;
+
+interface ManagedSession {
+  record: SessionRecord;
+  shell: ShellSession;
+  /** The one writable frontend; undefined while detached. */
+  controller?: Send;
+  running?: {command: string; since: number};
+  /** When zsh last returned to its prompt. */
+  idleSince: number;
+  screen: AlternateScreenTracker;
+  /** Bumped by every frontend resize so a pending redraw step never overrides a newer size. */
+  resizes: number;
+  seq: number;
+  backlog: StreamBacklog;
+  /** What the foreground program's own output says: recency, title, attention, last exit. */
+  evidence: SessionEvidence;
+}
+
+export {AlternateScreenTracker} from './TerminalModes.js';
+import {AlternateScreenTracker} from './TerminalModes.js';
+
+/** Delay between the two resizes that force a fullscreen app to repaint on attach. */
+const REDRAW_NUDGE_MS = 40;
+
+export interface SessionServiceOptions {
+  runtimeDir: string;
+  /** Exit if no frontend connects within this window after startup. */
+  startupIdleMs?: number;
+  backlogLimits?: BacklogLimits;
+  /** Live sessions allowed at once; detached ones are never ended to make room. */
+  maxSessions?: number;
+}
+
+export const DEFAULT_MAX_SESSIONS = 16;
+
+function toMessage(event: BacklogEvent): ServerMessage {
+  switch (event.kind) {
+    case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
+    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at,
+      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed})};
+    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at};
+  }
+}
+
+export class ServiceAlreadyRunningError extends Error {}
+
+function canConnect(path: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const probe = connect(path);
+    probe.once('connect', () => { probe.destroy(); resolve(true); });
+    probe.once('error', () => resolve(false));
+  });
+}
+
+/**
+ * Local per-user service owning PTY + managed zsh sessions. A session is
+ * attached to at most one frontend connection; losing that connection for any
+ * reason (window close, crash, SIGKILL) detaches it, and the shell keeps
+ * running until zsh itself exits or a frontend terminates it. The service
+ * exits once it has no sessions and no clients.
+ */
+export class SessionService {
+  readonly socketPath: string;
+  private server: Server | undefined;
+  private readonly sessions = new Map<string, ManagedSession>();
+  private readonly connections = new Set<Socket>();
+  private idleTimer: NodeJS.Timeout | undefined;
+  private closed = false;
+  readonly done: Promise<void>;
+  private resolveDone!: () => void;
+
+  constructor(private readonly options: SessionServiceOptions) {
+    this.socketPath = socketPathFor(options.runtimeDir);
+    this.done = new Promise(resolve => { this.resolveDone = resolve; });
+  }
+
+  get registry(): SessionRecord[] {
+    return [...this.sessions.values()].map(session => ({...session.record}));
+  }
+
+  private info(session: ManagedSession): SessionInfo {
+    const {record, running} = session;
+    const evidence = session.evidence.snapshot();
+    // Read only when someone lists sessions; nothing polls the process table.
+    const process = running ? session.shell.foregroundProcess : undefined;
+    return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
+      ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
+      ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {}),
+      ...(process && process !== 'zsh' ? {process} : {}),
+      ...(running && session.screen.active ? {fullscreen: 1} : {}),
+      ...(evidence.lastOutputAt !== undefined ? {lastOutputAt: evidence.lastOutputAt} : {}),
+      ...(evidence.title ? {title: evidence.title} : {}),
+      ...(evidence.attentionSince !== undefined ? {attentionSince: evidence.attentionSince} : {}),
+      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {})};
+  }
+
+  async start(): Promise<void> {
+    ensurePrivateRuntimeDir(this.options.runtimeDir);
+    await this.clearStaleSocket();
+    const server = createServer(socket => this.accept(socket));
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(this.socketPath, () => { server.off('error', reject); resolve(); });
+    });
+    chmodSync(this.socketPath, 0o600);
+    this.server = server;
+    this.idleTimer = setTimeout(() => this.maybeShutdown(), this.options.startupIdleMs ?? 10_000);
+  }
+
+  private async clearStaleSocket(): Promise<void> {
+    let stat;
+    try { stat = lstatSync(this.socketPath); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    if (!stat.isSocket() || stat.uid !== process.getuid?.()) throw new Error('refusing unexpected file at socket path');
+    if (await canConnect(this.socketPath)) throw new ServiceAlreadyRunningError('session service already running');
+    unlinkSync(this.socketPath);
+  }
+
+  private accept(socket: Socket): void {
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    this.connections.add(socket);
+    socket.setEncoding('utf8');
+    const decoder = new FrameDecoder();
+    const send = (message: ServerMessage) => { if (!socket.destroyed) socket.write(encodeMessage(message)); };
+    let greeted = false;
+    let owned: ManagedSession | undefined;
+
+    socket.on('data', chunk => {
+      for (const result of decoder.push(chunk as unknown as string)) {
+        if (!result.ok) {
+          if (!greeted) { send({type: 'error', code: 'protocol', message: result.error}); socket.end(); return; }
+          send({type: 'error', code: 'malformed', message: result.error});
+          continue;
+        }
+        const message = result.message;
+        if (!greeted) {
+          if (message.type !== 'hello' || message.version !== PROTOCOL_VERSION) {
+            send({type: 'error', code: 'version',
+              message: `service speaks protocol ${PROTOCOL_VERSION}; client sent ${message.type === 'hello' ? message.version : 'no handshake'}`});
+            socket.end();
+            return;
+          }
+          greeted = true;
+          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME});
+          continue;
+        }
+        switch (message.type) {
+          case 'create':
+            if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
+            if (this.sessions.size >= (this.options.maxSessions ?? DEFAULT_MAX_SESSIONS)) {
+              send({type: 'error', code: 'limit', message: `${this.sessions.size} live sessions are already running (the limit); end one or kill a detached one from /resume`});
+              break;
+            }
+            try {
+              owned = this.create(message.cwd, message.env, message.columns, message.rows, send);
+              send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid});
+            } catch (error) {
+              send({type: 'error', code: 'spawn', message: error instanceof Error ? error.message : String(error)});
+            }
+            break;
+          case 'attach': {
+            if (owned) { send({type: 'error', code: 'state', message: 'connection already controls a session'}); break; }
+            const session = this.sessions.get(message.sessionId);
+            if (!session) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            if (session.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            owned = session;
+            this.bind(session, send);
+            const info = this.info(session);
+            const {backlog} = session;
+            send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
+              ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
+              ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
+              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
+            // Everything the journal does not have yet, then the live stream continues.
+            const missed = backlog.events();
+            for (const event of missed) send(toMessage(event));
+            send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
+            this.redraw(session, message.columns, message.rows);
+            break;
+          }
+          case 'detach':
+            if (owned) {
+              const id = owned.record.id;
+              this.detach(owned, send);
+              owned = undefined;
+              send({type: 'detached', sessionId: id});
+            }
+            break;
+          case 'list':
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
+            break;
+          case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
+          case 'resize':
+            if (owned) { owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
+            break;
+          case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
+          case 'kill': {
+            const target = this.sessions.get(message.sessionId);
+            if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            // Never pull a shell out from under a frontend that is using it.
+            if (target.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
+            target.shell.once('exit', () => send({type: 'killed', sessionId: message.sessionId}));
+            target.shell.kill();
+            break;
+          }
+          case 'terminate': owned?.shell.kill(); break;
+          default: send({type: 'error', code: 'unsupported', message: `unsupported message ${message.type}`});
+        }
+      }
+    });
+    socket.on('error', () => {});
+    socket.on('close', () => {
+      this.connections.delete(socket);
+      // The frontend is gone however it left (even SIGKILL): detach, never kill.
+      if (owned) this.detach(owned, send);
+      this.maybeShutdown();
+    });
+  }
+
+  private bind(session: ManagedSession, send: Send): void {
+    session.controller = send;
+    session.record.state = 'attached';
+  }
+
+  private detach(session: ManagedSession, send: Send): void {
+    if (session.controller !== send) return;
+    session.controller = undefined;
+    session.record.state = 'detached';
+  }
+
+  /**
+   * Adopt the attaching frontend's size. A fullscreen app only repaints on a
+   * real size change, so step through a neighbouring size first: each step
+   * delivers SIGWINCH and the final one lands on the new frontend's size.
+   */
+  private redraw(session: ManagedSession, columns: number, rows: number): void {
+    this.resize(session, columns, rows > 2 ? rows - 1 : rows + 1, session.controller);
+    const generation = session.resizes;
+    setTimeout(() => {
+      if (this.sessions.has(session.record.id) && session.resizes === generation) this.resize(session, columns, rows, session.controller);
+    }, REDRAW_NUDGE_MS);
+  }
+
+  /**
+   * Resize one session's PTY without letting a failure escape into the
+   * service: nmshd owns every live session, so one session's PTY error must
+   * never end the others. ShellSession already ignores the benign teardown
+   * race; anything else is reported to the client that caused it.
+   */
+  private resize(session: ManagedSession, columns: number, rows: number, send?: Send): void {
+    try {
+      session.shell.resize(columns, rows);
+    } catch (error) {
+      send?.({type: 'error', code: 'resize', message: `could not resize the session: ${error instanceof Error ? error.message : String(error)}`});
+    }
+  }
+
+  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send): ManagedSession {
+    // The shell gets the launching frontend's environment and cwd, never the
+    // service's own startup state. The env is opaque: it is not stored or logged.
+    const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
+    const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
+      state: 'attached', protocolVersion: PROTOCOL_VERSION};
+    const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
+      seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
+      evidence: new SessionEvidence()};
+    this.sessions.set(record.id, session);
+    // Every event is retained until a frontend journal acknowledges it, and
+    // sent live when a frontend is attached.
+    const emit = (event: BacklogEvent, live: ServerMessage = toMessage(event)) => {
+      session.backlog.append(event);
+      session.controller?.(live);
+    };
+    shell.on('data', data => {
+      const at = Date.now();
+      session.evidence.observe(data, at);
+      session.screen.observeModes(data);
+      const kept = session.screen.push(data);
+      if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
+      else session.controller?.({type: 'output', data});
+    });
+    shell.on('exec', (command, historyAllowed) => {
+      const at = Date.now();
+      session.running = {command, since: at};
+      session.evidence.onExec();
+      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
+    });
+    shell.on('prompt', marker => {
+      record.cwd = marker.cwd;
+      session.running = undefined;
+      session.idleSince = Date.now();
+      session.evidence.onPrompt(marker.exitCode);
+      session.screen.reset();
+      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
+    });
+    shell.on('exit', event => {
+      this.sessions.delete(record.id);
+      // Detached: keep what the journal lacks on disk for archiving. Attached:
+      // the frontend journal is authoritative and the backlog goes.
+      if (session.controller) session.backlog.dispose();
+      else session.backlog.finish(event.exitCode, Date.now());
+      session.controller?.({type: 'exit', exitCode: event.exitCode, ...(event.signal ? {signal: event.signal} : {})});
+      session.controller = undefined;
+      this.maybeShutdown();
+    });
+    return session;
+  }
+
+  private maybeShutdown(): void {
+    if (this.sessions.size === 0 && this.connections.size === 0) void this.close();
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    for (const session of this.sessions.values()) session.shell.kill();
+    this.sessions.clear();
+    for (const socket of this.connections) socket.destroy();
+    // Closing the listening server unlinks its socket path.
+    await new Promise<void>(resolve => (this.server ? this.server.close(() => resolve()) : resolve()));
+    this.resolveDone();
+  }
+}
+
+export async function runSessionService(options: SessionServiceOptions): Promise<void> {
+  const service = new SessionService(options);
+  try {
+    await service.start();
+  } catch (error) {
+    if (error instanceof ServiceAlreadyRunningError) return;
+    throw error;
+  }
+  const stop = () => void service.close();
+  process.once('SIGTERM', stop);
+  process.once('SIGHUP', stop);
+  process.once('SIGINT', stop);
+  await service.done;
+}

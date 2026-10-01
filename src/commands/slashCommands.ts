@@ -13,6 +13,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
   {name: '/syntax', insertion: '/syntax', description: 'Configure syntax highlighting'},
+  {name: '/layout', insertion: '/layout', description: 'Preview and choose composer position and transcript presentation'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
@@ -22,6 +23,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
+  {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
+  {name: '/dirs', insertion: '/dirs ', description: 'Find a directory; insert a visible cd command'},
   {name: '/history', insertion: '/history ', description: 'Search history'},
 ];
 
@@ -32,6 +35,7 @@ export type ParsedSlashCommand =
   | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
+  | {kind: 'layout'}
   | {kind: 'keyboard'}
   | {kind: 'zsh'}
   | {kind: 'version'}
@@ -39,6 +43,8 @@ export type ParsedSlashCommand =
   | {kind: 'clear'}
   | {kind: 'resume'}
   | {kind: 'help'}
+  | {kind: 'palette'}
+  | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
 
@@ -52,6 +58,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
   if (/^\/syntax\s*$/u.test(input)) return {kind: 'syntax'};
+  if (/^\/layout\s*$/u.test(input)) return {kind: 'layout'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
@@ -60,6 +67,9 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
+  if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
+  const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);
+  if (directories) return {kind: 'directories', query: (directories[1] ?? '').trim()};
   const history = /^\/history(?:\s+([\s\S]*))?$/u.exec(input);
   if (history) return {kind: 'history', query: (history[1] ?? '').trim()};
   return {kind: 'unknown', input};

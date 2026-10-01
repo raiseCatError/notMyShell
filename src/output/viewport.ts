@@ -14,6 +14,8 @@ export interface WrappedRow {
   isLiveActivity?: boolean;
   /** startId of the command block that owns this row; presentation metadata only. */
   blockStartId?: number;
+  /** Leading alignment columns (Chat); surfaces and hit bounds start after them. */
+  indent?: number;
 }
 
 export interface StickyHeader {
