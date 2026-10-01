@@ -26,3 +26,10 @@ Protocol references: [Kitty keyboard detection](https://sw.kovidgoyal.net/kitty/
 and [synchronized output](https://ghostty.org/docs/help/synchronized-output).
 Adapter hints are fallback evidence, not physical compatibility certification.
 Physical validation remains deferred.
+
+Existing host configuration is exposed through a passive optional integration
+adapter. Core invokes operations only from explicit keyboard/appearance panel
+actions. Finding a configuration file for a different terminal no longer enables
+those actions. Host-specific guidance and zsh bootstrap terminal hints live under
+`src/host/`; architecture tests pin that boundary. No new preference-management
+feature is introduced.

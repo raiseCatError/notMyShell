@@ -1,3 +1,4 @@
+import {BOOTSTRAP_TERM_COMPATIBILITY} from '../host/integration.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawn, type IPty } from 'node-pty';
@@ -57,9 +58,7 @@ export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}/nmsh-disabled"
 
 # Suppress fastfetch via TERM
 local nmsh_orig_term=\$TERM
-if [[ "\$TERM" == "xterm-ghostty" ]]; then
-  export TERM="xterm-256color"
-fi
+${BOOTSTRAP_TERM_COMPATIBILITY}
 
 if [[ -f "${home}/.zshrc" ]]; then
   ZDOTDIR="${home}" source "${home}/.zshrc"

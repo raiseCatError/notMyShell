@@ -84,8 +84,6 @@ import {foreground, background, UI_COLORS} from '../ui/palette.js';
 import {cursorScreenRow, planScreen, regionAt, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
-import {installGhosttyKeybinding} from '../keyboard/ghosttyKeyboard.js';
-import {detectGhosttyConfigPath, readGhosttySettings, saveGhosttySettings} from '../appearance/ghostty.js';
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
@@ -1432,7 +1430,7 @@ export class TerminalApp {
     this.output.addHistoryLine(`${INFO}✻ Saving appearance settings...${RESET}`);
     this.render();
 
-    const result = await saveGhosttySettings({
+    const result = await this.host.integration!.saveAppearance({
       opacity: state.opacity,
       blurMode: BLUR_MODES[state.blurModeIndex],
       blurStrength: state.blurStrength
@@ -1442,7 +1440,7 @@ export class TerminalApp {
       this.output.addHistoryLine(`${SUCCESS}✻ Saved to ${result.fragmentPath}${RESET}`);
       this.output.addHistoryLine(`${INFO}✻ Host config updated: ${result.hostPath}${RESET}`);
       if (state.opacity < 1) {
-        this.output.addHistoryLine(`${INFO}✻ Note: opacity changes require Ghostty restart${RESET}`);
+        this.output.addHistoryLine(`${INFO}✻ ${this.host.integration!.appearanceRestart}${RESET}`);
       }
     } else {
       this.output.addHistoryLine(`${ERROR}✻ Failed to save appearance${RESET}`);
@@ -1452,32 +1450,10 @@ export class TerminalApp {
   }
 
   private async startKeyboard(): Promise<void> {
-    const isGhostty = process.env.TERM_PROGRAM === 'ghostty';
-    const isVSCode = process.env.TERM_PROGRAM === 'vscode';
-    if (isVSCode) {
-      // VS Code sends identical bytes for Enter and Shift+Enter (both \r at PTY level).
-      // NMSh cannot distinguish them without an explicit VS Code keybinding.
-      // The binding below sends the Kitty Shift+Enter sequence \u001B[13;2u which
-      // NMSh already maps to insertNewline.
-      const vscodeNote = [
-        `VS Code sends identical bytes for Enter and Shift+Enter.`,
-        `To enable Shift+Enter → insert newline, add this to your VS Code keybindings.json:`,
-        ``,
-        `  { "key": "shift+enter",`,
-        `    "command": "workbench.action.terminal.sendSequence",`,
-        `    "args": { "text": "\\u001b[13;2u" },`,
-        `    "when": "terminalFocus" }`,
-        ``,
-        `Ctrl+J always inserts a newline without any config (portable fallback).`,
-      ].join('\n');
-      this.output.addFrontendInteraction('/keyboard', vscodeNote, INFO);
+    if (!this.host.capabilities.hostConfiguration || !this.host.integration) {
+      this.output.addFrontendInteraction('/keyboard', this.host.keyboardGuidance ?? 'Ctrl+J inserts a newline; Ctrl+W deletes a word.', INFO);
       this.render();
       return;
-    }
-    if (!isGhostty && !await detectGhosttyConfigPath()) {
-       this.output.addFrontendInteraction('/keyboard', `Host is not Ghostty. Keyboard integration is specific to Ghostty currently.`, INFO);
-       this.render();
-       return;
     }
     this.keyboardState = { selectedIndex: 0 };
     this.render();
@@ -1488,14 +1464,14 @@ export class TerminalApp {
     if (!this.keyboardState) return;
     this.keyboardState = undefined;
 
-    this.output.addHistoryLine(`${INFO}✻ Installing Ghostty Cmd+A binding...${RESET}`);
+    this.output.addHistoryLine(`${INFO}✻ Installing ${this.host.name} keyboard bindings...${RESET}`);
     this.render();
 
-    const result = await installGhosttyKeybinding();
+    const result = await this.host.integration!.installKeyboard();
 
     if (result.success) {
-      this.output.addHistoryLine(`${SUCCESS}✻ Installed Cmd+A binding in Ghostty config${RESET}`);
-      this.output.addHistoryLine(`${INFO}✻ Reload Ghostty config (Cmd+Shift+,) for changes to take effect${RESET}`);
+      this.output.addHistoryLine(`${SUCCESS}✻ Installed keyboard bindings in ${this.host.name} config${RESET}`);
+      this.output.addHistoryLine(`${INFO}✻ ${this.host.integration!.keyboardReload}${RESET}`);
     } else {
       this.output.addHistoryLine(`${ERROR}✻ Failed to install binding${RESET}`);
       this.output.addHistoryLine(`  ⎿ ${result.error}`);
@@ -1504,17 +1480,13 @@ export class TerminalApp {
   }
 
   private async startAppearance(): Promise<void> {
-    const isGhostty = process.env.TERM_PROGRAM === 'ghostty';
-    const isVSCode = process.env.TERM_PROGRAM === 'vscode';
-
-    if (isVSCode || (!isGhostty && !await detectGhosttyConfigPath())) {
-       this.output.addFrontendInteraction('/appearance', `Host: ${isVSCode ? 'VS Code Integrated Terminal' : 'Unsupported Host'}\nWindow opacity and blur are controlled by the host.`, INFO);
-       this.returnFromPanel();
-       this.render();
-       return;
+    if (!this.host.capabilities.appearanceIntegration || !this.host.integration) {
+      this.output.addFrontendInteraction('/appearance', `Host: ${this.host.name}\nWindow opacity and blur are controlled by the host.`, INFO);
+      this.returnFromPanel();
+      this.render();
+      return;
     }
-
-    const settings = await readGhosttySettings();
+    const settings = await this.host.integration.readAppearance();
     this.appearanceState = {
       opacity: settings.opacity,
       blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)),
@@ -2292,7 +2264,7 @@ export class TerminalApp {
       return framePanel(rows, columns);
     }
     if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);
-    if (this.keyboardState) return framePanel(renderKeyboardPanel(this.keyboardState, columns), columns);
+    if (this.keyboardState) return framePanel(renderKeyboardPanel(this.keyboardState, columns, this.host.name), columns);
     return framePanel(this.renderedPromptPanel(columns), columns);
   }
 
