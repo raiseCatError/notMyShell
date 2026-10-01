@@ -7,6 +7,7 @@
 | **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
 | **Development branch** | `dev` |
 | **Next direction** | [v0.8.0 — Command Intelligence & Navigation](https://github.com/raiseCatError/notMyShell/milestone/8), in development |
+| **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), incomplete and unmerged |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -120,6 +121,27 @@ Native structured completion, command-level history, reusable optional pickers, 
 
 The earlier milestone #7 now represents unscheduled Discoverability & Integrations; its unrelated scope remains separate.
 
+The continuation's final acceptance head is [#251](https://github.com/raiseCatError/notMyShell/pull/251),
+`docs/v08-continuation-final-verification` at `2dfbf9c12c54ada8af364bc44db87bc70f0b77c0`.
+It includes command inspector, block actions, notifications and fixture hygiene.
+These remain implemented/unmerged with cumulative physical QA pending, not reopened backlog.
+
+## Stacked development — v0.9.0 Tools, Integrations & Workflows
+
+[Milestone #9](https://github.com/raiseCatError/notMyShell/milestone/9) adopts #9,
+#83, #153, #154, #176, #177 and #178. Research children #252 (supported config)
+and #253 (mise awareness) are also included. #176/#177/#178 moved from the
+unscheduled grouping; #179/#180 remain there. The stack consumes the pinned
+final v0.8 head without modifying or merging it; package version remains 0.7.0.
+
+Current review order: #251 → #182 → #181 → #183 → #254 → draft #255.
+Linguist identity, external welcome adapters, deterministic VHS tooling and
+supported Starship configuration are implemented. Tools discovery/install work
+is checkpointed as a draft. Mise implementation and session presets remain pending;
+no final milestone acceptance is claimed. Local disk exhaustion interrupted
+verification/continuation. See the [checkpoint](docs/development/v0.9.0-checkpoint.md)
+and [single additive QA checklist](docs/qa/v0.9.0-physical-qa.md).
+
 ## Backlog — Research and Future Features
 
 These remain open and are not scheduled for a release.
@@ -128,13 +150,8 @@ These remain open and are not scheduled for a release.
 |---|---|
 | [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability |
 | [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins |
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and first-run setup |
 | [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules |
 | [#78](https://github.com/raiseCatError/notMyShell/issues/78) | Chroma: gradients, animated color treatments, and transient visual effects |
-| [#83](https://github.com/raiseCatError/notMyShell/issues/83) | Tool configuration center inside `/settings` |
-| [#84](https://github.com/raiseCatError/notMyShell/issues/84) | Command inspector |
-| [#85](https://github.com/raiseCatError/notMyShell/issues/85) | Interactive command/output block controls |
-| [#106](https://github.com/raiseCatError/notMyShell/issues/106) | Command completion notifications for long-running commands |
 
 zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
 
