@@ -8,11 +8,14 @@ import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync } from 'node
 import {MAX_SHELL_KNOWLEDGE_BYTES, shellKnowledgeBootstrap} from './ShellKnowledge.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {PENDING_INPUT_LIMIT, sanitizeStartupOutput, STARTUP_RAW_LIMIT} from './startupOutput.js';
 import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
 
 interface SessionEvents {
   data: [string];
   prompt: [ShellMarker];
+  /** Sanitized, bounded tail of what the shell printed before its first prompt; emitted (coalesced) while startup is pending. */
+  startup: [string];
   exec: [string, number?];
   exit: [{ exitCode: number; signal?: number }];
 }
@@ -27,6 +30,11 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly protocol: ShellProtocolDecoder;
   private zdotdir: string;
   private ready = false;
+  /** Raw pre-ready output, bounded; the shell may be blocked on a prompt in the user's startup files. */
+  private startupRaw = '';
+  private startupTimer?: NodeJS.Timeout;
+  /** Input held until the shell is ready, so type-ahead can never answer a prompt in a startup file. */
+  private pendingInput = '';
   /** Set once the shell has exited or its PTY is closed; resizes after that are no-ops. */
   private exited = false;
 
@@ -146,6 +154,8 @@ add-zsh-hook preexec nmsh_preexec
     this.pty.onData(data => this.receive(data));
     this.pty.onExit(event => {
       this.exited = true;
+      this.pendingInput = '';
+      if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
       this.cleanup();
       this.emit('exit', event);
     });
@@ -171,12 +181,33 @@ add-zsh-hook preexec nmsh_preexec
     try { return this.pty.process || undefined; } catch { return undefined; }
   }
 
+  /** Whether the first prompt has been reached. */
+  get isReady(): boolean { return this.ready; }
+
+  /** Sanitized recent startup output while the shell has not reached its first prompt; undefined once ready. */
+  startupTail(): string | undefined {
+    return this.ready ? undefined : sanitizeStartupOutput(this.startupRaw);
+  }
+
+  pendingInputBytes(): number { return this.pendingInput.length; }
+
   submit(command: string): void {
-    this.pty.write(`${command}\r`);
+    this.send(`${command}\r`);
   }
 
   write(data: string): void {
-    this.pty.write(data);
+    // An explicit interrupt is the one pre-ready input that acts immediately.
+    if (data === '\u0003') this.interrupt(); else this.send(data);
+  }
+
+  /**
+   * Before the first prompt the shell may be reading from the terminal on behalf of the user's startup files
+   * (for example `read -k1` in .zshrc), where a queued command or keystroke would silently become the answer.
+   * Hold it, bounded, and release it in order once the shell reports ready.
+   */
+  private send(data: string): void {
+    if (this.ready) { this.pty.write(data); return; }
+    if (this.pendingInput.length + data.length <= PENDING_INPUT_LIMIT) this.pendingInput += data;
   }
 
   interrupt(): void {
@@ -205,6 +236,8 @@ add-zsh-hook preexec nmsh_preexec
   }
 
   kill(): void {
+    this.pendingInput = '';
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
     try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
@@ -212,15 +245,33 @@ add-zsh-hook preexec nmsh_preexec
     for (const event of this.protocol.push(data)) {
       if (event.kind === 'data') {
         if (this.ready) this.emit('data', event.data);
+        else this.captureStartup(event.data);
       } else if (event.kind === 'exec') {
         if (this.ready) this.emit('exec', event.command, event.historyAllowed);
       } else if (!this.ready) {
         this.ready = true;
+        this.startupRaw = '';
+        if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
         this.emit('prompt', this.withKnowledge(event.marker));
+        const pending = this.pendingInput;
+        this.pendingInput = '';
+        if (pending && !this.exited) this.pty.write(pending);
       } else {
         this.emit('prompt', this.withKnowledge(event.marker));
       }
     }
+  }
+
+  private captureStartup(data: string): void {
+    this.startupRaw = (this.startupRaw + data).slice(-STARTUP_RAW_LIMIT);
+    if (this.startupTimer || this.listenerCount('startup') === 0) return;
+    // Coalesce bursts: a chatty startup file must not become a flood of frontend messages.
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
+      const tail = this.startupTail();
+      if (tail !== undefined) this.emit('startup', tail);
+    }, 100);
+    this.startupTimer.unref?.();
   }
 
   private withKnowledge(marker: ShellMarker): ShellMarker {

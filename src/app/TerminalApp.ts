@@ -93,6 +93,7 @@ import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
+import {renderStartupPanel} from '../ui/StartupPanel.js';
 import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
@@ -288,6 +289,10 @@ export class TerminalApp {
     });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('startup', tail => {
+      this.startupTail = tail;
+      if (this.startupPanel) { this.startupPanel.tail = tail; this.render(); }
+    });
     this.session.on('exit', event => {
       this.shellEnded = true;
       if (event.lost) {
@@ -302,7 +307,50 @@ export class TerminalApp {
     if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
     // After any restored transcript, or reattaching would erase the launch notice.
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
+    this.beginStartupWatch(connection?.attached);
     this.session.start();
+  }
+
+  /** The shell has not reached its first prompt; set for a new session, or a reattached one still starting. */
+  private startupPending = false;
+  private startupTail = '';
+  private startupTimer?: NodeJS.Timeout;
+  private startupPanel?: {since: number; tail: string};
+
+  /**
+   * Normal startup finishes before this fires and shows nothing. A shell that is still not at its first prompt
+   * (slow, or blocked on a startup file waiting for input) gets an explicit state instead of a composer that
+   * looks ready; commands stay held by the shell until it is.
+   */
+  private beginStartupWatch(attached: AttachedSession | undefined): void {
+    this.startupPending = attached ? attached.startup !== undefined : true;
+    this.startupTail = attached?.startup ?? '';
+    if (!this.startupPending) return;
+    const configured = Number(process.env.NMSH_STARTUP_NOTICE_MS);
+    const delay = Number.isFinite(configured) && configured >= 50 ? Math.min(60_000, configured) : 1500;
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
+      if (!this.startupPending || this.stopped) return;
+      this.startupPanel = {since: Date.now() - delay, tail: this.startupTail};
+      this.render();
+    }, delay);
+    this.startupTimer.unref?.();
+  }
+
+  /** Explicit recovery from a blocked startup: end the shell and this session; nothing is left detached. */
+  private abortStartup(): void {
+    this.shellEnded = true;
+    this.detaching = false;
+    try { this.session.kill(); } catch { /* the shell may already be gone */ }
+    this.stop(130);
+    process.stderr.write('NMSh: shell startup aborted; the session was ended.\n');
+  }
+
+  private endStartupWatch(): void {
+    this.startupPending = false;
+    this.startupTail = '';
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+    this.startupPanel = undefined;
   }
 
   /** Last shell stream event reflected in the transcript (service sessions). */
@@ -593,6 +641,12 @@ export class TerminalApp {
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
+    }
+    if (this.startupPanel) {
+      // The shell is not ready; it may be waiting on a startup file. Abort is explicit, and nothing the
+      // composer produces is submitted until the shell reaches its first prompt (typed text is kept).
+      if (key.kind === 'interrupt') { this.abortStartup(); return; }
+      if (key.kind === 'enter' || key.kind === 'newline') return;
     }
     if (this.presetStartup?.active) {
       if (key.kind === 'interrupt') {
@@ -1806,6 +1860,7 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    this.endStartupWatch();
     const initialPrompt = !this.presetShellReady;
     this.presetShellReady = true;
     this.context.exitStatus = exitCode;
@@ -2281,10 +2336,11 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
   private settingsPanelRows(columns: number): string[] {
+    if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
@@ -3511,6 +3567,7 @@ export class TerminalApp {
     this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();
+    this.endStartupWatch();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
     this.providerPanelState?.task?.dispose();

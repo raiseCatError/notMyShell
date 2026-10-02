@@ -32,7 +32,11 @@ export type ServerMessage =
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
   | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
-    journalId?: string; ackedSeq: number; knowledge?: string}
+    journalId?: string; ackedSeq: number; knowledge?: string;
+    /** Present only while the shell has not reached its first prompt: the sanitized, bounded tail of its startup output. */
+    startup?: string}
+  /** Startup output of a shell still blocked or slow before its first prompt (bounded, sanitized, coalesced). */
+  | {type: 'startup'; output: string}
   | {type: 'detached'; sessionId: string}
   | {type: 'sessions'; sessions: SessionInfo[]}
   /**
@@ -108,7 +112,8 @@ const SHAPES: Record<string, Shape> = {
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
   attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
-    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?'},
+    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?', startup: 'string?'},
+  startup: {output: 'string'},
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
