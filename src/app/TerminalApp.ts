@@ -75,7 +75,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
-import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
@@ -119,6 +119,7 @@ const SEPARATOR = foreground(UI_COLORS.separator);
 const ACCENT = foreground(UI_COLORS.accent);
 const SUCCESS = foreground(UI_COLORS.success);
 const ERROR = foreground(UI_COLORS.failure);
+const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
   'deleteLineBefore', 'deleteLineAfter', 'enter', 'newline', 'complete', 'historySearch']);
@@ -1379,7 +1380,7 @@ export class TerminalApp {
     const payload = blockCopyPayload(record, action);
     if (payload !== undefined) {
       try { await writeClipboard(payload); }
-      catch { this.output.addFrontendInteraction('/copy', 'Clipboard copy failed', ERROR); }
+      catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
     else if (action === 'edit' || action === 'rerun') {
       this.clearBlockFocus();
@@ -1581,8 +1582,8 @@ export class TerminalApp {
       const payload = serializeCopyPayload(record);
       await writeClipboard(payload);
       this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
-    } catch {
-      this.output.addFrontendInteraction(command, 'Clipboard copy failed', ERROR);
+    } catch (error) {
+      this.output.addFrontendInteraction(command, clipboardFailure(error), ERROR);
     }
   }
 
