@@ -64,6 +64,8 @@ export interface AttachedSession {
   /** Journal the previous frontend kept for this session, and how far it got. */
   journalId?: string;
   ackedSeq: number;
+  /** Latest bounded name snapshot, independent of journal acknowledgements. */
+  knowledge?: string;
 }
 
 export interface SessionOptions {

@@ -36,6 +36,7 @@ interface ManagedSession {
   backlog: StreamBacklog;
   /** What the foreground program's own output says: recency, title, attention, last exit. */
   evidence: SessionEvidence;
+  knowledge?: string;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -195,7 +196,8 @@ export class SessionService {
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
               ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
-              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
+              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq,
+              ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge})});
             // Everything the journal does not have yet, then the live stream continues.
             const missed = backlog.events();
             for (const event of missed) send(toMessage(event));
@@ -311,6 +313,7 @@ export class SessionService {
       emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
     });
     shell.on('prompt', marker => {
+      session.knowledge = marker.knowledge;
       record.cwd = marker.cwd;
       session.running = undefined;
       session.idleSince = Date.now();

@@ -32,7 +32,7 @@ export type ServerMessage =
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
   | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
-    journalId?: string; ackedSeq: number}
+    journalId?: string; ackedSeq: number; knowledge?: string}
   | {type: 'detached'; sessionId: string}
   | {type: 'sessions'; sessions: SessionInfo[]}
   /**
@@ -108,7 +108,7 @@ const SHAPES: Record<string, Shape> = {
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
   attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
-    journalId: 'string?', ackedSeq: 'int'},
+    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?'},
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},
   output: {data: 'string', seq: 'int?', at: 'int?'},

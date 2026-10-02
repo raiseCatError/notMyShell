@@ -333,6 +333,10 @@ export class TerminalApp {
     this.replaying = true;
     this.shellCwd = attached.cwd;
     this.streamSeq = attached.ackedSeq;
+    if (attached.knowledge !== undefined) {
+      this.semanticService.applyShellKnowledge(attached.knowledge);
+      this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
+    }
     if (!journal) return;
     this.continuedJournal = journal;
     this.welcomeGeneration += 1;

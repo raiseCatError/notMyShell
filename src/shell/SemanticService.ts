@@ -15,10 +15,12 @@ export class SemanticService {
   private zdotdir: string;
   private generation = 0;
   private shellNames?: Map<string, CommandType>;
+  private shellNamesComplete = false;
 
   applyShellKnowledge(text: string): void {
     this.generation++;
     this.shellNames = parseShellKnowledge(text);
+    this.shellNamesComplete = text.split('\n').includes('complete');
     this.cache.clear();
     for (const [name, type] of this.shellNames) this.cache.set(name, type);
     for (const resolve of this.pending.values()) resolve('unknown');
@@ -88,12 +90,21 @@ PS1=""
     this.child.stdin!.on('error', () => { /* ignore EPIPE */ });
 
     this.child.stdin!.write(`
-while read -r id cmd; do
-  res=$(whence -w "$cmd" 2>/dev/null)
+while builtin read -r id mode cmd; do
+  res=$(builtin whence -w -- "$cmd" 2>/dev/null)
+  if [[ $mode == plain && ( $res == *': alias' || $res == *': function' ) ]]; then
+    if (( $+builtins[$cmd] )); then
+      res="$cmd: builtin"
+    elif builtin whence -p -- "$cmd" >/dev/null 2>&1; then
+      res="$cmd: command"
+    else
+      res=''
+    fi
+  fi
   if [[ -z "$res" ]]; then
-    echo "$id none"
+    builtin printf '%s none\\n' "$id"
   else
-    echo "$id \${res#*: }"
+    builtin printf '%s %s\\n' "$id" "\${res#*: }"
   fi
 done\n`);
 
@@ -131,7 +142,6 @@ done\n`);
   private isDead = false;
 
   async classifyCommand(cmd: string): Promise<CommandType> {
-    if (this.isDead || !this.child.stdin?.writable) return 'unknown';
     if (!cmd || cmd.trim().length === 0) return 'unknown';
     // Only classify the first word if it has spaces
     cmd = cmd.split(' ')[0];
@@ -139,6 +149,7 @@ done\n`);
     if (this.cache.has(cmd)) {
       return this.cache.get(cmd)!;
     }
+    if (this.isDead || !this.child.stdin?.writable) return 'unknown';
 
     const id = this.nextId++;
     const generation = this.generation;
@@ -150,7 +161,6 @@ done\n`);
       this.pending.set(id, (res) => {
         clearTimeout(timer);
         if (generation !== this.generation) { resolve('unknown'); return; }
-        if (this.shellNames && (res === 'alias' || res === 'function') && !this.shellNames.has(cmd)) res = 'unknown';
         if (this.cache.size >= 8192) this.cache.delete(this.cache.keys().next().value!);
         this.cache.set(cmd, res);
         resolve(res);
@@ -158,7 +168,8 @@ done\n`);
       // Safety: cmd should not contain newlines or null bytes
       const safeCmd = cmd.replace(/[\r\n\0]/g, '');
       try {
-        this.child.stdin!.write(`${id} ${safeCmd}\n`);
+        const mode = this.shellNamesComplete && !this.shellNames?.has(cmd) ? 'plain' : 'configured';
+        this.child.stdin!.write(`${id} ${mode} ${safeCmd}\n`);
       } catch (e) {
         clearTimeout(timer);
         this.pending.delete(id);

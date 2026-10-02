@@ -72,12 +72,12 @@ export class Highlighter {
       }
 
       // Operators
-      const redirect = /^(?:\d+)?(?:<<<|<<-|<<|>>|<>|>&|<&|>\||>|<)(?:[0-9-]+)?/u.exec(characters.slice(i, i + 24).join(''))?.[0];
+      const redirect = /^(?:\d+)?(?:(?:>&|<&)(?:[0-9-]+)?|<<<|<<-|<<|>>|<>|>\||>|<)/u.exec(characters.slice(i, i + 24).join(''))?.[0];
       if ('|&;<>()'.includes(c) || redirect) {
         const start = i;
         if (redirect) {
           i += redirect.length;
-          redirectTarget = !/[0-9-]$/u.test(redirect) || /<<-$/u.test(redirect);
+          redirectTarget = !/(?:>&|<&)[0-9-]+$/u.test(redirect);
           tokens.push({type: 'Operator', start, end: i, text: redirect});
           continue;
         }
