@@ -5,12 +5,12 @@ const line = text => process.stdout.write(text + '\r\n');
 if (mode === 'finite') {
   line('FINITE-STDOUT');
   process.stderr.write('FINITE-STDERR\n');
-  process.exit(7);
+  process.exitCode = 7;
 }
 if (mode === 'noisy') {
   for (let i = 0; i < 1000; i++) line(`building unit ${i} complete`);
   line('NOISY-END');
-  process.exit(0);
+  process.exitCode = 0;
 }
 if (mode === 'streaming') {
   let count = 0;
