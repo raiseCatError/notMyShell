@@ -1,3 +1,4 @@
+import {resolveZsh} from './zshExecutable.js';
 import {BOOTSTRAP_TERM_COMPATIBILITY} from '../host/integration.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -30,6 +31,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
 
   constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env) {
     super();
+    const shell = resolveZsh(env);
     const token = randomBytes(12).toString('hex');
     this.protocol = new ShellProtocolDecoder(token);
 
@@ -122,7 +124,7 @@ add-zsh-hook preexec nmsh_preexec
     this.zdotdir = zdotdir;
 
     try {
-      this.pty = spawn('/bin/zsh', ['-i'], {
+      this.pty = spawn(shell, ['-i'], {
         name: env.TERM || 'xterm-256color',
         cols: Math.max(2, columns),
         rows: Math.max(2, rows),

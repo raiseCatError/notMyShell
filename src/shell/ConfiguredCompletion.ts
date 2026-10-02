@@ -1,3 +1,4 @@
+import {resolveZsh} from './zshExecutable.js';
 import {spawn, type ChildProcess} from 'node:child_process';
 import {mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -132,6 +133,7 @@ export class ConfiguredCompletionSource implements CompletionSource {
   private async start(cwd: string, signal: AbortSignal): Promise<boolean> {
     this.reset();
     const env = {...(this.options.env ?? process.env)};
+    const shell = resolveZsh(env);
     const home = env.HOME ?? '';
     this.root = mkdtempSync(join(tmpdir(), 'nmsh-completion-'));
     const root = this.root;
@@ -142,8 +144,8 @@ export class ConfiguredCompletionSource implements CompletionSource {
     delete env.TERM_PROGRAM_VERSION;
     this.cwd = cwd;
     this.started = Date.now();
-    const child = spawn('/bin/zsh', ['-f', script('configured-completion.zsh')], {cwd, env: {...env,
-      TERM: 'dumb', ZDOTDIR: root, NMSH_COMPLETION_ROOT: root,
+    const child = spawn(shell, ['-f', script('configured-completion.zsh')], {cwd, env: {...env,
+      TERM: 'dumb', NMSH_ZSH_EXECUTABLE: shell, ZDOTDIR: root, NMSH_COMPLETION_ROOT: root,
       NMSH_COMPLETION_STARTUP_MS: String(Math.min(this.options.startupMs ?? 1500, 5000)),
       NMSH_COMPLETION_QUERY_MS: String(Math.min(this.options.queryMs ?? 300, 2000))}, detached: true, stdio: ['pipe', 'pipe', 'ignore']});
     this.child = child;

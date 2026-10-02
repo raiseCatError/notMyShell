@@ -1,3 +1,4 @@
+import {resolveZsh} from './shell/zshExecutable.js';
 import {SessionPresetStore, validatePresetCwd, presetNeedsAcknowledgement, type SessionPreset} from './session/SessionPresets.js';
 import {isVersionInvocation, formatBuildIdentity, readBuildIdentity} from './buildInfo.js';
 import {NESTED_NMSH_MESSAGE, createOrdinaryZshEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
@@ -7,7 +8,7 @@ import {PRODUCT_ABBREVIATION, PRODUCT_NAME} from './config.js';
 function startOrdinaryZsh(cwd?: string): Promise<number> {
   return new Promise(resolve => {
     try {
-      const shell = spawn('/bin/zsh', ['-i'], {
+      const shell = spawn(resolveZsh(), ['-i'], {
         ...(cwd ? {cwd} : {}),
         env: createOrdinaryZshEnvironment(),
         stdio: 'inherit',

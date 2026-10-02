@@ -65,7 +65,7 @@ test('a failed launch in the middle loses nothing: the others still launch and t
 const built = existsSync(join(REPO, 'dist/index.js'));
 
 test('built nmsh: Open all from a picker attaches here and launches every other selected session',
-  {skip: built ? false : 'run npm run build first'}, async () => {
+  {skip: !built ? 'run npm run build first' : process.platform !== 'darwin' ? 'macOS window integration' : false}, async () => {
     const sandbox = new LiveSandbox();
     const fakeBin = join(sandbox.root, 'fake-bin');
     mkdirSync(fakeBin);

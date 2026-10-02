@@ -1,3 +1,4 @@
+import {resolveZsh} from './zshExecutable.js';
 import { spawn } from 'node:child_process';
 import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -28,6 +29,7 @@ export class SemanticService {
   }
 
   constructor(cwd: string) {
+    const shell = resolveZsh();
     const home = process.env.HOME || '';
     this.zdotdir = mkdtempSync(join(tmpdir(), 'nmsh-semantic-'));
 
@@ -68,7 +70,7 @@ PS1=""
     delete env.TERM_PROGRAM_VERSION;
 
     // Use detached: true for setsid-style isolation to prevent TTIN/TTOU and controlling terminal access
-    this.child = spawn('zsh', ['-i'], {
+    this.child = spawn(shell, ['-i'], {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'ignore'],

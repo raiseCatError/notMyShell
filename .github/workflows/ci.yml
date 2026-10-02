@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [master, dev]
+    branches: [master, dev, 'feature/v013-*', 'docs/v013-*', docs/v012-cumulative-acceptance]
   pull_request:
-    branches: [master, dev]
+    # Stacked PRs need the same gates as integration PRs.
+
   workflow_dispatch:
 
 permissions:
@@ -16,11 +17,12 @@ concurrency:
 
 jobs:
   verify:
-    name: Verify
-    runs-on: macos-latest
+    name: Verify (${{ matrix.os }}, Node ${{ matrix.node-version }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       matrix:
+        os: [macos-latest, ubuntu-24.04]
         node-version: [22.x, 26.x]
 
     steps:
@@ -33,6 +35,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
+      - name: Install Linux shell and native build prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh build-essential python3
+
       - name: Install dependencies
         run: npm ci
 
@@ -41,6 +47,9 @@ jobs:
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Typecheck benchmark script
+        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts
 
       - name: Run tests
         run: npm test
