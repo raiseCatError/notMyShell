@@ -548,9 +548,8 @@ export class TerminalApp {
     } else if (!this.presetStartup && !this.promptConfiguration.toolsSetupComplete) {
       this.startTools(true);
     }
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
+    // Restored terminal modes are a visible handoff: keys can arrive at once.
+    // Install raw input first so the host cannot echo or translate those keys.
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -558,6 +557,9 @@ export class TerminalApp {
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
+    this.renderer.enter();
+    this.rendererEntered = true;
+    if (this.passthrough) this.enterAttachedPassthrough();
     if (earlyInput) this.onInput(earlyInput);
     process.stdout.on('resize', this.onResize);
     process.on('SIGTSTP', this.onSuspend);
