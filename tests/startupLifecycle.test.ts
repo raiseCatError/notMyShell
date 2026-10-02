@@ -61,3 +61,28 @@ test('live fixture run waits for the command journal instead of matching echoed 
     writeFileSync(gate, ''); await running;
   } finally { writeFileSync(gate, ''); await running?.catch(() => {}); await sandbox.dispose(); }
 });
+
+
+test('reattach replays readiness before exec without completing an unacknowledged submission', async () => {
+  const client = new ControlledSession();
+  const app = new TerminalApp({client, mode: 'in-process'});
+  app['render'] = () => {};
+  try {
+    app['editor'].insert('print REPLAY-READY'); await app['submit']();
+    const running = app['running']!;
+    app['beginReattach']({sessionId: 'replay-test', pid: 1, cwd: process.cwd(), fullscreen: 0, ackedSeq: 0}, {
+      id: 'journal-test', createdAt: new Date().toISOString(), commandCount: 0,
+      startCwd: process.cwd(), finalCwd: process.cwd(), preview: '',
+      transcript: app['output'].transcript(),
+      live: {sessionId: 'replay-test', seq: 0, running: {command: running.command, startedAt: running.startedAt,
+        cwd: running.cwd, startId: running.startId, outputStartId: app['output'].activeOutputStartId!}},
+    });
+    client.emit('prompt', {exitCode: 0, cwd: process.cwd()}, {seq: 1});
+    assert.equal(app['output'].transcript().records.length, 0);
+    client.emit('exec', running.command, {seq: 2, historyAllowed: 1});
+    client.emit('data', 'REPLAY-READY\r\n', {seq: 3});
+    client.emit('prompt', {exitCode: 0, cwd: process.cwd()}, {seq: 4});
+    assert.equal(app['output'].transcript().records.length, 1);
+    assert.equal(app['replayedCompletions'], 1);
+  } finally { app['stop'](0); client.kill(); }
+});

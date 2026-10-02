@@ -355,7 +355,10 @@ export class TerminalApp {
       if (running) {
         this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
         this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
-          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed};
+          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
+          // A submission checkpoint can precede the very first shell event.
+          // Its replayed readiness prompt must not complete the queued command.
+          awaitingExec: this.streamSeq === 0};
       }
     }
   }

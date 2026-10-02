@@ -59,8 +59,13 @@ class TmuxPane {
     await until(() => pattern.test(this.screen()), 20000, () => `${what}; screen:\n${this.screen()}`);
   }
   async run(command: string, expect: RegExp): Promise<void> {
+    const completedCount = async () => (await this.sandbox.transcripts().list())
+      .flatMap(session => session.transcript.records).filter(record => record.command === command).length;
+    const completed = await completedCount();
     this.keys(command, 'Enter');
     await this.waitFor(expect);
+    // Echoed command text can match before a TUI has returned terminal ownership.
+    await until(async () => await completedCount() > completed, 20000, `completed journal for ${command}`);
   }
   kill(): void { this.tmux('kill-server'); }
 }
