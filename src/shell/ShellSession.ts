@@ -121,19 +121,24 @@ add-zsh-hook preexec nmsh_preexec
 
     this.zdotdir = zdotdir;
 
-    this.pty = spawn('/bin/zsh', ['-i'], {
-      name: env.TERM || 'xterm-256color',
-      cols: Math.max(2, columns),
-      rows: Math.max(2, rows),
-      cwd,
-      env: {
-        ...env,
-        ZDOTDIR: zdotdir,
-        TERM: env.TERM || 'xterm-256color',
-        PAGER: 'cat',
-        GIT_PAGER: 'cat',
-      } as Record<string, string>,
-    });
+    try {
+      this.pty = spawn('/bin/zsh', ['-i'], {
+        name: env.TERM || 'xterm-256color',
+        cols: Math.max(2, columns),
+        rows: Math.max(2, rows),
+        cwd,
+        env: {
+          ...env,
+          ZDOTDIR: zdotdir,
+          TERM: env.TERM || 'xterm-256color',
+          PAGER: 'cat',
+          GIT_PAGER: 'cat',
+        } as Record<string, string>,
+      });
+    } catch (error) {
+      this.cleanup();
+      throw error;
+    }
 
     this.pty.onData(data => this.receive(data));
     this.pty.onExit(event => {
@@ -146,11 +151,11 @@ add-zsh-hook preexec nmsh_preexec
   private cleanup(): void {
     if (this.zdotdir) {
       try {
-        rmSync(this.zdotdir, { recursive: true, force: true });
+        rmSync(this.zdotdir, {recursive: true, force: true, maxRetries: 5, retryDelay: 10});
+        this.zdotdir = '';
       } catch (e) {
-        // Ignore errors during cleanup
+        // Retain ownership so the shell's exit event can retry a concurrent write.
       }
-      this.zdotdir = '';
     }
   }
 
@@ -197,8 +202,7 @@ add-zsh-hook preexec nmsh_preexec
   }
 
   kill(): void {
-    this.cleanup();
-    this.pty.kill();
+    try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
   private receive(data: string): void {
