@@ -501,13 +501,13 @@ function readExistingConfiguration(path: string): Record<string, unknown> | unde
 
 /** Apply only the leaves that differ between base and next onto the fresh on-disk state. */
 function applyChanges(fresh: unknown, base: unknown, next: unknown): unknown {
-  if (!isRecord(next)) return JSON.stringify(base) === JSON.stringify(next) ? fresh : next;
+  if (!isRecord(next)) return JSON.stringify(base) === JSON.stringify(next) && fresh !== undefined ? fresh : next;
   const target: Record<string, unknown> = isRecord(fresh) ? {...fresh} : {};
   const baseRecord = isRecord(base) ? base : {};
   for (const [key, value] of Object.entries(next)) {
-    if (!(key in baseRecord) || JSON.stringify(baseRecord[key]) !== JSON.stringify(value)) {
-      target[key] = isRecord(value) ? applyChanges(target[key], baseRecord[key], value) : value;
-    }
+    const changed = !(key in baseRecord) || JSON.stringify(baseRecord[key]) !== JSON.stringify(value);
+    // Unchanged settings keep whatever is on disk (another frontend may have changed them); absent ones are filled in.
+    if (changed || !(key in target) || isRecord(value)) target[key] = isRecord(value) ? applyChanges(target[key], baseRecord[key], value) : value;
   }
   return target;
 }
