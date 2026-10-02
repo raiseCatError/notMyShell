@@ -2,7 +2,7 @@
 
 zmodload zsh/zpty || { echo 'error: missing module zsh/zpty' >&2; exit 1 }
 zmodload zsh/datetime || exit 1
-typeset -F deadline=$(( EPOCHREALTIME + 1.2 ))
+typeset -F deadline=$(( EPOCHREALTIME + 1.5 ))
 export NMSH_CAPTURE_DELIMITER="nmsh-capture-$$-$RANDOM-$RANDOM"
 nmsh_capture_cleanup() {
     if [[ -n $NMSH_CAPTURE_ROOT && -f $NMSH_CAPTURE_ROOT/pid ]]; then
