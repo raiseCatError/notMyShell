@@ -22,7 +22,9 @@ Startup/query deadlines are 1500/300 ms, output/candidates 1 MiB/4096. Buffer,
 cursor, cwd and frontend generations reject stale results. Helper expiry is
 60 seconds, with invalidation after managed prompts/cwd changes; no stat tree runs
 per keystroke. Cancellation, expiry, timeout and failures restart the helper;
-failures use a five-second cooldown and native fallback. Middle-buffer legacy
+failures use a five-second cooldown and native fallback. Warm cancellation uses
+a one-second cooldown so rapid edits cannot repeatedly reload executable config.
+Middle-buffer legacy
 fallback is suppressed when no safe replacement protocol exists. Shell-side
 deadlines and explicit inner process-group cleanup survive frontend death.
 No history is recorded by helpers. Configuration is executable trusted user code
@@ -104,6 +106,17 @@ for exit-event retry on failure, and cleans a failed spawn. A red/green fault-in
 regression and an isolated spawn-failure fixture verify those fixes. These defects
 are confirmed; attributing the historical CI artifact to them would be an inference.
 
+Both initial updated-hardening and acceptance CI runs then exposed a test-fixture
+race in the redraw regression: its real shell startup prompt could legitimately
+schedule a second render while the test counted only classifier callbacks. The
+fixture now disconnects shell events and kills its owned resources before making
+the unchanged one-request assertion. This is a test isolation fix, not a relaxed
+product assertion. A further red/green config-load counter verifies ten rapid
+queries after warm cancellation use native fallback without reloading config.
+The premature [#270](https://github.com/raiseCatError/notMyShell/pull/270) acceptance
+PR was superseded unmerged to preserve published history while keeping runtime
+and test fixes in #269. Only this replacement is the active final acceptance PR.
+
 A real nested-fixture readiness race was reproduced: terminal exit text can be
 observed before the frontend's paste-restoration sequence. The harness now awaits
 frontend ownership before making the unchanged restoration assertions. Earlier CI
@@ -116,21 +129,24 @@ Final published-code profiling on Node 26.8.1, darwin arm64, 8 GiB memory:
 
 | Work | Median ms | p95 ms |
 | --- | ---: | ---: |
-| Live name snapshot, 4096 (20) | 1.07 | 1.30 |
-| Filter 500 candidates (20) | 0.10 | 0.24 |
-| Parse 4096 configured records (20) | 4.07 | 7.38 |
-| Cold configured startup/query (5) | 511.19 | 621.48 |
-| Warm configured query (20) | 15.19 | 19.93 |
-| Filesystem completion (20) | 17.38 | 33.87 |
-| Queued cancellation (20) | 0.02 | 0.08 |
-| In-flight cancellation (5) | 13.61 | 15.63 |
-| Large-query budget/failure return (5; **0 complete**) | 303.49 | 306.88 |
-| Native fallback (5) | 186.94 | 396.69 |
-| Edit/layout/highlight 10 operations (20) | 24.19 | 47.43 |
+| Live name snapshot, 4096 (20) | 0.82 | 1.42 |
+| Filter 500 candidates (20) | 0.04 | 0.11 |
+| Parse 4096 configured records (20) | 3.03 | 5.97 |
+| Cold configured startup/query (5) | 319.92 | 590.60 |
+| Warm configured query (20) | 9.61 | 11.18 |
+| Filesystem completion (20) | 10.43 | 11.08 |
+| Queued cancellation (20) | 0.01 | 0.04 |
+| In-flight cancellation (5) | 11.25 | 11.94 |
+| Large-query return (5; **4 complete, 1 fallback**) | 258.03 | 315.85 |
+| Native fallback (5) | 76.52 | 80.49 |
+| Edit/layout/highlight fixture (20) | 8.73 | 11.20 |
 
-In-flight cancellation includes a controlled 10 ms fixture delay. In this final
-run all five large queries hit their 300 ms budget and returned fallback; these
-timings are **not successful 4096-candidate throughput**. A previous prepared run
+In-flight cancellation includes a controlled 10 ms fixture delay; each cancellation
+sample prepares an independent warm generation outside its timed section. In this
+final run four large queries completed with 4096 candidates and one hit its budget.
+The table mixes both outcomes and is **not a successful-capture-only p95**. An earlier
+published-code run hit the budget on all five queries (303.49/306.88 ms median/p95);
+those were fallback timings, not capture throughput. A previous prepared run
 completed all five samples with 4096 records, zero fallback and 198.65/210.38 ms
 median/p95. Preparation runs outside timed queries. The real large fixture with
 a 2000 ms test budget verifies the 4096 cap independently. Production keeps its
@@ -148,14 +164,15 @@ Each new PR targets its immediate predecessor; none is merged.
 | Frozen base | [#266](https://github.com/raiseCatError/notMyShell/pull/266), `docs/v010-final-acceptance` | `d3e77f703fcd8af71fffc0feba1275e590984cbe` | [36932297398](https://github.com/raiseCatError/notMyShell/actions/runs/36932297398) |
 | Configured completion | [#267](https://github.com/raiseCatError/notMyShell/pull/267), `feature/v011-configured-completion` | `0df8cd6772d18793ea0f0744c2fdc7ec70a61692` | [36944128030](https://github.com/raiseCatError/notMyShell/actions/runs/36944128030) |
 | Native intelligence | [#268](https://github.com/raiseCatError/notMyShell/pull/268), `feature/v011-shell-intelligence-parity` | `f63f2f3cba3229ad2c8c106a1ca900bd7d8d5e54` | [36948391400](https://github.com/raiseCatError/notMyShell/actions/runs/36948391400) |
-| Hardening | [#269](https://github.com/raiseCatError/notMyShell/pull/269), `feature/v011-shell-hardening` | `1f092745bc5daf60fd4b0a524b6318aa6e9e6638` | [36949433308](https://github.com/raiseCatError/notMyShell/actions/runs/36949433308) |
-| Final acceptance | This docs PR, `docs/v011-final-acceptance` | Exact head in PR verification comment | Exact-head dispatch in PR verification comment |
+| Hardening | [#269](https://github.com/raiseCatError/notMyShell/pull/269), `feature/v011-shell-hardening` | `37244be9be7c79a27c6549d7e5f7a2d411eb54e6` | [36950450150](https://github.com/raiseCatError/notMyShell/actions/runs/36950450150) |
+| Final acceptance | This docs PR, `docs/v011-cumulative-acceptance` | Exact head in PR verification comment | Exact-head dispatch in PR verification comment |
 
-Local runtime verification passed **844/844** serial tests (144.16 seconds),
+Local runtime verification passed **845/845** serial tests (193.48 seconds),
 `npm run build`, `npm run typecheck`, `git diff --check` and benchmark-script typing.
 The initial #52 focused/full checkpoints passed 823 tests; #75 passed 836 before
 the readiness-only fixture update. Later cumulative checks include every change.
-Managed-shell cleanup added two further tests after the 842-test checkpoint. The updated hardening and final
+Managed-shell cleanup added two further tests after the 842-test checkpoint, and
+the config-reload regression added one. The updated hardening and final
 acceptance heads receive full-suite runs and Node 22/26 dispatches;
 its PR verification comment records the exact SHA and outcomes, including any
 failure, rather than embedding a self-referential commit hash here.
