@@ -416,6 +416,7 @@ export class TerminalApp {
    * detached, or came from type-ahead): give it its own transcript block.
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
+    this.effects.cancel();
     if (this.running) { this.running.historyAllowed = historyAllowed; return; }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
@@ -582,7 +583,7 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
-    if (this.effects.active && (key.kind === 'escape' || key.kind === 'interrupt')) {
+    if (this.effects.active && (key.kind === 'escape' || (key.kind === 'interrupt' && !this.running))) {
       this.effects.cancel(); this.render(); return;
     }
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
@@ -1452,6 +1453,7 @@ export class TerminalApp {
     }
 
     const contextAtSubmission = this.context;
+    this.effects.cancel();
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
@@ -2158,7 +2160,7 @@ export class TerminalApp {
         state.step = 'starship'; state.selectedIndex = 0;
       } else {
         state.step = 'installProgress';
-        state.task = new TaskProgress('Installing Starship with Homebrew', () => this.render(), Date.now(), 'Starship');
+        state.task = new TaskProgress('Installing Starship with Homebrew', () => this.renderTaskPresentation(), Date.now(), 'Starship');
         this.render();
         const outcome = await state.task.run('brew', ['install', 'starship']);
         if (this.stopped) return;
@@ -2542,7 +2544,7 @@ export class TerminalApp {
 
   private async handleToolsKey(key: Key, state: ToolsPanel): Promise<void> {
     if (state.confirm) {
-      await confirmToolInstall(state, key, () => this.render());
+      await confirmToolInstall(state, key, () => this.renderTaskPresentation());
       this.render();
       return;
     }
@@ -2802,7 +2804,7 @@ export class TerminalApp {
       const selected = providerPanelSelection(state);
       if (state.step === 'installConfirm' && selected.install) {
         state.step = 'installProgress';
-        state.task = new TaskProgress(`Installing ${selected.label}`, () => this.render(), Date.now(), selected.label);
+        state.task = new TaskProgress(`Installing ${selected.label}`, () => this.renderTaskPresentation(), Date.now(), selected.label);
         this.render();
         const outcome = await state.task.run(selected.install.command, [...selected.install.args]);
         if (this.stopped) return;
@@ -2982,15 +2984,15 @@ export class TerminalApp {
         return;
       }
       this.output.setWelcomeFrame('blink');
-      this.render();
       this.welcomeBlinkTimer = presentationClock.after(() => {
         this.welcomeBlinkTimer = undefined;
         this.output.setWelcomeFrame('open');
         if (this.stopped) return;
-        this.render();
         this.welcomeBlinkCount += 1;
         this.scheduleWelcomeBlink();
+        this.render();
       }, WELCOME_BLINK_CLOSED_MS);
+      this.render();
     }, welcomeBlinkDelay(this.welcomeBlinkCount));
   }
 
@@ -3187,6 +3189,8 @@ export class TerminalApp {
 
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
+    if (!this.decorativeMotionAllowed()) this.effects.cancel();
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();
@@ -3318,6 +3322,23 @@ export class TerminalApp {
     this.syncPresentationClock();
   }
 
+  /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
+  private renderTaskPresentation(): void {
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    const cached = this.presentationFrame;
+    const region = cached?.plan.regions.find(item => item.kind === 'panel');
+    if (!cached || !region) { this.render(); return; }
+    for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
+    const content = this.settingsPanelRows(cached.frame.columns ?? 80);
+    if (Math.min(cached.plan.rows, content.length) !== region.height) { this.render(); return; }
+    const projected = cached.plan.composerPosition === 'top' && /^[─-]+$/u.test(stripAnsi(content[0] ?? ''))
+      ? [...content.slice(1), content[0]!] : content;
+    const rows = [...cached.frame.rows];
+    for (let index = 0; index < region.height; index++) rows[region.top + index] = projected[index] ?? '';
+    this.presentationFrame = {...cached, frame: {...cached.frame, rows}};
+    this.paintPresentation(Date.now());
+  }
+
   private decorativeMotionAllowed(): boolean {
     return !isReducedMotion() && !this.promptConfiguration.presentation.reducedMotion && !this.promptConfiguration.presentation.effectsOff;
   }
@@ -3338,14 +3359,22 @@ export class TerminalApp {
     const settings = this.promptConfiguration.presentation;
     const rows = [...frame.rows];
     for (const region of plan.regions) {
+      if (region.kind === 'activity' && this.running) {
+        const line = truncateAnsi(this.currentActivity(), frame.columns ?? 80);
+        const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
+        for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
+      }
       if (region.kind === 'separator' || region.kind === 'composerBorder') {
         rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
       }
     }
     const active = this.effects.active;
     const region = active && effectRegion(plan, active.placement);
-    this.renderer.render({...frame, rows: active && region
-      ? applyEffect(rows, active, region, frame.columns ?? 80, now, getCurrentGlyphMode() === 'safe', colorLevel()) : rows});
+    if (active && !region) this.effects.cancel();
+    try {
+      this.renderer.render({...frame, rows: active && region
+        ? applyEffect(rows, active, region, frame.columns ?? 80, now, getCurrentGlyphMode() === 'safe', colorLevel()) : rows});
+    } catch (error) { this.onTerminate(); throw error; }
   }
 
   private renderPresentation(now: number): void {
@@ -3355,11 +3384,10 @@ export class TerminalApp {
     if (this.running) {
       this.activityAnimationNow = now;
       this.output.tickActiveCommand();
-      this.render();
-    } else {
-      this.paintPresentation(now);
-      this.syncPresentationClock();
+      if (this.passthrough) { this.cancelPresentation(); return; }
     }
+    this.paintPresentation(now);
+    this.syncPresentationClock();
   }
 
   private syncPresentationClock(): void {
@@ -3370,6 +3398,7 @@ export class TerminalApp {
     const needsFrames = Boolean(this.running || this.effects.active || (animatedRule && this.decorativeMotionAllowed()));
     if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
     if (!needsFrames) { this.presentationSubscription?.(); this.presentationSubscription = undefined; }
+    if (this.decorativeMotionAllowed() && this.output.hasWelcome && !this.welcomeBlinkTimer) this.scheduleWelcomeBlink();
     if (!this.decorativeMotionAllowed()) {
       this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined; this.output.setWelcomeFrame('open');
     }
@@ -3478,7 +3507,7 @@ export class TerminalApp {
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
     process.stdin.pause();
     this.terminalFocus = 'unknown';
-    this.renderer.leave();
+    try { this.renderer.leave(); } catch { /* A closed terminal must not prevent resource cleanup. */ }
     this.completionService.dispose();
     this.historyQueryAbort?.abort();
     this.clearCorrection();

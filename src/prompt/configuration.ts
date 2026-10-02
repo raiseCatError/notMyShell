@@ -464,11 +464,26 @@ export function loadPromptConfiguration(path = promptConfigurationPath()): Promp
   }
 }
 
+/** Merge only along the bounded normalized schema; unknown declarative fields survive edits. */
+function preserveConfiguration(existing: unknown, normalized: unknown): unknown {
+  if (!isRecord(existing) || !isRecord(normalized)) return normalized;
+  return Object.fromEntries(Object.entries({...existing, ...normalized}).map(([key, value]) =>
+    [key, key in normalized ? preserveConfiguration(existing[key], value) : value]));
+}
+
 export function savePromptConfiguration(configuration: PromptConfiguration, path = promptConfigurationPath()): void {
   mkdirSync(dirname(path), {recursive: true, mode: 0o700});
   const normalized = normalizePromptConfiguration(configuration);
+  let existing: unknown;
+  try { existing = JSON.parse(readFileSync(path, 'utf8')) as unknown; } catch { /* Missing or malformed old data has no safe fields to retain. */ }
+  // Flatten the legacy prompt wrapper so it cannot shadow newly saved values on reload.
+  if (isRecord(existing) && isRecord(existing.prompt)) {
+    const {prompt, ...root} = existing;
+    existing = {...prompt as Record<string, unknown>, ...root};
+  }
+  const persisted = preserveConfiguration(existing, normalized);
   const temporary = `${path}.${process.pid}.tmp`;
-  writeFileSync(temporary, `${JSON.stringify(normalized, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
+  writeFileSync(temporary, `${JSON.stringify(persisted, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
   renameSync(temporary, path);
 }
 
