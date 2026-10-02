@@ -43,6 +43,15 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const files = readdirSync('tests', {recursive: true}).filter(name => name.endsWith('.test.ts')).map(name => join('tests', name)).sort();
-  try { process.exitCode = (await runTestFiles(files, process.argv.slice(2))).code; }
+  // Preserve the history latency budget without measuring competing PTY/render
+  // fixtures on shared runners. All ranking tests still run canonically.
+  const ranking = files.filter(file => file.endsWith('suggestionRanking.test.ts'));
+  const runtime = files.filter(file => !ranking.includes(file));
+  try {
+    process.exitCode = 0;
+    for (const group of [runtime, ranking]) {
+      if (group.length) process.exitCode = Math.max(process.exitCode, (await runTestFiles(group, process.argv.slice(2))).code);
+    }
+  }
   catch (error) { console.error(error); process.exitCode = 1; }
 }

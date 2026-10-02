@@ -211,7 +211,7 @@ export class TerminalApp {
   /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
@@ -417,7 +417,7 @@ export class TerminalApp {
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
     this.effects.cancel();
-    if (this.running) { this.running.historyAllowed = historyAllowed; return; }
+    if (this.running) { this.running.awaitingExec = false; this.running.historyAllowed = historyAllowed; return; }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
@@ -1471,7 +1471,7 @@ export class TerminalApp {
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd, awaitingExec: true};
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
     });
@@ -1802,8 +1802,16 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    const initialPrompt = !this.presetShellReady;
     this.presetShellReady = true;
     this.context.exitStatus = exitCode;
+    // A slow global/user bootstrap may finish after the frontend submits.
+    // Its initial prompt is readiness, not completion of that queued command.
+    if (initialPrompt && this.running?.awaitingExec) {
+      void this.refreshContext(cwd);
+      this.render();
+      return;
+    }
     if (!this.running) {
       void this.refreshContext(cwd);
       this.render();
