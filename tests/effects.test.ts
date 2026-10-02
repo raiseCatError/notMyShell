@@ -9,22 +9,41 @@ import {displayWidth} from '../src/util/text.js';
 
 test('one demand-driven clock stops after final subscriber; callbacks can dispose during a frame', t => {
   t.mock.timers.enable({apis: ['setTimeout', 'Date'], now: 0});
-  const clock = new PresentationClock();
+  let mono = 0;
+  const clock = new PresentationClock(() => mono);
+  const tick = (ms: number) => { mono += ms; t.mock.timers.tick(ms); };
   let a = 0, b = 0;
   const stopA = clock.subscribe(() => a++);
   const stopB = clock.subscribe(() => b++, 1000);
   assert.equal(clock.subscriberCount, 2);
-  t.mock.timers.tick(100);
+  tick(100);
   assert.equal(a, 1); assert.equal(b, 0);
   stopA(); stopA();
-  t.mock.timers.tick(1000);
+  tick(1000);
   assert.equal(b, 1);
   stopB();
   assert.equal(clock.scheduled, false);
   let stop = () => {};
   stop = clock.subscribe(() => stop());
-  t.mock.timers.tick(100);
+  tick(100);
   assert.equal(clock.scheduled, false);
+});
+
+test('moving the wall clock backward does not stall presentation scheduling', t => {
+  t.mock.timers.enable({apis: ['setTimeout']});
+  let wall = 1_000_000;
+  t.mock.method(Date, 'now', () => wall);
+  let mono = 0;
+  const clock = new PresentationClock(() => mono);
+  const tick = (ms: number) => { mono += ms; wall += ms; t.mock.timers.tick(ms); };
+  let frames = 0;
+  clock.subscribe(() => frames++);
+  tick(100);
+  assert.equal(frames, 1);
+  wall -= 1_000_000; // NTP/manual adjustment: Date.now() jumps back by ~16 minutes.
+  tick(100);
+  tick(100);
+  assert.equal(frames, 3);
 });
 
 test('seeded effects bound cells, duration, placement and replace-active lifecycle', () => {
