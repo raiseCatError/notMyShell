@@ -11,8 +11,8 @@
 - [x] Presets: atomic recovery directory serializes recovery; re-read owner inside guard; never recover guard blindly. Deterministic competing recoverers with writer paused in mutation; retain dead/live/malformed/reused PID cases.
 - [x] Clipboard: stdin failure rejects even with zero exit; isolated process group killed only on failure/timeout; assert descendant cleanup and successful owner survival.
 - [x] Test quality: held submitted command survives reattach exactly once; isolate local mise marker mutation; wait on less journal completion and composer ownership.
-- [ ] Verification: focused red/green tests, complete macOS suite with TERM=xterm-256color/COLORTERM=truecolor, build/typecheck/benchmark typing/diff check, process/temp leak checks, repeated tmux test. Push implementation and open PR above #286, await all four CI gates.
-- [ ] Final acceptance: document disposition, evidence and pending physical QA on separate branch/PR above implementation; keep both open/unmerged.
+- [x] Verification: focused red/green tests, complete macOS suite with TERM=xterm-256color/COLORTERM=truecolor, build/typecheck/benchmark typing/diff check, process/temp leak checks, repeated tmux test. Push implementation and open PR above #286, await all four CI gates.
+- [x] Final acceptance: document disposition, evidence and pending physical QA on separate branch/PR above implementation; keep both open/unmerged.
 
 Review focus: asynchronous service rejection; readiness prompt must not complete queued command; each screen has independent stack; competing recovery cannot displace live owner; legacy service must not receive create/attach from new frontend.
 
@@ -20,3 +20,5 @@ Evidence: 918 local tests passed with TERM=xterm-256color, COLORTERM=truecolor, 
 
 Ruling: an abandoned recovery guard fails closed with both paths in the error. Automatic read-then-remove recovery of the guard would recreate the original ownership race. End all NMSh writers before manual guard removal.
 Ruling: protocol remains v2. Unknown startup semantics refuse create/attach before either request; administrative list/kill remain possible. Fresh-session creation falls back in-process with a factual notice.
+
+Integration evidence: implementation PR #287 remains open/unmerged at 39923fcf58c0fb52e07511104b45ac552899158d. All four CI jobs passed (run 37045796065); macOS Node 22 required a failed-job rerun after an unchanged native-completion deadline miss. Final acceptance records that residual risk. Final docs branch is docs/v013-adversarial-acceptance, above the implementation commit. Physical QA remains deferred; issue #284 remains open.
