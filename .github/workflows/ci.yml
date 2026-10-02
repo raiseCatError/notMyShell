@@ -40,6 +40,24 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh build-essential python3
 
+      - name: Verify secure Linux system completion paths
+        if: runner.os == 'Linux'
+        run: |
+          # Hosted image completion directories can be group-writable. Global
+          # compinit then prompts before NMSh's isolated startup files run.
+          insecure="$(zsh -fc 'autoload -Uz compaudit; compaudit' 2>/dev/null || true)"
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            case "$path" in
+              /usr/share/zsh|/usr/share/zsh/*|/usr/local/share/zsh|/usr/local/share/zsh/*)
+                sudo chown root:root "$path"
+                sudo chmod go-w "$path"
+                ;;
+              *) echo "::error::Unexpected insecure completion path: $path"; exit 1 ;;
+            esac
+          done <<< "$insecure"
+          zsh -fc 'autoload -Uz compaudit; compaudit'
+
       - name: Install dependencies
         run: npm ci
 
