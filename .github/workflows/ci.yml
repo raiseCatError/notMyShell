@@ -21,6 +21,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-24.04]
         node-version: [22.x, 26.x]

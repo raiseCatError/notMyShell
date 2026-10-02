@@ -65,6 +65,6 @@ if (mode === 'streaming') {
     if (carry.includes('q')) return cleanup(0);
     if (carry.length > 4096) carry = '';
   });
-} else if (mode !== 'streaming') {
+} else if (!['streaming', 'finite', 'noisy'].includes(mode)) {
   throw new Error(`Unknown compatibility fixture ${mode}`);
 }

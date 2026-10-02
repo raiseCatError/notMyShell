@@ -15,12 +15,15 @@ try {
   for (let index = 0; index < 3; index++) {
     let started = performance.now();
     const shell = new ShellSession(root, 80, 24, root, env);
+    let startup = '';
+    const raw = shell['pty'].onData(data => { if (startup.length < 4096) startup += data; });
     try {
-      await once(shell, 'prompt', {signal: AbortSignal.timeout(10000)});
+      try { await once(shell, 'prompt', {signal: AbortSignal.timeout(10000)}); }
+      catch (error) { console.error('Fixture PTY startup bytes:', JSON.stringify(startup)); throw error; }
       samples['pty-ready']!.push(performance.now() - started);
     } finally {
       const exited = once(shell, 'exit', {signal: AbortSignal.timeout(5000)});
-      shell.kill(); await exited;
+      shell.kill(); await exited; raw.dispose();
     }
     const runtimeDir = join(root, `r${index}`);
     started = performance.now();
