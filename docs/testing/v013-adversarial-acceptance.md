@@ -1,6 +1,6 @@
 # v0.13 adversarial hardening acceptance
 
-This continues issue [#284](https://github.com/raiseCatError/notMyShell/issues/284) after the independent adversarial review of [post-QA acceptance](v013-post-qa-acceptance.md). The implementation and this final acceptance PR remain **open and unmerged**. Physical QA is **deferred**, not passed. Package and lockfile remain **0.7.0**. No merge, tag, release, force push or history rewrite occurred.
+This continues issue [#284](https://github.com/raiseCatError/notMyShell/issues/284) after the independent adversarial review and the disk-limited checkpoint. Implementation #287 and the fresh final acceptance PR remain **open and unmerged**. Physical QA is **deferred**, not passed. Package and lockfile remain **0.7.0**. No merge command, tag, release, force push or history rewrite was performed. The earlier fast-forward of implementation through the original docs snapshot caused GitHub to mark #288 merged automatically; that violated the requested unmerged state. #289 is preserved at its published checkpoint, and this fresh docs branch is directly above the final implementation without merging or rewriting either prior branch.
 
 ## Verified starting point and review order
 
@@ -19,9 +19,9 @@ Final review order:
 [#283](https://github.com/raiseCatError/notMyShell/pull/283) →
 [#285](https://github.com/raiseCatError/notMyShell/pull/285) →
 [#286](https://github.com/raiseCatError/notMyShell/pull/286) →
-[#287](https://github.com/raiseCatError/notMyShell/pull/287) → this final acceptance PR.
+[#287](https://github.com/raiseCatError/notMyShell/pull/287) → the final acceptance PR (`docs/v013-adversarial-final-acceptance`).
 
-Implementation: `fix/v013-adversarial-hardening`, head `39923fcf58c0fb52e07511104b45ac552899158d`, based directly on #286. Final docs: `docs/v013-adversarial-acceptance`, based directly on that implementation head. Issue #284 stays open; this unmerged work is not Done or Needs Human Test after integration.
+Implementation: `fix/v013-adversarial-hardening`, head `a8937c677268735cc5291d13d12eba11eebaabc3`, based directly on #286. Final docs: `docs/v013-adversarial-final-acceptance`, based directly on that implementation head. Issue #284 stays open; this unmerged work is not Done or Needs Human Test after integration.
 
 ## Disposition
 
@@ -51,24 +51,48 @@ The legacy-service test establishes a real blocked read, verifies refusal leaves
 
 Local environment: macOS, Node **26.8.1**, `TERM=xterm-256color`, `COLORTERM=truecolor`, with `NO_COLOR` and `FORCE_COLOR` cleared.
 
-- Full canonical suite: **918 passed, zero failed** (910 runtime tests plus 8 ranking tests).
+- Fresh full canonical suite at final implementation `a8937c677268735cc5291d13d12eba11eebaabc3`: **918 passed, zero failed** (910 runtime tests plus 8 ranking tests).
 - Build, source typecheck, benchmark-script typing and `git diff --check`: passed.
-- Ten consecutive real-tmux less ownership runs: passed.
+- Ten consecutive real-tmux less ownership runs: passed. The additional nested-tmux startup/reattach/completion barriers also passed ten consecutive runs, including runs alongside the full suite.
 - Owned temporary-root lifecycle check: no leaked semantic/zsh/completion/capture directories; test-owned roots removed. LiveSandbox also checks sessions, services and open process references before deletion.
 - Final helper/test process scan: zero matches.
 - Regression proof: unfixed #286 TerminalApp loses the startup notice for early less; unfixed #286 SocketSessionClient accepts the real legacy service. Queue rejection, stale interleaving, clipboard EPIPE and inherited Kitty stack regressions were also observed failing before their fixes.
+- Exact macOS CI Node **22.23.2**: ten consecutive real reattach regressions passed, including concurrent full-suite load. The temporary official runtime/archive were removed after verification.
 - Independent focused review found an asynchronous rejection that erased a newer draft. A real socket test reproduced it; the fix preserves both inputs and the follow-up review found no remaining material concern.
+
+Final implementation CI at **`a8937c677268735cc5291d13d12eba11eebaabc3`**: [run 37067891722](https://github.com/raiseCatError/notMyShell/actions/runs/37067891722), all four jobs passed on the first attempt after the reattach fix.
+
+| Platform | Node 22 | Node 26 |
+| --- | --- | --- |
+| macOS | Passed | Passed |
+| Ubuntu 24.04 | Passed | Passed |
+
+The latest canonical suite and these CI results apply to the exact final implementation head above. Final docs CI is tracked on its own PR.
 
 An initial run inherited `NO_COLOR=1` and failed presentation expectations; two foreground fixtures also lacked initial readiness. The environment/fixtures were corrected and the final canonical run above passed. No physical validation is inferred from these automated runs.
 
 The first implementation CI attempt passed macOS Node 26 and both Ubuntu jobs. macOS Node 22 failed the unchanged `native fuzzy filtering preserves nested path capture context and cached insertion ranges` test: its candidate was absent after about 1.62 s, consistent with the capture helper's existing 1.5 s deadline under load. The exact cause is not proven. Twenty unchanged local repetitions passed (Node 26); only the failed CI job was rerun at the same implementation SHA. This is a recorded residual timing risk, not a silently discarded failure; no unrelated completion code, sleep or timeout was changed.
 
-Implementation CI: [run 37045796065](https://github.com/raiseCatError/notMyShell/actions/runs/37045796065).
+Original implementation CI at `39923fc`: [run 37045796065](https://github.com/raiseCatError/notMyShell/actions/runs/37045796065).
 
 | Platform | Node 22 | Node 26 |
 | --- | --- | --- |
 | macOS | Passed (attempt 2) | Passed |
 | Ubuntu 24.04 | Passed | Passed |
+
+## Resumed checkpoint and reattach root cause
+
+Resume fetched origin and verified #287 `2a4ca48e2bbe17426b37d61357224344abacc3ef` and #289 `fd16ac9c651515a9469a1b1dab407900f4b2db44`, both open. Disk recovered from 0.71 GiB to **4.77 GiB**. Existing history, worktrees and `.serena/` were preserved.
+
+Final-docs CI at `38284c8` exposed the nested-tmux marker race on Ubuntu Node 22. The marker could match NMSh's displayed command before tmux started, followed by unchecked kill-server. The checkpointed fix observes real pane dimensions, the reattached 110×36 client, successful shutdown and a completion journal. Ten repetitions passed; the fresh full suite now passes this corrected test too. The historical intermediate fixed-height assertion and disk stop are not final-head failures.
+
+Implementation CI [run 37061934895](https://github.com/raiseCatError/notMyShell/actions/runs/37061934895) at `2a4ca48` then exposed a real frontend handoff ordering gap on macOS Node 22. The picker selected No after Down, but Enter did not produce PICKED-1. Echoed `^[[B` is consistent with host canonical mode: CR can become LF, which the fixture ignores.
+
+The complete path was traced: service attach binds the controller, reports shell readiness/modes and sends replay completion; TerminalApp restores passthrough only after that replay and outside startupPending; onInput forwards raw data through SocketSessionClient.write and service input to the already-ready shell's PTY. Startup capability negotiation, queue isolation and the socket write path do not filter these keys. The gap was in TerminalApp.run: renderer handoff visibly restored the app's modes **before** host stdin raw mode and the data listener were installed.
+
+A deterministic real-service regression records stdin state inside the child frontend at the exact restored-mode write. Unfixed code reported `{raw:false,listening:false}` locally, including on Node 26, so the gap is not Node-22-specific. The fix installs raw mode and the input listener before entering the renderer and announcing passthrough. The test then sends Down+CR as one byte stream and checks PICKED-1 and a subsequent NMSh command. No sleep, retry or timeout was added. Ten repetitions passed on the exact macOS Node 22.23.2 runtime; all five interactive tests and the fresh 918-test suite passed.
+
+This final acceptance branch starts directly at the new implementation head. #289's published history remains intact; it is superseded by the fresh final docs PR. #288's accidental merged status is retained without undoing it.
 
 ## Remaining limits and physical handoff
 
@@ -94,4 +118,4 @@ env HOME="$qa_root/home" XDG_CONFIG_HOME="$qa_root/config" NMSH_RUNTIME_DIR="$qa
 
 Immediately submit `less`, then repeat with `vim` using a fresh launch. The notice must appear after 1.5 s; typed q must not answer the hidden read; Ctrl+C must exit with startup-aborted feedback and end the session. Confirm no live session remains before removing the disposable root. Use a clean disposable `.zshrc` for post-ready less/vim and the broader physical tests. Do not use a recursively managed NMSh terminal for this check.
 
-Final disk check: **3.05 GiB free**; continue only while free disk is at least 1 GiB. `.serena/` and existing worktrees were preserved.
+Final acceptance disk snapshot: **4.01 GiB free**; continue only while free disk is at least 1 GiB. `.serena/` and existing worktrees were preserved.
