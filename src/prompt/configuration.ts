@@ -1,3 +1,4 @@
+import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
@@ -207,6 +208,7 @@ export function normalizeNotificationSettings(value: unknown): NotificationSetti
 }
 
 export interface PromptConfiguration {
+  presentation: TreatmentSettings;
   provider: PromptProviderId;
   onboardingComplete: boolean;
   /** Optional discovery is separate; legacy completed onboarding stays completed. */
@@ -274,6 +276,7 @@ export interface PromptConfiguration {
 }
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
+  presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
   provider: 'nmsh',
   onboardingComplete: false,
   toolsSetupComplete: false,
@@ -335,6 +338,7 @@ function validSeparator(value: unknown): value is string {
 export function normalizePromptConfiguration(value: unknown): PromptConfiguration {
   if (!isRecord(value)) return structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 
+  const presentation = normalizeTreatmentSettings(value.presentation);
   const promptValue = isRecord(value.prompt) ? value.prompt : value;
   const glyphStyle: GlyphStyle = value.glyphStyle === 'safe' ? 'safe' : 'nerd';
   // Existing configured installations keep their v0.3 appearance without a new wizard.
@@ -406,7 +410,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -448,7 +452,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, nmsh, transcript, syntax, notifications, powerlevel10k,
+    glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
 }
 

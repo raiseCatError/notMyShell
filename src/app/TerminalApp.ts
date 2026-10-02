@@ -258,6 +258,7 @@ export class TerminalApp {
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
+    this.output.presenter.setTreatment(this.promptConfiguration.presentation);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
@@ -2619,6 +2620,7 @@ export class TerminalApp {
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
     this.output.setTranscriptAppearance(next.transcript);
+    this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
     this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
@@ -2844,6 +2846,7 @@ export class TerminalApp {
       savePromptConfiguration(next);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
+    this.output.presenter.setTreatment(next.presentation);
       this.transcriptPanelState = undefined;
       this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
     } catch (error) {
