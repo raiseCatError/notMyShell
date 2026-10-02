@@ -110,8 +110,8 @@ at `ae45bbe`:
 The first Ubuntu Node 22 attempt failed in the existing tmux interoperability test
 (`BACK-FROM-LESS`: a key sent to `less` did not arrive). It passed on a rerun of the
 same commit and could not be reproduced locally; it is recorded as a suspected
-timing flake, not diagnosed. The earlier macOS skip count was 8; one additional
-skip is new on macOS CI and was not investigated.
+timing flake, not diagnosed. The macOS skip count rose from 8 to 9: the new real-tmux test skips on macOS runners
+because tmux is not installed there. It ran on the Ubuntu lanes and locally on macOS with tmux 3.7c.
 
 ## Physical QA
 
