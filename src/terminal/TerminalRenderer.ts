@@ -48,6 +48,26 @@ export class TerminalRenderer {
     return modes;
   }
 
+  /**
+   * Absolute terminal state for when the foreground program's ownership ends, however it ended (a program
+   * killed with SIGKILL cannot undo its own modes). Everything NMSh could have inherited is set or reset
+   * explicitly, so the physical terminal equals NMSh's desired state rather than relying on a clean exit.
+   * `desired` keeps the modes NMSh itself needs; otherwise they are all released.
+   */
+  private reconcileModes(desired: boolean): string {
+    const wanted = new Set<number>();
+    if (desired && this.capabilities.mouseReporting && this.capabilities.clickSupport) {
+      wanted.add(1000); wanted.add(1006);
+      if (this.capabilities.mouseMovement) wanted.add(1003);
+    }
+    // Pop every keyboard-protocol entry the program left, then restore only NMSh's own entry.
+    let sequence = '\u001B[<255u';
+    for (const mode of [1000, 1002, 1003, 1005, 1006, 1015]) if (!wanted.has(mode)) sequence += `\u001B[?${mode}l`;
+    // Keypad and cursor-key modes are never wanted by NMSh's own composer.
+    sequence += '\u001B>\u001B[?1l';
+    return sequence + (desired ? this.inputModes(true) : `\u001B[?1004l\u001B[?2004l`);
+  }
+
   enter(): void {
     if (this.active) return;
     this.active = true;
@@ -105,8 +125,9 @@ export class TerminalRenderer {
     this.suspended = false;
     this.previous = [];
     this.previousCursor = undefined;
-    // Push kitty mode back onto the alt screen
-    this.write(`${this.inputModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
+    // Re-assert the alternate screen (a program that left it, or died elsewhere, must not strand NMSh on the
+    // main screen; entering when already there is a no-op) then NMSh's exact mode set.
+    this.write(`\u001B[?1049h${this.reconcileModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
   }
 
   invalidate(): void {
@@ -120,6 +141,7 @@ export class TerminalRenderer {
     this.previous = [];
     this.previousCursor = undefined;
     // Pop kitty mode first, THEN leave alt screen
-    this.write(`\u001B[0m${this.suspended ? '' : this.inputModes(false)}\u001B[?25h\u001B[?1049l`);
+    // Suspended means a foreground program still owns the terminal: release whatever it left, not just NMSh's own modes.
+    this.write(`\u001B[0m${this.suspended ? this.reconcileModes(false) : this.inputModes(false)}\u001B[?25h\u001B[?1049l`);
   }
 }
