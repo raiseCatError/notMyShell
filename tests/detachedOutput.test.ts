@@ -32,8 +32,13 @@ async function journaled(sandbox: LiveSandbox, check: (session: TranscriptSessio
   }, 15000, 'journal checkpoint');
 }
 
-const journaledRunning = (sandbox: LiveSandbox, text: string) =>
-  journaled(sandbox, session => session.live?.running?.command.includes(text) === true);
+async function journaledRunning(sandbox: LiveSandbox, text: string) {
+  // Submission is journaled before zsh finishes bootstrap. Detach only after
+  // the service has observed preexec, so readiness cannot look like completion.
+  await until(async () => (await sandbox.sessions()).some(session => session.running?.includes(text)),
+    15000, 'shell execution marker');
+  await journaled(sandbox, session => session.live?.running?.command.includes(text) === true);
+}
 
 async function idle(sandbox: LiveSandbox) {
   await until(async () => {
