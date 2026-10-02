@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [master, dev, 'feature/v013-*', 'docs/v013-*', docs/v012-cumulative-acceptance]
+    branches: [master, dev]
   pull_request:
     # Stacked PRs need the same gates as integration PRs.
 
