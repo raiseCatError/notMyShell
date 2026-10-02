@@ -20,8 +20,8 @@ Transient v1: seeded sparkles and rain, user-triggered through /effects, replaci
 
 - [x] Treatment child: src/chroma/treatment.ts pure cell sampler, validated settings, representative Native Minimal/Outline identity modules, static historical divider and Settings panel frame. Tests cover interpolation, widths, geometry, capability, semantic exclusions, configuration, and all layouts. Canonical verification; push focused PR based on #271.
 - [x] Effects child: shared src/motion/PresentationClock.ts for existing activity/task consumers and effects; src/motion/effects.ts bounded seeded state; internal /effects UX. Tests cover ownership and lifecycle; canonical verification; push PR onto treatment branch.
-- [ ] Research #179/#180 using current primary documentation. Record product boundaries and framework concepts; only create a further primitive child if genuinely missing beyond the clock already needed by effects.
-- [ ] Cumulative hardening: audit timers, restore/resize/passthrough, semantic and persistence boundaries, settings, rendering cost and widths. Fix concrete issues in a separate PR when necessary.
-- [ ] Acceptance: additive physical QA, findings, performance and automated evidence; full cumulative verification and Node 22/26 CI. Final docs PR targets immediate predecessor; no merges/tags/releases.
+- [x] Research #179/#180 using current primary documentation. Record product boundaries and framework concepts; only create a further primitive child if genuinely missing beyond the clock already needed by effects.
+- [x] Cumulative hardening: audit timers, restore/resize/passthrough, semantic and persistence boundaries, settings, rendering cost and widths. Fix concrete issues in a separate PR when necessary.
+- [x] Acceptance: additive physical QA, findings, performance and automated evidence; full cumulative verification and Node 22/26 CI. Final docs PR targets immediate predecessor; no merges/tags/releases.
 
 Review focus: malformed config must not reset theme; grapheme width must survive treatment; historical rows must not animate; effects cannot hide focus or shell output; idle clocks must have zero wakeups.
