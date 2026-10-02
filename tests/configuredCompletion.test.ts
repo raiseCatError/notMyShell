@@ -197,3 +197,21 @@ test('explicit disposal cannot recreate helpers from queued requests', async () 
     assert.equal(source['child'], undefined);
   } finally { source.dispose(); rmSync(home, {recursive: true, force: true}); }
 });
+
+test('warm cancellation backs off configuration reloads during rapid typing', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-completion-fixture-'));
+  writeFileSync(join(home, '.zshrc'), 'autoload -Uz compinit\ncompinit -D\nprint x >> "$HOME/starts"\n_demo() { [[ $PREFIX == slow ]] && sleep 20; compadd -- alpha; }\ncompdef _demo demo\n');
+  const source = new ConfiguredCompletionSource({env: {...process.env, HOME: home}, startupMs: 4000});
+  let nativeCalls = 0;
+  const pipeline = new ShellCompletionSource(source, {id: 'native', query: async () => { nativeCalls++; return []; }});
+  try {
+    assert.equal((await source.query({buffer: 'demo a', cwd: home}, new AbortController().signal)).length, 1);
+    const controller = new AbortController();
+    const pending = source.query({buffer: 'demo slow', cwd: home}, controller.signal);
+    setTimeout(() => controller.abort(), 20);
+    assert.deepEqual(await pending, []);
+    for (let i = 0; i < 10; i++) await pipeline.query({buffer: 'demo a', cwd: home}, new AbortController().signal);
+    assert.equal(nativeCalls, 10, 'typing stays usable through native fallback');
+    assert.equal(readFileSync(join(home, 'starts'), 'utf8'), 'x\n', 'rapid queries must not reload executable config');
+  } finally { source.dispose(); rmSync(home, {recursive: true, force: true}); }
+});

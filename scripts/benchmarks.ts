@@ -163,8 +163,12 @@ const benchmarks: Benchmark[] = [
     const result = source.query({buffer: 'bench al', cwd: home}, controller.signal); controller.abort(); return result;
   }},
   {name: 'completion/configured-cancel-inflight', samples: 5, warmup: 0, prepare: async () => {
-    const {home, source} = configuredFixture();
-    if (!(await source.query({buffer: 'bench al', cwd: home}, new AbortController().signal)).length) throw new Error('Cancellation preparation failed');
+    const {home} = configuredFixture();
+    // Production cancellation intentionally backs off config reloads. Prepare
+    // an independent warm generation rather than timing a cooldown cache miss.
+    configuredSource?.dispose();
+    configuredSource = new ConfiguredCompletionSource({env: {...process.env, HOME: home}});
+    if (!(await configuredSource.query({buffer: 'bench al', cwd: home}, new AbortController().signal)).length) throw new Error('Cancellation preparation failed');
   }, run: async () => {
     const {home, source} = configuredFixture(); const controller = new AbortController();
     const result = source.query({buffer: 'benchcancel v', cwd: home}, controller.signal);

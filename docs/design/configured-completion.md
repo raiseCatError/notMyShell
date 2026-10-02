@@ -25,7 +25,9 @@ both completion and native capture roots.
 Config may still have external side effects. No new frontend config evaluation
 or runtime dependency is introduced.
 
-Failures enter a five-second configured-provider cooldown. Superseding input
+Failures enter a five-second configured-provider cooldown. Warm cancellation
+uses a one-second cooldown to prevent executable configuration reloads on each
+subsequent edit; native fallback remains available. Superseding input
 requests share bounded startup and serialize queries; canceled requests cannot
 return candidates. A warm-query cancellation ends the helper, while a canceled
 startup request leaves the shared initialization available to the newest input.

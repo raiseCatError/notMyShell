@@ -188,7 +188,9 @@ export class ConfiguredCompletionSource implements CompletionSource {
       rmSync(join(root, 'done'), {force: true});
       const id = ++this.sequence;
       if (!await this.expect(`DONE ${id}`, this.options.queryMs ?? 300, signal, () => this.child?.stdin!.write(`${id}\n`))) {
-        if (!signal.aborted) this.retryAfter = Date.now() + 5000;
+        // A slow warm query canceled by typing must not source executable config
+        // again on every subsequent keystroke. Native remains available meanwhile.
+        this.retryAfter = Date.now() + (signal.aborted ? 1000 : 5000);
         return [];
       }
       if (statSync(join(root, 'results')).size > MAX_BYTES) { this.reset(); return []; }

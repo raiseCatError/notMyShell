@@ -206,6 +206,11 @@ test('an unresponsive semantic helper times out, removes its root and retains li
 
 test('unavailable classification does not cause an uncached render microtask loop', async () => {
   const app = new TerminalApp();
+  // This regression measures classifier-triggered redraws only. A real startup
+  // prompt may legitimately render while the assertion awaits its microtask.
+  app['session'].removeAllListeners();
+  app['session'].kill();
+  app['semanticService'].kill();
   let requests = 0;
   Object.defineProperty(app, 'fetchSuggestions', {value: async () => {}});
   app['renderer'].render = () => {};
