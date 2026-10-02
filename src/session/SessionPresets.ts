@@ -1,11 +1,22 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {readFileSync, writeFileSync, mkdirSync, lstatSync, statSync, realpathSync, renameSync, unlinkSync, openSync, closeSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdirSync, lstatSync, statSync, realpathSync, renameSync, unlinkSync, linkSync} from 'node:fs';
 import {isAbsolute, join} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 
 export interface SessionPreset {name: string; cwd: string; commands: string[]; acknowledged?: string}
 interface PresetFile {version: 1; presets: SessionPreset[]}
 export class PresetError extends Error {}
+function ownerPid(lock: string): number | undefined | 'gone' {
+  try {
+    const text = readFileSync(lock, 'utf8');
+    if (!/^\d{1,10}\n?$/u.test(text)) return;
+    const pid = Number.parseInt(text, 10);
+    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+  } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'gone' : undefined; }
+}
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const safeText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max && !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u.test(value);
 export function validatePreset(value: unknown): SessionPreset {
@@ -58,9 +69,7 @@ export class SessionPresetStore {
   private mutate(change: (file: PresetFile)=>void): void {
     mkdirSync(this.directory,{recursive:true,mode:0o700});
     const lock = `${this.path}.lock`, temporary = `${this.path}.${randomUUID()}.tmp`;
-    let descriptor: number;
-    try { descriptor = openSync(lock,'wx',0o600); }
-    catch { throw new PresetError('Preset storage is busy or not writable.'); }
+    this.acquire(lock);
     try {
       const original = this.diskContents();
       const file = this.read();
@@ -74,9 +83,42 @@ export class SessionPresetStore {
       if (this.diskContents() !== original) throw new PresetError('Preset storage changed; retry after inspecting it.');
       renameSync(temporary,this.path);
     } finally {
-      closeSync(descriptor);
       try { unlinkSync(temporary); } catch { /* no staged file */ }
       unlinkSync(lock);
+    }
+  }
+  /**
+   * Take the cross-process lock the way TranscriptStore.withLock does: the owner pid is written to a private
+   * file that is hard-linked into place, so the lock never exists without an owner. A lock whose owner process
+   * is gone is moved aside and retried; a live, reused or unreadable owner is never displaced.
+   */
+  private acquire(lock: string): void {
+    const mine = `${lock}.${randomUUID()}`;
+    writeFileSync(mine, `${process.pid}\n`, {flag: 'wx', mode: 0o600});
+    const deadline = Date.now() + 1000;
+    try {
+      for (;;) {
+        try { linkSync(mine, lock); return; } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new PresetError(`Preset storage is not writable (${lock}).`);
+        }
+        const owner = ownerPid(lock);
+        if (owner === 'gone') continue; // Released between our link attempt and the read.
+        if (owner !== undefined && !processAlive(owner)) {
+          const aside = `${lock}.${randomUUID()}.stale`;
+          try {
+            renameSync(lock, aside);
+            if (ownerPid(aside) !== owner) linkSync(aside, lock); // A takeover raced us; put it back.
+            unlinkSync(aside);
+          } catch { /* another launch cleared it first */ }
+          continue;
+        }
+        if (owner === undefined || Date.now() >= deadline) {
+          throw new PresetError(`Preset storage is busy: ${lock} is held by ${owner === undefined ? 'an unreadable owner' : `process ${owner}`}. Remove it only if no NMSh process is running.`);
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      }
+    } finally {
+      try { unlinkSync(mine); } catch { /* already gone */ }
     }
   }
   private diskContents(): string | undefined {
