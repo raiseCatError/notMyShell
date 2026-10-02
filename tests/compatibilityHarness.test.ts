@@ -94,6 +94,12 @@ for (const mode of ['inline', 'fullscreen', 'agent', 'nested']) test(`${mode} fi
     await app.waitFor(/INTERACTIVE-KEY/, mark);
     app.pty.write(mode === 'agent' ? '\u0003' : 'q');
     await app.waitFor(new RegExp(`INTERACTIVE-EXIT-${mode === 'agent' ? 130 : 0}`), mark);
+    // Exit output precedes precmd; terminal echo can match run() before NMSh
+    // has regained ownership. Wait for the restoration assertion itself.
+    await until(() => {
+      const output = app.output.slice(mark);
+      return output.lastIndexOf('\u001b[?2004h') > output.indexOf('INTERACTIVE-EXIT');
+    }, 15000, 'NMSh paste restoration');
     await app.run('echo AFTER-INTERACTIVE', /AFTER-INTERACTIVE/);
     const output = app.output.slice(mark);
     assert.ok(output.includes('\u001b[<u'), 'program keyboard push is popped');
