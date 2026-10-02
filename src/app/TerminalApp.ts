@@ -1,3 +1,8 @@
+import {presentationClock} from '../motion/PresentationClock.js';
+import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
+import {paintTreatment} from '../chroma/treatment.js';
+import {colorLevel} from '../presentation/capabilities.js';
+import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
 import {probeHost} from '../host/probe.js';
 import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type SessionPreset} from '../session/SessionPresets.js';
@@ -12,7 +17,7 @@ import {createConfigurationPanel, configurationKey, renderConfigurationPanel, ty
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
+import {GLYPHS, setIconStyle, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
@@ -121,8 +126,6 @@ const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
-const STATUS_REFRESH_MS = 100;
-
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
@@ -217,10 +220,13 @@ export class TerminalApp {
   private externalPassthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
-  private activityTimer?: NodeJS.Timeout;
+  private presentationStarted = false;
+  private presentationSubscription?: () => void;
+  private readonly effects = new EffectState();
+  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan};
   private activityAnimationNow = Date.now();
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
-  private welcomeBlinkTimer?: NodeJS.Timeout;
+  private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
   private contextGeneration = 0;
   private appearanceState?: AppearanceState;
@@ -369,6 +375,7 @@ export class TerminalApp {
     // Without a journal the running command is known only from the service.
     if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
     if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+      this.cancelPresentation();
       this.passthrough = true;
       this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
@@ -393,6 +400,7 @@ export class TerminalApp {
   private onActiveModeChange(mode: PresentationMode): void {
     if (this.replaying) return;
     if (mode === 'PASSTHROUGH' && !this.passthrough) {
+      this.cancelPresentation();
       this.passthrough = true;
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
       this.terminalFocus = 'unknown';
@@ -497,12 +505,7 @@ export class TerminalApp {
         this.renderer.leave();
       }
     });
-    this.activityTimer = setInterval(() => {
-      if (!this.running) return;
-      this.activityAnimationNow = Date.now();
-      this.output.tickActiveCommand();
-      this.render();
-    }, STATUS_REFRESH_MS);
+    this.presentationStarted = true;
     this.scheduleWelcomeBlink();
     void this.loadHistory();
     this.render();
@@ -533,6 +536,7 @@ export class TerminalApp {
   };
 
   private readonly onResize = (): void => {
+    this.effects.cancel();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
     this.lastPtyRows = 0;
@@ -556,6 +560,7 @@ export class TerminalApp {
   private frontendSuspended = false;
   private readonly onSuspend = (): void => {
     if (this.stopped || this.externalPassthrough) return;
+    this.cancelPresentation();
     this.frontendSuspended = true;
     this.terminalFocus = 'unknown';
     this.renderer.leave();
@@ -577,6 +582,9 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.effects.active && (key.kind === 'escape' || key.kind === 'interrupt')) {
+      this.effects.cancel(); this.render(); return;
+    }
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
@@ -1259,6 +1267,7 @@ export class TerminalApp {
     const controller = new AbortController();
     const abort = () => controller.abort();
     const ignoreInterrupt = () => { /* The foreground picker handles Ctrl+C. */ };
+    this.cancelPresentation();
     this.externalPassthrough = true;
     let detached = false;
     let released = false;
@@ -1300,7 +1309,16 @@ export class TerminalApp {
 
   /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
   private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
-    if (slash.kind === 'copy') await this.copyRecent(slash.index);
+    if (slash.kind === 'effects') {
+      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Effects Off suppress previews.', INFO);
+      else if (slash.effect === 'stop') this.effects.cancel();
+      else if (!this.running && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended) {
+        this.effects.trigger(slash.effect, slash.placement, Date.now(), 0x4e4d5348, {...this.promptConfiguration.presentation,
+          reducedMotion: this.promptConfiguration.presentation.reducedMotion || isReducedMotion()});
+      }
+      this.render();
+    }
+    else if (slash.kind === 'copy') await this.copyRecent(slash.index);
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
@@ -1437,6 +1455,7 @@ export class TerminalApp {
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough) {
+        this.cancelPresentation();
         this.passthrough = true;
         this.terminalFocus = 'unknown';
         this.renderer.suspendForPassthrough();
@@ -1951,6 +1970,7 @@ export class TerminalApp {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
     if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
     const ignoreInterrupt = (): void => { /* The foreground wizard handles Ctrl+C. */ };
+    this.cancelPresentation();
     this.externalPassthrough = true;
     let inputDetached = false;
     let rawModeReleased = false;
@@ -2952,9 +2972,10 @@ export class TerminalApp {
    * change. Blinks are skipped (not queued) while no welcome is present.
    */
   private scheduleWelcomeBlink(): void {
-    if (this.stopped || isReducedMotion()) return;
-    this.welcomeBlinkTimer = setTimeout(() => {
-      if (this.stopped) return;
+    if (this.stopped || !this.decorativeMotionAllowed() || !this.output.hasWelcome) return;
+    this.welcomeBlinkTimer = presentationClock.after(() => {
+      this.welcomeBlinkTimer = undefined;
+      if (this.stopped || !this.decorativeMotionAllowed()) return;
       if (!this.output.hasWelcome || this.passthrough) {
         this.welcomeBlinkCount += 1;
         this.scheduleWelcomeBlink();
@@ -2962,7 +2983,8 @@ export class TerminalApp {
       }
       this.output.setWelcomeFrame('blink');
       this.render();
-      this.welcomeBlinkTimer = setTimeout(() => {
+      this.welcomeBlinkTimer = presentationClock.after(() => {
+        this.welcomeBlinkTimer = undefined;
         this.output.setWelcomeFrame('open');
         if (this.stopped) return;
         this.render();
@@ -3164,7 +3186,7 @@ export class TerminalApp {
   }
 
   private render(): void {
-    if (this.stopped || this.passthrough || this.externalPassthrough) return;
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();
@@ -3283,23 +3305,83 @@ export class TerminalApp {
       for (let index = 0; index < region.height; index += 1) frameRows[region.top + index] = content[index] ?? '';
     }
 
-    this.renderer.render({
+    const frame: TerminalFrame = {
       rows: frameRows,
       columns,
       cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
       // Flow can scroll the input row off screen.
       cursorVisible: !plan.panelActive && plan.inputHeight > 0,
-    });
+    };
+    this.presentationFrame = {frame, plan};
+    this.paintPresentation(Date.now());
+    this.syncPresentationClock();
+  }
+
+  private decorativeMotionAllowed(): boolean {
+    return !isReducedMotion() && !this.promptConfiguration.presentation.reducedMotion && !this.promptConfiguration.presentation.effectsOff;
+  }
+
+  private cancelPresentation(): void {
+    this.effects.cancel();
+    this.presentationSubscription?.(); this.presentationSubscription = undefined;
+    this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
+    this.output.setWelcomeFrame('open');
+    this.presentationFrame = undefined;
+  }
+
+  /** Decorative frames reuse the base projection; they never walk transcript history. */
+  private paintPresentation(now: number): void {
+    const cached = this.presentationFrame;
+    if (!cached) return;
+    const {frame, plan} = cached;
+    const settings = this.promptConfiguration.presentation;
+    const rows = [...frame.rows];
+    for (const region of plan.regions) {
+      if (region.kind === 'separator' || region.kind === 'composerBorder') {
+        rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
+      }
+    }
+    const active = this.effects.active;
+    const region = active && effectRegion(plan, active.placement);
+    this.renderer.render({...frame, rows: active && region
+      ? applyEffect(rows, active, region, frame.columns ?? 80, now, getCurrentGlyphMode() === 'safe', colorLevel()) : rows});
+  }
+
+  private renderPresentation(now: number): void {
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    if (!this.decorativeMotionAllowed()) this.effects.cancel();
+    this.effects.expire(now);
+    if (this.running) {
+      this.activityAnimationNow = now;
+      this.output.tickActiveCommand();
+      this.render();
+    } else {
+      this.paintPresentation(now);
+      this.syncPresentationClock();
+    }
+  }
+
+  private syncPresentationClock(): void {
+    if (!this.presentationStarted || this.stopped) return;
+    const settings = this.promptConfiguration.presentation;
+    const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
+      && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
+    const needsFrames = Boolean(this.running || this.effects.active || (animatedRule && this.decorativeMotionAllowed()));
+    if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
+    if (!needsFrames) { this.presentationSubscription?.(); this.presentationSubscription = undefined; }
+    if (!this.decorativeMotionAllowed()) {
+      this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined; this.output.setWelcomeFrame('open');
+    }
   }
 
   private currentActivity(): string {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
-    const animationElapsed = presentationAnimationElapsed(elapsed);
+    const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
     const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
-    return `${shimmerText(parts.phrase, animationElapsed, isReducedMotion() ? false : isActive)}${SECONDARY}${parts.duration}${RESET}`;
+    return `${shimmerText(parts.phrase, animationElapsed, this.decorativeMotionAllowed() ? isActive : false)}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -3379,13 +3461,13 @@ export class TerminalApp {
   private stop(exitCode: number): void {
     if (this.stopped) return;
     this.stopped = true;
-    if (this.activityTimer) clearInterval(this.activityTimer);
+    this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
     this.providerPanelState?.task?.dispose();
-    if (this.welcomeBlinkTimer) clearTimeout(this.welcomeBlinkTimer);
+    this.welcomeBlinkTimer?.();
     this.welcomeBlinkTimer = undefined;
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);

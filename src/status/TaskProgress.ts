@@ -1,3 +1,5 @@
+import {presentationClock} from '../motion/PresentationClock.js';
+import {isReducedMotion} from '../presentation/environment.js';
 import {spawn, type ChildProcessByStdio} from 'node:child_process';
 import {environmentFor, resolveCommand, STANDARD_TOOL_DIRECTORIES} from '../providers/providers.js';
 import type {Readable} from 'node:stream';
@@ -26,7 +28,7 @@ const RESET = '\u001B[0m';
 /** A factual, bounded UI state and child-process runner for NMSh-owned tasks. */
 export class TaskProgress {
   readonly state: TaskSnapshot;
-  private timer?: NodeJS.Timeout;
+  private timer?: () => void;
   private timeout?: NodeJS.Timeout;
   private child?: ChildProcessByStdio<null, Readable, Readable>;
   private settled = false;
@@ -66,7 +68,7 @@ export class TaskProgress {
         this.state.status = error ? 'failed' : 'succeeded';
         this.state.error = error;
         this.state.endedAt = Date.now();
-        if (this.timer) clearInterval(this.timer);
+        this.timer?.();
         if (this.timeout) clearTimeout(this.timeout);
         this.timer = undefined;
         this.timeout = undefined;
@@ -94,7 +96,7 @@ export class TaskProgress {
         child.stderr.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));
         child.once('error', error => finish(error.message));
         child.once('close', (code, signal) => finish(code === 0 ? undefined : `Exit ${code ?? signal ?? 'unknown'}`));
-        this.timer = setInterval(this.onChange, 100);
+        this.timer = presentationClock.subscribe(this.onChange, isReducedMotion() ? 1000 : 100);
         this.timeout = setTimeout(() => {
           this.appendDetails('\nTimed out.\n');
           cancel('Timed out');
@@ -107,7 +109,7 @@ export class TaskProgress {
   }
 
   dispose(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.timer?.();
     if (this.timeout) clearTimeout(this.timeout);
     this.timer = undefined;
     this.timeout = undefined;
