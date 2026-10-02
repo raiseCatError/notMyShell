@@ -105,6 +105,9 @@ test('NMSh inside tmux: environment, resize, job control, fullscreen, paste; kil
       pane.keys('seq 1 500 | less', 'Enter');
       await pane.waitFor(/^:\s*$/mu, 'less prompt');
       pane.keys('q');
+      await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records)
+        .some(record => record.command === 'seq 1 500 | less'), 20000, 'less completion journal');
+      await pane.waitFor(/❯/, 'composer owns terminal after less');
       await pane.run('echo BACK-FROM-LESS', /BACK-FROM-LESS/);
 
       // Bracketed paste through tmux stays a paste in the composer: nothing runs.

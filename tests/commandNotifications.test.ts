@@ -85,6 +85,7 @@ function app() {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
   Object.defineProperty(app, 'refreshContext', {value: async () => {}});
+  app['onShellPrompt'](0, process.cwd());
   app['promptConfiguration'].notifications = {...DEFAULT_NOTIFICATION_SETTINGS};
   return app;
 }

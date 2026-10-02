@@ -20,6 +20,8 @@ export interface SessionClientEvents {
   exec: [string, StreamStamp];
   /** Bounded, sanitized startup output while the shell has not yet reached its first prompt. */
   startup: [string];
+  /** Input was not queued or written; the caller can restore it. */
+  inputRejected: [data: string, submission: boolean];
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
