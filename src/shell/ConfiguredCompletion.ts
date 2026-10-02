@@ -138,8 +138,8 @@ export class ConfiguredCompletionSource implements CompletionSource {
     this.root = mkdtempSync(join(tmpdir(), 'nmsh-completion-'));
     const root = this.root;
     // Same HOME-based startup trust boundary as ShellSession. Suppress UI before sourcing.
-    writeFileSync(join(root, '.zshenv'), `print -r -- $$ > ${shellQuote(join(root, 'pid'))}\nunsetopt monitor\n[[ -f ${shellQuote(join(home, '.zshenv'))} ]] && source ${shellQuote(join(home, '.zshenv'))}\nZDOTDIR=${shellQuote(root)}\n`, {mode: 0o600});
-    writeFileSync(join(root, '.zshrc'), `unsetopt zle\nexport POWERLEVEL9K_DISABLE_PROMPT=true\nTERM=dumb\nif [[ -f ${shellQuote(join(home, '.zshrc'))} ]]; then\n ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshrc'))}\nfi\nsetopt noaliases\nbuiltin cd -- ${shellQuote(cwd)} || exit 1\nexport NMSH_COMPLETION_ROOT=${shellQuote(root)}\nbuiltin source ${shellQuote(script('configured-widget.zsh'))}\n`, {mode: 0o600});
+    writeFileSync(join(root, '.zshenv'), `print -r -- $$ > ${shellQuote(join(root, 'pid'))}\nunsetopt monitor\n[[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]] && source ${shellQuote(join(home, '.zshenv'))}\nZDOTDIR=${shellQuote(root)}\n`, {mode: 0o600});
+    writeFileSync(join(root, '.zshrc'), `unsetopt zle\nexport POWERLEVEL9K_DISABLE_PROMPT=true\nTERM=dumb\nif [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshrc'))} ]]; then\n ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshrc'))}\nfi\nsetopt noaliases\nbuiltin cd -- ${shellQuote(cwd)} || exit 1\nexport NMSH_COMPLETION_ROOT=${shellQuote(root)}\nbuiltin source ${shellQuote(script('configured-widget.zsh'))}\n`, {mode: 0o600});
     delete env.TERM_PROGRAM;
     delete env.TERM_PROGRAM_VERSION;
     this.cwd = cwd;

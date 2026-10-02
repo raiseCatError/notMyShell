@@ -2605,7 +2605,9 @@ export class TerminalApp {
       [
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
-        {label: 'Shell', value: 'zsh (/bin/zsh)'},
+        {label: 'Platform', value: `${process.platform} ${process.arch}`},
+        {label: 'Node', value: process.version},
+        {label: 'Shell', value: 'zsh'},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),

@@ -49,10 +49,15 @@ jobs:
         run: npm run typecheck
 
       - name: Typecheck benchmark script
-        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts
+        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts scripts/platform-benchmarks.ts
 
       - name: Run tests
-        run: npm test
+        run: npm test -- --test-timeout=60000
+
+      - name: Bounded platform timing smoke
+        run: |
+          node --import=tsx scripts/platform-benchmarks.ts
+          NMSH_BENCH_SAMPLES=5 NMSH_BENCH_WARMUP=1 npm run bench -- completion/configured-cold completion/configured-warm composer/screen-plan
 
       - name: Verify working tree clean
         run: git diff --check
