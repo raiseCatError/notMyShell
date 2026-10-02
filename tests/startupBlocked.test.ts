@@ -102,6 +102,7 @@ test('frontend: a blocked startup read shows an explicit state with its prompt, 
     await app.waitFor(/Shell startup is still running/);
     await app.waitFor(/Continue\? \[y\/n\]/);
     const blockedAt = app.mark;
+    await until(async () => (await sandbox.sessions()).length === 1, 15000, 'live session listed');
     const [{pid}] = await sandbox.sessions();
     app.pty.write('y');
     app.pty.write('hello\r');
@@ -169,6 +170,7 @@ test('service: detach and reattach during a blocked startup keep the state, the 
     zshrc(sandbox, `print -n "Waiting for gate> "\nwhile [ ! -f ${gate} ]; do sleep 0.05; done\n`);
     const first = sandbox.launch();
     await first.waitFor(/Waiting for gate>/);
+    await until(async () => (await sandbox.sessions()).length === 1, 15000, 'live session listed');
     const {id, pid} = (await sandbox.sessions())[0]!;
     first.pty.write('echo HELD-$((1+1))\r'); // held by the Enter guard, never reaches the shell
     first.pty.kill('SIGHUP');
@@ -194,6 +196,7 @@ test('service: shutting down the shell during a blocked startup leaves no sessio
     zshrc(sandbox, '[[ -t 0 ]] && read -k1 "?Blocked> "\n');
     const app = sandbox.launch();
     await app.waitFor(/Blocked>/);
+    await until(async () => (await sandbox.sessions()).length === 1, 15000, 'live session listed');
     const {pid} = (await sandbox.sessions())[0]!;
     app.pty.write('\u0003');
     await app.waitExit();
