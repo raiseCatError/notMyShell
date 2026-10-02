@@ -1950,8 +1950,9 @@ export class TerminalApp {
       this.externalPromptError = error instanceof Error ? error.message : String(error);
       this.externalPrompt = undefined;
       this.effectivePromptProvider = 'nmsh';
+      const saved = structuredClone(this.promptConfiguration);
       this.promptConfiguration.provider = 'nmsh';
-      try { savePromptConfiguration(this.promptConfiguration); } catch { /* Runtime fallback remains in effect. */ }
+      try { savePromptConfiguration(this.promptConfiguration, undefined, saved); } catch { /* Runtime fallback remains in effect. */ }
     }
   }
 
@@ -2204,7 +2205,7 @@ export class TerminalApp {
     if (!state) return;
     state.draft.onboardingComplete = true;
     try {
-      savePromptConfiguration(state.draft);
+      savePromptConfiguration(state.draft, undefined, this.promptConfiguration);
       this.promptConfiguration = structuredClone(state.draft);
       this.promptPanelState = undefined;
       if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
@@ -2373,7 +2374,7 @@ export class TerminalApp {
   private saveGlyphChoice(style: PromptConfiguration['glyphStyle']): void {
     const next = {...this.promptConfiguration, glyphStyle: style, glyphChoiceComplete: true};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
@@ -2384,8 +2385,9 @@ export class TerminalApp {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
           draft: structuredClone(next), saved: structuredClone(next)};
       }
-    } catch {
+    } catch (error) {
       // Keep the chooser visible so the user can retry without losing their choice.
+      this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
       if (this.settingsPanelState) this.settingsPanelState.glyphStyle = style;
     }
   }
@@ -2648,8 +2650,10 @@ export class TerminalApp {
   private applySettingsConfiguration(next: PromptConfiguration | undefined): void {
     if (!next) return;
     try {
-      savePromptConfiguration(next);
-    } catch {
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
+    } catch (error) {
+      this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
+      this.render();
       return;
     }
     this.promptConfiguration = next;
@@ -2845,7 +2849,7 @@ export class TerminalApp {
       : state.family === 'history' ? {...structuredClone(this.promptConfiguration), history: selected.id as PromptConfiguration['history']}
       : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.providerPanelState = undefined;
       if (state.family === 'suggestions') this.applySuggestionProvider();
@@ -2878,7 +2882,7 @@ export class TerminalApp {
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft)};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
@@ -2924,7 +2928,7 @@ export class TerminalApp {
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), syntax: structuredClone(state.draft)};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.syntaxPanelState = undefined;
       this.returnFromPanel();

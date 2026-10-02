@@ -471,17 +471,59 @@ function preserveConfiguration(existing: unknown, normalized: unknown): unknown 
     [key, key in normalized ? preserveConfiguration(existing[key], value) : value]));
 }
 
-export function savePromptConfiguration(configuration: PromptConfiguration, path = promptConfigurationPath()): void {
+/** Raised when an existing config cannot be safely read; the file is left untouched. */
+export class ConfigurationUnreadableError extends Error {
+  constructor(readonly path: string, reason: string) {
+    super(`Settings were not saved: ${path} ${reason}. The file was left unchanged; fix or move it, then try again.`);
+    this.name = 'ConfigurationUnreadableError';
+  }
+}
+
+/** Absent files yield undefined; anything present but unusable throws instead of being replaced. */
+function readExistingConfiguration(path: string): Record<string, unknown> | undefined {
+  let text: string;
+  try {
+    text = readFileSync(path, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw new ConfigurationUnreadableError(path, `could not be read (${(error as NodeJS.ErrnoException).code ?? 'unknown error'})`);
+  }
+  let parsed: unknown;
+  try { parsed = JSON.parse(text) as unknown; } catch { throw new ConfigurationUnreadableError(path, 'is not valid JSON'); }
+  if (!isRecord(parsed)) throw new ConfigurationUnreadableError(path, 'is not a JSON object');
+  // Flatten the legacy prompt wrapper so it cannot shadow newly saved values on reload.
+  if (isRecord(parsed.prompt)) {
+    const {prompt, ...root} = parsed;
+    return {...prompt as Record<string, unknown>, ...root};
+  }
+  return parsed;
+}
+
+/** Apply only the leaves that differ between base and next onto the fresh on-disk state. */
+function applyChanges(fresh: unknown, base: unknown, next: unknown): unknown {
+  if (!isRecord(next)) return JSON.stringify(base) === JSON.stringify(next) ? fresh : next;
+  const target: Record<string, unknown> = isRecord(fresh) ? {...fresh} : {};
+  const baseRecord = isRecord(base) ? base : {};
+  for (const [key, value] of Object.entries(next)) {
+    if (!(key in baseRecord) || JSON.stringify(baseRecord[key]) !== JSON.stringify(value)) {
+      target[key] = isRecord(value) ? applyChanges(target[key], baseRecord[key], value) : value;
+    }
+  }
+  return target;
+}
+
+/**
+ * Persist the configuration atomically. With `base` (the state this frontend last loaded or saved),
+ * only changed settings are written over a fresh read, so another frontend's unrelated edits survive.
+ * An existing file that cannot be read or parsed is never replaced.
+ */
+export function savePromptConfiguration(configuration: PromptConfiguration, path = promptConfigurationPath(), base?: PromptConfiguration): void {
   mkdirSync(dirname(path), {recursive: true, mode: 0o700});
   const normalized = normalizePromptConfiguration(configuration);
-  let existing: unknown;
-  try { existing = JSON.parse(readFileSync(path, 'utf8')) as unknown; } catch { /* Missing or malformed old data has no safe fields to retain. */ }
-  // Flatten the legacy prompt wrapper so it cannot shadow newly saved values on reload.
-  if (isRecord(existing) && isRecord(existing.prompt)) {
-    const {prompt, ...root} = existing;
-    existing = {...prompt as Record<string, unknown>, ...root};
-  }
-  const persisted = preserveConfiguration(existing, normalized);
+  const existing = readExistingConfiguration(path);
+  const persisted = base
+    ? applyChanges(existing ?? {}, normalizePromptConfiguration(base), normalized)
+    : preserveConfiguration(existing, normalized);
   const temporary = `${path}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(persisted, null, 2)}\n`, {encoding: 'utf8', mode: 0o600});
   renameSync(temporary, path);
