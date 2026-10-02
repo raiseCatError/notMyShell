@@ -1,6 +1,6 @@
 # v0.13 adversarial hardening acceptance
 
-This continues issue [#284](https://github.com/raiseCatError/notMyShell/issues/284) after the independent adversarial review of [post-QA acceptance](v013-post-qa-acceptance.md). The implementation and this final acceptance PR remain **open and unmerged**. Final verification is **paused at the user-defined disk threshold**; the latest checkpoint is not declared complete. Physical QA is **deferred**, not passed. Package and lockfile remain **0.7.0**. No merge, tag, release, force push or history rewrite occurred.
+This continues issue [#284](https://github.com/raiseCatError/notMyShell/issues/284) after the independent adversarial review of [post-QA acceptance](v013-post-qa-acceptance.md). The implementation and this final acceptance PR remain **open and unmerged**. Final verification is **paused at the user-defined disk threshold**; the latest checkpoint is not declared complete. Physical QA is **deferred**, not passed. Package and lockfile remain **0.7.0**. No merge command, tag, release, force push or history rewrite was performed. GitHub automatically marked the original docs PR #288 merged when its head became an ancestor of the advanced implementation base; this violated the requested unmerged PR state. Replacement final docs PR #289 remains open above #287.
 
 ## Verified starting point and review order
 
@@ -19,7 +19,7 @@ Final review order:
 [#283](https://github.com/raiseCatError/notMyShell/pull/283) →
 [#285](https://github.com/raiseCatError/notMyShell/pull/285) →
 [#286](https://github.com/raiseCatError/notMyShell/pull/286) →
-[#287](https://github.com/raiseCatError/notMyShell/pull/287) → [#288](https://github.com/raiseCatError/notMyShell/pull/288).
+[#287](https://github.com/raiseCatError/notMyShell/pull/287) → [#289](https://github.com/raiseCatError/notMyShell/pull/289).
 
 Implementation: `fix/v013-adversarial-hardening`, head `2a4ca48e2bbe17426b37d61357224344abacc3ef`, based directly on #286. Final docs: `docs/v013-adversarial-acceptance`, based directly on that implementation head. Issue #284 stays open; this unmerged work is not Done or Needs Human Test after integration.
 
@@ -76,9 +76,9 @@ Final docs CI [run 37060992991](https://github.com/raiseCatError/notMyShell/acti
 
 The appended implementation fix waits for actual pane dimensions, observes the reattached tmux client's 110×36 size, asserts successful server shutdown, and waits for a completion journal before the composer and next command. Ten repetitions passed. An intermediate local assertion incorrectly fixed pane height at 30 rather than accounting for tmux's status line; the concurrent full suite loaded that intermediate assertion and failed only that test (917 passed, one failed). The final assertion accepts the actual positive pane height and all ten focused runs passed. Build, typecheck, benchmark typing and diff check passed after correction.
 
-Free disk fell below **1 GiB** during verification. No further disk-heavy work was started. The implementation branch was advanced through the existing acceptance snapshot and the test fix using only fast-forward updates; the docs branch was then advanced above it. All published commits remain reachable, with no merge or history rewrite. Latest implementation/docs CI and a fresh full local suite must be checked after disk recovery. The previous four-job green implementation run is evidence for the previous SHA, not a claim about the new head.
+Free disk fell below **1 GiB** during verification. No further disk-heavy work was started. The implementation branch was advanced through the existing acceptance snapshot and the test fix using only fast-forward updates; the docs branch was then advanced above it. All published commits remain reachable with no history rewrite. Advancing the implementation through the existing docs snapshot caused GitHub to mark #288 merged automatically; the replacement final docs PR is #289. Latest implementation/docs CI and a fresh full local suite must be checked after disk recovery. The previous four-job green implementation run is evidence for the previous SHA, not a claim about the new head.
 
-Resume by checking free disk is at least 1 GiB, running the canonical suite with the recorded terminal profile, inspecting latest CI for #287/#288, and refreshing the acceptance evidence. Do not merge either PR. Physical QA remains deferred.
+Resume by checking free disk is at least 1 GiB, running the canonical suite with the recorded terminal profile, inspecting latest CI for #287/#289, and refreshing the acceptance evidence. Do not merge either PR. Physical QA remains deferred.
 
 ## Remaining limits and physical handoff
 
@@ -104,4 +104,4 @@ env HOME="$qa_root/home" XDG_CONFIG_HOME="$qa_root/config" NMSH_RUNTIME_DIR="$qa
 
 Immediately submit `less`, then repeat with `vim` using a fresh launch. The notice must appear after 1.5 s; typed q must not answer the hidden read; Ctrl+C must exit with startup-aborted feedback and end the session. Confirm no live session remains before removing the disposable root. Use a clean disposable `.zshrc` for post-ready less/vim and the broader physical tests. Do not use a recursively managed NMSh terminal for this check.
 
-Resource-stop disk check: **0.73 GiB free**; continue only while free disk is at least 1 GiB. `.serena/` and existing worktrees were preserved.
+Resource-stop disk check: **0.72 GiB free**; continue only while free disk is at least 1 GiB. `.serena/` and existing worktrees were preserved.
