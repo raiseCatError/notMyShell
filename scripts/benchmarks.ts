@@ -15,12 +15,13 @@ import {parseZshHistory, indexImportedHistory} from '../src/shell/HistoryService
 import {NativeSuggestions} from '../src/suggestions/NativeSuggestions.js';
 import {ConfiguredCompletionSource, parseConfiguredCompletions} from '../src/shell/ConfiguredCompletion.js';
 import {NativeCompletionSource, ShellCompletionSource} from '../src/shell/CompletionService.js';
+import {parseShellKnowledge} from '../src/shell/ShellKnowledge.js';
 import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
 
-type Benchmark = {name: string; run: () => unknown; samples?: number; warmup?: number; units?: number; unitName?: string};
+type Benchmark = {name: string; run: () => unknown; prepare?: () => unknown; samples?: number; warmup?: number; units?: number; unitName?: string};
 
 const args = new Set(process.argv.slice(2));
 const memory = args.has('--memory');
@@ -36,6 +37,7 @@ const highlighter = new Highlighter();
 const semanticCache = new Map<string, 'executable' | 'builtin'>();
 for (const name of ['git', 'npm', 'rg', 'zsh', 'print']) semanticCache.set(name, 'executable');
 const editorCharacters = Array.from(editorText);
+const shellNamesFixture = Array.from({length: 4096}, (_, index) => `alias n${index}\n`).join('') + 'complete\n';
 const suggestionCounts = [10_000, 100_000];
 const historyIndexes = new Map<number, HistoryIndex>();
 const histories = new Map<number, CommandEntry[]>();
@@ -108,10 +110,13 @@ const completionFixture = parseNativeCompletions(Array.from({length: 500}, (_, i
 const configuredWire = Array.from({length: 4096}, (_, i) => [`value${i}`, `value${i}`, 'description', 'group', '', '', 'argument'].join('\0') + '\0').join('');
 let completionHome: string | undefined;
 let configuredSource: ConfiguredCompletionSource | undefined;
+let configuredBigResults: number | undefined;
+let configuredBigHits = 0;
+let configuredBigMisses = 0;
 function configuredFixture(): {home: string; source: ConfiguredCompletionSource} {
   if (!completionHome) {
     completionHome = mkdtempSync(join(tmpdir(), 'nmsh-completion-bench-'));
-    writeFileSync(join(completionHome, '.zshrc'), `autoload -Uz compinit\ncompinit -D\n_bench() { compadd -- alpha alpine; }\ncompdef _bench bench\n`);
+    writeFileSync(join(completionHome, '.zshrc'), `autoload -Uz compinit\ncompinit -D\n_bench() { compadd -- alpha alpine; }\ncompdef _bench bench\n_bench_cancel() { sleep 0.1; compadd -- value; }\ncompdef _bench_cancel benchcancel\n_bench_big() { compadd -- value{1..4096}; }\ncompdef _bench_big benchbig\n`);
     writeFileSync(join(completionHome, 'alpha.txt'), '');
     configuredSource = new ConfiguredCompletionSource({env: {...process.env, HOME: completionHome}});
   }
@@ -120,6 +125,7 @@ function configuredFixture(): {home: string; source: ConfiguredCompletionSource}
 
 const directoryServices = new Map(suggestionCounts.map(count => [count, new DirectoryService()]));
 const benchmarks: Benchmark[] = [
+  {name: 'shell/name-snapshot-4096', run: () => parseShellKnowledge(shellNamesFixture), units: 4096, unitName: 'names'},
   {name: 'hyperlinks/recognize-1000', run: () => {
     const presenter = new HyperlinkPresenter();
     for (const line of hyperlinkLines) presenter.line(line);
@@ -148,16 +154,39 @@ const benchmarks: Benchmark[] = [
   }},
   {name: 'completion/configured-files', run: async () => {
     const {home, source} = configuredFixture();
-    return source.query({buffer: 'cat al', cwd: home}, new AbortController().signal);
+    const values = await source.query({buffer: 'cat al', cwd: home}, new AbortController().signal);
+    if (!values.length) throw new Error('Configured file benchmark returned no candidates');
+    return values;
   }},
   {name: 'completion/configured-cancel', run: async () => {
     const {home, source} = configuredFixture(); const controller = new AbortController();
     const result = source.query({buffer: 'bench al', cwd: home}, controller.signal); controller.abort(); return result;
   }},
+  {name: 'completion/configured-cancel-inflight', samples: 5, warmup: 0, prepare: async () => {
+    const {home, source} = configuredFixture();
+    if (!(await source.query({buffer: 'bench al', cwd: home}, new AbortController().signal)).length) throw new Error('Cancellation preparation failed');
+  }, run: async () => {
+    const {home, source} = configuredFixture(); const controller = new AbortController();
+    const result = source.query({buffer: 'benchcancel v', cwd: home}, controller.signal);
+    await new Promise(resolve => setTimeout(resolve, 10));
+    controller.abort(); return result;
+  }},
+  {name: 'completion/configured-large-query', samples: 5, warmup: 0, prepare: async () => {
+    const {home} = configuredFixture();
+    configuredSource?.dispose();
+    configuredSource = new ConfiguredCompletionSource({env: {...process.env, HOME: home}});
+    if (!(await configuredSource.query({buffer: 'bench al', cwd: home}, new AbortController().signal)).length) throw new Error('Large-query preparation failed');
+  }, run: async () => {
+    const {home, source} = configuredFixture();
+    configuredBigResults = (await source.query({buffer: 'benchbig v', cwd: home}, new AbortController().signal)).length;
+    if (configuredBigResults === 4096) configuredBigHits++; else configuredBigMisses++;
+  }},
   {name: 'completion/native-fallback', samples: 5, run: async () => {
     const {home} = configuredFixture();
     const source = new ShellCompletionSource({id: 'unavailable', query: async () => []}, new NativeCompletionSource());
-    return source.query({buffer: 'cat al', cwd: home}, new AbortController().signal);
+    const values = await source.query({buffer: 'cat al', cwd: home}, new AbortController().signal);
+    if (!values.length) throw new Error('Native fallback benchmark returned no candidates');
+    return values;
   }},
   ...suggestionCounts.map(count => ({
     name: `history/current-text-scan-${count}`,
@@ -252,9 +281,10 @@ function percentile(sorted: number[], value: number): number {
 async function report(benchmark: Benchmark): Promise<void> {
   const samples = benchmark.samples ?? sampleDefault;
   const warmup = benchmark.warmup ?? warmupDefault;
-  for (let index = 0; index < warmup; index += 1) await benchmark.run();
+  for (let index = 0; index < warmup; index += 1) { await benchmark.prepare?.(); await benchmark.run(); }
   const times: number[] = [];
   for (let index = 0; index < samples; index += 1) {
+    await benchmark.prepare?.();
     const start = performance.now();
     await benchmark.run();
     times.push(performance.now() - start);
@@ -277,6 +307,7 @@ if (runnable.length === 0) {
 } else {
   try { for (const benchmark of runnable) await report(benchmark); }
   finally { configuredSource?.dispose(); if (completionHome) rmSync(completionHome, {recursive: true, force: true}); }
+  if (configuredBigResults !== undefined) console.log(`Configured large query: ${configuredBigHits} complete, ${configuredBigMisses} budget/failure fallbacks; last result=${configuredBigResults}/4096.`);
 }
 if (memory) {
   if (globalThis.gc) globalThis.gc();

@@ -3208,7 +3208,12 @@ export class TerminalApp {
 
     for (const token of tokens) {
       if (token.type === 'Command') {
-        void this.semanticService.classifyCommand(token.text).then(() => this.render());
+        const before = this.semanticService.cache.get(token.text);
+        void this.semanticService.classifyCommand(token.text).then(() => {
+          // Unavailable/uncached results must not schedule another immediate
+          // render and classification loop that starves editor input.
+          if (this.semanticService.cache.get(token.text) !== before) this.render();
+        });
       }
     }
 

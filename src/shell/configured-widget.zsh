@@ -54,7 +54,13 @@ compadd() {
       nmshcap_value=${(Q)nmshcap_value}
     fi
     nmshcap_description=${nmsh_labels[$nmshcap_i]}
-    if [[ $nmshcap_kind == file && -d $nmshcap_prefix$nmshcap_value ]]; then
+    local nmshcap_path=$nmshcap_prefix$nmshcap_value
+    # Test directories using HOME without evaluating arbitrary completion text.
+    # The request flag distinguishes unquoted HOME from escaped/quoted literals.
+    if [[ $nmsh_home_expansion == 1 && $nmshcap_path == '~/'* ]]; then
+      nmshcap_path=$HOME/${nmshcap_path#\~/}
+    fi
+    if [[ $nmshcap_kind == file && -d $nmshcap_path ]]; then
       nmshcap_candidate_kind=directory
       [[ $nmshcap_value != */ && $nmshcap_suffix != /* ]] && nmshcap_value+=/
     fi
@@ -75,6 +81,7 @@ nmsh_complete() {
 }
 zle -C nmsh-knowledge complete-word nmsh_complete
 nmsh_request() {
+  local nmsh_home_expansion=$(<"$NMSH_COMPLETION_ROOT/home-expansion")
   BUFFER=$(<"$NMSH_COMPLETION_ROOT/buffer")
   CURSOR=$(<"$NMSH_COMPLETION_ROOT/cursor")
   zle nmsh-knowledge

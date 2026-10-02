@@ -76,11 +76,7 @@ PS1=""
     });
 
     const handleDead = () => {
-      this.isDead = true;
-      for (const resolve of this.pending.values()) {
-        resolve('unknown');
-      }
-      this.pending.clear();
+      this.kill();
     };
 
     this.child.on('error', handleDead);
@@ -110,7 +106,7 @@ done\n`);
 
     this.child.stdout!.on('data', (data: Buffer) => {
       this.buffer += data.toString('utf8');
-      if (this.buffer.length > 65536) { this.kill(); return; }
+      if (Buffer.byteLength(this.buffer) > 65536) { this.kill(); return; }
       const lines = this.buffer.split('\n');
       this.buffer = lines.pop() || '';
       for (const line of lines) {
@@ -150,12 +146,14 @@ done\n`);
       return this.cache.get(cmd)!;
     }
     if (this.isDead || !this.child.stdin?.writable) return 'unknown';
+    if (cmd.length > 1024 || this.pending.size >= 128) return 'unknown';
 
     const id = this.nextId++;
     const generation = this.generation;
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.kill();
         resolve('unknown');
       }, 1500);
       this.pending.set(id, (res) => {

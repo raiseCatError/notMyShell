@@ -11,6 +11,7 @@ In Ghostty and Terminal.app where available:
   compdef functions and aliases. Check groups and insertion without command execution.
 - Complete paths containing spaces and Unicode, including an unfinished quote;
   complete in the middle of a word with trailing arguments. Check the caret.
+  Check `~/` home files/directories and quoted or escaped literal tilde paths.
 - Type/delete/move the cursor rapidly and change cwd. Old candidates must disappear.
 - Change completion configuration, then retry after the 60-second helper expiry
   or after a submitted command. Confirm refreshed knowledge and usable fallback.

@@ -46,9 +46,15 @@ export function parseConfiguredCompletions(output: string, context: CompletionCo
     if (!raw || /[\u0000-\u001f\u007f-\u009f]/u.test(value) || seen.has(value)) continue;
     seen.add(value);
     // Quote the complete replacement, avoiding any dependence on plugin ZLE insertion.
-    const insertionValue = value.replace(/([^\p{L}\p{N}_./:,@%+\-])/gu, '\\$1');
+    let insertionValue = value.replace(/([^\p{L}\p{N}_./:,@%+\-])/gu, '\\$1');
     const kind = category === 'directory' ? 'directory' : category === 'file' ? 'file'
       : value.startsWith('-') ? 'option' : range.start === 0 ? 'command' : 'argument';
+    // Preserve only the user's explicit, unquoted HOME expansion. Quoted/escaped
+    // tildes and arbitrary completion values remain literal presentation data.
+    if ((kind === 'file' || kind === 'directory') && value.startsWith('~/')
+      && context.buffer.slice(range.start, range.end).startsWith('~/')) {
+      insertionValue = insertionValue.slice(1);
+    }
     const label = completionLabel(display);
     candidates.push({value, display: label, name: label, description: completionLabel(description),
       group: completionLabel(group), prefix, suffix, kind, source: 'zsh-configured', replacement: range,
@@ -88,7 +94,16 @@ export class ConfiguredCompletionSource implements CompletionSource {
       } catch { /* The helper may not have reached startup yet. */ }
     }
     if (child?.pid) {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already exited. */ }
+      const pid = child.pid;
+      // Let the zpty parent reap an inner shell even before its PID file exists.
+      const deadline = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* Already exited. */ }
+      }, 100);
+      child.once('close', () => {
+        clearTimeout(deadline);
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* Group already gone. */ }
+      });
+      try { process.kill(-pid, 'SIGTERM'); } catch { clearTimeout(deadline); }
     }
     this.wait?.resolve(false);
     this.wait = undefined;
@@ -165,6 +180,8 @@ export class ConfiguredCompletionSource implements CompletionSource {
       if (signal.aborted || epoch !== this.epoch) return [];
       const root = this.root!;
       writeFileSync(join(root, 'buffer'), context.buffer, {mode: 0o600});
+      const range = completionWord(context)!;
+      writeFileSync(join(root, 'home-expansion'), context.buffer.slice(range.start, range.end).startsWith('~/') ? '1' : '0', {mode: 0o600});
       // zsh counts Unicode code points; NMSh context offsets are UTF-16.
       writeFileSync(join(root, 'cursor'), String([...context.buffer.slice(0, context.cursor ?? context.buffer.length)].length), {mode: 0o600});
       writeFileSync(join(root, 'results'), '', {mode: 0o600});

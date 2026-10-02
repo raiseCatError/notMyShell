@@ -50,7 +50,7 @@ jobs:
 
       - name: Process leak check
         run: |
-          if ps -axo pid,ppid,pgid,command | grep -E '[z]sh.*nmsh-semantic|[n]msh-semantic|viewportSyntax' | grep -v grep; then
+          if ps -axo pid,ppid,pgid,command | grep -E '[z]sh.*nmsh-semantic|[n]msh-semantic|[c]onfigured-completion\.zsh|[c]apture\.zsh|[v]iewportSyntax' | grep -v grep; then
             echo "::error::NMSh helper or test processes leaked!"
             exit 1
           fi

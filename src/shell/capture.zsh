@@ -5,6 +5,10 @@ zmodload zsh/datetime || exit 1
 typeset -F deadline=$(( EPOCHREALTIME + 1.5 ))
 export NMSH_CAPTURE_DELIMITER="nmsh-capture-$$-$RANDOM-$RANDOM"
 nmsh_capture_cleanup() {
+    # zpty's parent-side table exists before the inner shell processes any input.
+    local listing=$(zpty)
+    local pid=${${listing#\(}%%\)*}
+    [[ $pid == <-> && $pid -gt 1 ]] && kill -KILL -- -$pid 2>/dev/null
     if [[ -n $NMSH_CAPTURE_ROOT && -f $NMSH_CAPTURE_ROOT/pid ]]; then
         local pid=$(< $NMSH_CAPTURE_ROOT/pid)
         [[ $pid == <-> && $pid -gt 1 ]] && kill -KILL -- -$pid 2>/dev/null
@@ -16,7 +20,11 @@ trap nmsh_capture_cleanup EXIT
 trap 'exit 2' TERM HUP INT
 
 # spawn shell
-zpty -b z exec zsh -f -i
+zpty -b z exec zsh -f -i || exit 1
+if [[ -n $NMSH_CAPTURE_ROOT ]]; then
+    local listing=$(zpty)
+    print -r -- ${${listing#\(}%%\)*} > "$NMSH_CAPTURE_ROOT/pid"
+fi
 
 # line buffer for pty output
 local line
@@ -40,6 +48,7 @@ setopt rcquotes
 } =( <<< '
 # no prompt!
 PROMPT=
+unsetopt monitor
 
 # load completion system
 autoload compinit
