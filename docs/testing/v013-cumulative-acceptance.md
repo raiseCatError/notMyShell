@@ -2,6 +2,7 @@
 
 v0.13 is an unmerged development stack, not a Linux/Windows public release.
 Physical QA is intentionally deferred. Package and lockfile remain **0.7.0**.
+Independent-QA fixes are recorded in [post-QA acceptance](v013-post-qa-acceptance.md).
 No lower published branch was rewritten; no merge, tag or release occurred.
 
 ## Review stack and scope
