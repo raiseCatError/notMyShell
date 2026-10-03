@@ -1,7 +1,8 @@
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
-import {CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
+import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
+import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {withIdleColorSource} from '../idle/IdleVisuals.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
@@ -197,12 +198,18 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'dividerDensity', level: 'advanced', parent: 'divider', when: config => config.transcript.divider, label: 'Divider density', description: 'Spacing around history dividers', category: 'Transcript',
     values: DENSITIES, labels: ['Normal', 'Compact'],
     get: config => config.transcript.dividerDensity, set: (config, dividerDensity) => withTranscript(config, {dividerDensity})}),
+  enumRow({id: 'dividerColors', level: 'advanced', parent: 'divider', when: config => config.transcript.divider, label: 'Divider colors', description: 'Past-command dividers: Follow Chroma (static in history), the History colors, the UI theme, or a muted grayscale', category: 'Transcript',
+    values: DIVIDER_COLOR_MODES, labels: DIVIDER_COLOR_MODES.map(mode => DIVIDER_COLOR_LABELS[mode]),
+    get: config => config.transcript.dividerColors, set: (config, dividerColors) => withTranscript(config, {dividerColors})}),
   {id: 'historicalPrompt', label: 'Prompt snapshots', description: 'Show the prompt each past command ran under', category: 'Transcript',
     control: 'boolean', get: config => config.transcript.historicalPrompt,
     set: (config, historicalPrompt) => withTranscript(config, {historicalPrompt})},
   enumRow({id: 'historyColors', level: 'advanced', parent: 'historicalPrompt', when: config => config.transcript.historicalPrompt, label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
-    values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
+    values: COLOR_MODES, labels: ['Follow prompt', 'Choose theme', 'Grayscale'],
     get: config => config.transcript.historyColors, set: (config, historyColors) => withTranscript(config, {historyColors})}),
+  enumRow({id: 'historyTheme', level: 'advanced', parent: 'historyColors', when: config => config.transcript.historicalPrompt && config.transcript.historyColors === 'theme', label: 'History theme', description: 'The NMSh theme past prompt snapshots are shown in', category: 'Transcript',
+    values: NATIVE_PALETTE_IDS, labels: NATIVE_PALETTE_IDS.map(id => NATIVE_PROMPT_THEMES[id].label),
+    get: config => config.transcript.historyTheme, set: (config, historyTheme) => withTranscript(config, {historyTheme})}),
   {id: 'syntaxHighlighting', label: 'Syntax highlighting', description: 'Color commands while typing and in new history', category: 'Syntax',
     control: 'boolean', get: config => config.syntax.highlighting, set: (config, highlighting) => ({...config, syntax: {...config.syntax, highlighting}})},
   enumRow({id: 'syntaxColors', level: 'advanced', parent: 'syntaxHighlighting', when: config => config.syntax.highlighting, label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',

@@ -86,7 +86,7 @@ export interface SetupSection {
 
 /** Direct entry names to the section they open. */
 export const SETUP_ENTRIES: Readonly<Record<string, string>> = {
-  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor',
+  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', transcript: 'transcript',
 };
 
 const configRow = (id: string): SettingsRow => {
@@ -192,13 +192,22 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   ]},
   {id: 'editor', title: 'Editor', intro: ['The composer, syntax colors and suggestions.'], rows: [
     {row: configRow('composerPosition')},
-    {row: configRow('transcriptPresentation')},
     {row: configRow('syntaxHighlighting')},
     providerRow('setupSuggestions', 'Suggestions', 'Ghost-text prediction', 'Suggestions', SUGGESTION_PROVIDERS,
       config => config.suggestions, (config, suggestions) => ({...config, suggestions})),
     {row: configRow('suggestionsOnEmpty')},
-    {row: configRow('outputFolding')},
   ], facts: (_draft, context) => completionFacts(context.completion)},
+  // The same transcript rows as Settings and /transcript; one draft, one save path.
+  {id: 'transcript', title: 'Transcript', intro: ['How past commands look. Stored history is never changed; this is presentation only.'], rows: [
+    {row: configRow('transcriptPresentation')},
+    {row: configRow('historicalPrompt')},
+    {row: configRow('historyColors')},
+    {row: configRow('historyTheme')},
+    {row: configRow('divider')},
+    {row: configRow('dividerDensity')},
+    {row: configRow('dividerColors'), note: () => 'Live composer dividers follow Appearance → Divider lines; past dividers never move'},
+    {row: configRow('outputFolding')},
+  ]},
   {id: 'history', title: 'History & navigation', intro: ['NMSh Native covers history, directory jumps and picking.', 'External providers are optional alternatives.'], rows: [
     providerRow('setupHistory', 'History', 'Command history source', 'History', HISTORY_PROVIDERS,
       config => config.history, (config, history) => ({...config, history})),

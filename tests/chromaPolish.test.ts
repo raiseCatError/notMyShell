@@ -60,7 +60,7 @@ test('ownership: Chroma never paints the Settings frame; Chroma Off and On give 
   assert.ok(on[0]!.includes(foreground(UI_COLORS.separator)), 'frame uses the chrome separator');
 });
 
-test('ownership: history divider lines follow Chroma by default (static), UI theme when chosen', () => {
+test('ownership: history divider lines follow Chroma by default (static); their colors are the transcript Divider colors setting', () => {
   const rule = (presentation: object) => {
     const output = new OutputBuffer();
     output.presenter.setTreatment(normalizeTreatmentSettings(presentation));
@@ -71,7 +71,7 @@ test('ownership: history divider lines follow Chroma by default (static), UI the
   };
   const off = rule({preset: 'off'});
   assert.ok(off.length > 0);
-  assert.equal(rule({preset: 'rainbow', rules: false}), off, 'Chroma on, Divider lines = Follow UI theme: unchanged rule');
+  assert.equal(rule({preset: 'rainbow', rules: false}), rule({preset: 'rainbow'}), 'the live Divider lines setting does not recolor history');
   assert.notEqual(rule({preset: 'rainbow'}), off, 'Divider lines follow Chroma by default');
   assert.equal(rule({preset: 'rainbow', motion: 'breathe'}), rule({preset: 'rainbow'}), 'history stays static under motion');
   assert.equal(rule({preset: 'off', rules: true}), off, 'Chroma Off restores the base rule exactly');

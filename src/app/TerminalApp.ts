@@ -53,7 +53,7 @@ import {delimiter, join} from 'node:path';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
 import {localKnowledge} from '../shell/CommandKnowledge.js';
-import {ComposerHistory} from '../input/ComposerHistory.js';
+import {ComposerHistory, recallSource, SESSION_SUBMISSION_LIMIT, type SessionSubmission} from '../input/ComposerHistory.js';
 import {resolveAction} from '../ui/actions.js';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {classifyShellFailure, parseShellKnowledge} from '../shell/ShellKnowledge.js';
@@ -69,7 +69,7 @@ import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
-import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
+import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
 import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, type ProviderStatus} from '../providers/providers.js';
@@ -78,7 +78,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
 import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
-import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
+import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
@@ -184,6 +184,11 @@ export class TerminalApp {
   private readonly historyService = new HistoryService();
   /** Shell-style Up/Down recall in the ordinary composer. Frontend-local; never persisted. */
   private readonly composerHistory = new ComposerHistory();
+  /**
+   * What was submitted in this NMSh session, for recall only. NMSh slash
+   * commands live here and nowhere else: never zsh, Atuin or other history.
+   */
+  private readonly sessionSubmissions: SessionSubmission[] = [];
   /** Unsubscribes the Chroma panel preview from the presentation clock. */
   private panelAnimation?: () => void;
   /** A milestone effect waiting for the owning panel to close. */
@@ -1447,7 +1452,7 @@ export class TerminalApp {
     if (this.editor.hasPasteAtoms) return;
     const current = this.editor.text;
     const text = direction === 'previous'
-      ? this.composerHistory.previous(current, () => historyCommands(this.historyService.index.all()))
+      ? this.composerHistory.previous(current, () => recallSource(this.sessionSubmissions, [...historyCommands(this.historyService.index.all())]))
       : this.composerHistory.next(current);
     if (text === undefined) return;
     this.editor.replaceText(text);
@@ -1770,6 +1775,9 @@ export class TerminalApp {
     this.editor.clear();
     this.composerHistory.reset();
     if (!command.trim()) return;
+    // Valid NMSh commands are recalled with the session; unknown slash input runs as typed and follows shell history.
+    this.sessionSubmissions.push({text: command, slash: Boolean(slash && slash.kind !== 'unknown')});
+    if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
 
     if (slash) {
       await this.runSlash(command, slash);
@@ -2708,7 +2716,7 @@ export class TerminalApp {
         this.dimensions().rows - 4), columns);
     }
     if (this.transcriptPanelState) {
-      return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
+      return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4, this.promptConfiguration.presentation), columns);
     }
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
@@ -3231,6 +3239,10 @@ export class TerminalApp {
         rows.push(...this.setupEditorPreview(draft, width));
         break;
       }
+      case 'transcript': {
+        rows.push(...this.setupTranscriptPreview(draft, width));
+        break;
+      }
       case 'history': {
         for (const [family, title, id] of [['history', 'History', draft.history], ['navigation', 'Navigation', draft.navigation], ['picker', 'Picker', draft.picker]] as const) {
           rows.push(`${label(title)}${PRIMARY}${family === 'history' ? HISTORY_PROVIDERS.find(item => item.id === id)?.label : family === 'navigation'
@@ -3296,6 +3308,25 @@ export class TerminalApp {
       : `  ${SUBTLE}Empty prompt: no prediction until you type${RESET}`);
     rows.push(`  ${SUBTLE}${providerExplanation('suggestions', draft.suggestions)}${RESET}`);
     return rows;
+  }
+
+  /**
+   * The Transcript step's preview through the real history-header renderer:
+   * a historical prompt with its divider, the command (Normal or Chat), short
+   * output, and a long block as the Output folding draft would present it.
+   */
+  private setupTranscriptPreview(draft: PromptConfiguration, width: number): string[] {
+    const inner = Math.max(20, Math.min(72, width));
+    const chat = draft.transcriptPresentation === 'chat';
+    const sample = this.transcriptPreviewSample();
+    const header = renderHistoricalContext(sample, chat ? Math.max(10, Math.floor(inner * 0.6)) : inner, draft.transcript, draft.presentation);
+    const rows: string[] = [];
+    const place = (line: string) => chat ? `${' '.repeat(Math.max(0, inner - displayWidth(line)))}${line}` : line;
+    if (header) rows.push(place(header.ansi));
+    rows.push(place(`${SECONDARY}${GLYPHS.prompt} ${RESET}${PRIMARY}npm test${RESET}`), `${SUBTLE}  ${GLYPHS.success} 42 passing${RESET}`);
+    if (header) rows.push(place(header.ansi));
+    // The same long-block preview /transcript shows for this Output folding choice.
+    return [...rows.map(line => `  ${line}`), ...foldingPreview(draft.outputFolding)];
   }
 
   /** Setup Cat's external prompt preview, rendered off the render path once per provider. */

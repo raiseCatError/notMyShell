@@ -78,3 +78,32 @@ export class ComposerHistory {
     return text;
   }
 }
+
+/** One submission in this NMSh session, newest last. */
+export interface SessionSubmission {
+  text: string;
+  /** An NMSh slash command: composer recall only, never shell or external history. */
+  slash: boolean;
+}
+
+/** Bounded so a long session cannot grow recall without limit. */
+export const SESSION_SUBMISSION_LIMIT = 200;
+
+/** How far into shell history a session's shell command is looked for. */
+const RECORDED_WINDOW = 2000;
+
+/**
+ * Recall order: this session's submissions newest first (NMSh slash commands
+ * in their real place between shell commands), then shell history. A session
+ * shell command is offered only when the history provider recorded it, so the
+ * shell's own history policy (ignored commands, for example) still decides.
+ * Duplicates collapse in ComposerHistory, keeping the newest position.
+ */
+export function* recallSource(session: readonly SessionSubmission[], history: readonly string[]): Iterable<string> {
+  const recorded = new Set(history.slice(0, RECORDED_WINDOW));
+  for (let index = session.length - 1; index >= 0; index -= 1) {
+    const entry = session[index]!;
+    if (entry.slash || recorded.has(entry.text)) yield entry.text;
+  }
+  yield* history;
+}

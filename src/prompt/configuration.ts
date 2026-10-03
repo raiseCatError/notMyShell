@@ -136,6 +136,13 @@ export interface ContextModuleConfig {
 
 export type HistoryColorMode = 'followPrompt' | 'theme' | 'grayscale';
 export type DividerDensity = 'normal' | 'compact';
+/**
+ * Historical divider colors (live composer dividers follow the Chroma
+ * Divider lines setting instead). Follow Chroma is static in history.
+ */
+export const DIVIDER_COLOR_MODES = ['chroma', 'history', 'ui', 'muted'] as const;
+export type DividerColorMode = typeof DIVIDER_COLOR_MODES[number];
+export const DIVIDER_COLOR_LABELS: Record<DividerColorMode, string> = {chroma: 'Follow Chroma', history: 'Follow history', ui: 'Follow UI theme', muted: 'Muted grayscale'};
 
 /** How historical command headers are presented; stored snapshots are never changed. */
 export interface TranscriptAppearance {
@@ -145,6 +152,7 @@ export interface TranscriptAppearance {
   /** Used when `historyColors` is `theme`. */
   historyTheme: NativePaletteId;
   dividerDensity: DividerDensity;
+  dividerColors: DividerColorMode;
 }
 
 export const DEFAULT_TRANSCRIPT_APPEARANCE: TranscriptAppearance = {
@@ -153,6 +161,7 @@ export const DEFAULT_TRANSCRIPT_APPEARANCE: TranscriptAppearance = {
   historyColors: 'followPrompt',
   historyTheme: 'lavender',
   dividerDensity: 'normal',
+  dividerColors: 'chroma',
 };
 
 export function normalizeTranscriptAppearance(value: unknown): TranscriptAppearance {
@@ -163,6 +172,7 @@ export function normalizeTranscriptAppearance(value: unknown): TranscriptAppeara
     historyColors: value.historyColors === 'theme' || value.historyColors === 'grayscale' ? value.historyColors : 'followPrompt',
     historyTheme: normalizePaletteId(value.historyTheme),
     dividerDensity: value.dividerDensity === 'compact' ? 'compact' : 'normal',
+    dividerColors: DIVIDER_COLOR_MODES.includes(value.dividerColors as DividerColorMode) ? value.dividerColors as DividerColorMode : 'chroma',
   };
 }
 

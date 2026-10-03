@@ -78,10 +78,10 @@ test('search field is bordered, inset, and shows focus with a caret and accent b
 
 test('Config rows are compact, single-line, with aligned values and a pointer', () => {
   const rows = plain(renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
-  const list = rows.filter(row => /^ {2}[› ] (?: {2})?(Glyph style|Prompt provider|History divider|Divider density|Prompt snapshots|History colors)/u.test(row));
-  assert.equal(list.length, 6);
+  const list = rows.filter(row => /^ {2}[› ] (?: {2})?(Glyph style|Prompt provider|History divider|Divider density|Divider colors|Prompt snapshots|History colors)/u.test(row));
+  assert.equal(list.length, 7);
   const first = rows.indexOf(list[0]!);
-  assert.deepEqual(rows.slice(first, first + 6), list, 'one line per setting, no blank lines between them');
+  assert.deepEqual(rows.slice(first, first + 7), list, 'one line per setting, no blank lines between them');
   const valueStarts = list.map(row => { const match = /^(.*?\S)(\s{2,})\S/u.exec(row)!; return match[1]!.length + match[2]!.length; });
   assert.equal(new Set(valueStarts).size, 1, `values align: ${list.join('|')}`);
   assert.match(list[2]!, /^ {2}› History divider\s+true$/u);
@@ -147,7 +147,7 @@ test('Space and Enter toggle a real boolean; values stay shared with Status', ()
   assert.equal(JSON.parse(await readFile(path, 'utf8')).transcript.divider, false);
   app['handleKey']({kind: 'enter'});
   assert.equal(app['promptConfiguration'].transcript.divider, true);
-  for (let step = 0; step < 3; step++) app['handleKey']({kind: 'down'});
+  for (let step = 0; step < 4; step++) app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'right'});
   assert.equal(app['promptConfiguration'].transcript.historyColors, 'theme');
   assert.ok(app['statusSections']().flat().some(item => item.label === 'History colors' && item.value === 'Theme'));

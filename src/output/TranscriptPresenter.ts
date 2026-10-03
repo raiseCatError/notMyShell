@@ -478,6 +478,33 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
  * and the historical prompt are off. Presentation only: stored snapshots and
  * raw PTY output are never modified.
  */
+/** Deliberately quiet neutral divider: readable, clearly secondary. */
+const MUTED_DIVIDER: Rgb = {red: 98, green: 100, blue: 106};
+
+/**
+ * Historical divider color, by Divider colors: Follow Chroma (the active
+ * palette, always static here; the UI-theme tone while Chroma is Off),
+ * Follow history (the History colors mode), Follow UI theme (the separator
+ * role's history tone) or Muted grayscale. Presentation only.
+ */
+function historicalDivider(text: string, context: HistoricalContextSnapshot, appearance: TranscriptAppearance,
+  treatment: TreatmentSettings, uiTone: Rgb): string {
+  const mode = appearance.dividerColors ?? 'chroma';
+  if (mode === 'chroma') return paintDivider(text, {...treatment, rules: true}, 0, false, uiTone);
+  if (mode === 'muted') return paintDivider(text, DEFAULT_TREATMENT_SETTINGS, 0, false, appearance.dividerDensity === 'compact' ? mixRgb(MUTED_DIVIDER, {red: 0, green: 0, blue: 0}, 0.15) : MUTED_DIVIDER);
+  if (mode === 'history') {
+    const first = context.prompt?.segments[0];
+    const segment: HistoricalSegment = first ? {text: '', role: first.role, background: first.background} : legacySegments(context)[0] ?? {text: ''};
+    const color = appearance.historyColors === 'theme' && isPromptRole(segment.role)
+      ? archiveColor(promptRoleColors(segment.role, appearance.historyTheme, 'followTheme').background, 'foreground')
+      : segment.background
+        ? appearance.historyColors === 'grayscale' ? grayscaleArchiveColor(segment.background, 'foreground') : archiveColor(segment.background, 'foreground')
+        : uiTone;
+    return paintDivider(text, DEFAULT_TREATMENT_SETTINGS, 0, false, color);
+  }
+  return paintDivider(text, DEFAULT_TREATMENT_SETTINGS, 0, false, uiTone);
+}
+
 export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
   appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE,
   treatment: TreatmentSettings = DEFAULT_TREATMENT_SETTINGS): WrappedRow | undefined {
@@ -485,7 +512,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
   if (!appearance.historicalPrompt) {
     const line = repeatToWidth(divider.glyph, width);
-    return {ansi: `${paintDivider(line, treatment, 0, false, divider.color)}\u001B[0m`, plain: line, isHistoricalHeader: true};
+    return {ansi: `${historicalDivider(line, context, appearance, treatment, divider.color)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
   const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
   const prompt = typeof parts === 'string' ? parts : parts.left;
@@ -499,7 +526,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
   const rightAnsi = right ? ` ${right}\u001B[0m` : '';
-  return {ansi: `${prompt}\u001B[0m ${paintDivider(fill, treatment, 0, false, divider.color)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
+  return {ansi: `${prompt}\u001B[0m ${historicalDivider(fill, context, appearance, treatment, divider.color)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {
