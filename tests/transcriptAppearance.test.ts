@@ -139,3 +139,41 @@ test('transcript settings normalize safely and persist in the NMSh config', asyn
     await rm(directory, {recursive: true, force: true});
   }
 });
+
+test('/transcript owns Output folding: the same root setting as Config, drafted, previewed and saved once', async () => {
+  const {renderTranscriptPanel: render, handleTranscriptPanelKey: handle} = await import('../src/output/TranscriptPanel.js');
+  const {TerminalApp} = await import('../src/app/TerminalApp.js');
+  const app = new TerminalApp();
+  try {
+    app['configuration'].outputFolding = 'smart';
+    app['startTranscriptSettings']();
+    const state = app['transcriptPanelState']!;
+    const sample = app['transcriptPreviewSample']();
+    state.selectedIndex = 4;
+    let rows = render(state, 140, sample).map(stripAnsi);
+    assert.ok(rows.some(row => row.includes('Output folding     ‹ Smart ›')));
+    assert.ok(rows.some(row => /lines hidden · Ctrl\+O/u.test(row)), 'Smart previews a folded block');
+    handle({kind: 'left'} as never, state);
+    rows = render(state, 140, sample).map(stripAnsi);
+    assert.ok(rows.some(row => row.includes('Output folding     ‹ Off ›  saved: Smart')));
+    assert.ok(!rows.some(row => /lines hidden/u.test(row)), 'Off previews expanded output');
+    assert.equal(app['configuration'].outputFolding, 'smart', 'only a draft until saved');
+    const {mkdtempSync, readFileSync, rmSync} = await import('node:fs');
+    const {join} = await import('node:path');
+    const {tmpdir} = await import('node:os');
+    const root = mkdtempSync(join(tmpdir(), 'nmsh-transcript-folding-'));
+    const previous = process.env.XDG_CONFIG_HOME;
+    process.env.XDG_CONFIG_HOME = root;
+    try {
+      app['saveTranscriptSettings']();
+      const saved = JSON.parse(readFileSync(join(root, 'nmsh', 'config.json'), 'utf8'));
+      assert.equal(saved.outputFolding, 'never', 'the root setting Config edits; no second value');
+      assert.equal(saved.transcript.outputFolding, undefined);
+      assert.equal(app['configuration'].outputFolding, 'never');
+      assert.equal(app['output']['outputFolding'], 'never', 'applied live');
+    } finally {
+      if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
+      rmSync(root, {recursive: true, force: true});
+    }
+  } finally { app['stop'](0); app['session'].kill(); }
+});

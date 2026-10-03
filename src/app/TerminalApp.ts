@@ -3015,7 +3015,8 @@ export class TerminalApp {
 
   private startTranscriptSettings(): void {
     const saved = structuredClone(this.promptConfiguration.transcript);
-    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved};
+    const folding = this.promptConfiguration.outputFolding;
+    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved, folding: {draft: folding, saved: folding}};
   }
 
   /** A representative history header: the live provider's identity over preview-only modules. */
@@ -3030,11 +3031,13 @@ export class TerminalApp {
   private saveTranscriptSettings(): void {
     const state = this.transcriptPanelState;
     if (!state) return;
-    const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft)};
+    const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft),
+      outputFolding: state.folding?.draft ?? this.promptConfiguration.outputFolding};
     try {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
+      this.output.setOutputFolding(next.outputFolding);
     this.output.presenter.setTreatment(next.presentation);
       this.transcriptPanelState = undefined;
       this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
