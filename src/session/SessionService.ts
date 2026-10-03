@@ -167,7 +167,7 @@ export class SessionService {
             return;
           }
           greeted = true;
-          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME});
+          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1});
           continue;
         }
         switch (message.type) {
@@ -197,7 +197,8 @@ export class SessionService {
               ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
               ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq,
-              ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge})});
+              ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge}),
+              ...(session.shell.isReady ? {} : {startup: session.shell.startupTail() ?? ''})});
             // Everything the journal does not have yet, then the live stream continues.
             const missed = backlog.events();
             for (const event of missed) send(toMessage(event));
@@ -216,7 +217,15 @@ export class SessionService {
           case 'list':
             send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
             break;
-          case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
+          case 'input':
+            owned?.evidence.onInput();
+            if (owned) {
+              const rejected = (data: string, submission: boolean) => send({type: 'input-rejected', data, submission: submission ? 1 : 0});
+              owned.shell.once('inputRejected', rejected);
+              owned.shell.write(message.data, message.submission === 1);
+              owned.shell.off('inputRejected', rejected);
+            }
+            break;
           case 'resize':
             if (owned) { owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
             break;
@@ -306,6 +315,7 @@ export class SessionService {
       if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
       else session.controller?.({type: 'output', data});
     });
+    shell.on('startup', output => session.controller?.({type: 'startup', output}));
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       session.running = {command, since: at};

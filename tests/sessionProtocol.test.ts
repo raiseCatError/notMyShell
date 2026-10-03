@@ -31,6 +31,8 @@ const samples: ProtocolMessage[] = [
   {type: 'prompt', exitCode: 130, cwd: '/tmp'},
   {type: 'prompt', exitCode: 0, cwd: '/tmp', knowledge: 'alias live_alias\ncomplete\n'},
   {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 0, ackedSeq: 30, knowledge: 'function live_function\ncomplete\n'},
+  {type: 'startup', output: 'Continue? [y/n] '},
+  {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 0, ackedSeq: 0, startup: 'Waiting> '},
   {type: 'exit', exitCode: 0},
   {type: 'exit', exitCode: 1, signal: 9},
 ];

@@ -1,3 +1,4 @@
+import {resolveZsh} from './shell/zshExecutable.js';
 import {SessionPresetStore, validatePresetCwd, presetNeedsAcknowledgement, type SessionPreset} from './session/SessionPresets.js';
 import {isVersionInvocation, formatBuildIdentity, readBuildIdentity} from './buildInfo.js';
 import {NESTED_NMSH_MESSAGE, createOrdinaryZshEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
@@ -7,7 +8,7 @@ import {PRODUCT_ABBREVIATION, PRODUCT_NAME} from './config.js';
 function startOrdinaryZsh(cwd?: string): Promise<number> {
   return new Promise(resolve => {
     try {
-      const shell = spawn('/bin/zsh', ['-i'], {
+      const shell = spawn(resolveZsh(), ['-i'], {
         ...(cwd ? {cwd} : {}),
         env: createOrdinaryZshEnvironment(),
         stdio: 'inherit',
@@ -119,7 +120,7 @@ if (isVersionInvocation(args)) {
     const restored = await restoreAtStartup(live, {
       policy: {startup: config.liveSessionStartup, multiple: config.liveSessionMultiple},
       saveStartup: startup => {
-        try { savePromptConfiguration({...loadPromptConfiguration(), liveSessionStartup: startup}); } catch { /* keep going; applies this launch */ }
+        try { const base = loadPromptConfiguration(); savePromptConfiguration({...base, liveSessionStartup: startup}, undefined, base); } catch { /* keep going; applies this launch */ }
       },
       askOne: session => picker.runStartupScreen(columns => picker.renderSinglePrompt(session, columns, Date.now()), picker.singlePromptKey),
       pick: sessions => {

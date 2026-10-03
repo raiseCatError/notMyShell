@@ -3,7 +3,7 @@ import test from 'node:test';
 import {sampleTreatment, treatmentText, normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS} from '../src/chroma/treatment.js';
 import {solid, theme, resolveColor} from '../src/chroma/chroma.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
-import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
+import {normalizePromptConfiguration, loadPromptConfiguration, savePromptConfiguration} from '../src/prompt/configuration.js';
 
 const red = solid({red: 255, green: 0, blue: 0});
 const blue = solid({red: 0, green: 0, blue: 255});
@@ -79,13 +79,17 @@ test('representative surfaces project decoration without changing semantic data'
   assert.deepEqual(nativePromptSnapshot(themePreviewContext(), config), nativePromptSnapshot(themePreviewContext(), ordinary));
   assert.notEqual(framePanel(['hello'], 30, config.presentation)[0], framePanel(['hello'], 30)[0]);
   const output = new OutputBuffer();
+  output.beginCommand('echo raw', ['echo raw']);
   output.write('raw \u001B[31mred\u001B[0m');
+  output.complete(0);
+  const copy = serializeCopyPayload(output.recent(1)!);
   const before = output.wrapped(30);
   output.presenter.setTreatment(config.presentation);
   assert.deepEqual(output.wrapped(30), before);
   const archive = output.transcript();
   output.presenter.setTreatment(DEFAULT_TREATMENT_SETTINGS);
   assert.deepEqual(output.transcript(), archive);
+  assert.equal(serializeCopyPayload(output.recent(1)!), copy);
 });
 
 test('six layouts retain placement and widths with treated chrome at narrow and normal widths', () => {
@@ -107,4 +111,25 @@ test('six layouts retain placement and widths with treated chrome at narrow and 
       }
     }
   }
+});
+
+import {mkdtempSync, writeFileSync, readFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+
+test('saving additive presentation settings preserves unknown declarative configuration', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nmsh-treatment-config-'));
+  const path = join(root, 'config.json');
+  try {
+    writeFileSync(path, JSON.stringify({futureFeature: {enabled: true}, nmsh: {palette: 'warm', futureGeometry: 'kept'}, presentation: {futurePalette: 'kept'}}));
+    const config = loadPromptConfiguration(path);
+    config.presentation.preset = 'lavender';
+    savePromptConfiguration(config, path);
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    assert.deepEqual(saved.futureFeature, {enabled: true});
+    assert.equal(saved.nmsh.futureGeometry, 'kept');
+    assert.equal(saved.presentation.futurePalette, 'kept');
+    assert.equal(saved.presentation.preset, 'lavender');
+    assert.equal(saved.nmsh.palette, config.nmsh.palette);
+  } finally { rmSync(root, {recursive: true, force: true}); }
 });

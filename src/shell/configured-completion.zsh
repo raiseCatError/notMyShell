@@ -16,7 +16,7 @@ nmsh_cleanup() {
 }
 trap nmsh_cleanup EXIT
 trap 'exit 2' TERM HUP INT
-zpty -b bridge exec /bin/zsh -i || exit 1
+zpty -b bridge exec "${NMSH_ZSH_EXECUTABLE:-/bin/zsh}" -i || exit 1
 local listing=$(zpty)
 print -r -- ${${listing#\(}%%\)*} > "$NMSH_COMPLETION_ROOT/pid"
 typeset -F deadline=$(( EPOCHREALTIME + ${NMSH_COMPLETION_STARTUP_MS:-1500} / 1000.0 ))
