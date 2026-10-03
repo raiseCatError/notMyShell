@@ -4,6 +4,9 @@ export type CompletionKind = 'command' | 'subcommand' | 'option' | 'argument' | 
 export interface CompletionContext {
   buffer: string;
   cwd: string;
+  cursor?: number;
+  generation?: number;
+  expiresAt?: number;
 }
 
 export interface CompletionCandidate {
@@ -14,16 +17,20 @@ export interface CompletionCandidate {
   kind: CompletionKind;
   source: string;
   group?: string;
+  prefix?: string;
+  suffix?: string;
   replacement: {start: number; end: number};
   context: CompletionContext;
   /** Full buffer and display aliases for existing composer consumers. */
   insertion: string;
+  insertionCursor?: number;
   name: string;
 }
 
 export interface CompletionSource {
   readonly id: string;
   query(context: CompletionContext, signal: AbortSignal): Promise<CompletionCandidate[]>;
+  dispose?(): void;
 }
 
 /** Presentation data cannot inject terminal controls; insertion values are validated separately. */

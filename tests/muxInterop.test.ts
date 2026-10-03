@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 import nodePty from 'node-pty';
 import {detectTerminalHost} from '../src/host/terminalHost.js';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
@@ -41,7 +43,7 @@ function cleanEnv(): NodeJS.ProcessEnv {
 class TmuxPane {
   readonly socket = `nmsh-mux-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
   constructor(private readonly sandbox: LiveSandbox, columns = 100, rows = 30) {
-    const env = Object.entries(sandbox.env).filter(([name, value]) => value !== undefined && /^(HOME|XDG_CONFIG_HOME|NMSH_[A-Z_]+|PATH)$/u.test(name))
+    const env = Object.entries(sandbox.env).filter(([name, value]) => value !== undefined && /^(HOME|XDG_CONFIG_HOME|TMPDIR|TMP|TEMP|NMSH_[A-Z_]+|PATH)$/u.test(name))
       .map(([name, value]) => `${name}=${quote(value!)}`).join(' ');
     this.tmux('new-session', '-d', '-x', String(columns), '-y', String(rows), '-s', 'p',
       `env ${env} sh -c ${quote(nmshCommand(sandbox.home))}`);
@@ -59,8 +61,13 @@ class TmuxPane {
     await until(() => pattern.test(this.screen()), 20000, () => `${what}; screen:\n${this.screen()}`);
   }
   async run(command: string, expect: RegExp): Promise<void> {
+    const completedCount = async () => (await this.sandbox.transcripts().list())
+      .flatMap(session => session.transcript.records).filter(record => record.command === command).length;
+    const completed = await completedCount();
     this.keys(command, 'Enter');
     await this.waitFor(expect);
+    // Echoed command text can match before a TUI has returned terminal ownership.
+    await until(async () => await completedCount() > completed, 20000, `completed journal for ${command}`);
   }
   kill(): void { this.tmux('kill-server'); }
 }
@@ -98,6 +105,9 @@ test('NMSh inside tmux: environment, resize, job control, fullscreen, paste; kil
       pane.keys('seq 1 500 | less', 'Enter');
       await pane.waitFor(/^:\s*$/mu, 'less prompt');
       pane.keys('q');
+      await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records)
+        .some(record => record.command === 'seq 1 500 | less'), 20000, 'less completion journal');
+      await pane.waitFor(/❯/, 'composer owns terminal after less');
       await pane.run('echo BACK-FROM-LESS', /BACK-FROM-LESS/);
 
       // Bracketed paste through tmux stays a paste in the composer: nothing runs.
@@ -202,6 +212,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   for (const key of Object.keys(env)) if (env[key] === undefined) delete env[key];
   const pty = nodePty.spawn('screen', ['-q', '-S', name, 'zsh', '-f', '-c',
     nmshCommand(sandbox.home)], {cwd: sandbox.home, cols: 100, rows: 30, env});
+  const frontend = sandbox.trackFrontend(pty);
   let output = '';
   pty.onData(data => { output += data; });
   const plain = (from: number) => output.slice(from).replace(/\u001b\[[0-9;?>]*[A-Za-z]|\u001b[()][A-Z0-9]|\u001b[=>]/gu, ' ');
@@ -223,6 +234,7 @@ test('NMSh inside GNU screen: renders, sees STY, follows a resize, and suspends 
   } finally {
     pty.kill();
     spawnSync('screen', ['-S', name, '-X', 'quit'], {env: cleanEnv()});
+    await frontend.waitExit();
     await sandbox.dispose();
   }
 });
@@ -238,3 +250,59 @@ test('window-launch host detection inside a multiplexer uses inherited evidence 
   const zellij = detectTerminalHost({ZELLIJ: '0', TERM_PROGRAM: ''}, 'linux');
   assert.equal(zellij.newWindow, undefined);
 });
+
+test('mouse-enabled tmux client detach/reattach preserves one attached NMSh and interactive ownership',
+  {skip: hasTmux ? false : 'tmux is not installed'}, async () => {
+    const sandbox = new LiveSandbox();
+    const pane = new TmuxPane(sandbox);
+    const fixture = fileURLToPath(new URL('./fixtures/compatibility.mjs', import.meta.url));
+    const attach = () => sandbox.trackFrontend(nodePty.spawn('tmux',
+      ['-L', pane.socket, '-f', '/dev/null', 'attach-session', '-t', 'p'], {
+        cwd: sandbox.home, cols: 100, rows: 30,
+        env: {...cleanEnv(), ...sandbox.env, TMUX: ''} as Record<string, string>,
+      }));
+    try {
+      pane.tmux('set-option', '-g', 'mouse', 'on');
+      assert.equal(pane.tmux('show-option', '-gv', 'mouse').trim(), 'on');
+      await pane.waitFor(/❯/);
+      const first = attach();
+      await first.waitFor(/❯/);
+      const [live] = await sandbox.sessions();
+      first.pty.write('\u0002d');
+      await first.waitExit();
+      assert.equal((await sandbox.sessions())[0]!.id, live!.id);
+      assert.equal((await sandbox.sessions())[0]!.state, 'attached', 'tmux owns the surviving frontend');
+      const second = attach();
+      await second.waitFor(/❯/);
+      const mark = second.mark;
+      second.pty.write(`${quote(process.execPath)} ${quote(fixture)} fullscreen\r`);
+      await second.waitFor(/INTERACTIVE-READY-fullscreen/, mark);
+      second.pty.resize(82, 28);
+      await second.waitFor(/INTERACTIVE-SIZE-27x82/, mark); // tmux reserves its status row.
+      second.pty.write('q');
+      await second.waitFor(/INTERACTIVE-EXIT-0/, mark);
+      await pane.run('echo AFTER-TMUX-CLIENT', /AFTER-TMUX-CLIENT/);
+      assert.equal((await sandbox.sessions())[0]!.id, live!.id);
+    } finally { pane.kill(); await sandbox.dispose(); }
+  });
+
+test('real tmux: a foreground program SIGKILLed with terminal modes enabled leaves the pane in NMSh\'s mode state',
+  {skip: hasTmux ? false : 'tmux is not installed'}, async () => {
+    const sandbox = new LiveSandbox();
+    const pane = new TmuxPane(sandbox);
+    const flags = () => pane.tmux('display-message', '-p', '-t', 'p',
+      '#{alternate_on}|#{mouse_any_flag}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}|#{keypad_flag}|#{keypad_cursor_flag}').trim();
+    try {
+      await pane.waitFor(/❯/, 'composer');
+      const baseline = flags();
+      const script = join(sandbox.home, 'leak.cjs');
+      // Alternate screen, every mouse protocol, application keypad/cursor keys, then death with no cleanup.
+      writeFileSync(script, `process.stdout.write('\\u001b[?1049h\\u001b[?1000h\\u001b[?1002h\\u001b[?1003h\\u001b[?1005h\\u001b[?1006h\\u001b[?1h\\u001b=LEAK-READY\\n');\nsetTimeout(() => process.kill(process.pid, 'SIGKILL'), 3000);\nsetInterval(() => {}, 1000);\n`);
+      pane.keys(`node ${quote(script)}`, 'Enter');
+      await until(() => flags() !== baseline, 20000, () => `fixture modes active in tmux; got ${flags()}`);
+      // The program dies without cleanup; NMSh regains the terminal and must reconcile it.
+      await until(() => flags() === baseline, 20000, () => `tmux pane modes after kill; got ${flags()}, want ${baseline}`);
+      await pane.run('echo AFTER-KILL', /AFTER-KILL/);
+      assert.equal(flags(), baseline, 'tmux pane modes equal NMSh\'s own state from before the program ran');
+    } finally { pane.kill(); await sandbox.dispose(); }
+  });
