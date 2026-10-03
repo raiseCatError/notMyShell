@@ -1,3 +1,5 @@
+import {shellQuote} from '../host/terminalHost.js';
+import {resolveZsh} from './zshExecutable.js';
 import { spawn } from 'node:child_process';
 import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -28,18 +30,19 @@ export class SemanticService {
   }
 
   constructor(cwd: string) {
+    const shell = resolveZsh();
     const home = process.env.HOME || '';
     this.zdotdir = mkdtempSync(join(tmpdir(), 'nmsh-semantic-'));
 
     writeFileSync(join(this.zdotdir, '.zshenv'), `
-if [[ -f "${home}/.zshenv" ]]; then
-  ZDOTDIR="${home}" source "${home}/.zshenv"
+if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]]; then
+  ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshenv'))}
 fi
 `);
 
     writeFileSync(join(this.zdotdir, '.zprofile'), `
-if [[ -f "${home}/.zprofile" ]]; then
-  ZDOTDIR="${home}" source "${home}/.zprofile"
+if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zprofile'))} ]]; then
+  ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zprofile'))}
 fi
 `);
 
@@ -52,8 +55,8 @@ RPROMPT=""
 PS1=""
 PS2=""
 
-if [[ -f "${home}/.zshrc" ]]; then
-  ZDOTDIR="${home}" source "${home}/.zshrc"
+if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshrc'))} ]]; then
+  ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshrc'))}
 fi
 
 # Re-enforce clean environment
@@ -68,7 +71,7 @@ PS1=""
     delete env.TERM_PROGRAM_VERSION;
 
     // Use detached: true for setsid-style isolation to prevent TTIN/TTOU and controlling terminal access
-    this.child = spawn('zsh', ['-i'], {
+    this.child = spawn(shell, ['-i'], {
       cwd,
       env,
       stdio: ['pipe', 'pipe', 'ignore'],

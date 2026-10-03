@@ -75,7 +75,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
-import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
@@ -93,6 +93,7 @@ import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
+import {renderStartupPanel} from '../ui/StartupPanel.js';
 import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
@@ -119,6 +120,7 @@ const SEPARATOR = foreground(UI_COLORS.separator);
 const ACCENT = foreground(UI_COLORS.accent);
 const SUCCESS = foreground(UI_COLORS.success);
 const ERROR = foreground(UI_COLORS.failure);
+const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
   'deleteLineBefore', 'deleteLineAfter', 'enter', 'newline', 'complete', 'historySearch']);
@@ -211,7 +213,7 @@ export class TerminalApp {
   /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
@@ -287,6 +289,11 @@ export class TerminalApp {
     });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
+    this.session.on('startup', tail => {
+      this.startupTail = tail;
+      if (this.startupPanel) { this.startupPanel.tail = tail; this.render(); }
+    });
     this.session.on('exit', event => {
       this.shellEnded = true;
       if (event.lost) {
@@ -301,7 +308,50 @@ export class TerminalApp {
     if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
     // After any restored transcript, or reattaching would erase the launch notice.
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
+    this.beginStartupWatch(connection?.attached);
     this.session.start();
+  }
+
+  /** The shell has not reached its first prompt; set for a new session, or a reattached one still starting. */
+  private startupPending = false;
+  private startupTail = '';
+  private startupTimer?: NodeJS.Timeout;
+  private startupPanel?: {since: number; tail: string};
+
+  /**
+   * Normal startup finishes before this fires and shows nothing. A shell that is still not at its first prompt
+   * (slow, or blocked on a startup file waiting for input) gets an explicit state instead of a composer that
+   * looks ready; commands stay held by the shell until it is.
+   */
+  private beginStartupWatch(attached: AttachedSession | undefined): void {
+    this.startupPending = attached ? attached.startup !== undefined : true;
+    this.startupTail = attached?.startup ?? '';
+    if (!this.startupPending) return;
+    const configured = Number(process.env.NMSH_STARTUP_NOTICE_MS);
+    const delay = Number.isFinite(configured) && configured >= 50 ? Math.min(60_000, configured) : 1500;
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
+      if (!this.startupPending || this.stopped) return;
+      this.startupPanel = {since: Date.now() - delay, tail: this.startupTail};
+      this.render();
+    }, delay);
+    this.startupTimer.unref?.();
+  }
+
+  /** Explicit recovery from a blocked startup: end the shell and this session; nothing is left detached. */
+  private abortStartup(): void {
+    this.shellEnded = true;
+    this.detaching = false;
+    try { this.session.kill(); } catch { /* the shell may already be gone */ }
+    this.stop(130);
+    process.stderr.write('NMSh: shell startup aborted; the session was ended.\n');
+  }
+
+  private endStartupWatch(): void {
+    this.startupPending = false;
+    this.startupTail = '';
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+    this.startupPanel = undefined;
   }
 
   /** Last shell stream event reflected in the transcript (service sessions). */
@@ -355,7 +405,10 @@ export class TerminalApp {
       if (running) {
         this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
         this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
-          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed};
+          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
+          // A submission checkpoint can precede the very first shell event.
+          // Its replayed readiness prompt must not complete the queued command.
+          awaitingExec: this.streamSeq === 0};
       }
     }
   }
@@ -374,7 +427,7 @@ export class TerminalApp {
     }
     // Without a journal the running command is known only from the service.
     if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
-    if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+    if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.cancelPresentation();
       this.passthrough = true;
       this.attachedModes = attached.modes ?? '';
@@ -399,7 +452,7 @@ export class TerminalApp {
 
   private onActiveModeChange(mode: PresentationMode): void {
     if (this.replaying) return;
-    if (mode === 'PASSTHROUGH' && !this.passthrough) {
+    if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
       this.cancelPresentation();
       this.passthrough = true;
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
@@ -417,7 +470,19 @@ export class TerminalApp {
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
     this.effects.cancel();
-    if (this.running) { this.running.historyAllowed = historyAllowed; return; }
+    if (this.running) {
+      this.running.awaitingExec = false;
+      this.running.historyAllowed = historyAllowed;
+      if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+        this.cancelPresentation();
+        this.terminalFocus = 'unknown';
+        this.passthrough = true;
+        this.renderer.suspendForPassthrough();
+        const dimensions = this.dimensions();
+        this.session.resize(dimensions.columns, dimensions.rows);
+      }
+      return;
+    }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
@@ -483,9 +548,8 @@ export class TerminalApp {
     } else if (!this.presetStartup && !this.promptConfiguration.toolsSetupComplete) {
       this.startTools(true);
     }
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
+    // Restored terminal modes are a visible handoff: keys can arrive at once.
+    // Install raw input first so the host cannot echo or translate those keys.
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -493,6 +557,9 @@ export class TerminalApp {
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
+    this.renderer.enter();
+    this.rendererEntered = true;
+    if (this.passthrough) this.enterAttachedPassthrough();
     if (earlyInput) this.onInput(earlyInput);
     process.stdout.on('resize', this.onResize);
     process.on('SIGTSTP', this.onSuspend);
@@ -526,7 +593,7 @@ export class TerminalApp {
       const escaped = JSON.stringify(data);
       appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
     }
-    if (this.passthrough) {
+    if (this.passthrough && !this.startupPending) {
       this.session.write(data);
       return;
     }
@@ -589,6 +656,13 @@ export class TerminalApp {
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
+    }
+    if (this.startupPending && key.kind === 'interrupt') { this.abortStartup(); return; }
+    if (this.startupPanel) {
+      // The shell is not ready; it may be waiting on a startup file. Abort is explicit, and nothing the
+      // composer produces is submitted until the shell reaches its first prompt (typed text is kept).
+      if (key.kind === 'interrupt') { this.abortStartup(); return; }
+      if (key.kind === 'enter' || key.kind === 'newline') return;
     }
     if (this.presetStartup?.active) {
       if (key.kind === 'interrupt') {
@@ -1145,7 +1219,10 @@ export class TerminalApp {
           this.editor.clear();
           this.output.addFrontendInteraction('/resume', 'Wait for the foreground command to finish before switching transcripts.', INFO);
         } else {
-          this.session.write(`${this.editor.text}\r`);
+          const input = this.editor.text;
+          this.editor.clear();
+          this.session.write(`${input}\r`);
+          return;
         }
         this.editor.clear();
       } else {
@@ -1376,7 +1453,7 @@ export class TerminalApp {
     const payload = blockCopyPayload(record, action);
     if (payload !== undefined) {
       try { await writeClipboard(payload); }
-      catch { this.output.addFrontendInteraction('/copy', 'Clipboard copy failed', ERROR); }
+      catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
     else if (action === 'edit' || action === 'rerun') {
       this.clearBlockFocus();
@@ -1456,7 +1533,7 @@ export class TerminalApp {
     this.effects.cancel();
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
-      if (mode === 'PASSTHROUGH' && !this.passthrough) {
+      if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
         this.passthrough = true;
         this.terminalFocus = 'unknown';
@@ -1471,14 +1548,14 @@ export class TerminalApp {
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd, awaitingExec: true};
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
     });
     this.activityAnimationNow = startedAt;
 
     // Initial static heuristic, but dynamic can override
-    this.passthrough = shouldPassthrough(command);
+    this.passthrough = !this.startupPending && shouldPassthrough(command);
     if (this.passthrough) {
       this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough();
@@ -1578,8 +1655,8 @@ export class TerminalApp {
       const payload = serializeCopyPayload(record);
       await writeClipboard(payload);
       this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
-    } catch {
-      this.output.addFrontendInteraction(command, 'Clipboard copy failed', ERROR);
+    } catch (error) {
+      this.output.addFrontendInteraction(command, clipboardFailure(error), ERROR);
     }
   }
 
@@ -1779,8 +1856,24 @@ export class TerminalApp {
     this.output.addFrontendInteraction(command, helpText, INFO);
   }
 
+  private onInputRejected(data: string, submission: boolean): void {
+    if (submission && this.running?.awaitingExec) {
+      const command = this.running.command;
+      this.output.complete(1);
+      this.running = undefined;
+      if (!this.editor.text) this.editor.insert(command);
+    } else {
+      const input = data.replace(/\r$/u, '');
+      if (!this.editor.text) this.editor.insert(input);
+      else this.output.addFrontendInteraction('rejected input', input, ERROR);
+    }
+    this.output.addFrontendInteraction('session', 'Input was not sent: shell startup queue exceeds 64 KiB. Rejected input is retained. Wait for readiness, then submit again.', ERROR);
+    this.render();
+  }
+
   private onShellData(data: string): void {
     if (this.passthrough) {
+      this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
       this.commandModes.observeModes(data);
@@ -1790,6 +1883,7 @@ export class TerminalApp {
       this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
+        this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
         this.render();
@@ -1802,8 +1896,17 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    this.endStartupWatch();
+    const initialPrompt = !this.presetShellReady;
     this.presetShellReady = true;
     this.context.exitStatus = exitCode;
+    // A slow global/user bootstrap may finish after the frontend submits.
+    // Its initial prompt is readiness, not completion of that queued command.
+    if (initialPrompt && this.running?.awaitingExec) {
+      void this.refreshContext(cwd);
+      this.render();
+      return;
+    }
     if (!this.running) {
       void this.refreshContext(cwd);
       this.render();
@@ -1939,8 +2042,9 @@ export class TerminalApp {
       this.externalPromptError = error instanceof Error ? error.message : String(error);
       this.externalPrompt = undefined;
       this.effectivePromptProvider = 'nmsh';
+      const saved = structuredClone(this.promptConfiguration);
       this.promptConfiguration.provider = 'nmsh';
-      try { savePromptConfiguration(this.promptConfiguration); } catch { /* Runtime fallback remains in effect. */ }
+      try { savePromptConfiguration(this.promptConfiguration, undefined, saved); } catch { /* Runtime fallback remains in effect. */ }
     }
   }
 
@@ -2193,7 +2297,7 @@ export class TerminalApp {
     if (!state) return;
     state.draft.onboardingComplete = true;
     try {
-      savePromptConfiguration(state.draft);
+      savePromptConfiguration(state.draft, undefined, this.promptConfiguration);
       this.promptConfiguration = structuredClone(state.draft);
       this.promptPanelState = undefined;
       if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
@@ -2268,10 +2372,11 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
   private settingsPanelRows(columns: number): string[] {
+    if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
@@ -2362,7 +2467,7 @@ export class TerminalApp {
   private saveGlyphChoice(style: PromptConfiguration['glyphStyle']): void {
     const next = {...this.promptConfiguration, glyphStyle: style, glyphChoiceComplete: true};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
@@ -2373,8 +2478,9 @@ export class TerminalApp {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
           draft: structuredClone(next), saved: structuredClone(next)};
       }
-    } catch {
+    } catch (error) {
       // Keep the chooser visible so the user can retry without losing their choice.
+      this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
       if (this.settingsPanelState) this.settingsPanelState.glyphStyle = style;
     }
   }
@@ -2605,7 +2711,9 @@ export class TerminalApp {
       [
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
-        {label: 'Shell', value: 'zsh (/bin/zsh)'},
+        {label: 'Platform', value: `${process.platform} ${process.arch}`},
+        {label: 'Node', value: process.version},
+        {label: 'Shell', value: 'zsh'},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
@@ -2635,8 +2743,10 @@ export class TerminalApp {
   private applySettingsConfiguration(next: PromptConfiguration | undefined): void {
     if (!next) return;
     try {
-      savePromptConfiguration(next);
-    } catch {
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
+    } catch (error) {
+      this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
+      this.render();
       return;
     }
     this.promptConfiguration = next;
@@ -2832,7 +2942,7 @@ export class TerminalApp {
       : state.family === 'history' ? {...structuredClone(this.promptConfiguration), history: selected.id as PromptConfiguration['history']}
       : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.providerPanelState = undefined;
       if (state.family === 'suggestions') this.applySuggestionProvider();
@@ -2865,7 +2975,7 @@ export class TerminalApp {
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft)};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
@@ -2911,7 +3021,7 @@ export class TerminalApp {
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), syntax: structuredClone(state.draft)};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.syntaxPanelState = undefined;
       this.returnFromPanel();
@@ -3493,6 +3603,7 @@ export class TerminalApp {
     this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();
+    this.endStartupWatch();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
     this.providerPanelState?.task?.dispose();
