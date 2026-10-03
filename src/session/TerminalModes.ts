@@ -50,14 +50,14 @@ export class AlternateScreenTracker {
     return kept;
   }
 
-  reset(): void {
+  reset(screen: 'main' | 'alternate' = 'main'): void {
     this.active = false;
     this.interactive = false;
     this.carry = '';
     this.modes.clear();
     this.keypad = false;
     this.modeCarry = '';
-    this.keyboardScreen = 'main';
+    this.keyboardScreen = screen;
     this.keyboardStacks.main.length = 0;
     this.keyboardStacks.alternate.length = 0;
   }
@@ -115,6 +115,17 @@ export class AlternateScreenTracker {
     }
     if (this.keypad) sequence += '\u001b=';
     for (const flags of this.keyboardStacks[this.keyboardScreen]) sequence += `\u001b[>${flags}u`;
+    return sequence;
+  }
+
+  /** Remove only outstanding child pushes, on the screen that owns each stack.
+   * Always finish on alternate, where NMSh draws. Inherited entries are never flattened.
+   */
+  releaseKeyboardSequence(): string {
+    let sequence = '';
+    if (this.keyboardStacks.main.length) sequence += `\u001b[?1049l\u001b[<${this.keyboardStacks.main.length}u`;
+    sequence += '\u001b[?1049h';
+    if (this.keyboardStacks.alternate.length) sequence += `\u001b[<${this.keyboardStacks.alternate.length}u`;
     return sequence;
   }
 

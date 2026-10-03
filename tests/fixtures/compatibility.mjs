@@ -5,12 +5,12 @@ const line = text => process.stdout.write(text + '\r\n');
 if (mode === 'finite') {
   line('FINITE-STDOUT');
   process.stderr.write('FINITE-STDERR\n');
-  process.exit(7);
+  process.exitCode = 7;
 }
 if (mode === 'noisy') {
   for (let i = 0; i < 1000; i++) line(`building unit ${i} complete`);
   line('NOISY-END');
-  process.exit(0);
+  process.exitCode = 0;
 }
 if (mode === 'streaming') {
   let count = 0;
@@ -65,6 +65,6 @@ if (mode === 'streaming') {
     if (carry.includes('q')) return cleanup(0);
     if (carry.length > 4096) carry = '';
   });
-} else if (mode !== 'streaming') {
+} else if (!['streaming', 'finite', 'noisy'].includes(mode)) {
   throw new Error(`Unknown compatibility fixture ${mode}`);
 }

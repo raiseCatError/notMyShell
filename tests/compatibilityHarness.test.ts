@@ -115,6 +115,8 @@ test('canonical inline input and subsequent raw/canonical shell state are restor
     const app = sandbox.launch();
     await app.waitFor(/❯/);
     await app.run('stty -g', /[0-9a-f]+:[0-9a-f]+/u);
+    // The visible mode line precedes precmd; finish the baseline before submitting interactive input.
+    await until(async () => (await sandbox.transcripts().list()).some(session => session.transcript.records.some(record => record.command === 'stty -g')));
     app.pty.write(command('canonical') + '\r');
     await app.waitFor(/CANONICAL-READY/);
     app.pty.write('answer\r');
