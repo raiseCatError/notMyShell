@@ -16,7 +16,7 @@ zsh test (`λ` alias name) fails on the untouched baseline as well.
 - `npm run build`, `npm run typecheck`: pass.
 - `npm test`: 1144 tests, 1137 pass, 0 fail, 7 skipped (optional tools not
   installed: zoxide, fzf, GNU screen ×2, Powerlevel10k; macOS window
-  integration; unreadable-config case skipped as root); history ranking group
+  integration; the unreadable-config case, which prints no skip reason); history ranking group
   8/8.
 - `git diff --check`: clean.
 - An earlier full run had two failures: `/open-diff`'s palette insertion
