@@ -12,6 +12,22 @@ export function helpMarkdown(): AuthoredMarkdown {
 | --- | --- |
 ${commands}
 
+## Setup Cat and optional tools
+
+NMSh is complete out of the box. No external shell tools are required. Optional providers and integrations can be added later, and you can switch between Native and external providers anytime from Settings or Setup Cat.
+
+Run /setup (or /setup prompt, appearance, chroma, editor, tools) to revisit settings. Setup Cat starts from your current settings, changes nothing until you apply on its last step, and Esc discards the draft. /tools lists optional tools by tier (Recommended, Enhanced CLI); every install or upgrade shows its exact command and asks first. Optional tool update checks are Off unless you choose Daily or Weekly.
+
+When a submitted command is missing in your zsh and exactly names a curated tool, NMSh may offer to install it; aliases, functions, builtins and executables always win, and your command stays in the composer. The command inspector (palette: Toggle command inspector) shows what a command word resolves to: builtin, alias, function or executable path.
+
+## Appearance
+
+Settings → Theme family picks NMSh themes or bundled families (Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark). Themes color NMSh-owned UI only; your terminal and editor keep their colors. /theme opens Theme Studio to clone, edit, import (NMSh Theme JSON, Base16, Windows Terminal schemes) and export a custom theme. Cursor shape and blink (/cursor), the prompt symbol and the optional status strip are in Settings. UI chrome (frames, rules, tabs, selection) follows the theme by default, or a Custom preset (Native Lavender, Grayscale, your colors). Chroma colors the Native prompt; Full Chroma is the default influence, and Semantic colors decides whether success, failure and Git state are recolored too. Shimmer (On by default) plays one soft sweep of light when you select or change something, submit, or confirm; Decorative effects Off or Reduced Motion turn it off.
+
+## Idle visuals
+
+Optional and off by default (Never). /screensaver previews each mode live: Aurora Drift, Deep Space, Warp Starfield, Rain, Sparkles, Fireworks and Bouncing Vespyr. They run only inside NMSh at a quiet prompt; any key, mouse, focus return or new output ends them and leaves everything exactly as it was. Reduced Motion shows a still frame; Decorative effects Off keeps them off.
+
 ## Session presets
 
 Use /presets (also in the palette) to create, inspect, launch and delete named startup configurations. N creates one with an explicit cwd and optional commands, one per line; Tab changes fields, Ctrl+J adds a command line, Enter saves. Never put secrets in saved commands; reference your existing environment tooling instead.

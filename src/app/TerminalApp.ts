@@ -1,6 +1,6 @@
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
-import {paintTreatment} from '../chroma/treatment.js';
+import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
@@ -16,9 +16,30 @@ import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
-import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {GLYPHS, setIconStyle, getCurrentGlyphMode} from '../ui/glyphs.js';
-import {framePanel} from '../ui/PanelShell.js';
+import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
+import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
+import {CellGrid} from '../idle/CellGrid.js';
+import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
+import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
+  SCREENSAVER_MIN_SIZE, screensaverKey, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
+import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
+  type InstallPromptState} from '../tools/InstallSuggestion.js';
+import {toolInstall, TOOLS} from '../tools/catalog.js';
+import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
+import type {CommandSource} from '../shell/SemanticService.js';
+import {GLYPHS, setIconStyle, getCurrentGlyphMode, setPromptSymbol} from '../ui/glyphs.js';
+import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
+import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
+import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
+import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
+import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
+import {providerExplanation} from '../setup/providerExplanations.js';
+import {liveActivityPaint} from '../status/liveActivityColors.js';
+import {renderControls} from '../ui/controls.js';
+import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
   settingsView, statusLineCount, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
@@ -29,7 +50,10 @@ import {
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
-import {renderCompletion, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
+import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
+import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
+import {localKnowledge} from '../shell/CommandKnowledge.js';
+import {ComposerHistory, recallSource, SESSION_SUBMISSION_LIMIT, type SessionSubmission} from '../input/ComposerHistory.js';
 import {resolveAction} from '../ui/actions.js';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {classifyShellFailure, parseShellKnowledge} from '../shell/ShellKnowledge.js';
@@ -45,16 +69,16 @@ import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
-import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
-import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
+import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
+import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider, resolveCommand, resolveProvider} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, type ProviderStatus} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
-import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
@@ -62,7 +86,7 @@ import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type St
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
-import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
@@ -70,7 +94,7 @@ import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
 import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
-import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
+import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
@@ -81,17 +105,21 @@ import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
 import {helpMarkdown} from '../help/helpContent.js';
 import {renderMarkdownText} from '../help/markdown.js';
-import {shimmerText} from '../status/shimmer.js';
-import {isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
+import {sweepAnimates, sweepAnsiRow, sweepCells, sweepOnce} from '../motion/lightSweep.js';
+import {sweepStill, sweepStyleFor} from '../motion/sweepStyle.js';
+import {mixRgb} from '../chroma/chroma.js';
+import type {Rgb} from '../chroma/escape.js';
+import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
+import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type StatsSource, type SystemStats} from '../status/StatusStrip.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
-import {foreground, background, UI_COLORS} from '../ui/palette.js';
-import {cursorScreenRow, planScreen, regionAt, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {cursorScreenRow, planScreen, regionAt, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
-import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
+import {handleSyntaxPanelKey, renderSyntaxPanel, renderSyntaxPreviewLine, type SyntaxPanelState} from '../input/SyntaxPanel.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
 import {renderStartupPanel} from '../ui/StartupPanel.js';
 import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
@@ -113,13 +141,13 @@ import {defaultRuntimeDir} from '../session/runtimeDir.js';
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
 const DIRECTORY_SEARCH = '/dirs ';
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const SUBTLE = foreground(UI_COLORS.subtle);
-const SEPARATOR = foreground(UI_COLORS.separator);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUCCESS = foreground(UI_COLORS.success);
-const ERROR = foreground(UI_COLORS.failure);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
+const SEPARATOR = lazyForeground(UI_COLORS.separator);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUCCESS = lazyForeground(UI_COLORS.success);
+const ERROR = lazyForeground(UI_COLORS.failure);
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -128,6 +156,9 @@ const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
+const INVERSE = '\u001B[7m';
+/** The Settings row the glyph preview returns to. */
+const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(entry => entry.id === 'glyphPreview'));
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
@@ -151,6 +182,19 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly session: SessionClient;
   private readonly historyService = new HistoryService();
+  /** Shell-style Up/Down recall in the ordinary composer. Frontend-local; never persisted. */
+  private readonly composerHistory = new ComposerHistory();
+  /**
+   * What was submitted in this NMSh session, for recall only. NMSh slash
+   * commands live here and nowhere else: never zsh, Atuin or other history.
+   */
+  private readonly sessionSubmissions: SessionSubmission[] = [];
+  /** Unsubscribes the Chroma panel preview from the presentation clock. */
+  private panelAnimation?: () => void;
+  /** A milestone effect waiting for the owning panel to close. */
+  private pendingMilestone = false;
+  private readonly commandDescriptions = new CommandDescriptions();
+  private commandUsageVersion = -1;
   private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
     reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
@@ -176,7 +220,27 @@ export class TerminalApp {
   private historyResults: HistoryEntry[] = [];
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
   private readonly commandContexts = new CommandContextCache(() => this.render());
-  private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
+  private configuration: PromptConfiguration = loadPromptConfiguration();
+  /** Decorative surfaces without prompt context follow the active Native theme for Current Theme Chroma. */
+  private themeStopsKey = '';
+  private get promptConfiguration(): PromptConfiguration {
+    const config = this.configuration;
+    const key = `${config.nmsh.palette}:${config.nmsh.vibrance}:${config.nmsh.accent}:${config.promptSymbol}:${config.promptSymbolCustom ?? ''}:${
+      config.nmsh.palette === 'custom' ? JSON.stringify(config.customTheme ?? null) : ''}:${JSON.stringify(config.uiChrome)}`;
+    if (key !== this.themeStopsKey) {
+      this.themeStopsKey = key;
+      // Theme context first: Current Theme stops and the chrome both read it.
+      setThemeContext(config.nmsh.accent, config.customTheme);
+      applyUiTheme(uiColorsFor(resolveChrome(config.uiChrome, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+      setActiveThemeStops(themeChromaStops(config.nmsh.palette, config.nmsh.vibrance));
+      setPromptSymbol(promptSymbolGlyph(config.promptSymbol, config.promptSymbolCustom, true),
+        promptSymbolGlyph(config.promptSymbol, config.promptSymbolCustom, false));
+    }
+    return config;
+  }
+  private set promptConfiguration(next: PromptConfiguration) {
+    this.configuration = next;
+  }
   private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
   private starshipStatus?: StarshipStatus;
   /** Live Starship/Powerlevel10k rendering for the effective provider. */
@@ -197,6 +261,38 @@ export class TerminalApp {
   private presetFrontendReady = false;
   switchPreset?: SessionPreset;
   private toolsPanel?: ToolsPanel;
+  /** Idle visuals: one inactivity timer while armed, one frame subscription while showing; neither exists otherwise. */
+  private idleTimer?: NodeJS.Timeout;
+  private idle?: {mode: IdleMode; startedAt: number; frame: number; interval: number; preview: boolean; paused: boolean; still: boolean};
+  private idleSubscription?: () => void;
+  private readonly idleGrid = new CellGrid();
+  private lastActivity = Date.now();
+  private idleArmedFor = -1;
+  private screensaverPanel?: ScreensaverPanelState;
+  private screensaverAnimation?: () => void;
+  private readonly screensaverGrid = new CellGrid();
+  /** Custom UI chrome colors draft. */
+  private chromeEditor?: ChromeEditorState;
+  /** Custom colors for idle visuals or Live activity, in the shared gradient stop editor. */
+  private stopsEditor?: {target: 'idle' | 'activity'; gradient: GradientEditorState};
+  /** Theme Studio: a custom theme draft; nothing persists until Save. */
+  private themeStudio?: ThemeStudioState;
+  /** Setup Cat: one draft over the saved configuration; nothing persists until Apply. */
+  private setupState?: SetupState;
+  /** A missing curated command's install offer; the submitted text is kept until the user decides. */
+  private installPrompt?: InstallPromptState;
+  /** The last optional tool update check (bookkeeping file, read once). */
+  private toolUpdates: ToolUpdateState = loadToolUpdateState();
+  private toolUpdateCheckRunning = false;
+  /** What command words resolve to in the configured zsh, filled off the keypress path for the inspector. */
+  private readonly commandSources = new Map<string, CommandSource | null>();
+  /** Status strip data: sampled from local OS counters on its own modest timer, only while enabled. */
+  private statsSource: StatsSource = new LocalStats();
+  private stripStats: SystemStats = {};
+  private stripTimer?: () => void;
+  private stripSampling = false;
+  /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
+  private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
   private misePanel?: MisePanel;
   private readonly miseService = new MiseProjectService();
   private toolConfigurationLoading = false;
@@ -270,6 +366,7 @@ export class TerminalApp {
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
+    this.renderer.setCursorStyle(cursorStyleSequence(this.promptConfiguration.cursor.shape, this.promptConfiguration.cursor.blink));
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
@@ -282,6 +379,7 @@ export class TerminalApp {
       if (this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.semanticService.applyShellKnowledge(marker.knowledge);
+          this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
         }
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
@@ -386,6 +484,7 @@ export class TerminalApp {
    * handlers live output uses, and finishReplay() settles the final state.
    */
   private beginReattach(attached: AttachedSession, journal: TranscriptSession | undefined): void {
+    this.noteActivity();
     this.attachedSession = attached;
     this.replaying = true;
     this.shellCwd = attached.cwd;
@@ -451,6 +550,7 @@ export class TerminalApp {
   }
 
   private onActiveModeChange(mode: PresentationMode): void {
+    if (this.idle) this.dismissIdle(false);
     if (this.replaying) return;
     if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
       this.cancelPresentation();
@@ -578,6 +678,8 @@ export class TerminalApp {
     void this.loadHistory();
     this.render();
     void this.quietUpdateCheck();
+    void this.quietToolUpdateCheck();
+    this.armIdle();
     this.presetFrontendReady = true;
     if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
     const exitCode = await this.done;
@@ -598,13 +700,45 @@ export class TerminalApp {
       return;
     }
     const keys = this.keyDecoder.push(data);
+    this.scheduleEscapeFlush();
+    this.handleDecodedKeys(keys);
+  };
+
+  /** The Escape key flush timer (see KeyDecoder.pendingEscape); at most one, cleared by the next input. */
+  private escapeFlushTimer?: NodeJS.Timeout;
+  private static readonly ESCAPE_FLUSH_MS = 35;
+
+  private scheduleEscapeFlush(): void {
+    if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
+    if (!this.keyDecoder.pendingEscape) return;
+    this.escapeFlushTimer = setTimeout(() => {
+      this.escapeFlushTimer = undefined;
+      if (this.stopped) return;
+      const keys = this.keyDecoder.flush();
+      if (keys.length) this.handleDecodedKeys(keys);
+    }, TerminalApp.ESCAPE_FLUSH_MS);
+    this.escapeFlushTimer.unref?.();
+  }
+
+  private handleDecodedKeys(keys: Key[]): void {
+    if (this.idle) {
+      // The idle overlay owns input: losing focus pauses it; anything else dismisses it and is not passed on.
+      if (keys.length && keys.every(key => key.kind === 'focusOut')) { this.terminalFocus = 'blurred'; this.pauseIdle(); return; }
+      if (keys.some(key => key.kind === 'focusIn' || key.kind === 'focusOut')) this.terminalFocus = keys.at(-1)!.kind === 'focusOut' ? 'blurred' : 'focused';
+      if (keys.length) this.dismissIdle();
+      return;
+    }
+    // Focus reports alone are not user activity (a terminal can report them on its own).
+    if (keys.some(key => key.kind !== 'focusIn' && key.kind !== 'focusOut')) this.noteActivity();
     for (const key of keys) this.handleKey(key);
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
-  };
+  }
 
   private readonly onResize = (): void => {
     this.effects.cancel();
+    if (this.idle) this.dismissIdle(false);
+    this.noteActivity();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
     this.lastPtyRows = 0;
@@ -697,6 +831,33 @@ export class TerminalApp {
     }
     if (this.misePanel) {
       void this.handleMiseKey(key, this.misePanel);
+      return;
+    }
+    if (this.installPrompt) {
+      void this.handleInstallPromptKey(key, this.installPrompt);
+      return;
+    }
+    if (this.setupState) {
+      this.handleSetupKey(key, this.setupState);
+      return;
+    }
+    if (this.themeStudio) {
+      this.handleThemeStudioKey(key, this.themeStudio);
+      return;
+    }
+    if (this.screensaverPanel) {
+      this.handleScreensaverKey(key, this.screensaverPanel);
+      return;
+    }
+    if (this.stopsEditor) {
+      this.handleStopsEditorKey(key, this.stopsEditor);
+      return;
+    }
+    if (this.chromeEditor) {
+      const result = chromeEditorKey(this.chromeEditor, key, colorLevel());
+      if (result?.kind === 'cancel') { this.chromeEditor = undefined; this.returnFromPanel(); }
+      else if (result?.kind === 'save' && this.applySettingsConfiguration({...this.promptConfiguration,
+        uiChrome: {source: 'custom', preset: 'custom', colors: result.colors}})) { this.chromeEditor = undefined; this.returnFromPanel(); }
       return;
     }
     if (this.toolsPanel) {
@@ -809,7 +970,17 @@ export class TerminalApp {
       if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
         // Esc leaves the module manager, keeping its draft edits for the final save.
         this.promptPanelState.step = 'appearance';
-        this.promptPanelState.selectedIndex = APPEARANCE_MODULES_ROW;
+        this.promptPanelState.selectedIndex = appearanceModulesRow(this.promptPanelState.draft);
+        this.render();
+      } else if (this.promptPanelState.step === 'gradient' && (key.kind === 'escape' || key.kind === 'enter' || key.kind === 'interrupt')) {
+        // The stop editor owns Enter (edit/apply) and Esc (cancel an edit, else return with its stops).
+        const editing = this.promptPanelState.gradient?.editing !== undefined;
+        if (key.kind === 'enter' || editing) handlePromptPanelKey(key.kind === 'interrupt' ? {kind: 'escape'} : key, this.promptPanelState);
+        else closeGradientEditor(this.promptPanelState);
+        this.render();
+      } else if (promptPanelOwnsKey(this.promptPanelState, key)) {
+        // Typing a custom glyph owns Enter and Esc until it is set or cancelled.
+        handlePromptPanelKey(key, this.promptPanelState);
         this.render();
       } else if (key.kind === 'escape' || key.kind === 'interrupt') {
         if (this.promptPanelState.onboarding) void this.savePromptSettings();
@@ -1059,7 +1230,9 @@ export class TerminalApp {
     if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
       && !this.suggestions.alternativesOpen) {
       const action = resolveAction(COMPLETION_ACTIONS, key);
-      if (action?.id === 'move') {
+      // Up from the first candidate leaves the menu for shell history, as Up
+      // from an editor's first line does; Down still enters the menu.
+      if (action?.id === 'move' && !(key.kind === 'up' && this.selectedSuggestion === 0)) {
         this.selectedSuggestion = (this.selectedSuggestion + (key.kind === 'down' ? 1 : -1) + this.shellSuggestions.length) % this.shellSuggestions.length;
         return;
       }
@@ -1182,13 +1355,13 @@ export class TerminalApp {
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
     else if (key.kind === 'up') {
       const {columns} = this.dimensions();
-      this.editor.moveUp(columns, this.inputFirstLinePrefix(columns));
+      if (!this.editor.moveUp(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
       this.editor.selectUp(columns, this.inputFirstLinePrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
-      this.editor.moveDown(columns, this.inputFirstLinePrefix(columns));
+      if (!this.editor.moveDown(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('next');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
       this.editor.selectDown(columns, this.inputFirstLinePrefix(columns));
@@ -1233,6 +1406,60 @@ export class TerminalApp {
   }
 
 
+  /**
+   * The highlighted candidate's description: structured completion text,
+   * local knowledge, the session-identity fallback (alias/function bodies are
+   * never shown), or a local man-page summary looked up off the keypress path.
+   */
+  private completionDescription(candidate: CompletionCandidate): string {
+    if (candidate.description) return candidate.description;
+    if (candidate.kind !== 'command') return '';
+    const known = localKnowledge(candidate.value, candidate.value, true)?.description ?? identityDescription(candidate);
+    if (known) return known;
+    const cached = this.commandDescriptions.cached(candidate.value);
+    if (cached !== undefined) return cached;
+    void this.commandDescriptions.request(candidate.value).then(description => {
+      // Every visible row shows its description, so any candidate still listed repaints.
+      if (description && !this.stopped && this.shellSuggestions.some(item => item.value === candidate.value)) this.render();
+    });
+    return '';
+  }
+
+  /** Command-name use from the eligible history index, recomputed only when it changed. */
+  private refreshCommandUsage(): void {
+    const index = this.historyService.index;
+    if (index.version === this.commandUsageVersion) return;
+    this.commandUsageVersion = index.version;
+    const usage = new Map<string, {count: number; last: number}>();
+    const entries = index.all();
+    for (let position = 0; position < Math.min(entries.length, 5000); position += 1) {
+      const entry = entries[position]!;
+      const name = /^\s*([^\s=;|&()<>]+)(?=\s|$)/u.exec(entry.command)?.[1];
+      if (!name) continue;
+      const known = usage.get(name);
+      if (known) known.count += 1;
+      else usage.set(name, {count: 1, last: entry.at ?? 0});
+    }
+    this.completionService.setCommandUsage(usage);
+  }
+
+  /**
+   * Up past the editor's first row recalls older commands; Down past its last
+   * row walks newer ones and finally restores the unsent draft. Only text is
+   * placed in the composer: nothing runs until Enter.
+   */
+  private recallHistory(direction: 'previous' | 'next'): void {
+    if (this.editor.hasPasteAtoms) return;
+    const current = this.editor.text;
+    const text = direction === 'previous'
+      ? this.composerHistory.previous(current, () => recallSource(this.sessionSubmissions, [...historyCommands(this.historyService.index.all())]))
+      : this.composerHistory.next(current);
+    if (text === undefined) return;
+    this.editor.replaceText(text);
+    this.selectedSuggestion = 0;
+    this.shellSuggestions = [];
+  }
+
   private async fetchSuggestions(): Promise<void> {
     const input = this.editor.text;
     if (!this.directorySearchActive && this.directoryQuery !== undefined) {
@@ -1245,7 +1472,9 @@ export class TerminalApp {
     }
     const cwd = this.context.cwd;
     const cursor = this.completionCursor;
-    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim());
+    // A recalled command is not being typed: no completion menu claims Up/Down until it is edited.
+    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim())
+      && !this.composerHistory.showing(input);
     const key = eligible ? JSON.stringify([input, cursor, cwd]) : '';
     if (key === this.lastSuggestionInput) return;
     this.lastSuggestionInput = key;
@@ -1255,6 +1484,7 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.selectedSuggestion = 0;
     if (!eligible) return;
+    this.refreshCommandUsage();
     const comps = await this.completionService.suggest(input, cwd, cursor);
     if (!this.stopped && generation === this.completionGeneration && this.editor.text === input && this.context.cwd === cwd
       && this.completionCursor === cursor && !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms) {
@@ -1388,7 +1618,7 @@ export class TerminalApp {
   /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
   private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
     if (slash.kind === 'effects') {
-      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Effects Off suppress previews.', INFO);
+      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain|confetti [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Decorative effects Off suppress previews.', INFO);
       else if (slash.effect === 'stop') this.effects.cancel();
       else if (!this.running && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended) {
         this.effects.trigger(slash.effect, slash.placement, Date.now(), 0x4e4d5348, {...this.promptConfiguration.presentation,
@@ -1399,8 +1629,21 @@ export class TerminalApp {
     else if (slash.kind === 'copy') await this.copyRecent(slash.index);
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
+    else if (slash.kind === 'screensaver') {
+      this.panelOrigin = undefined;
+      if (slash.start) {
+        if (slash.mode) this.applySettingsConfiguration({...this.promptConfiguration, idleVisuals: {...this.promptConfiguration.idleVisuals, mode: slash.mode}});
+        this.startIdle(true);
+      } else this.screensaverPanel = createScreensaverPanel(Date.now());
+    }
+    // The cursor has one configuration: /cursor opens its existing Settings rows.
+    else if (slash.kind === 'cursor') { this.panelOrigin = undefined; this.focusConfigRow('cursorShape'); }
+    else if (slash.kind === 'activity') { this.panelOrigin = undefined; this.focusConfigRow('activityColors'); }
+    else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
+    else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
     else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
@@ -1516,13 +1759,26 @@ export class TerminalApp {
     }
   }
 
-  private async submit(realShell = false): Promise<void> {
+  private async submit(realShell = false, skipInstallCheck = false): Promise<void> {
     this.clearCorrection();
     const command = this.editor.text;
-    this.editor.clear();
-    if (!command.trim()) return;
-
     const slash = realShell ? undefined : parseSlashCommand(command);
+    if (!slash && !skipInstallCheck && !this.startupPending && installCandidate(command, this.promptConfiguration)) {
+      // Real zsh resolution decides first; the composer keeps the text while it is asked.
+      this.preparingCommand = true;
+      let offered = false;
+      try { offered = await this.offerInstallFor(command); } finally { this.preparingCommand = false; }
+      if (this.stopped) return;
+      if (offered) { this.render(); return; }
+      if (this.editor.text !== command) return;
+    }
+    this.editor.clear();
+    this.composerHistory.reset();
+    if (!command.trim()) return;
+    // Valid NMSh commands are recalled with the session; unknown slash input runs as typed and follows shell history.
+    this.sessionSubmissions.push({text: command, slash: Boolean(slash && slash.kind !== 'unknown')});
+    if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+
     if (slash) {
       await this.runSlash(command, slash);
       this.render();
@@ -1567,6 +1823,8 @@ export class TerminalApp {
     } else {
       this.session.submit(command);
     }
+    // After the command is on its way: one sweep acknowledging the submission (never delays it).
+    if (!this.passthrough) this.startSweep('prompt', 'vivid');
     this.render();
   }
 
@@ -1629,7 +1887,7 @@ export class TerminalApp {
 
   private async startAppearance(): Promise<void> {
     if (!this.host.capabilities.appearanceIntegration || !this.host.integration) {
-      this.output.addFrontendInteraction('/appearance', `Host: ${this.host.name}\nWindow opacity and blur are controlled by the host.`, INFO);
+      this.output.addFrontendInteraction('/appearance', `Host: ${this.host.name}\n${this.host.appearanceGuidance ?? 'Window opacity and blur are controlled by the host.'}`, INFO);
       this.returnFromPanel();
       this.render();
       return;
@@ -1841,6 +2099,7 @@ export class TerminalApp {
         this.render();
       });
       this.offeredUpdate = undefined;
+      if (result.ok) this.milestoneEffect();
       this.output.addHistoryLine(result.ok
         ? `${SUCCESS}NMSh ${release.version} is installed. Restart NMSh to use it; this session keeps running ${current}.${RESET}`
         : `${ERROR}The update did not complete; the lines above say what happened.${RESET}`);
@@ -1872,6 +2131,8 @@ export class TerminalApp {
   }
 
   private onShellData(data: string): void {
+    // New output is activity: it ends idle visuals and restarts the inactivity timer.
+    this.noteActivity();
     if (this.passthrough) {
       this.renderer.observePassthrough(data);
       process.stdout.write(data);
@@ -2070,6 +2331,31 @@ export class TerminalApp {
     }
     if (this.promptConfiguration.provider !== 'nmsh') await this.refreshPanelPreview(this.promptPanelState);
     this.render();
+  }
+
+  /** /chroma: the /prompt Chroma view directly, editing the same presentation settings. */
+  private startChromaSettings(): void {
+    this.promptPanelState = {onboarding: false, step: 'appearance', view: 'chroma', selectedIndex: 0,
+      draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    this.panelExternalPrompt = undefined;
+    this.render();
+  }
+
+  /**
+   * A brief, restrained effect for a real milestone (a confirmed install,
+   * an applied update, finished setup). Respects Milestone effects, Reduced
+   * Motion and Effects Off; never during a command, passthrough or panel.
+   */
+  private milestoneEffect(): boolean {
+    const presentation = this.promptConfiguration.presentation;
+    if (presentation.autoEffects === false || presentation.effectsOff || presentation.reducedMotion || isReducedMotion()) return false;
+    // Panels own the screen and leave no decorative gap: celebrate once the panel closes.
+    if (this.settingsPanelActive || this.running || this.passthrough || this.externalPassthrough || this.frontendSuspended) {
+      this.pendingMilestone = true;
+      return false;
+    }
+    this.pendingMilestone = false;
+    return this.effects.trigger('confetti', 'bottom', Date.now(), Date.now() >>> 0, presentation);
   }
 
   private async runPowerlevel10kWizard(status: Powerlevel10kStatus): Promise<number> {
@@ -2272,6 +2558,7 @@ export class TerminalApp {
           this.starshipStatus = await detectStarship(process.env);
           state.starshipStatus = this.starshipStatus;
           if (!this.starshipStatus.installed) state.task.markFailure('Homebrew completed, but starship was not found on PATH.');
+          else this.milestoneEffect();
         }
         state.step = 'installResult';
         state.selectedIndex = 0;
@@ -2283,9 +2570,11 @@ export class TerminalApp {
     } else if (onModulesRow(state)) {
       state.step = 'modules';
       state.selectedIndex = 0;
+    } else if (onGradientRow(state)) {
+      openGradientEditor(state);
     } else if (state.step === 'modules') {
       state.step = 'appearance';
-      state.selectedIndex = APPEARANCE_MODULES_ROW;
+      state.selectedIndex = appearanceModulesRow(state.draft);
     } else {
       await this.savePromptSettings();
     }
@@ -2371,16 +2660,43 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
+  /** Complex panels declare the smallest size that shows their essential controls. */
+  private panelMinimum(): MinimumSize | undefined {
+    if (this.setupState) return SETUP_MIN_SIZE;
+    if (this.themeStudio) return STUDIO_MIN_SIZE;
+    if (this.screensaverPanel) return SCREENSAVER_MIN_SIZE;
+    if (this.chromeEditor || this.stopsEditor) return CHROME_EDITOR_MIN_SIZE;
+    return undefined;
+  }
+
   private settingsPanelRows(columns: number): string[] {
+    const minimum = this.panelMinimum();
+    const {rows} = this.dimensions();
+    if (minimum && !fits(minimum, columns, rows)) return renderTooSmall(minimum, columns, rows);
+    return this.panelContentRows(columns);
+  }
+
+  private panelContentRows(columns: number): string[] {
     if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
+    if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
+    if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
+    if (this.screensaverPanel) return this.renderScreensaverRows(this.screensaverPanel, columns);
+    if (this.stopsEditor) return this.renderStopsEditor(this.stopsEditor, columns);
+    if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
+    if (this.setupState) {
+      const state = this.setupState;
+      if (!state.toolBrowser) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
+      state.context.title = this.setupTitle(state);
+      return this.withDraftTheme(state.draft, () => renderSetup(state, columns, this.dimensions().rows));
+    }
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
@@ -2400,7 +2716,7 @@ export class TerminalApp {
         this.dimensions().rows - 4), columns);
     }
     if (this.transcriptPanelState) {
-      return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4), columns);
+      return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4, this.promptConfiguration.presentation), columns);
     }
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
@@ -2472,7 +2788,7 @@ export class TerminalApp {
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
       this.settingsPanelState = undefined;
-      if (!onboarding) this.settingsPanelState = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 1,
+      if (!onboarding) this.settingsPanelState = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: GLYPH_ENTRY_INDEX(),
         glyphStyle: style, onboarding: false};
       if (onboarding && !next.onboardingComplete) {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
@@ -2501,7 +2817,7 @@ export class TerminalApp {
     const state = this.settingsPanelState!;
     state.searchQuery = '';
     state.showAdvanced = state.showAdvanced || SETTINGS_ROWS.find(row => row.id === rowId)?.level === 'advanced';
-    state.contentIndex = Math.max(0, visibleSettingsRows(state).findIndex(row => row.id === rowId));
+    state.contentIndex = Math.max(0, visibleSettingsRows(state, this.promptConfiguration).findIndex(row => row.id === rowId));
   }
 
   /**
@@ -2515,7 +2831,7 @@ export class TerminalApp {
   private handleSettingsKey(key: Key, state: SettingsPanelState): void {
     if (key.kind === 'escape' || key.kind === 'interrupt') {
       if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
-      else if (state.section === 'appearance') { state.section = 'root'; state.view = 'settings'; state.contentIndex = 1; }
+      else if (state.section === 'appearance') { state.section = 'root'; state.view = 'settings'; state.contentIndex = GLYPH_ENTRY_INDEX(); }
       else if (state.searchQuery || state.searchFocused) { state.searchQuery = ''; state.searchFocused = false; state.contentIndex = 0; }
       else this.settingsPanelState = undefined;
       return;
@@ -2526,7 +2842,7 @@ export class TerminalApp {
       return;
     }
     const view = settingsView(state);
-    const row = selectedSettingsRow(state);
+    const row = selectedSettingsRow(state, this.promptConfiguration);
     const editedSearch = state.searchFocused ? editText(state.searchQuery ?? '', key) : undefined;
     if (editedSearch !== undefined) {
       state.searchQuery = editedSearch;
@@ -2553,7 +2869,7 @@ export class TerminalApp {
     } else if (state.focus === 'tabs') {
       if (key.kind === 'down' || key.kind === 'enter') { state.focus = 'rows'; state.contentIndex = 0; }
     } else if (key.kind === 'up' || key.kind === 'down') {
-      const count = settingsItemCount(state);
+      const count = settingsItemCount(state, this.promptConfiguration);
       const index = state.contentIndex ?? 0;
       if (key.kind === 'up' && index === 0 && !state.searchFocused) state.focus = 'tabs';
       else if (count > 0) state.contentIndex = Math.max(0, Math.min(count - 1, index + (key.kind === 'up' ? -1 : 1)));
@@ -2567,6 +2883,12 @@ export class TerminalApp {
   }
 
   private openSettingsDestination(destination: SettingsDestination, view: SettingsView, rowIndex: number, state: SettingsPanelState): void {
+    if (destination === 'resetInstallSuggestions') {
+      const count = this.promptConfiguration.ignoredInstallSuggestions.length;
+      if (count) this.applySettingsConfiguration({...this.promptConfiguration, ignoredInstallSuggestions: []});
+      this.output.addFrontendInteraction('/settings', count ? `Install suggestions reset for ${count} tool${count === 1 ? '' : 's'}.` : 'No ignored install suggestions to reset.', INFO);
+      return;
+    }
     if (destination === 'glyph') {
       state.section = 'appearance';
       state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1;
@@ -2577,6 +2899,13 @@ export class TerminalApp {
     this.panelOriginRow = rowIndex;
     this.settingsPanelState = undefined;
     if (destination === 'tools') this.startTools();
+    else if (destination === 'setup') this.startSetup();
+    else if (destination === 'screensaver') this.screensaverPanel = createScreensaverPanel(Date.now());
+    else if (destination === 'chromeColors') {
+      const config = this.promptConfiguration;
+      this.chromeEditor = createChromeEditor(config.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...config.uiChrome, source: 'theme'}, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+    }
+    else if (destination === 'idleColors' || destination === 'activityColors') this.openStopsEditor(destination === 'idleColors' ? 'idle' : 'activity');
     else if (destination === 'toolConfig') void this.startToolConfiguration('starship');
     else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
@@ -2645,12 +2974,14 @@ export class TerminalApp {
   private startTools(onboarding = false): void {
     const config = this.promptConfiguration;
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
+    state.updates = this.toolUpdates;
     void refreshTools(state, () => { if (!this.stopped && this.toolsPanel === state) this.render(); });
   }
 
   private async handleToolsKey(key: Key, state: ToolsPanel): Promise<void> {
     if (state.confirm) {
       await confirmToolInstall(state, key, () => this.renderTaskPresentation());
+      if (state.task?.state.status === 'succeeded' && state.detail && state.statuses[state.detail.id]?.state === 'installed') this.milestoneEffect();
       this.render();
       return;
     }
@@ -2658,6 +2989,8 @@ export class TerminalApp {
     const action = toolsKey(state, key);
     if (wasOnboarding && (action === 'close' || action === 'finishOnboarding')) {
       this.applySettingsConfiguration({...this.promptConfiguration, toolsSetupComplete: true});
+      // First-run setup is complete; a skip is not a milestone.
+      if (action === 'finishOnboarding') this.milestoneEffect();
     }
     if (action === 'close') { this.toolsPanel = undefined; this.returnFromPanel(); }
     else if (action === 'mise') {
@@ -2672,6 +3005,656 @@ export class TerminalApp {
         this.startProviderPanel(family);
       }
     } else if (action === 'refresh') await refreshTools(state, () => this.render());
+    else if (action === 'checkUpdates') await this.checkToolUpdates(state);
+    this.render();
+  }
+
+  /** An explicit or due background check: one batched package-manager call, never on render or keystrokes. */
+  private async checkToolUpdates(panel?: ToolsPanel): Promise<void> {
+    if (this.toolUpdateCheckRunning) return;
+    this.toolUpdateCheckRunning = true;
+    if (panel) { panel.checking = true; this.render(); }
+    try {
+      this.toolUpdates = await runToolUpdateCheck();
+    } finally {
+      this.toolUpdateCheckRunning = false;
+      if (panel) { panel.checking = false; panel.updates = this.toolUpdates; }
+    }
+    if (this.toolsPanel) this.toolsPanel.updates = this.toolUpdates;
+    if (!this.stopped) this.render();
+  }
+
+  private async quietToolUpdateCheck(): Promise<void> {
+    if (!toolUpdateCheckDue(this.promptConfiguration.toolUpdateChecks, this.toolUpdates)) return;
+    await this.checkToolUpdates();
+    const count = Object.keys(this.toolUpdates.outdated).length;
+    if (count && !this.stopped) {
+      this.output.addHistoryLine(`${SUBTLE}Optional tool updates available · /tools${RESET}`);
+      this.render();
+    }
+  }
+
+  private renderThemeStudioRows(state: ThemeStudioState, columns: number): string[] {
+    const draft: PromptConfiguration = {...this.promptConfiguration, customTheme: state.draft, nmsh: {...this.promptConfiguration.nmsh, palette: 'custom'}};
+    const width = Math.max(1, columns - 16);
+    const preview = state.picker || state.importPath !== undefined ? [] : this.withDraftTheme(draft, () => [
+      `  ${SECONDARY}${'Preview'.padEnd(12)}${RESET}${buildThemePreviewLine(draft, 'custom', width)}${RESET}`]);
+    return renderThemeStudio(state, columns, this.dimensions().rows, colorLevel(), preview);
+  }
+
+  private handleThemeStudioKey(key: Key, state: ThemeStudioState): void {
+    const result = studioKey(state, key, colorLevel(), this.shellCwd);
+    if (!result) return;
+    if (result.kind === 'cancel') { this.themeStudio = undefined; this.returnFromPanel(); return; }
+    if (result.kind === 'export') {
+      try { state.message = `Exported to ${writeThemeExport(state.draft)}`; }
+      catch (error) { state.message = `Export failed: ${error instanceof Error ? error.message : String(error)}`; }
+      return;
+    }
+    const next = {...this.promptConfiguration, customTheme: result.theme, nmsh: {...this.promptConfiguration.nmsh, palette: 'custom' as const}};
+    if (this.applySettingsConfiguration(next)) {
+      this.themeStudio = undefined;
+      this.output.addFrontendInteraction('/theme', `Custom theme ${result.theme.name} is active. Your terminal and editor colors are unchanged.`, SUCCESS);
+      this.startSweep('prompt', 'vivid');
+    }
+  }
+
+  // ---- Idle visuals ---------------------------------------------------------------
+
+  /** Any input, output, resize or lifecycle change: restart the inactivity countdown (and end idle visuals). */
+  private noteActivity(): void {
+    this.lastActivity = Date.now();
+    if (this.idle) this.dismissIdle();
+    else this.armIdle();
+  }
+
+  /** One timer for the configured timeout; none when the timeout is Never or NMSh is not running. */
+  private armIdle(): void {
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    const minutes = this.promptConfiguration.idleVisuals.timeout;
+    if (!minutes || this.stopped || !this.presentationStarted) return;
+    const delay = Math.max(1000, this.lastActivity + minutes * 60_000 - Date.now());
+    this.idleTimer = setTimeout(() => { this.idleTimer = undefined; this.onIdleTimeout(); }, delay);
+    this.idleTimer.unref?.();
+  }
+
+  /**
+   * Starts only at a safe, quiet prompt that NMSh owns: no running or waiting command, no panel,
+   * picker or palette, no passthrough, not suspended, and not while the terminal is unfocused.
+   */
+  private idleEligible(): boolean {
+    return !this.stopped && this.presentationStarted && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
+      && !this.running && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
+      && !this.pickerOpening && this.terminalFocus !== 'blurred';
+  }
+
+  private onIdleTimeout(): void {
+    const minutes = this.promptConfiguration.idleVisuals.timeout;
+    if (!minutes) return;
+    if (Date.now() - this.lastActivity < minutes * 60_000 - 50) { this.armIdle(); return; }
+    if (this.idleEligible()) this.startIdle(false);
+    else { this.lastActivity = Date.now(); this.armIdle(); }
+  }
+
+  /** Begins the overlay; `preview` is an explicit start from /screensaver. Effects Off keeps idle visuals off. */
+  private startIdle(preview: boolean): void {
+    const motion = idleMotion(this.promptConfiguration);
+    if (motion.disabled) {
+      if (preview) this.output.addFrontendInteraction('/screensaver', 'Idle visuals stay off while Decorative effects are Off.', INFO);
+      return;
+    }
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    this.screensaverPanel = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    const mode = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
+    this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still};
+    this.renderer.invalidate();
+    this.paintIdle();
+    if (!motion.still) this.idleSubscription = presentationClock.subscribe(now => this.tickIdle(now), this.idle.interval);
+  }
+
+  private tickIdle(now: number): void {
+    const idle = this.idle;
+    if (!idle || idle.paused) return;
+    idle.frame += 1;
+    const started = performance.now();
+    this.paintIdle(now);
+    // Adaptive cadence: a frame that costs too much slows the scene instead of the shell.
+    const cost = performance.now() - started;
+    if (cost > 35 && idle.interval < 500) {
+      idle.interval = Math.min(500, Math.round(idle.interval * 1.5));
+      this.stopIdleFrames();
+      this.idleSubscription = presentationClock.subscribe(next => this.tickIdle(next), idle.interval);
+    }
+  }
+
+  private paintIdle(now = Date.now()): void {
+    const idle = this.idle;
+    if (!idle) return;
+    const {columns, rows} = this.dimensions();
+    const time = idle.still ? 20_000 : sceneTime(now - idle.startedAt, idle.frame, idle.mode);
+    const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time,
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+    try { this.renderer.render({rows: frame, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
+    catch (error) { this.onTerminate(); throw error; }
+  }
+
+  private stopIdleFrames(): void {
+    this.idleSubscription?.(); this.idleSubscription = undefined;
+  }
+
+  /** An unfocused terminal: keep the overlay but stop drawing frames nobody can see. */
+  private pauseIdle(): void {
+    if (!this.idle || this.idle.paused) return;
+    this.idle.paused = true;
+    this.stopIdleFrames();
+  }
+
+  /** Restores the exact presentation underneath: nothing it covered was changed. */
+  private dismissIdle(render = true): void {
+    if (!this.idle) return;
+    this.stopIdleFrames();
+    this.idle = undefined;
+    this.lastActivity = Date.now();
+    this.renderer.invalidate();
+    if (render) this.render();
+    this.armIdle();
+  }
+
+  /**
+   * Setup Cat's preview for the current step, from the real renderers and the
+   * draft (never the saved config). Animated steps get one repaint timer while
+   * shown; nothing ever changes the real terminal cursor.
+   */
+  private setupPreview(state: SetupState, columns: number): string[] {
+    const draft = state.draft;
+    const section = SETUP_SECTIONS[state.section]?.id;
+    const width = Math.max(10, columns - 4);
+    const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
+    let animate = false;
+    const rows: string[] = [];
+    const motion = idleMotion(draft);
+    switch (section) {
+      case 'welcome': {
+        const cat = vespyrSprite();
+        const caption = [`${PRIMARY}Vespyr${RESET} ${SUBTLE}the NMSh cat${RESET}`, `${SUBTLE}also the Native Welcome; Setup Cat is this wizard${RESET}`];
+        cat.forEach((line, index) => rows.push(`  ${line}${RESET}  ${caption[index - 1] ?? ''}`));
+        break;
+      }
+      case 'terminal': {
+        // The real production glyphs in both modes, column by column, so a font problem is visible.
+        rows.push(...glyphDiagnosticRows(draft.glyphStyle).map(row => `  ${row}`), '');
+        // A drawn caret only: the real terminal cursor is never changed by a preview.
+        const caret = draft.cursor.shape === 'block' ? `${INVERSE}s${RESET}` : draft.cursor.shape === 'bar' ? `${ACCENT}▏${RESET}s`
+          : draft.cursor.shape === 'underline' ? `\u001B[4ms\u001B[24m` : `${SUBTLE}▏${RESET}s`;
+        const shape = {host: 'Host default: your terminal decides', block: 'Block', bar: 'Bar', underline: 'Underline'}[draft.cursor.shape];
+        const blink = draft.cursor.shape === 'host' ? '' : ` · blink ${draft.cursor.blink === 'host' ? 'as the terminal does' : draft.cursor.blink}`;
+        rows.push(`${label('Caret')}${PRIMARY}git ${caret}${PRIMARY}tatus${RESET}   ${SUBTLE}${shape}${blink}${RESET}`);
+        break;
+      }
+      case 'prompt': {
+        if (draft.provider === 'nmsh') {
+          rows.push(`${label('Prompt')}${buildContextLine(themePreviewContext(), width - 12, draft, 'composer', Date.now())}${RESET}`);
+          rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git status${RESET}`);
+          animate ||= treatmentAnimated(draft.presentation);
+          break;
+        }
+        // An external provider's own prompt, never the Native one standing in for it.
+        rows.push(this.setupExternalPromptRow(draft, width - 12, label(providerLabel(draft.provider))));
+        rows.push(`  ${SUBTLE}${providerExplanation('prompt', draft.provider)}${RESET}`, `  ${SUBTLE}${NATIVE_ONLY_NOTE}${RESET}`);
+        break;
+      }
+      case 'appearance': {
+        rows.push(`${label('Prompt')}${buildThemePreviewLine(draft, draft.nmsh.palette, width - 12, Date.now())}${RESET}`);
+        rows.push(`${label('Chrome')}${renderTabStrip(['Settings', 'Status', 'Config'], 2, Math.min(36, width - 12), true)}`);
+        rows.push(`${label('')}${SEPARATOR}${repeatToWidth(GLYPHS.separator, Math.min(36, width - 12))}${RESET}`);
+        rows.push(`${label('')}${background(UI_COLORS.selection)}${ACCENT}${GLYPHS.selection} ${PRIMARY}Selected row${' '.repeat(Math.max(0, Math.min(36, width - 12) - 14))}${RESET}`);
+        if (draft.presentation.preset !== 'off') {
+          // The selected treatment, live: Breathe breathes, Comet and Travel move, Static stays still.
+          const treatment = treatmentFor({...draft.presentation, intensity: 1}, themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance));
+          const swatch = treatment ? treatmentText('█'.repeat(Math.max(4, Math.min(36, width - 12))), treatment,
+            {role: 'effect', base: {red: 40, green: 40, blue: 46}, reducedMotion: draft.presentation.reducedMotion || isReducedMotion(), effectsOff: draft.presentation.effectsOff}, Date.now()) : '';
+          rows.push(`${label('Chroma')}${swatch}${RESET}  ${SUBTLE}${TREATMENT_MOTION_LABELS[draft.presentation.motion]}${RESET}`);
+          if (draft.provider === 'nmsh') rows.push(`  ${SUBTLE}${CHROMA_PREVIEW_NOTE}${RESET}`);
+        }
+        rows.push(`  ${SUBTLE}${draft.presentation.effectsOff ? 'Decorative effects Off: Chroma motion, sparkles and idle visuals stay still.'
+          : draft.presentation.reducedMotion ? 'Reduced Motion: colors stay, movement stops.' : 'Decorative effects On: Chroma motion and effects may move.'}${RESET}`);
+        // The light sweep over a semantic sample: with Semantic Preserve, ✔ and ✘ keep their hues.
+        const style = sweepStyleFor(draft);
+        if (style.level !== 'off') {
+          const sample: Array<{glyph: string; color?: Rgb; semantic?: boolean}> = [];
+          const add = (text: string, color: Rgb | undefined, semantic = false) => { for (const glyph of graphemes(text)) sample.push({glyph, color: glyph === ' ' ? undefined : color, semantic}); };
+          add('✔ 0 ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('success').background, true);
+          add('notMyShell ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('project').background);
+          add('~/src ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('cwd').background);
+          add('✘ 1', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('failure').background, true);
+          // One pass on each change in this step (the same event as the selected row), not a loop.
+          rows.push(`${label('Shimmer')}${sweepOnce(sample, this.sweep?.target === 'selection' ? this.sweepElapsed() : Number.POSITIVE_INFINITY, style, colorLevel(), sweepStill(draft))}${RESET}`);
+        }
+        animate ||= treatmentAnimated(draft.presentation);
+        break;
+      }
+      case 'editor': {
+        rows.push(...this.setupEditorPreview(draft, width));
+        break;
+      }
+      case 'transcript': {
+        rows.push(...this.setupTranscriptPreview(draft, width));
+        break;
+      }
+      case 'history': {
+        for (const [family, title, id] of [['history', 'History', draft.history], ['navigation', 'Navigation', draft.navigation], ['picker', 'Picker', draft.picker]] as const) {
+          rows.push(`${label(title)}${PRIMARY}${family === 'history' ? HISTORY_PROVIDERS.find(item => item.id === id)?.label : family === 'navigation'
+            ? NAVIGATION_PROVIDERS.find(item => item.id === id)?.label : PICKER_PROVIDERS.find(item => item.id === id)?.label}${RESET}`);
+          rows.push(`${label('')}${SUBTLE}${providerExplanation(family, id)}${RESET}`);
+        }
+        break;
+      }
+      case 'welcomeScreen': {
+        rows.push(`  ${SUBTLE}${providerExplanation('welcome', draft.welcome)}${RESET}`);
+        if (draft.welcome === 'vespyr') rows.push(...vespyrSprite().map(line => `  ${line}${RESET}`));
+        if (draft.statusStrip.enabled) rows.push(`${label('Strip')}${stripAnsi(renderStatusStrip(draft.statusStrip, this.stripStats, Math.min(60, width - 12))).trim()}`);
+        break;
+      }
+      case 'idle': {
+        if (motion.disabled) { rows.push(`  ${SUBTLE}Decorative effects Off: idle visuals stay off.${RESET}`); break; }
+        const mode = effectiveMode(draft.idleVisuals.mode, motion);
+        const elapsed = Date.now() - this.lastActivity;
+        rows.push(...idleFrameRows(this.screensaverGrid, {mode, width: Math.max(10, Math.min(56, columns - 6)), height: 6, palette: idlePaletteFor(draft),
+          level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode)})
+          .map(line => `  ${line}`));
+        animate = !motion.still;
+        break;
+      }
+      case 'tools': {
+        for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
+          const status = state.context.statuses[tool.executable ?? ''] ?? this.toolStatuses.get(tool.id);
+          const installed = status?.state === 'installed' ? `${SUCCESS}installed${RESET}` : status?.state === 'missing' ? `${SUBTLE}not installed${RESET}` : `${SUBTLE}…${RESET}`;
+          rows.push(`${label(tool.label)}${installed}  ${SUBTLE}${tool.description}${RESET}`);
+        }
+        break;
+      }
+    }
+    if (animate && !this.screensaverAnimation) {
+      this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
+    } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
+    return rows.map(row => truncateAnsi(row, columns - 2));
+  }
+
+  /**
+   * A compact, representative picture of the Editor step: where the composer
+   * sits, Normal or Chat transcript rows, a folded output block, syntax
+   * colors, ghost text and the empty-prompt prediction, each following the draft.
+   */
+  private setupEditorPreview(draft: PromptConfiguration, width: number): string[] {
+    const inner = Math.max(20, Math.min(60, width));
+    const chat = draft.transcriptPresentation === 'chat';
+    const command = (text: string) => {
+      const painted = `${renderSyntaxPreviewLine(text, draft.syntax, draft.nmsh.palette)}${RESET}`;
+      return chat ? `${' '.repeat(Math.max(1, inner - displayWidth(text) - 2))}${painted} ${SUBTLE}${GLYPHS.prompt}${RESET}` : `${SUBTLE}${GLYPHS.prompt}${RESET} ${painted}`;
+    };
+    const transcript = [command('npm test'), `${SECONDARY}  ${GLYPHS.success} 42 passed${RESET}`];
+    if (draft.outputFolding !== 'never') transcript.push(`${SUBTLE}  ${getCurrentGlyphMode() === 'nerd' ? '▸' : '>'} 318 more lines folded${RESET}`);
+    const ghost = draft.suggestions === 'none' ? '' : `${SECONDARY} --amend${RESET}`;
+    const composer = [`${ACCENT}${GLYPHS.prompt}${RESET} ${renderSyntaxPreviewLine('git commit -m "fix"', draft.syntax, draft.nmsh.palette)}${ghost}`];
+    const rule = `${SUBTLE}${repeatToWidth(GLYPHS.separator, inner)}${RESET}`;
+    const body = draft.composerPosition === 'top' ? [...composer, rule, ...transcript] : [...transcript, rule, ...composer];
+    const rows = body.map(line => `  ${SUBTLE}│${RESET} ${line}`);
+    const where = draft.composerPosition === 'flow' ? 'Flow: the composer follows the newest output' : `Composer docked at the ${draft.composerPosition}`;
+    rows.push(`  ${SUBTLE}${where} · ${chat ? 'Chat' : 'Normal'} transcript · syntax ${draft.syntax.highlighting ? 'on' : 'off'} · folding ${draft.outputFolding}${RESET}`);
+    rows.push(draft.suggestionsOnEmpty && draft.suggestions !== 'none'
+      ? `  ${SUBTLE}Empty prompt:${RESET} ${ACCENT}${GLYPHS.prompt}${RESET} ${SECONDARY}git push${RESET}  ${SUBTLE}predicted before typing${RESET}`
+      : `  ${SUBTLE}Empty prompt: no prediction until you type${RESET}`);
+    rows.push(`  ${SUBTLE}${providerExplanation('suggestions', draft.suggestions)}${RESET}`);
+    return rows;
+  }
+
+  /**
+   * The Transcript step's preview through the real history-header renderer:
+   * a historical prompt with its divider, the command (Normal or Chat), short
+   * output, and a long block as the Output folding draft would present it.
+   */
+  private setupTranscriptPreview(draft: PromptConfiguration, width: number): string[] {
+    const inner = Math.max(20, Math.min(72, width));
+    const chat = draft.transcriptPresentation === 'chat';
+    const sample = this.transcriptPreviewSample();
+    const header = renderHistoricalContext(sample, chat ? Math.max(10, Math.floor(inner * 0.6)) : inner, draft.transcript, draft.presentation);
+    const rows: string[] = [];
+    const place = (line: string) => chat ? `${' '.repeat(Math.max(0, inner - displayWidth(line)))}${line}` : line;
+    if (header) rows.push(place(header.ansi));
+    rows.push(place(`${SECONDARY}${GLYPHS.prompt} ${RESET}${PRIMARY}npm test${RESET}`), `${SUBTLE}  ${GLYPHS.success} 42 passing${RESET}`);
+    if (header) rows.push(place(header.ansi));
+    // The same long-block preview /transcript shows for this Output folding choice.
+    return [...rows.map(line => `  ${line}`), ...foldingPreview(draft.outputFolding)];
+  }
+
+  /** Setup Cat's external prompt preview, rendered off the render path once per provider. */
+  private setupExternalPrompt?: {provider: PromptProviderId; result?: StarshipPromptResult; error?: string};
+
+  private setupExternalPromptRow(draft: PromptConfiguration, width: number, label: string): string {
+    const provider = draft.provider;
+    const cached = this.setupExternalPrompt?.provider === provider ? this.setupExternalPrompt : undefined;
+    if (!cached) {
+      const entry: NonNullable<TerminalApp['setupExternalPrompt']> = {provider};
+      this.setupExternalPrompt = entry;
+      void this.renderExternalPrompt(draft).then(result => { entry.result = result; }, (error: unknown) => {
+        entry.error = error instanceof Error ? error.message : String(error);
+      }).then(() => { if (!this.stopped && this.setupState && this.setupExternalPrompt === entry) this.render(); });
+      return `${label}${SUBTLE}Checking ${providerLabel(provider)}…${RESET}`;
+    }
+    if (cached.result) return `${label}${this.externalPromptRow(cached.result, width, 'composer')}${RESET}`;
+    if (cached.error) return `${label}${SUBTLE}${truncateText(`No preview: ${cached.error}`, width)}${RESET}`;
+    return `${label}${SUBTLE}Checking ${providerLabel(provider)}…${RESET}`;
+  }
+
+  /** The Setup Cat title takes the current one-shot sweep when the step changes; otherwise it rests. */
+  private setupTitle(state: SetupState): string {
+    const text = 'Setup Cat';
+    const cells = [...text].map(glyph => ({glyph, color: glyph === ' ' ? undefined : {...UI_COLORS.primary}}));
+    const elapsed = this.sweep && this.sweep.section === state.section && this.sweep.titled ? this.sweepElapsed() : Number.POSITIVE_INFINITY;
+    return sweepOnce(cells, elapsed, sweepStyleFor(this.promptConfiguration), colorLevel());
+  }
+
+  // ---- Light sweep controller -----------------------------------------------------
+
+  /**
+   * At most one sweep at a time, started by an event (a new selection or a changed value in the
+   * active panel, a submitted command, an Apply or Save). A new event replaces the running sweep, so
+   * fast navigation never builds a backlog. One clock subscription exists only while a sweep runs.
+   */
+  private sweep?: {target: 'selection' | 'prompt'; startedAt: number; frame: number; strength: 'subtle' | 'vivid'; section?: number; titled?: boolean};
+  private sweepTimer?: () => void;
+  private lastSelection?: string;
+  private static readonly SWEEP_FRAME_MS = 40;
+  private static readonly SWEEP_MAX_MS = 1300;
+
+  private sweepAllowed(): boolean {
+    const style = sweepStyleFor(this.promptConfiguration);
+    return sweepAnimates(style.level, sweepStill(this.promptConfiguration), colorLevel()) && !this.stopped && !this.idle;
+  }
+
+  /** Elapsed time of the running sweep; deterministic runs use the frame count. */
+  private sweepElapsed(now = Date.now()): number {
+    if (!this.sweep) return Number.POSITIVE_INFINITY;
+    return isDeterministicPresentation() ? this.sweep.frame * TerminalApp.SWEEP_FRAME_MS : now - this.sweep.startedAt;
+  }
+
+  private startSweep(target: 'selection' | 'prompt', strength: 'subtle' | 'vivid', extra: {section?: number; titled?: boolean} = {}): void {
+    if (!this.sweepAllowed()) return;
+    this.sweep = {target, startedAt: Date.now(), frame: 0, strength, ...extra};
+    if (!this.sweepTimer) {
+      this.sweepTimer = presentationClock.subscribe(now => {
+        if (!this.sweep) return;
+        this.sweep.frame += 1;
+        if (this.sweepElapsed(now) > TerminalApp.SWEEP_MAX_MS) this.endSweep();
+        this.render();
+      }, TerminalApp.SWEEP_FRAME_MS);
+    }
+  }
+
+  private endSweep(): void {
+    this.sweep = undefined;
+    this.sweepTimer?.(); this.sweepTimer = undefined;
+  }
+
+  /** The selected panel row: the line marked with the selection pointer. */
+  private static selectedRowIndex(rows: readonly string[]): number {
+    return rows.findIndex(row => /^\s*[›>] \S/u.test(stripAnsi(row)));
+  }
+
+  /** Called with the panel rows of each render: a new selection or a changed value starts one sweep. */
+  private noteSelection(rows: readonly string[] | undefined): void {
+    const index = rows ? TerminalApp.selectedRowIndex(rows) : -1;
+    const signature = index === -1 ? undefined : `${this.setupState ? `setup:${this.setupState.section}` : 'panel'}|${stripAnsi(rows![index]!).trim()}`;
+    if (signature === this.lastSelection) return;
+    const sectionChanged = Boolean(this.setupState && this.lastSelection && !this.lastSelection.startsWith(`setup:${this.setupState.section}|`));
+    const opening = this.lastSelection === undefined;
+    this.lastSelection = signature;
+    if (!signature) { if (this.sweep?.target === 'selection') this.endSweep(); return; }
+    this.startSweep('selection', 'subtle', this.setupState ? {section: this.setupState.section, titled: sectionChanged || opening} : {});
+  }
+
+  /** Applies the running sweep to its target row in a painted frame (presentation only). */
+  private applySweep(rows: string[], plan: ScreenPlan, columns: number): void {
+    const sweep = this.sweep;
+    if (!sweep) return;
+    const elapsed = this.sweepElapsed();
+    const style = sweepStyleFor(this.promptConfiguration, sweep.strength);
+    const level = colorLevel();
+    const contentRange = (row: string, skipPointer: boolean) => {
+      const plain = stripAnsi(row);
+      const start = skipPointer ? plain.search(/[›>] \S/u) + 2 : plain.search(/\S/u);
+      return {from: Math.max(0, displayWidth(plain.slice(0, Math.max(0, start)))), to: Math.min(columns, displayWidth(plain.trimEnd()))};
+    };
+    if (sweep.target === 'prompt') {
+      const region = plan.regions.find(item => item.kind === 'prompt' && item.height > 0) ?? plan.regions.find(item => item.kind === 'input');
+      if (region) rows[region.top] = sweepAnsiRow(rows[region.top]!, elapsed, style, level, contentRange(rows[region.top]!, false));
+      return;
+    }
+    const panel = plan.regions.find(item => item.kind === 'panel');
+    if (!panel) return;
+    const local = TerminalApp.selectedRowIndex(rows.slice(panel.top, panel.top + panel.height));
+    if (local === -1) return;
+    const row = rows[panel.top + local]!;
+    rows[panel.top + local] = sweepAnsiRow(row, elapsed, style, level, contentRange(row, true));
+  }
+
+  /** Recommended-tool install state for Setup Cat's tools preview, detected once off the render path. */
+  private readonly toolStatuses = new Map<string, ProviderStatus>();
+
+  private renderScreensaverRows(state: ScreensaverPanelState, columns: number): string[] {
+    const {rows} = this.dimensions();
+    const settings = this.promptConfiguration.idleVisuals;
+    const motion = idleMotion(this.promptConfiguration);
+    const size = previewSize(columns, rows);
+    const mode = effectiveMode(settings.mode, motion);
+    const elapsed = Date.now() - state.startedAt;
+    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode, width: size.width, height: size.height,
+      time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode),
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+    // A real animated preview while the gallery is open; one timer, removed with the panel.
+    if (!motion.still && !motion.disabled && !this.screensaverAnimation) {
+      this.screensaverAnimation = presentationClock.subscribe(() => { if (this.screensaverPanel) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
+    }
+    return renderScreensaverPanel(state, columns, rows, {settings, motion, preview});
+  }
+
+  private handleScreensaverKey(key: Key, state: ScreensaverPanelState): void {
+    const action = screensaverKey(state, key, this.promptConfiguration.idleVisuals, this.promptConfiguration);
+    if (!action) return;
+    if (action.kind === 'editColors') {
+      this.screensaverPanel = undefined;
+      this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.openStopsEditor('idle');
+      return;
+    }
+    if (action.kind === 'close') {
+      this.screensaverPanel = undefined;
+      this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.returnFromPanel();
+    } else if (action.kind === 'change') {
+      this.applySettingsConfiguration({...this.promptConfiguration, idleVisuals: action.settings});
+      this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.armIdle();
+    } else this.startIdle(true);
+  }
+
+  private openStopsEditor(target: 'idle' | 'activity'): void {
+    const config = this.promptConfiguration;
+    const stops = target === 'idle' ? config.idleVisuals.customStops : config.liveActivity.customStops;
+    this.stopsEditor = {target, gradient: {stops: [...(stops.length >= MIN_CUSTOM_STOPS ? stops : PRESET_STOPS.lavender)], index: 0}};
+  }
+
+  /** The draft stops applied to a copy of the configuration, for live previews. */
+  private stopsDraft(editor: NonNullable<TerminalApp['stopsEditor']>): PromptConfiguration {
+    const config = this.promptConfiguration;
+    const customStops = editor.gradient.stops.length >= MIN_CUSTOM_STOPS ? [...editor.gradient.stops] : [...PRESET_STOPS.lavender];
+    return editor.target === 'idle'
+      ? {...config, idleVisuals: {...config.idleVisuals, colorSource: 'custom', customStops}}
+      : {...config, liveActivity: {colors: 'custom', customStops}};
+  }
+
+  /** Shared stop editor keys; Esc (when not typing a hex) saves the stops and returns. */
+  private handleStopsEditorKey(key: Key, editor: NonNullable<TerminalApp['stopsEditor']>): void {
+    const saved = editor.target === 'idle' ? this.promptConfiguration.idleVisuals.customStops : this.promptConfiguration.liveActivity.customStops;
+    if (gradientEditorKey(editor.gradient, key, () => saved.length >= MIN_CUSTOM_STOPS ? saved : PRESET_STOPS.lavender)) return;
+    if (key.kind !== 'escape' && key.kind !== 'interrupt') return;
+    if (key.kind === 'escape' && this.applySettingsConfiguration(this.stopsDraft(editor))) this.armIdle();
+    this.stopsEditor = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.returnFromPanel();
+  }
+
+  private renderStopsEditor(editor: NonNullable<TerminalApp['stopsEditor']>, columns: number): string[] {
+    const draft = this.stopsDraft(editor);
+    const title = editor.target === 'idle' ? 'Idle visuals · Custom colors' : 'Live activity · Custom colors';
+    const rows = ['', ...renderGradientEditorRows(editor.gradient, title).map(row => `  ${row}`), '', `  ${SUBTLE}${GLYPHS.separator.repeat(2)} Preview${RESET}`];
+    if (editor.target === 'idle') {
+      rows.push(...idleFrameRows(this.screensaverGrid, {mode: draft.idleVisuals.mode, width: Math.max(10, Math.min(56, columns - 6)), height: 5,
+        palette: idlePaletteFor(draft), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: 20_000}).map(line => `  ${line}`));
+    } else {
+      const {cells, style} = liveActivityPaint('• Running sleep 5 · ', draft);
+      rows.push(`  ${sweepCells(cells, Number.POSITIVE_INFINITY, style, colorLevel(), true)}${SECONDARY}3.4s${RESET}`,
+        `  ${SUBTLE}Only live work uses these colors; finished commands show their plain success or failure.${RESET}`);
+    }
+    rows.push('', renderControls(gradientEditorControls(editor.gradient)));
+    return framePanel(rows.map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, this.dimensions().rows));
+  }
+
+  private startSetup(entry?: string): void {
+    this.setupExternalPrompt = undefined;
+    const state = this.setupState = createSetup(this.promptConfiguration, entry);
+    void this.loadSetupContext(state);
+  }
+
+  /** Provider install state and completion facts, detected once per Setup Cat open; never on render. */
+  private async loadSetupContext(state: SetupState): Promise<void> {
+    const descriptors = [...PICKER_PROVIDERS, ...NAVIGATION_PROVIDERS, ...HISTORY_PROVIDERS, ...SUGGESTION_PROVIDERS, ...WELCOME_PROVIDERS]
+      .filter(descriptor => descriptor.kind === 'external' && descriptor.executable);
+    const statuses: Record<string, ProviderStatus> = {};
+    const facts = this.semanticService.completionFacts().then(result => {
+      state.context = {...state.context, completion: result ?? {zshCompletions: false, fzfTab: false, completionSystem: false}};
+    });
+    await Promise.all(descriptors.map(async descriptor => { statuses[descriptor.executable!] = await detectProvider(descriptor); }));
+    const starship = await detectProvider({id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', description: '', executable: 'starship'});
+    statuses.starship = starship;
+    for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
+      const status = await detectProvider(tool);
+      this.toolStatuses.set(tool.id, status);
+      if (tool.executable) statuses[tool.executable] ??= status;
+    }
+    state.context = {...state.context, statuses};
+    await facts;
+    if (!this.stopped && this.setupState === state) this.render();
+  }
+
+  private handleSetupKey(key: Key, state: SetupState): void {
+    if (state.toolBrowser) { void this.handleSetupToolsKey(key, state, state.toolBrowser); return; }
+    const result = setupKey(state, key);
+    if (!result) return;
+    if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
+    this.setupState = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+
+    if (result.kind === 'cancel') { this.returnFromPanel(); return; }
+    const previous = this.promptConfiguration;
+    const next = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
+    if (result.changed && !setupIsIdempotent({...state, draft: next})) {
+      if (!this.applySettingsConfiguration(next)) return;
+      this.armIdle();
+      if (previous.suggestions !== next.suggestions) this.applySuggestionProvider();
+      if (previous.history !== next.history) void this.loadHistory();
+      if (previous.navigation !== next.navigation) { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
+      if (previous.provider !== next.provider) void this.refreshProviderPrompt().then(() => this.render());
+      this.output.addFrontendInteraction('/setup', 'Setup Cat applied your changes. Rerun /setup anytime; it starts from your current settings.', SUCCESS);
+      this.startSweep('prompt', 'vivid');
+    } else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
+    this.panelOrigin = undefined;
+    if (result.tools === 'recommended' || result.tools === 'enhanced' || result.tools === 'individual') {
+      this.startTools();
+      if (this.toolsPanel) this.toolsPanel.tier = result.tools === 'individual' ? undefined : result.tools;
+    }
+  }
+
+  /**
+   * The shared tool browser inside Setup Cat: the same panel, recipes, previews, confirmation and
+   * installer as /tools. The Setup Cat draft and step are untouched; Esc returns to them.
+   */
+  private openSetupToolBrowser(state: SetupState, toolId?: string): void {
+    const config = state.draft;
+    const browser = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]));
+    browser.updates = this.toolUpdates;
+    const tool = toolId ? TOOLS.find(item => item.id === toolId) : undefined;
+    if (tool) browser.detail = tool;
+    state.toolBrowser = browser;
+    void refreshTools(browser, () => { if (!this.stopped && state.toolBrowser === browser) this.render(); });
+  }
+
+  private async handleSetupToolsKey(key: Key, state: SetupState, browser: ToolsPanel): Promise<void> {
+    if (browser.confirm) {
+      // Same confirmation and installer as /tools; a failure stays visible and the draft is kept.
+      await confirmToolInstall(browser, key, () => this.renderTaskPresentation());
+      if (browser.task?.state.status === 'succeeded' && browser.detail && browser.statuses[browser.detail.id]?.state === 'installed') this.pendingMilestone = true;
+      this.render();
+      return;
+    }
+    const action = toolsKey(browser, key);
+    if (action === 'close') {
+      state.toolBrowser = undefined;
+      // Fresh install state for the provider rows, so a just-installed tool can be selected at once.
+      clearProviderDetection();
+      void this.loadSetupContext(state);
+    } else if (action === 'refresh') await refreshTools(browser, () => this.render());
+    else if (action === 'checkUpdates') await this.checkToolUpdates(browser);
+    this.render();
+  }
+
+  /**
+   * Before a submitted command runs: when its first word exactly names a curated tool that the real
+   * zsh cannot resolve (no alias, function, builtin or executable), offer an install instead. Returns
+   * true when the offer is shown; the command text stays in the composer meanwhile.
+   */
+  private async offerInstallFor(command: string): Promise<boolean> {
+    const tool = installCandidate(command, this.promptConfiguration);
+    if (!tool || !tool.executable) return false;
+    const source = await this.semanticService.resolveSource(tool.executable);
+    const resolution = source === undefined ? 'unavailable' : source.kind;
+    const onPath = this.installProbe.onPath(tool.executable);
+    const recipe = this.installProbe.recipe(tool);
+    if (!shouldOfferInstall(tool, resolution, onPath, recipe)) return false;
+    this.installPrompt = createInstallPrompt(tool, recipe, command);
+    return true;
+  }
+
+  private async handleInstallPromptKey(key: Key, state: InstallPromptState): Promise<void> {
+    const action = installPromptKey(state, key);
+    if (!action) { this.render(); return; }
+    const restore = () => { this.editor.clear(); this.editor.insert(state.command); };
+    if (action === 'close' || action === 'later') { this.installPrompt = undefined; restore(); }
+    else if (action === 'run') { this.installPrompt = undefined; restore(); await this.submit(false, true); }
+    else if (action === 'ignoreTool' || action === 'never') {
+      this.installPrompt = undefined; restore();
+      this.applySettingsConfiguration(ignoreInstallSuggestion(this.promptConfiguration, action, state.tool));
+      this.output.addFrontendInteraction('/tools', action === 'never'
+        ? 'Install suggestions are off. Turn them back on in /settings (Tools).'
+        : `NMSh will not offer to install ${state.tool.label} again. Reset in /settings (Tools).`, INFO);
+    } else if (action === 'install') {
+      state.task = new TaskProgress(`Installing ${state.tool.label}`, () => this.renderTaskPresentation(), Date.now(), state.tool.label);
+      this.render();
+      const outcome = await state.task.run(state.recipe.command, [...state.recipe.args]);
+      if (this.stopped) return;
+      clearProviderDetection();
+      this.semanticService.cache.delete(state.tool.executable ?? '');
+      this.commandSources.clear();
+      const installed = resolveCommand(state.tool.executable ?? state.tool.id) !== undefined;
+      state.result = outcome.status === 'succeeded' && installed
+        ? {ok: true, message: `${state.tool.label} installed. Nothing was run.`}
+        : {ok: false, message: outcome.status === 'succeeded' ? `${state.recipe.label} finished, but ${state.tool.executable} was not found.`
+          : `${state.tool.label} was not installed. ${state.task.state.error ?? ''}`.trim()};
+      restore();
+      if (state.result.ok) this.pendingMilestone = true;
+    }
     this.render();
   }
 
@@ -2740,22 +3723,25 @@ export class TerminalApp {
   }
 
   /** Persists an inline Settings edit and applies it live; on failure the old value stays. */
-  private applySettingsConfiguration(next: PromptConfiguration | undefined): void {
-    if (!next) return;
+  private applySettingsConfiguration(next: PromptConfiguration | undefined): boolean {
+    if (!next) return false;
     try {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
     } catch (error) {
       this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
       this.render();
-      return;
+      return false;
     }
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
+    this.renderer.setCursorStyle(cursorStyleSequence(next.cursor.shape, next.cursor.blink));
+    if (next.idleVisuals.timeout !== this.idleArmedFor) { this.idleArmedFor = next.idleVisuals.timeout; this.armIdle(); }
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
     this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
+    return true;
   }
 
   /**
@@ -2912,21 +3898,29 @@ export class TerminalApp {
       else { this.providerPanelState = undefined; this.returnFromPanel(); }
     } else if (key.kind === 'enter') {
       const selected = providerPanelSelection(state);
-      if (state.step === 'installConfirm' && selected.install) {
+      const install = providerInstall(selected);
+      if (state.step === 'installConfirm' && install) {
         state.step = 'installProgress';
         state.task = new TaskProgress(`Installing ${selected.label}`, () => this.renderTaskPresentation(), Date.now(), selected.label);
         this.render();
-        const outcome = await state.task.run(selected.install.command, [...selected.install.args]);
+        const outcome = await state.task.run(install.command, [...install.args]);
         if (this.stopped) return;
         clearProviderDetection();
         state.statuses[selected.id] = await detectProvider(selected);
         state.step = 'list';
-        state.message = outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed'
-          ? `${selected.label} installed.` : `${selected.label} was not installed. ${state.task.state.error ?? ''}`.trim();
+        if (outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed') {
+          // Installed and re-detected: use it right away, as the user asked.
+          this.saveProviderChoice(state);
+          this.milestoneEffect();
+        } else {
+          state.message = outcome.status === 'succeeded'
+            ? `${install.label} finished, but ${selected.label} was not found on PATH; nothing was selected.`
+            : `${selected.label} was not installed. ${state.task.state.error ?? ''}`.trim();
+        }
       } else {
         const action = providerPanelEnterAction(state);
         if (action === 'installConfirm') state.step = 'installConfirm';
-        else if (action === 'unavailable') state.message = `${selected.label} is not available on this system.`;
+        else if (action === 'unavailable') state.message = installUnavailableReason(selected);
         else this.saveProviderChoice(state);
       }
     } else if (!handleProviderPanelKey(key, state)) return;
@@ -2958,7 +3952,8 @@ export class TerminalApp {
 
   private startTranscriptSettings(): void {
     const saved = structuredClone(this.promptConfiguration.transcript);
-    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved};
+    const folding = this.promptConfiguration.outputFolding;
+    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved, folding: {draft: folding, saved: folding}};
   }
 
   /** A representative history header: the live provider's identity over preview-only modules. */
@@ -2973,11 +3968,13 @@ export class TerminalApp {
   private saveTranscriptSettings(): void {
     const state = this.transcriptPanelState;
     if (!state) return;
-    const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft)};
+    const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft),
+      outputFolding: state.folding?.draft ?? this.promptConfiguration.outputFolding};
     try {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
+      this.output.setOutputFolding(next.outputFolding);
     this.output.presenter.setTreatment(next.presentation);
       this.transcriptPanelState = undefined;
       this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
@@ -3033,12 +4030,83 @@ export class TerminalApp {
   }
 
   private renderedPromptPanel(columns: number): string[] {
-    if (!this.promptPanelState) return [];
-    const preview = this.promptPanelState.step.startsWith('install') ? [] : this.promptPanelPreview(columns);
-    const full = renderPromptPanel(this.promptPanelState, columns, preview, this.promptThemePreviews(columns), this.dimensions().rows - 1,
-      this.promptGitShowcase(columns));
-    // Short terminals keep the editable rows and live preview; the theme gallery goes first.
-    return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(this.promptPanelState, columns, preview, [], this.dimensions().rows - 1);
+    const state = this.promptPanelState;
+    if (!state) return [];
+    return this.withDraftTheme(state.draft, () => this.renderPromptPanelRows(state, columns));
+  }
+
+  private renderPromptPanelRows(state: PromptPanelState, columns: number): string[] {
+    const now = Date.now();
+    const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
+    const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
+    const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
+      this.promptGitShowcase(columns), stops);
+    // Short terminals keep the editable rows and live preview; the theme gallery goes first, then preview lines.
+    const budget = this.dimensions().rows - 3;
+    if (full.length <= budget) return full;
+    const compact = renderPromptPanel(state, columns, preview, [], this.dimensions().rows - 1, [], stops);
+    const overflow = compact.length - budget;
+    if (overflow <= 0 || !preview.length) return compact;
+    return renderPromptPanel(state, columns, preview.slice(0, Math.max(1, preview.length - overflow)), [], this.dimensions().rows - 1, [], stops);
+  }
+
+  private chromaPanelActive(state: PromptPanelState): boolean {
+    return state.step === 'gradient' || (state.step === 'appearance' && state.view === 'chroma');
+  }
+
+  /** The Chroma draft (including stops being edited) the previews render. */
+  private chromaPreviewDraft(state: PromptPanelState): PromptConfiguration {
+    const draft = structuredClone(state.draft);
+    // Previews show the Native treatment even while an external provider is selected.
+    draft.provider = 'nmsh';
+    if (state.step === 'gradient' && state.gradient && state.gradient.stops.length >= 2) {
+      draft.presentation = {...draft.presentation, preset: 'custom', customStops: [...state.gradient.stops]};
+    }
+    return draft;
+  }
+
+  /**
+   * Chroma preview: the user's current prompt (live context, saved style,
+   * theme, vibrance, modules, icons) and the synthetic full-module showcase,
+   * both through the real renderer with the draft treatment at `now`.
+   */
+  private chromaPanelPreview(columns: number, now: number): string[] {
+    const state = this.promptPanelState!;
+    const width = Math.max(1, columns - 16);
+    const draft = this.chromaPreviewDraft(state);
+    const label = (text: string) => `  ${SECONDARY}${text.padEnd(12)}${RESET}`;
+    const current = buildContextLine(this.promptContext(), width, draft, 'composer', now);
+    const showcase = structuredClone(draft);
+    showcase.modules = showcase.modules.map(module => ({...module, visible: true}));
+    return [`${label('Current')}${current}${RESET}`, `${label('Showcase')}${buildContextLine(moduleShowcaseContext(), width, showcase, 'composer', now)}${RESET}`];
+  }
+
+  /** Panels with an animated Chroma preview repaint on the shared clock; nothing ticks otherwise. */
+  private syncPanelAnimation(): void {
+    const state = this.promptPanelState;
+    const animated = Boolean(state && this.chromaPanelActive(state) && treatmentAnimated(this.chromaPreviewDraft(state).presentation)
+      && colorLevel() !== 'none' && !this.stopped);
+    if (animated && !this.panelAnimation) this.panelAnimation = presentationClock.subscribe(() => this.render(), 120);
+    if (!animated && this.panelAnimation) { this.panelAnimation(); this.panelAnimation = undefined; }
+  }
+
+  /** Previews of a draft see its accent and custom theme; the live context is restored afterwards. */
+  private withDraftTheme<T>(draft: PromptConfiguration, render: () => T): T {
+    const live = themeContext();
+    const symbol = {nerd: promptSymbolGlyph(this.configuration.promptSymbol, this.configuration.promptSymbolCustom, true),
+      safe: promptSymbolGlyph(this.configuration.promptSymbol, this.configuration.promptSymbolCustom, false)};
+    const config = this.configuration;
+    setThemeContext(draft.nmsh.accent, draft.customTheme);
+    setPromptSymbol(promptSymbolGlyph(draft.promptSymbol, draft.promptSymbolCustom, true), promptSymbolGlyph(draft.promptSymbol, draft.promptSymbolCustom, false));
+    // The draft's chrome and Current Theme stops too, so previews show what Apply would show.
+    applyUiTheme(uiColorsFor(resolveChrome(draft.uiChrome, draft.nmsh.palette, draft.nmsh.accent, draft.customTheme)));
+    setActiveThemeStops(themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance));
+    try { return render(); } finally {
+      setThemeContext(live.accent, live.custom);
+      setPromptSymbol(symbol.nerd, symbol.safe);
+      applyUiTheme(uiColorsFor(resolveChrome(config.uiChrome, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+      setActiveThemeStops(themeChromaStops(config.nmsh.palette, config.nmsh.vibrance));
+    }
   }
 
   /** Rich Git view rows: the draft's colors and geometry over synthetic states; never runs Git. */
@@ -3052,11 +4120,19 @@ export class TerminalApp {
   }
 
   /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */
-  private promptThemePreviews(columns: number): string[] {
+  private promptThemePreviews(columns: number, now = Date.now()): string[] {
     const state = this.promptPanelState;
     if (!state || state.step !== 'appearance' || state.view === 'git') return [];
+    if (state.view === 'chroma') {
+      // One row per palette: the showcase prompt in the draft style, theme and vibrance.
+      const width = Math.max(1, columns - 20);
+      const draft = this.chromaPreviewDraft(state);
+      return TREATMENT_PRESETS.map(preset => buildThemePreviewLine({...draft, presentation: {...draft.presentation, preset,
+        customStops: draft.presentation.customStops.length ? draft.presentation.customStops : [...PRESET_STOPS.lavender]}},
+      draft.nmsh.palette, width, now));
+    }
     const width = Math.max(1, columns - 22);
-    return NATIVE_PALETTE_IDS.map(palette => buildThemePreviewLine(state.draft, palette, width));
+    return galleryPalettes(state.draft).map(palette => buildThemePreviewLine(state.draft, palette, width));
   }
 
   private externalPanelStatusText(state: PromptPanelState, provider: PromptProviderId, width: number): string {
@@ -3071,11 +4147,16 @@ export class TerminalApp {
     return hasVisibleContextModule(this.promptConfiguration, this.promptContext(), isOnCommandRelevant);
   }
 
-  private currentPromptLine(width: number): string {
+  private currentPromptLine(width: number, time = Date.now()): string {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
-      return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement);
+      return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement, time);
     }
-    return buildContextLine(this.promptContext(), width, this.promptConfiguration);
+    return buildContextLine(this.promptContext(), width, this.promptConfiguration, this.promptConfiguration.placement, time);
+  }
+
+  /** Animated Chroma on the Native prompt row needs presentation frames; external prompts never do. */
+  private promptChromaAnimated(): boolean {
+    return this.effectivePromptProvider === 'nmsh' && treatmentAnimated(this.promptConfiguration.presentation) && colorLevel() !== 'none';
   }
 
   /**
@@ -3107,10 +4188,10 @@ export class TerminalApp {
   }
 
   /** External provider content follows the native placement rule: the divider fill only in header placement. */
-  private externalPromptRow(prompt: StarshipPromptResult, width: number, placement: PromptConfiguration['placement']): string {
+  private externalPromptRow(prompt: StarshipPromptResult, width: number, placement: PromptConfiguration['placement'], time = Date.now()): string {
     const content = truncateAnsi(prompt.ansi, Math.max(0, width - 1));
     if (placement === 'composer') return `${content}${RESET}`;
-    return `${content}${RESET}${SEPARATOR}${repeatToWidth(GLYPHS.separator, Math.max(0, width - displayWidth(content)))}${RESET}`;
+    return `${content}${RESET}${paintDivider(repeatToWidth(GLYPHS.separator, Math.max(0, width - displayWidth(content))), this.promptConfiguration.presentation, time)}${RESET}`;
   }
 
   private scroll(direction: -1 | 1): void {
@@ -3262,8 +4343,27 @@ export class TerminalApp {
    * focus, cursor and PTY sizing all call this instead of counting rows.
    */
   private inspectorRows(columns: number): string[] {
-    if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms || this.editor.text.startsWith('/')) return [];
-    return renderInspector(inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions, this.semanticService.cache), columns);
+    if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms) return [];
+    if (this.editor.text.startsWith('/')) {
+      const slash = describeSlashCommand(this.editor.text);
+      return slash ? [truncateText(`Inspect ${this.editor.text.trim().split(/\s+/u)[0]}`, columns), truncateText(slash, columns)] : [];
+    }
+    const context = inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions, this.semanticService.cache);
+    if (!context || context.kind !== 'command' || context.value !== context.command) return renderInspector(context, columns);
+    return renderInspector(context, columns, describeCommandSource(context.value, this.commandSource(context.value)));
+  }
+
+  /** Cached source lookup; a miss is resolved off the keypress path and re-renders when known. */
+  private commandSource(word: string): CommandSource | undefined {
+    if (this.commandSources.has(word)) return this.commandSources.get(word) ?? undefined;
+    if (this.commandSources.size >= 512) this.commandSources.delete(this.commandSources.keys().next().value!);
+    this.commandSources.set(word, null);
+    void this.semanticService.resolveSource(word).then(source => {
+      if (this.stopped) return;
+      if (source) this.commandSources.set(word, source); else this.commandSources.delete(word);
+      if (source && this.inspectorVisible) this.render();
+    });
+    return undefined;
   }
 
   private planFrame(
@@ -3273,6 +4373,46 @@ export class TerminalApp {
     suggestions = this.composerSuggestions().length,
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
+    // The status strip owns one top row only when it is on, fits, and no panel owns the screen.
+    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planComposer(columns, rows - 1, fullInput, suggestions, panelRows));
+    return this.planComposer(columns, rows, fullInput, suggestions, panelRows);
+  }
+
+  private stripActive(columns: number, rows: number): boolean {
+    return stripVisible(this.promptConfiguration.statusStrip, columns, rows);
+  }
+
+  private statusStripRow(columns: number): string {
+    return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns);
+  }
+
+  /** One timer while the strip is on and NMSh owns the screen; none otherwise. */
+  private syncStatusStrip(): void {
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
+      && this.promptConfiguration.statusStrip.enabled;
+    if (wanted && !this.stripTimer) {
+      this.stripTimer = presentationClock.subscribe(() => void this.sampleStrip(), STRIP_REFRESH_MS);
+      void this.sampleStrip();
+    } else if (!wanted && this.stripTimer) {
+      this.stripTimer(); this.stripTimer = undefined;
+    }
+  }
+
+  private async sampleStrip(): Promise<void> {
+    if (this.stripSampling) return;
+    this.stripSampling = true;
+    try {
+      const {columns} = this.dimensions();
+      const before = this.statusStripRow(columns);
+      this.stripStats = await this.statsSource.sample();
+      // The clock also moves without new stats; repaint only when the row text changes.
+      if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
+    } catch { /* A failed sample keeps the previous values. */ }
+    finally { this.stripSampling = false; }
+  }
+
+  private planComposer(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
+    panelRows: number | undefined): ScreenPlan {
     const transcriptRows = this.output.wrapped(columns).length;
     const input = {
       rows,
@@ -3299,21 +4439,29 @@ export class TerminalApp {
 
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    if (this.idle) { this.paintIdle(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
+    this.syncPanelAnimation();
+    if (this.pendingMilestone && !this.settingsPanelActive && !this.running) this.milestoneEffect();
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();
     const panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns) : undefined;
+    this.noteSelection(panelRows);
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.suggestionGhost();
     const fullInput = this.layoutEditorInput(columns);
-    const plan = this.planFrame(columns, rows, fullInput, availableSuggestions.length, panelRows?.length);
+    const completionMenu = availableSuggestions === this.shellSuggestions && availableSuggestions.length > 0;
+    const plan = this.planFrame(columns, rows, fullInput, completionMenu ? completionMenuRows(availableSuggestions.length) : availableSuggestions.length, panelRows?.length);
     const input = plan.panelActive
       ? {...fullInput, rows: [], caretRow: 0, caretColumn: 0}
       : this.layoutEditorInput(columns, plan.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
-    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, plan.suggestionCount);
+    // A bounded completion viewport: when candidates overflow it, the last row says how many follow.
+    const menuOverflow = completionMenu && plan.suggestionCount > 1 && availableSuggestions.length > plan.suggestionCount;
+    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, menuOverflow ? plan.suggestionCount - 1 : plan.suggestionCount);
+    const hiddenBelow = menuOverflow ? availableSuggestions.length - suggestionView.start - suggestionView.items.length : 0;
     if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
       this.lastPtyRows = plan.ptyRows;
       this.lastPtyColumns = columns;
@@ -3382,7 +4530,8 @@ export class TerminalApp {
     });
 
     // The plan decides where each region lives; this only decides what paints into it.
-    const separator = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`;
+    // Composer top and bottom divider lines; the prompt row's divider fill uses the same source.
+    const separator = `${paintDivider(repeatToWidth(GLYPHS.separator, columns), this.promptConfiguration.presentation, Date.now())}${RESET}`;
     const regionRows = (region: Region): string[] => {
       switch (region.kind) {
         case 'transcript': return visible;
@@ -3392,15 +4541,17 @@ export class TerminalApp {
         case 'panel': return plan.composerPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'inspector': return this.inspectorRows(columns);
-        case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
+        case 'suggestions': return [...suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
           if ('correction' in suggestion) return renderCorrection(suggestion, columns);
-          if ('source' in suggestion && 'replacement' in suggestion) return renderCompletion(suggestion, selected, columns);
+          if ('source' in suggestion && 'replacement' in suggestion) {
+            return renderCompletion(suggestion, selected, columns, this.completionDescription(suggestion));
+          }
           return truncateAnsi(
             `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
             columns,
           );
-        });
+        }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])];
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': {
           if (!this.running) return [];
@@ -3411,6 +4562,7 @@ export class TerminalApp {
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
         case 'separator': return [separator];
+        case 'status': return [this.statusStripRow(columns)];
       }
     };
     const frameRows = new Array<string>(plan.rows).fill('');
@@ -3455,6 +4607,13 @@ export class TerminalApp {
 
   private cancelPresentation(): void {
     this.effects.cancel();
+    this.endSweep();
+    if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
+    this.stopIdleFrames();
+    this.idle = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.stripTimer?.(); this.stripTimer = undefined;
+    this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
     this.output.setWelcomeFrame('open');
@@ -3474,10 +4633,16 @@ export class TerminalApp {
         const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
-      if (region.kind === 'separator' || region.kind === 'composerBorder') {
-        rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
+      // Live composer divider lines move with Chroma only when Divider lines follow Chroma.
+      if ((region.kind === 'separator' || region.kind === 'composerBorder') && dividerAnimated(settings)) {
+        rows[region.top] = paintDivider(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, now) + RESET;
+      }
+      // The prompt row is re-rendered from the same semantic modules; only Chroma colors move (its divider fill too).
+      if (region.kind === 'prompt' && region.height > 0 && (this.promptChromaAnimated() || dividerAnimated(settings)) && this.decorativeMotionAllowed()) {
+        rows[region.top] = this.currentPromptLine(frame.columns ?? 80, now);
       }
     }
+    this.applySweep(rows, plan, frame.columns ?? 80);
     const active = this.effects.active;
     const region = active && effectRegion(plan, active.placement);
     if (active && !region) this.effects.cancel();
@@ -3502,10 +4667,12 @@ export class TerminalApp {
 
   private syncPresentationClock(): void {
     if (!this.presentationStarted || this.stopped) return;
+    this.syncStatusStrip();
     const settings = this.promptConfiguration.presentation;
-    const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
-      && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
-    const needsFrames = Boolean(this.running || this.effects.active || (animatedRule && this.decorativeMotionAllowed()));
+    const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder'
+      || (region.kind === 'prompt' && region.height > 0)) && dividerAnimated(settings) && colorLevel() !== 'none';
+    const animatedPrompt = this.presentationFrame?.plan.regions.some(region => region.kind === 'prompt' && region.height > 0) && this.promptChromaAnimated();
+    const needsFrames = Boolean(this.running || this.effects.active || ((animatedRule || animatedPrompt) && this.decorativeMotionAllowed()));
     if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
     if (!needsFrames) { this.presentationSubscription?.(); this.presentationSubscription = undefined; }
     if (this.decorativeMotionAllowed() && this.output.hasWelcome && !this.welcomeBlinkTimer) this.scheduleWelcomeBlink();
@@ -3520,7 +4687,12 @@ export class TerminalApp {
     const isActive = (Date.now() - this.lastOutputTime) < 750;
     const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
     const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
-    return `${shimmerText(parts.phrase, animationElapsed, this.decorativeMotionAllowed() ? isActive : false)}${SECONDARY}${parts.duration}${RESET}`;
+    // A soft light sweep over the working phrase: its own colors lifted in place, never moved; faster while output arrives.
+    // Colors come from Live activity colors; the sweep is the same light sweep everywhere.
+    const still = !this.decorativeMotionAllowed() || sweepStill(this.promptConfiguration);
+    const {cells, style} = liveActivityPaint(parts.phrase, this.promptConfiguration, this.activityAnimationNow, still);
+    const phrase = sweepCells(cells, animationElapsed * (isActive ? 1.4 : 1), style, colorLevel(), !this.decorativeMotionAllowed());
+    return `${phrase}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -3606,9 +4778,15 @@ export class TerminalApp {
     this.endStartupWatch();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
+    this.installPrompt?.task?.dispose();
     this.providerPanelState?.task?.dispose();
     this.welcomeBlinkTimer?.();
     this.welcomeBlinkTimer = undefined;
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    this.stopIdleFrames();
+    this.idle = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.endSweep();
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
     process.off('SIGTSTP', this.onSuspend);
@@ -3620,6 +4798,7 @@ export class TerminalApp {
     this.terminalFocus = 'unknown';
     try { this.renderer.leave(); } catch { /* A closed terminal must not prevent resource cleanup. */ }
     this.completionService.dispose();
+    this.commandDescriptions.dispose();
     this.historyQueryAbort?.abort();
     this.clearCorrection();
     this.directoryQueryAbort?.abort();
@@ -3628,4 +4807,9 @@ export class TerminalApp {
     this.semanticService.kill();
     this.finish(exitCode);
   }
+}
+
+/** Commands newest first, read lazily so navigation stops at its bound. */
+function* historyCommands(entries: readonly {command: string}[]): Iterable<string> {
+  for (const entry of entries) yield entry.command;
 }

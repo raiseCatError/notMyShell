@@ -68,7 +68,7 @@ jobs:
         run: npm run typecheck
 
       - name: Typecheck benchmark script
-        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts scripts/platform-benchmarks.ts
+        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts scripts/platform-benchmarks.ts scripts/idle-benchmarks.ts
 
       - name: Bounded platform timing smoke
         run: |

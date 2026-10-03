@@ -101,6 +101,11 @@ function catRow(row: number, frame: WelcomeCatFrame = 'open'): {ansi: string; pl
   return {ansi, plain};
 }
 
+/** The approved Vespyr sprite alone (four rows), for places that show the mascot without the Welcome card. */
+export function vespyrSprite(frame: WelcomeCatFrame = 'open'): string[] {
+  return Array.from({length: CAT_ROWS}, (_, row) => catRow(row, frame).ansi);
+}
+
 interface Span {
   text: string;
   color: typeof BODY;

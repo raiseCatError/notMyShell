@@ -1,3 +1,4 @@
+import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 export interface SlashCommand {
   name: string;
   insertion: string;
@@ -5,12 +6,23 @@ export interface SlashCommand {
 }
 
 export const slashCommands: readonly SlashCommand[] = [
-  {name: '/effects', insertion: '/effects ', description: 'Preview sparkles or rain in owned chrome; /effects stop cancels'},
+  {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
+  {name: '/cursor', insertion: '/cursor', description: 'Text caret shape and blink while NMSh owns the composer'},
+  {name: '/activity', insertion: '/activity', description: 'Live activity colors for the running-command line'},
+  {name: '/screensaver', insertion: '/screensaver', description: 'Idle visuals: live gallery, timeout and colors'},
+  {name: '/screensaver start', insertion: '/screensaver start', description: 'Start the selected idle visual now; any key or mouse stops it'},
+  {name: '/theme', insertion: '/theme', description: 'Theme Studio: clone, edit, import and export a custom Native theme'},
+  {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
+  {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
+  {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
+  {name: '/setup appearance', insertion: '/setup appearance', description: 'Setup Cat: theme, vibrance and Chroma'},
+  {name: '/setup transcript', insertion: '/setup transcript', description: 'Setup Cat: transcript presentation, history colors, dividers and folding'},
+  {name: '/setup tools', insertion: '/setup tools', description: 'Setup Cat: optional tools, update checks and install suggestions'},
   {name: '/tools', insertion: '/tools', description: 'Browse optional tools, installation previews and supported configuration'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
@@ -32,11 +44,17 @@ export const slashCommands: readonly SlashCommand[] = [
 ];
 
 export type ParsedSlashCommand =
-  | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'stop' | 'help'; placement: 'top' | 'bottom'}
+  | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
   | {kind: 'prompt'}
+  | {kind: 'chroma'}
+  | {kind: 'theme'}
+  | {kind: 'cursor'}
+  | {kind: 'activity'}
+  | {kind: 'screensaver'; start: boolean; mode?: IdleMode}
   | {kind: 'tools'}
+  | {kind: 'setup'; entry?: string}
   | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
@@ -56,13 +74,23 @@ export type ParsedSlashCommand =
 
 export function parseSlashCommand(input: string): ParsedSlashCommand | undefined {
   if (!input.startsWith('/')) return undefined;
-  const effect = /^\/effects(?:\s+(sparkles|rain|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
-  if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
+  const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
+  if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
+  if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
+  if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
+  if (/^\/cursor\s*$/u.test(input)) return {kind: 'cursor'};
+  if (/^\/activity\s*$/u.test(input)) return {kind: 'activity'};
+  const screensaver = /^\/screensaver(?:\s+(start)(?:\s+(\w+))?)?\s*$/u.exec(input);
+  if (screensaver && (!screensaver[2] || (IDLE_MODES as readonly string[]).includes(screensaver[2]))) {
+    return {kind: 'screensaver', start: screensaver[1] === 'start', ...(screensaver[2] ? {mode: screensaver[2] as IdleMode} : {})};
+  }
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
+  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript))?\s*$/u.exec(input);
+  if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};

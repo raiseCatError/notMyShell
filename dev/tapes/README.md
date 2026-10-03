@@ -1,6 +1,19 @@
-# VHS development demos
+# Demo capture: VHS and asciinema
 
-These optional VHS tapes capture welcome, Settings v2, an ordinary command and native history selection. They are development tooling only; NMSh does not depend on VHS at runtime, and `npm test` does not invoke it.
+NMSh keeps two recording tools with separate jobs and invents no third:
+
+- **VHS** (`dev/tapes/*.tape`) is the canonical *scripted, reproducible* demo
+  tool: README captures, deterministic feature demos (Settings, Chroma, idle
+  visuals) and development tapes.
+- **asciinema** (`scripts/readme-demo/record.cjs`, via tmux) records *real
+  interactive sessions*: debugging and support evidence, replayable terminal
+  event streams and optional web playback.
+
+Neither is a runtime dependency, and neither is installed for NMSh users.
+
+## VHS tapes
+
+These optional VHS tapes capture welcome, Settings v2, an ordinary command, native history selection and idle visuals. They are development tooling only; NMSh does not depend on VHS at runtime, and `npm test` does not invoke it.
 
 ## Run
 
@@ -14,7 +27,17 @@ vhs dev/tapes/welcome.tape
 vhs dev/tapes/settings.tape
 vhs dev/tapes/command.tape
 vhs dev/tapes/intelligence.tape
+vhs dev/tapes/idle-aurora.tape      # Aurora Drift, Aurora Chroma
+vhs dev/tapes/idle-warp.tape        # Warp Starfield
+vhs dev/tapes/idle-fireworks.tape   # Fireworks, Rainbow Chroma
+vhs dev/tapes/idle-catppuccin.tape  # Aurora Drift following Catppuccin Mocha (blue accent)
+vhs dev/tapes/shimmer.tape          # color-aware light sweep, one pass per row
 ```
+
+Idle-visual tapes write short WebM files (smooth gradients without large GIF
+artifacts) plus a PNG screenshot. `NMSH_DEMO_CONFIG` passes a JSON overlay to
+the isolated demo config (glyph style, Chroma palette, theme), and
+`NMSH_IDLE_START_MS` picks the deterministic starting phase.
 
 VHS writes GIFs under `dev/tapes/output/`, which is ignored by Git. VHS is not installed automatically. Install it using the instructions in the [official VHS repository](https://github.com/charmbracelet/vhs) if you want to record these demos.
 

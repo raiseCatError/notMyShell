@@ -7,7 +7,8 @@ import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {mkdtempSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {filterCompletions, parseNativeCompletions, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
+import {commandIdentity, filterCompletions, isInternalHelper, parseNativeCompletions, rankCommandCandidates, type CommandUsage, type CompletionCandidate,
+  type CompletionContext, type CompletionSource} from './completion.js';
 
 export type {CompletionCandidate} from './completion.js';
 const script = join(dirname(fileURLToPath(import.meta.url)), 'capture.zsh');
@@ -78,12 +79,15 @@ export class CompletionService {
   private active?: AbortController;
   private generation = 0;
   private shellNames: ReadonlyMap<string, CommandType> = new Map();
+  private usage: ReadonlyMap<string, CommandUsage> = new Map();
 
   constructor(private readonly source: CompletionSource = new ShellCompletionSource()) {}
 
   dispose(): void { this.cancel(); this.source.dispose?.(); }
   invalidate(): void { this.dispose(); }
   setShellKnowledge(names: ReadonlyMap<string, CommandType>): void { this.cancel(); this.shellNames = new Map(names); }
+  /** Command-name use from eligible local history; never private or deleted entries. */
+  setCommandUsage(usage: ReadonlyMap<string, CommandUsage>): void { this.usage = usage; }
 
   cancel(): void {
     this.generation += 1;
@@ -98,17 +102,26 @@ export class CompletionService {
     const active = new AbortController();
     this.active = active;
     try {
-      const candidates = await this.source.query({buffer: input, cwd, cursor}, active.signal);
+      let candidates = await this.source.query({buffer: input, cwd, cursor}, active.signal);
       const range = completionWord({buffer: input, cwd, cursor});
       if (range?.start === 0) {
         const prefix = input.slice(0, cursor);
         for (const [name, type] of this.shellNames) {
           if (name.startsWith(prefix) && !candidates.some(candidate => candidate.value === name)) candidates.push({
-            value: name, display: name, name, kind: 'command', description: `${type} in the current shell`, source: 'shell-metadata',
+            value: name, display: name, name, kind: 'command', description: '', source: 'shell-metadata',
+            ...(commandIdentity(type) ? {identity: commandIdentity(type)} : {}),
             replacement: range, context: {buffer: input, cwd, cursor}, insertionCursor: name.length,
             insertion: name + input.slice(range.end),
           });
         }
+        // Semantic identity from the session's own metadata wins over source guesses.
+        candidates = candidates.map(candidate => {
+          if (candidate.kind !== 'command') return candidate;
+          const known = commandIdentity(this.shellNames.get(candidate.value));
+          return known && known !== candidate.identity ? {...candidate, identity: known} : candidate;
+        });
+        const word = input.slice(range.start, cursor);
+        candidates = rankCommandCandidates(candidates.filter(candidate => !isInternalHelper(candidate, word)), word, this.usage, Date.now());
       }
       return generation === this.generation && !active.signal.aborted ? candidates : [];
     } catch {

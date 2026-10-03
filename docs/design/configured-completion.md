@@ -52,3 +52,20 @@ then bounded persistent transport; then composer cursor/invalidation integration
 and picker selection; finally failure, quoting, Unicode, performance and cumulative
 verification. Use the current checkout and one primary implementer. Physical QA
 is additive and deferred. Version stays 0.7.0; PR targets #266 and stays unmerged.
+
+## Knowledge parity (v0.15 pass)
+
+The helper now asks zsh for plain group explanations
+(`zstyle ':completion:*:descriptions' format '%d'`) and captures the `-X`
+explanation as the candidate group, so groups read "common commands",
+"external command", "local directory" or "option" instead of zsh's internal
+`-default-`. Internal `-name-` groups are dropped. `_describe` display strings
+(`checkout  -- checkout a branch`) are reduced to the description. Subcommand
+groups after the command word are classified as subcommands, and "external
+command" maps to the executable identity.
+
+zsh-completions is consumed as knowledge whenever it is on the configured
+`fpath`; nothing extra is sourced. fzf-tab is detected and reported (Setup Cat,
+tools step) but never owns NMSh's editor or completion UI: the helper removes
+any `compadd` override and calls `_main_complete` directly. NMSh does not claim
+fzf-tab compatibility. Partial user input is never executed.

@@ -1,14 +1,16 @@
-import {paintTreatment, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
+import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
-import {background, foreground, UI_COLORS} from '../ui/palette.js';
+import {background, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {mixRgb} from '../chroma/chroma.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
 import {shimmerTextWithColors} from '../status/shimmer.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizePromptStyle, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
+import {normalizeStyleProfiles} from '../prompt/styles.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {foldWindow} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor} from '../prompt/snapshot.js';
@@ -16,11 +18,20 @@ import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
 import {DEFAULT_TRANSCRIPT_APPEARANCE, normalizeConnectorFade, type GitColorMode, type TranscriptAppearance} from '../prompt/configuration.js';
 import type {CompletedCommand, HistoricalContextSnapshot, SecondaryActivity} from './OutputBuffer.js';
 
-const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
+/**
+ * History rules are UI chrome, resolved at use so themes apply. The shipped
+ * Lavender chrome keeps its original rule colors exactly; any other chrome
+ * gets lighter and darker tones of its own separator.
+ */
+const SHIPPED_SEPARATOR = {red: 139, green: 132, blue: 178};
+const shippedChrome = () => UI_COLORS.separator.red === SHIPPED_SEPARATOR.red && UI_COLORS.separator.green === SHIPPED_SEPARATOR.green
+  && UI_COLORS.separator.blue === SHIPPED_SEPARATOR.blue;
+/** History divider tones of the UI separator role (Follow UI theme); Chroma dividers use the shared divider source. */
+const archiveDividerRgb = () => shippedChrome() ? {red: 162, green: 151, blue: 190} : mixRgb(UI_COLORS.separator, UI_COLORS.primary, 0.22);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 /** Row surfaces: submitted command rows, hovered and focused disclosure rows. */
 const COMMAND_SURFACE = background({red: 38, green: 38, blue: 48});
@@ -368,8 +379,8 @@ const LEGACY_BACKGROUNDS: Record<string, Rgb> = {
 };
 /** Compact density: a finer dashed rule in a quieter tone, same single row. */
 const DIVIDER_STYLES = {
-  normal: {glyph: '─', color: ARCHIVE_DIVIDER},
-  compact: {glyph: '┈', color: foreground({red: 118, green: 112, blue: 138})},
+  normal: {glyph: '─', get color() { return archiveDividerRgb(); }},
+  compact: {glyph: '┈', get color() { return shippedChrome() ? {red: 118, green: 112, blue: 138} : mixRgb(UI_COLORS.separator, {red: 0, green: 0, blue: 0}, 0.15); }},
 } as const;
 
 interface HistoricalSegment {
@@ -444,13 +455,16 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
     const fade = snapshot.connectorFade === undefined ? undefined
       : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), connector);
     const fadeColors = normalizeConnectorFadeColors(snapshot.connectorFadeColors);
+    // History replays the submitted style profile; Chroma is a live treatment and never replays.
+    const submitted = normalizePromptStyle(snapshot.style);
+    const extras = {profiles: normalizeStyleProfiles(submitted === 'powerline' ? undefined : {[submitted]: snapshot.styleProfile}, gapEnabled ? gap : 0, spacing)};
     const left = fitPowerlineBlocks(blocks.filter((_, index) => segments[index]!.placement !== 'right'), gap, spacing, width,
-      endStyle, gapEnabled, startStyle, connector, fade, fadeColors);
+      endStyle, gapEnabled, startStyle, connector, fade, fadeColors, extras);
     const right = blocks.filter((_, index) => segments[index]!.placement === 'right');
     if (right.length === 0) return left;
     return {left, right: fitRightPowerlineBlocks(right, width - displayWidth(left) - 1 - RIGHT_CONTEXT_MIN_DIVIDER,
       candidate => renderPowerlineBlocks(candidate, gap, spacing, endStyle, gapEnabled, startStyle, connector, fade, fadeColors,
-        snapshot.mirrorRight ? 'mirrored' : 'normal'))};
+        snapshot.mirrorRight ? 'mirrored' : 'normal', extras))};
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),
@@ -464,6 +478,33 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
  * and the historical prompt are off. Presentation only: stored snapshots and
  * raw PTY output are never modified.
  */
+/** Deliberately quiet neutral divider: readable, clearly secondary. */
+const MUTED_DIVIDER: Rgb = {red: 98, green: 100, blue: 106};
+
+/**
+ * Historical divider color, by Divider colors: Follow Chroma (the active
+ * palette, always static here; the UI-theme tone while Chroma is Off),
+ * Follow history (the History colors mode), Follow UI theme (the separator
+ * role's history tone) or Muted grayscale. Presentation only.
+ */
+function historicalDivider(text: string, context: HistoricalContextSnapshot, appearance: TranscriptAppearance,
+  treatment: TreatmentSettings, uiTone: Rgb): string {
+  const mode = appearance.dividerColors ?? 'chroma';
+  if (mode === 'chroma') return paintDivider(text, {...treatment, rules: true}, 0, false, uiTone);
+  if (mode === 'muted') return paintDivider(text, DEFAULT_TREATMENT_SETTINGS, 0, false, appearance.dividerDensity === 'compact' ? mixRgb(MUTED_DIVIDER, {red: 0, green: 0, blue: 0}, 0.15) : MUTED_DIVIDER);
+  if (mode === 'history') {
+    const first = context.prompt?.segments[0];
+    const segment: HistoricalSegment = first ? {text: '', role: first.role, background: first.background} : legacySegments(context)[0] ?? {text: ''};
+    const color = appearance.historyColors === 'theme' && isPromptRole(segment.role)
+      ? archiveColor(promptRoleColors(segment.role, appearance.historyTheme, 'followTheme').background, 'foreground')
+      : segment.background
+        ? appearance.historyColors === 'grayscale' ? grayscaleArchiveColor(segment.background, 'foreground') : archiveColor(segment.background, 'foreground')
+        : uiTone;
+    return paintDivider(text, DEFAULT_TREATMENT_SETTINGS, 0, false, color);
+  }
+  return paintDivider(text, DEFAULT_TREATMENT_SETTINGS, 0, false, uiTone);
+}
+
 export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
   appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE,
   treatment: TreatmentSettings = DEFAULT_TREATMENT_SETTINGS): WrappedRow | undefined {
@@ -471,7 +512,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
   if (!appearance.historicalPrompt) {
     const line = repeatToWidth(divider.glyph, width);
-    return {ansi: `${treatment.preset === 'off' ? divider.color + line : paintTreatment(line, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m`, plain: line, isHistoricalHeader: true};
+    return {ansi: `${historicalDivider(line, context, appearance, treatment, divider.color)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
   const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
   const prompt = typeof parts === 'string' ? parts : parts.left;
@@ -485,7 +526,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
   const rightAnsi = right ? ` ${right}\u001B[0m` : '';
-  return {ansi: `${prompt}\u001B[0m ${treatment.preset === 'off' ? divider.color + fill : paintTreatment(fill, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
+  return {ansi: `${prompt}\u001B[0m ${historicalDivider(fill, context, appearance, treatment, divider.color)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {

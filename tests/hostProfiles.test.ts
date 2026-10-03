@@ -40,6 +40,43 @@ test('host profiles advertise passive capabilities; optional protocols use share
   }
 });
 
+test('Zed: wheel/click reporting with Shift selection, no movement tracking; colors follow COLORTERM; hyperlinks stay opt-in', () => {
+  const zedEnv = {TERM_PROGRAM: 'zed', TERM: 'xterm-256color', COLORTERM: 'truecolor', ZED_TERM: 'true'};
+  for (const env of [zedEnv, {ZED_TERM: 'true', TERM: 'xterm-256color'}]) {
+    const capabilities = resolveHostCapabilities(env);
+    assert.equal(capabilities.mouseReporting, true);
+    assert.equal(capabilities.clickSupport, true);
+    assert.equal(capabilities.mouseMovement, false);
+    assert.equal(capabilities.textSelectionInteraction, 'shift');
+    assert.equal(capabilities.hyperlinks, false, 'no OSC 8 claim without physical evidence');
+    assert.equal(capabilities.kittyKeyboard, false, 'keyboard protocols come only from the probe');
+    assert.equal(capabilities.synchronizedOutput, false);
+    assert.equal(capabilities.appearanceIntegration, false);
+    assert.equal(capabilities.hostConfiguration, false);
+  }
+  assert.equal(resolveHostCapabilities(zedEnv).truecolor, true);
+  assert.equal(resolveHostCapabilities({TERM_PROGRAM: 'zed', TERM: 'xterm-256color'}).truecolor, false);
+  assert.equal(resolveHostCapabilities({...zedEnv, NMSH_HYPERLINKS: '1'}).hyperlinks, true);
+  assert.deepEqual(resolveHostCapabilities({...zedEnv, TMUX: 'socket'}), {...BASELINE_CAPABILITIES, truecolor: true}, 'nested: baseline');
+  const host = detectTerminalHost(zedEnv, 'darwin');
+  assert.equal(host.name, 'Zed');
+  assert.equal(host.newWindow, undefined, 'no documented Zed command opens a new integrated terminal');
+  assert.equal(host.integration, undefined, 'NMSh never edits Zed settings');
+  assert.equal(host.appearanceGuidance, 'Appearance is configured by Zed.');
+  const writes: string[] = [];
+  const renderer = new TerminalRenderer(data => writes.push(data), resolveHostCapabilities(zedEnv));
+  renderer.enter();
+  renderer.suspendForPassthrough();
+  renderer.resumeAfterPassthrough();
+  renderer.leave();
+  const output = writes.join('');
+  for (const mode of [1000, 1006]) {
+    assert.ok(output.includes(`\u001b[?${mode}h`), `mode ${mode} enabled`);
+    assert.equal(output.split(`\u001b[?${mode}h`).length, output.split(`\u001b[?${mode}l`).length, `mode ${mode} balanced`);
+  }
+  assert.ok(!output.includes('\u001b[?1003h'), 'no movement tracking');
+});
+
 test('explicit host evidence overrides stale variables; nested and dumb attachments fall back', () => {
   assert.deepEqual(resolveHostCapabilities({TERM_PROGRAM: 'unknown', KITTY_WINDOW_ID: '1', GHOSTTY_RESOURCES_DIR: '/stale'}), BASELINE_CAPABILITIES);
   assert.equal(resolveHostCapabilities({TERM_PROGRAM: 'iTerm.app', KITTY_WINDOW_ID: '1'}).kittyKeyboard, false);
@@ -55,11 +92,12 @@ test('reattaching across profiles updates input modes while keeping the real she
   const sandbox = new LiveSandbox({toolsSetupComplete: true, glyphStyle: 'safe'});
   try {
     let id: string | undefined;
-    for (const TERM_PROGRAM of ['ghostty', 'Apple_Terminal', 'kitty', 'iTerm.app', 'WezTerm']) {
+    for (const TERM_PROGRAM of ['ghostty', 'Apple_Terminal', 'kitty', 'iTerm.app', 'WezTerm', 'zed']) {
       const app = sandbox.launch(id ? ['--attach', id] : [], {cols: 60, rows: 20}, {TERM_PROGRAM, COLORTERM: '', TMUX: '', STY: '', ZELLIJ: ''});
       await app.waitFor(/> /);
       assert.equal(app.output.includes('\u001b[>1u'), ['ghostty', 'kitty'].includes(TERM_PROGRAM));
-      assert.equal(app.output.includes('\u001b[?1003h'), TERM_PROGRAM !== 'Apple_Terminal');
+      assert.equal(app.output.includes('\u001b[?1003h'), !['Apple_Terminal', 'zed'].includes(TERM_PROGRAM));
+      assert.equal(app.output.includes('\u001b[?1006h'), TERM_PROGRAM !== 'Apple_Terminal');
       if (!id) {
         await app.run('export PROFILE_STATE=kept', /Completed/);
         await until(async () => (await sandbox.sessions()).length === 1, 15000, 'persistent session');

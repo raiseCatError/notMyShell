@@ -1,4 +1,14 @@
-import {TREATMENT_PRESETS, TREATMENT_GEOMETRIES, TREATMENT_MOTIONS} from '../chroma/treatment.js';
+import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
+  TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
+import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
+import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
+import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
+import {withIdleColorSource} from '../idle/IdleVisuals.js';
+import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
+import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
+import {FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
+import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
+import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
 import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
@@ -20,7 +30,7 @@ import {PICKER_PROVIDERS} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foregroundOf, status, theme} from '../chroma/chroma.js';
-import {foreground, UI_COLORS} from './palette.js';
+import {foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
 import {stepIndex, toggleValue} from './formControls.js';
@@ -64,7 +74,8 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors';
 
 interface SettingsRowBase {
   id: string;
@@ -74,6 +85,10 @@ interface SettingsRowBase {
   category: string;
   /** Advanced rows stay out of the default Config list until the user asks for them (or searches). */
   level?: 'advanced';
+  /** The row this one depends on; it renders indented right below its parent. */
+  parent?: string;
+  /** Whether the row applies to the current values; rows that do not apply disappear. */
+  when?: (config: PromptConfiguration) => boolean;
 }
 
 /**
@@ -81,7 +96,7 @@ interface SettingsRowBase {
  * value inline; `child` opens a full panel; `action` runs on Enter only.
  */
 export type SettingsRow = SettingsRowBase & (
-  | {control: 'enum'; options: readonly string[]; index: (config: PromptConfiguration) => number;
+  | {control: 'enum'; options: readonly string[]; optionsFor?: (config: PromptConfiguration) => readonly string[]; index: (config: PromptConfiguration) => number;
     select: (config: PromptConfiguration, index: number) => PromptConfiguration}
   | {control: 'boolean'; get: (config: PromptConfiguration) => boolean;
     set: (config: PromptConfiguration, value: boolean) => PromptConfiguration}
@@ -95,7 +110,7 @@ function withTranscript(config: PromptConfiguration, patch: Partial<TranscriptAp
   return {...config, transcript: {...config.transcript, ...patch}};
 }
 
-function enumRow<T>(row: SettingsRowBase & {values: readonly T[]; labels: readonly string[];
+export function enumRow<T>(row: SettingsRowBase & {values: readonly T[]; labels: readonly string[];
   get: (config: PromptConfiguration) => T; set: (config: PromptConfiguration, value: T) => PromptConfiguration}): SettingsRow {
   const {values, labels, get, set, ...base} = row;
   return {...base, control: 'enum', options: labels,
@@ -129,6 +144,49 @@ const ON_OFF = [true, false] as const;
 const FOCUS_POLICIES = ['suppress', 'notify'] as const;
 const NOTIFICATION_THRESHOLD_STEPS = [5, 10, 30, 60, 120, 300, 600, 1800, 3600];
 
+const symbolIds = (c: PromptConfiguration) => PROMPT_SYMBOL_IDS.filter(id => id !== 'custom' || c.promptSymbolCustom);
+const chromaOn = (c: PromptConfiguration) => c.presentation.preset !== 'off';
+const chromaMoving = (c: PromptConfiguration) => chromaOn(c) && c.presentation.motion !== 'static';
+const nativePrompt = (c: PromptConfiguration) => c.provider === 'nmsh';
+const stripOn = (c: PromptConfiguration) => c.statusStrip.enabled;
+const withStrip = (c: PromptConfiguration, patch: Partial<StatusStripSettings>): PromptConfiguration => ({...c, statusStrip: {...c.statusStrip, ...patch}});
+
+/** Theme family, then the family's variant and (Catppuccin) accent, as nested rows. */
+const THEME_ROWS: readonly SettingsRow[] = [
+  enumRow({id: 'uiChrome', label: 'UI chrome', description: 'Colors of NMSh frames, rules, tabs, selection and accents; Follow theme matches the active theme', category: 'Appearance',
+    values: CHROME_SOURCES, labels: ['Follow theme', 'Custom'],
+    get: c => c.uiChrome.source, set: (c, source) => ({...c, uiChrome: {...c.uiChrome, source}})}),
+  {id: 'uiChromePreset', parent: 'uiChrome', when: c => c.uiChrome.source === 'custom', label: 'Preset', description: 'Native Lavender, Grayscale, or your own chrome colors', category: 'Appearance',
+    control: 'enum', options: CHROME_PRESETS.map(preset => CHROME_PRESET_LABELS[preset]),
+    index: c => CHROME_PRESETS.indexOf(c.uiChrome.preset),
+    // Custom colors start from the chrome in effect, so nothing jumps.
+    select: (c, index) => {
+      const preset = CHROME_PRESETS[index]!;
+      const colors = c.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...c.uiChrome, source: 'theme'}, c.nmsh.palette, c.nmsh.accent, c.customTheme));
+      return {...c, uiChrome: {...c.uiChrome, preset, ...(preset === 'custom' ? {colors} : {})}};
+    }},
+  {id: 'uiChromeColors', parent: 'uiChromePreset', when: c => c.uiChrome.source === 'custom' && c.uiChrome.preset === 'custom', label: 'Edit colors',
+    description: 'Accent, text, separator, selection and status roles with the color picker', category: 'Appearance', control: 'action', actionLabel: 'Edit ›', destination: 'chromeColors'},
+  {id: 'themeFamily', label: 'Theme family', description: 'NMSh themes, bundled families or your Custom theme; colors NMSh-owned UI only', category: 'Appearance',
+    control: 'enum', options: FAMILY_LABELS, index: c => FAMILY_IDS.indexOf(familyOf(c.nmsh.palette)),
+    select: (c, index) => familyOf(c.nmsh.palette) === FAMILY_IDS[index] ? c : selectFamily(c, FAMILY_IDS[index]!)},
+  {id: 'themeVariant', parent: 'themeFamily', when: c => variantOptions(familyOf(c.nmsh.palette)).length > 1, label: 'Variant',
+    description: 'Flavor, style or variant within the theme family', category: 'Appearance', control: 'enum',
+    options: [], optionsFor: c => variantOptions(familyOf(c.nmsh.palette)).map(option => option.label),
+    index: c => Math.max(0, variantOptions(familyOf(c.nmsh.palette)).findIndex(option => option.id === c.nmsh.palette)),
+    select: (c, index) => {
+      const options = variantOptions(familyOf(c.nmsh.palette));
+      return {...c, nmsh: {...c.nmsh, palette: options[((index % options.length) + options.length) % options.length]!.id}};
+    }},
+  enumRow({id: 'themeText', parent: 'themeFamily', label: 'Theme text', description: 'On: the theme colors NMSh text tiers (primary, secondary, muted). Off: NMSh neutral text. Status colors keep their meaning', category: 'Appearance',
+    values: [true, false], labels: ['On', 'Off'],
+    get: c => c.uiChrome.themeText !== false, set: (c, themeText) => ({...c, uiChrome: {...c.uiChrome, themeText}})}),
+  enumRow({id: 'themeAccent', parent: 'themeFamily', when: c => familyOf(c.nmsh.palette) === 'catppuccin', label: 'Accent',
+    description: 'Catppuccin accent for the project module and NMSh accents', category: 'Appearance',
+    values: CATPPUCCIN_ACCENTS, labels: CATPPUCCIN_ACCENTS.map(accent => CATPPUCCIN_ACCENT_LABELS[accent]),
+    get: c => c.nmsh.accent, set: (c, accent) => ({...c, nmsh: {...c.nmsh, accent}})}),
+];
+
 export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
@@ -137,23 +195,33 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     control: 'child', destination: 'prompt', value: config => providerLabel(config.provider)},
   {id: 'divider', label: 'History divider', description: 'Rule drawn above each past command', category: 'Transcript',
     control: 'boolean', get: config => config.transcript.divider, set: (config, divider) => withTranscript(config, {divider})},
-  enumRow({id: 'dividerDensity', level: 'advanced', label: 'Divider density', description: 'Spacing around history dividers', category: 'Transcript',
+  enumRow({id: 'dividerDensity', level: 'advanced', parent: 'divider', when: config => config.transcript.divider, label: 'Divider density', description: 'Spacing around history dividers', category: 'Transcript',
     values: DENSITIES, labels: ['Normal', 'Compact'],
     get: config => config.transcript.dividerDensity, set: (config, dividerDensity) => withTranscript(config, {dividerDensity})}),
+  enumRow({id: 'dividerColors', level: 'advanced', parent: 'divider', when: config => config.transcript.divider, label: 'Divider colors', description: 'Past-command dividers: Follow Chroma (static in history), the History colors, the UI theme, or a muted grayscale', category: 'Transcript',
+    values: DIVIDER_COLOR_MODES, labels: DIVIDER_COLOR_MODES.map(mode => DIVIDER_COLOR_LABELS[mode]),
+    get: config => config.transcript.dividerColors, set: (config, dividerColors) => withTranscript(config, {dividerColors})}),
   {id: 'historicalPrompt', label: 'Prompt snapshots', description: 'Show the prompt each past command ran under', category: 'Transcript',
     control: 'boolean', get: config => config.transcript.historicalPrompt,
     set: (config, historicalPrompt) => withTranscript(config, {historicalPrompt})},
-  enumRow({id: 'historyColors', level: 'advanced', label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
-    values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
+  enumRow({id: 'historyColors', level: 'advanced', parent: 'historicalPrompt', when: config => config.transcript.historicalPrompt, label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
+    values: COLOR_MODES, labels: ['Follow prompt', 'Choose theme', 'Grayscale'],
     get: config => config.transcript.historyColors, set: (config, historyColors) => withTranscript(config, {historyColors})}),
+  enumRow({id: 'historyTheme', level: 'advanced', parent: 'historyColors', when: config => config.transcript.historicalPrompt && config.transcript.historyColors === 'theme', label: 'History theme', description: 'The NMSh theme past prompt snapshots are shown in', category: 'Transcript',
+    values: NATIVE_PALETTE_IDS, labels: NATIVE_PALETTE_IDS.map(id => NATIVE_PROMPT_THEMES[id].label),
+    get: config => config.transcript.historyTheme, set: (config, historyTheme) => withTranscript(config, {historyTheme})}),
   {id: 'syntaxHighlighting', label: 'Syntax highlighting', description: 'Color commands while typing and in new history', category: 'Syntax',
     control: 'boolean', get: config => config.syntax.highlighting, set: (config, highlighting) => ({...config, syntax: {...config.syntax, highlighting}})},
-  enumRow({id: 'syntaxColors', level: 'advanced', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
+  enumRow({id: 'syntaxColors', level: 'advanced', parent: 'syntaxHighlighting', when: config => config.syntax.highlighting, label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
-  enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look: Powerline, Soft, Minimal, or Outline', category: 'Prompt',
+  enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look; each style keeps its own settings in /prompt', category: 'Prompt',
     values: PROMPT_STYLES, labels: PROMPT_STYLES.map(style => PROMPT_STYLE_LABELS[style]),
     get: config => config.nmsh.style, set: (config, style) => ({...config, nmsh: {...config.nmsh, style}})}),
+  ...THEME_ROWS,
+  enumRow({id: 'promptVibrance', label: 'Prompt vibrance', description: 'Soft, Standard or Vibrant theme colors; explicit module colors are kept', category: 'Prompt',
+    values: VIBRANCE_LEVELS, labels: VIBRANCE_LEVELS.map(level => VIBRANCE_LABELS[level]),
+    get: config => config.nmsh.vibrance, set: (config, vibrance) => ({...config, nmsh: {...config.nmsh, vibrance}})}),
   enumRow({id: 'composerPosition', label: 'Composer position', description: 'Dock the composer at the bottom or top, or Flow it after the newest output', category: 'Layout',
     values: COMPOSER_POSITIONS, labels: COMPOSER_POSITIONS.map(position => COMPOSER_POSITION_LABELS[position]),
     get: config => config.composerPosition, set: (config, composerPosition) => ({...config, composerPosition})}),
@@ -188,36 +256,114 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'notifications', label: 'Notifications', description: 'Notify when a long-running command finishes', category: NOTIFICATION_CATEGORY,
     values: ON_OFF, labels: ['On', 'Off'],
     get: config => config.notifications.enabled, set: (config, enabled) => withNotifications(config, {enabled})}),
-  {id: 'notifyAfter', label: 'Notify after', description: 'Minimum command duration before notifying', category: NOTIFICATION_CATEGORY,
+  {id: 'notifyAfter', parent: 'notifications', when: config => config.notifications.enabled, label: 'Notify after', description: 'Minimum command duration before notifying', category: NOTIFICATION_CATEGORY,
     control: 'stepper', steps: NOTIFICATION_THRESHOLD_STEPS, format: formatThreshold,
     get: config => config.notifications.thresholdSeconds,
     set: (config, thresholdSeconds) => withNotifications(config, {thresholdSeconds})},
-  enumRow({id: 'notifyOnSuccess', label: 'On success', description: 'Notify when a long command exits 0', category: NOTIFICATION_CATEGORY,
+  enumRow({id: 'notifyOnSuccess', parent: 'notifications', when: config => config.notifications.enabled, label: 'On success', description: 'Notify when a long command exits 0', category: NOTIFICATION_CATEGORY,
     values: ON_OFF, labels: ['On', 'Off'],
     get: config => config.notifications.onSuccess, set: (config, onSuccess) => withNotifications(config, {onSuccess})}),
-  enumRow({id: 'notifyOnFailure', label: 'On failure', description: 'Notify when a long command fails or is interrupted', category: NOTIFICATION_CATEGORY,
+  enumRow({id: 'notifyOnFailure', parent: 'notifications', when: config => config.notifications.enabled, label: 'On failure', description: 'Notify when a long command fails or is interrupted', category: NOTIFICATION_CATEGORY,
     values: ON_OFF, labels: ['On', 'Off'],
     get: config => config.notifications.onFailure, set: (config, onFailure) => withNotifications(config, {onFailure})}),
-  enumRow({id: 'notifyWhenFocused', label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: NOTIFICATION_CATEGORY,
+  enumRow({id: 'notifyWhenFocused', parent: 'notifications', when: config => config.notifications.enabled, label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: NOTIFICATION_CATEGORY,
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
+  enumRow({id: 'cursorShape', label: 'Cursor', description: 'Text caret shape while NMSh owns the composer; Host default sends nothing', category: 'General',
+    values: CURSOR_SHAPES, labels: ['Host default', 'Block', 'Bar', 'Underline'],
+    get: c => c.cursor.shape, set: (c, shape) => ({...c, cursor: {...c.cursor, shape}})}),
+  enumRow({id: 'cursorBlink', parent: 'cursorShape', when: c => c.cursor.shape !== 'host', label: 'Blink', description: 'Caret blink; speed stays the terminal\'s own', category: 'General',
+    values: CURSOR_BLINKS, labels: ['Host default', 'On', 'Off'],
+    get: c => c.cursor.blink, set: (c, blink) => ({...c, cursor: {...c.cursor, blink}})}),
+  {id: 'promptSymbol', when: nativePrompt, label: 'Prompt symbol', description: 'The composer marker; a custom symbol is typed in /prompt. Starship/Powerlevel10k prompts are unchanged', category: 'Prompt',
+    // Custom is offered here only once a glyph exists; the glyph is typed in /prompt.
+    control: 'enum', options: PROMPT_SYMBOL_IDS.filter(id => id !== 'custom').map(id => promptSymbolLabel(id)),
+    optionsFor: c => symbolIds(c).map(id => promptSymbolLabel(id, c.promptSymbolCustom)),
+    index: c => Math.max(0, symbolIds(c).indexOf(c.promptSymbol)),
+    select: (c, index) => ({...c, promptSymbol: symbolIds(c)[index] ?? 'chevron'})},
+  {id: 'statusStrip', label: 'Status strip', description: 'Compact NMSh-owned status row, top right; Minimal shows the clock and a real battery', category: 'Status strip',
+    control: 'boolean', get: c => c.statusStrip.enabled, set: (c, enabled) => withStrip(c, {enabled})},
+  {id: 'stripClock', parent: 'statusStrip', when: stripOn, label: 'Clock', description: 'Local time', category: 'Status strip',
+    control: 'boolean', get: c => c.statusStrip.clock, set: (c, clock) => withStrip(c, {clock})},
+  {id: 'stripBattery', parent: 'statusStrip', when: stripOn, label: 'Battery', description: 'Shown only when this machine has a battery', category: 'Status strip',
+    control: 'boolean', get: c => c.statusStrip.battery, set: (c, battery) => withStrip(c, {battery})},
+  {id: 'stripCpu', parent: 'statusStrip', when: stripOn, label: 'CPU', description: 'CPU use from local OS counters', category: 'Status strip',
+    control: 'boolean', get: c => c.statusStrip.cpu, set: (c, cpu) => withStrip(c, {cpu})},
+  {id: 'stripRam', parent: 'statusStrip', when: stripOn, label: 'RAM', description: 'Memory in use', category: 'Status strip',
+    control: 'boolean', get: c => c.statusStrip.ram, set: (c, ram) => withStrip(c, {ram})},
+  enumRow({id: 'stripRamDisplay', parent: 'stripRam', when: c => stripOn(c) && c.statusStrip.ram, label: 'Show', description: 'Percent, absolute, or both', category: 'Status strip',
+    values: RAM_DISPLAYS, labels: ['Percent', 'Absolute', 'Both'],
+    get: c => c.statusStrip.ramDisplay, set: (c, ramDisplay) => withStrip(c, {ramDisplay})}),
+  {id: 'stripUptime', parent: 'statusStrip', when: stripOn, label: 'Uptime', description: 'Time since this machine booted', category: 'Status strip',
+    control: 'boolean', get: c => c.statusStrip.uptime, set: (c, uptime) => withStrip(c, {uptime})},
+  enumRow({id: 'idleTimeout', label: 'Idle visuals', description: 'Screensaver after inactivity while NMSh owns the terminal; Never by default. /screensaver previews', category: 'Idle visuals',
+    values: IDLE_TIMEOUTS, labels: IDLE_TIMEOUTS.map(minutes => minutes === 0 ? 'Never' : minutes === 60 ? '60 minutes' : `${minutes} minute${minutes === 1 ? '' : 's'}`),
+    get: c => c.idleVisuals.timeout, set: (c, timeout) => ({...c, idleVisuals: {...c.idleVisuals, timeout}})}),
+  enumRow({id: 'idleMode', parent: 'idleTimeout', label: 'Mode', description: 'The idle visual; /screensaver shows each one live', category: 'Idle visuals',
+    values: IDLE_MODES, labels: IDLE_MODES.map(mode => IDLE_MODE_LABELS[mode]),
+    get: c => c.idleVisuals.mode, set: (c, mode) => ({...c, idleVisuals: {...c.idleVisuals, mode}})}),
+  enumRow({id: 'idleColor', parent: 'idleTimeout', label: 'Colors', description: 'Follow Chroma / Theme: Chroma when it is on, otherwise the theme. Theme only ignores Chroma. Custom: your own idle gradient', category: 'Idle visuals',
+    values: IDLE_COLOR_SOURCES, labels: IDLE_COLOR_SOURCES.map(source => IDLE_COLOR_LABELS[source]),
+    get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: withIdleColorSource(c, colorSource)})}),
+  {id: 'idleCustomColors', parent: 'idleColor', when: c => c.idleVisuals.colorSource === 'custom', label: 'Edit colors',
+    description: 'The idle visuals\' own gradient stops, with a live preview', category: 'Idle visuals', control: 'action', actionLabel: 'Edit ›', destination: 'idleColors'},
+  enumRow({id: 'activityColors', label: 'Live activity colors', description: 'The running-command line. Follow appearance uses Chroma when it is on, otherwise the theme. Only live work moves; finished commands show their plain result', category: 'Live activity',
+    values: LIVE_ACTIVITY_COLORS, labels: LIVE_ACTIVITY_COLORS.map(colors => LIVE_ACTIVITY_COLOR_LABELS[colors]),
+    get: c => c.liveActivity.colors, set: (c, colors) => ({...c, liveActivity: {...c.liveActivity, colors,
+      customStops: colors === 'custom' && c.liveActivity.customStops.length < 2 ? [...PRESET_STOPS.lavender] : c.liveActivity.customStops}})}),
+  {id: 'activityCustomColors', parent: 'activityColors', when: c => c.liveActivity.colors === 'custom', label: 'Edit colors',
+    description: 'Gradient stops for the live activity line', category: 'Live activity', control: 'action', actionLabel: 'Edit ›', destination: 'activityColors'},
   {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
-  enumRow({id: 'treatmentPreset', label: 'Visual treatment', description: 'Native Minimal/Outline identity, history rules and Settings frame; external prompts retain their colors', category: 'Presentation',
-    values: TREATMENT_PRESETS, labels: ['Off', 'Lavender', 'Aurora', 'Theme', 'Custom'],
+  enumRow({id: 'toolUpdateChecks', label: 'Optional tool update checks', description: 'Batched Homebrew outdated checks for optional tools; upgrades are always previewed and confirmed', category: 'Tools',
+    values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
+    get: config => config.toolUpdateChecks, set: (config, toolUpdateChecks) => ({...config, toolUpdateChecks})}),
+  {id: 'installSuggestions', label: 'Install suggestions', description: 'Offer to install a missing curated tool when its exact command is submitted', category: 'Tools',
+    control: 'boolean', get: config => config.installSuggestions, set: (config, installSuggestions) => ({...config, installSuggestions})},
+  {id: 'resetInstallSuggestions', parent: 'installSuggestions', label: 'Ignored install suggestions', description: 'Tools you asked NMSh not to offer again; Enter resets the list', category: 'Tools',
+    control: 'action', actionLabel: 'Reset', destination: 'resetInstallSuggestions'},
+  enumRow({id: 'treatmentPreset', label: 'Chroma', description: 'Colors the Native prompt; /chroma has every option. Ordinary UI chrome is not Chroma; external prompts keep their colors', category: 'Presentation',
+    values: TREATMENT_PRESETS, labels: TREATMENT_PRESETS.map(preset => TREATMENT_PRESET_LABELS[preset]),
     get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
-  enumRow({id: 'treatmentGeometry', level: 'advanced', label: 'Gradient geometry', description: 'Independent gradient direction', category: 'Presentation',
-    values: TREATMENT_GEOMETRIES, labels: ['Left to right', 'Center outward', 'Outside inward'],
+  {id: 'treatmentIntensity', parent: 'treatmentPreset', when: chromaOn, label: 'Influence', description: 'How strongly Chroma recolors the Native prompt; Full Chroma is the default', category: 'Presentation',
+    control: 'enum', options: TREATMENT_INFLUENCES.map(entry => entry.label),
+    index: c => TREATMENT_INFLUENCES.findIndex(entry => entry.id === treatmentInfluence(c.presentation)),
+    // Choosing Full Chroma brings Semantic colors to its default, Override; it stays editable below.
+    select: (c, index) => {
+      const entry = TREATMENT_INFLUENCES[index]!;
+      return {...c, presentation: {...c.presentation, intensity: entry.intensity, ...(entry.id === 'full' ? {semantic: 'override' as const} : {})}};
+    }},
+  enumRow({id: 'treatmentSemantic', parent: 'treatmentIntensity', when: chromaOn, label: 'Semantic colors', description: 'Override lets Chroma recolor success, failure and Git state; their symbols and readable text keep the meaning', category: 'Presentation',
+    values: SEMANTIC_MODES, labels: SEMANTIC_MODES.map(mode => SEMANTIC_MODE_LABELS[mode]),
+    get: c => c.presentation.semantic ?? 'preserve', set: (c, semantic) => ({...c, presentation: {...c.presentation, semantic}})}),
+  enumRow({id: 'treatmentScope', parent: 'treatmentPreset', when: chromaOn, label: 'Applies to', description: 'The whole Native prompt (default), or identity modules only', category: 'Presentation',
+    values: TREATMENT_SCOPES, labels: TREATMENT_SCOPES.map(scope => TREATMENT_SCOPE_LABELS[scope]),
+    get: c => c.presentation.scope ?? 'prompt', set: (c, scope) => ({...c, presentation: {...c.presentation, scope}})}),
+  enumRow({id: 'chromaRules', parent: 'treatmentPreset', when: chromaOn, label: 'Divider lines', description: DIVIDER_LINES_HELP, category: 'Presentation',
+    values: [true, false], labels: [dividerLinesLabel(true), dividerLinesLabel(false)],
+    get: c => c.presentation.rules !== false, set: (c, rules) => ({...c, presentation: {...c.presentation, rules}})}),
+  enumRow({id: 'treatmentGeometry', parent: 'treatmentPreset', when: chromaOn, label: 'Gradient layout', description: 'Where the gradient runs: Left → Right, Right → Left, Center → Outward or Outside → Center; works with Static', category: 'Presentation',
+    values: TREATMENT_GEOMETRIES, labels: TREATMENT_GEOMETRIES.map(geometry => TREATMENT_GEOMETRY_LABELS[geometry]),
     get: c => c.presentation.geometry, set: (c, geometry) => ({...c, presentation: {...c.presentation, geometry}})}),
-  enumRow({id: 'treatmentMotion', level: 'advanced', label: 'Decorative motion', description: 'Live separator motion; history stays static', category: 'Presentation',
-    values: TREATMENT_MOTIONS, labels: ['Static', 'Travel', 'Breathe'],
+  enumRow({id: 'treatmentMotion', parent: 'treatmentPreset', when: chromaOn, label: 'Motion', description: 'Live prompt motion (and divider lines when they follow Chroma); history stays static', category: 'Presentation',
+    values: TREATMENT_MOTIONS, labels: TREATMENT_MOTIONS.map(motion => TREATMENT_MOTION_LABELS[motion]),
     get: c => c.presentation.motion, set: (c, motion) => ({...c, presentation: {...c.presentation, motion}})}),
-  {id: 'treatmentIntensity', level: 'advanced', label: 'Treatment intensity', description: 'Blend with ordinary surface foreground', category: 'Presentation',
-    control: 'stepper', steps: [0, 0.25, 0.5, 0.65, 1], format: v => `${Math.round(v * 100)}%`,
-    get: c => c.presentation.intensity, set: (c, intensity) => ({...c, presentation: {...c.presentation, intensity}})},
+  enumRow({id: 'treatmentSpeed', parent: 'treatmentMotion', when: chromaMoving, label: 'Speed', description: 'Chroma animation cycle length', category: 'Presentation',
+    values: TREATMENT_SPEEDS, labels: TREATMENT_SPEEDS.map(speed => TREATMENT_SPEED_LABELS[speed]),
+    get: c => c.presentation.speed ?? 'normal', set: (c, speed) => ({...c, presentation: {...c.presentation, speed}})}),
+  enumRow({id: 'treatmentCurve', parent: 'treatmentMotion', when: chromaMoving, label: 'Ramp', description: 'Easing of the animation', category: 'Presentation',
+    values: TREATMENT_CURVES, labels: TREATMENT_CURVES.map(curve => TREATMENT_CURVE_LABELS[curve]),
+    get: c => c.presentation.curve ?? 'linear', set: (c, curve) => ({...c, presentation: {...c.presentation, curve}})}),
   {id: 'reducedMotion', label: 'Reduced Motion', description: 'Static colors; no decorative movement or effects', category: 'Presentation', control: 'boolean',
     get: c => c.presentation.reducedMotion, set: (c, reducedMotion) => ({...c, presentation: {...c.presentation, reducedMotion}})},
-  {id: 'effectsOff', label: 'Effects Off', description: 'Disable decorative animation and transient effects', category: 'Presentation', control: 'boolean',
-    get: c => c.presentation.effectsOff, set: (c, effectsOff) => ({...c, presentation: {...c.presentation, effectsOff}})},
+  // Stored as effectsOff for compatibility; shown positively so nobody reads "Effects Off: Off".
+  enumRow({id: 'effectsOff', label: 'Decorative effects', description: 'Chroma motion, sparkle effects, idle visuals and the Welcome blink; Off keeps NMSh still and quiet', category: 'Presentation',
+    values: [true, false], labels: ['On', 'Off'],
+    get: c => !c.presentation.effectsOff, set: (c, on) => ({...c, presentation: {...c.presentation, effectsOff: !on}})}),
+  enumRow({id: 'shimmer', when: c => !c.presentation.effectsOff, label: 'Shimmer', description: 'One soft sweep of light when you select or change something, submit, or confirm; also the live Working status. Characters never move', category: 'Presentation',
+    values: ['on', 'off'] as const, labels: ['On', 'Off'],
+    get: c => c.presentation.shimmer ?? 'on', set: (c, shimmer) => ({...c, presentation: {...c.presentation, shimmer}})}),
+  {id: 'autoEffects', label: 'Milestone effects', description: 'A brief effect after a successful tool install, update or setup', category: 'Presentation', control: 'boolean',
+    get: c => c.presentation.autoEffects !== false, set: (c, autoEffects) => ({...c, presentation: {...c.presentation, autoEffects}})},
 
 
 ];
@@ -235,6 +381,8 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
+  {id: 'screensaver', label: 'Screensaver', description: 'Idle visuals: live gallery, timeout and colors', category: 'Idle visuals', control: 'child', destination: 'screensaver'},
+  {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
 
 /** Text cue (not color) that a value differs from its default. */
@@ -242,21 +390,36 @@ const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');
 
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;
 
-export function visibleSettingsRows(state: SettingsPanelState): SettingsRow[] {
+/** How deep a row nests under its parents (0 for top-level rows). */
+export function settingsRowDepth(row: SettingsRow): number {
+  let depth = 0;
+  for (let parent = row.parent; parent && depth < 4; depth++) parent = SETTINGS_ROWS.find(item => item.id === parent)?.parent;
+  return depth;
+}
+
+/** A row applies when its own condition and every parent's hold; rows that do not apply are hidden, not disabled. */
+export function settingsRowApplies(row: SettingsRow, config: PromptConfiguration): boolean {
+  if (row.when && !row.when(config)) return false;
+  const parent = row.parent ? SETTINGS_ROWS.find(item => item.id === row.parent) : undefined;
+  return parent ? settingsRowApplies(parent, config) : true;
+}
+
+export function visibleSettingsRows(state: SettingsPanelState, config: PromptConfiguration = DEFAULT_PROMPT_CONFIGURATION): SettingsRow[] {
   const view = settingsView(state);
   if (view === 'status') return [];
   if (view === 'settings') return [...SETTINGS_ENTRIES];
   const query = state.searchQuery?.trim().toLowerCase();
-  if (!query) return SETTINGS_ROWS.filter(row => state.showAdvanced || row.level !== 'advanced');
-  return SETTINGS_ROWS.filter(row => [row.label, row.description, row.category].some(text => text.toLowerCase().includes(query)));
+  const applicable = SETTINGS_ROWS.filter(row => settingsRowApplies(row, config));
+  if (!query) return applicable.filter(row => state.showAdvanced || row.level !== 'advanced');
+  return applicable.filter(row => [row.label, row.description, row.category].some(text => text.toLowerCase().includes(query)));
 }
 
-export function selectedSettingsRow(state: SettingsPanelState): SettingsRow | undefined {
-  return state.focus === 'tabs' ? undefined : visibleSettingsRows(state)[state.contentIndex ?? 0];
+export function selectedSettingsRow(state: SettingsPanelState, config?: PromptConfiguration): SettingsRow | undefined {
+  return state.focus === 'tabs' ? undefined : visibleSettingsRows(state, config)[state.contentIndex ?? 0];
 }
 
-export function settingsItemCount(state: SettingsPanelState): number {
-  return state.section === 'root' ? visibleSettingsRows(state).length : 2;
+export function settingsItemCount(state: SettingsPanelState, config?: PromptConfiguration): number {
+  return state.section === 'root' ? visibleSettingsRows(state, config).length : 2;
 }
 
 export function isInlineEditable(row: SettingsRow | undefined): boolean {
@@ -268,7 +431,12 @@ export function adjustSettingsRow(row: SettingsRow, config: PromptConfiguration,
   if (row.control === 'boolean') return row.set(config, toggleValue(row.get(config)));
   if (row.control === 'stepper') return row.set(config, stepPreset(row.steps, row.get(config), delta));
   if (row.control !== 'enum') return undefined;
-  return row.select(config, stepIndex(row.options.length, row.index(config), delta));
+  return row.select(config, stepIndex(rowOptions(row, config).length, row.index(config), delta));
+}
+
+/** An enum row's options for this configuration (some rows depend on other values). */
+export function rowOptions(row: Extract<SettingsRow, {control: 'enum'}>, config: PromptConfiguration): readonly string[] {
+  return row.optionsFor?.(config) ?? row.options;
 }
 
 /** Enter/Space: toggle a boolean or step an enum forward. */
@@ -304,7 +472,7 @@ export function settingsRowDestination(row: SettingsRow): SettingsDestination | 
 
 export function settingsRowValue(row: SettingsRow, config: PromptConfiguration): string | undefined {
   switch (row.control) {
-    case 'enum': return row.options[row.index(config)];
+    case 'enum': return rowOptions(row, config)[row.index(config)];
     case 'stepper': return row.format(row.get(config));
     case 'boolean': return row.get(config) ? 'true' : 'false';
     case 'child': return row.value?.(config);
@@ -326,11 +494,11 @@ export interface SettingsRenderContext {
   status?: StatusSections;
 }
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
-const BORDER = foreground(UI_COLORS.separator);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
+const BORDER = lazyForeground(UI_COLORS.separator);
 const BOLD = '\u001B[1m';
 const INVERSE = '\u001B[7m';
 const RESET = '\u001B[0m';
@@ -375,8 +543,10 @@ export function renderSearchField(state: SettingsPanelState, columns: number): s
 function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
   columns: number, query: string, valueOf: (row: SettingsRow) => string, budget: number): string[] {
   const widest = Math.max(0, ...rows.map(row => displayWidth(valueOf(row))));
+  // Dependent rows sit under their parent with a small plain indent.
+  const indent = (row: SettingsRow) => '  '.repeat(settingsRowDepth(row));
   // One value column for every row; it moves left before any value is cut.
-  const labelColumn = Math.max(6, Math.min(Math.max(0, ...rows.map(row => displayWidth(row.label))) + 4,
+  const labelColumn = Math.max(6, Math.min(Math.max(0, ...rows.map(row => displayWidth(indent(row) + row.label))) + 4,
     columns - MARGIN.length - 2 - widest));
   const visible = Math.max(1, budget);
   const anchor = selected ?? 0;
@@ -388,7 +558,7 @@ function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
     const value = valueOf(row);
     const valueStyled = `${active ? ACCENT : SECONDARY}${value}${RESET}`;
     const room = labelColumn - 2;
-    const label = truncateAnsi(highlightMatches(row.label, query, active ? `${BOLD}${ACCENT}` : PRIMARY, SEARCH_MATCH) + RESET, room);
+    const label = truncateAnsi(indent(row) + highlightMatches(row.label, query, active ? `${BOLD}${ACCENT}` : PRIMARY, SEARCH_MATCH) + RESET, room);
     const pad = Math.max(2, labelColumn - displayWidth(label));
     out.push(truncateAnsi(`${MARGIN}${pointer} ${label}${' '.repeat(pad)}${valueStyled}`, columns));
   });
@@ -458,7 +628,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   const view = settingsView(state);
   const tabsFocused = state.focus === 'tabs';
   const header = [renderTabStrip(SETTINGS_VIEWS, VIEW_IDS.indexOf(view), columns, tabsFocused), ''];
-  const rows = visibleSettingsRows(state);
+  const rows = visibleSettingsRows(state, config);
   const selectedIndex = Math.min(state.contentIndex ?? 0, Math.max(0, rows.length - 1));
   const selectedRow = tabsFocused ? undefined : rows[selectedIndex];
   const changedDefault = view === 'config' && selectedRow && settingsRowChanged(selectedRow, config) ? settingsRowDefaultLabel(selectedRow) : undefined;
@@ -491,6 +661,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
       }
     } else body.push(`${MARGIN}  ${SUBTLE}No settings match "${query}"${RESET}`);
   }
-  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns, config.presentation);
+  // Panel frames are ordinary UI chrome: they follow the UI chrome colors, never Chroma.
+  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns);
   return out.slice(0, Math.max(1, maxRows)).map(row => truncateAnsi(row, columns));
 }

@@ -41,6 +41,7 @@ feature is introduced.
 | iTerm2 | Probe only | Yes | Host selection override (verify settings) | Yes | iTerm2 inline images | None |
 | Kitty | Yes | Yes | Shift | Yes | Kitty | None |
 | WezTerm | Probe only (configuration dependent) | Yes | Shift (configurable) | Yes | iTerm2 inline images | None |
+| Zed | Probe only | Wheel and clicks; no movement tracking | Shift | OSC 8 opt-in (`NMSH_HYPERLINKS=1`); truecolor from `COLORTERM` | None | None |
 | Unknown / nested | No | No | Native | No / explicit color evidence | None | None |
 
 All synchronized output remains probe-only. A graphics hint never emits image
@@ -97,3 +98,31 @@ recognized text overlapping them is never given a competing generated target.
 Program payloads containing controls or exceeding 4096 characters are dropped;
 oversized unfinished OSC strings are drained without unbounded retention.
 Physical click/selection behavior remains pending in the additive QA checklist.
+
+## Zed (integrated terminal)
+
+Zed's integrated terminal is recognized from `TERM_PROGRAM=zed` or `ZED_TERM`,
+the variables Zed itself exports. Its terminal (alacritty_terminal) implements
+the standard xterm button and SGR mouse modes, so the Zed profile enables
+`?1000`/`?1006` reporting: wheel and trackpad scrolling arrive as `wheelUp`/
+`wheelDown` while NMSh owns the alternate screen, and PageUp/PageDown keep
+working. Movement tracking (`?1003`) is not requested because nothing needs it.
+Shift keeps Zed's own text selection, and passthrough applications release and
+restore mouse modes exactly as on other hosts.
+
+Nothing else is claimed from the name. Truecolor follows `COLORTERM`, which Zed
+sets. OSC 8 hyperlinks stay opt-in through `NMSH_HYPERLINKS=1` until physical QA
+confirms them. Kitty keyboard flags and synchronized output come only from the
+shared probe. Zed exposes no documented command for opening an arbitrary
+command in a new integrated terminal, so `newWindow` stays undefined: further
+sessions use `/resume` or `nmsh --attach`, and NMSh never edits Zed task or
+settings files. `/appearance` says "Appearance is configured by Zed."
+
+Physical QA groups hosts without ranking them. Integrated terminals (Zed, VS
+Code and other integrated hosts as they are physically tested) and standalone
+terminals (Ghostty, macOS Terminal, Superlogical where available, and other
+standalone hosts as they are physically tested) are equally first-class.
+Kitty, iTerm2 and WezTerm are additional supported profiles. *Supported* means
+NMSh is designed for the host's capability profile; *physically validated*
+means a real manual QA pass was completed on it. Only the latter is recorded
+as validated.

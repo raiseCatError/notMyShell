@@ -1,5 +1,9 @@
-import {paintTreatment, type TreatmentSettings} from '../chroma/treatment.js';
-import {background, foreground, type RgbColor} from '../ui/palette.js';
+import {separatorGlyph} from './glyphChoices.js';
+import {readableTextTone, samplePromptTreatment, treatmentFor, type Treatment, type TreatmentSettings} from '../chroma/treatment.js';
+import {fromOklch, mixOklch, readableForeground, toOklch} from '../chroma/color.js';
+import {graphemes} from '../input/inputLayout.js';
+import {background, foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {defaultStyleProfiles, type PromptStyle, type StyleProfiles} from './styles.js';
 import {getCurrentGlyphMode, GLYPHS, powerlineShapeGlyphs, type PowerlineShape} from '../ui/glyphs.js';
 import {fadePromptColor} from './snapshot.js';
 import {displayWidth, truncateText} from '../util/text.js';
@@ -26,21 +30,10 @@ export const POWERLINE_EDGE_STYLES: readonly PowerlineEdgeStyle[] = [
 ];
 export const POWERLINE_SHAPES: readonly PowerlineShape[] = ['wedge', 'flat', 'rounded', 'slash', 'backslash'];
 
-/**
- * Native prompt visual styles. All render from the same semantic blocks and
- * colors: Powerline uses the configured geometry; Soft is Powerline with
- * rounded caps and separated segments; Minimal and Outline draw text in
- * each segment's color without filled backgrounds.
- */
-export type PromptStyle = 'powerline' | 'soft' | 'minimal' | 'outline';
-export const PROMPT_STYLES: readonly PromptStyle[] = ['powerline', 'soft', 'minimal', 'outline'];
-export const PROMPT_STYLE_LABELS: Record<PromptStyle, string> = {powerline: 'Powerline', soft: 'Soft', minimal: 'Minimal', outline: 'Outline'};
-
-export function normalizePromptStyle(value: unknown): PromptStyle {
-  return PROMPT_STYLES.includes(value as PromptStyle) ? value as PromptStyle : 'powerline';
-}
+export {PROMPT_STYLES, PROMPT_STYLE_LABELS, normalizePromptStyle, type PromptStyle} from './styles.js';
 
 export interface PowerlineBlock {
+  /** Present when this block may receive Chroma; protected status/Git-state blocks never carry it. */
   treatment?: TreatmentSettings;
   /** Visual style; every block of one prompt carries the same one. Missing means Powerline. */
   style?: PromptStyle;
@@ -125,10 +118,18 @@ class Painter {
 /** Horizontal reflection of every geometry glyph, in both glyph modes. */
 const REFLECTED_GLYPHS: Readonly<Record<string, string>> = {
   '\ue0b0': '\ue0b2', '\ue0b2': '\ue0b0', '\ue0d7': '\ue0d6', '\ue0d6': '\ue0d7',
+  '\ue0b1': '\ue0b3', '\ue0b3': '\ue0b1', '\ue0bb': '\ue0b9', '\ue0b9': '\ue0bb', '\ue0b5': '\ue0b7', '\ue0b7': '\ue0b5',
+  '[': ']', ']': '[',
   '\ue0b4': '\ue0b6', '\ue0b6': '\ue0b4',
   '\ue0b8': '\ue0ba', '\ue0ba': '\ue0b8', '\ue0bc': '\ue0be', '\ue0be': '\ue0bc',
   '<': '>', '>': '<', '(': ')', ')': '(', '/': '\\', '\\': '/',
 };
+
+/** Reflect every geometry glyph in a glyph cell, leaving embedded SGR sequences intact. */
+function reflectGlyphs(text: string): string {
+  return text.split(/(\u001B\[[0-9;]*m)/u).map(part => part.startsWith('\u001B[') ? part
+    : [...part].map(glyph => REFLECTED_GLYPHS[glyph] ?? glyph).join('')).join('');
+}
 
 /** Normal orientation: the exact escape sequence this renderer has always produced. */
 function serialize(cells: readonly Cell[]): string {
@@ -142,7 +143,7 @@ function serialize(cells: readonly Cell[]): string {
  */
 function serializeReflected(cells: readonly Cell[]): string {
   return cells.filter(cell => cell.text).reverse().map(cell => {
-    const text = cell.kind === 'glyph' ? REFLECTED_GLYPHS[cell.text] ?? cell.text : cell.text;
+    const text = cell.kind === 'glyph' ? reflectGlyphs(cell.text) : cell.text;
     return `${RESET}${zoneBackground(cell.background)}${cell.foreground ? foreground(cell.foreground) : ''}${text}`;
   }).join('');
 }
@@ -345,24 +346,146 @@ export function renderPowerlineBlocks(
   connectorFade: ResolvedConnectorFade = undefined,
   fadeColors: ConnectorFadeColors = 'previous',
   orientation: PowerlineOrientation = 'normal',
+  extras: RenderExtras = {},
 ): string {
   if (modules.length === 0) return `${RESET}${NEUTRAL_BACKGROUND}`;
   const style = modules[0]!.style ?? 'powerline';
-  if (style === 'minimal' || style === 'outline') return renderTextStyle(modules, style, gapEnabled ? gap : 0, spacing);
-  if (style === 'soft') {
-    // Soft: the same painter with rounded caps, always separated, no fades.
-    startStyle = 'rounded';
-    endStyle = 'rounded';
-    connector = 'rounded';
-    connectorFade = undefined;
-    gap = Math.max(1, gap);
-    gapEnabled = true;
+  const profiles = extras.profiles ?? defaultStyleProfiles(gapEnabled ? gap : 0, spacing);
+  const chroma = resolveChroma(modules, extras);
+  const paint = (blocks: readonly PowerlineBlock[]) => paintStyle(style, blocks, profiles, chroma,
+    {gap, spacing, endStyle, gapEnabled, startStyle, connector, connectorFade, fadeColors});
+  if (orientation === 'mirrored') return `${serializeReflected(paint([...modules].reverse()))}${RESET}${NEUTRAL_BACKGROUND}`;
+  return serialize(paint(modules));
+}
+
+/** Per-prompt render options beyond the Powerline geometry. */
+export interface RenderExtras {
+  /** Style profiles; missing means the legacy shared gap/spacing (historical snapshots). */
+  profiles?: StyleProfiles;
+  chroma?: PromptChroma;
+}
+
+/** A resolved Chroma treatment for one prompt render: what, when, and whether it may move. */
+export interface PromptChroma {
+  treatment: Treatment;
+  time: number;
+  still: boolean;
+}
+
+/** Explicit Chroma wins; otherwise blocks carrying treatment settings render it statically. */
+function resolveChroma(modules: readonly PowerlineBlock[], extras: RenderExtras): PromptChroma | undefined {
+  if (extras.chroma) return extras.chroma;
+  const settings = modules.find(block => block.treatment)?.treatment;
+  const treatment = settings && treatmentFor(settings);
+  return treatment ? {treatment, time: 0, still: true} : undefined;
+}
+
+interface Geometry {
+  gap: number;
+  spacing: number;
+  endStyle: PowerlineEndStyle | boolean;
+  gapEnabled: boolean;
+  startStyle: PowerlineStartStyle;
+  connector: PowerlineConnectorStyle;
+  connectorFade: ResolvedConnectorFade;
+  fadeColors: ConnectorFadeColors;
+}
+
+/** Block centers along the prompt, 0..1. */
+function blockPosition(index: number, count: number): number {
+  return count <= 1 ? 0.5 : index / (count - 1);
+}
+
+/**
+ * Filled-surface Chroma: each eligible block's background moves toward the
+ * gradient at its place in the prompt, and its text is re-chosen for
+ * contrast. Boundaries stay because neighbors sample different positions.
+ */
+function treatFilled(blocks: readonly PowerlineBlock[], chroma: PromptChroma | undefined): PowerlineBlock[] {
+  if (!chroma) return [...blocks];
+  return blocks.map((block, index) => {
+    if (!block.treatment) return block;
+    const fill = samplePromptTreatment(chroma.treatment, block.background, blockPosition(index, blocks.length), chroma.time, chroma.still);
+    return {...block, background: fill, foreground: readableForeground(fill, block.foreground)};
+  });
+}
+
+function paintStyle(style: PromptStyle, modules: readonly PowerlineBlock[], profiles: StyleProfiles, chroma: PromptChroma | undefined,
+  geometry: Geometry): Cell[] {
+  switch (style) {
+    case 'minimal': case 'outline': case 'breadcrumb': return paintTextStyle(modules, style, profiles, chroma);
+    case 'soft': {
+      const profile = profiles.soft;
+      const blocks = treatFilled(profile.fill === 'subtle' ? modules.map(subtleBlock) : modules, chroma);
+      const cap: PowerlineShape = profile.cap === 'slant' ? 'slash' : profile.cap === 'square' ? 'flat' : 'rounded';
+      return profile.layout === 'connected'
+        ? paintPowerlineBlocks(blocks, 0, profile.padding, cap, false, cap, 'flat', undefined, 'previous')
+        : paintPowerlineBlocks(blocks, profile.gap, profile.padding, cap, true, cap, cap, undefined, 'previous');
+    }
+    case 'compact': return paintCompact(treatFilled(modules, chroma), profiles.compact);
+    case 'ribbon': return paintRibbon(modules, profiles.ribbon, chroma);
+    case 'powerline': return paintPowerlineBlocks(treatFilled(modules, chroma), geometry.gap, geometry.spacing, geometry.endStyle,
+      geometry.gapEnabled, geometry.startStyle, geometry.connector, geometry.connectorFade, geometry.fadeColors);
   }
-  if (orientation === 'mirrored') {
-    const reflected = paintPowerlineBlocks([...modules].reverse(), gap, spacing, endStyle, gapEnabled, startStyle, connector, connectorFade, fadeColors);
-    return `${serializeReflected(reflected)}${RESET}${NEUTRAL_BACKGROUND}`;
-  }
-  return serialize(paintPowerlineBlocks(modules, gap, spacing, endStyle, gapEnabled, startStyle, connector, connectorFade, fadeColors));
+}
+
+const TERMINAL_DARK: RgbColor = {red: 30, green: 30, blue: 36};
+
+/** Soft's subtle fill: a quiet tinted surface with the module color carried by its text. */
+function subtleBlock(block: PowerlineBlock): PowerlineBlock {
+  const fill = mixOklch(block.background, TERMINAL_DARK, 0.6);
+  return {...block, background: fill, foreground: readableForeground(fill, readableTextTone(mixOklch(block.background, {red: 255, green: 255, blue: 255}, 0.25)))};
+}
+
+function compactEdge(ends: StyleProfiles['compact']['ends']): PowerlineShape {
+  return ends === 'rounded' ? 'rounded' : ends === 'wedge' ? 'wedge' : 'flat';
+}
+
+/** Compact: dense filled cells, no gaps; optional thin same-hue seams. */
+function paintCompact(modules: readonly PowerlineBlock[], profile: StyleProfiles['compact']): Cell[] {
+  const paint = new Painter();
+  const edge = compactEdge(profile.ends);
+  renderStart(paint, modules[0]!.background, edge);
+  modules.forEach((block, index) => {
+    blockContent(paint, block, profile.padding);
+    const next = modules[index + 1];
+    if (next && profile.seams === 'thin') {
+      const seam = connectorFadeColor(next.background);
+      paint.add(`${RESET}${background(next.background)}${foreground(seam)}`, getCurrentGlyphMode() === 'nerd' ? '\u2595' : '|', next.background, seam);
+    }
+  });
+  renderEnd(paint, modules[modules.length - 1]!.background, edge);
+  paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+  return paint.cells;
+}
+
+/** The ribbon's single band color. */
+function ribbonBand(first: RgbColor, band: StyleProfiles['ribbon']['band']): RgbColor {
+  if (band === 'neutral') return {red: 40, green: 40, blue: 48};
+  const lch = toOklch(first);
+  return fromOklch({l: 0.3, c: Math.min(0.06, lch.c), h: lch.h});
+}
+
+/** Ribbon: one band across the prompt; each module is colored text on it, divided by thin slants. */
+function paintRibbon(modules: readonly PowerlineBlock[], profile: StyleProfiles['ribbon'], chroma: PromptChroma | undefined): Cell[] {
+  const paint = new Painter();
+  const band = ribbonBand(modules[0]!.background, profile.band);
+  const nerd = getCurrentGlyphMode() === 'nerd';
+  const edge: PowerlineShape = profile.ends === 'pointed' ? 'wedge' : profile.ends === 'flat' ? 'flat' : profile.slant === 'forward' ? 'slash' : 'backslash';
+  const divider = profile.slant === 'forward' ? (nerd ? '\ue0bb' : '/') : (nerd ? '\ue0b9' : '\\');
+  const dividerColor = readableForeground(band, mixOklch(band, {red: 255, green: 255, blue: 255}, 0.3), 2);
+  const pad = ' '.repeat(profile.padding);
+  const tones = modules.map(block => readableForeground(band, readableTextTone(textTone(block.background)), 4.5));
+  const spans: Span[] = [];
+  modules.forEach((block, index) => {
+    if (index > 0) spans.push({text: ` ${divider} `, color: dividerColor, kind: 'glyph', eligible: false});
+    spans.push({text: `${pad}${block.compact ? (nerd ? '●' : '*') : block.text}${pad}`, color: tones[index]!, kind: 'text', eligible: Boolean(block.treatment)});
+  });
+  renderStart(paint, band, edge);
+  paintSpans(paint, spans, chroma, band);
+  renderEnd(paint, band, edge);
+  paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+  return paint.cells;
 }
 
 function paintPowerlineBlocks(
@@ -435,25 +558,140 @@ function textTone(color: RgbColor): RgbColor {
   return {red: lift(color.red), green: lift(color.green), blue: lift(color.blue)};
 }
 
+/** A run of text one color (or one Chroma sweep) wide. */
+interface Span {
+  text: string;
+  color: RgbColor;
+  kind: Cell['kind'];
+  /** Whether Chroma may color this span. */
+  eligible: boolean;
+  bold?: boolean;
+  /** A filled span (breadcrumb anchor); text spans are unfilled. */
+  fill?: RgbColor;
+}
+
 /**
- * Minimal and Outline: no filled backgrounds. Segment colors become text
- * tones; Outline adds thin caps (Nerd half-circle outlines, Safe parentheses).
- * Symmetric, so mirrored right context renders the same way.
+ * Paint spans as cells. With Chroma, eligible spans take a per-column color
+ * from one sweep across the whole prompt; each span stays one cell so a
+ * mirrored render keeps its reading order.
  */
-function renderTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | 'outline', gap: number, spacing: number): string {
-  const safe = getCurrentGlyphMode() === 'safe';
-  const [open, close] = safe ? ['(', ')'] : ['\uE0B7', '\uE0B5'];
-  const pad = ' '.repeat(Math.max(0, Math.min(3, Math.trunc(spacing))));
-  const separator = ' '.repeat(style === 'minimal' ? Math.max(2, gap + 1) : Math.max(1, gap));
-  const parts = modules.map(block => {
-    const tone = foreground(textTone(block.background));
-    const plain = block.compact ? (safe ? '*' : '●') : block.text;
-    const text = block.treatment ? paintTreatment(plain, block.treatment, 'native-identity', textTone(block.background)) : plain;
-    return style === 'minimal'
-      ? `${tone}${text}`
-      : `${tone}${open}${pad}${text}${pad}${close}`;
-  });
-  return `${RESET}${NEUTRAL_BACKGROUND}${parts.join(`${RESET}${NEUTRAL_BACKGROUND}${separator}`)}${RESET}${NEUTRAL_BACKGROUND}`;
+function paintSpans(paint: Painter, spans: readonly Span[], chroma: PromptChroma | undefined, zone?: RgbColor): void {
+  const total = spans.reduce((sum, span) => sum + displayWidth(span.text), 0);
+  let column = 0;
+  let previous = '';
+  for (const span of spans) {
+    const fill = span.fill ?? zone;
+    const backgroundSgr = fill ? background(fill) : NEUTRAL_BACKGROUND;
+    const bold = span.bold ? BOLD : '';
+    let body = span.text;
+    if (chroma && span.eligible && span.text.trim()) {
+      let offset = column;
+      body = graphemes(span.text).map(glyph => {
+        const position = total <= 1 ? 0 : offset / (total - 1);
+        offset += displayWidth(glyph);
+        const treated = samplePromptTreatment(chroma.treatment, span.color, position, chroma.time, chroma.still);
+        const color = fill ? readableForeground(fill, treated, 3) : readableTextTone(treated);
+        return `${foreground(color)}${glyph}`;
+      }).join('');
+    }
+    const sgr = `${RESET}${backgroundSgr}${bold}${foreground(span.color)}`;
+    // Adjacent spans in the same plain style share one escape.
+    paint.add(sgr === previous ? '' : sgr, body, fill, span.color, span.kind);
+    previous = body === span.text ? sgr : '';
+    column += displayWidth(span.text);
+  }
+}
+
+const BOLD = '\u001B[1m';
+const SUBTLE_SEPARATOR = UI_COLORS.subtle;
+
+function minimalSeparator(profile: StyleProfiles['minimal']): string {
+  const glyph = separatorGlyph('minimal', profile.separator, profile.customSeparator);
+  if (!glyph) return ' '.repeat(profile.spacing);
+  const side = ' '.repeat(Math.max(1, Math.ceil(profile.spacing / 2)));
+  return `${side}${glyph}${side}`;
+}
+
+function outlineCaps(cap: StyleProfiles['outline']['cap']): [string, string] {
+  const nerd = getCurrentGlyphMode() === 'nerd';
+  if (cap === 'square') return ['[', ']'];
+  if (cap === 'angle') return nerd ? ['\ue0b3', '\ue0b1'] : ['<', '>'];
+  return nerd ? ['\uE0B7', '\uE0B5'] : ['(', ')'];
+}
+
+function breadcrumbSeparator(profile: StyleProfiles['breadcrumb']): string {
+  const glyph = separatorGlyph('breadcrumb', profile.separator, profile.customSeparator);
+  const side = ' '.repeat(profile.spacing);
+  return `${side}${glyph}${side}`;
+}
+
+/**
+ * Minimal, Outline and Breadcrumb: no filled module backgrounds (the
+ * Breadcrumb anchor is the one filled pill). Module colors become text
+ * tones; separators and outlines stay quiet unless Chroma treats them.
+ */
+function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | 'outline' | 'breadcrumb', profiles: StyleProfiles,
+  chroma: PromptChroma | undefined): Cell[] {
+  const nerd = getCurrentGlyphMode() === 'nerd';
+  const label = (block: PowerlineBlock) => block.compact ? (nerd ? '●' : '*') : block.text;
+  const tone = (block: PowerlineBlock) => textTone(block.background);
+  const spans: Span[] = [];
+  if (style === 'minimal') {
+    const profile = profiles.minimal;
+    const separator = minimalSeparator(profile);
+    modules.forEach((block, index) => {
+      if (index > 0) spans.push({text: separator, color: SUBTLE_SEPARATOR, kind: separator.trim() ? 'glyph' : 'space',
+        eligible: Boolean(modules[index - 1]!.treatment && block.treatment)});
+      spans.push({text: label(block), color: tone(block), kind: 'text', eligible: Boolean(block.treatment),
+        bold: profile.emphasis === 'all' || (profile.emphasis === 'first' && index === 0)});
+    });
+  } else if (style === 'outline') {
+    const profile = profiles.outline;
+    const [open, close] = outlineCaps(profile.cap);
+    const pad = ' '.repeat(profile.padding);
+    if (profile.layout === 'connected') {
+      const divider = separatorGlyph('outline', profile.divider, profile.customSeparator);
+      modules.forEach((block, index) => {
+        const color = tone(block);
+        const eligible = Boolean(block.treatment);
+        if (index === 0) spans.push({text: open, color, kind: 'glyph', eligible});
+        else spans.push({text: divider, color: SUBTLE_SEPARATOR, kind: 'glyph', eligible: eligible && Boolean(modules[index - 1]!.treatment)});
+        spans.push({text: `${pad}${label(block)}${pad}`, color, kind: 'text', eligible});
+        if (index === modules.length - 1) spans.push({text: close, color, kind: 'glyph', eligible});
+      });
+    } else {
+      modules.forEach((block, index) => {
+        const color = tone(block);
+        const eligible = Boolean(block.treatment);
+        if (index > 0 && profile.gap > 0) spans.push({text: ' '.repeat(profile.gap), color, kind: 'space', eligible: false});
+        spans.push({text: open, color, kind: 'glyph', eligible});
+        spans.push({text: `${pad}${label(block)}${pad}`, color, kind: 'text', eligible});
+        spans.push({text: close, color, kind: 'glyph', eligible});
+      });
+    }
+  } else {
+    const profile = profiles.breadcrumb;
+    const separator = breadcrumbSeparator(profile);
+    const anchor = profile.anchor === 'none' ? -1 : profile.anchor === 'first' ? 0 : modules.length - 1;
+    const filled = treatFilled(modules, chroma);
+    modules.forEach((block, index) => {
+      if (index > 0) spans.push({text: separator, color: SUBTLE_SEPARATOR, kind: 'glyph', eligible: false});
+      if (index !== anchor) {
+        spans.push({text: label(block), color: tone(block), kind: 'text', eligible: Boolean(block.treatment)});
+        return;
+      }
+      const pill = filled[index]!;
+      const caps = powerlineShapeGlyphs(nerd ? 'rounded' : 'flat');
+      if (caps.open) spans.push({text: caps.open, color: pill.background, kind: 'glyph', eligible: false});
+      spans.push({text: ` ${label(pill)} `, color: pill.foreground, kind: 'text', eligible: false, fill: pill.background});
+      if (caps.close) spans.push({text: caps.close, color: pill.background, kind: 'glyph', eligible: false});
+    });
+  }
+  const paint = new Painter();
+  paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+  paintSpans(paint, spans, chroma);
+  paint.add(`${RESET}${NEUTRAL_BACKGROUND}`, '', undefined);
+  return paint.cells;
 }
 
 /** Fit complete segment transitions to the cell budget, omitting decorations first. */
@@ -468,6 +706,7 @@ export function fitPowerlineBlocks(
   connector: PowerlineConnectorStyle = 'wedge',
   connectorFade: ResolvedConnectorFade = undefined,
   fadeColors: ConnectorFadeColors = 'previous',
+  extras: RenderExtras = {},
 ): string {
   if (width <= 0 || modules.length === 0) return '';
   const style = normalizeEndStyle(endStyle);
@@ -476,7 +715,7 @@ export function fitPowerlineBlocks(
     return `${foreground(first.foreground)}${truncateText(first.text, width)}${RESET}${NEUTRAL_BACKGROUND}`;
   }
   const render = (blocks: readonly PowerlineBlock[], blockGap: number, blockSpacing: number, enabled: boolean) =>
-    renderPowerlineBlocks(blocks, blockGap, blockSpacing, style, enabled, startStyle, connector, connectorFade, fadeColors);
+    renderPowerlineBlocks(blocks, blockGap, blockSpacing, style, enabled, startStyle, connector, connectorFade, fadeColors, 'normal', extras);
 
   for (let count = modules.length; count >= 1; count -= 1) {
     const visible = modules.slice(0, count);

@@ -10,7 +10,8 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
   let leftovers = [];
   try {
     // Existing presentation snapshots pin truecolor; baseline fixtures override this explicitly.
-    const env = {...process.env, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root};
+    // Tests never see the user's real NMSh settings: configuration lives under this run's private root.
+    const env = {...process.env, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config')};
     // A nested runner must not impersonate its parent's test worker.
     delete env.NODE_TEST_CONTEXT;
     const child = spawn(process.execPath, ['--import=tsx', '--test', ...args, ...files], {

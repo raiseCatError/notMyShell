@@ -75,5 +75,5 @@ test('style persists under nmsh.style (default Powerline) and is editable in /se
   assert.equal(normalizePromptConfiguration({nmsh: {style: 'glass'}}).nmsh.style, 'powerline');
   const row = SETTINGS_ROWS.find(candidate => candidate.id === 'promptStyle')!;
   assert.ok(row.control === 'enum');
-  assert.deepEqual(row.options, ['Powerline', 'Soft', 'Minimal', 'Outline']);
+  assert.deepEqual(row.options, ['Powerline', 'Soft', 'Minimal', 'Outline', 'Breadcrumb', 'Compact', 'Ribbon']);
 });

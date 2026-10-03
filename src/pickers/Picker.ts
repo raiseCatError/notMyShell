@@ -11,8 +11,10 @@ export type PickerResult = {kind: 'selected'; candidate: PickerCandidate} | {kin
 export type PickerHandoff = (run: (signal: AbortSignal) => Promise<PickerResult>) => Promise<PickerResult>;
 export const PICKER_PROVIDERS: readonly ProviderDescriptor<PickerProviderId>[] = [
   {id: 'native', family: 'picker', label: 'NMSh Native', kind: 'native', description: 'search in the composer; select without executing'},
-  {id: 'fzf', family: 'picker', label: 'fzf', kind: 'external', executable: 'fzf', versionArgs: ['--version'], description: 'optional terminal fuzzy picker'},
-  {id: 'television', family: 'picker', label: 'Television', kind: 'external', executable: 'tv', versionArgs: ['--version'], description: 'optional terminal fuzzy picker'},
+  {id: 'fzf', family: 'picker', label: 'fzf', kind: 'external', executable: 'fzf', versionArgs: ['--version'], description: 'optional terminal fuzzy picker',
+    recipe: {brew: 'fzf'}, source: 'https://github.com/junegunn/fzf'},
+  {id: 'television', family: 'picker', label: 'Television', kind: 'external', executable: 'tv', versionArgs: ['--version'], description: 'optional terminal fuzzy picker',
+    recipe: {brew: 'television'}, source: 'https://github.com/alexpasmantier/television'},
 ];
 const plain = (text: string): string => text.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ');
 
