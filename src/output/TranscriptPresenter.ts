@@ -2,7 +2,7 @@ import {paintTreatment, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
-import {background, foreground, UI_COLORS} from '../ui/palette.js';
+import {background, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
@@ -19,9 +19,9 @@ import type {CompletedCommand, HistoricalContextSnapshot, SecondaryActivity} fro
 
 const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 /** Row surfaces: submitted command rows, hovered and focused disclosure rows. */
 const COMMAND_SURFACE = background({red: 38, green: 38, blue: 48});

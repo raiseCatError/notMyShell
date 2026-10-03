@@ -1,11 +1,11 @@
 import {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const INTERACTIVE = foreground(UI_COLORS.accent);
-const WARNING = foreground(UI_COLORS.failure);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const INTERACTIVE = lazyForeground(UI_COLORS.accent);
+const WARNING = lazyForeground(UI_COLORS.failure);
 const RESET = '\u001B[0m';
 
 export interface KeyboardState {

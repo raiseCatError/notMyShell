@@ -192,7 +192,7 @@ test('new themes are complete, readable and not near-duplicates of each other', 
 
 test('the /prompt Main Prompt row order and Chroma rows hide meaningless controls', () => {
   assert.deepEqual(appearanceRows(withStyle('minimal')).map(row => row.id),
-    ['theme', 'style', 'vibrance', 'minimal.separator', 'minimal.spacing', 'minimal.emphasis', 'icons', 'modules']);
+    ['themeFamily', 'themeVariant', 'style', 'vibrance', 'minimal.separator', 'minimal.spacing', 'minimal.emphasis', 'icons', 'promptSymbol', 'modules']);
   const config = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   assert.deepEqual(chromaRows(config).map(row => row.id), ['preset'], 'Off shows only the palette');
   config.presentation.preset = 'aurora';

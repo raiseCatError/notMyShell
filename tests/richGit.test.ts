@@ -264,9 +264,11 @@ test('/prompt Main Prompt and Rich Git views: arrows switch views and edit every
   const state = appearanceState();
   const bar = renderPromptPanel(state, 120, []).find(row => stripAnsi(row).includes('Main Prompt') && stripAnsi(row).includes('Rich Git'))!;
   assert.match(bar, /\u001B\[48;2;[\d;]+m\u001B\[38;2;[\d;]+m Main Prompt /u, 'the active view is a filled block');
+  state.selectedIndex = 1;
   press(state, 'right');
   assert.equal(state.draft.nmsh.palette, 'brand', '←/→ on a row still edit it');
   press(state, 'left');
+  state.selectedIndex = 0;
   press(state, 'up');
   press(state, 'right');
   assert.equal(state.view, 'git');

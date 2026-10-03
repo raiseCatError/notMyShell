@@ -26,7 +26,9 @@ export type RegionKind =
   | 'composerBorder'
   | 'prompt'
   | 'input'
-  | 'separator';
+  | 'separator'
+  /** The optional NMSh status strip: one owned row at the top. */
+  | 'status';
 
 export interface Region {
   kind: RegionKind;
@@ -191,6 +193,16 @@ function build(
     top += height;
   }
   return {rows, regions, transcript, ptyRows: transcript.height, viewportRows: Math.max(1, transcript.height), ...extra};
+}
+
+/**
+ * A plan with one owned status row above everything else. Every region moves
+ * down by one, so hit-testing, cursor placement and viewport math stay in
+ * agreement; the transcript keeps its own height.
+ */
+export function withStatusRow(plan: ScreenPlan): ScreenPlan {
+  const shift = (region: Region): Region => ({...region, top: region.top + 1});
+  return {...plan, rows: plan.rows + 1, regions: [{kind: 'status', top: 0, height: 1}, ...plan.regions.map(shift)], transcript: shift(plan.transcript)};
 }
 
 export function regionOf(plan: ScreenPlan, kind: RegionKind): Region | undefined {

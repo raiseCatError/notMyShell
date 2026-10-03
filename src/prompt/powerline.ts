@@ -1,3 +1,4 @@
+import {separatorGlyph} from './glyphChoices.js';
 import {readableTextTone, samplePromptTreatment, treatmentFor, type Treatment, type TreatmentSettings} from '../chroma/treatment.js';
 import {fromOklch, mixOklch, readableForeground, toOklch} from '../chroma/color.js';
 import {graphemes} from '../input/inputLayout.js';
@@ -605,8 +606,7 @@ const BOLD = '\u001B[1m';
 const SUBTLE_SEPARATOR = UI_COLORS.subtle;
 
 function minimalSeparator(profile: StyleProfiles['minimal']): string {
-  const nerd = getCurrentGlyphMode() === 'nerd';
-  const glyph = {space: '', dot: '·', pipe: nerd ? '│' : '|', slash: '/', chevron: nerd ? '\ue0b1' : '>'}[profile.separator];
+  const glyph = separatorGlyph('minimal', profile.separator, profile.customSeparator);
   if (!glyph) return ' '.repeat(profile.spacing);
   const side = ' '.repeat(Math.max(1, Math.ceil(profile.spacing / 2)));
   return `${side}${glyph}${side}`;
@@ -620,8 +620,7 @@ function outlineCaps(cap: StyleProfiles['outline']['cap']): [string, string] {
 }
 
 function breadcrumbSeparator(profile: StyleProfiles['breadcrumb']): string {
-  const nerd = getCurrentGlyphMode() === 'nerd';
-  const glyph = {chevron: nerd ? '\ue0b1' : '>', slash: nerd ? '\ue0bb' : '/', dot: '·'}[profile.separator];
+  const glyph = separatorGlyph('breadcrumb', profile.separator, profile.customSeparator);
   const side = ' '.repeat(profile.spacing);
   return `${side}${glyph}${side}`;
 }

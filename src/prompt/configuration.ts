@@ -26,6 +26,9 @@ import {
   type PromptStyle,
 } from './powerline.js';
 import {normalizeStyleProfiles, type StyleProfiles} from './styles.js';
+import {normalizeCustomGlyph, normalizePromptSymbol, type PromptSymbolId} from './glyphChoices.js';
+import {normalizeCatppuccinAccent, type CatppuccinAccent} from '../appearance/themeFamilies.js';
+import {normalizeCustomTheme, type CustomTheme} from '../appearance/customTheme.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
@@ -60,7 +63,15 @@ export type NativeStartStyle = PowerlineEdgeStyle;
 export type NativeConnectorStyle = PowerlineConnectorStyle;
 /** `nerd` shows Nerd Font module icons; a future `text` mode can join without migration. */
 export type NativeIconMode = 'nerd' | 'off';
-export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale' | 'aurora' | 'ocean' | 'sunset' | 'forest' | 'rose' | 'nebula' | 'highContrast';
+export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale' | 'aurora' | 'ocean' | 'sunset' | 'forest' | 'rose' | 'nebula' | 'highContrast'
+  | ThirdPartyPaletteId | 'custom';
+/** Bundled third-party variants (see appearance/themeFamilies). */
+export type ThirdPartyPaletteId = 'catppuccinLatte' | 'catppuccinFrappe' | 'catppuccinMacchiato' | 'catppuccinMocha' | 'dracula'
+  | 'tokyonightNight' | 'tokyonightStorm' | 'tokyonightMoon' | 'tokyonightDay' | 'gruvboxDark' | 'gruvboxLight'
+  | 'rosePine' | 'rosePineMoon' | 'rosePineDawn' | 'nord' | 'solarizedDark' | 'solarizedLight' | 'oneDark' | 'oneLight';
+export const THIRD_PARTY_PALETTE_IDS: readonly ThirdPartyPaletteId[] = ['catppuccinLatte', 'catppuccinFrappe', 'catppuccinMacchiato', 'catppuccinMocha',
+  'dracula', 'tokyonightNight', 'tokyonightStorm', 'tokyonightMoon', 'tokyonightDay', 'gruvboxDark', 'gruvboxLight',
+  'rosePine', 'rosePineMoon', 'rosePineDawn', 'nord', 'solarizedDark', 'solarizedLight', 'oneDark', 'oneLight'];
 export type NativeGapChoice = 'off' | 'compact' | 'normal' | 'wide';
 /**
  * Rich Git state colors: `semantic` keeps meaningful Git colors under any
@@ -99,13 +110,16 @@ export function normalizeConnectorFade(value: unknown): ConnectorFadeStyle {
   return CONNECTOR_FADE_STYLES.includes(value as ConnectorFadeStyle) ? value as ConnectorFadeStyle : 'off';
 }
 
+/** The NMSh theme family (Native themes); other families are listed by THEME_PALETTE_IDS. */
 export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale',
   'aurora', 'ocean', 'sunset', 'forest', 'rose', 'nebula', 'highContrast'];
+/** Every selectable theme id: NMSh themes, bundled families, and the user's custom theme. */
+export const THEME_PALETTE_IDS: readonly NativePaletteId[] = [...NATIVE_PALETTE_IDS, ...THIRD_PARTY_PALETTE_IDS, 'custom'];
 
 /** Retired theme ids keep working: Soft Semantic overlapped Brand / Semantic. */
 export function normalizePaletteId(value: unknown, fallback: NativePaletteId = 'lavender'): NativePaletteId {
   if (value === 'semantic') return 'brand';
-  return NATIVE_PALETTE_IDS.includes(value as NativePaletteId) ? value as NativePaletteId : fallback;
+  return THEME_PALETTE_IDS.includes(value as NativePaletteId) ? value as NativePaletteId : fallback;
 }
 
 export interface ContextModuleConfig {
@@ -210,6 +224,35 @@ export function normalizeNotificationSettings(value: unknown): NotificationSetti
   };
 }
 
+/** Text-caret style while NMSh owns the composer; Host default sends nothing. */
+export const CURSOR_SHAPES = ['host', 'block', 'bar', 'underline'] as const;
+export type CursorShape = typeof CURSOR_SHAPES[number];
+export const CURSOR_BLINKS = ['host', 'on', 'off'] as const;
+export type CursorBlink = typeof CURSOR_BLINKS[number];
+export interface CursorSettings {shape: CursorShape; blink: CursorBlink}
+export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host'};
+
+export function normalizeCursor(value: unknown): CursorSettings {
+  const v = isRecord(value) ? value : {};
+  return {shape: CURSOR_SHAPES.includes(v.shape as CursorShape) ? v.shape as CursorShape : 'host',
+    blink: CURSOR_BLINKS.includes(v.blink as CursorBlink) ? v.blink as CursorBlink : 'host'};
+}
+
+/** Optional NMSh-owned status strip; Off by default, Minimal (clock + real battery) when enabled. */
+export const RAM_DISPLAYS = ['percent', 'absolute', 'both'] as const;
+export type RamDisplay = typeof RAM_DISPLAYS[number];
+export interface StatusStripSettings {
+  enabled: boolean; clock: boolean; battery: boolean; cpu: boolean; ram: boolean; uptime: boolean; ramDisplay: RamDisplay;
+}
+export const DEFAULT_STATUS_STRIP: StatusStripSettings = {enabled: false, clock: true, battery: true, cpu: false, ram: false, uptime: false, ramDisplay: 'percent'};
+
+export function normalizeStatusStrip(value: unknown): StatusStripSettings {
+  const v = isRecord(value) ? value : {};
+  const flag = (key: keyof StatusStripSettings) => typeof v[key] === 'boolean' ? v[key] as boolean : DEFAULT_STATUS_STRIP[key] as boolean;
+  return {enabled: flag('enabled'), clock: flag('clock'), battery: flag('battery'), cpu: flag('cpu'), ram: flag('ram'), uptime: flag('uptime'),
+    ramDisplay: RAM_DISPLAYS.includes(v.ramDisplay as RamDisplay) ? v.ramDisplay as RamDisplay : 'percent'};
+}
+
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
   provider: PromptProviderId;
@@ -245,6 +288,14 @@ export interface PromptConfiguration {
   installSuggestions: boolean;
   /** Curated tool ids the user asked not to be offered again. */
   ignoredInstallSuggestions: string[];
+  /** The composer's prompt marker; provider-owned prompts (Starship, Powerlevel10k) are never changed. */
+  promptSymbol: PromptSymbolId;
+  /** Used when `promptSymbol` is `custom`; kept when another symbol is chosen. */
+  promptSymbolCustom?: string;
+  /** The user's custom Native theme (NMSh Theme JSON); used when the palette is `custom`, kept otherwise. */
+  customTheme?: CustomTheme;
+  cursor: CursorSettings;
+  statusStrip: StatusStripSettings;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -266,6 +317,8 @@ export interface PromptConfiguration {
     mirrorRight: boolean;
     /** Theme color strength; missing in older configs means Standard (unchanged colors). */
     vibrance: Vibrance;
+    /** Catppuccin accent; ignored by other families. */
+    accent: CatppuccinAccent;
     /**
      * Per-style settings for every style except Powerline, whose settings are
      * the fields above plus the root gap/spacing. Missing profiles are seeded
@@ -314,9 +367,12 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   toolUpdateChecks: 'off',
   installSuggestions: true,
   ignoredInstallSuggestions: [],
+  promptSymbol: 'chevron',
+  cursor: {...DEFAULT_CURSOR},
+  statusStrip: {...DEFAULT_STATUS_STRIP},
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
-    mirrorRight: true, vibrance: 'standard', styleProfiles: normalizeStyleProfiles(undefined)},
+    mirrorRight: true, vibrance: 'standard', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -389,7 +445,9 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const ignoredInstallSuggestions = Array.isArray(value.ignoredInstallSuggestions)
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
-  const tooling = {toolUpdateChecks, installSuggestions, ignoredInstallSuggestions};
+  const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
+  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+    ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -403,7 +461,11 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const connector = normalizeConnectorStyle(nativeValue.connector);
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
   const style = normalizePromptStyle(nativeValue.style);
-  const palette = normalizePaletteId(nativeValue.palette);
+  const customTheme = normalizeCustomTheme(value.customTheme);
+  // A custom palette without a valid custom theme falls back instead of rendering nothing.
+  const storedPalette = normalizePaletteId(nativeValue.palette);
+  const palette = storedPalette === 'custom' && !customTheme ? 'lavender' : storedPalette;
+  Object.assign(tooling, customTheme ? {customTheme} : {});
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const notifications = normalizeNotificationSettings(value.notifications);
@@ -417,6 +479,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade),
     mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true,
     vibrance: normalizeVibrance(nativeValue.vibrance),
+    accent: normalizeCatppuccinAccent(nativeValue.accent),
     styleProfiles: normalizeStyleProfiles(undefined)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath

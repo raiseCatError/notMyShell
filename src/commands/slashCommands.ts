@@ -10,6 +10,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
+  {name: '/theme', insertion: '/theme', description: 'Theme Studio: clone, edit, import and export a custom Native theme'},
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
@@ -42,6 +43,7 @@ export type ParsedSlashCommand =
   | {kind: 'appearance'}
   | {kind: 'prompt'}
   | {kind: 'chroma'}
+  | {kind: 'theme'}
   | {kind: 'tools'}
   | {kind: 'setup'; entry?: string}
   | {kind: 'settings'; view: 'config' | 'status'}
@@ -70,6 +72,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
+  if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
   const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};

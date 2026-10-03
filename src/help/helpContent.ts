@@ -20,6 +20,10 @@ Run /setup (or /setup prompt, appearance, chroma, editor, tools) to revisit sett
 
 When a submitted command is missing in your zsh and exactly names a curated tool, NMSh may offer to install it; aliases, functions, builtins and executables always win, and your command stays in the composer. The command inspector (palette: Toggle command inspector) shows what a command word resolves to: builtin, alias, function or executable path.
 
+## Appearance
+
+Settings → Theme family picks NMSh themes or bundled families (Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark). Themes color NMSh-owned UI only; your terminal and editor keep their colors. /theme opens Theme Studio to clone, edit, import (NMSh Theme JSON, Base16, Windows Terminal schemes) and export a custom theme. Cursor shape and blink, the prompt symbol and the optional status strip are in Settings.
+
 ## Session presets
 
 Use /presets (also in the palette) to create, inspect, launch and delete named startup configurations. N creates one with an explicit cwd and optional commands, one per line; Tab changes fields, Ctrl+J adds a command line, Enter saves. Never put secrets in saved commands; reference your existing environment tooling instead.

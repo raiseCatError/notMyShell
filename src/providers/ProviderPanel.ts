@@ -1,15 +1,15 @@
 import type {Key} from '../terminal/keys.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {installUnavailableReason, providerInstall, providerRowText, providerUsable, type ProviderDescriptor, type ProviderFamily, type ProviderInstall,
   type ProviderStatus, lifecycleNote} from './providers.js';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 
 /**

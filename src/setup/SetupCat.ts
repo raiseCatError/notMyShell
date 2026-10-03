@@ -1,9 +1,10 @@
 import type {Key} from '../terminal/keys.js';
 import {
-  DEFAULT_PROMPT_CONFIGURATION, NATIVE_PALETTE_IDS, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
+  DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
   type PromptConfiguration, type PromptProviderId,
 } from '../prompt/configuration.js';
-import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
+import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
+import {separatorLabel} from '../prompt/glyphChoices.js';
 import {PROMPT_PROVIDERS} from '../prompt/PromptPanel.js';
 import {WELCOME_PROVIDERS} from '../output/WelcomeProviders.js';
 import {NAVIGATION_PROVIDERS} from '../shell/DirectoryService.js';
@@ -13,7 +14,7 @@ import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {lifecycleNote, type ProviderDescriptor, type ProviderStatus} from '../providers/providers.js';
 import type {CompletionFacts} from '../shell/SemanticService.js';
 import {
-  adjustSettingsRow, enumRow, settingsRowValue, SETTINGS_ROWS, type SettingsRow,
+  adjustSettingsRow, enumRow, settingsRowApplies, settingsRowValue, SETTINGS_ROWS, type SettingsRow,
 } from '../ui/SettingsPanel.js';
 import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
@@ -100,9 +101,27 @@ function providerRow<Id extends string>(id: string, label: string, description: 
   };
 }
 
-const THEME_ROW = enumRow({id: 'setupTheme', label: 'Theme', description: 'NMSh Native prompt theme', category: 'Appearance',
-  values: NATIVE_PALETTE_IDS, labels: NATIVE_PALETTE_IDS.map(id => NATIVE_PROMPT_THEMES[id].label),
-  get: config => config.nmsh.palette, set: (config, palette) => ({...config, nmsh: {...config.nmsh, palette}})});
+/** Minimal and Breadcrumb draw a text separator; other styles keep their own geometry (custom glyphs live in /prompt). */
+const separatorStyle = (config: PromptConfiguration): 'minimal' | 'breadcrumb' | undefined =>
+  config.nmsh.style === 'minimal' || config.nmsh.style === 'breadcrumb' ? config.nmsh.style : undefined;
+const separatorIds = (config: PromptConfiguration): string[] => {
+  const style = separatorStyle(config);
+  return style ? (STYLE_PROFILE_OPTIONS[style].separator as readonly string[]).filter(id => id !== 'custom') : [];
+};
+const SEPARATOR_ROW: SettingsRow = {id: 'setupSeparator', parent: 'promptStyle', when: config => separatorStyle(config) !== undefined,
+  label: 'Separator', description: 'Only styles that draw a text separator offer one; custom glyphs are typed in /prompt', category: 'Prompt',
+  control: 'enum', options: [], optionsFor: config => separatorIds(config).map(id => separatorLabel(id)),
+  index: config => {
+    const style = separatorStyle(config);
+    return style ? Math.max(0, separatorIds(config).indexOf(config.nmsh.styleProfiles[style].separator)) : 0;
+  },
+  select: (config, index) => {
+    const style = separatorStyle(config);
+    if (!style) return config;
+    const id = separatorIds(config)[index] ?? separatorIds(config)[0]!;
+    return {...config, nmsh: {...config.nmsh, styleProfiles: {...config.nmsh.styleProfiles,
+      [style]: {...config.nmsh.styleProfiles[style], separator: id}}}};
+  }};
 
 const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider', 'Prompt provider', 'Native prompt, or your existing Starship / Powerlevel10k', 'Prompt',
   PROMPT_PROVIDERS, config => config.provider, (config, provider) => ({...config, provider}));
@@ -117,14 +136,20 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   ], rows: []},
   {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
     {row: configRow('glyphStyle'), note: draft => draft.glyphStyle === 'nerd' ? 'Needs a Nerd Font in your terminal' : 'Works with any terminal font'},
+    {row: configRow('cursorShape'), note: () => 'Applied only while NMSh owns the composer; full-screen programs get your normal cursor'},
+    {row: configRow('cursorBlink')},
   ]},
   {id: 'prompt', title: 'Prompt', intro: ['How the prompt above the composer looks.'], rows: [
     {...PROMPT_PROVIDER_ROW, note: (draft, context) => draft.provider === 'nmsh' ? 'Built in · no installation required'
       : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · details in /prompt`},
     {row: configRow('promptStyle')},
+    {row: SEPARATOR_ROW},
+    {row: configRow('promptSymbol')},
   ]},
   {id: 'appearance', title: 'Appearance', intro: ['Theme and Chroma color NMSh-owned UI only; your terminal and editor keep their own colors.'], rows: [
-    {row: THEME_ROW},
+    {row: configRow('themeFamily'), note: () => 'Themes NMSh-owned UI only; your terminal and editor keep their colors. /theme makes your own'},
+    {row: configRow('themeVariant')},
+    {row: configRow('themeAccent')},
     {row: configRow('promptVibrance')},
     {row: configRow('treatmentPreset'), note: () => 'Chroma colors NMSh-owned prompt, rules and frames; /chroma has every option'},
     {row: configRow('treatmentMotion')},
@@ -155,6 +180,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'welcomeScreen', title: 'Welcome', intro: ['What a new session shows first. Vespyr is the NMSh cat.'], rows: [
     providerRow('setupWelcome', 'Welcome', 'New-session welcome', 'Welcome', WELCOME_PROVIDERS.filter(provider => WELCOME_PROVIDER_IDS.includes(provider.id)),
       config => config.welcome, (config, welcome) => ({...config, welcome})),
+    {row: configRow('statusStrip'), note: draft => draft.statusStrip.enabled ? 'Minimal: clock, plus battery only when this machine has one; more in /settings' : 'Off: no extra row'},
   ]},
   {id: 'tools', title: 'Optional tools', intro: [NATIVE_FIRST_SHORT, 'Installing is never automatic: each install is previewed and confirmed in /tools.'], rows: [
     {row: configRow('toolUpdateChecks'), note: draft => draft.toolUpdateChecks === 'off' ? 'Off: NMSh never checks unless you ask in /tools' : 'Checks run in the background at startup, never while typing'},
@@ -236,8 +262,15 @@ export type SetupResult =
   | {kind: 'cancel'}
   | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean};
 
+/** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
 function currentRows(state: SetupState): readonly SetupRow[] {
-  return state.section === sectionIndex('tools') ? [...SETUP_SECTIONS[state.section]!.rows, TOOL_CHOICE_ROW] : SETUP_SECTIONS[state.section]!.rows;
+  const rows = SETUP_SECTIONS[state.section]!.rows.filter(item => setupRowApplies(item.row, state.draft));
+  return state.section === sectionIndex('tools') ? [...rows, TOOL_CHOICE_ROW] : rows;
+}
+
+function setupRowApplies(row: SettingsRow, config: PromptConfiguration): boolean {
+  if (row.when && !row.when(config)) return false;
+  return SETTINGS_ROWS.some(item => item.id === row.id) ? settingsRowApplies(row, config) : true;
 }
 
 /** The tools tier choice is a Setup Cat action, not a stored setting; it rides on the same row model. */
@@ -331,14 +364,15 @@ export function renderSetup(state: SetupState, columns: number, height: number):
     }
   } else {
     const rows = currentRows(state);
-    const labelWidth = Math.min(30, Math.max(0, ...rows.map(item => displayWidth(item.row.label))) + 3);
+    const indent = (row: SettingsRow) => row.parent ? '  ' : '';
+    const labelWidth = Math.min(30, Math.max(0, ...rows.map(item => displayWidth(indent(item.row) + item.row.label))) + 3);
     rows.forEach((item, index) => {
       const selected = index === state.row;
       const value = item.row.id === TOOL_CHOICE_ROW.row.id ? TOOL_CHOICE_LABELS[state.tools] : rowValue(item.row, state.draft);
       const changed = item.row.id !== TOOL_CHOICE_ROW.row.id && rowValue(item.row, state.saved) !== value;
       const pointer = selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
       const control = selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
-      out.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${item.row.label.padEnd(labelWidth)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
+      out.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${(indent(item.row) + item.row.label).padEnd(labelWidth)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
     });
     const selected = rows[state.row];
     if (selected) {

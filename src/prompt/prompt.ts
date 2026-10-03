@@ -1,9 +1,11 @@
+import {accentedVariant, THEME_VARIANTS, type CatppuccinAccent, type ThemeVariant} from '../appearance/themeFamilies.js';
+import type {CustomTheme} from '../appearance/customTheme.js';
 import {treatmentAnimated, treatmentFor, type TreatmentSettings} from '../chroma/treatment.js';
 import {applyVibrance, fromOklch, readableForeground, toOklch, type Vibrance} from '../chroma/color.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
-import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
 import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
@@ -21,7 +23,7 @@ import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, reso
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
-const LINE = foreground(UI_COLORS.separator);
+const LINE = lazyForeground(UI_COLORS.separator);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 /** NMSh brand/project lavender. */
 export const NMSH_BRAND_LAVENDER: RgbColor = {red: 166, green: 124, blue: 243};
@@ -136,7 +138,7 @@ export function promptRoleColors(role: PromptRole, palette: NativePaletteId, git
  * any module order. Toolchain segments keep recognizable identities in the
  * semantic themes; Lavender Native and Grayscale stay within their family.
  */
-export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = {
+export const NATIVE_PROMPT_THEMES = {
   lavender: theme('lavender', 'Lavender Native', 'lavender, violet and iris family', {
     project: pair('#a67cf3', '#faf6ff'),
     cwd: pair('#7a68b8', '#f3eeff'),
@@ -222,7 +224,50 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     project: '#ff3df2', cwd: '#24243a', gitBranch: '#00e5ff', node: '#39ff14', go: '#00b3ff', python: '#ffe600',
     docker: '#2f6bff', kubernetes: '#8a5cff', success: '#00ff9c', failure: '#ff2e63',
   })),
-};
+} as Record<NativePaletteId, NativePromptTheme>;
+
+/** Theme context that is not part of a palette id: Catppuccin accent and the user's custom theme. */
+let activeAccent: CatppuccinAccent = 'mauve';
+let activeCustomTheme: CustomTheme | undefined;
+
+/** Set from the live configuration before rendering; previews of the same config see the same context. */
+export function setThemeContext(accent: CatppuccinAccent, custom: CustomTheme | undefined): void {
+  activeAccent = accent;
+  activeCustomTheme = custom;
+}
+
+export function themeContext(): {accent: CatppuccinAccent; custom: CustomTheme | undefined} {
+  return {accent: activeAccent, custom: activeCustomTheme};
+}
+
+function familyTheme(variant: ThemeVariant): NativePromptTheme {
+  const rolesFor = () => auto(accentedVariant(variant, activeAccent).roles);
+  let cacheKey = '';
+  let cached = rolesFor();
+  return {id: variant.id as NativePaletteId, label: variant.label, description: variant.description, colors: role => {
+    if (cacheKey !== activeAccent) { cacheKey = activeAccent; cached = rolesFor(); }
+    return isGitStateRole(role) ? themeGitColors(cached, role) : cached[role];
+  }};
+}
+
+const FALLBACK_CUSTOM = {project: '#a67cf3', cwd: '#7a68b8', gitBranch: '#5e45a6', node: '#9a6fd6', go: '#5d56c2', python: '#b08bcb',
+  docker: '#544ca8', kubernetes: '#6c5fc7', success: '#7c84cf', failure: '#b85c8f'};
+
+let customRolesSource: CustomTheme['prompt'] | undefined;
+let customRoles = auto(FALLBACK_CUSTOM);
+const CUSTOM_THEME: NativePromptTheme = {id: 'custom', label: 'Custom', description: 'your own NMSh theme', colors: role => {
+  const source = activeCustomTheme?.prompt;
+  if (source !== customRolesSource) { customRolesSource = source; customRoles = auto(source ?? FALLBACK_CUSTOM); }
+  return isGitStateRole(role) ? themeGitColors(customRoles, role) : customRoles[role];
+}};
+
+for (const variant of THEME_VARIANTS) (NATIVE_PROMPT_THEMES as Record<string, NativePromptTheme>)[variant.id] = familyTheme(variant);
+(NATIVE_PROMPT_THEMES as Record<string, NativePromptTheme>).custom = CUSTOM_THEME;
+
+/** The live label for the custom theme includes its name. */
+export function themeLabel(palette: NativePaletteId): string {
+  return palette === 'custom' && activeCustomTheme ? `Custom · ${activeCustomTheme.name}` : (NATIVE_PROMPT_THEMES[palette] ?? NATIVE_PROMPT_THEMES.lavender).label;
+}
 
 function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
   if (!color || !/^#[0-9a-f]{6}$/iu.test(color)) return fallback;

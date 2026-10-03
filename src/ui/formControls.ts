@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from './palette.js';
+import {foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
 
 /**
@@ -82,10 +82,10 @@ export interface ControlLook {
   color?: boolean;
 }
 
-const ACCENT = foreground(UI_COLORS.accent);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const SUBTLE = foreground(UI_COLORS.subtle);
-const ERROR = foreground(UI_COLORS.failure);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
+const ERROR = lazyForeground(UI_COLORS.failure);
 const INVERSE = '\u001B[7m';
 const RESET = '\u001B[0m';
 

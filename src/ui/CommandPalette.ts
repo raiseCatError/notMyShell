@@ -5,7 +5,7 @@ import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {fuzzyMatch} from '../suggestions/NativeSuggestions.js';
 import type {Key} from '../terminal/keys.js';
 import {renderActionHelp, resolveAction, type UiAction} from './actions.js';
-import {foreground, UI_COLORS} from './palette.js';
+import {foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {SEARCH_MATCH, SETTINGS_ENTRIES, SETTINGS_ROWS, type SettingsDestination} from './SettingsPanel.js';
 import {highlightMatches, truncateAnsi} from '../util/text.js';
 
@@ -135,10 +135,10 @@ export function handlePaletteKey(key: Key, state: PaletteState, recent: readonly
   return 'changed';
 }
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 
 export function renderPalette(state: PaletteState, columns: number, rowsAvailable: number, recent: readonly string[] = []): string[] {

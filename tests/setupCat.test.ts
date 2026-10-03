@@ -48,7 +48,8 @@ test('rerun after months of use shows the current choices as selected, not defau
   state.section = sectionIndex('terminal');
   assert.match(plain(renderSetup(state, 100, 30)), /Glyph style\s+.*Safe \/ ASCII/u);
   state.section = sectionIndex('appearance');
-  assert.match(plain(renderSetup(state, 100, 30)), /Theme\s+.*Ocean/u);
+  assert.match(plain(renderSetup(state, 100, 30)), /Theme family\s+.*NMSh/u);
+  assert.match(plain(renderSetup(state, 100, 30)), /  Variant\s+Ocean/u, 'the variant nests under its family');
   assert.match(plain(renderSetup(state, 100, 30)), /Chroma\s+Aurora/u);
   assert.deepEqual(setupChanges(state), []);
 });

@@ -7,7 +7,7 @@ import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import type {Key} from '../terminal/keys.js';
 import {DRAFT_PANEL_ACTIONS, renderActionHelp} from '../ui/actions.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {renderHistoricalContext, type HistoricalContextSnapshot} from './OutputBuffer.js';
 import {FOLD_HEAD_LINES, FOLD_TAIL_LINES, OUTPUT_FOLDING_MODES, type OutputFoldingMode} from './FoldPolicy.js';
@@ -27,10 +27,10 @@ export interface TranscriptPanelState {
 
 type Row = 'divider' | 'density' | 'prompt' | 'colors' | 'theme' | 'folding';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 const COLOR_MODES: readonly HistoryColorMode[] = ['followPrompt', 'theme', 'grayscale'];
 

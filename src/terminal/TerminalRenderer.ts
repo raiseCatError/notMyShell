@@ -2,6 +2,22 @@ import {BASELINE_CAPABILITIES, type TerminalCapabilities} from '../host/capabili
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
 import {displayWidth} from '../util/text.js';
 
+/** DECSCUSR reset: the terminal's own configured cursor. */
+export const CURSOR_RESET = '\u001B[0 q';
+
+/**
+ * DECSCUSR for a caret choice, or '' for Host default (NMSh then sends
+ * nothing). Blink "Host default" with a chosen shape uses the blinking form,
+ * which is the xterm default for that shape. Terminals without DECSCUSR
+ * ignore the sequence and keep their own cursor.
+ */
+export function cursorStyleSequence(shape: 'host' | 'block' | 'bar' | 'underline', blink: 'host' | 'on' | 'off'): string {
+  if (shape === 'host') return '';
+  const steady = blink === 'off' ? 1 : 0;
+  const base = shape === 'block' ? 1 : shape === 'underline' ? 3 : 5;
+  return `\u001B[${base + steady} q`;
+}
+
 export interface TerminalFrame {
   rows: string[];
   cursorRow: number;
@@ -28,6 +44,8 @@ export class TerminalRenderer {
   private previousCursor?: {row: number; column: number; visible: boolean};
 
   private suspended = false;
+  /** NMSh's caret style while it owns the composer; '' leaves the host's cursor alone. */
+  private cursorStyle = '';
   private readonly childModes = new AlternateScreenTracker();
   constructor(private readonly write: (data: string) => unknown = data => process.stdout.write(data),
     private capabilities: Readonly<TerminalCapabilities> = BASELINE_CAPABILITIES) {}
@@ -70,12 +88,28 @@ export class TerminalRenderer {
     return sequence + (desired ? this.inputModes(true) : `\u001B[?1004l\u001B[?2004l`);
   }
 
+  /**
+   * Applied only while NMSh owns the editable composer: written on entry and
+   * after passthrough, reset to the host default on passthrough and exit.
+   */
+  setCursorStyle(sequence: string): void {
+    if (sequence === this.cursorStyle) return;
+    const previous = this.cursorStyle;
+    this.cursorStyle = sequence;
+    if (!this.active || this.suspended) return;
+    this.write(sequence || (previous ? CURSOR_RESET : ''));
+  }
+
+  get currentCursorStyle(): string {
+    return this.cursorStyle;
+  }
+
   enter(): void {
     if (this.active) return;
     this.active = true;
     // Push alt screen FIRST, then push kitty mode onto the alt screen's stack
     this.suspended = false;
-    this.write(`\u001B[?1049h${this.inputModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
+    this.write(`\u001B[?1049h${this.inputModes(true)}\u001B[?25l\u001B[2J\u001B[H${this.cursorStyle}`);
   }
 
   render(frame: TerminalFrame): void {
@@ -119,7 +153,8 @@ export class TerminalRenderer {
     // Pop kitty mode while still on the alt screen
     this.childModes.reset('alternate');
     this.childModes.observeModes(restore);
-    this.write(`${this.inputModes(false)}\u001B[?25h\u001B[2J\u001B[H${restore}`);
+    // The foreground program gets the host's own cursor, not NMSh's caret style.
+    this.write(`${this.inputModes(false)}${this.cursorStyle ? CURSOR_RESET : ''}\u001B[?25h\u001B[2J\u001B[H${restore}`);
     this.previous = [];
     this.previousCursor = undefined;
   }
@@ -136,7 +171,7 @@ export class TerminalRenderer {
     this.previousCursor = undefined;
     // Clean each child keyboard stack on its own screen, finish on alternate,
     // then restore NMSh's modes even if the child exited abnormally.
-    this.write(`${this.reconcileModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
+    this.write(`${this.reconcileModes(true)}${this.cursorStyle}\u001B[?25l\u001B[2J\u001B[H`);
   }
 
   invalidate(): void {
@@ -151,6 +186,6 @@ export class TerminalRenderer {
     this.previousCursor = undefined;
     // Pop kitty mode first, THEN leave alt screen
     // Suspended means a foreground program still owns the terminal: release whatever it left, not just NMSh's own modes.
-    this.write(`\u001B[0m${this.suspended ? this.reconcileModes(false) : this.inputModes(false)}\u001B[?25h\u001B[?1049l`);
+    this.write(`\u001B[0m${this.suspended ? this.reconcileModes(false) : this.inputModes(false)}${this.cursorStyle ? CURSOR_RESET : ''}\u001B[?25h\u001B[?1049l`);
   }
 }

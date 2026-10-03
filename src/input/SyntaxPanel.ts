@@ -10,7 +10,7 @@ import type {CommandType} from '../shell/SemanticService.js';
 import type {Key} from '../terminal/keys.js';
 import {DRAFT_PANEL_ACTIONS, renderActionHelp} from '../ui/actions.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {graphemes} from './inputLayout.js';
 import {Highlighter} from './Highlighter.js';
@@ -26,10 +26,10 @@ export interface SyntaxPanelState {
 
 type Row = 'highlighting' | 'colors' | 'theme';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 
 /** Short rows that together exercise every token type. */

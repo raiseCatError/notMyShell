@@ -6,6 +6,8 @@
  * switching styles never discards another style's customization.
  */
 
+import {BREADCRUMB_SEPARATORS, MINIMAL_SEPARATORS, normalizeCustomGlyph, type BreadcrumbSeparator, type MinimalSeparator} from './glyphChoices.js';
+
 export type PromptStyle = 'powerline' | 'soft' | 'minimal' | 'outline' | 'breadcrumb' | 'compact' | 'ribbon';
 export const PROMPT_STYLES: readonly PromptStyle[] = ['powerline', 'soft', 'minimal', 'outline', 'breadcrumb', 'compact', 'ribbon'];
 export const PROMPT_STYLE_LABELS: Record<PromptStyle, string> = {
@@ -31,9 +33,13 @@ export function isTextStyle(style: PromptStyle): boolean {
 }
 
 export interface SoftProfile {cap: 'rounded' | 'slant' | 'square'; layout: 'separated' | 'connected'; gap: number; padding: number; fill: 'filled' | 'subtle'}
-export interface MinimalProfile {separator: 'space' | 'dot' | 'pipe' | 'slash' | 'chevron'; spacing: number; emphasis: 'none' | 'first' | 'all'}
+export interface MinimalProfile {separator: MinimalSeparator; spacing: number; emphasis: 'none' | 'first' | 'all';
+  /** Used when `separator` is `custom`; kept when another separator is chosen. */
+  customSeparator?: string}
 export interface OutlineProfile {cap: 'rounded' | 'square' | 'angle'; layout: 'separated' | 'connected'; gap: number; padding: number}
-export interface BreadcrumbProfile {separator: 'chevron' | 'slash' | 'dot'; anchor: 'first' | 'last' | 'none'; spacing: number}
+export interface BreadcrumbProfile {separator: BreadcrumbSeparator; anchor: 'first' | 'last' | 'none'; spacing: number;
+  /** Used when `separator` is `custom`; kept when another separator is chosen. */
+  customSeparator?: string}
 export interface CompactProfile {ends: 'flat' | 'rounded' | 'wedge'; padding: number; seams: 'none' | 'thin'}
 export interface RibbonProfile {slant: 'forward' | 'backward'; ends: 'slanted' | 'pointed' | 'flat'; padding: number; band: 'deep' | 'neutral'}
 
@@ -71,12 +77,18 @@ const bounded = (value: unknown, min: number, max: number, fallback: number) =>
 
 export const STYLE_PROFILE_OPTIONS = {
   soft: {cap: ['rounded', 'slant', 'square'], layout: ['separated', 'connected'], gap: [1, 2, 3], padding: [0, 1, 2, 3], fill: ['filled', 'subtle']},
-  minimal: {separator: ['space', 'dot', 'pipe', 'slash', 'chevron'], spacing: [1, 2, 3, 4], emphasis: ['none', 'first', 'all']},
+  minimal: {separator: MINIMAL_SEPARATORS, spacing: [1, 2, 3, 4], emphasis: ['none', 'first', 'all']},
   outline: {cap: ['rounded', 'square', 'angle'], layout: ['separated', 'connected'], gap: [0, 1, 2, 3], padding: [0, 1, 2, 3]},
-  breadcrumb: {separator: ['chevron', 'slash', 'dot'], anchor: ['first', 'last', 'none'], spacing: [1, 2]},
+  breadcrumb: {separator: BREADCRUMB_SEPARATORS, anchor: ['first', 'last', 'none'], spacing: [1, 2]},
   compact: {ends: ['flat', 'rounded', 'wedge'], padding: [0, 1], seams: ['none', 'thin']},
   ribbon: {slant: ['forward', 'backward'], ends: ['slanted', 'pointed', 'flat'], padding: [0, 1, 2], band: ['deep', 'neutral']},
 } as const;
+
+/** A stored custom separator survives only if it still validates. */
+function withCustom(value: unknown): {customSeparator?: string} {
+  const glyph = normalizeCustomGlyph(value);
+  return glyph ? {customSeparator: glyph} : {};
+}
 
 /** Missing profiles (older configs) are seeded from the legacy shared gap/spacing. */
 export function normalizeStyleProfiles(value: unknown, legacyGap = 1, legacySpacing = 1): StyleProfiles {
@@ -94,11 +106,13 @@ export function normalizeStyleProfiles(value: unknown, legacyGap = 1, legacySpac
       gap: bounded(soft.gap, 1, 3, defaults.soft.gap), padding: bounded(soft.padding, 0, 3, defaults.soft.padding),
       fill: choose(o.soft.fill, soft.fill, defaults.soft.fill)},
     minimal: {separator: choose(o.minimal.separator, minimal.separator, defaults.minimal.separator),
-      spacing: bounded(minimal.spacing, 1, 4, defaults.minimal.spacing), emphasis: choose(o.minimal.emphasis, minimal.emphasis, defaults.minimal.emphasis)},
+      spacing: bounded(minimal.spacing, 1, 4, defaults.minimal.spacing), emphasis: choose(o.minimal.emphasis, minimal.emphasis, defaults.minimal.emphasis),
+      ...withCustom(minimal.customSeparator)},
     outline: {cap: choose(o.outline.cap, outline.cap, defaults.outline.cap), layout: choose(o.outline.layout, outline.layout, defaults.outline.layout),
       gap: bounded(outline.gap, 0, 3, defaults.outline.gap), padding: bounded(outline.padding, 0, 3, defaults.outline.padding)},
     breadcrumb: {separator: choose(o.breadcrumb.separator, breadcrumb.separator, defaults.breadcrumb.separator),
-      anchor: choose(o.breadcrumb.anchor, breadcrumb.anchor, defaults.breadcrumb.anchor), spacing: bounded(breadcrumb.spacing, 1, 2, defaults.breadcrumb.spacing)},
+      anchor: choose(o.breadcrumb.anchor, breadcrumb.anchor, defaults.breadcrumb.anchor), spacing: bounded(breadcrumb.spacing, 1, 2, defaults.breadcrumb.spacing),
+      ...withCustom(breadcrumb.customSeparator)},
     compact: {ends: choose(o.compact.ends, compact.ends, defaults.compact.ends), padding: bounded(compact.padding, 0, 1, defaults.compact.padding),
       seams: choose(o.compact.seams, compact.seams, defaults.compact.seams)},
     ribbon: {slant: choose(o.ribbon.slant, ribbon.slant, defaults.ribbon.slant), ends: choose(o.ribbon.ends, ribbon.ends, defaults.ribbon.ends),
@@ -111,4 +125,5 @@ export const STYLE_OPTION_LABELS: Readonly<Record<string, string>> = {
   space: 'Space', dot: 'Dot ·', pipe: 'Pipe │', slash: 'Slash /', chevron: 'Chevron ›', none: 'None', first: 'First module', all: 'All modules',
   angle: 'Angle', last: 'Last module', flat: 'Flat', wedge: 'Wedge', thin: 'Thin seams', forward: 'Forward /', backward: 'Backward \\',
   slanted: 'Slanted', pointed: 'Pointed', deep: 'Deep theme band', neutral: 'Neutral band',
+  bullet: 'Bullet •', arrow: 'Arrow →', doubleChevron: 'Double chevron »', diamond: 'Diamond ◆', triangle: 'Triangle ▸', dash: 'ASCII -', custom: 'Custom',
 };

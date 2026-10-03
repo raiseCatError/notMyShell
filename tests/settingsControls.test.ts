@@ -78,13 +78,14 @@ test('search field is bordered, inset, and shows focus with a caret and accent b
 
 test('Config rows are compact, single-line, with aligned values and a pointer', () => {
   const rows = plain(renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
-  const list = rows.filter(row => /^ {2}[› ] (Glyph style|Prompt provider|History divider|Divider density|Prompt snapshots|History colors)/u.test(row));
+  const list = rows.filter(row => /^ {2}[› ] (?: {2})?(Glyph style|Prompt provider|History divider|Divider density|Prompt snapshots|History colors)/u.test(row));
   assert.equal(list.length, 6);
   const first = rows.indexOf(list[0]!);
   assert.deepEqual(rows.slice(first, first + 6), list, 'one line per setting, no blank lines between them');
   const valueStarts = list.map(row => { const match = /^(.*?\S)(\s{2,})\S/u.exec(row)!; return match[1]!.length + match[2]!.length; });
   assert.equal(new Set(valueStarts).size, 1, `values align: ${list.join('|')}`);
   assert.match(list[2]!, /^ {2}› History divider\s+true$/u);
+  assert.match(list[3]!, /^ {4} {2}Divider density\s+Normal$/u, 'dependent rows indent under their parent');
   assert.match(list[0]!, /^ {4}Glyph style\s+Nerd Font$/u, 'enum values are plain, not ‹ › wrapped');
   const styled = renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION});
   const accent = foreground(UI_COLORS.accent);

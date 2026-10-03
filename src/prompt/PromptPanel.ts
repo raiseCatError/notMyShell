@@ -1,3 +1,7 @@
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
+import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
+import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, THEME_FAMILIES} from '../appearance/themeFamilies.js';
+import {FAMILY_IDS, familyOf, selectFamily, variantLabel, variantOptions} from '../appearance/themeSelection.js';
 import {
   applyNativeGapChoice,
   CONNECTOR_FADE_STYLES,
@@ -12,6 +16,7 @@ import {
   nativeGapChoice,
   type NativeGapChoice,
   type PromptConfiguration,
+  type NativePaletteId,
   type PromptProviderId,
   modulePlacement,
   ON_COMMAND_MODULES,
@@ -34,7 +39,7 @@ import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAda
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
 import {stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
@@ -69,17 +74,19 @@ export interface PromptPanelState {
   /** `tabs`: ←/→ switch views; `rows` (default): ←/→ edit the selected row. */
   focus?: 'tabs' | 'rows';
   gradient?: GradientEditorState;
+  /** Typing a custom glyph: the row being edited, the typed text, and a factual validation note. */
+  glyphEdit?: {rowId: string; buffer: string; note?: string};
 }
 
 export type PromptView = 'main' | 'git' | 'chroma';
 export const PROMPT_VIEWS = ['Main Prompt', 'Rich Git', 'Chroma'] as const;
 const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma'];
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
-const ERROR = foreground(UI_COLORS.failure);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
+const ERROR = lazyForeground(UI_COLORS.failure);
 const INVERSE = '\u001B[7m';
 const RESET = '\u001B[0m';
 const GAP_CHOICES: readonly NativeGapChoice[] = ['off', 'compact', 'normal', 'wide'];
@@ -108,6 +115,8 @@ export interface AppearanceRow {
   note?(configuration: PromptConfiguration): string | undefined;
   /** Enter opens a sub-editor instead of saving. */
   opens?: 'modules' | 'gradient';
+  /** Enter starts typing a one-glyph value (custom separator or prompt symbol). */
+  edit?: {get(configuration: PromptConfiguration): string | undefined; set(configuration: PromptConfiguration, glyph: string): void};
 }
 
 const cycleKey = <T>(values: readonly T[], current: T, delta: number): T => cycle(values, current, delta);
@@ -141,6 +150,46 @@ const POWERLINE_ROWS: readonly AppearanceRow[] = [
   {id: 'padding', label: 'Padding', value: c => cells(c.spacing), change: (c, d) => { c.spacing = cycle([0, 1, 2, 3], c.spacing, d); }},
 ];
 
+/** The style-scoped custom separator glyph; switching styles keeps each style's own glyph. */
+function customSeparatorRow(style: 'minimal' | 'breadcrumb'): AppearanceRow {
+  return {id: `${style}.customSeparator`, label: '  Glyph', value: c => c.nmsh.styleProfiles[style].customSeparator ?? 'Enter to type one',
+    note: () => 'one character, 1–2 cells',
+    edit: {get: c => c.nmsh.styleProfiles[style].customSeparator, set: (c, glyph) => { c.nmsh.styleProfiles[style].customSeparator = glyph; }}};
+}
+
+const PROMPT_SYMBOL_ROW: AppearanceRow = {id: 'promptSymbol', label: 'Prompt symbol', value: c => promptSymbolLabel(c.promptSymbol, c.promptSymbolCustom),
+  change: (c, d) => { c.promptSymbol = cycle(PROMPT_SYMBOL_IDS, c.promptSymbol, d); },
+  note: c => getCurrentGlyphMode() === 'safe' && promptSymbolGlyph(c.promptSymbol, c.promptSymbolCustom, true) !== promptSymbolGlyph(c.promptSymbol, c.promptSymbolCustom, false)
+    ? `Safe glyphs show ${promptSymbolGlyph(c.promptSymbol, c.promptSymbolCustom, false)}` : undefined};
+const PROMPT_SYMBOL_GLYPH_ROW: AppearanceRow = {id: 'promptSymbolCustom', label: '  Glyph', value: c => c.promptSymbolCustom ?? 'Enter to type one',
+  note: () => 'one character, 1–2 cells', edit: {get: c => c.promptSymbolCustom, set: (c, glyph) => { c.promptSymbolCustom = glyph; }}};
+
+/** Theme family, then its variant and (Catppuccin) accent, indented under it. */
+function themeRows(configuration: PromptConfiguration): AppearanceRow[] {
+  const family = familyOf(configuration.nmsh.palette);
+  const variants = variantOptions(family);
+  return [
+    {id: 'themeFamily', label: 'Theme family', value: c => THEME_FAMILIES.find(item => item.id === familyOf(c.nmsh.palette))!.label,
+      change: (c, d) => {
+        const next = selectFamily(c, cycle(FAMILY_IDS, familyOf(c.nmsh.palette), d));
+        c.nmsh = next.nmsh;
+        if (next.customTheme) c.customTheme = next.customTheme;
+      }},
+    ...(variants.length > 1 ? [{id: 'themeVariant', label: `  ${variantLabel(configuration)}`,
+      value: (c: PromptConfiguration) => variantOptions(familyOf(c.nmsh.palette)).find(option => option.id === c.nmsh.palette)?.label ?? c.nmsh.palette,
+      change: (c: PromptConfiguration, d: number) => { c.nmsh.palette = cycle(variantOptions(familyOf(c.nmsh.palette)).map(option => option.id), c.nmsh.palette, d); }}] : []),
+    ...(family === 'catppuccin' ? [{id: 'themeAccent', label: '  Accent', value: (c: PromptConfiguration) => CATPPUCCIN_ACCENT_LABELS[c.nmsh.accent],
+      change: (c: PromptConfiguration, d: number) => { c.nmsh.accent = cycle(CATPPUCCIN_ACCENTS, c.nmsh.accent, d); }}] : []),
+    ...(family === 'custom' ? [{id: 'themeStudio', label: '  Edit colors', value: (c: PromptConfiguration) => `${c.customTheme?.name ?? 'Custom'} · /theme ›`,
+      note: () => 'clone, edit, import and export in /theme'}] : []),
+  ];
+}
+
+/** Gallery entries for the current family: NMSh themes, or the selected family's variants. */
+export function galleryPalettes(configuration: PromptConfiguration): NativePaletteId[] {
+  return variantOptions(familyOf(configuration.nmsh.palette)).map(option => option.id);
+}
+
 /** Each style's own controls, shown only when they can change that style. */
 export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
   const profiles = configuration.nmsh.styleProfiles;
@@ -152,13 +201,15 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
     case 'soft': return [profileRow('soft', 'cap', 'Caps'), profileRow('soft', 'layout', 'Layout'),
       ...(profiles.soft.layout === 'separated' ? [profileRow('soft', 'gap', 'Gap', cells)] : []),
       profileRow('soft', 'padding', 'Padding', cells), profileRow('soft', 'fill', 'Fill')];
-    case 'minimal': return [profileRow('minimal', 'separator', 'Separator'), profileRow('minimal', 'spacing', 'Spacing', cells),
-      profileRow('minimal', 'emphasis', 'Bold')];
+    case 'minimal': return [profileRow('minimal', 'separator', 'Separator', value => separatorLabel(String(value), profiles.minimal.customSeparator)),
+      ...(profiles.minimal.separator === 'custom' ? [customSeparatorRow('minimal')] : []),
+      profileRow('minimal', 'spacing', 'Spacing', cells), profileRow('minimal', 'emphasis', 'Bold')];
     case 'outline': return [profileRow('outline', 'cap', 'Outline'), profileRow('outline', 'layout', 'Layout'),
       ...(profiles.outline.layout === 'separated' ? [profileRow('outline', 'gap', 'Gap', cells)] : []),
       profileRow('outline', 'padding', 'Padding', cells)];
-    case 'breadcrumb': return [profileRow('breadcrumb', 'separator', 'Separator'), profileRow('breadcrumb', 'anchor', 'Anchor'),
-      profileRow('breadcrumb', 'spacing', 'Spacing', cells)];
+    case 'breadcrumb': return [profileRow('breadcrumb', 'separator', 'Separator', value => separatorLabel(String(value), profiles.breadcrumb.customSeparator)),
+      ...(profiles.breadcrumb.separator === 'custom' ? [customSeparatorRow('breadcrumb')] : []),
+      profileRow('breadcrumb', 'anchor', 'Anchor'), profileRow('breadcrumb', 'spacing', 'Spacing', cells)];
     case 'compact': return [profileRow('compact', 'ends', 'Ends'), profileRow('compact', 'padding', 'Padding', cells),
       profileRow('compact', 'seams', 'Seams')];
     case 'ribbon': return [profileRow('ribbon', 'slant', 'Slant'), profileRow('ribbon', 'ends', 'Ends'),
@@ -169,12 +220,14 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
 /** Main Prompt rows: theme, style and vibrance, the style's own controls, then icons and modules. */
 export function appearanceRows(configuration: PromptConfiguration): AppearanceRow[] {
   return [
-    {id: 'theme', label: 'Theme', value: c => NATIVE_PROMPT_THEMES[c.nmsh.palette].label, change: (c, d) => { c.nmsh.palette = cycle(NATIVE_PALETTE_IDS, c.nmsh.palette, d); }},
+    ...themeRows(configuration),
     {id: 'style', label: 'Style', value: c => PROMPT_STYLE_LABELS[c.nmsh.style], change: (c, d) => { c.nmsh.style = cycle(PROMPT_STYLES, c.nmsh.style, d); },
       note: c => PROMPT_STYLE_NOTES[c.nmsh.style]},
     {id: 'vibrance', label: 'Vibrance', value: c => VIBRANCE_LABELS[c.nmsh.vibrance], change: (c, d) => { c.nmsh.vibrance = cycle(VIBRANCE_LEVELS, c.nmsh.vibrance, d); }},
     ...styleRows(configuration),
     {id: 'icons', label: 'Icons', value: c => c.nmsh.icons === 'off' ? 'Off' : 'On', change: c => { c.nmsh.icons = c.nmsh.icons === 'off' ? 'nerd' : 'off'; }},
+    PROMPT_SYMBOL_ROW,
+    ...(configuration.promptSymbol === 'custom' ? [PROMPT_SYMBOL_GLYPH_ROW] : []),
     {id: 'modules', label: 'Modules', value: c => `${c.modules.filter(module => module.visible).length} of ${c.modules.length} shown ›`, opens: 'modules'},
   ];
 }
@@ -507,7 +560,44 @@ export function promptPanelItemCount(state: PromptPanelState): number {
   return 1;
 }
 
+/** Whether the panel itself handles this key (glyph typing owns Enter and Esc). */
+export function promptPanelOwnsKey(state: PromptPanelState, key: Key): boolean {
+  if (state.glyphEdit) return true;
+  return key.kind === 'enter' && state.step === 'appearance' && state.focus !== 'tabs' && Boolean(viewRows(state)[state.selectedIndex]?.edit);
+}
+
+function handleGlyphEdit(key: Key, state: PromptPanelState): boolean {
+  const edit = state.glyphEdit;
+  const row = viewRows(state).find(item => item.id === edit?.rowId);
+  if (!edit || !row?.edit) { state.glyphEdit = undefined; return true; }
+  if (key.kind === 'escape' || key.kind === 'interrupt') { state.glyphEdit = undefined; return true; }
+  if (key.kind === 'enter') {
+    const result = validateGlyph(edit.buffer);
+    if (!result.ok) { edit.note = result.reason; return true; }
+    row.edit.set(state.draft, result.glyph);
+    state.glyphEdit = undefined;
+    state.message = result.warning;
+    return true;
+  }
+  if (key.kind === 'backspace') {
+    const graphemes = [...new Intl.Segmenter(undefined, {granularity: 'grapheme'}).segment(edit.buffer)].map(part => part.segment);
+    edit.buffer = graphemes.slice(0, -1).join('');
+  } else if (key.kind === 'text' || key.kind === 'paste') {
+    // Controls never enter the buffer; validation reports anything else that does not fit.
+    edit.buffer = (edit.buffer + key.value).replace(/[\u0000-\u001f\u007f-\u009f]/gu, '').slice(0, 32);
+  } else return true;
+  const result = validateGlyph(edit.buffer);
+  edit.note = edit.buffer ? (result.ok ? result.warning ?? `Preview: ${result.glyph} (${result.width} cell${result.width === 1 ? '' : 's'})` : result.reason) : undefined;
+  return true;
+}
+
 export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean {
+  if (state.glyphEdit) return handleGlyphEdit(key, state);
+  if (key.kind === 'enter' && promptPanelOwnsKey(state, key)) {
+    const row = viewRows(state)[state.selectedIndex]!;
+    state.glyphEdit = {rowId: row.id, buffer: row.edit!.get(state.draft) ?? ''};
+    return true;
+  }
   if (state.step === 'appearance' && state.view === 'git' && state.focus !== 'tabs'
     && RICH_GIT_ROWS[state.selectedIndex] === 'gitEnabled' && key.kind === 'text' && key.value === ' ') {
     state.draft.nmsh.gitEnabled = !state.draft.nmsh.gitEnabled;
@@ -719,9 +809,10 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       // Main Prompt and Chroma: rows derived from the draft, so hidden controls cannot be edited.
       const savedConfiguration = state.saved;
       viewRows(state).forEach((entry, index) => {
-        const text = entry.value(state.draft);
-        const savedText = savedConfiguration ? entry.value(savedConfiguration) : undefined;
-        const note = entry.note?.(state.draft);
+        const editing = state.glyphEdit?.rowId === entry.id ? state.glyphEdit : undefined;
+        const text = editing ? `${editing.buffer}${INVERSE} ${RESET}` : entry.value(state.draft);
+        const savedText = editing ? undefined : savedConfiguration ? entry.value(savedConfiguration) : undefined;
+        const note = editing ? editing.note ?? 'type one character · Enter set · Esc cancel' : entry.note?.(state.draft);
         const body = entry.opens ? text : value(text, savedText);
         rows.push(row(index, `${entry.label.padEnd(16)}${body}${note ? `  ${SUBTLE}${note}` : ''}`));
       });
@@ -741,7 +832,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     if (themePreviews.length && view === 'main') {
       rows.push('');
       rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
-      NATIVE_PALETTE_IDS.forEach((id, index) => {
+      galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
         const savedMark = saved?.palette === id ? '✓' : ' ';

@@ -17,13 +17,17 @@ import {createConfigurationPanel, configurationKey, renderConfigurationPanel, ty
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {createSetup, renderSetup, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {createSetup, renderSetup, SETUP_MIN_SIZE, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
+import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
 import {toolInstall} from '../tools/catalog.js';
 import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
 import type {CommandSource} from '../shell/SemanticService.js';
-import {GLYPHS, setIconStyle, getCurrentGlyphMode} from '../ui/glyphs.js';
+import {GLYPHS, setIconStyle, getCurrentGlyphMode, setPromptSymbol} from '../ui/glyphs.js';
+import {applyUiTheme, uiColorsFor, uiThemeInput} from '../appearance/uiTheme.js';
+import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
@@ -62,7 +66,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -71,7 +75,7 @@ import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type St
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
-import {appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
@@ -79,7 +83,7 @@ import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
 import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
-import {TerminalRenderer} from '../terminal/TerminalRenderer.js';
+import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
@@ -93,10 +97,11 @@ import {renderMarkdownText} from '../help/markdown.js';
 import {shimmerText} from '../status/shimmer.js';
 import {isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
+import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type StatsSource, type SystemStats} from '../status/StatusStrip.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
-import {foreground, background, UI_COLORS} from '../ui/palette.js';
-import {cursorScreenRow, planScreen, regionAt, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {cursorScreenRow, planScreen, regionAt, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
@@ -122,13 +127,13 @@ import {defaultRuntimeDir} from '../session/runtimeDir.js';
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
 const DIRECTORY_SEARCH = '/dirs ';
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const SUBTLE = foreground(UI_COLORS.subtle);
-const SEPARATOR = foreground(UI_COLORS.separator);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUCCESS = foreground(UI_COLORS.success);
-const ERROR = foreground(UI_COLORS.failure);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
+const SEPARATOR = lazyForeground(UI_COLORS.separator);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUCCESS = lazyForeground(UI_COLORS.success);
+const ERROR = lazyForeground(UI_COLORS.failure);
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -199,12 +204,19 @@ export class TerminalApp {
   /** Decorative surfaces without prompt context follow the active Native theme for Current Theme Chroma. */
   private themeStopsKey = '';
   private get promptConfiguration(): PromptConfiguration {
-    const key = `${this.configuration.nmsh.palette}:${this.configuration.nmsh.vibrance}`;
+    const config = this.configuration;
+    const key = `${config.nmsh.palette}:${config.nmsh.vibrance}:${config.nmsh.accent}:${config.promptSymbol}:${config.promptSymbolCustom ?? ''}:${
+      config.nmsh.palette === 'custom' ? JSON.stringify(config.customTheme ?? null) : ''}`;
     if (key !== this.themeStopsKey) {
       this.themeStopsKey = key;
-      setActiveThemeStops(themeChromaStops(this.configuration.nmsh.palette, this.configuration.nmsh.vibrance));
+      // Theme context first: Current Theme stops and the chrome both read it.
+      setThemeContext(config.nmsh.accent, config.customTheme);
+      applyUiTheme(uiColorsFor(uiThemeInput(config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+      setActiveThemeStops(themeChromaStops(config.nmsh.palette, config.nmsh.vibrance));
+      setPromptSymbol(promptSymbolGlyph(config.promptSymbol, config.promptSymbolCustom, true),
+        promptSymbolGlyph(config.promptSymbol, config.promptSymbolCustom, false));
     }
-    return this.configuration;
+    return config;
   }
   private set promptConfiguration(next: PromptConfiguration) {
     this.configuration = next;
@@ -229,6 +241,8 @@ export class TerminalApp {
   private presetFrontendReady = false;
   switchPreset?: SessionPreset;
   private toolsPanel?: ToolsPanel;
+  /** Theme Studio: a custom theme draft; nothing persists until Save. */
+  private themeStudio?: ThemeStudioState;
   /** Setup Cat: one draft over the saved configuration; nothing persists until Apply. */
   private setupState?: SetupState;
   /** A missing curated command's install offer; the submitted text is kept until the user decides. */
@@ -238,6 +252,11 @@ export class TerminalApp {
   private toolUpdateCheckRunning = false;
   /** What command words resolve to in the configured zsh, filled off the keypress path for the inspector. */
   private readonly commandSources = new Map<string, CommandSource | null>();
+  /** Status strip data: sampled from local OS counters on its own modest timer, only while enabled. */
+  private statsSource: StatsSource = new LocalStats();
+  private stripStats: SystemStats = {};
+  private stripTimer?: () => void;
+  private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
   private misePanel?: MisePanel;
@@ -313,6 +332,7 @@ export class TerminalApp {
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
+    this.renderer.setCursorStyle(cursorStyleSequence(this.promptConfiguration.cursor.shape, this.promptConfiguration.cursor.blink));
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
@@ -752,6 +772,10 @@ export class TerminalApp {
       this.handleSetupKey(key, this.setupState);
       return;
     }
+    if (this.themeStudio) {
+      this.handleThemeStudioKey(key, this.themeStudio);
+      return;
+    }
     if (this.toolsPanel) {
       void this.handleToolsKey(key, this.toolsPanel);
       return;
@@ -869,6 +893,10 @@ export class TerminalApp {
         const editing = this.promptPanelState.gradient?.editing !== undefined;
         if (key.kind === 'enter' || editing) handlePromptPanelKey(key.kind === 'interrupt' ? {kind: 'escape'} : key, this.promptPanelState);
         else closeGradientEditor(this.promptPanelState);
+        this.render();
+      } else if (promptPanelOwnsKey(this.promptPanelState, key)) {
+        // Typing a custom glyph owns Enter and Esc until it is set or cancelled.
+        handlePromptPanelKey(key, this.promptPanelState);
         this.render();
       } else if (key.kind === 'escape' || key.kind === 'interrupt') {
         if (this.promptPanelState.onboarding) void this.savePromptSettings();
@@ -1518,6 +1546,7 @@ export class TerminalApp {
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
+    else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
     else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
@@ -2530,17 +2559,32 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
+  /** Complex panels declare the smallest size that shows their essential controls. */
+  private panelMinimum(): MinimumSize | undefined {
+    if (this.setupState) return SETUP_MIN_SIZE;
+    if (this.themeStudio) return STUDIO_MIN_SIZE;
+    return undefined;
+  }
+
   private settingsPanelRows(columns: number): string[] {
+    const minimum = this.panelMinimum();
+    const {rows} = this.dimensions();
+    if (minimum && !fits(minimum, columns, rows)) return renderTooSmall(minimum, columns, rows);
+    return this.panelContentRows(columns);
+  }
+
+  private panelContentRows(columns: number): string[] {
     if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
+    if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.setupState) return renderSetup(this.setupState, columns, this.dimensions().rows);
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
@@ -2662,7 +2706,7 @@ export class TerminalApp {
     const state = this.settingsPanelState!;
     state.searchQuery = '';
     state.showAdvanced = state.showAdvanced || SETTINGS_ROWS.find(row => row.id === rowId)?.level === 'advanced';
-    state.contentIndex = Math.max(0, visibleSettingsRows(state).findIndex(row => row.id === rowId));
+    state.contentIndex = Math.max(0, visibleSettingsRows(state, this.promptConfiguration).findIndex(row => row.id === rowId));
   }
 
   /**
@@ -2687,7 +2731,7 @@ export class TerminalApp {
       return;
     }
     const view = settingsView(state);
-    const row = selectedSettingsRow(state);
+    const row = selectedSettingsRow(state, this.promptConfiguration);
     const editedSearch = state.searchFocused ? editText(state.searchQuery ?? '', key) : undefined;
     if (editedSearch !== undefined) {
       state.searchQuery = editedSearch;
@@ -2714,7 +2758,7 @@ export class TerminalApp {
     } else if (state.focus === 'tabs') {
       if (key.kind === 'down' || key.kind === 'enter') { state.focus = 'rows'; state.contentIndex = 0; }
     } else if (key.kind === 'up' || key.kind === 'down') {
-      const count = settingsItemCount(state);
+      const count = settingsItemCount(state, this.promptConfiguration);
       const index = state.contentIndex ?? 0;
       if (key.kind === 'up' && index === 0 && !state.searchFocused) state.focus = 'tabs';
       else if (count > 0) state.contentIndex = Math.max(0, Math.min(count - 1, index + (key.kind === 'up' ? -1 : 1)));
@@ -2870,6 +2914,30 @@ export class TerminalApp {
     if (count && !this.stopped) {
       this.output.addHistoryLine(`${SUBTLE}Optional tool updates available · /tools${RESET}`);
       this.render();
+    }
+  }
+
+  private renderThemeStudioRows(state: ThemeStudioState, columns: number): string[] {
+    const draft: PromptConfiguration = {...this.promptConfiguration, customTheme: state.draft, nmsh: {...this.promptConfiguration.nmsh, palette: 'custom'}};
+    const width = Math.max(1, columns - 16);
+    const preview = state.picker || state.importPath !== undefined ? [] : this.withDraftTheme(draft, () => [
+      `  ${SECONDARY}${'Preview'.padEnd(12)}${RESET}${buildThemePreviewLine(draft, 'custom', width)}${RESET}`]);
+    return renderThemeStudio(state, columns, this.dimensions().rows, colorLevel(), preview);
+  }
+
+  private handleThemeStudioKey(key: Key, state: ThemeStudioState): void {
+    const result = studioKey(state, key, colorLevel(), this.shellCwd);
+    if (!result) return;
+    if (result.kind === 'cancel') { this.themeStudio = undefined; this.returnFromPanel(); return; }
+    if (result.kind === 'export') {
+      try { state.message = `Exported to ${writeThemeExport(state.draft)}`; }
+      catch (error) { state.message = `Export failed: ${error instanceof Error ? error.message : String(error)}`; }
+      return;
+    }
+    const next = {...this.promptConfiguration, customTheme: result.theme, nmsh: {...this.promptConfiguration.nmsh, palette: 'custom' as const}};
+    if (this.applySettingsConfiguration(next)) {
+      this.themeStudio = undefined;
+      this.output.addFrontendInteraction('/theme', `Custom theme ${result.theme.name} is active. Your terminal and editor colors are unchanged.`, SUCCESS);
     }
   }
 
@@ -3040,6 +3108,7 @@ export class TerminalApp {
     }
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
+    this.renderer.setCursorStyle(cursorStyleSequence(next.cursor.shape, next.cursor.blink));
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
@@ -3334,15 +3403,24 @@ export class TerminalApp {
   }
 
   private renderedPromptPanel(columns: number): string[] {
-    if (!this.promptPanelState) return [];
-    const now = Date.now();
     const state = this.promptPanelState;
+    if (!state) return [];
+    return this.withDraftTheme(state.draft, () => this.renderPromptPanelRows(state, columns));
+  }
+
+  private renderPromptPanelRows(state: PromptPanelState, columns: number): string[] {
+    const now = Date.now();
     const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
     const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
     const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
       this.promptGitShowcase(columns), stops);
-    // Short terminals keep the editable rows and live preview; the theme gallery goes first.
-    return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(state, columns, preview, [], this.dimensions().rows - 1, [], stops);
+    // Short terminals keep the editable rows and live preview; the theme gallery goes first, then preview lines.
+    const budget = this.dimensions().rows - 3;
+    if (full.length <= budget) return full;
+    const compact = renderPromptPanel(state, columns, preview, [], this.dimensions().rows - 1, [], stops);
+    const overflow = compact.length - budget;
+    if (overflow <= 0 || !preview.length) return compact;
+    return renderPromptPanel(state, columns, preview.slice(0, Math.max(1, preview.length - overflow)), [], this.dimensions().rows - 1, [], stops);
   }
 
   private chromaPanelActive(state: PromptPanelState): boolean {
@@ -3385,6 +3463,19 @@ export class TerminalApp {
     if (!animated && this.panelAnimation) { this.panelAnimation(); this.panelAnimation = undefined; }
   }
 
+  /** Previews of a draft see its accent and custom theme; the live context is restored afterwards. */
+  private withDraftTheme<T>(draft: PromptConfiguration, render: () => T): T {
+    const live = themeContext();
+    const symbol = {nerd: promptSymbolGlyph(this.configuration.promptSymbol, this.configuration.promptSymbolCustom, true),
+      safe: promptSymbolGlyph(this.configuration.promptSymbol, this.configuration.promptSymbolCustom, false)};
+    setThemeContext(draft.nmsh.accent, draft.customTheme);
+    setPromptSymbol(promptSymbolGlyph(draft.promptSymbol, draft.promptSymbolCustom, true), promptSymbolGlyph(draft.promptSymbol, draft.promptSymbolCustom, false));
+    try { return render(); } finally {
+      setThemeContext(live.accent, live.custom);
+      setPromptSymbol(symbol.nerd, symbol.safe);
+    }
+  }
+
   /** Rich Git view rows: the draft's colors and geometry over synthetic states; never runs Git. */
   private promptGitShowcase(columns: number): string[] {
     const state = this.promptPanelState;
@@ -3408,7 +3499,7 @@ export class TerminalApp {
       draft.nmsh.palette, width, now));
     }
     const width = Math.max(1, columns - 22);
-    return NATIVE_PALETTE_IDS.map(palette => buildThemePreviewLine(state.draft, palette, width));
+    return galleryPalettes(state.draft).map(palette => buildThemePreviewLine(state.draft, palette, width));
   }
 
   private externalPanelStatusText(state: PromptPanelState, provider: PromptProviderId, width: number): string {
@@ -3649,6 +3740,46 @@ export class TerminalApp {
     suggestions = this.composerSuggestions().length,
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
+    // The status strip owns one top row only when it is on, fits, and no panel owns the screen.
+    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planComposer(columns, rows - 1, fullInput, suggestions, panelRows));
+    return this.planComposer(columns, rows, fullInput, suggestions, panelRows);
+  }
+
+  private stripActive(columns: number, rows: number): boolean {
+    return stripVisible(this.promptConfiguration.statusStrip, columns, rows);
+  }
+
+  private statusStripRow(columns: number): string {
+    return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns);
+  }
+
+  /** One timer while the strip is on and NMSh owns the screen; none otherwise. */
+  private syncStatusStrip(): void {
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
+      && this.promptConfiguration.statusStrip.enabled;
+    if (wanted && !this.stripTimer) {
+      this.stripTimer = presentationClock.subscribe(() => void this.sampleStrip(), STRIP_REFRESH_MS);
+      void this.sampleStrip();
+    } else if (!wanted && this.stripTimer) {
+      this.stripTimer(); this.stripTimer = undefined;
+    }
+  }
+
+  private async sampleStrip(): Promise<void> {
+    if (this.stripSampling) return;
+    this.stripSampling = true;
+    try {
+      const {columns} = this.dimensions();
+      const before = this.statusStripRow(columns);
+      this.stripStats = await this.statsSource.sample();
+      // The clock also moves without new stats; repaint only when the row text changes.
+      if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
+    } catch { /* A failed sample keeps the previous values. */ }
+    finally { this.stripSampling = false; }
+  }
+
+  private planComposer(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
+    panelRows: number | undefined): ScreenPlan {
     const transcriptRows = this.output.wrapped(columns).length;
     const input = {
       rows,
@@ -3795,6 +3926,7 @@ export class TerminalApp {
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
         case 'separator': return [separator];
+        case 'status': return [this.statusStripRow(columns)];
       }
     };
     const frameRows = new Array<string>(plan.rows).fill('');
@@ -3839,6 +3971,7 @@ export class TerminalApp {
 
   private cancelPresentation(): void {
     this.effects.cancel();
+    this.stripTimer?.(); this.stripTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
@@ -3891,6 +4024,7 @@ export class TerminalApp {
 
   private syncPresentationClock(): void {
     if (!this.presentationStarted || this.stopped) return;
+    this.syncStatusStrip();
     const settings = this.promptConfiguration.presentation;
     const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
       && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
