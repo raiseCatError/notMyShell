@@ -1,14 +1,17 @@
 export type Key =
+  | {kind: 'focusIn' | 'focusOut'}
   | {kind: 'text'; value: string}
   | {kind: 'paste'; value: string}
   | {kind: 'deleteWord' | 'deleteLineBefore' | 'deleteLineAfter' | 'wordLeft' | 'wordRight' | 'selectWordLeft' | 'selectWordRight'} 
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch' | 'historyDelete'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  ['\u001B[I', 'focusIn'],
+  ['\u001B[O', 'focusOut'],
   // Kitty keyboard protocol (CSI > 1 u, enabled by TerminalRenderer on entry;
   // Ghostty honors it) encodes Escape as its functional key code (27) rather
   // than a lone raw ESC byte. Without these, Escape falls through to the
@@ -80,6 +83,7 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001BOB', 'down'],
   ['\u001B[97;5u', 'lineHome'], // Kitty Ctrl+A
   ['\u001B[101;5u', 'lineEnd'], // Kitty Ctrl+E
+  ['\u001B[120;5u', 'historyDelete'], // Ctrl+X: only active in command history
   ['\u001B[119;5u', 'deleteWord'], // Kitty Ctrl+W
   ['\u001B[117;5u', 'deleteLineBefore'], // Kitty Ctrl+U
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
@@ -157,6 +161,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0001') keys.push({kind: 'lineHome'} as Key); // Ctrl+A
     else if (value === '\u0005') keys.push({kind: 'lineEnd'} as Key); // Ctrl+E
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
+    else if (value === '\u0018') keys.push({kind: 'historyDelete'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N

@@ -46,7 +46,7 @@ test('Starship adapter rejects intervening edits and symlink configs', async () 
   const path = join(directory, 'starship.toml');
   await writeFile(path, '# original\n');
   const run = async (_binary: string, args: string[], options: {env?: NodeJS.ProcessEnv}) => {
-    if (args[0] === 'config') await writeFile(options.env!.STARSHIP_CONFIG!, '[git_branch]\ndisabled = true\n');
+    if (args[0] === 'config') await writeFile(options.env!.STARSHIP_CONFIG!, '# original\n[git_branch]\ndisabled = true\n');
     return {stdout: '[git_branch]\ndisabled = true\n', stderr: ''};
   };
   const adapter = new StarshipConfigAdapter({installed: true, binary: '/fake/starship', configPath: path, configExists: true},
@@ -69,7 +69,7 @@ test('Starship adapter leaves the user config untouched when CLI validation fail
   const path = join(directory, 'starship.toml');
   await writeFile(path, '# keep\n');
   const run = async (_binary: string, args: string[], options: {env?: NodeJS.ProcessEnv}) => {
-    if (args[0] === 'config') await writeFile(options.env!.STARSHIP_CONFIG!, '[directory]\ndisabled = true\n');
+    if (args[0] === 'config') await writeFile(options.env!.STARSHIP_CONFIG!, '# keep\n[directory]\ndisabled = true\n');
     return {stdout: '[directory]\ndisabled = false\n', stderr: ''};
   };
   try {
