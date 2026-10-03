@@ -9,9 +9,9 @@ const sgr = (button: number, x: number, y: number, final: 'M' | 'm' = 'M') => `\
 
 test('SGR decoding: passive motion, clicks, wheel, and modifier bits', () => {
   assert.deepEqual(decodeKeys(sgr(35, 4, 2)), [{kind: 'mouseMove', x: 4, y: 2}], 'passive any-motion (no button)');
-  assert.deepEqual(decodeKeys(sgr(32, 4, 2)), [{kind: 'mouseMove', x: 4, y: 2}], 'left-drag motion');
+  assert.deepEqual(decodeKeys(sgr(32, 4, 2)), [{kind: 'mouseDrag', x: 4, y: 2}], 'left-drag motion is transcript selection, not hover');
   assert.deepEqual(decodeKeys(sgr(0, 4, 2)), [{kind: 'mouseClick', x: 4, y: 2}]);
-  assert.deepEqual(decodeKeys(sgr(0, 4, 2, 'm')), [], 'release is not a click');
+  assert.deepEqual(decodeKeys(sgr(0, 4, 2, 'm')), [{kind: 'mouseRelease', x: 4, y: 2}], 'release is not a click; it ends a drag selection');
   assert.deepEqual(decodeKeys(sgr(16, 4, 2)), [{kind: 'mouseClick', x: 4, y: 2}], 'ctrl bit does not hide a click');
   assert.deepEqual(decodeKeys(sgr(64, 1, 1)), [{kind: 'wheelUp'}]);
   assert.deepEqual(decodeKeys(sgr(69, 1, 1)), [{kind: 'wheelDown'}], 'modified wheel still scrolls');
@@ -25,9 +25,9 @@ test('renderer enables any-motion tracking only while NMSh owns the screen', () 
   const writes: string[] = [];
   const renderer = new TerminalRenderer(data => { writes.push(data); }, resolveHostCapabilities({TERM_PROGRAM: 'ghostty'}));
   renderer.enter();
-  assert.match(writes.at(-1)!, /\?1000h\u001B\[\?1003h\u001B\[\?1006h/u);
+  assert.match(writes.at(-1)!, /\?1000h\u001B\[\?1002h\u001B\[\?1003h\u001B\[\?1006h/u);
   renderer.suspendForPassthrough();
-  assert.match(writes.at(-1)!, /\?1000l\u001B\[\?1003l\u001B\[\?1006l/u);
+  assert.match(writes.at(-1)!, /\?1000l\u001B\[\?1002l\u001B\[\?1003l\u001B\[\?1006l/u);
   renderer.resumeAfterPassthrough();
   assert.match(writes.at(-1)!, /\?1003h/u);
   renderer.leave();

@@ -62,7 +62,8 @@ export class TerminalRenderer {
     let modes = this.capabilities.kittyKeyboard ? (enable ? '\u001B[>1u' : '\u001B[<u') : '';
     modes += `\u001B[?1004${suffix}\u001B[?2004${suffix}`;
     if (this.capabilities.mouseReporting && this.capabilities.clickSupport) {
-      modes += `\u001B[?1000${suffix}`;
+      // 1002 reports motion while a button is held (drag), for NMSh transcript selection; 1003 adds hover.
+      modes += `\u001B[?1000${suffix}\u001B[?1002${suffix}`;
       if (this.capabilities.mouseMovement) modes += `\u001B[?1003${suffix}`;
       modes += `\u001B[?1006${suffix}`;
     }
@@ -78,7 +79,7 @@ export class TerminalRenderer {
   private reconcileModes(desired: boolean): string {
     const wanted = new Set<number>();
     if (desired && this.capabilities.mouseReporting && this.capabilities.clickSupport) {
-      wanted.add(1000); wanted.add(1006);
+      wanted.add(1000); wanted.add(1002); wanted.add(1006);
       if (this.capabilities.mouseMovement) wanted.add(1003);
     }
     // Child entries belong to independent screen stacks; inherited entries stay intact.

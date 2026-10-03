@@ -6,7 +6,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -127,8 +127,11 @@ export function decodeKeys(input: string): Key[] {
       else if (base === 65) keys.push({kind: 'wheelDown'});
       // Shift+mouse is native text selection: never click, toggle, or hover.
       else if (shift) { /* ignored */ }
-      else if (motion && (base === 3 || base === 0)) keys.push({kind: 'mouseMove', x, y});
+      // Motion with the primary button held is a drag (NMSh transcript selection); without a button it is hover.
+      else if (motion && base === 0) keys.push({kind: 'mouseDrag', x, y});
+      else if (motion && base === 3) keys.push({kind: 'mouseMove', x, y});
       else if (!motion && base === 0 && isPress) keys.push({kind: 'mouseClick', x, y});
+      else if (!motion && base === 0 && !isPress) keys.push({kind: 'mouseRelease', x, y});
       index += sgrMatch[0].length;
       continue;
     }

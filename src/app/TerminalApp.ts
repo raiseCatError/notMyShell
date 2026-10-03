@@ -101,6 +101,7 @@ import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
@@ -378,6 +379,8 @@ export class TerminalApp {
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean};
   private hoveredLineIndex?: number;
+  /** NMSh-owned transcript selection (plain drag); presentation only. */
+  private selection?: TranscriptSelection;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
   private focusedCommandIndex?: number;
@@ -1134,6 +1137,12 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (key.kind === 'mouseDrag' || key.kind === 'mouseRelease') { this.handleSelectionPointer(key.kind, key.y); return; }
+    // Any other key or click ends a finished selection (its text is already on the clipboard).
+    if (this.selection && !this.selection.dragging && key.kind !== 'wheelUp' && key.kind !== 'wheelDown' && key.kind !== 'mouseMove') {
+      this.selection = undefined;
+      this.render();
+    }
     if (key.kind === 'mouseMove' || key.kind === 'mouseClick') {
       const {columns, rows} = this.dimensions();
       // Hit-test against the same plan render paints; Shift+mouse never reaches here (native selection).
@@ -1159,6 +1168,8 @@ export class TerminalApp {
           }
         } else if (localVisibleIndex >= 0) {
           const row = wrapped[viewStart + localVisibleIndex];
+          // A press may start a drag selection; a plain click still acts exactly as before.
+          if (key.kind === 'mouseClick' && row && key.y) this.selection = beginSelection(viewStart + localVisibleIndex, key.y);
           if (row) {
             const affordance = blockAffordance(row, columns);
             if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex
@@ -1235,6 +1246,7 @@ export class TerminalApp {
     }
     if (key.kind === 'wheelUp') {
       this.scrollLines(-3);
+      this.followSelectionPointer();
       return;
     }
     if (key.kind === 'pageDown') {
@@ -1243,6 +1255,7 @@ export class TerminalApp {
     }
     if (key.kind === 'wheelDown') {
       this.scrollLines(3);
+      this.followSelectionPointer();
       return;
     }
     if (key.kind === 'latest') {
@@ -5118,6 +5131,7 @@ export class TerminalApp {
       for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
     });
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
+      if (isRowSelected(this.selection, viewStart + offset)) return `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
       const marked = findSpans.get(viewStart + offset);
       if (marked) return markSpans(row.plain, marked.spans, `${background(UI_COLORS.selection)}${PRIMARY}`, marked.active ? `${PRIMARY}` : SECONDARY,
         marked.active ? '' : '\u001b[4m');
@@ -5437,6 +5451,45 @@ export class TerminalApp {
       columns: Math.max(1, process.stdout.columns || 80),
       rows: Math.max(1, process.stdout.rows || 24),
     };
+  }
+
+  /** Transcript row under a terminal row, clamped to the transcript region so a drag past its edge keeps selecting. */
+  private transcriptRowAt(y: number): number | undefined {
+    const {columns, rows} = this.dimensions();
+    const plan = this.planFrame(columns, rows);
+    const wrapped = this.output.wrapped(columns);
+    if (!wrapped.length) return undefined;
+    const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
+    const top = plan.transcript.top;
+    const local = Math.max(0, Math.min(plan.transcript.height - 1, screenRowFromTerminal(y) - top));
+    return Math.min(wrapped.length - 1, viewStart + local);
+  }
+
+  private handleSelectionPointer(kind: 'mouseDrag' | 'mouseRelease', y: number | undefined): void {
+    const selection = this.selection;
+    if (!selection?.dragging || !y) return;
+    const row = this.transcriptRowAt(y);
+    if (row !== undefined) extendSelection(selection, row, y);
+    if (kind === 'mouseRelease') {
+      selection.dragging = false;
+      if (!selection.moved) { this.selection = undefined; return; }
+      const text = selectedText(this.output.wrapped(this.dimensions().columns), selection);
+      // Like a terminal selection: copied on release, silently; only a failure is worth a line.
+      if (text) void writeClipboard(text).catch(() => {
+        this.output.addFrontendInteraction('selection', 'Could not copy the selection: no clipboard is available here.', ERROR);
+        this.render();
+      });
+    }
+    this.render();
+  }
+
+  /** While dragging, a wheel step scrolls the transcript and the selection follows the pointer's row. */
+  private followSelectionPointer(): void {
+    const selection = this.selection;
+    if (!selection?.dragging || selection.pointerY === undefined) return;
+    const row = this.transcriptRowAt(selection.pointerY);
+    if (row !== undefined) extendSelection(selection, row);
+    this.render();
   }
 
   /** The ordinary shell to hand the terminal to after NMSh exits, when one was requested. */
