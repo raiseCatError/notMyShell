@@ -766,10 +766,10 @@ export class TerminalApp {
 
   private handleDecodedKeys(keys: Key[]): void {
     if (this.idle) {
-      // The idle overlay owns input: losing focus pauses it; anything else dismisses it and is not passed on.
-      if (keys.length && keys.every(key => key.kind === 'focusOut')) { this.terminalFocus = 'blurred'; this.pauseIdle(); return; }
-      if (keys.some(key => key.kind === 'focusIn' || key.kind === 'focusOut')) this.terminalFocus = keys.at(-1)!.kind === 'focusOut' ? 'blurred' : 'focused';
-      if (keys.length) this.dismissIdle();
+      // The idle overlay owns input and passes nothing on. Losing focus keeps it running
+      // (the terminal may still be visible); focus returning or any real input dismisses it.
+      if (keys.some(key => key.kind === 'focusIn' || key.kind === 'focusOut')) this.terminalFocus = [...keys].reverse().find(key => key.kind === 'focusIn' || key.kind === 'focusOut')!.kind === 'focusOut' ? 'blurred' : 'focused';
+      if (keys.some(key => key.kind !== 'focusOut')) this.dismissIdle();
       return;
     }
     // Focus reports alone are not user activity (a terminal can report them on its own).
@@ -3182,7 +3182,8 @@ export class TerminalApp {
   private armIdle(): void {
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
     const minutes = this.promptConfiguration.idleVisuals.timeout;
-    if (!minutes || this.stopped || !this.presentationStarted) return;
+    // While idle visuals own the screen there is nothing to count down to.
+    if (!minutes || this.stopped || !this.presentationStarted || this.idle) return;
     const delay = Math.max(1000, this.lastActivity + minutes * 60_000 - Date.now());
     this.idleTimer = setTimeout(() => { this.idleTimer = undefined; this.onIdleTimeout(); }, delay);
     this.idleTimer.unref?.();
@@ -3190,12 +3191,13 @@ export class TerminalApp {
 
   /**
    * Starts only at a safe, quiet prompt that NMSh owns: no running or waiting command, no panel,
-   * picker or palette, no passthrough, not suspended, and not while the terminal is unfocused.
+   * picker or palette, no passthrough, not suspended. Focus does not matter: an unfocused
+   * terminal is often still visible (another monitor, beside a browser or editor).
    */
   private idleEligible(): boolean {
     return !this.stopped && this.presentationStarted && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
       && !this.running && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
-      && !this.pickerOpening && this.terminalFocus !== 'blurred';
+      && !this.pickerOpening;
   }
 
   private onIdleTimeout(): void {
@@ -3213,10 +3215,11 @@ export class TerminalApp {
       if (preview) this.output.addFrontendInteraction('/screensaver', 'Idle visuals stay off while Decorative effects are Off.', INFO);
       return;
     }
-    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended || this.idle) return;
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
-    this.screensaverPanel = undefined;
-    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    // Exclusive ownership: every other presentation owner stops before the first idle frame.
+    // The gallery (if any) stays open underneath and resumes its own preview on dismissal.
+    this.suspendPresentationOwners();
     const mode = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
     this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still};
     this.renderer.invalidate();
@@ -3254,11 +3257,20 @@ export class TerminalApp {
     this.idleSubscription?.(); this.idleSubscription = undefined;
   }
 
-  /** An unfocused terminal: keep the overlay but stop drawing frames nobody can see. */
-  private pauseIdle(): void {
-    if (!this.idle || this.idle.paused) return;
-    this.idle.paused = true;
-    this.stopIdleFrames();
+  /**
+   * Stop every animation subscription that paints the normal UI, so the idle
+   * scene is the only thing drawn while it is active. Each one is recreated by
+   * the normal render path after dismissal (render → syncPresentationClock,
+   * syncPanelAnimation, the gallery's own preview subscription).
+   */
+  private suspendPresentationOwners(): void {
+    this.effects.cancel();
+    this.endSweep();
+    this.presentationSubscription?.(); this.presentationSubscription = undefined;
+    this.panelAnimation?.(); this.panelAnimation = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.stripTimer?.(); this.stripTimer = undefined;
+    this.noticeTimer?.(); this.noticeTimer = undefined;
   }
 
   /** Restores the exact presentation underneath: nothing it covered was changed. */
@@ -5061,6 +5073,7 @@ export class TerminalApp {
 
   /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
   private renderTaskPresentation(): void {
+    if (this.idle) return;
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     const cached = this.presentationFrame;
     const region = cached?.plan.regions.find(item => item.kind === 'panel');
@@ -5098,6 +5111,8 @@ export class TerminalApp {
 
   /** Decorative frames reuse the base projection; they never walk transcript history. */
   private paintPresentation(now: number): void {
+    // Idle visuals are the sole owner of the screen while active.
+    if (this.idle) return;
     const cached = this.presentationFrame;
     if (!cached) return;
     const {frame, plan} = cached;
@@ -5129,6 +5144,7 @@ export class TerminalApp {
   }
 
   private renderPresentation(now: number): void {
+    if (this.idle) return;
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
     this.effects.expire(now);
@@ -5142,7 +5158,7 @@ export class TerminalApp {
   }
 
   private syncPresentationClock(): void {
-    if (!this.presentationStarted || this.stopped) return;
+    if (!this.presentationStarted || this.stopped || this.idle) return;
     this.syncStatusStrip();
     this.syncNotices();
     const settings = this.promptConfiguration.presentation;
