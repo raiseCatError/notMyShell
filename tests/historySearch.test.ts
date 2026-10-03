@@ -19,7 +19,7 @@ function historyApp(): {app: TerminalApp; leaked: string[]} {
   const leaked: string[] = [];
   Object.defineProperty(app, 'render', {value: () => {}});
   Object.defineProperty(app, 'dimensions', {value: () => ({columns: 80, rows: 24})});
-  app['historyService'].getAll = () => ['git status', 'ls -la', 'git log'];
+  app['historyService'].search = async query => ['git status', 'ls -la', 'git log'].filter(command => command.includes(query)).map((command, index) => ({id: String(index), command, source: 'zsh'}));
   app['session'].submit = ((data: string) => { leaked.push(data); }) as never;
   app['session'].write = ((data: string) => { leaked.push(data); }) as never;
   return {app, leaked};
@@ -39,6 +39,8 @@ test('bare /history enters the same search state as the slash suggestion', async
     app['editor'].insert('/history');
     await enter(app);
     assert.equal(app['editor'].text, '/history ');
+    app['composerSuggestions']();
+    await new Promise<void>(resolve => setImmediate(resolve));
     assert.deepEqual(app['composerSuggestions']().map((s: {name: string}) => s.name), ['git status', 'ls -la', 'git log']);
     assert.deepEqual(leaked, [], 'nothing reaches zsh');
     assert.doesNotMatch(transcriptText(app), /Unknown NMSh command|\/history/u, 'no transcript entry');
@@ -52,6 +54,8 @@ test('/history query filters, arrows select, and Enter restores the match withou
   const {app, leaked} = historyApp();
   try {
     app['editor'].insert('/history git');
+    app['composerSuggestions']();
+    await new Promise<void>(resolve => setImmediate(resolve));
     assert.deepEqual(app['composerSuggestions']().map((s: {name: string}) => s.name), ['git status', 'git log']);
     app['handleKey']({kind: 'down'});
     await enter(app);
@@ -64,10 +68,12 @@ test('/history query filters, arrows select, and Enter restores the match withou
   }
 });
 
-test('Tab applies the selected history match', () => {
+test('Tab applies the selected history match', async () => {
   const {app} = historyApp();
   try {
     app['editor'].insert('/history ls');
+    app['composerSuggestions']();
+    await new Promise<void>(resolve => setImmediate(resolve));
     app['handleKey']({kind: 'complete'});
     assert.equal(app['editor'].text, 'ls -la');
   } finally {

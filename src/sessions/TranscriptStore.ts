@@ -42,7 +42,7 @@ export interface LiveLink {
   /** Last shell stream event reflected in this transcript. */
   seq: number;
   /** The command in flight when this checkpoint was taken. */
-  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number};
+  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number};
 }
 
 function parseLive(value: unknown): LiveLink | undefined {
@@ -81,7 +81,10 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && (transcript.welcome.captured === undefined
       || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)
-    && transcript.records.every(record => record && typeof record.command === 'string'
+    && transcript.records.every(record => record && (record.historyEligible === undefined || typeof record.historyEligible === 'boolean')
+      && (record.startedAt === undefined || Number.isFinite(record.startedAt))
+      && (record.durationMs === undefined || (Number.isFinite(record.durationMs) && record.durationMs >= 0))
+      && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
       && typeof record.outputStartId === 'number'

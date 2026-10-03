@@ -88,10 +88,11 @@ test('/resume rows and nmsh --list show the status; the new fields round-trip an
 });
 
 test('end to end: a CLI’s own title and notification reach /resume across detach, and typing after reattach clears attention', async () => {
-  const {LiveSandbox, until} = await import('./helpers/liveFrontend.js');
+  const {LiveSandbox, until, strip} = await import('./helpers/liveFrontend.js');
   const {mkdirSync, writeFileSync, chmodSync} = await import('node:fs');
   const {join} = await import('node:path');
   const sandbox = new LiveSandbox();
+  let backgroundPid: number | undefined;
   const bin = join(sandbox.home, 'bin');
   mkdirSync(bin);
   // Named like a known agent; it only prints, sets a title, notifies, and reads a line.
@@ -108,7 +109,7 @@ test('end to end: a CLI’s own title and notification reach /resume across deta
     const a = sandbox.launch();
     await a.waitFor(/❯/);
     await a.run(`export PATH="${bin}:$PATH"`, /❯/);
-    await a.run('claude', /FAKE-AGENT-UP/);
+    await a.run('claude', /FAKE-AGENT-UP/, {completion: false});
     await until(async () => (await sandbox.sessions())[0]?.attentionSince !== undefined, 15000, 'attention recorded');
     const [live] = await sandbox.sessions();
     assert.equal(live!.running?.includes('claude'), true);
@@ -121,7 +122,9 @@ test('end to end: a CLI’s own title and notification reach /resume across deta
     const viewer = sandbox.launch(['--new']);
     await viewer.waitFor(/❯/);
     // Wait for the command to finish: /resume is refused while one runs.
-    await viewer.run('sleep 30 & echo BG-STARTED', /BG-STARTED[\s\S]*Completed/);
+    const backgroundMark = viewer.mark;
+    await viewer.run('sleep 30 & echo BG-STARTED=$!', /BG-STARTED=\d+[\s\S]*Completed/);
+    backgroundPid = Number(/BG-STARTED=(\d+)/u.exec(strip(viewer.output.slice(backgroundMark)))![1]);
     const mark = viewer.mark;
     viewer.pty.write('/resume\r');
     await viewer.waitFor(/Claude Code · needs attention[\s\S]*Fake agent: ready/, mark);
@@ -139,6 +142,8 @@ test('end to end: a CLI’s own title and notification reach /resume across deta
       return session !== undefined && session.running === undefined && session.lastExit === 0 && session.attentionSince === undefined;
     }, 15000, 'command ended; attention cleared; last exit recorded');
   } finally {
+    // The fixture intentionally leaves this background job running across /resume.
+    if (backgroundPid) { try { process.kill(backgroundPid, 'SIGKILL'); } catch { /* already ended */ } }
     await sandbox.dispose();
   }
 });

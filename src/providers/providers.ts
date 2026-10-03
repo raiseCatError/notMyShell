@@ -7,7 +7,7 @@ import {delimiter, join} from 'node:path';
  * runtime interface (prompt render, welcome render, suggestion query, ...);
  * this module only describes providers and how their availability looks.
  */
-export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions';
+export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'tool';
 export type ProviderKind = 'native' | 'external' | 'none';
 
 export interface ProviderInstall {
@@ -99,7 +99,8 @@ export interface ExternalResult {
  * host TTY) so a timeout kills everything it started. Never throws.
  */
 export function runExternal(binary: string, args: readonly string[], options: {timeoutMs?: number; maxBytes?: number;
-  env?: NodeJS.ProcessEnv; cwd?: string} = {}): Promise<ExternalResult> {
+  env?: NodeJS.ProcessEnv; cwd?: string; signal?: AbortSignal; terminationGraceMs?: number} = {}): Promise<ExternalResult> {
+  if (options.signal?.aborted) return Promise.resolve({ok: false, stdout: '', error: 'cancelled'});
   const maxBytes = options.maxBytes ?? 256 * 1024;
   return new Promise(resolve => {
     let child: ReturnType<typeof spawn>;
@@ -116,12 +117,33 @@ export function runExternal(binary: string, args: readonly string[], options: {t
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       if (child.exitCode === null && child.signalCode === null && child.pid) {
+        // PTY-owning helpers need their EXIT trap to reap a separate inner group.
+        // Keep this opt-in and bounded; ordinary providers retain immediate kill.
+        if (options.terminationGraceMs) {
+          const pid = child.pid;
+          const deadline = setTimeout(() => {
+            try { process.kill(-pid, 'SIGKILL'); } catch { /* Already gone. */ }
+            resolve(result);
+          }, Math.min(100, Math.max(1, options.terminationGraceMs)));
+          child.once('close', () => {
+            clearTimeout(deadline);
+            // A closed parent does not prove TERM-ignoring descendants exited.
+            try { process.kill(-pid, 'SIGKILL'); } catch { /* Group already gone. */ }
+            resolve(result);
+          });
+          try { process.kill(-pid, 'SIGTERM'); } catch { clearTimeout(deadline); resolve(result); }
+          return;
+        }
         try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already gone. */ }
       }
       resolve(result);
     };
+    const abort = () => finish({ok: false, stdout: '', error: 'cancelled'});
     const timer = setTimeout(() => finish({ok: false, stdout: '', error: 'timed out'}), options.timeoutMs ?? 2000);
+    options.signal?.addEventListener('abort', abort, {once: true});
+    if (options.signal?.aborted) abort();
     child.stdout!.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxBytes) finish({ok: false, stdout: '', error: 'output too large'});
