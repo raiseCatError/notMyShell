@@ -1,3 +1,4 @@
+import {hostIntegration, keyboardGuidance, type HostIntegration} from './integration.js';
 import {spawn} from 'node:child_process';
 import {resolveHostCapabilities, type TerminalCapabilities} from './capabilities.js';
 
@@ -11,6 +12,8 @@ export interface TerminalHost {
   name: string;
   /** Current frontend attachment, never persistent shell state. */
   capabilities: Readonly<TerminalCapabilities>;
+  integration?: HostIntegration;
+  keyboardGuidance?: string;
   /** How to open a new window running `argv`, if this host supports it. */
   newWindow?: (argv: readonly string[]) => {command: string; args: string[]};
 }
@@ -45,24 +48,26 @@ export const GHOSTTY_NEW_WINDOW_SCRIPT = [
 export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): TerminalHost {
   const program = env.TERM_PROGRAM ?? '';
   const capabilities = resolveHostCapabilities(env);
+  const integration = hostIntegration(env);
+  const guidance = keyboardGuidance(env);
   if (program === 'ghostty' || env.GHOSTTY_RESOURCES_DIR) {
-    return {capabilities, name: 'Ghostty', newWindow: argv => platform === 'darwin'
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'Ghostty', newWindow: argv => platform === 'darwin'
       // Ghostty's AppleScript API opens a normal window in the running app. The
       // command words arrive as osascript argv, never inside the script text.
       ? {command: 'osascript', args: [...GHOSTTY_NEW_WINDOW_SCRIPT.flatMap(line => ['-e', line]), ...argv]}
       : {command: 'ghostty', args: ['-e', ...argv]}};
   }
   if (program === 'Apple_Terminal' && platform === 'darwin') {
-    return {capabilities, name: 'Terminal', newWindow: argv => ({command: 'osascript', args: ['-e',
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'Terminal', newWindow: argv => ({command: 'osascript', args: ['-e',
       `tell application "Terminal" to do script ${appleScriptString(argv.map(shellQuote).join(' '))}`]})};
   }
   if (env.KITTY_WINDOW_ID) {
     // Needs kitty remote control (allow_remote_control); failure falls back like any unsupported host.
-    return {capabilities, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }
-  if (program === 'vscode') return {capabilities, name: 'VS Code'};
-  if (program === 'zed' || env.ZED_TERM) return {capabilities, name: 'Zed'};
-  return {capabilities, name: program || 'this terminal'};
+  if (program === 'vscode') return {capabilities, integration, keyboardGuidance: guidance, name: 'VS Code'};
+  if (program === 'zed' || env.ZED_TERM) return {capabilities, integration, keyboardGuidance: guidance, name: 'Zed'};
+  return {capabilities, integration, keyboardGuidance: guidance, name: program || 'this terminal'};
 }
 
 export type Spawner = (command: string, args: string[], timeoutMs?: number) => Promise<boolean>;
