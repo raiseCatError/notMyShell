@@ -1,3 +1,4 @@
+import {isolateConfig} from './support/isolatedConfig.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -149,6 +150,7 @@ test('gallery: real preview rows, changes are immediate, Enter on Start preview 
 
 /** An app with captured frames and no real terminal writes. */
 function harness(patch: Partial<PromptConfiguration['idleVisuals']> = {timeout: 1}): {app: TerminalApp; frames: TerminalFrame[]; cleanup: () => void} {
+  const isolation = isolateConfig();
   const app = new TerminalApp();
   const frames: TerminalFrame[] = [];
   app['renderer'].render = (next: TerminalFrame) => { frames.push(next); };
@@ -156,7 +158,7 @@ function harness(patch: Partial<PromptConfiguration['idleVisuals']> = {timeout: 
   app['presentationStarted'] = true;
   app['startupPending'] = false;
   app['configuration'] = {...app['configuration'], idleVisuals: {...app['configuration'].idleVisuals, ...patch}};
-  return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); }};
+  return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); isolation.restore(); }};
 }
 
 function goIdle(app: TerminalApp): void {

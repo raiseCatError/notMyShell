@@ -87,3 +87,51 @@ WezTerm are supported profiles without a physical pass in this round.
 
 No row above is marked passed. Physical results are recorded in #297 once a
 person has run them.
+
+## Full Chroma review (pending your review)
+
+This section is for the follow-up PR on `feature/v015-chroma-polish`. Do not
+mark it passed until you have looked at it on a physical host (Zed first).
+
+### Chroma
+- New config (or Settings → Chroma → Influence): Full Chroma is the default.
+  An older config with Mixed keeps Mixed.
+- Full Chroma + Semantic colors **Override**: success/failure and Git state
+  segments take Chroma colors; their symbols and counts stay readable.
+- Full Chroma + Semantic colors **Preserve**: those segments keep their
+  meaning colors.
+- Try several palettes: Aurora, Nebula, Rainbow, Black Hole, Current Theme,
+  a Custom gradient; on a light-ish and a dark theme.
+- Motion: Breathe, Pulse, Comet (should look as before), and the revised
+  **Travel** (a smooth out-and-back flow with a soft crest; no snap at the
+  end of a cycle). Speeds Slow/Normal; no flashing.
+- Chroma ownership: with Chroma on, Settings frames, tabs, selection and
+  labels look exactly as with Chroma off. Rules stay chrome-colored unless
+  Chroma → Rules = Chroma. Chroma Off restores everything.
+
+### UI chrome and themes
+- UI chrome **Follow theme**: switch between Lavender, Forest, Ocean, Nord,
+  Catppuccin Mocha: divider lines, panel frames, selected tabs, selection
+  bands and markers follow each theme (no stray lavender).
+- UI chrome **Custom → Native Lavender**, **Grayscale**, **Custom colors**
+  (Edit colors, change accent and separator, Save).
+- **Forest**: a forest feel (moss, pine, bark, amber, teal), readable text.
+- Theme Studio: edit a role, **Reset to base** (asks first), Esc (saved
+  custom theme unchanged), reset then **Save & use**; change Based on and
+  reset; R on a color row resets one role.
+
+### Setup Cat and commands
+- `/setup`: **Vespyr** on the first page; every step keeps its controls at
+  the top with a preview below; shrink the terminal: the preview gives way
+  first.
+- Previews change as you edit: glyph sample and drawn caret (the real cursor
+  must not change until Apply), real prompt, theme/chrome/Chroma sample,
+  composer/syntax, provider explanations, Welcome/status strip, idle visual.
+- History & navigation: each provider explains itself; Native says no
+  installation is required.
+- Install from setup: select zoxide/fzf (not installed), press I, review the
+  exact command, confirm; after install you return to the same step with the
+  same draft and the tool shows installed. Try a cancel and, if possible, a
+  failure: the draft survives either way.
+- `/cursor` opens the cursor rows in Settings.
+- Settings shows **Decorative effects On/Off**, never "Effects Off: Off".

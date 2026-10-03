@@ -22,11 +22,11 @@ When a submitted command is missing in your zsh and exactly names a curated tool
 
 ## Appearance
 
-Settings → Theme family picks NMSh themes or bundled families (Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark). Themes color NMSh-owned UI only; your terminal and editor keep their colors. /theme opens Theme Studio to clone, edit, import (NMSh Theme JSON, Base16, Windows Terminal schemes) and export a custom theme. Cursor shape and blink, the prompt symbol and the optional status strip are in Settings.
+Settings → Theme family picks NMSh themes or bundled families (Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark). Themes color NMSh-owned UI only; your terminal and editor keep their colors. /theme opens Theme Studio to clone, edit, import (NMSh Theme JSON, Base16, Windows Terminal schemes) and export a custom theme. Cursor shape and blink (/cursor), the prompt symbol and the optional status strip are in Settings. UI chrome (frames, rules, tabs, selection) follows the theme by default, or a Custom preset (Native Lavender, Grayscale, your colors). Chroma colors the Native prompt; Full Chroma is the default influence, and Semantic colors decides whether success, failure and Git state are recolored too.
 
 ## Idle visuals
 
-Optional and off by default (Never). /screensaver previews each mode live: Aurora Drift, Deep Space, Warp Starfield, Rain, Sparkles, Fireworks and Bouncing Vespyr. They run only inside NMSh at a quiet prompt; any key, mouse, focus return or new output ends them and leaves everything exactly as it was. Reduced Motion shows a still frame; Effects Off keeps them off.
+Optional and off by default (Never). /screensaver previews each mode live: Aurora Drift, Deep Space, Warp Starfield, Rain, Sparkles, Fireworks and Bouncing Vespyr. They run only inside NMSh at a quiet prompt; any key, mouse, focus return or new output ends them and leaves everything exactly as it was. Reduced Motion shows a still frame; Decorative effects Off keeps them off.
 
 ## Session presets
 

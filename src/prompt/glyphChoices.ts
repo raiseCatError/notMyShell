@@ -29,12 +29,16 @@ export const SEPARATOR_CHOICES = {
   diamond: {glyph: '◆', ascii: '*', label: 'Diamond ◆'},
   triangle: {glyph: '▸', ascii: '>', label: 'Triangle ▸'},
   dash: {glyph: '-', ascii: '-', label: 'ASCII -'},
+  dashed: {glyph: '┆', ascii: ':', label: 'Dashed ┆'},
 } as const satisfies Record<string, GlyphChoice>;
 export type SeparatorId = keyof typeof SEPARATOR_CHOICES;
 
 /** Style-appropriate separators; `custom` is offered only where a text separator makes sense. */
 export const MINIMAL_SEPARATORS = ['space', 'dot', 'bullet', 'pipe', 'slash', 'chevron', 'arrow', 'doubleChevron', 'diamond', 'dash', 'custom'] as const;
 export const BREADCRUMB_SEPARATORS = ['chevron', 'arrow', 'slash', 'dot', 'doubleChevron', 'triangle', 'custom'] as const;
+/** Outline's connected layout divides outlined segments with a thin vertical divider only. */
+export const OUTLINE_DIVIDERS = ['pipe', 'dashed', 'dot', 'slash', 'custom'] as const;
+export type OutlineDivider = typeof OUTLINE_DIVIDERS[number];
 export type MinimalSeparator = typeof MINIMAL_SEPARATORS[number];
 export type BreadcrumbSeparator = typeof BREADCRUMB_SEPARATORS[number];
 
@@ -73,12 +77,12 @@ export function normalizeCustomGlyph(value: unknown): string | undefined {
 const isAscii = (text: string) => /^[\x20-\x7e]*$/u.test(text);
 
 /** The separator glyph actually drawn for a style under the current glyph mode. */
-export function separatorGlyph(style: 'minimal' | 'breadcrumb', id: string, custom: string | undefined, nerd = getCurrentGlyphMode() === 'nerd'): string {
+export function separatorGlyph(style: 'minimal' | 'breadcrumb' | 'outline', id: string, custom: string | undefined, nerd = getCurrentGlyphMode() === 'nerd'): string {
   if (id === 'custom') {
     const glyph = custom ?? '';
-    if (!glyph) return style === 'minimal' ? '' : (nerd ? '' : '>');
+    if (!glyph) return style === 'minimal' ? '' : style === 'outline' ? (nerd ? '│' : '|') : (nerd ? '' : '>');
     // Safe mode keeps a custom glyph only when it is plain ASCII.
-    return nerd || isAscii(glyph) ? glyph : style === 'minimal' ? '|' : '>';
+    return nerd || isAscii(glyph) ? glyph : style === 'breadcrumb' ? '>' : '|';
   }
   const choice = (style === 'breadcrumb' ? BREADCRUMB_OVERRIDES[id as SeparatorId] : undefined) ?? SEPARATOR_CHOICES[id as SeparatorId];
   if (!choice) return '';

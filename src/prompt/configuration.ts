@@ -30,6 +30,7 @@ import {normalizeCustomGlyph, normalizePromptSymbol, type PromptSymbolId} from '
 import {normalizeCatppuccinAccent, type CatppuccinAccent} from '../appearance/themeFamilies.js';
 import {normalizeCustomTheme, type CustomTheme} from '../appearance/customTheme.js';
 import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
+import {DEFAULT_UI_CHROME, normalizeUiChrome, type UiChromeSettings} from '../appearance/uiChrome.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
@@ -313,6 +314,8 @@ export interface PromptConfiguration {
   cursor: CursorSettings;
   statusStrip: StatusStripSettings;
   idleVisuals: IdleVisualSettings;
+  /** Where NMSh chrome (frames, rules, tabs, selection, accents) takes its colors from. */
+  uiChrome: UiChromeSettings;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -388,6 +391,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
   idleVisuals: {...DEFAULT_IDLE_VISUALS},
+  uiChrome: {...DEFAULT_UI_CHROME},
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true, vibrance: 'standard', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
@@ -464,7 +468,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), uiChrome: normalizeUiChrome(value.uiChrome), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider

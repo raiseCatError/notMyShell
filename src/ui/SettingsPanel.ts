@@ -1,8 +1,9 @@
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
-  TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS} from '../chroma/treatment.js';
+  TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS} from '../chroma/treatment.js';
 import {CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
+import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
 import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
@@ -72,7 +73,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver';
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor';
 
 interface SettingsRowBase {
   id: string;
@@ -150,6 +151,20 @@ const withStrip = (c: PromptConfiguration, patch: Partial<StatusStripSettings>):
 
 /** Theme family, then the family's variant and (Catppuccin) accent, as nested rows. */
 const THEME_ROWS: readonly SettingsRow[] = [
+  enumRow({id: 'uiChrome', label: 'UI chrome', description: 'Colors of NMSh frames, rules, tabs, selection and accents; Follow theme matches the active theme', category: 'Appearance',
+    values: CHROME_SOURCES, labels: ['Follow theme', 'Custom'],
+    get: c => c.uiChrome.source, set: (c, source) => ({...c, uiChrome: {...c.uiChrome, source}})}),
+  {id: 'uiChromePreset', parent: 'uiChrome', when: c => c.uiChrome.source === 'custom', label: 'Preset', description: 'Native Lavender, Grayscale, or your own chrome colors', category: 'Appearance',
+    control: 'enum', options: CHROME_PRESETS.map(preset => CHROME_PRESET_LABELS[preset]),
+    index: c => CHROME_PRESETS.indexOf(c.uiChrome.preset),
+    // Custom colors start from the chrome in effect, so nothing jumps.
+    select: (c, index) => {
+      const preset = CHROME_PRESETS[index]!;
+      const colors = c.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...c.uiChrome, source: 'theme'}, c.nmsh.palette, c.nmsh.accent, c.customTheme));
+      return {...c, uiChrome: {...c.uiChrome, preset, ...(preset === 'custom' ? {colors} : {})}};
+    }},
+  {id: 'uiChromeColors', parent: 'uiChromePreset', when: c => c.uiChrome.source === 'custom' && c.uiChrome.preset === 'custom', label: 'Edit colors',
+    description: 'Accent, text, separator, selection and status roles with the color picker', category: 'Appearance', control: 'action', actionLabel: 'Edit ›', destination: 'chromeColors'},
   {id: 'themeFamily', label: 'Theme family', description: 'NMSh themes, bundled families or your Custom theme; colors NMSh-owned UI only', category: 'Appearance',
     control: 'enum', options: FAMILY_LABELS, index: c => FAMILY_IDS.indexOf(familyOf(c.nmsh.palette)),
     select: (c, index) => familyOf(c.nmsh.palette) === FAMILY_IDS[index] ? c : selectFamily(c, FAMILY_IDS[index]!)},
@@ -287,19 +302,30 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     control: 'boolean', get: config => config.installSuggestions, set: (config, installSuggestions) => ({...config, installSuggestions})},
   {id: 'resetInstallSuggestions', parent: 'installSuggestions', label: 'Ignored install suggestions', description: 'Tools you asked NMSh not to offer again; Enter resets the list', category: 'Tools',
     control: 'action', actionLabel: 'Reset', destination: 'resetInstallSuggestions'},
-  enumRow({id: 'treatmentPreset', label: 'Chroma', description: 'Native prompt, history rules and Settings frame; /chroma for the full editor; external prompts keep their colors', category: 'Presentation',
+  enumRow({id: 'treatmentPreset', label: 'Chroma', description: 'Colors the Native prompt; /chroma has every option. Ordinary UI chrome is not Chroma; external prompts keep their colors', category: 'Presentation',
     values: TREATMENT_PRESETS, labels: TREATMENT_PRESETS.map(preset => TREATMENT_PRESET_LABELS[preset]),
     get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
-  {id: 'treatmentIntensity', parent: 'treatmentPreset', when: chromaOn, label: 'Intensity', description: 'How strongly Chroma blends with ordinary surface colors', category: 'Presentation',
-    control: 'stepper', steps: [0, 0.25, 0.5, 0.65, 1], format: v => `${Math.round(v * 100)}%`,
-    get: c => c.presentation.intensity, set: (c, intensity) => ({...c, presentation: {...c.presentation, intensity}})},
+  {id: 'treatmentIntensity', parent: 'treatmentPreset', when: chromaOn, label: 'Influence', description: 'How strongly Chroma recolors the Native prompt; Full Chroma is the default', category: 'Presentation',
+    control: 'enum', options: TREATMENT_INFLUENCES.map(entry => entry.label),
+    index: c => TREATMENT_INFLUENCES.findIndex(entry => entry.id === treatmentInfluence(c.presentation)),
+    // Choosing Full Chroma brings Semantic colors to its default, Override; it stays editable below.
+    select: (c, index) => {
+      const entry = TREATMENT_INFLUENCES[index]!;
+      return {...c, presentation: {...c.presentation, intensity: entry.intensity, ...(entry.id === 'full' ? {semantic: 'override' as const} : {})}};
+    }},
+  enumRow({id: 'treatmentSemantic', parent: 'treatmentIntensity', when: chromaOn, label: 'Semantic colors', description: 'Override lets Chroma recolor success, failure and Git state; their symbols and readable text keep the meaning', category: 'Presentation',
+    values: SEMANTIC_MODES, labels: SEMANTIC_MODES.map(mode => SEMANTIC_MODE_LABELS[mode]),
+    get: c => c.presentation.semantic ?? 'preserve', set: (c, semantic) => ({...c, presentation: {...c.presentation, semantic}})}),
   enumRow({id: 'treatmentScope', parent: 'treatmentPreset', when: chromaOn, label: 'Scope', description: 'Identity modules only, or the whole Native prompt', category: 'Presentation',
     values: TREATMENT_SCOPES, labels: TREATMENT_SCOPES.map(scope => TREATMENT_SCOPE_LABELS[scope]),
     get: c => c.presentation.scope ?? 'identity', set: (c, scope) => ({...c, presentation: {...c.presentation, scope}})}),
+  enumRow({id: 'chromaRules', parent: 'treatmentPreset', when: chromaOn, label: 'Rules', description: 'Also color the composer and history rules with Chroma; frames and other chrome never are', category: 'Presentation',
+    values: [false, true], labels: ['UI chrome', 'Chroma'],
+    get: c => c.presentation.rules === true, set: (c, rules) => ({...c, presentation: {...c.presentation, rules}})}),
   enumRow({id: 'treatmentGeometry', parent: 'treatmentPreset', when: chromaOn, label: 'Geometry', description: 'Independent gradient direction', category: 'Presentation',
     values: TREATMENT_GEOMETRIES, labels: TREATMENT_GEOMETRIES.map(geometry => TREATMENT_GEOMETRY_LABELS[geometry]),
     get: c => c.presentation.geometry, set: (c, geometry) => ({...c, presentation: {...c.presentation, geometry}})}),
-  enumRow({id: 'treatmentMotion', parent: 'treatmentPreset', when: chromaOn, label: 'Motion', description: 'Live separator and prompt motion; history stays static', category: 'Presentation',
+  enumRow({id: 'treatmentMotion', parent: 'treatmentPreset', when: chromaOn, label: 'Motion', description: 'Live prompt motion (and rules when Rules is Chroma); history stays static', category: 'Presentation',
     values: TREATMENT_MOTIONS, labels: TREATMENT_MOTIONS.map(motion => TREATMENT_MOTION_LABELS[motion]),
     get: c => c.presentation.motion, set: (c, motion) => ({...c, presentation: {...c.presentation, motion}})}),
   enumRow({id: 'treatmentSpeed', parent: 'treatmentMotion', when: chromaMoving, label: 'Speed', description: 'Chroma animation cycle length', category: 'Presentation',
@@ -310,8 +336,10 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: c => c.presentation.curve ?? 'linear', set: (c, curve) => ({...c, presentation: {...c.presentation, curve}})}),
   {id: 'reducedMotion', label: 'Reduced Motion', description: 'Static colors; no decorative movement or effects', category: 'Presentation', control: 'boolean',
     get: c => c.presentation.reducedMotion, set: (c, reducedMotion) => ({...c, presentation: {...c.presentation, reducedMotion}})},
-  {id: 'effectsOff', label: 'Effects Off', description: 'Disable decorative animation and transient effects', category: 'Presentation', control: 'boolean',
-    get: c => c.presentation.effectsOff, set: (c, effectsOff) => ({...c, presentation: {...c.presentation, effectsOff}})},
+  // Stored as effectsOff for compatibility; shown positively so nobody reads "Effects Off: Off".
+  enumRow({id: 'effectsOff', label: 'Decorative effects', description: 'Chroma motion, sparkle effects, idle visuals and the Welcome blink; Off keeps NMSh still and quiet', category: 'Presentation',
+    values: [true, false], labels: ['On', 'Off'],
+    get: c => !c.presentation.effectsOff, set: (c, on) => ({...c, presentation: {...c.presentation, effectsOff: !on}})}),
   {id: 'autoEffects', label: 'Milestone effects', description: 'A brief effect after a successful tool install, update or setup', category: 'Presentation', control: 'boolean',
     get: c => c.presentation.autoEffects !== false, set: (c, autoEffects) => ({...c, presentation: {...c.presentation, autoEffects}})},
 
@@ -611,6 +639,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
       }
     } else body.push(`${MARGIN}  ${SUBTLE}No settings match "${query}"${RESET}`);
   }
-  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns, config.presentation);
+  // Panel frames are ordinary UI chrome: they follow the UI chrome colors, never Chroma.
+  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns);
   return out.slice(0, Math.max(1, maxRows)).map(row => truncateAnsi(row, columns));
 }

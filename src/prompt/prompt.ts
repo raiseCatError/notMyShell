@@ -208,9 +208,10 @@ export const NATIVE_PROMPT_THEMES = {
     project: '#f08a5d', cwd: '#7a4a6a', gitBranch: '#b8456b', node: '#d9a441', go: '#c75d8a', python: '#f2c14e',
     docker: '#8a5fa8', kubernetes: '#6b4f9e', success: '#7fae5a', failure: '#d64550',
   })),
-  forest: theme('forest', 'Forest', 'moss, pine and bark', auto({
-    project: '#5f9e5a', cwd: '#4a5a3c', gitBranch: '#2f6b4f', node: '#8aa64a', go: '#3f8f7f', python: '#b8a84a',
-    docker: '#4f7f6a', kubernetes: '#3e6f5a', success: '#6fae6a', failure: '#b85a4a',
+  // A forest, not "all green": moss and pine, warm bark for the path, amber sap, a muted teal stream and lichen blue.
+  forest: theme('forest', 'Forest', 'moss, pine, bark, amber and stream teal', auto({
+    project: '#6b9a52', cwd: '#5c4a36', gitBranch: '#2e6656', node: '#8fae5a', go: '#3f8a86', python: '#c9a24a',
+    docker: '#5b7f86', kubernetes: '#4e6a8a', success: '#6fb072', failure: '#c0603e',
   })),
   rose: theme('rose', 'Rose', 'rose, mauve and apricot', auto({
     project: '#e07a9a', cwd: '#6e4a5a', gitBranch: '#a8507a', node: '#c98a9a', go: '#9a6aa8', python: '#e0a87a',
@@ -370,12 +371,16 @@ export function richGitGeometry(nmsh: PromptConfiguration['nmsh']): {geometry?: 
 const IDENTITY_ROLES: ReadonlySet<PromptRole> = new Set(['project', 'cwd', 'node', 'go', 'python', 'docker']);
 
 /**
- * Status and Git-state meaning is protected: Chroma never recolors success,
- * failure or Rich Git state segments. Identity scope treats project, path and
- * toolchains; Whole prompt also treats the branch and context modules.
+ * Semantic colors: Preserve keeps success, failure and Rich Git state fills;
+ * Override lets Chroma recolor them, because their text and symbols (✔ 0,
+ * +2, ~1, ↑3) still say what they mean and text contrast is corrected after
+ * Chroma. The textless clean-tree marker is meaning by color alone, so it is
+ * always kept. Identity scope treats project, path and toolchains; Whole
+ * prompt also treats the branch and context modules.
  */
-export function chromaEligibleRole(role: PromptRole, scope: 'identity' | 'prompt'): boolean {
-  if (role === 'success' || role === 'failure' || isGitStateRole(role)) return false;
+export function chromaEligibleRole(role: PromptRole, scope: 'identity' | 'prompt', semantic: 'preserve' | 'override' = 'preserve'): boolean {
+  if (role === 'gitClean') return false;
+  if (role === 'success' || role === 'failure' || isGitStateRole(role)) return semantic === 'override';
   return scope === 'prompt' || IDENTITY_ROLES.has(role);
 }
 
@@ -442,7 +447,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     // Per-module custom colors are for the module's identity, not its Git states.
     const custom = !isGitStateRole(segment.role);
     const explicit = custom && Boolean(segment.module.foreground || segment.module.background);
-    const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'identity')
+    const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'identity', presentation.semantic ?? 'preserve')
       && (!explicit || presentation.customColors === true);
     return {
       ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),

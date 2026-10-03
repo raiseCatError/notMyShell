@@ -49,6 +49,11 @@ class LazyEscape {
   toJSON(): string { return this.resolve(); }
 }
 
+/** Any escape computed at use, for colors derived from chrome roles. */
+export function lazyEscape(resolve: () => string): string {
+  return new LazyEscape(resolve) as unknown as string;
+}
+
 export function lazyForeground(color: RgbColor): string {
   return new LazyEscape(() => foreground(color)) as unknown as string;
 }

@@ -650,7 +650,7 @@ function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | '
     const [open, close] = outlineCaps(profile.cap);
     const pad = ' '.repeat(profile.padding);
     if (profile.layout === 'connected') {
-      const divider = nerd ? '│' : '|';
+      const divider = separatorGlyph('outline', profile.divider, profile.customSeparator);
       modules.forEach((block, index) => {
         const color = tone(block);
         const eligible = Boolean(block.treatment);

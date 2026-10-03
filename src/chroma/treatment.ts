@@ -17,7 +17,7 @@ export const TREATMENT_GEOMETRIES = ['linear', 'center-out', 'outside-in'] as co
 export const TREATMENT_GEOMETRY_LABELS: Record<typeof TREATMENT_GEOMETRIES[number], string> = {
   linear: 'Left → Right', 'center-out': 'Center → Outward', 'outside-in': 'Outside → Center',
 };
-export const TREATMENT_MOTIONS = ['static', 'travel', 'breathe', 'comet', 'pulse'] as const;
+export const TREATMENT_MOTIONS = ['static', 'breathe', 'comet', 'pulse', 'travel'] as const;
 export const TREATMENT_MOTION_LABELS: Record<typeof TREATMENT_MOTIONS[number], string> = {
   static: 'Static', travel: 'Travel', breathe: 'Breathe', comet: 'Comet', pulse: 'Pulse',
 };
@@ -61,10 +61,24 @@ export interface TreatmentSettings {
   customColors?: boolean;
   /** Restrained automatic effects on real milestones (install, update, onboarding). */
   autoEffects?: boolean;
+  /**
+   * Semantic module colors (success, failure, Git state): Preserve keeps their
+   * meaning colors; Override lets Chroma recolor them too (text, symbols and
+   * contrast correction still carry the meaning).
+   */
+  semantic?: typeof SEMANTIC_MODES[number];
+  /** Where Chroma paints besides the Native prompt: `rules` adds composer and history rules. */
+  rules?: boolean;
 }
 
+export const SEMANTIC_MODES = ['preserve', 'override'] as const;
+export const SEMANTIC_MODE_LABELS: Record<typeof SEMANTIC_MODES[number], string> = {preserve: 'Preserve', override: 'Override'};
+
+/** Full Chroma is the default influence; saved influences load unchanged. */
+export const DEFAULT_INTENSITY = 0.9;
+
 export const DEFAULT_TREATMENT_SETTINGS: TreatmentSettings = {
-  preset: 'off', geometry: 'linear', motion: 'static', intensity: 0.65,
+  preset: 'off', geometry: 'linear', motion: 'static', intensity: DEFAULT_INTENSITY, semantic: 'override', rules: false,
   customStops: [], reducedMotion: false, effectsOff: false,
   speed: 'normal', curve: 'linear', direction: 'forward', scope: 'identity', customColors: false, autoEffects: true,
 };
@@ -84,11 +98,15 @@ export function normalizeTreatmentSettings(value: unknown): TreatmentSettings {
   const v = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   const customStops = validCustomStops(v.customStops) ? v.customStops.map(stop => stop.toLowerCase()) : [];
   const preset = pick(TREATMENT_PRESETS, v.preset, 'off');
+  const intensity = typeof v.intensity === 'number' && Number.isFinite(v.intensity) ? Math.max(0, Math.min(1, v.intensity)) : DEFAULT_INTENSITY;
+  // An explicit semantic choice is kept; otherwise Full Chroma overrides and gentler influences preserve.
+  const semantic = pick(SEMANTIC_MODES, v.semantic, treatmentInfluence({intensity}) === 'full' ? 'override' : 'preserve');
   return {
+    semantic, rules: v.rules === true,
     preset: preset === 'custom' && !customStops.length ? 'off' : preset,
     geometry: pick(TREATMENT_GEOMETRIES, v.geometry, 'linear'),
     motion: pick(TREATMENT_MOTIONS, v.motion, 'static'),
-    intensity: typeof v.intensity === 'number' && Number.isFinite(v.intensity) ? Math.max(0, Math.min(1, v.intensity)) : 0.65,
+    intensity,
     customStops, reducedMotion: v.reducedMotion === true, effectsOff: v.effectsOff === true,
     speed: pick(TREATMENT_SPEEDS, v.speed, 'normal'),
     curve: pick(TREATMENT_CURVES, v.curve, 'linear'),
@@ -186,7 +204,13 @@ function animate(treatment: Treatment, position: number, time: number, still: bo
   const phase = applyCurve(treatment.curve ?? 'linear', wrappedPhase(time, motionCycleMs(motion, treatment.speed)));
   const signed = treatment.direction === 'reverse' ? -phase : phase;
   switch (motion) {
-    case 'travel': return {position: ((position + signed) % 1 + 1) % 1, factor: 1};
+    case 'travel': {
+      // The gradient flows as a seamless loop (out and back, so the last stop never snaps to the first),
+      // with a gentle brightness crest riding along so the movement reads even across few cells.
+      const flowing = ((position + signed) % 1 + 1) % 1;
+      const loop = 1 - Math.abs(2 * flowing - 1);
+      return {position: loop, factor: 0.85 + 0.15 * (1 + Math.cos(2 * Math.PI * flowing)) / 2};
+    }
     case 'breathe': return {position, factor: 0.65 + 0.35 * (1 + Math.cos(2 * Math.PI * phase)) / 2};
     case 'comet': {
       // A bright crest sweeps across; cells away from it settle to a quieter base.

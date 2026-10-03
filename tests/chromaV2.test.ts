@@ -104,15 +104,18 @@ test('vibrance and Chroma compose deterministically into four distinct appearanc
   }
 });
 
-test('protected meaning: status and Rich Git state segments are never treated; explicit module colors stay authoritative', () => {
+test('protected meaning: with Preserve, status and Rich Git state segments are not treated; explicit module colors stay authoritative', () => {
   const failing = {...moduleShowcaseContext(), exitStatus: 1};
-  const value = config('powerline', {preset: 'rainbow', scope: 'prompt', intensity: 1});
+  const value = config('powerline', {preset: 'rainbow', scope: 'prompt', intensity: 1, semantic: 'preserve'});
+  const overridden = buildContextLine(failing, 220, config('powerline', {preset: 'rainbow', scope: 'prompt', intensity: 1, semantic: 'override'}), 'composer');
   const off = config('powerline');
   const treated = buildContextLine(failing, 220, value, 'composer');
   const plain = buildContextLine(failing, 220, off, 'composer');
   const failureFill = NATIVE_PROMPT_THEMES.lavender.colors('failure').background;
   const has = (ansi: string, color: {red: number; green: number; blue: number}) => colors(ansi, BG).some(fill => JSON.stringify(fill) === JSON.stringify(color));
   assert.ok(has(plain, failureFill) && has(treated, failureFill), 'failure fill unchanged under Chroma');
+  assert.ok(!has(overridden, failureFill), 'Override recolors the failure fill');
+  assert.match(stripAnsi(overridden), /✘ 1|x 1/u, 'its symbol and code still say failure');
   const custom = normalizePromptConfiguration({presentation: {preset: 'rainbow', scope: 'prompt', intensity: 1},
     modules: [{id: 'project', visible: true, condition: 'always', background: '#203040'}]});
   assert.ok(has(line(custom), {red: 0x20, green: 0x30, blue: 0x40}), 'explicit color untouched by default');

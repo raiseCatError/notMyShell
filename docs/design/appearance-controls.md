@@ -2,7 +2,7 @@
 
 ## Cursor (text caret)
 
-Settings → Cursor: Host default, Block, Bar, Underline; nested Blink: Host
+Settings → Cursor (or `/cursor`, which opens the same rows): Host default, Block, Bar, Underline; nested Blink: Host
 default, On, Off (shown only with a chosen shape). NMSh uses DECSCUSR
 (`CSI n SP q`) and never touches the OS mouse pointer. Host default sends
 nothing at all. Blink speed is the terminal's own; there is no portable control
@@ -25,8 +25,11 @@ Only styles that draw a text separator get separator choices:
 - Breadcrumb: Chevron, Arrow →, Slash, Dot ·, Double chevron », Triangle ▸,
   Custom.
 
-Powerline, Soft, Outline, Compact and Ribbon keep their geometry choices; a
-free-form glyph would not read as their structure. Existing separator ids load
+- Outline (connected layout): a divider between outlined segments: Pipe │,
+  Dashed ┆, Dot ·, Slash /, Custom.
+
+Powerline, Soft, Compact and Ribbon keep their geometry choices (shapes,
+caps, seams, slants); a free-form glyph would not read as their structure. Existing separator ids load
 unchanged. A custom glyph is stored per style (`customSeparator`), so switching
 styles keeps each style's glyph.
 

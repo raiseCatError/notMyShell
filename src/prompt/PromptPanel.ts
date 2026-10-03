@@ -1,3 +1,4 @@
+import {SEMANTIC_MODES, SEMANTIC_MODE_LABELS} from '../chroma/treatment.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, THEME_FAMILIES} from '../appearance/themeFamilies.js';
@@ -151,7 +152,7 @@ const POWERLINE_ROWS: readonly AppearanceRow[] = [
 ];
 
 /** The style-scoped custom separator glyph; switching styles keeps each style's own glyph. */
-function customSeparatorRow(style: 'minimal' | 'breadcrumb'): AppearanceRow {
+function customSeparatorRow(style: 'minimal' | 'breadcrumb' | 'outline'): AppearanceRow {
   return {id: `${style}.customSeparator`, label: '  Glyph', value: c => c.nmsh.styleProfiles[style].customSeparator ?? 'Enter to type one',
     note: () => 'one character, 1–2 cells',
     edit: {get: c => c.nmsh.styleProfiles[style].customSeparator, set: (c, glyph) => { c.nmsh.styleProfiles[style].customSeparator = glyph; }}};
@@ -205,7 +206,9 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
       ...(profiles.minimal.separator === 'custom' ? [customSeparatorRow('minimal')] : []),
       profileRow('minimal', 'spacing', 'Spacing', cells), profileRow('minimal', 'emphasis', 'Bold')];
     case 'outline': return [profileRow('outline', 'cap', 'Outline'), profileRow('outline', 'layout', 'Layout'),
-      ...(profiles.outline.layout === 'separated' ? [profileRow('outline', 'gap', 'Gap', cells)] : []),
+      ...(profiles.outline.layout === 'separated' ? [profileRow('outline', 'gap', 'Gap', cells)] : [
+        profileRow('outline', 'divider', '  Divider', value => separatorLabel(String(value), profiles.outline.customSeparator)),
+        ...(profiles.outline.divider === 'custom' ? [customSeparatorRow('outline')] : [])]),
       profileRow('outline', 'padding', 'Padding', cells)];
     case 'breadcrumb': return [profileRow('breadcrumb', 'separator', 'Separator', value => separatorLabel(String(value), profiles.breadcrumb.customSeparator)),
       ...(profiles.breadcrumb.separator === 'custom' ? [customSeparatorRow('breadcrumb')] : []),
@@ -254,15 +257,21 @@ export function chromaRows(configuration: PromptConfiguration): AppearanceRow[] 
         const ids = TREATMENT_INFLUENCES.map(entry => entry.id);
         const next = cycle(ids, treatmentInfluence(c.presentation), d);
         c.presentation.intensity = TREATMENT_INFLUENCES.find(entry => entry.id === next)!.intensity;
+        if (next === 'full') c.presentation.semantic = 'override';
       }},
+    {id: 'semantic', label: '  Semantic colors', value: c => SEMANTIC_MODE_LABELS[c.presentation.semantic ?? 'preserve'],
+      change: (c, d) => { c.presentation.semantic = cycle(SEMANTIC_MODES, c.presentation.semantic ?? 'preserve', d); },
+      note: c => (c.presentation.semantic ?? 'preserve') === 'override' ? 'symbols and readable text keep success, failure and Git meaning' : 'success, failure and Git state keep their colors'},
     {id: 'scope', label: 'Applies to', value: c => TREATMENT_SCOPE_LABELS[c.presentation.scope ?? 'identity'],
       change: (c, d) => { c.presentation.scope = cycle(TREATMENT_SCOPES, c.presentation.scope ?? 'identity', d); }},
+    {id: 'rules', label: 'Rules', value: c => c.presentation.rules ? 'Chroma' : 'UI chrome',
+      change: c => { c.presentation.rules = !c.presentation.rules; }, note: () => 'composer and history rules; frames never'},
     {id: 'geometry', label: 'Geometry', value: c => TREATMENT_GEOMETRY_LABELS[c.presentation.geometry],
       change: (c, d) => { c.presentation.geometry = cycle(TREATMENT_GEOMETRIES, c.presentation.geometry, d); }},
     {id: 'motion', label: 'Motion', value: c => TREATMENT_MOTION_LABELS[c.presentation.motion],
       change: (c, d) => { c.presentation.motion = cycle(TREATMENT_MOTIONS, c.presentation.motion, d); },
       note: c => c.presentation.motion !== 'static' && (c.presentation.reducedMotion || c.presentation.effectsOff || isReducedMotion())
-        ? 'held still: Reduced Motion / Effects Off' : undefined},
+        ? 'held still: Reduced Motion / Decorative effects Off' : undefined},
   );
   if (p.motion !== 'static') {
     rows.push(

@@ -1,3 +1,4 @@
+import {isolateConfig} from './support/isolatedConfig.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -141,6 +142,7 @@ test('Display too small: modal notice with sizes, one line when tiny, and gone a
 });
 
 test('app: Setup Cat shows Display too small below its minimum and recovers on resize', () => {
+  const isolation = isolateConfig();
   const app = new TerminalApp();
   const columns = Object.getOwnPropertyDescriptor(process.stdout, 'columns');
   const rows = Object.getOwnPropertyDescriptor(process.stdout, 'rows');
@@ -160,6 +162,7 @@ test('app: Setup Cat shows Display too small below its minimum and recovers on r
     if (rows) Object.defineProperty(process.stdout, 'rows', rows); else delete (process.stdout as {rows?: number}).rows;
     app['stop'](0);
     app['session'].kill();
+    isolation.restore();
   }
 });
 
@@ -210,6 +213,7 @@ test('status strip owns one plan row: regions shift together and hit-testing agr
 });
 
 test('app: the strip has no timer while Off or during passthrough and never enters the transcript', () => {
+  const isolation = isolateConfig();
   const app = new TerminalApp();
   try {
     app['render'] = () => {};
@@ -232,6 +236,7 @@ test('app: the strip has no timer while Off or during passthrough and never ente
   } finally {
     app['stop'](0);
     app['session'].kill();
+    isolation.restore();
   }
   assert.equal(app['stripTimer'], undefined, 'stop cleans up the timer');
 });
@@ -313,6 +318,7 @@ test('prompt symbol: built-ins, custom glyph, Safe fallback, composer marker onl
   assert.equal(promptSymbolGlyph('custom', undefined, true), '❯');
   assert.equal(normalizePromptConfiguration({promptSymbol: 'custom', promptSymbolCustom: 'ab'}).promptSymbolCustom, undefined);
   assert.equal(normalizePromptConfiguration({promptSymbol: 'bogus'}).promptSymbol, 'chevron');
+  const isolation = isolateConfig();
   const app = new TerminalApp();
   try {
     app['configuration'] = {...app['configuration'], promptSymbol: 'lambda'} as PromptConfiguration;
@@ -326,6 +332,7 @@ test('prompt symbol: built-ins, custom glyph, Safe fallback, composer marker onl
     void app['promptConfiguration'];
     app['stop'](0);
     app['session'].kill();
+    isolation.restore();
   }
   assert.equal(GLYPHS.prompt, '❯');
 });

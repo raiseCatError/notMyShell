@@ -17,6 +17,8 @@ import {
   adjustSettingsRow, enumRow, settingsRowApplies, settingsRowValue, SETTINGS_ROWS, type SettingsRow,
 } from '../ui/SettingsPanel.js';
 import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
+import {renderTools, type ToolsPanel} from '../tools/ToolsPanel.js';
+import {TOOLS} from '../tools/catalog.js';
 import {renderControls} from '../ui/controls.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
@@ -34,6 +36,8 @@ import {displayWidth, truncateAnsi} from '../util/text.js';
 
 export const NATIVE_FIRST_MESSAGE = 'NMSh is complete out of the box. No external shell tools are required.';
 export const NATIVE_FIRST_DETAIL = 'Optional providers and integrations can be added later, and you can switch between Native and external providers anytime from Settings or Setup Cat.';
+/** Installs are real side effects; settings are not. Said wherever an install can start. */
+export const INSTALL_DRAFT_NOTE = 'Tool installation happens immediately after confirmation. Your NMSh settings remain a draft until Apply.';
 export const NATIVE_FIRST_SHORT = 'NMSh works fully with its Native providers. External tools are optional alternatives or enhancements. You can change providers anytime.';
 
 /** What happens with optional tools after Apply. Installs are always separate, explicit confirmations. */
@@ -48,12 +52,18 @@ export interface SetupContext {
   /** Detected provider/tool state by executable name; filled asynchronously, never on render. */
   statuses: Readonly<Record<string, ProviderStatus>>;
   completion?: CompletionFacts;
-  /** A live frame of the draft's idle visual from the real renderer, supplied while that step is shown. */
-  idlePreview?: readonly string[];
+  /**
+   * The step's preview from the real renderers (prompt, theme and chrome,
+   * syntax, idle visuals, Vespyr...), supplied by the app for the current
+   * draft and shown below the pinned controls.
+   */
+  preview?: readonly string[];
 }
 
 export interface SetupRow {
   row: SettingsRow;
+  /** For provider rows: the executable of the selected external provider, if any. */
+  provider?: (draft: PromptConfiguration) => string | undefined;
   /** A muted line under the row while it is selected. */
   note?: (draft: PromptConfiguration, context: SetupContext) => string | undefined;
 }
@@ -98,8 +108,12 @@ function providerRow<Id extends string>(id: string, label: string, description: 
       labels: providers.map(provider => provider.label), get, set}),
     note: (draft, context) => {
       const descriptor = providers.find(provider => provider.id === get(draft));
-      return providerNote(descriptor, descriptor?.executable ? context.statuses[descriptor.executable] : undefined);
+      const note = providerNote(descriptor, descriptor?.executable ? context.statuses[descriptor.executable] : undefined);
+      const installable = descriptor?.executable && context.statuses[descriptor.executable]?.state === 'missing'
+        && TOOLS.some(tool => tool.executable === descriptor.executable);
+      return installable ? `${note} · I to install` : note;
     },
+    provider: draft => providers.find(provider => provider.id === get(draft) && provider.kind === 'external')?.executable,
   };
 }
 
@@ -131,7 +145,7 @@ const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider',
 /** Every Setup Cat row id, so callers (and tests) can find any row in the one model. */
 export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'welcome', title: 'Start', intro: [
-    'Hi, I am Setup Cat. I walk through NMSh settings with you.',
+    'Setup Cat walks through NMSh settings with you; Vespyr, the NMSh cat, says hello.',
     NATIVE_FIRST_MESSAGE,
     NATIVE_FIRST_DETAIL,
     'Your current choices are already selected. Nothing changes until you apply on the last step.',
@@ -153,7 +167,11 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('themeVariant')},
     {row: configRow('themeAccent')},
     {row: configRow('promptVibrance')},
+    {row: configRow('uiChrome'), note: () => 'Frames, rules, tabs and selection; Follow theme matches the theme above'},
+    {row: configRow('uiChromePreset')},
     {row: configRow('treatmentPreset'), note: () => 'Chroma colors NMSh-owned prompt, rules and frames; /chroma has every option'},
+    {row: configRow('treatmentIntensity')},
+    {row: configRow('treatmentSemantic')},
     {row: configRow('treatmentMotion')},
     {row: configRow('reducedMotion')},
     {row: configRow('effectsOff')},
@@ -189,8 +207,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('idleTimeout')},
     {row: configRow('idleMode')},
     {row: configRow('idleColor'), note: () => 'Follow Appearance uses Chroma when it is on, otherwise your theme'},
-  ], facts: (_draft, context) => context.idlePreview?.length ? ['', ...context.idlePreview] : []},
-  {id: 'tools', title: 'Optional tools', intro: [NATIVE_FIRST_SHORT, 'Installing is never automatic: each install is previewed and confirmed in /tools.'], rows: [
+  ]},
+  {id: 'tools', title: 'Optional tools', intro: [NATIVE_FIRST_SHORT, INSTALL_DRAFT_NOTE], rows: [
     {row: configRow('toolUpdateChecks'), note: draft => draft.toolUpdateChecks === 'off' ? 'Off: NMSh never checks unless you ask in /tools' : 'Checks run in the background at startup, never while typing'},
     {row: configRow('installSuggestions')},
   ], facts: (_draft, context) => completionFacts(context.completion)},
@@ -216,6 +234,11 @@ export interface SetupState {
   tools: ToolChoice;
   /** Esc with unapplied edits asks first. */
   confirmDiscard?: boolean;
+  /**
+   * The optional-tool browser opened inside Setup Cat (the same /tools panel
+   * and installer). The draft and section are untouched while it is open.
+   */
+  toolBrowser?: ToolsPanel;
   context: SetupContext;
 }
 
@@ -268,18 +291,25 @@ function applyToolChoice(draft: PromptConfiguration, choice: ToolChoice): Prompt
 
 export type SetupResult =
   | {kind: 'cancel'}
+  /** Open the shared tool browser inside Setup Cat, optionally on one tool. */
+  | {kind: 'browseTools'; toolId?: string}
   | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean};
 
 /** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
 function currentRows(state: SetupState): readonly SetupRow[] {
   const rows = SETUP_SECTIONS[state.section]!.rows.filter(item => setupRowApplies(item.row, state.draft));
-  return state.section === sectionIndex('tools') ? [...rows, TOOL_CHOICE_ROW] : rows;
+  return state.section === sectionIndex('tools') ? [...rows, TOOL_CHOICE_ROW, BROWSE_ROW] : rows;
 }
 
 function setupRowApplies(row: SettingsRow, config: PromptConfiguration): boolean {
   if (row.when && !row.when(config)) return false;
   return SETTINGS_ROWS.some(item => item.id === row.id) ? settingsRowApplies(row, config) : true;
 }
+
+/** Opens the shared tool browser in place; Enter on it never leaves the step. */
+const BROWSE_ROW: SetupRow = {row: {id: 'setupBrowseTools', label: 'Browse optional tools',
+  description: 'See what each tool does, whether it is installed, and install it with a previewed, confirmed command',
+  category: 'Tools', control: 'action', actionLabel: 'Open ›', destination: 'tools'}};
 
 /** The tools tier choice is a Setup Cat action, not a stored setting; it rides on the same row model. */
 const TOOL_CHOICE_ROW: SetupRow = {
@@ -330,6 +360,11 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
       const next = adjustSettingsRow(row, state.draft, delta);
       if (next) state.draft = next;
     }
+  } else if (key.kind === 'enter' && rows[state.row]?.row.control === 'action') {
+    return {kind: 'browseTools'};
+  } else if (key.kind === 'text' && key.value.toLowerCase() === 'i' && rows[state.row]) {
+    const tool = installableTool(rows[state.row]!, state);
+    if (tool) return {kind: 'browseTools', toolId: tool};
   } else if (key.kind === 'enter') {
     if (state.section < last) go(state.section + 1);
     else {
@@ -338,6 +373,17 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * The catalog tool behind a selected external provider that is not installed
+ * yet; `I` opens it in the shared tool browser (install still needs its own
+ * preview and confirmation).
+ */
+export function installableTool(item: SetupRow, state: SetupState): string | undefined {
+  const executable = item.provider?.(state.draft);
+  if (!executable || state.context.statuses[executable]?.state !== 'missing') return undefined;
+  return TOOLS.find(tool => tool.executable === executable)?.id;
 }
 
 /** The smallest size where Setup Cat shows its essential controls. */
@@ -354,20 +400,28 @@ export function renderSetup(state: SetupState, columns: number, height: number):
   const section = SETUP_SECTIONS[state.section]!;
   const nerd = getCurrentGlyphMode() === 'nerd';
   const title = `  ${bold}${primary}Setup Cat${reset}  ${subtle}${nerd ? '·' : '-'} ${state.section + 1}/${SETUP_SECTIONS.length} ${section.title}${reset}`;
-  const out: string[] = [title, renderTabStrip(SETUP_SECTIONS.map(item => item.title), state.section, columns), ''];
-  for (const line of section.intro) {
-    for (const part of wrapWords(line, Math.max(10, columns - 4))) out.push(`  ${line === NATIVE_FIRST_MESSAGE ? primary : subtle}${part}${reset}`);
+  const head = [title, renderTabStrip(SETUP_SECTIONS.map(item => item.title), state.section, columns)];
+  if (state.toolBrowser) {
+    // The shared /tools browser, inside Setup Cat: the draft and step are kept underneath.
+    const note = wrapWords(`${INSTALL_DRAFT_NOTE} Esc returns to Setup Cat.`, Math.max(10, columns - 4)).map(line => `  ${subtle}${line}${reset}`);
+    const tools = renderTools(state.toolBrowser, columns, Math.max(4, height - head.length - note.length - 1));
+    return [...framePanel([...head, ...note].map(row => truncateAnsi(row, columns)), columns), ...tools].slice(0, Math.max(1, height));
   }
-  if (section.intro.length) out.push('');
 
+  // Stable top area: intro, controls and the selected control's help.
+  const top: string[] = [''];
+  for (const line of section.intro) {
+    for (const part of wrapWords(line, Math.max(10, columns - 4))) top.push(`  ${line === NATIVE_FIRST_MESSAGE ? primary : subtle}${part}${reset}`);
+  }
+  if (section.intro.length) top.push('');
   if (section.id === 'review') {
     const changes = setupChanges(state);
-    if (!changes.length) out.push(`  ${secondary}No changes. Enter closes Setup Cat and keeps everything as it is.${reset}`);
+    if (!changes.length) top.push(`  ${secondary}No changes. Enter closes Setup Cat and keeps everything as it is.${reset}`);
     else {
-      out.push(`  ${primary}Apply these changes?${reset}`, '');
+      top.push(`  ${primary}Apply these changes?${reset}`, '');
       const labelWidth = Math.min(28, Math.max(...changes.map(change => displayWidth(change.label))) + 2);
       for (const change of changes) {
-        out.push(`  ${secondary}${change.label.padEnd(labelWidth)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
+        top.push(`  ${secondary}${change.label.padEnd(labelWidth)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
       }
     }
   } else {
@@ -377,20 +431,24 @@ export function renderSetup(state: SetupState, columns: number, height: number):
     rows.forEach((item, index) => {
       const selected = index === state.row;
       const value = item.row.id === TOOL_CHOICE_ROW.row.id ? TOOL_CHOICE_LABELS[state.tools] : rowValue(item.row, state.draft);
-      const changed = item.row.id !== TOOL_CHOICE_ROW.row.id && rowValue(item.row, state.saved) !== value;
+      const changed = item.row.id !== TOOL_CHOICE_ROW.row.id && item.row.control !== 'action' && rowValue(item.row, state.saved) !== value;
       const pointer = selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
-      const control = selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
-      out.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${(indent(item.row) + item.row.label).padEnd(labelWidth)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
+      const control = item.row.control === 'action' ? `${selected ? accent : secondary}${value}${reset}`
+        : selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
+      top.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${(indent(item.row) + item.row.label).padEnd(labelWidth)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
     });
     const selected = rows[state.row];
     if (selected) {
       const note = selected.row.id === TOOL_CHOICE_ROW.row.id ? toolChoiceNote(state.tools) : selected.note?.(state.draft, state.context);
-      out.push('', `  ${subtle}${selected.row.description}${reset}`);
-      if (note) out.push(`  ${subtle}${note}${reset}`);
+      top.push('', `  ${subtle}${selected.row.description}${reset}`);
+      if (note) top.push(`  ${subtle}${note}${reset}`);
     }
-    const facts = section.facts?.(state.draft, state.context) ?? [];
-    if (facts.length) out.push('', ...facts.map(line => `  ${subtle}${line}${reset}`));
   }
+  if (state.confirmDiscard) top.push('', `  ${primary}Discard unapplied Setup Cat changes? Your saved settings stay exactly as they are.${reset}`);
+
+  // Bottom area: the live preview starts below the controls and gives way first on short terminals.
+  const facts = section.facts?.(state.draft, state.context) ?? [];
+  const preview = [...(state.context.preview ?? []), ...facts.map(line => `  ${subtle}${line}${reset}`)];
   const footer = state.confirmDiscard
     ? renderControls([['Enter', 'discard changes'], ['Esc', 'keep editing']])
     : renderControls([
@@ -398,11 +456,12 @@ export function renderSetup(state: SetupState, columns: number, height: number):
       ['Tab', 'next section'],
       ['Enter', state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length ? 'apply' : 'close') : 'next'],
       ['Esc', 'cancel']]);
-  if (state.confirmDiscard) out.push('', `  ${primary}Discard unapplied Setup Cat changes? Your saved settings stay exactly as they are.${reset}`);
-  // Keep the footer: trim the body first on short terminals.
-  const budget = Math.max(1, height - 3);
-  const body = out.slice(0, Math.max(1, budget - 2));
-  return framePanel([...body, '', footer].map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, height));
+  // Frame line, head, footer and its blank line are fixed; controls come next; the preview gets what is left.
+  const budget = Math.max(1, height - 1 - head.length - 2);
+  const controls = top.slice(0, budget);
+  const room = budget - controls.length - 1;
+  const shown = room >= 2 && preview.length ? ['', `  ${subtle}${nerd ? '─' : '-'} Preview${reset}`, ...preview].slice(0, room + 1) : [];
+  return framePanel([...head, ...controls, ...shown, '', footer].map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, height));
 }
 
 /** Plain word wrap for prose rows; long words are left for truncation. */

@@ -30,7 +30,7 @@ test('migration: an old config keeps Powerline storage untouched and seeds other
   const config = normalizePromptConfiguration(legacy);
   assert.equal(config.nmsh.vibrance, 'standard', 'existing appearance maps to Standard');
   assert.deepEqual([config.nmsh.startStyle, config.nmsh.connector, config.nmsh.endStyle, config.gap, config.spacing], ['flat', 'rounded', 'wedge', 2, 2]);
-  assert.deepEqual(config.nmsh.styleProfiles.outline, {cap: 'rounded', layout: 'separated', gap: 2, padding: 2});
+  assert.deepEqual(config.nmsh.styleProfiles.outline, {cap: 'rounded', layout: 'separated', gap: 2, padding: 2, divider: 'pipe'});
   assert.deepEqual(config.nmsh.styleProfiles.soft.gap, 2);
   assert.equal(config.nmsh.styleProfiles.minimal.spacing, 3, 'Minimal kept its legacy gap + 1 spacing');
   // An upgraded Outline prompt renders exactly as the legacy shared-geometry render.
@@ -196,7 +196,7 @@ test('the /prompt Main Prompt row order and Chroma rows hide meaningless control
   const config = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   assert.deepEqual(chromaRows(config).map(row => row.id), ['preset'], 'Off shows only the palette');
   config.presentation.preset = 'aurora';
-  assert.deepEqual(chromaRows(config).map(row => row.id), ['preset', 'influence', 'scope', 'geometry', 'motion']);
+  assert.deepEqual(chromaRows(config).map(row => row.id), ['preset', 'influence', 'semantic', 'scope', 'rules', 'geometry', 'motion']);
   config.presentation.motion = 'breathe';
   assert.deepEqual(chromaRows(config).map(row => row.id).slice(-2), ['speed', 'curve'], 'Breathe has no direction');
   config.presentation.motion = 'comet';

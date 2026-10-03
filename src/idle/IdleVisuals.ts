@@ -144,7 +144,7 @@ export function renderScreensaverPanel(state: ScreensaverPanelState, columns: nu
   out.push(row(2, 'Start after', timeoutLabel(settings.timeout)));
   out.push(row(3, 'Start preview', 'Enter · any key or mouse stops it'));
   out.push('', `  ${subtle}${IDLE_MODE_NOTES[settings.mode]}${reset}`);
-  if (motion.disabled) out.push(`  ${subtle}Effects Off: idle visuals stay off until Effects are on again.${reset}`);
+  if (motion.disabled) out.push(`  ${subtle}Decorative effects are Off: idle visuals stay off until they are On again.${reset}`);
   else if (motion.still) out.push(`  ${subtle}Reduced Motion: shown still${HIGH_MOTION.has(settings.mode) ? ' as a calm star field' : ''}.${reset}`);
   if (context.preview.length) out.push('', ...context.preview.map(line => `  ${line}`));
   out.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ['Enter', 'preview'], ['Esc', 'close']]));

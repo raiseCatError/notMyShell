@@ -13,7 +13,7 @@ are derived, so older configurations load unchanged:
 
 | Family | Variants (ids) | Notes |
 | --- | --- | --- |
-| NMSh | the twelve existing Native themes | unchanged ids; keep the shipped lavender chrome |
+| NMSh | the twelve existing Native themes | unchanged ids; Lavender and Brand keep the shipped chrome, others derive theme-aware chrome (see chroma-and-ui-chrome.md); Forest is moss, pine, bark, amber and stream teal |
 | Catppuccin | Latte, Frappé, Macchiato, Mocha | `nmsh.accent` selects one of 14 accents (default Mauve) |
 | Dracula | Dracula | Alucard is not bundled: it is not part of the MIT-licensed `dracula/spec` repository |
 | Tokyo Night | Night, Storm, Moon, Day | |
@@ -56,7 +56,8 @@ for identification. Random gallery or theme-site copies were not used.
 ## Custom themes (`/theme`)
 
 Theme Studio edits a draft and applies it as the Custom theme on Save. It can
-clone any built-in theme ("Based on"), edit semantic roles with the color
+clone any built-in theme ("Based on"), reset the draft to that base (Reset to
+base, confirmed when there are edits; R resets one role),  edit semantic roles with the color
 picker, import and export. Roles:
 
 - Prompt: project, path, Git branch, Node, Go, Python, Docker, Kubernetes,

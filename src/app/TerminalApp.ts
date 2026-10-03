@@ -1,6 +1,6 @@
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
-import {paintTreatment, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated} from '../chroma/treatment.js';
+import {paintTreatment, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
@@ -26,13 +26,16 @@ import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePa
 import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
-import {toolInstall} from '../tools/catalog.js';
+import {toolInstall, TOOLS} from '../tools/catalog.js';
 import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
 import type {CommandSource} from '../shell/SemanticService.js';
 import {GLYPHS, setIconStyle, getCurrentGlyphMode, setPromptSymbol} from '../ui/glyphs.js';
-import {applyUiTheme, uiColorsFor, uiThemeInput} from '../appearance/uiTheme.js';
+import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
+import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
+import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
-import {framePanel} from '../ui/PanelShell.js';
+import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
+import {providerExplanation} from '../setup/providerExplanations.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
   settingsView, statusLineCount, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
@@ -63,7 +66,7 @@ import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
-import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
+import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
 import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, type ProviderStatus} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
@@ -109,7 +112,7 @@ import {cursorScreenRow, planScreen, regionAt, withStatusRow, screenRowFromTermi
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
-import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
+import {handleSyntaxPanelKey, renderSyntaxPanel, renderSyntaxPreviewLine, type SyntaxPanelState} from '../input/SyntaxPanel.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
 import {renderStartupPanel} from '../ui/StartupPanel.js';
 import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
@@ -146,6 +149,7 @@ const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
+const INVERSE = '\u001B[7m';
 /** The Settings row the glyph preview returns to. */
 const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(entry => entry.id === 'glyphPreview'));
 export class TerminalApp {
@@ -210,12 +214,12 @@ export class TerminalApp {
   private get promptConfiguration(): PromptConfiguration {
     const config = this.configuration;
     const key = `${config.nmsh.palette}:${config.nmsh.vibrance}:${config.nmsh.accent}:${config.promptSymbol}:${config.promptSymbolCustom ?? ''}:${
-      config.nmsh.palette === 'custom' ? JSON.stringify(config.customTheme ?? null) : ''}`;
+      config.nmsh.palette === 'custom' ? JSON.stringify(config.customTheme ?? null) : ''}:${JSON.stringify(config.uiChrome)}`;
     if (key !== this.themeStopsKey) {
       this.themeStopsKey = key;
       // Theme context first: Current Theme stops and the chrome both read it.
       setThemeContext(config.nmsh.accent, config.customTheme);
-      applyUiTheme(uiColorsFor(uiThemeInput(config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+      applyUiTheme(uiColorsFor(resolveChrome(config.uiChrome, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
       setActiveThemeStops(themeChromaStops(config.nmsh.palette, config.nmsh.vibrance));
       setPromptSymbol(promptSymbolGlyph(config.promptSymbol, config.promptSymbolCustom, true),
         promptSymbolGlyph(config.promptSymbol, config.promptSymbolCustom, false));
@@ -255,6 +259,8 @@ export class TerminalApp {
   private screensaverPanel?: ScreensaverPanelState;
   private screensaverAnimation?: () => void;
   private readonly screensaverGrid = new CellGrid();
+  /** Custom UI chrome colors draft. */
+  private chromeEditor?: ChromeEditorState;
   /** Theme Studio: a custom theme draft; nothing persists until Save. */
   private themeStudio?: ThemeStudioState;
   /** Setup Cat: one draft over the saved configuration; nothing persists until Apply. */
@@ -806,6 +812,13 @@ export class TerminalApp {
     }
     if (this.screensaverPanel) {
       this.handleScreensaverKey(key, this.screensaverPanel);
+      return;
+    }
+    if (this.chromeEditor) {
+      const result = chromeEditorKey(this.chromeEditor, key, colorLevel());
+      if (result?.kind === 'cancel') { this.chromeEditor = undefined; this.returnFromPanel(); }
+      else if (result?.kind === 'save' && this.applySettingsConfiguration({...this.promptConfiguration,
+        uiChrome: {source: 'custom', preset: 'custom', colors: result.colors}})) { this.chromeEditor = undefined; this.returnFromPanel(); }
       return;
     }
     if (this.toolsPanel) {
@@ -1566,7 +1579,7 @@ export class TerminalApp {
   /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
   private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
     if (slash.kind === 'effects') {
-      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain|confetti [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Effects Off suppress previews.', INFO);
+      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain|confetti [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Decorative effects Off suppress previews.', INFO);
       else if (slash.effect === 'stop') this.effects.cancel();
       else if (!this.running && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended) {
         this.effects.trigger(slash.effect, slash.placement, Date.now(), 0x4e4d5348, {...this.promptConfiguration.presentation,
@@ -1585,6 +1598,8 @@ export class TerminalApp {
         this.startIdle(true);
       } else this.screensaverPanel = createScreensaverPanel(Date.now());
     }
+    // The cursor has one configuration: /cursor opens its existing Settings rows.
+    else if (slash.kind === 'cursor') { this.panelOrigin = undefined; this.focusConfigRow('cursorShape'); }
     else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
@@ -2600,7 +2615,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
@@ -2609,6 +2624,7 @@ export class TerminalApp {
     if (this.setupState) return SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
     if (this.screensaverPanel) return SCREENSAVER_MIN_SIZE;
+    if (this.chromeEditor) return CHROME_EDITOR_MIN_SIZE;
     return undefined;
   }
 
@@ -2628,9 +2644,11 @@ export class TerminalApp {
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.screensaverPanel) return this.renderScreensaverRows(this.screensaverPanel, columns);
+    if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
     if (this.setupState) {
-      this.setupState.context.idlePreview = this.setupIdlePreview(this.setupState, columns);
-      return renderSetup(this.setupState, columns, this.dimensions().rows);
+      const state = this.setupState;
+      if (!state.toolBrowser) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
+      return this.withDraftTheme(state.draft, () => renderSetup(state, columns, this.dimensions().rows));
     }
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
@@ -2836,6 +2854,10 @@ export class TerminalApp {
     if (destination === 'tools') this.startTools();
     else if (destination === 'setup') this.startSetup();
     else if (destination === 'screensaver') this.screensaverPanel = createScreensaverPanel(Date.now());
+    else if (destination === 'chromeColors') {
+      const config = this.promptConfiguration;
+      this.chromeEditor = createChromeEditor(config.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...config.uiChrome, source: 'theme'}, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+    }
     else if (destination === 'toolConfig') void this.startToolConfiguration('starship');
     else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
@@ -3029,7 +3051,7 @@ export class TerminalApp {
   private startIdle(preview: boolean): void {
     const motion = idleMotion(this.promptConfiguration);
     if (motion.disabled) {
-      if (preview) this.output.addFrontendInteraction('/screensaver', 'Idle visuals are off while Effects Off is on.', INFO);
+      if (preview) this.output.addFrontendInteraction('/screensaver', 'Idle visuals stay off while Decorative effects are Off.', INFO);
       return;
     }
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
@@ -3091,22 +3113,105 @@ export class TerminalApp {
     this.armIdle();
   }
 
-  /** Setup Cat's idle step previews the draft's choice through the real renderer, animated while shown. */
-  private setupIdlePreview(state: SetupState, columns: number): string[] | undefined {
-    const onIdleStep = SETUP_SECTIONS[state.section]?.id === 'idle';
-    if (!onIdleStep) { this.screensaverAnimation?.(); this.screensaverAnimation = undefined; return undefined; }
-    const motion = idleMotion(state.draft);
-    if (motion.disabled) return ['  Effects Off: idle visuals stay off.'];
-    const mode = effectiveMode(state.draft.idleVisuals.mode, motion);
-    const elapsed = Date.now() - this.lastActivity;
-    const width = Math.max(10, Math.min(56, columns - 6));
-    const rows = idleFrameRows(this.screensaverGrid, {mode, width, height: 6, palette: idlePaletteFor(state.draft), level: colorLevel(),
-      nerd: getCurrentGlyphMode() === 'nerd', time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode)});
-    if (!motion.still && !this.screensaverAnimation) {
-      this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
+  /**
+   * Setup Cat's preview for the current step, from the real renderers and the
+   * draft (never the saved config). Animated steps get one repaint timer while
+   * shown; nothing ever changes the real terminal cursor.
+   */
+  private setupPreview(state: SetupState, columns: number): string[] {
+    const draft = state.draft;
+    const section = SETUP_SECTIONS[state.section]?.id;
+    const width = Math.max(10, columns - 4);
+    const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
+    let animate = false;
+    const rows: string[] = [];
+    const motion = idleMotion(draft);
+    switch (section) {
+      case 'welcome': {
+        const cat = vespyrSprite();
+        const caption = [`${PRIMARY}Vespyr${RESET} ${SUBTLE}the NMSh cat${RESET}`, `${SUBTLE}also the Native Welcome; Setup Cat is this wizard${RESET}`];
+        cat.forEach((line, index) => rows.push(`  ${line}${RESET}  ${caption[index - 1] ?? ''}`));
+        break;
+      }
+      case 'terminal': {
+        const nerdSample = `${SECONDARY}Nerd Font${RESET}   ~/Projects   main   node`;
+        const safeSample = `${SECONDARY}Safe/ASCII${RESET}  < ~/Projects > git: main > node >`;
+        rows.push(`  ${draft.glyphStyle === 'nerd' ? ACCENT + '›' : ' '}${RESET} ${nerdSample}`, `  ${draft.glyphStyle === 'safe' ? ACCENT + '›' : ' '}${RESET} ${safeSample}`, '');
+        // A drawn caret only: the real terminal cursor is never changed by a preview.
+        const caret = draft.cursor.shape === 'block' ? `${INVERSE}s${RESET}` : draft.cursor.shape === 'bar' ? `${ACCENT}▏${RESET}s`
+          : draft.cursor.shape === 'underline' ? `\u001B[4ms\u001B[24m` : `${SUBTLE}▏${RESET}s`;
+        const shape = {host: 'Host default: your terminal decides', block: 'Block', bar: 'Bar', underline: 'Underline'}[draft.cursor.shape];
+        const blink = draft.cursor.shape === 'host' ? '' : ` · blink ${draft.cursor.blink === 'host' ? 'as the terminal does' : draft.cursor.blink}`;
+        rows.push(`${label('Caret')}${PRIMARY}git ${caret}${PRIMARY}tatus${RESET}   ${SUBTLE}${shape}${blink}${RESET}`);
+        break;
+      }
+      case 'prompt': {
+        const context = themePreviewContext();
+        rows.push(`${label('Prompt')}${buildContextLine(context, width - 12, draft, 'composer')}${RESET}`);
+        rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git status${RESET}`);
+        if (draft.provider !== 'nmsh') rows.push(`  ${SUBTLE}${providerExplanation('prompt', draft.provider)}${RESET}`);
+        break;
+      }
+      case 'appearance': {
+        rows.push(`${label('Prompt')}${buildThemePreviewLine(draft, draft.nmsh.palette, width - 12, Date.now())}${RESET}`);
+        rows.push(`${label('Chrome')}${renderTabStrip(['Settings', 'Status', 'Config'], 2, Math.min(36, width - 12), true)}`);
+        rows.push(`${label('')}${SEPARATOR}${repeatToWidth(GLYPHS.separator, Math.min(36, width - 12))}${RESET}`);
+        rows.push(`${label('')}${background(UI_COLORS.selection)}${ACCENT}${GLYPHS.selection} ${PRIMARY}Selected row${' '.repeat(Math.max(0, Math.min(36, width - 12) - 14))}${RESET}`);
+        if (draft.presentation.preset !== 'off') rows.push(`${label('Chroma')}${treatmentSwatch(draft.presentation, Math.min(36, width - 12), themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance))}${RESET}`);
+        rows.push(`  ${SUBTLE}${draft.presentation.effectsOff ? 'Decorative effects Off: Chroma motion, sparkles and idle visuals stay still.'
+          : draft.presentation.reducedMotion ? 'Reduced Motion: colors stay, movement stops.' : 'Decorative effects On: Chroma motion and effects may move.'}${RESET}`);
+        animate = treatmentAnimated(draft.presentation);
+        break;
+      }
+      case 'editor': {
+        const syntax = renderSyntaxPreviewLine('git commit -m "fix" ~/src', draft.syntax, draft.nmsh.palette);
+        const ghost = draft.suggestions === 'none' ? '' : `${SECONDARY} --amend${RESET}`;
+        rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${syntax}${ghost}`);
+        rows.push(`  ${SUBTLE}Composer docks ${draft.composerPosition === 'flow' ? 'after the newest output (Flow)' : `at the ${draft.composerPosition}`}; transcript ${draft.transcriptPresentation === 'chat' ? 'in Chat rows' : 'in Normal rows'}.${RESET}`);
+        rows.push(`  ${SUBTLE}${providerExplanation('suggestions', draft.suggestions)}${RESET}`);
+        break;
+      }
+      case 'history': {
+        for (const [family, title, id] of [['history', 'History', draft.history], ['navigation', 'Navigation', draft.navigation], ['picker', 'Picker', draft.picker]] as const) {
+          rows.push(`${label(title)}${PRIMARY}${family === 'history' ? HISTORY_PROVIDERS.find(item => item.id === id)?.label : family === 'navigation'
+            ? NAVIGATION_PROVIDERS.find(item => item.id === id)?.label : PICKER_PROVIDERS.find(item => item.id === id)?.label}${RESET}`);
+          rows.push(`${label('')}${SUBTLE}${providerExplanation(family, id)}${RESET}`);
+        }
+        break;
+      }
+      case 'welcomeScreen': {
+        rows.push(`  ${SUBTLE}${providerExplanation('welcome', draft.welcome)}${RESET}`);
+        if (draft.welcome === 'vespyr') rows.push(...vespyrSprite().map(line => `  ${line}${RESET}`));
+        if (draft.statusStrip.enabled) rows.push(`${label('Strip')}${stripAnsi(renderStatusStrip(draft.statusStrip, this.stripStats, Math.min(60, width - 12))).trim()}`);
+        break;
+      }
+      case 'idle': {
+        if (motion.disabled) { rows.push(`  ${SUBTLE}Decorative effects Off: idle visuals stay off.${RESET}`); break; }
+        const mode = effectiveMode(draft.idleVisuals.mode, motion);
+        const elapsed = Date.now() - this.lastActivity;
+        rows.push(...idleFrameRows(this.screensaverGrid, {mode, width: Math.max(10, Math.min(56, columns - 6)), height: 6, palette: idlePaletteFor(draft),
+          level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode)})
+          .map(line => `  ${line}`));
+        animate = !motion.still;
+        break;
+      }
+      case 'tools': {
+        for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
+          const status = state.context.statuses[tool.executable ?? ''] ?? this.toolStatuses.get(tool.id);
+          const installed = status?.state === 'installed' ? `${SUCCESS}installed${RESET}` : status?.state === 'missing' ? `${SUBTLE}not installed${RESET}` : `${SUBTLE}…${RESET}`;
+          rows.push(`${label(tool.label)}${installed}  ${SUBTLE}${tool.description}${RESET}`);
+        }
+        break;
+      }
     }
-    return rows;
+    if (animate && !this.screensaverAnimation) {
+      this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
+    } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
+    return rows.map(row => truncateAnsi(row, columns - 2));
   }
+
+  /** Recommended-tool install state for Setup Cat's tools preview, detected once off the render path. */
+  private readonly toolStatuses = new Map<string, ProviderStatus>();
 
   private renderScreensaverRows(state: ScreensaverPanelState, columns: number): string[] {
     const {rows} = this.dimensions();
@@ -3155,14 +3260,21 @@ export class TerminalApp {
     await Promise.all(descriptors.map(async descriptor => { statuses[descriptor.executable!] = await detectProvider(descriptor); }));
     const starship = await detectProvider({id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', description: '', executable: 'starship'});
     statuses.starship = starship;
+    for (const tool of TOOLS.filter(item => item.tier === 'recommended')) {
+      const status = await detectProvider(tool);
+      this.toolStatuses.set(tool.id, status);
+      if (tool.executable) statuses[tool.executable] ??= status;
+    }
     state.context = {...state.context, statuses};
     await facts;
     if (!this.stopped && this.setupState === state) this.render();
   }
 
   private handleSetupKey(key: Key, state: SetupState): void {
+    if (state.toolBrowser) { void this.handleSetupToolsKey(key, state, state.toolBrowser); return; }
     const result = setupKey(state, key);
     if (!result) return;
+    if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
     this.setupState = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     if (result.kind === 'cancel') { this.returnFromPanel(); return; }
@@ -3182,6 +3294,39 @@ export class TerminalApp {
       this.startTools();
       if (this.toolsPanel) this.toolsPanel.tier = result.tools === 'individual' ? undefined : result.tools;
     }
+  }
+
+  /**
+   * The shared tool browser inside Setup Cat: the same panel, recipes, previews, confirmation and
+   * installer as /tools. The Setup Cat draft and step are untouched; Esc returns to them.
+   */
+  private openSetupToolBrowser(state: SetupState, toolId?: string): void {
+    const config = state.draft;
+    const browser = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]));
+    browser.updates = this.toolUpdates;
+    const tool = toolId ? TOOLS.find(item => item.id === toolId) : undefined;
+    if (tool) browser.detail = tool;
+    state.toolBrowser = browser;
+    void refreshTools(browser, () => { if (!this.stopped && state.toolBrowser === browser) this.render(); });
+  }
+
+  private async handleSetupToolsKey(key: Key, state: SetupState, browser: ToolsPanel): Promise<void> {
+    if (browser.confirm) {
+      // Same confirmation and installer as /tools; a failure stays visible and the draft is kept.
+      await confirmToolInstall(browser, key, () => this.renderTaskPresentation());
+      if (browser.task?.state.status === 'succeeded' && browser.detail && browser.statuses[browser.detail.id]?.state === 'installed') this.pendingMilestone = true;
+      this.render();
+      return;
+    }
+    const action = toolsKey(browser, key);
+    if (action === 'close') {
+      state.toolBrowser = undefined;
+      // Fresh install state for the provider rows, so a just-installed tool can be selected at once.
+      clearProviderDetection();
+      void this.loadSetupContext(state);
+    } else if (action === 'refresh') await refreshTools(browser, () => this.render());
+    else if (action === 'checkUpdates') await this.checkToolUpdates(browser);
+    this.render();
   }
 
   /**
@@ -3669,11 +3814,17 @@ export class TerminalApp {
     const live = themeContext();
     const symbol = {nerd: promptSymbolGlyph(this.configuration.promptSymbol, this.configuration.promptSymbolCustom, true),
       safe: promptSymbolGlyph(this.configuration.promptSymbol, this.configuration.promptSymbolCustom, false)};
+    const config = this.configuration;
     setThemeContext(draft.nmsh.accent, draft.customTheme);
     setPromptSymbol(promptSymbolGlyph(draft.promptSymbol, draft.promptSymbolCustom, true), promptSymbolGlyph(draft.promptSymbol, draft.promptSymbolCustom, false));
+    // The draft's chrome and Current Theme stops too, so previews show what Apply would show.
+    applyUiTheme(uiColorsFor(resolveChrome(draft.uiChrome, draft.nmsh.palette, draft.nmsh.accent, draft.customTheme)));
+    setActiveThemeStops(themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance));
     try { return render(); } finally {
       setThemeContext(live.accent, live.custom);
       setPromptSymbol(symbol.nerd, symbol.safe);
+      applyUiTheme(uiColorsFor(resolveChrome(config.uiChrome, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
+      setActiveThemeStops(themeChromaStops(config.nmsh.palette, config.nmsh.vibrance));
     }
   }
 
@@ -4197,7 +4348,8 @@ export class TerminalApp {
         const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
-      if (region.kind === 'separator' || region.kind === 'composerBorder') {
+      // Rules are UI chrome; they carry Chroma only when the user chose Chroma on rules.
+      if ((region.kind === 'separator' || region.kind === 'composerBorder') && settings.rules) {
         rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
       }
       // The prompt row is re-rendered from the same semantic modules; only Chroma colors move.
@@ -4232,7 +4384,7 @@ export class TerminalApp {
     this.syncStatusStrip();
     const settings = this.promptConfiguration.presentation;
     const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
-      && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
+      && settings.rules === true && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
     const animatedPrompt = this.presentationFrame?.plan.regions.some(region => region.kind === 'prompt' && region.height > 0) && this.promptChromaAnimated();
     const needsFrames = Boolean(this.running || this.effects.active || ((animatedRule || animatedPrompt) && this.decorativeMotionAllowed()));
     if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));

@@ -2,7 +2,8 @@ import {paintTreatment, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
-import {background, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {background, foreground, UI_COLORS, lazyEscape, lazyForeground} from '../ui/palette.js';
+import {mixRgb} from '../chroma/chroma.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from '../status/commandTiming.js';
@@ -17,7 +18,15 @@ import {isPromptRole, promptRoleColors} from '../prompt/prompt.js';
 import {DEFAULT_TRANSCRIPT_APPEARANCE, normalizeConnectorFade, type GitColorMode, type TranscriptAppearance} from '../prompt/configuration.js';
 import type {CompletedCommand, HistoricalContextSnapshot, SecondaryActivity} from './OutputBuffer.js';
 
-const ARCHIVE_DIVIDER = foreground({red: 162, green: 151, blue: 190});
+/**
+ * History rules are UI chrome, resolved at use so themes apply. The shipped
+ * Lavender chrome keeps its original rule colors exactly; any other chrome
+ * gets lighter and darker tones of its own separator.
+ */
+const SHIPPED_SEPARATOR = {red: 139, green: 132, blue: 178};
+const shippedChrome = () => UI_COLORS.separator.red === SHIPPED_SEPARATOR.red && UI_COLORS.separator.green === SHIPPED_SEPARATOR.green
+  && UI_COLORS.separator.blue === SHIPPED_SEPARATOR.blue;
+const ARCHIVE_DIVIDER = lazyEscape(() => foreground(shippedChrome() ? {red: 162, green: 151, blue: 190} : mixRgb(UI_COLORS.separator, UI_COLORS.primary, 0.22)));
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
@@ -370,7 +379,7 @@ const LEGACY_BACKGROUNDS: Record<string, Rgb> = {
 /** Compact density: a finer dashed rule in a quieter tone, same single row. */
 const DIVIDER_STYLES = {
   normal: {glyph: '─', color: ARCHIVE_DIVIDER},
-  compact: {glyph: '┈', color: foreground({red: 118, green: 112, blue: 138})},
+  compact: {glyph: '┈', color: lazyEscape(() => foreground(shippedChrome() ? {red: 118, green: 112, blue: 138} : mixRgb(UI_COLORS.separator, {red: 0, green: 0, blue: 0}, 0.15)))},
 } as const;
 
 interface HistoricalSegment {
@@ -475,7 +484,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
   if (!appearance.historicalPrompt) {
     const line = repeatToWidth(divider.glyph, width);
-    return {ansi: `${treatment.preset === 'off' ? divider.color + line : paintTreatment(line, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m`, plain: line, isHistoricalHeader: true};
+    return {ansi: `${treatment.preset === 'off' || !treatment.rules ? divider.color + line : paintTreatment(line, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
   const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
   const prompt = typeof parts === 'string' ? parts : parts.left;
@@ -489,7 +498,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
   const rightAnsi = right ? ` ${right}\u001B[0m` : '';
-  return {ansi: `${prompt}\u001B[0m ${treatment.preset === 'off' ? divider.color + fill : paintTreatment(fill, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
+  return {ansi: `${prompt}\u001B[0m ${treatment.preset === 'off' || !treatment.rules ? divider.color + fill : paintTreatment(fill, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {

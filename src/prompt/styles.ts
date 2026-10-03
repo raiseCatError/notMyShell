@@ -6,7 +6,8 @@
  * switching styles never discards another style's customization.
  */
 
-import {BREADCRUMB_SEPARATORS, MINIMAL_SEPARATORS, normalizeCustomGlyph, type BreadcrumbSeparator, type MinimalSeparator} from './glyphChoices.js';
+import {BREADCRUMB_SEPARATORS, MINIMAL_SEPARATORS, normalizeCustomGlyph, OUTLINE_DIVIDERS, type BreadcrumbSeparator, type MinimalSeparator,
+  type OutlineDivider} from './glyphChoices.js';
 
 export type PromptStyle = 'powerline' | 'soft' | 'minimal' | 'outline' | 'breadcrumb' | 'compact' | 'ribbon';
 export const PROMPT_STYLES: readonly PromptStyle[] = ['powerline', 'soft', 'minimal', 'outline', 'breadcrumb', 'compact', 'ribbon'];
@@ -36,7 +37,9 @@ export interface SoftProfile {cap: 'rounded' | 'slant' | 'square'; layout: 'sepa
 export interface MinimalProfile {separator: MinimalSeparator; spacing: number; emphasis: 'none' | 'first' | 'all';
   /** Used when `separator` is `custom`; kept when another separator is chosen. */
   customSeparator?: string}
-export interface OutlineProfile {cap: 'rounded' | 'square' | 'angle'; layout: 'separated' | 'connected'; gap: number; padding: number}
+export interface OutlineProfile {cap: 'rounded' | 'square' | 'angle'; layout: 'separated' | 'connected'; gap: number; padding: number;
+  /** Connected layout only: the divider between outlined segments. Missing in older configs means Pipe. */
+  divider: OutlineDivider; customSeparator?: string}
 export interface BreadcrumbProfile {separator: BreadcrumbSeparator; anchor: 'first' | 'last' | 'none'; spacing: number;
   /** Used when `separator` is `custom`; kept when another separator is chosen. */
   customSeparator?: string}
@@ -63,7 +66,7 @@ export function defaultStyleProfiles(legacyGap = 1, legacySpacing = 1): StylePro
   return {
     soft: {cap: 'rounded', layout: 'separated', gap: Math.max(1, gap), padding: spacing, fill: 'filled'},
     minimal: {separator: 'space', spacing: Math.max(2, gap + 1), emphasis: 'none'},
-    outline: {cap: 'rounded', layout: 'separated', gap: Math.max(1, gap), padding: spacing},
+    outline: {cap: 'rounded', layout: 'separated', gap: Math.max(1, gap), padding: spacing, divider: 'pipe'},
     breadcrumb: {separator: 'chevron', anchor: 'first', spacing: 1},
     compact: {ends: 'flat', padding: 1, seams: 'none'},
     ribbon: {slant: 'forward', ends: 'slanted', padding: 1, band: 'deep'},
@@ -78,7 +81,7 @@ const bounded = (value: unknown, min: number, max: number, fallback: number) =>
 export const STYLE_PROFILE_OPTIONS = {
   soft: {cap: ['rounded', 'slant', 'square'], layout: ['separated', 'connected'], gap: [1, 2, 3], padding: [0, 1, 2, 3], fill: ['filled', 'subtle']},
   minimal: {separator: MINIMAL_SEPARATORS, spacing: [1, 2, 3, 4], emphasis: ['none', 'first', 'all']},
-  outline: {cap: ['rounded', 'square', 'angle'], layout: ['separated', 'connected'], gap: [0, 1, 2, 3], padding: [0, 1, 2, 3]},
+  outline: {cap: ['rounded', 'square', 'angle'], layout: ['separated', 'connected'], gap: [0, 1, 2, 3], padding: [0, 1, 2, 3], divider: OUTLINE_DIVIDERS},
   breadcrumb: {separator: BREADCRUMB_SEPARATORS, anchor: ['first', 'last', 'none'], spacing: [1, 2]},
   compact: {ends: ['flat', 'rounded', 'wedge'], padding: [0, 1], seams: ['none', 'thin']},
   ribbon: {slant: ['forward', 'backward'], ends: ['slanted', 'pointed', 'flat'], padding: [0, 1, 2], band: ['deep', 'neutral']},
@@ -109,7 +112,8 @@ export function normalizeStyleProfiles(value: unknown, legacyGap = 1, legacySpac
       spacing: bounded(minimal.spacing, 1, 4, defaults.minimal.spacing), emphasis: choose(o.minimal.emphasis, minimal.emphasis, defaults.minimal.emphasis),
       ...withCustom(minimal.customSeparator)},
     outline: {cap: choose(o.outline.cap, outline.cap, defaults.outline.cap), layout: choose(o.outline.layout, outline.layout, defaults.outline.layout),
-      gap: bounded(outline.gap, 0, 3, defaults.outline.gap), padding: bounded(outline.padding, 0, 3, defaults.outline.padding)},
+      gap: bounded(outline.gap, 0, 3, defaults.outline.gap), padding: bounded(outline.padding, 0, 3, defaults.outline.padding),
+      divider: choose(o.outline.divider, outline.divider, defaults.outline.divider), ...withCustom(outline.customSeparator)},
     breadcrumb: {separator: choose(o.breadcrumb.separator, breadcrumb.separator, defaults.breadcrumb.separator),
       anchor: choose(o.breadcrumb.anchor, breadcrumb.anchor, defaults.breadcrumb.anchor), spacing: bounded(breadcrumb.spacing, 1, 2, defaults.breadcrumb.spacing),
       ...withCustom(breadcrumb.customSeparator)},
@@ -125,5 +129,5 @@ export const STYLE_OPTION_LABELS: Readonly<Record<string, string>> = {
   space: 'Space', dot: 'Dot ·', pipe: 'Pipe │', slash: 'Slash /', chevron: 'Chevron ›', none: 'None', first: 'First module', all: 'All modules',
   angle: 'Angle', last: 'Last module', flat: 'Flat', wedge: 'Wedge', thin: 'Thin seams', forward: 'Forward /', backward: 'Backward \\',
   slanted: 'Slanted', pointed: 'Pointed', deep: 'Deep theme band', neutral: 'Neutral band',
-  bullet: 'Bullet •', arrow: 'Arrow →', doubleChevron: 'Double chevron »', diamond: 'Diamond ◆', triangle: 'Triangle ▸', dash: 'ASCII -', custom: 'Custom',
+  dashed: 'Dashed ┆', bullet: 'Bullet •', arrow: 'Arrow →', doubleChevron: 'Double chevron »', diamond: 'Diamond ◆', triangle: 'Triangle ▸', dash: 'ASCII -', custom: 'Custom',
 };
