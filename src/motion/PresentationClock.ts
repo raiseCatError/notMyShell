@@ -9,7 +9,8 @@ export class PresentationClock {
 
   subscribe(callback: (now: number) => void, interval = 100): () => void {
     const key = Symbol();
-    const bounded = Number.isFinite(interval) ? Math.max(100, Math.min(60_000, interval)) : 100;
+    // Short one-shot sweeps may ask for up to 25 frames per second; everything else keeps 10 or fewer.
+    const bounded = Number.isFinite(interval) ? Math.max(40, Math.min(60_000, interval)) : 100;
     this.listeners.set(key, {callback, interval: bounded, next: this.monotonic() + bounded});
     this.schedule();
     return () => { if (this.listeners.delete(key)) this.schedule(); };

@@ -135,3 +135,25 @@ mark it passed until you have looked at it on a physical host (Zed first).
   failure: the draft survives either way.
 - `/cursor` opens the cursor rows in Settings.
 - Settings shows **Decorative effects On/Off**, never "Effects Off: Off".
+
+### Shimmer (light sweep) — pending your review
+
+The tests prove structure (text and positions unchanged, exact restoration,
+left-to-right travel, hue kept, no timers when idle). They do not prove it
+looks like the reference: width, brightness, speed, color mixing and
+smoothness are yours to judge, and all are tunable constants in
+`src/motion/lightSweep.ts`.
+
+- `node --import=tsx scripts/shimmer-demo.ts`: one pass per row, left to
+  right, then base colors exactly; compare Override vs Preserve (✔/✘ hues),
+  theme accent, Grayscale (no color fringe).
+- In `/settings`: move the selection (one sweep on the new row only; holding
+  still does nothing); change a value with ←/→ (one replay); hold ↓ to scroll
+  fast (no lag, no backlog).
+- Setup Cat: changing step sweeps the title; on Appearance, the Shimmer
+  sample replays when Chroma, Semantic colors or theme change.
+- Submit a command: one sweep over the prompt row; the transcript is static.
+- Setup Cat Apply / Theme Studio Save & use: one stronger sweep.
+- `sleep 10`: the Working status sweeps calmly and stops when done.
+- Decorative effects Off / Shimmer Off / Reduced Motion: no sweep at all.
+- Activity Monitor: no CPU from shimmer while nothing is changing.

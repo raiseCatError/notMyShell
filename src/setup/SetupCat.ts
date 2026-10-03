@@ -58,6 +58,8 @@ export interface SetupContext {
    * draft and shown below the pinned controls.
    */
   preview?: readonly string[];
+  /** The title as painted by the app (a one-pass light sweep); plain when absent. */
+  title?: string;
 }
 
 export interface SetupRow {
@@ -399,7 +401,7 @@ export function renderSetup(state: SetupState, columns: number, height: number):
   const reset = '\u001B[0m';
   const section = SETUP_SECTIONS[state.section]!;
   const nerd = getCurrentGlyphMode() === 'nerd';
-  const title = `  ${bold}${primary}Setup Cat${reset}  ${subtle}${nerd ? '·' : '-'} ${state.section + 1}/${SETUP_SECTIONS.length} ${section.title}${reset}`;
+  const title = `  ${bold}${state.context.title ?? `${primary}Setup Cat`}${reset}  ${subtle}${nerd ? '·' : '-'} ${state.section + 1}/${SETUP_SECTIONS.length} ${section.title}${reset}`;
   const head = [title, renderTabStrip(SETUP_SECTIONS.map(item => item.title), state.section, columns)];
   if (state.toolBrowser) {
     // The shared /tools browser, inside Setup Cat: the draft and step are kept underneath.

@@ -31,6 +31,7 @@ vhs dev/tapes/idle-aurora.tape      # Aurora Drift, Aurora Chroma
 vhs dev/tapes/idle-warp.tape        # Warp Starfield
 vhs dev/tapes/idle-fireworks.tape   # Fireworks, Rainbow Chroma
 vhs dev/tapes/idle-catppuccin.tape  # Aurora Drift following Catppuccin Mocha (blue accent)
+vhs dev/tapes/shimmer.tape          # color-aware light sweep, one pass per row
 ```
 
 Idle-visual tapes write short WebM files (smooth gradients without large GIF

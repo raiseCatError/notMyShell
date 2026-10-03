@@ -73,7 +73,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -101,8 +101,11 @@ import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
 import {helpMarkdown} from '../help/helpContent.js';
 import {renderMarkdownText} from '../help/markdown.js';
-import {shimmerText} from '../status/shimmer.js';
-import {isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
+import {sweepAnimates, sweepAnsiRow, sweepCells, sweepOnce} from '../motion/lightSweep.js';
+import {sweepStill, sweepStyleFor} from '../motion/sweepStyle.js';
+import {mixRgb} from '../chroma/chroma.js';
+import type {Rgb} from '../chroma/escape.js';
+import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
 import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type StatsSource, type SystemStats} from '../status/StatusStrip.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
@@ -1780,6 +1783,8 @@ export class TerminalApp {
     } else {
       this.session.submit(command);
     }
+    // After the command is on its way: one sweep acknowledging the submission (never delays it).
+    if (!this.passthrough) this.startSweep('prompt', 'vivid');
     this.render();
   }
 
@@ -2648,6 +2653,7 @@ export class TerminalApp {
     if (this.setupState) {
       const state = this.setupState;
       if (!state.toolBrowser) state.context.preview = this.withDraftTheme(state.draft, () => this.setupPreview(state, columns));
+      state.context.title = this.setupTitle(state);
       return this.withDraftTheme(state.draft, () => renderSetup(state, columns, this.dimensions().rows));
     }
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
@@ -3007,6 +3013,7 @@ export class TerminalApp {
     if (this.applySettingsConfiguration(next)) {
       this.themeStudio = undefined;
       this.output.addFrontendInteraction('/theme', `Custom theme ${result.theme.name} is active. Your terminal and editor colors are unchanged.`, SUCCESS);
+      this.startSweep('prompt', 'vivid');
     }
   }
 
@@ -3160,7 +3167,19 @@ export class TerminalApp {
         if (draft.presentation.preset !== 'off') rows.push(`${label('Chroma')}${treatmentSwatch(draft.presentation, Math.min(36, width - 12), themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance))}${RESET}`);
         rows.push(`  ${SUBTLE}${draft.presentation.effectsOff ? 'Decorative effects Off: Chroma motion, sparkles and idle visuals stay still.'
           : draft.presentation.reducedMotion ? 'Reduced Motion: colors stay, movement stops.' : 'Decorative effects On: Chroma motion and effects may move.'}${RESET}`);
-        animate = treatmentAnimated(draft.presentation);
+        // The light sweep over a semantic sample: with Semantic Preserve, ✔ and ✘ keep their hues.
+        const style = sweepStyleFor(draft);
+        if (style.level !== 'off') {
+          const sample: Array<{glyph: string; color?: Rgb; semantic?: boolean}> = [];
+          const add = (text: string, color: Rgb | undefined, semantic = false) => { for (const glyph of graphemes(text)) sample.push({glyph, color: glyph === ' ' ? undefined : color, semantic}); };
+          add('✔ 0 ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('success').background, true);
+          add('notMyShell ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('project').background);
+          add('~/src ', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('cwd').background);
+          add('✘ 1', NATIVE_PROMPT_THEMES[draft.nmsh.palette].colors('failure').background, true);
+          // One pass on each change in this step (the same event as the selected row), not a loop.
+          rows.push(`${label('Shimmer')}${sweepOnce(sample, this.sweep?.target === 'selection' ? this.sweepElapsed() : Number.POSITIVE_INFINITY, style, colorLevel(), sweepStill(draft))}${RESET}`);
+        }
+        animate ||= treatmentAnimated(draft.presentation);
         break;
       }
       case 'editor': {
@@ -3208,6 +3227,98 @@ export class TerminalApp {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
     } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
     return rows.map(row => truncateAnsi(row, columns - 2));
+  }
+
+  /** The Setup Cat title takes the current one-shot sweep when the step changes; otherwise it rests. */
+  private setupTitle(state: SetupState): string {
+    const text = 'Setup Cat';
+    const cells = [...text].map(glyph => ({glyph, color: glyph === ' ' ? undefined : {...UI_COLORS.primary}}));
+    const elapsed = this.sweep && this.sweep.section === state.section && this.sweep.titled ? this.sweepElapsed() : Number.POSITIVE_INFINITY;
+    return sweepOnce(cells, elapsed, sweepStyleFor(this.promptConfiguration), colorLevel());
+  }
+
+  // ---- Light sweep controller -----------------------------------------------------
+
+  /**
+   * At most one sweep at a time, started by an event (a new selection or a changed value in the
+   * active panel, a submitted command, an Apply or Save). A new event replaces the running sweep, so
+   * fast navigation never builds a backlog. One clock subscription exists only while a sweep runs.
+   */
+  private sweep?: {target: 'selection' | 'prompt'; startedAt: number; frame: number; strength: 'subtle' | 'vivid'; section?: number; titled?: boolean};
+  private sweepTimer?: () => void;
+  private lastSelection?: string;
+  private static readonly SWEEP_FRAME_MS = 40;
+  private static readonly SWEEP_MAX_MS = 1300;
+
+  private sweepAllowed(): boolean {
+    const style = sweepStyleFor(this.promptConfiguration);
+    return sweepAnimates(style.level, sweepStill(this.promptConfiguration), colorLevel()) && !this.stopped && !this.idle;
+  }
+
+  /** Elapsed time of the running sweep; deterministic runs use the frame count. */
+  private sweepElapsed(now = Date.now()): number {
+    if (!this.sweep) return Number.POSITIVE_INFINITY;
+    return isDeterministicPresentation() ? this.sweep.frame * TerminalApp.SWEEP_FRAME_MS : now - this.sweep.startedAt;
+  }
+
+  private startSweep(target: 'selection' | 'prompt', strength: 'subtle' | 'vivid', extra: {section?: number; titled?: boolean} = {}): void {
+    if (!this.sweepAllowed()) return;
+    this.sweep = {target, startedAt: Date.now(), frame: 0, strength, ...extra};
+    if (!this.sweepTimer) {
+      this.sweepTimer = presentationClock.subscribe(now => {
+        if (!this.sweep) return;
+        this.sweep.frame += 1;
+        if (this.sweepElapsed(now) > TerminalApp.SWEEP_MAX_MS) this.endSweep();
+        this.render();
+      }, TerminalApp.SWEEP_FRAME_MS);
+    }
+  }
+
+  private endSweep(): void {
+    this.sweep = undefined;
+    this.sweepTimer?.(); this.sweepTimer = undefined;
+  }
+
+  /** The selected panel row: the line marked with the selection pointer. */
+  private static selectedRowIndex(rows: readonly string[]): number {
+    return rows.findIndex(row => /^\s*[›>] \S/u.test(stripAnsi(row)));
+  }
+
+  /** Called with the panel rows of each render: a new selection or a changed value starts one sweep. */
+  private noteSelection(rows: readonly string[] | undefined): void {
+    const index = rows ? TerminalApp.selectedRowIndex(rows) : -1;
+    const signature = index === -1 ? undefined : `${this.setupState ? `setup:${this.setupState.section}` : 'panel'}|${stripAnsi(rows![index]!).trim()}`;
+    if (signature === this.lastSelection) return;
+    const sectionChanged = Boolean(this.setupState && this.lastSelection && !this.lastSelection.startsWith(`setup:${this.setupState.section}|`));
+    const opening = this.lastSelection === undefined;
+    this.lastSelection = signature;
+    if (!signature) { if (this.sweep?.target === 'selection') this.endSweep(); return; }
+    this.startSweep('selection', 'subtle', this.setupState ? {section: this.setupState.section, titled: sectionChanged || opening} : {});
+  }
+
+  /** Applies the running sweep to its target row in a painted frame (presentation only). */
+  private applySweep(rows: string[], plan: ScreenPlan, columns: number): void {
+    const sweep = this.sweep;
+    if (!sweep) return;
+    const elapsed = this.sweepElapsed();
+    const style = sweepStyleFor(this.promptConfiguration, sweep.strength);
+    const level = colorLevel();
+    const contentRange = (row: string, skipPointer: boolean) => {
+      const plain = stripAnsi(row);
+      const start = skipPointer ? plain.search(/[›>] \S/u) + 2 : plain.search(/\S/u);
+      return {from: Math.max(0, displayWidth(plain.slice(0, Math.max(0, start)))), to: Math.min(columns, displayWidth(plain.trimEnd()))};
+    };
+    if (sweep.target === 'prompt') {
+      const region = plan.regions.find(item => item.kind === 'prompt' && item.height > 0) ?? plan.regions.find(item => item.kind === 'input');
+      if (region) rows[region.top] = sweepAnsiRow(rows[region.top]!, elapsed, style, level, contentRange(rows[region.top]!, false));
+      return;
+    }
+    const panel = plan.regions.find(item => item.kind === 'panel');
+    if (!panel) return;
+    const local = TerminalApp.selectedRowIndex(rows.slice(panel.top, panel.top + panel.height));
+    if (local === -1) return;
+    const row = rows[panel.top + local]!;
+    rows[panel.top + local] = sweepAnsiRow(row, elapsed, style, level, contentRange(row, true));
   }
 
   /** Recommended-tool install state for Setup Cat's tools preview, detected once off the render path. */
@@ -3277,6 +3388,7 @@ export class TerminalApp {
     if (result.kind === 'browseTools') { this.openSetupToolBrowser(state, result.toolId); return; }
     this.setupState = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+
     if (result.kind === 'cancel') { this.returnFromPanel(); return; }
     const previous = this.promptConfiguration;
     const next = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
@@ -3288,6 +3400,7 @@ export class TerminalApp {
       if (previous.navigation !== next.navigation) { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
       if (previous.provider !== next.provider) void this.refreshProviderPrompt().then(() => this.render());
       this.output.addFrontendInteraction('/setup', 'Setup Cat applied your changes. Rerun /setup anytime; it starts from your current settings.', SUCCESS);
+      this.startSweep('prompt', 'vivid');
     } else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
     this.panelOrigin = undefined;
     if (result.tools === 'recommended' || result.tools === 'enhanced' || result.tools === 'individual') {
@@ -4167,6 +4280,7 @@ export class TerminalApp {
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();
     const panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns) : undefined;
+    this.noteSelection(panelRows);
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.suggestionGhost();
     const fullInput = this.layoutEditorInput(columns);
@@ -4324,6 +4438,7 @@ export class TerminalApp {
 
   private cancelPresentation(): void {
     this.effects.cancel();
+    this.endSweep();
     this.stopIdleFrames();
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
@@ -4357,6 +4472,7 @@ export class TerminalApp {
         rows[region.top] = this.currentPromptLine(frame.columns ?? 80, now);
       }
     }
+    this.applySweep(rows, plan, frame.columns ?? 80);
     const active = this.effects.active;
     const region = active && effectRegion(plan, active.placement);
     if (active && !region) this.effects.cancel();
@@ -4401,7 +4517,12 @@ export class TerminalApp {
     const isActive = (Date.now() - this.lastOutputTime) < 750;
     const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
     const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
-    return `${shimmerText(parts.phrase, animationElapsed, this.decorativeMotionAllowed() ? isActive : false)}${SECONDARY}${parts.duration}${RESET}`;
+    // A soft light sweep over the working phrase: its own colors lifted in place, never moved; faster while output arrives.
+    const style = sweepStyleFor(this.promptConfiguration);
+    const base = mixRgb(UI_COLORS.workingBase, UI_COLORS.workingPeak, 0.35);
+    const cells = graphemes(parts.phrase).map(glyph => ({glyph, color: glyph === ' ' ? undefined : base}));
+    const phrase = sweepCells(cells, animationElapsed * (isActive ? 1.4 : 1), style, colorLevel(), !this.decorativeMotionAllowed());
+    return `${phrase}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -4495,6 +4616,7 @@ export class TerminalApp {
     this.stopIdleFrames();
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.endSweep();
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
     process.off('SIGTSTP', this.onSuspend);

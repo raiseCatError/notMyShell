@@ -69,6 +69,8 @@ export interface TreatmentSettings {
   semantic?: typeof SEMANTIC_MODES[number];
   /** Where Chroma paints besides the Native prompt: `rules` adds composer and history rules. */
   rules?: boolean;
+  /** The event-driven light sweep (selection, value change, submit, confirmation, live working text). */
+  shimmer?: 'on' | 'off';
 }
 
 export const SEMANTIC_MODES = ['preserve', 'override'] as const;
@@ -79,6 +81,7 @@ export const DEFAULT_INTENSITY = 0.9;
 
 export const DEFAULT_TREATMENT_SETTINGS: TreatmentSettings = {
   preset: 'off', geometry: 'linear', motion: 'static', intensity: DEFAULT_INTENSITY, semantic: 'override', rules: false,
+  shimmer: 'on',
   customStops: [], reducedMotion: false, effectsOff: false,
   speed: 'normal', curve: 'linear', direction: 'forward', scope: 'identity', customColors: false, autoEffects: true,
 };
@@ -103,6 +106,7 @@ export function normalizeTreatmentSettings(value: unknown): TreatmentSettings {
   const semantic = pick(SEMANTIC_MODES, v.semantic, treatmentInfluence({intensity}) === 'full' ? 'override' : 'preserve');
   return {
     semantic, rules: v.rules === true,
+    shimmer: v.shimmer === 'off' ? 'off' : 'on',
     preset: preset === 'custom' && !customStops.length ? 'off' : preset,
     geometry: pick(TREATMENT_GEOMETRIES, v.geometry, 'linear'),
     motion: pick(TREATMENT_MOTIONS, v.motion, 'static'),

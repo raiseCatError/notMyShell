@@ -340,6 +340,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'effectsOff', label: 'Decorative effects', description: 'Chroma motion, sparkle effects, idle visuals and the Welcome blink; Off keeps NMSh still and quiet', category: 'Presentation',
     values: [true, false], labels: ['On', 'Off'],
     get: c => !c.presentation.effectsOff, set: (c, on) => ({...c, presentation: {...c.presentation, effectsOff: !on}})}),
+  enumRow({id: 'shimmer', when: c => !c.presentation.effectsOff, label: 'Shimmer', description: 'One soft sweep of light when you select or change something, submit, or confirm; also the live Working status. Characters never move', category: 'Presentation',
+    values: ['on', 'off'] as const, labels: ['On', 'Off'],
+    get: c => c.presentation.shimmer ?? 'on', set: (c, shimmer) => ({...c, presentation: {...c.presentation, shimmer}})}),
   {id: 'autoEffects', label: 'Milestone effects', description: 'A brief effect after a successful tool install, update or setup', category: 'Presentation', control: 'boolean',
     get: c => c.presentation.autoEffects !== false, set: (c, autoEffects) => ({...c, presentation: {...c.presentation, autoEffects}})},
 

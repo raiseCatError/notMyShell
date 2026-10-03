@@ -258,7 +258,8 @@ test('animated previews tick through the shared clock only while visible and ani
   const {app} = panelApp();
   const before = presentationClock.subscriberCount;
   try {
-    app['configuration'].presentation = normalizeTreatmentSettings({preset: 'aurora'});
+    // Shimmer is its own one-shot effect (tested in lightSweep.test.ts); this test is about Chroma preview ticks.
+    app['configuration'].presentation = normalizeTreatmentSettings({preset: 'aurora', shimmer: 'off'});
     await app['runSlash']('/chroma', {kind: 'chroma'});
     assert.equal(presentationClock.subscriberCount, before, 'static Chroma: no subscription');
     app['promptPanelState']!.draft.presentation.motion = 'travel';
