@@ -4,8 +4,9 @@ Nothing below has passed physical QA. Automated PTY fixtures validate
 protocols and rendering, not a physical terminal. Record host and version,
 macOS version, font (Nerd or Safe), commit, actual result and any failure.
 
-Host order: **Zed** (primary development and QA host), **Ghostty**
-(enhanced), **Terminal.app** (baseline), **Kitty** (advanced).
+Hosts are grouped, not ranked: integrated terminals (**Zed**) and standalone
+terminals (**Ghostty**, **Terminal.app**) are equally first-class; **Kitty** is
+an additional supported profile.
 
 ## Zed
 

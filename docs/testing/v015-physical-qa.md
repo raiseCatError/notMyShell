@@ -5,11 +5,18 @@ rendering and lifecycle in fixtures, not a physical terminal. Record host and
 version, macOS version, font (Nerd or Safe), commit, actual result and any
 failure. Tracking: #297.
 
-Host order: **Zed** (primary), **Ghostty** (first-class enhanced),
-**Terminal.app** (baseline), **Kitty** (supported profile). iTerm2 and
-WezTerm are supported profiles without a physical pass in this round.
+Hosts are grouped, not ranked; integrated and standalone terminals are
+equally first-class. Mark a host physically validated only after a real
+manual pass on it.
 
-## Zed (primary)
+- **Integrated terminals:** Zed, VS Code, and other integrated hosts as they
+  are physically tested.
+- **Standalone terminals:** Ghostty, macOS Terminal, Superlogical where
+  available, and other standalone hosts as they are physically tested.
+- **Additional supported profiles:** Kitty, iTerm2, WezTerm (supported; no
+  physical pass in this round).
+
+## Zed (integrated terminal)
 
 ### Setup Cat
 - `/setup`: every step shows your current choices; nothing changes until the
@@ -91,7 +98,7 @@ person has run them.
 ## Full Chroma review (pending your review)
 
 This section is for the follow-up PR on `feature/v015-chroma-polish`. Do not
-mark it passed until you have looked at it on a physical host (Zed first).
+mark it passed until you have looked at it on a physical host (integrated or standalone).
 
 ### Chroma
 - New config (or Settings → Chroma → Influence): Full Chroma is the default.

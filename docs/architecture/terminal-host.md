@@ -99,7 +99,7 @@ Program payloads containing controls or exceeding 4096 characters are dropped;
 oversized unfinished OSC strings are drained without unbounded retention.
 Physical click/selection behavior remains pending in the additive QA checklist.
 
-## Zed (primary development and QA host)
+## Zed (integrated terminal)
 
 Zed's integrated terminal is recognized from `TERM_PROGRAM=zed` or `ZED_TERM`,
 the variables Zed itself exports. Its terminal (alacritty_terminal) implements
@@ -118,5 +118,11 @@ command in a new integrated terminal, so `newWindow` stays undefined: further
 sessions use `/resume` or `nmsh --attach`, and NMSh never edits Zed task or
 settings files. `/appearance` says "Appearance is configured by Zed."
 
-Host order for physical QA: Zed, then Ghostty (enhanced integration), then
-Terminal.app (baseline compatibility), then Kitty (advanced compatibility).
+Physical QA groups hosts without ranking them. Integrated terminals (Zed, VS
+Code and other integrated hosts as they are physically tested) and standalone
+terminals (Ghostty, macOS Terminal, Superlogical where available, and other
+standalone hosts as they are physically tested) are equally first-class.
+Kitty, iTerm2 and WezTerm are additional supported profiles. *Supported* means
+NMSh is designed for the host's capability profile; *physically validated*
+means a real manual QA pass was completed on it. Only the latter is recorded
+as validated.

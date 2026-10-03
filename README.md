@@ -162,7 +162,7 @@ See [ROADMAP.md](ROADMAP.md) for planned shell compatibility, multi-shell adapte
 - macOS
 - Node.js (v22+)
 - zsh
-- A compatible terminal host (Zed, Ghostty, macOS Terminal, Kitty, VS Code)
+- A compatible terminal host: an integrated terminal (such as Zed or VS Code) or a standalone terminal (such as Ghostty or macOS Terminal)
 
 Clone the repository and install dependencies:
 
@@ -207,15 +207,24 @@ Do not instruct macOS to change your default login shell to NMSh. NMSh is a fron
 
 ## Host Compatibility
 
-| Host | Status | Notes |
-|------|--------|-------|
-| Zed integrated terminal | Primary development and QA host | Wheel/trackpad scrolling of the transcript through standard SGR mouse reporting; Shift keeps Zed's own text selection. Appearance is configured by Zed. Additional sessions use `/resume` or `nmsh --attach`. |
-| Ghostty | First-class, enhanced | Full integration available (`/keyboard`, `/appearance`), new windows for sessions. |
-| macOS Terminal | Baseline compatibility | Shift+Enter works out of the box; keyboard scrolling (PageUp/PageDown). |
-| Kitty | Advanced compatibility | Kitty keyboard protocol and mouse reporting; new windows need `allow_remote_control`. |
-| VS Code Integrated Terminal | Supported | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
+Keep your terminal. Keep your shell. Upgrade the interaction layer. NMSh is intentionally terminal-host independent: you can move between integrated terminals, standalone terminals and different hosts and keep the same NMSh interaction layer. No host is required or preferred.
 
-NMSh's core stays terminal-host agnostic: host profiles only supply conservative capability hints, and optional protocols still come from the shared probe.
+- **Integrated terminals** are a first-class NMSh use case. Integrated terminals such as Zed and VS Code are regularly used during development and receive frequent real-world testing.
+- **Standalone terminals** are equally first-class. Standalone terminals such as Ghostty and macOS Terminal are also regularly used and physically validated.
+- **Other compatible hosts** are supported where NMSh's terminal capabilities allow, but some have not yet received the same level of physical validation.
+
+*Supported* means NMSh is designed to work with the host's capability profile; *physically validated* means a real manual QA pass has been completed on that host.
+
+| Host | Kind | Notes |
+|------|------|-------|
+| Zed | Integrated | Wheel/trackpad scrolling of the transcript through standard SGR mouse reporting; Shift keeps Zed's own text selection. Appearance is configured by Zed. Additional sessions use `/resume` or `nmsh --attach`. |
+| VS Code | Integrated | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
+| Ghostty | Standalone | `/keyboard` and `/appearance` integration, new windows for sessions. |
+| macOS Terminal | Standalone | Shift+Enter works out of the box; keyboard scrolling (PageUp/PageDown). |
+| Kitty | Supported profile | Kitty keyboard protocol and mouse reporting; new windows need `allow_remote_control`. |
+| iTerm2, WezTerm | Supported profiles | Capability profiles; not yet physically validated to the same level. |
+
+Where a host differs, NMSh says so factually (for example, "Appearance is configured by Zed."). Host profiles only supply conservative capability hints, and optional protocols still come from the shared probe.
 
 ## Keyboard Behavior
 

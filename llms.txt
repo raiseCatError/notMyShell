@@ -8,8 +8,13 @@ Current primary backend:
 Current primary platform:
 - macOS
 
-Primary terminal host during development:
-- Ghostty
+Terminal hosts:
+- intentionally terminal-host independent; no host is required or preferred
+- integrated terminals (such as Zed and VS Code) and standalone terminals
+  (such as Ghostty and macOS Terminal) are both first-class and regularly
+  used during development and physical testing
+- other compatible hosts are supported through capability profiles, some
+  without the same level of physical validation
 
 Core architecture:
 
