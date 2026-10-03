@@ -1,11 +1,12 @@
-import {join} from 'node:path';
+import {homedir} from 'node:os';
+import {isAbsolute, join} from 'node:path';
 
 export function nmshConfigDirectory(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const home = env.HOME || env.USERPROFILE || '';
-  if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, 'nmsh');
+  const home = [env.HOME, env.USERPROFILE].find(value => value && isAbsolute(value)) || homedir();
+  if (env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME)) return join(env.XDG_CONFIG_HOME, 'nmsh');
   if (platform === 'darwin') return join(home, 'Library', 'Application Support', 'notMyShell');
   return join(home, '.config', 'nmsh');
 }

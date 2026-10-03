@@ -45,6 +45,8 @@ export function probeHost(hints: Readonly<TerminalCapabilities>, transport: Prob
         // Stop collecting promptly for large paste/input bursts.
         if (input.length >= 65536) finish();
       });
+      // A transport can deliver buffered input synchronously from listen().
+      if (finished) { remove(); return; }
       transport.write(HOST_QUERY);
     } catch { finish(); }
   });

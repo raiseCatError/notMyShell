@@ -15,7 +15,10 @@ test('unknown and Terminal.app attachments use a complete keyboard-only baseline
     renderer.suspendForPassthrough();
     renderer.resumeAfterPassthrough();
     renderer.leave();
-    assert.doesNotMatch(writes.join(''), /\u001b\[(?:[<>]1?u|\?100[036][hl]|\?2026[hl])/u);
+    // Optional protocols are never enabled. After a foreground app the renderer still releases mouse modes
+    // and pops keyboard entries (idempotent resets) so a killed app cannot leave them on; see terminalModeReconciliation.test.ts.
+    assert.doesNotMatch(writes.join(''), /\u001b\[(?:[<>]1?u|\?100[036]h|\?2026[hl])/u);
+    assert.doesNotMatch(writes.slice(0, 2).join(''), /\u001b\[\?100[036]l/u, 'no mouse resets before any foreground app');
     assert.match(writes.join(''), /plain/u);
   }
   assert.deepEqual(new KeyDecoder().push('\n\u0017\u0012\u001bOP\u000f'),

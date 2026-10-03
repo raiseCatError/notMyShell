@@ -1,3 +1,4 @@
+import type {TreatmentSettings} from '../chroma/treatment.js';
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
@@ -30,6 +31,7 @@ function safePromptText(value: string): string {
 }
 
 interface RenderedModule {
+  treatment?: TreatmentSettings;
   id: ContextModuleConfig['id'];
   role: PromptRole;
   style?: PromptStyle;
@@ -303,6 +305,8 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     const custom = !isGitStateRole(segment.role);
     return {
       ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
+      ...(configuration.provider === 'nmsh' && ['project', 'cwd', 'toolchain'].includes(segment.role) && !segment.module.foreground
+        ? {treatment: configuration.presentation} : {}),
       id: segment.module.id,
       role: segment.role,
       text: segment.text,

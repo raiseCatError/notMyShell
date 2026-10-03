@@ -51,6 +51,10 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
         if (message.type === 'error') { fail(`session service refused: ${message.message}`, message.code); return; }
         if (message.type === 'welcome') {
           if (message.version !== PROTOCOL_VERSION) { fail(`protocol mismatch: service ${message.version}, client ${PROTOCOL_VERSION}`, 'version'); return; }
+          if ((first?.type === 'create' || first?.type === 'attach') && message.startupSafety !== 1) {
+            fail('service does not advertise startup safety; end its sessions and restart the service before attaching', 'startup-safety');
+            return;
+          }
           if (first) send(first);
           continue;
         }
@@ -154,8 +158,11 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
 
   private receive(message: ServerMessage): void {
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
-    else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd}, {seq: message.seq, at: message.at});
+    else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
+      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge})}, {seq: message.seq, at: message.at});
     else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed});
+    else if (message.type === 'input-rejected') this.emit('inputRejected', message.data, message.submission === 1);
+    else if (message.type === 'startup') this.emit('startup', message.output);
     else if (message.type === 'replayed') this.emit('replayed', {truncatedBytes: message.truncatedBytes});
     else if (message.type === 'exit') {
       this.finish(message.exitCode, message.signal);
@@ -174,7 +181,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     if (!this.socket.destroyed && this.socket.writable) this.socket.write(encodeMessage(message));
   }
 
-  submit(command: string): void { this.send({type: 'input', data: `${command}\r`}); }
+  submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }

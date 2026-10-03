@@ -29,6 +29,10 @@ const samples: ProtocolMessage[] = [
     {id: 's2', pid: 43, state: 'attached', cwd: '/', createdAt: 3}]},
   {type: 'output', data: '\u001b[?1049h\u001b[31mred\u001b[0m\r\n\u0007\u001b]777;x\u0007😀'},
   {type: 'prompt', exitCode: 130, cwd: '/tmp'},
+  {type: 'prompt', exitCode: 0, cwd: '/tmp', knowledge: 'alias live_alias\ncomplete\n'},
+  {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 0, ackedSeq: 30, knowledge: 'function live_function\ncomplete\n'},
+  {type: 'startup', output: 'Continue? [y/n] '},
+  {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 0, ackedSeq: 0, startup: 'Waiting> '},
   {type: 'exit', exitCode: 0},
   {type: 'exit', exitCode: 1, signal: 9},
 ];
