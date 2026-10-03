@@ -2,7 +2,8 @@ import {spawn} from 'node:child_process';
 import {extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {InProcessSessionClient} from './InProcessSessionClient.js';
-import {SocketSessionClient, listSessions} from './SocketSessionClient.js';
+import {SocketSessionClient, dismissNotice, listSessions, listSessionsWithNotices} from './SocketSessionClient.js';
+import type {SessionNotice} from './SessionNotices.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
 import {type SessionConnection, type SessionOptions} from './SessionClient.js';
@@ -128,4 +129,20 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
       notice: `Session service unavailable (${reason}); running the shell in-process. `
         + 'Closing this window ends its shell: it cannot be detached or reattached.'};
   }
+}
+
+/** Live sessions and recently-ended notices, for cross-session notices; empty when no service runs. */
+export async function listSessionNotices(options: {env?: NodeJS.ProcessEnv; runtimeDir?: string} = {}): Promise<{sessions: SessionInfo[]; ended: SessionNotice[]}> {
+  const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(options.env ?? process.env);
+  try {
+    return await listSessionsWithNotices(socketPathFor(runtimeDir), 1500);
+  } catch {
+    return {sessions: [], ended: []};
+  }
+}
+
+/** Best effort: clear a session's notice in every frontend. */
+export async function dismissSessionNotice(sessionId: string, options: {env?: NodeJS.ProcessEnv; runtimeDir?: string} = {}): Promise<void> {
+  const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(options.env ?? process.env);
+  try { await dismissNotice(socketPathFor(runtimeDir), sessionId, 1500); } catch { /* older service or none: nothing to clear */ }
 }

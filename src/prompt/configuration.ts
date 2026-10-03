@@ -354,6 +354,10 @@ export interface PromptConfiguration {
   liveActivity: LiveActivitySettings;
   /** Where NMSh chrome (frames, rules, tabs, selection, accents) takes its colors from. */
   uiChrome: UiChromeSettings;
+  /** Compact cross-session notices above the composer (other sessions finished, failed, ended...). */
+  sessionNotices: boolean;
+  /** Local-only agent CLI activity stats (durations and counts; never content). */
+  agentActivity: boolean;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -428,6 +432,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
+  sessionNotices: true,
+  agentActivity: true,
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
@@ -507,7 +513,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false, toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider

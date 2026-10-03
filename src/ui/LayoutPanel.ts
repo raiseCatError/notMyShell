@@ -111,6 +111,7 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     input: [`${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git push${RESET}`],
     separator: [separator],
     status: [],
+    notices: [],
   };
   const frame = new Array<string>(plan.rows).fill('');
   for (const region of plan.regions) {

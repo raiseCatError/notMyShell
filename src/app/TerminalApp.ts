@@ -115,7 +115,11 @@ import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type Stat
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
-import {cursorScreenRow, planScreen, regionAt, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {AgentActivityStore} from '../agents/AgentActivityStore.js';
+import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
+import {detectAgentCommand} from '../agents/agents.js';
+import {describeNotice, noticeKey, selectNotices, sessionLabel, type NoticeView, type SessionNotice} from '../session/SessionNotices.js';
+import {cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
@@ -131,9 +135,9 @@ import {formatBytes} from '../session/sessionList.js';
 import type {PresentationMode} from '../output/PresentationMode.js';
 import type {SessionInfo} from '../session/SessionProtocol.js';
 import {SessionJournal} from '../sessions/SessionJournal.js';
-import {createResumeBrowser, describeLiveSession, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
+import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
-import {listLiveSessions} from '../session/connectSession.js';
+import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {defaultRuntimeDir} from '../session/runtimeDir.js';
@@ -146,6 +150,8 @@ const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const SEPARATOR = lazyForeground(UI_COLORS.separator);
 const ACCENT = lazyForeground(UI_COLORS.accent);
+/** Session notices change on human timescales; a slow poll keeps the service quiet. */
+const NOTICE_REFRESH_MS = 4000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
 const ERROR = lazyForeground(UI_COLORS.failure);
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
@@ -290,6 +296,14 @@ export class TerminalApp {
   private statsSource: StatsSource = new LocalStats();
   private stripStats: SystemStats = {};
   private stripTimer?: () => void;
+  /** Cross-session notices from the session service; frontend chrome only. */
+  private noticeView: NoticeView = {notices: [], hidden: 0};
+  private noticeLabels = new Map<string, string>();
+  private noticeTimer?: () => void;
+  private noticePolling = false;
+  /** Notices this window cleared while an older service could not clear them for everyone. */
+  private readonly dismissedNotices = new Set<string>();
+  private readonly agentActivity = new AgentActivityStore();
   private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
@@ -1655,6 +1669,8 @@ export class TerminalApp {
     else if (slash.kind === 'presets') this.startPresets();
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'help') this.showHelp(command);
+    else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
+    else if (slash.kind === 'notices') await this.runNoticesCommand(command, slash.action);
     else if (slash.kind === 'history') {
       if (command.startsWith(HISTORY_SEARCH)) this.submitHistorySearch(slash.query, true);
       else await this.openHistoryPicker(slash.query);
@@ -2176,6 +2192,15 @@ export class TerminalApp {
     }
 
     const command = this.running;
+    // Program identity only (the command's program word); never the agent's prompt or output.
+    const agent = detectAgentCommand(command.command);
+    if (agent && this.promptConfiguration.agentActivity && !command.cleared) {
+      const interrupted = command.interrupted || exitCode === 130;
+      try {
+        this.agentActivity.record({agent: agent.id, startedAt: command.startedAt, durationMs: Math.max(0, at - command.startedAt),
+          ...(interrupted ? {} : {exitCode})}, `${this.sessionId ?? this.journal?.id ?? 'local'}:${command.startedAt}`);
+      } catch { /* local stats are best effort and never affect the command */ }
+    }
     const notification = {command: command.command, elapsedMs: Math.max(0, at - command.startedAt), exitCode,
       interrupted: command.interrupted || exitCode === 130};
     if (!this.replaying && shouldNotify(notification, this.promptConfiguration.notifications, this.terminalFocus)) {
@@ -2207,6 +2232,7 @@ export class TerminalApp {
       const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
       if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
+      else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -2730,9 +2756,16 @@ export class TerminalApp {
       if (live.length > 0) {
         const now = Date.now();
         rows.push(`${SUBTLE}  LIVE${RESET}`);
+        const safe = getCurrentGlyphMode() === 'safe';
         live.forEach((session, index) => {
           const selected = index === browser.selectedIndex;
-          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ● ${describeLiveSession(session, now)}${RESET}`, columns));
+          const state = liveRowState(session, now);
+          const stateColor = state === 'failed' ? ERROR : state === 'attention' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
+          const agent = liveRowAgent(session);
+          // Agent color only when identity is proven and color is allowed; generic otherwise.
+          const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${who}`
+            + `${selected ? ACCENT : SECONDARY}${describeLiveRow(session, now)}${RESET}`, columns));
         });
         rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
       }
@@ -2748,8 +2781,7 @@ export class TerminalApp {
         lastDay = day;
         const selected = index + live.length === browser.selectedIndex;
         const time = new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-        const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
-        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${session.project || 'notMyShell'} · ${session.finalCwd} · ${session.commandCount} commands${interrupted}${RESET}`, columns));
+        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${SUBTLE}Archived${RESET}${selected ? ACCENT : SECONDARY}  ${describeArchivedRow(session, Date.now())}${RESET}`, columns));
       }
       if (sessions.length === 0) rows.push(`${SUBTLE}  No matching archived sessions${RESET}`);
       const confirming = browser.live.find(session => session.id === browser.confirmKill);
@@ -4314,7 +4346,10 @@ export class TerminalApp {
       const active = new AbortController();
       this.historyQueryAbort = active;
       this.historyResults = [];
-      void this.historyService.search(query, active.signal).then(entries => {
+      const ranked = this.historyService.status.active === 'native'
+        ? this.historyService.searchRanked(query, {cwd: this.shellCwd, project: this.context.project, session: this.journal?.id ?? this.sessionId, now: Date.now()}, active.signal)
+        : this.historyService.search(query, active.signal);
+      void ranked.then(entries => {
         if (this.stopped || active.signal.aborted || this.historyQuery !== query) return;
         this.historyResults = entries;
         this.selectedSuggestion = 0;
@@ -4322,7 +4357,8 @@ export class TerminalApp {
       }).catch(() => {});
     }
     return this.historyResults.map(entry => ({id: entry.id, name: entry.command.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' '), insertion: entry.command,
-      description: [entry.exitCode === undefined ? undefined : `exit ${entry.exitCode}`,
+      description: ['count' in entry && typeof entry.count === 'number' && entry.count > 1 ? `×${entry.count}` : undefined,
+        entry.agent ? `agent ${entry.agent}` : undefined, entry.exitCode === undefined ? undefined : `exit ${entry.exitCode}`,
         entry.durationMs === undefined ? undefined : `${entry.durationMs}ms`, entry.cwd, entry.project].filter(Boolean).join(' · ') || 'History'}));
   }
 
@@ -4374,8 +4410,70 @@ export class TerminalApp {
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
     // The status strip owns one top row only when it is on, fits, and no panel owns the screen.
-    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planComposer(columns, rows - 1, fullInput, suggestions, panelRows));
-    return this.planComposer(columns, rows, fullInput, suggestions, panelRows);
+    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planWithNotices(columns, rows - 1, fullInput, suggestions, panelRows));
+    return this.planWithNotices(columns, rows, fullInput, suggestions, panelRows);
+  }
+
+  private planWithNotices(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
+    panelRows: number | undefined): ScreenPlan {
+    const count = panelRows === undefined ? this.noticeRows(columns).length : 0;
+    // Notices never squeeze the composer or transcript out: small screens simply do not show them.
+    if (count === 0 || rows < 12 + count) return this.planComposer(columns, rows, fullInput, suggestions, panelRows);
+    return withNoticeRows(this.planComposer(columns, rows - count, fullInput, suggestions, panelRows), count);
+  }
+
+  /** One compact line per notice (max three, the last may summarize overflow). */
+  private noticeRows(columns: number): string[] {
+    if (!this.promptConfiguration.sessionNotices || this.passthrough) return [];
+    const {notices, hidden} = this.noticeView;
+    const now = Date.now();
+    const safe = getCurrentGlyphMode() === 'safe';
+    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷'};
+    const rows = notices.map(notice => {
+      const parts = describeNotice(notice, this.noticeLabels.get(notice.sessionId) ?? sessionLabel(notice.sessionId), now);
+      const color = parts.symbol === 'failed' ? ERROR : parts.symbol === 'attention' ? ACCENT : parts.symbol === 'done' ? SUCCESS : SECONDARY;
+      return truncateAnsi(`${color}${symbols[parts.symbol]}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
+    });
+    if (hidden > 0) rows.push(truncateAnsi(`${SECONDARY}… ${hidden} more session update${hidden === 1 ? '' : 's'} · /resume · /notices clear${RESET}`, columns));
+    return rows;
+  }
+
+  /** Poll the service's session list on a slow cadence while notices are on and NMSh owns the screen. */
+  private syncNotices(): void {
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
+      && this.sessionMode === 'service' && this.promptConfiguration.sessionNotices;
+    if (wanted && !this.noticeTimer) {
+      this.noticeTimer = presentationClock.subscribe(() => void this.refreshNotices(), NOTICE_REFRESH_MS);
+      void this.refreshNotices();
+    } else if (!wanted && this.noticeTimer) {
+      this.noticeTimer(); this.noticeTimer = undefined;
+    }
+    if (!wanted && !this.promptConfiguration.sessionNotices && this.noticeView.notices.length) this.noticeView = {notices: [], hidden: 0};
+  }
+
+  private async refreshNotices(): Promise<void> {
+    if (this.noticePolling) return;
+    this.noticePolling = true;
+    try {
+      const {sessions, ended} = await listSessionNotices();
+      if (this.stopped) return;
+      const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
+      this.noticeLabels = new Map(ordered.map((session, index) => [session.id, sessionLabel(session.id, index + 1)]));
+      const all: SessionNotice[] = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
+      const next = selectNotices(all, this.sessionId, this.dismissedNotices);
+      const changed = JSON.stringify(next) !== JSON.stringify(this.noticeView);
+      this.noticeView = next;
+      if (changed) this.render();
+    } catch { /* notices are best effort */ } finally { this.noticePolling = false; }
+  }
+
+  /** Clear every visible notice, for every attached frontend where the service supports it. */
+  private async clearNotices(): Promise<void> {
+    const shown = [...this.noticeView.notices];
+    for (const notice of shown) this.dismissedNotices.add(noticeKey(notice));
+    this.noticeView = {notices: [], hidden: 0};
+    await Promise.all(shown.map(notice => dismissSessionNotice(notice.sessionId)));
+    await this.refreshNotices();
   }
 
   private stripActive(columns: number, rows: number): boolean {
@@ -4409,6 +4507,45 @@ export class TerminalApp {
       if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
     } catch { /* A failed sample keeps the previous values. */ }
     finally { this.stripSampling = false; }
+  }
+
+  /** Apply one small settings change and persist it over a fresh read (other windows' edits survive). */
+  private updateConfiguration(change: (configuration: PromptConfiguration) => void): void {
+    const next = structuredClone(this.promptConfiguration);
+    change(next);
+    try { savePromptConfiguration(next, undefined, this.promptConfiguration); } catch { /* applies to this window */ }
+    this.promptConfiguration = next;
+  }
+
+  private runAgentsCommand(command: string, action: 'show' | 'on' | 'off' | 'reset'): void {
+    if (action === 'on' || action === 'off') {
+      this.updateConfiguration(configuration => { configuration.agentActivity = action === 'on'; });
+      this.output.addFrontendInteraction(command, action === 'on' ? 'Agent activity recording is On (local only).' : 'Agent activity recording is Off; existing data is kept until /agents reset.', INFO);
+      return;
+    }
+    if (action === 'reset') {
+      try { this.agentActivity.reset(); this.output.addFrontendInteraction(command, 'Deleted all local agent activity data.', INFO); }
+      catch (error) { this.output.addFrontendInteraction(command, `Could not delete agent activity data: ${error instanceof Error ? error.message : String(error)}`, ERROR); }
+      return;
+    }
+    const data = this.agentActivity.load();
+    this.output.addFrontendBlock(command, renderAgentStats(data, {now: Date.now(), columns: Math.max(20, this.dimensions().columns - 2),
+      enabled: this.promptConfiguration.agentActivity, loadState: this.agentActivity.state}));
+  }
+
+  private async runNoticesCommand(command: string, action: 'show' | 'on' | 'off' | 'clear'): Promise<void> {
+    if (action === 'on' || action === 'off') {
+      this.updateConfiguration(configuration => { configuration.sessionNotices = action === 'on'; });
+      this.output.addFrontendInteraction(command, `Session notices are ${action === 'on' ? 'On' : 'Off'}.`, INFO);
+    } else if (action === 'clear') {
+      await this.clearNotices();
+      this.output.addFrontendInteraction(command, 'Cleared session notices.', INFO);
+    } else {
+      const state = this.promptConfiguration.sessionNotices ? 'On' : 'Off';
+      const mode = this.sessionMode === 'service' ? '' : ' They need the live-session service; this window runs its shell in-process.';
+      this.output.addFrontendInteraction(command, `Session notices are ${state}: other sessions' finished, failed, attention and ended states show above the composer.${mode}`, INFO);
+    }
+    this.syncNotices();
   }
 
   private planComposer(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
@@ -4563,6 +4700,7 @@ export class TerminalApp {
         case 'input': return inputRows;
         case 'separator': return [separator];
         case 'status': return [this.statusStripRow(columns)];
+        case 'notices': return this.noticeRows(columns);
       }
     };
     const frameRows = new Array<string>(plan.rows).fill('');
@@ -4613,6 +4751,7 @@ export class TerminalApp {
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.stripTimer?.(); this.stripTimer = undefined;
+    this.noticeTimer?.(); this.noticeTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
@@ -4668,6 +4807,7 @@ export class TerminalApp {
   private syncPresentationClock(): void {
     if (!this.presentationStarted || this.stopped) return;
     this.syncStatusStrip();
+    this.syncNotices();
     const settings = this.promptConfiguration.presentation;
     const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder'
       || (region.kind === 'prompt' && region.height > 0)) && dividerAnimated(settings) && colorLevel() !== 'none';

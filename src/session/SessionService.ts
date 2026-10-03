@@ -6,6 +6,7 @@ import {SessionEvidence} from './SessionEvidence.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
+import {EndedNotices, SessionNoticeTracker} from './SessionNotices.js';
 import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
 
 export const SERVICE_NAME = 'nmshd';
@@ -36,6 +37,8 @@ interface ManagedSession {
   backlog: StreamBacklog;
   /** What the foreground program's own output says: recency, title, attention, last exit. */
   evidence: SessionEvidence;
+  /** This session's cross-session notice; cleared when the session is focused. */
+  notices: SessionNoticeTracker;
   knowledge?: string;
 }
 
@@ -88,6 +91,7 @@ export class SessionService {
   private server: Server | undefined;
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly connections = new Set<Socket>();
+  private readonly endedNotices = new EndedNotices();
   private idleTimer: NodeJS.Timeout | undefined;
   private closed = false;
   readonly done: Promise<void>;
@@ -107,6 +111,10 @@ export class SessionService {
     const evidence = session.evidence.snapshot();
     // Read only when someone lists sessions; nothing polls the process table.
     const process = running ? session.shell.foregroundProcess : undefined;
+    session.notices.observeProcess(process);
+    if (evidence.attentionSince !== undefined) session.notices.onAttention(evidence.attentionSince);
+    session.notices.checkLongRunning(Date.now());
+    const notice = session.notices.notice;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
       ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
       ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {}),
@@ -115,7 +123,8 @@ export class SessionService {
       ...(evidence.lastOutputAt !== undefined ? {lastOutputAt: evidence.lastOutputAt} : {}),
       ...(evidence.title ? {title: evidence.title} : {}),
       ...(evidence.attentionSince !== undefined ? {attentionSince: evidence.attentionSince} : {}),
-      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {})};
+      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {}),
+      ...(notice ? {notice} : {})};
   }
 
   async start(): Promise<void> {
@@ -191,6 +200,9 @@ export class SessionService {
             if (session.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
             owned = session;
             this.bind(session, send);
+            // Opening a session is focusing it: its notice is no longer news in any window.
+            session.notices.clear();
+            this.endedNotices.dismiss(session.record.id);
             const info = this.info(session);
             const {backlog} = session;
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
@@ -215,10 +227,16 @@ export class SessionService {
             }
             break;
           case 'list':
-            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session)), ended: this.endedNotices.list(Date.now())});
+            break;
+          case 'dismiss':
+            this.sessions.get(message.sessionId)?.notices.clear();
+            this.endedNotices.dismiss(message.sessionId);
+            send({type: 'dismissed', sessionId: message.sessionId});
             break;
           case 'input':
             owned?.evidence.onInput();
+            owned?.notices.clear();
             if (owned) {
               const rejected = (data: string, submission: boolean) => send({type: 'input-rejected', data, submission: submission ? 1 : 0});
               owned.shell.once('inputRejected', rejected);
@@ -299,7 +317,7 @@ export class SessionService {
       state: 'attached', protocolVersion: PROTOCOL_VERSION};
     const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
-      evidence: new SessionEvidence()};
+      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id)};
     this.sessions.set(record.id, session);
     // Every event is retained until a frontend journal acknowledges it, and
     // sent live when a frontend is attached.
@@ -320,6 +338,7 @@ export class SessionService {
       const at = Date.now();
       session.running = {command, since: at};
       session.evidence.onExec();
+      session.notices.onExec(command, at);
       emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
     });
     shell.on('prompt', marker => {
@@ -328,12 +347,15 @@ export class SessionService {
       session.running = undefined;
       session.idleSince = Date.now();
       session.evidence.onPrompt(marker.exitCode);
+      session.notices.onPrompt(marker.exitCode, Date.now(), marker.cwd);
       session.screen.reset();
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd,
         ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge})});
     });
     shell.on('exit', event => {
       this.sessions.delete(record.id);
+      // Ending with no window attached is news; with one attached, that window saw it.
+      if (!session.controller) this.endedNotices.add(session.notices.ended(event.exitCode, Date.now(), record.cwd));
       // Detached: keep what the journal lacks on disk for archiving. Attached:
       // the frontend journal is authoritative and the backlog goes.
       if (session.controller) session.backlog.dispose();

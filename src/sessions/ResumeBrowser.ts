@@ -1,7 +1,8 @@
 import type {TranscriptSummary} from './TranscriptStore.js';
 import type {SessionInfo} from '../session/SessionProtocol.js';
 import {formatAge, tildePath} from '../session/sessionList.js';
-import {liveStatusParts} from '../session/liveStatus.js';
+import {ACTIVE_OUTPUT_MS, liveStatusParts} from '../session/liveStatus.js';
+import {detectAgentCommand, detectAgentProcess, type AgentDescriptor} from '../agents/agents.js';
 
 export interface ResumeBrowserState {
   /** Live service sessions other than this frontend's own; listed first. */
@@ -105,4 +106,52 @@ export function resumeDayLabel(timestamp: string, now = new Date()): string {
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).getTime();
   if (day === yesterday) return 'Yesterday';
   return date.toLocaleDateString();
+}
+
+/**
+ * The one-word state a live row leads with, strongest fact first. Only what
+ * the service reports: a pending attention request, recent output, a running
+ * command, or how the last command ended. "Awaiting input" is claimed only
+ * when the program itself asked for attention.
+ */
+export type LiveRowState = 'attention' | 'active' | 'running' | 'completed' | 'failed' | 'idle';
+
+export function liveRowState(session: SessionInfo, now: number): LiveRowState {
+  if (session.running) {
+    if (session.attentionSince !== undefined) return 'attention';
+    if (session.lastOutputAt !== undefined && now - session.lastOutputAt < ACTIVE_OUTPUT_MS) return 'active';
+    return 'running';
+  }
+  if (session.notice?.kind === 'completed') return 'completed';
+  if (session.notice?.kind === 'failed' || (session.lastExit !== undefined && session.lastExit !== 0 && session.lastExit !== 130)) return 'failed';
+  return 'idle';
+}
+
+export const LIVE_ROW_LABELS: Record<LiveRowState, string> = {
+  attention: 'Needs attention', active: 'Active', running: 'Running', completed: 'Completed', failed: 'Failed', idle: 'Idle',
+};
+
+/** A known agent, only when the command's program word or the foreground process proves it. */
+export function liveRowAgent(session: SessionInfo): AgentDescriptor | undefined {
+  return (session.running ? detectAgentCommand(session.running) : undefined) ?? detectAgentProcess(session.process);
+}
+
+/** Session viewer row facts after the state badge: where, what, how long. */
+export function describeLiveRow(session: SessionInfo, now: number): string {
+  const where = tildePath(session.cwd);
+  const attached = session.state === 'attached' ? 'open in another window' : 'detached';
+  const what = session.running
+    ? `${session.running.replace(/\s+/gu, ' ').slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
+    : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}${session.lastExit !== undefined && session.lastExit !== 0 ? ` · last exit ${session.lastExit}` : ''}`;
+  const extra = session.title && session.running ? ` · “${session.title.slice(0, 32)}”` : '';
+  return `${where} · ${what}${extra} · ${attached} · age ${formatAge(now - session.createdAt)}`;
+}
+
+/** Archived row: duration when the journal recorded an end, otherwise its age. */
+export function describeArchivedRow(session: TranscriptSummary, now: number): string {
+  const ended = session.endedAt ? Date.parse(session.endedAt) : NaN;
+  const started = Date.parse(session.createdAt);
+  const span = Number.isFinite(ended) && Number.isFinite(started) ? `ran ${formatAge(Math.max(0, ended - started))}` : `${formatAge(Math.max(0, now - started))} ago`;
+  const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
+  return `${session.project || 'notMyShell'} · ${tildePath(session.finalCwd)} · ${session.commandCount} command${session.commandCount === 1 ? '' : 's'} · ${span}${interrupted}`;
 }

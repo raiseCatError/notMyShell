@@ -295,6 +295,18 @@ export class OutputBuffer {
     this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
   }
 
+  /** A multi-row NMSh-owned result (for example /agents); presentation rows, never shell output. */
+  addFrontendBlock(command: string, rows: readonly string[]): void {
+    this.parser.ensureLineBoundary();
+    if (this.parser.completedCount() > 0) this.visualGaps.add(this.parser.completedCount());
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
+    this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
+    for (const row of rows) {
+      this.lineTypes.set(this.parser.completedCount(), 'metadata');
+      this.parser.addLine(`  ${row}`, '');
+    }
+  }
+
   recent(index: number): CompletedCommand | undefined {
     return this.completed[index - 1];
   }
