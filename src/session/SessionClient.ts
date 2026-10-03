@@ -18,6 +18,10 @@ export interface SessionClientEvents {
   prompt: [ShellMarker, StreamStamp];
   /** zsh is about to run a command line (preexec). */
   exec: [string, StreamStamp];
+  /** Bounded, sanitized startup output while the shell has not yet reached its first prompt. */
+  startup: [string];
+  /** Input was not queued or written; the caller can restore it. */
+  inputRejected: [data: string, submission: boolean];
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
@@ -64,6 +68,10 @@ export interface AttachedSession {
   /** Journal the previous frontend kept for this session, and how far it got. */
   journalId?: string;
   ackedSeq: number;
+  /** Latest bounded name snapshot, independent of journal acknowledgements. */
+  knowledge?: string;
+  /** Set only while the shell has not reached its first prompt: its startup output so far. */
+  startup?: string;
 }
 
 export interface SessionOptions {

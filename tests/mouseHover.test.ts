@@ -1,3 +1,4 @@
+import {resolveHostCapabilities} from '../src/host/capabilities.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {decodeKeys} from '../src/terminal/keys.js';
@@ -22,11 +23,11 @@ test('Shift+mouse is native selection: no click, drag, or hover events', () => {
 
 test('renderer enables any-motion tracking only while NMSh owns the screen', () => {
   const writes: string[] = [];
-  const renderer = new TerminalRenderer(data => { writes.push(data); });
+  const renderer = new TerminalRenderer(data => { writes.push(data); }, resolveHostCapabilities({TERM_PROGRAM: 'ghostty'}));
   renderer.enter();
   assert.match(writes.at(-1)!, /\?1000h\u001B\[\?1003h\u001B\[\?1006h/u);
   renderer.suspendForPassthrough();
-  assert.match(writes.at(-1)!, /\?1006l\u001B\[\?1003l\u001B\[\?1000l/u);
+  assert.match(writes.at(-1)!, /\?1000l\u001B\[\?1003l\u001B\[\?1006l/u);
   renderer.resumeAfterPassthrough();
   assert.match(writes.at(-1)!, /\?1003h/u);
   renderer.leave();
