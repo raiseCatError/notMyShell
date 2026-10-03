@@ -5,7 +5,7 @@ import {chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'nod
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import nodePty from 'node-pty';
-import {spawnLauncher} from '../src/host/terminalHost.js';
+import {detectTerminalHost, spawnLauncher} from '../src/host/terminalHost.js';
 import {restoreAtStartup} from '../src/session/startupRestore.js';
 import type {SessionInfo} from '../src/session/SessionProtocol.js';
 import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
@@ -35,7 +35,7 @@ test('launcher results: clean exit, failure, missing command, and a launcher tha
 
 function deps(spawned: string[][], spawner = async (_c: string, args: string[]) => { spawned.push(args); return true; }) {
   return {policy: {startup: 'ask' as const, multiple: 'ask' as const}, saveStartup: () => {}, askOne: async () => 'not-now' as const,
-    host: {name: 'Terminal', newWindow: (argv: readonly string[]) => ({command: 'osascript', args: [...argv]})},
+    host: {capabilities: detectTerminalHost({}).capabilities, name: 'Terminal', newWindow: (argv: readonly string[]) => ({command: 'osascript', args: [...argv]})},
     selfCommand: ['node', '/nmsh'], spawner};
 }
 
@@ -65,7 +65,7 @@ test('a failed launch in the middle loses nothing: the others still launch and t
 const built = existsSync(join(REPO, 'dist/index.js'));
 
 test('built nmsh: Open all from a picker attaches here and launches every other selected session',
-  {skip: built ? false : 'run npm run build first'}, async () => {
+  {skip: !built ? 'run npm run build first' : process.platform !== 'darwin' ? 'macOS window integration' : false}, async () => {
     const sandbox = new LiveSandbox();
     const fakeBin = join(sandbox.root, 'fake-bin');
     mkdirSync(fakeBin);
@@ -82,6 +82,7 @@ test('built nmsh: Open all from a picker attaches here and launches every other 
       }
       const env = {...sandbox.env, TERM_PROGRAM: 'Apple_Terminal', PATH: `${fakeBin}:${process.env.PATH}`} as Record<string, string>;
       const pty = nodePty.spawn(join(REPO, 'bin/nmsh'), [], {cwd: sandbox.home, cols: 100, rows: 30, env});
+      sandbox.trackFrontend(pty);
       let output = '';
       let exitCode: number | undefined;
       pty.onData(data => { output += data; });
@@ -111,6 +112,7 @@ test('built nmsh starts normally as Terminal.app', {skip: built ? false : 'run n
   try {
     const env = {...sandbox.env, TERM_PROGRAM: 'Apple_Terminal'} as Record<string, string>;
     const pty = nodePty.spawn(join(REPO, 'bin/nmsh'), [], {cwd: sandbox.home, cols: 100, rows: 30, env});
+    sandbox.trackFrontend(pty);
     let output = '';
     pty.onData(data => { output += data; });
     try {

@@ -1,3 +1,4 @@
+import type {BlockActionId} from './BlockActions.js';
 import {slashCommands} from '../commands/slashCommands.js';
 import {NATIVE_PALETTE_IDS} from '../prompt/configuration.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -22,7 +23,8 @@ export type PaletteAction =
   | {kind: 'theme'; palette: (typeof NATIVE_PALETTE_IDS)[number]}
   | {kind: 'latest'}
   | {kind: 'toggleDetails'}
-  | {kind: 'toggleInspector'};
+  | {kind: 'toggleInspector'}
+  | {kind: 'block'; id: BlockActionId; startId: number};
 
 export interface PaletteItem {
   id: string;

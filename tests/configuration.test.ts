@@ -12,7 +12,7 @@ test('NMSh configuration uses macOS Application Support and honors XDG overrides
   assert.equal(nmshConfigDirectory({HOME: '/Users/test'}, 'darwin'), '/Users/test/Library/Application Support/notMyShell');
   assert.equal(nmshConfigDirectory({HOME: '/Users/test', XDG_CONFIG_HOME: '/tmp/config'}, 'darwin'), '/tmp/config/nmsh');
   assert.equal(nmshConfigDirectory({HOME: '/home/test'}, 'linux'), '/home/test/.config/nmsh');
-  assert.equal(promptConfigurationPath({HOME: '/Users/test'}), '/Users/test/Library/Application Support/notMyShell/config.json');
+  assert.equal(promptConfigurationPath({HOME: '/Users/test'}), join(nmshConfigDirectory({HOME: '/Users/test'}), 'config.json'));
 });
 
 test('v0.3 config keeps Nerd appearance and completed onboarding; fresh config asks for glyph style', () => {

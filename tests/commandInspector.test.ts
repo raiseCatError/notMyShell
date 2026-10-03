@@ -12,9 +12,16 @@ test('inspector shares completion knowledge across command, subcommand, flag and
   assert.equal(inspect('git status')?.kind, 'subcommand');
   assert.match(inspect('rg --hidden', 7)?.description ?? '', /hidden/);
   assert.equal(inspect('rg pattern')?.kind, 'argument');
+  assert.equal(inspect('/usr/bin/rg', 3)?.kind, 'command');
+  assert.equal(inspect("'git'", 2)?.kind, 'command');
+  assert.equal(inspect("'git' status")?.kind, 'argument');
+  assert.equal(inspect('NAME=value git', 13)?.kind, 'command');
+  assert.equal(inspect('rg < file')?.kind, 'argument');
+  assert.equal(inspect('rg < file --hidden')?.source, 'context');
   assert.equal(inspect('rg -- --hidden')?.kind, 'argument');
   assert.equal(inspect('git log status')?.kind, 'argument');
   assert.equal(inspect('echo x | rg --hidden')?.command, 'rg');
+  assert.equal(inspect('echo x & rg --hidden')?.command, 'rg');
   assert.equal(inspect('echo x\nrg --hidden')?.command, 'rg');
   const [candidate] = parseNativeCompletions('status', {buffer: 'git st', cwd: '/'});
   assert.equal(enrichCompletion(candidate!).description, inspect('git status')?.description);
