@@ -11,7 +11,7 @@ export interface HistoryEntry extends CommandEntry {
   project?: string;
   session?: string;
   durationMs?: number;
-  source: 'zsh' | 'atuin' | 'nmsh';
+  source: 'zsh' | 'fish' | 'bash' | 'atuin' | 'nmsh';
   /** Known agent CLI this command started, from its program word only. */
   agent?: string;
 }

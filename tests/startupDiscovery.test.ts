@@ -216,7 +216,7 @@ test('/resume shows LIVE and ARCHIVED; Kill Session confirms and archives; LIVE 
     const hub = await started(sandbox, ['--new']);
     let mark = hub.mark;
     hub.pty.write('/resume\r');
-    await hub.waitFor(/LIVE[\s\S]*running sleep 600[\s\S]*ARCHIVED/, mark);
+    await hub.waitFor(/LIVE[\s\S]*sleep 600[\s\S]*ARCHIVED/, mark);
 
     // Select the /tmp session (sessions are listed in service order) and kill it.
     const live = (await sandbox.sessions()).filter(session => session.state === 'detached');

@@ -3,6 +3,7 @@ import {connect, type Socket} from 'node:net';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ClientMessage, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
+import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {AttachedSession, SessionClient, SessionClientEvents, SessionOptions} from './SessionClient.js';
 
 export interface SocketConnectOptions extends SessionOptions {
@@ -135,9 +136,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   static async connect(options: SocketConnectOptions): Promise<SocketSessionClient> {
     const first: ClientMessage = options.attach
       ? {type: 'attach', sessionId: options.attach, columns: options.columns, rows: options.rows}
-      : {type: 'create', cwd: options.cwd, env: options.env, columns: options.columns, rows: options.rows};
+      : {type: 'create', cwd: options.cwd, env: options.env, columns: options.columns, rows: options.rows, ...(options.shell ? {shell: options.shell} : {})};
     const {value, socket, decoder, rest} = await request<AttachedSession>(options.socketPath, options.timeoutMs ?? 5000, first, message => {
-      if (message.type === 'created') return {sessionId: message.sessionId, pid: message.pid, cwd: options.cwd, fullscreen: 0, ackedSeq: 0};
+      // An older service ignores the shell request and reports none: that is zsh.
+      if (message.type === 'created') return {sessionId: message.sessionId, pid: message.pid, cwd: options.cwd, fullscreen: 0, ackedSeq: 0, shell: message.shell ?? 'zsh'};
       if (message.type === 'attached') {
         const {type: _type, ...attached} = message;
         return attached;
@@ -145,6 +147,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       return undefined;
     });
     const client = new SocketSessionClient(socket, value.sessionId, value.pid);
+    client.shell = isShellId(value.shell) ? value.shell : 'zsh';
     if (options.attach) client.attachedSession = value;
     client.listen(decoder, rest);
     return client;
@@ -172,7 +175,26 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.socket.resume();
   }
 
+  /** Backend currently running in this session. */
+  shell: ShellId = 'zsh';
+  private pendingSwitch?: {resolve: (value: {shell: ShellId; pid: number}) => void; reject: (error: Error) => void};
+
+  switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}> {
+    if (this.pendingSwitch) return Promise.reject(new Error('A shell switch is already in progress.'));
+    return new Promise((resolve, reject) => {
+      this.pendingSwitch = {resolve, reject};
+      this.send({type: 'switch-shell', shell, cwd});
+    });
+  }
+
   private receive(message: ServerMessage): void {
+    if (message.type === 'shell-switched' || (message.type === 'error' && this.pendingSwitch)) {
+      const pending = this.pendingSwitch;
+      this.pendingSwitch = undefined;
+      if (message.type === 'shell-switched' && isShellId(message.shell)) { this.shell = message.shell; pending?.resolve({shell: message.shell, pid: message.pid}); }
+      else pending?.reject(new SessionConnectError(message.type === 'error' ? message.message : 'unexpected shell reply', message.type === 'error' ? message.code : 'protocol'));
+      return;
+    }
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge})}, {seq: message.seq, at: message.at});
@@ -189,6 +211,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   private finish(exitCode: number, signal?: number, lost = false): void {
     if (this.exited) return;
     this.exited = true;
+    this.pendingSwitch?.reject(new Error('The session ended.'));
+    this.pendingSwitch = undefined;
     this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
 

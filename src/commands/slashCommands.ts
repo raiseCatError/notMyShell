@@ -30,6 +30,10 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/layout', insertion: '/layout', description: 'Preview and choose composer position and transcript presentation'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
+  {name: '/shell', insertion: '/shell', description: 'Shell backend: switch this session (zsh, Fish, Bash) or set the default'},
+  {name: '/shell fish', insertion: '/shell fish', description: 'Switch this session to Fish in the current directory'},
+  {name: '/shell bash', insertion: '/shell bash', description: 'Switch this session to Bash in the current directory'},
+  {name: '/shell zsh', insertion: '/shell zsh', description: 'Switch this session to zsh in the current directory'},
   {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
@@ -71,6 +75,7 @@ export type ParsedSlashCommand =
   | {kind: 'resume'}
   | {kind: 'help'}
   | {kind: 'about'}
+  | {kind: 'shell'; shell?: 'zsh' | 'fish' | 'bash'}
   | {kind: 'agents'; action: 'show' | 'on' | 'off' | 'reset'}
   | {kind: 'notices'; action: 'show' | 'on' | 'off' | 'clear'}
   | {kind: 'palette'}
@@ -112,6 +117,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (/^\/about\s*$/u.test(input)) return {kind: 'about'};
+  const shell = /^\/shell(?:\s+(zsh|fish|bash))?\s*$/u.exec(input);
+  if (shell) return shell[1] ? {kind: 'shell', shell: shell[1] as 'zsh' | 'fish' | 'bash'} : {kind: 'shell'};
   const agents = /^\/agents(?:\s+(on|off|reset))?\s*$/u.exec(input);
   if (agents) return {kind: 'agents', action: (agents[1] ?? 'show') as 'show' | 'on' | 'off' | 'reset'};
   const notices = /^\/notices(?:\s+(on|off|clear))?\s*$/u.exec(input);
