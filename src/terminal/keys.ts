@@ -6,7 +6,7 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch' | 'historyDelete'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -88,6 +88,7 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[117;5u', 'deleteLineBefore'], // Kitty Ctrl+U
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
   ['\u001B[99;5u', 'interrupt'], // Kitty Ctrl+C
+  ['\u001B[102;5u', 'find'], // Kitty Ctrl+F
   ['\u001B[100;5u', 'eof'], // Kitty Ctrl+D
   ['\u001B[122;5u', 'suspend'], // Kitty Ctrl+Z
   ['\u001B[90;5u', 'suspend'], // Kitty Ctrl+Z (uppercase Z)
@@ -163,6 +164,7 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
     else if (value === '\u0018') keys.push({kind: 'historyDelete'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
+    else if (value === '\u0006') keys.push({kind: 'find'} as Key); // Ctrl+F: NMSh transcript find
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N
     else if (value === '\u0010') keys.push({kind: 'suggestPrevious'} as Key); // Ctrl+P

@@ -33,6 +33,8 @@ export interface SourceLocation {
 export interface HostCapabilities {
   /** The editor whose integrated terminal NMSh runs in, when it is known. */
   integratedEditor?: 'zed' | 'vscode';
+  /** The integrated editor is known but its command-line tool was not found. */
+  cliMissing?: 'zed' | 'code';
   nativeFileOpen: boolean;
   nativeDirectoryOpen: boolean;
   nativeDiff: boolean;
@@ -56,6 +58,7 @@ export interface HostActionAdapter {
 
 export interface HostEnvironment {
   env: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
   /** Absolute executable for a name on PATH, if any. */
   which(name: string): string | undefined;
   /** First lines of `<cli> --help`, to check for documented flags before using them. */
@@ -144,6 +147,31 @@ const NONE: HostActionAdapter = {
   openDiff: () => ({kind: 'unsupported', reason: 'No editor with a native diff view is known here. git diff works in the transcript as usual.'}),
 };
 
+/**
+ * Inside Zed or VS Code without its CLI on PATH: the editor IS known, so say
+ * exactly what is missing and how the editor itself installs it. NMSh does not
+ * install it: Zed's installer symlinks into /usr/local/bin and may ask for
+ * administrator rights; VS Code's is a command in its own palette.
+ */
+export function missingCliMessage(editor: 'zed' | 'vscode', platform: NodeJS.Platform = process.platform, detected = true): string {
+  const who = detected ? (editor === 'zed' ? 'Zed detected' : 'VS Code detected') : (editor === 'zed' ? 'Open with is Zed' : 'Open with is VS Code');
+  if (editor === 'zed') {
+    return platform === 'darwin'
+      ? `${who}, but its CLI (zed) is not on PATH. In Zed: Cmd+Shift+P → "cli: install cli binary", then open a new terminal (or refresh PATH).`
+      : `${who}, but its CLI is not on PATH (zed, or zeditor / zedit / zed-editor from some packages). Official Zed releases put it in ~/.local/bin: add that to PATH, or run "cli: install cli binary" from Zed's command palette (Ctrl+Shift+P), then open a new terminal.`;
+  }
+  return platform === 'darwin'
+    ? `${who}, but its CLI (code) is not on PATH. In VS Code: Cmd+Shift+P → "Shell Command: Install 'code' command in PATH", then open a new terminal.`
+    : `${who}, but its CLI (code) is not on PATH. VS Code's Linux packages normally provide it; check that its bin directory is on PATH, then open a new terminal.`;
+}
+
+function missingCliAdapter(editor: 'zed' | 'vscode', platform: NodeJS.Platform, detected: boolean): HostActionAdapter {
+  const reason = missingCliMessage(editor, platform, detected);
+  return {id: 'none', label: editor === 'zed' ? 'Zed (CLI not found)' : 'VS Code (CLI not found)',
+    capabilities: {...(detected ? {integratedEditor: editor} : {}), cliMissing: editor === 'zed' ? 'zed' : 'code', nativeFileOpen: false, nativeDirectoryOpen: false, nativeDiff: false},
+    openFile: () => ({kind: 'unsupported', reason}), openDirectory: () => ({kind: 'unsupported', reason}), openDiff: () => ({kind: 'unsupported', reason})};
+}
+
 /** VISUAL then EDITOR, split on whitespace (no shell parsing; quotes are not interpreted). */
 export function configuredEditor(env: NodeJS.ProcessEnv): string[] | undefined {
   const value = (env.VISUAL || env.EDITOR || '').trim();
@@ -158,17 +186,17 @@ export function resolveHostActions(openWith: OpenWith, host: HostEnvironment = s
   const program = host.env.TERM_PROGRAM;
   const inZed = program === 'zed' || Boolean(host.env.ZED_TERM);
   const inVsCode = program === 'vscode';
-  const zed = () => host.which('zed') ?? host.which('zeditor');
+  const zed = () => host.which('zed') ?? host.which('zeditor') ?? host.which('zedit') ?? host.which('zed-editor');
   const code = () => host.which('code');
   if (openWith === 'zed' || (openWith === 'auto' && inZed)) {
     const executable = zed();
     if (executable) return zedAdapter(executable, host, inZed);
-    if (openWith === 'zed') return {...NONE, openFile: () => ({kind: 'unsupported', reason: 'Open with is Zed, but the zed CLI is not on PATH (Zed: "cli: install").'})};
+    if (openWith === 'zed' || !configuredEditor(host.env)) return missingCliAdapter('zed', host.platform ?? process.platform, inZed);
   }
   if (openWith === 'vscode' || (openWith === 'auto' && inVsCode)) {
     const executable = code();
     if (executable) return vscodeAdapter(executable, inVsCode);
-    if (openWith === 'vscode') return {...NONE, openFile: () => ({kind: 'unsupported', reason: 'Open with is VS Code, but the code CLI is not on PATH (VS Code: "Shell Command: Install \'code\' command in PATH").'})};
+    if (openWith === 'vscode' || !configuredEditor(host.env)) return missingCliAdapter('vscode', host.platform ?? process.platform, inVsCode);
   }
   const editor = configuredEditor(host.env);
   if (editor) {

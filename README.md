@@ -247,7 +247,8 @@ Where a host differs, NMSh says so factually (for example, "Appearance is config
 - **Cmd+A:** Select all input (requires Ghostty forwarding setup)
 - **Cmd+Up/Down:** Jump to top/bottom of buffer (requires Ghostty forwarding setup)
 - **Shift+Left/Right:** Character selection
-- **Up/Down:** Recall previous/next submitted commands when the caret is on the first/last editor line; Down past the newest restores your unsent draft. Multiline drafts move by line first; open menus and panels keep their own Up/Down.
+- **Up/Down:** Recall previous/next submitted commands when the caret is on the first/last editor line; Down past the newest restores your unsent draft. Multiline drafts move by line first. A completion or slash-command menu is entered with Down; Up from its first row returns to history. Panels and /history, /dirs keep their own Up/Down.
+- **Ctrl+F:** Find in the transcript (adds a term; terms AND together). `/find` does the same; Cmd+F stays the host's own find.
 - **PageUp/PageDown, mouse wheel:** Scroll output history
 
 *(Note: In VS Code, Shift+Enter is often indistinguishable from Enter by default. Use Ctrl+J as a reliable multiline fallback.)*

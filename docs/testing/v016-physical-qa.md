@@ -27,11 +27,20 @@ WezTerm are supported profiles.
 ## History, completion, find/filter
 - `/history make` in a repo ranks this directory's commands first.
 - `/history agent:claude` lists only agent runs.
-- `/find error` after noisy output: bar above composer, count, Enter/Shift+Enter
-  step and scroll, Tab cycles case/regex, Esc closes; Cmd/Ctrl+F still opens
-  the host's own find.
-- `npm test` then `/filter FAIL`, `/filter -v PASS`, `/filter -C 2 FAIL`,
-  `/filter clear`; `/copy` copies the full output while filtered.
+- `/find error`, then `/find disk`: only lines with both match; chrome shows
+  both terms left with the count; `/find remove 1`, `/find clear`.
+- Ctrl+F at the idle composer opens a new term (caret visible); Enter applies
+  it, empty Enter/Shift+Enter step older/newer; Esc keeps applied terms.
+  Ctrl+F inside `less`/`vim` still reaches the program; Cmd+F is the host's.
+- Five find terms and four filter terms: exactly two chrome rows with
+  `+3 more` / `+2 more`; narrow the window: summaries on one row.
+- Type `/screensaver`, press Up: previous command. Down enters the menu,
+  Up from its first row returns to history; Tab still completes.
+- Inside Zed/VS Code without the CLI: `/open x.ts` names the editor and its
+  install step; `/status` shows Integrated editor, Editor bridge unavailable.
+- `npm test` then `/filter FAIL`, `/filter network` (AND), `/filter -v PASS`,
+  `/filter -C 2 FAIL`, `/filter remove 2`, `/filter clear`; run another
+  command: the filter stays on its block; `/copy` copies the full output.
 
 ## Shell backends (each host)
 - `/shell`: lists zsh/Fish/Bash with versions or "not installed".

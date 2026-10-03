@@ -122,7 +122,21 @@ import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
 import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
 import {fishQuote, posixQuote} from '../shell/adapters/ShellAdapter.js';
-import {compileQuery, createFind, findStatus, parseSearchArguments, refreshFind, revealStart, stepFind, type FindState} from '../output/TranscriptSearch.js';
+import {compileQuery, createFind, findCount, parseSearchCommand, refreshFind, revealStart, stepFind, type FindState} from '../output/TranscriptSearch.js';
+import {searchChromeRows} from '../output/SearchChrome.js';
+
+/** A row's plain text with spans marked: the active result strongly, others underlined. */
+function markSpans(plain: string, spans: ReadonlyArray<{start: number; end: number}>, strong: string, base: string, weak: string): string {
+  const ordered = [...spans].sort((a, b) => a.start - b.start);
+  let output = base;
+  let index = 0;
+  for (const span of ordered) {
+    if (span.start < index) continue;
+    output += `${plain.slice(index, span.start)}\u001b[0m${weak || strong}${plain.slice(span.start, span.end)}\u001b[0m${base}`;
+    index = span.end;
+  }
+  return `${output}${plain.slice(index)}\u001b[0m`;
+}
 import {shellAdapter, shellAvailability} from '../shell/adapters/registry.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
 import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
@@ -325,6 +339,14 @@ export class TerminalApp {
   private shellId: ShellId = 'zsh';
   private shellPanel?: ShellPanelState;
   private shellSwitching = false;
+  /** The slash text whose suggestion menu Down entered; Up from its first row leaves it. */
+  private slashMenuFor?: string;
+
+  private leaveSlashMenu(): true {
+    this.slashMenuFor = undefined;
+    this.selectedSuggestion = 0;
+    return true;
+  }
   /** The transcript find bar, while open. */
   private findState?: FindState;
   /** Facts about the machine and shell setup; read once, never per frame. */
@@ -1034,7 +1056,7 @@ export class TerminalApp {
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
       return;
     }
-    if (this.findState && !this.settingsPanelActive && this.handleFindKey(key)) return;
+    if (this.findState?.editing && !this.settingsPanelActive && this.handleFindKey(key)) return;
     if (this.openPanel) {
       const panel = this.openPanel;
       const action = openPanelKey(panel, key);
@@ -1269,6 +1291,13 @@ export class TerminalApp {
       }
       return;
     }
+    if (key.kind === 'find') {
+      // Transcript find while NMSh owns the idle composer; a running command
+      // still receives the byte, exactly as it would without NMSh.
+      if (this.running) this.session.write('\u0006');
+      else { this.openFindEditor(); this.render(); }
+      return;
+    }
     if (key.kind === 'suspend') {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
@@ -1339,10 +1368,20 @@ export class TerminalApp {
       ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
       : this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
     const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
-    if (key.kind === 'up' && suggestions.length > 0) {
+    // /history and /dirs own Up/Down. Slash suggestions behave like the shell
+    // completion menu: Down enters it, Up from its first row (or before
+    // entering it) leaves it for command history.
+    const searchSurface = this.historySearchActive || this.directorySearchActive;
+    const inSlashMenu = this.slashMenuFor === this.editor.text;
+    if (key.kind === 'up' && suggestions.length > 0 && (searchSurface || (inSlashMenu && this.selectedSuggestion > 0))) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
-    } else if (key.kind === 'down' && suggestions.length > 0) {
-      this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
+    } else if (key.kind === 'down' && suggestions.length > 0 && (searchSurface || isSlash)) {
+      if (!searchSurface && !inSlashMenu) { this.slashMenuFor = this.editor.text; this.selectedSuggestion = 0; }
+      else this.selectedSuggestion = (this.selectedSuggestion + 1) % suggestions.length;
+    } else if (key.kind === 'up' && isSlash && !searchSurface && suggestions.length > 0 && this.leaveSlashMenu()) {
+      // Left the slash menu; fall through to history recall below.
+      const {columns} = this.dimensions();
+      if (!this.editor.moveUp(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'complete') {
       const action = tabCompletionAction(this.shellSuggestions.length, isSlash ? suggestions.length : 0);
       if (action === 'shell-suggestion') {
@@ -1734,7 +1773,7 @@ export class TerminalApp {
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
-    else if (slash.kind === 'find') this.openFind(slash.arguments);
+    else if (slash.kind === 'find') this.findCommand(command, slash.arguments);
     else if (slash.kind === 'open') {
       if (slash.target) await this.openLocation(command, slash.target, this.shellCwd);
       else { this.panelOrigin = undefined; this.openPanel = {references: this.recentReferences(), selected: 0, editor: this.hostActions().label}; }
@@ -3837,8 +3876,18 @@ export class TerminalApp {
         {label: 'Directory navigation', value: this.directoryService.status.detail ?? this.directoryService.status.active},
         {label: 'Picker', value: this.promptConfiguration.picker},
         {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
-        {label: 'Open with', value: (() => { const host = this.hostActions(); const caps = host.capabilities;
-          return host.id === 'none' ? 'no editor known (set VISUAL/EDITOR or Open with)' : `${host.label} · file ${caps.nativeFileOpen ? 'yes' : 'no'} · folder ${caps.nativeDirectoryOpen ? 'yes' : 'no'} · diff ${caps.nativeDiff ? 'yes' : 'no'}`; })()},
+        ...(() => {
+          const host = this.hostActions();
+          const caps = host.capabilities;
+          const editor = caps.integratedEditor === 'zed' ? 'Zed' : caps.integratedEditor === 'vscode' ? 'VS Code' : undefined;
+          return [
+            ...(editor ? [{label: 'Integrated editor', value: editor}] : []),
+            {label: 'Editor bridge', value: host.id === 'none' ? (editor ? 'unavailable' : 'no editor known (set VISUAL/EDITOR or Open with)')
+              : `${host.label} · file ${caps.nativeFileOpen ? 'yes' : 'no'} · folder ${caps.nativeDirectoryOpen ? 'yes' : 'no'} · diff ${caps.nativeDiff ? 'yes' : 'no'}`,
+              ...(host.id === 'none' ? {tone: 'warning' as const} : {})},
+            ...(caps.cliMissing ? [{label: caps.cliMissing === 'zed' ? 'Zed CLI' : 'code CLI', value: 'not found on PATH', tone: 'warning' as const}] : []),
+          ];
+        })(),
         {label: 'Completion sources', value: this.completionService.sourceIds.join(' + ')},
         {label: 'Session notices', value: config.sessionNotices ? (this.sessionMode === 'service' ? 'On' : 'On (needs the live-session service)') : 'Off'},
         {label: 'Agent activity', value: config.agentActivity ? 'On · local only' : 'Off'},
@@ -4517,7 +4566,7 @@ export class TerminalApp {
 
   private planWithNotices(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
     panelRows: number | undefined): ScreenPlan {
-    const find = panelRows === undefined && this.findState ? 1 : 0;
+    const find = panelRows === undefined ? this.searchChrome(columns).length : 0;
     const count = panelRows === undefined ? this.noticeRows(columns).length : 0;
     // Notices never squeeze the composer or transcript out: small screens simply do not show them.
     const notices = count > 0 && rows - find >= 12 + count ? count : 0;
@@ -4676,13 +4725,13 @@ export class TerminalApp {
   /** Changes whenever presented rows may have changed; matches are recomputed only then. */
   private findGeneration(wrapped: readonly WrappedRow[], columns: number): string {
     const filter = this.output.activeFilter;
-    return `${wrapped.length}|${columns}|${this.lastOutputTime}|${filter ? `${filter.startId}:${filter.query}:${filter.invert}:${filter.context}` : ''}`;
+    return `${wrapped.length}|${columns}|${this.lastOutputTime}|${filter ? JSON.stringify(filter) : ''}`;
   }
 
   private revealFindMatch(totalRows: number, height: number): void {
-    const match = this.findState?.matches[this.findState.active];
-    if (!match) return;
-    this.historyViewport.scrollLines(totalRows, height, revealStart(match.row, totalRows, height) - this.historyViewport.resolve(totalRows, height));
+    const result = this.findState?.results[this.findState.active];
+    if (!result) return;
+    this.historyViewport.scrollLines(totalRows, height, revealStart(result.row, totalRows, height) - this.historyViewport.resolve(totalRows, height));
   }
 
   /** The block a block-scoped action targets: the focused block, else the newest completed one. */
@@ -4691,60 +4740,112 @@ export class TerminalApp {
     return this.output.recent(index + 1)?.startId;
   }
 
-  private openFind(argumentsText: string): void {
-    const parsed = parseSearchArguments(argumentsText);
-    const block = parsed.block ? this.targetBlockStartId() : undefined;
-    this.findState = createFind(parsed.query, parsed.options, block === undefined ? 'transcript' : 'block', block);
+  /** Ctrl+F or /find alone: a fresh clause input; applied clauses stay. */
+  private openFindEditor(): void {
+    this.findState ??= createFind();
+    this.findState.editing = {query: '', options: {regex: false, caseSensitive: false}};
   }
 
-  private findBarRow(columns: number): string {
-    const state = this.findState!;
-    const query = `${ACCENT}${getCurrentGlyphMode() === 'safe' ? '/' : '⌕'}${RESET} ${PRIMARY}${state.query}${ACCENT}_${RESET}`;
-    const hints = 'Enter older · Shift+Enter newer · Tab options · Esc close';
-    return truncateAnsi(`${query}  ${state.error ? ERROR : SECONDARY}${findStatus(state)}${RESET}  ${SUBTLE}${hints}${RESET}`, columns);
+  private findCommand(command: string, argumentsText: string): void {
+    const parsed = parseSearchCommand(argumentsText);
+    const say = (message: string, style = INFO) => this.output.addFrontendInteraction(command, message, style);
+    if (parsed.kind === 'open') { this.openFindEditor(); return; }
+    if (parsed.kind === 'clear') { this.findState = undefined; say('Find cleared.'); return; }
+    if (parsed.kind === 'remove') {
+      const clauses = this.findState?.clauses ?? [];
+      if (parsed.index < 1 || parsed.index > clauses.length) { say(`No find term ${parsed.index}; ${clauses.length} active.`, ERROR); return; }
+      clauses.splice(parsed.index - 1, 1);
+      if (!clauses.length && !this.findState?.editing) this.findState = undefined;
+      return;
+    }
+    if (!parsed.parsed.query) { this.openFindEditor(); return; }
+    const check = compileQuery(parsed.parsed.query, parsed.parsed.options);
+    if (!check.ok) { say(`Invalid regular expression: ${check.error}`, ERROR); return; }
+    if (!this.findState) {
+      const block = parsed.parsed.block ? this.targetBlockStartId() : undefined;
+      this.findState = createFind(block === undefined ? 'transcript' : 'block', block);
+    }
+    // Repeated /find adds a clause: every clause must match the same logical line (AND).
+    this.findState.clauses.push({query: parsed.parsed.query, options: parsed.parsed.options});
   }
 
-  /** Find bar keys. Returns false for keys the bar does not own (they reach the composer as usual). */
+  /** Find and filter status above the composer: at most two rows. */
+  private searchChrome(columns: number): string[] {
+    const find = this.findState;
+    const filter = this.output.activeFilter;
+    const safe = getCurrentGlyphMode() === 'safe';
+    return searchChromeRows(find ? {clauses: find.clauses, ...(find.editing ? {editing: find.editing} : {}), count: findCount(find), error: Boolean(find.error)} : undefined,
+      filter ? {clauses: filter.clauses} : undefined, columns,
+      {accent: ACCENT, primary: PRIMARY, secondary: SECONDARY, subtle: SUBTLE, error: ERROR, reset: RESET},
+      safe ? {find: '/', filter: '|'} : {find: '⌕', filter: '⧩'}).map(row => truncateAnsi(row, columns));
+  }
+
+  /**
+   * Find editor keys (while a clause is being typed). Enter applies a typed
+   * clause, or with an empty input steps to the older match; Shift+Enter steps
+   * newer; Tab cycles the clause's options; Esc discards only the input.
+   * Returns false for keys the editor does not own.
+   */
   private handleFindKey(key: Key): boolean {
     const state = this.findState!;
+    const editing = state.editing;
+    if (!editing) return false;
     const {columns, rows} = this.dimensions();
     const step = (direction: 'next' | 'previous') => {
       stepFind(state, direction);
       const total = this.output.wrapped(columns).length;
       this.revealFindMatch(total, this.planFrame(columns, rows).viewportRows);
     };
-    if (key.kind === 'escape' || key.kind === 'interrupt') { this.findState = undefined; this.render(); return true; }
-    if (key.kind === 'enter' || key.kind === 'up') step('next');
+    if (key.kind === 'escape' || key.kind === 'interrupt') {
+      state.editing = undefined;
+      if (!state.clauses.length) this.findState = undefined;
+    } else if (key.kind === 'enter') {
+      if (editing.query) {
+        if (!compileQuery(editing.query, editing.options).ok) return true;
+        state.clauses.push(editing);
+        state.editing = {query: '', options: {regex: false, caseSensitive: false}};
+      } else step('next');
+    } else if (key.kind === 'up') step('next');
     else if (key.kind === 'newline' || key.kind === 'down') step('previous');
     else if (key.kind === 'complete') {
       // Tab cycles: plain → case-sensitive → regex → regex + case.
       const order = [[false, false], [false, true], [true, false], [true, true]] as const;
-      const current = order.findIndex(([regex, caseSensitive]) => regex === state.options.regex && caseSensitive === state.options.caseSensitive);
+      const current = order.findIndex(([regex, caseSensitive]) => regex === editing.options.regex && caseSensitive === editing.options.caseSensitive);
       const [regex, caseSensitive] = order[(current + 1) % order.length]!;
-      state.options = {regex, caseSensitive};
-    } else if (key.kind === 'text') state.query += key.value;
-    else if (key.kind === 'paste') state.query += key.value.replace(/[\r\n]+/gu, ' ');
-    else if (key.kind === 'backspace') state.query = [...state.query].slice(0, -1).join('');
-    else if (key.kind === 'deleteWord' || key.kind === 'deleteLineBefore') state.query = '';
+      editing.options = {regex, caseSensitive};
+    } else if (key.kind === 'text') editing.query += key.value;
+    else if (key.kind === 'paste') editing.query += key.value.replace(/[\r\n]+/gu, ' ');
+    else if (key.kind === 'backspace') editing.query = [...editing.query].slice(0, -1).join('');
+    else if (key.kind === 'deleteWord' || key.kind === 'deleteLineBefore') editing.query = '';
+    else if (key.kind === 'find') { /* already open */ }
     else return false;
     this.render();
     return true;
   }
 
   private applyFilterCommand(command: string, argumentsText: string): void {
-    const parsed = parseSearchArguments(argumentsText);
-    if (!parsed.query || parsed.query === 'clear') {
-      const had = this.output.activeFilter;
+    const parsed = parseSearchCommand(argumentsText);
+    const say = (message: string, style = INFO) => { this.output.addFrontendInteraction(command, message, style); this.render(); };
+    const current = this.output.activeFilter;
+    if (parsed.kind === 'open' || parsed.kind === 'clear') {
       this.output.setOutputFilter(undefined);
-      this.output.addFrontendInteraction(command, had ? 'Filter cleared; the complete output is shown again.' : 'No filter is active.', INFO);
+      say(current ? 'Filter cleared; the complete output is shown again.' : 'No filter is active. /filter <text> shows only matching lines of the newest output.');
+      return;
+    }
+    if (parsed.kind === 'remove') {
+      if (!current || parsed.index < 1 || parsed.index > current.clauses.length) { say(`No filter term ${parsed.index}; ${current?.clauses.length ?? 0} active.`, ERROR); return; }
+      const clauses = current.clauses.filter((_clause, index) => index !== parsed.index - 1);
+      this.output.setOutputFilter(clauses.length ? {startId: current.startId, clauses} : undefined);
       this.render();
       return;
     }
-    const startId = this.targetBlockStartId();
-    if (startId === undefined) { this.output.addFrontendInteraction(command, 'There is no command output to filter yet.', ERROR); this.render(); return; }
-    const check = compileQuery(parsed.query, parsed.options);
-    if (!check.ok) { this.output.addFrontendInteraction(command, `Invalid regular expression: ${check.error}`, ERROR); this.render(); return; }
-    this.output.setOutputFilter({startId, query: parsed.query, options: parsed.options, invert: parsed.invert, context: parsed.context});
+    const {query, options, invert, context} = parsed.parsed;
+    const check = compileQuery(query, options);
+    if (!check.ok) { say(`Invalid regular expression: ${check.error}`, ERROR); return; }
+    // Repeated /filter adds a clause to the same block's set (AND); it never moves to a newer block.
+    const startId = current?.startId ?? this.targetBlockStartId();
+    if (startId === undefined) { say('There is no command output to filter yet.', ERROR); return; }
+    this.output.setOutputFilter({startId, clauses: [...(current?.clauses ?? []), {query, options, invert, context}]});
     this.historyViewport.latest();
     this.render();
   }
@@ -4915,13 +5016,15 @@ export class TerminalApp {
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
       focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId,
       now: presentationNow().getTime()};
-    const activeMatch = this.findState ? this.findState.matches[this.findState.active] : undefined;
+    // Matching lines show every clause's spans; the active result is marked more strongly. Presentation only.
+    const findSpans = new Map<number, {spans: Array<{start: number; end: number}>; active: boolean}>();
+    if (this.findState) this.findState.results.forEach((result, index) => {
+      for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
+    });
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
-      if (activeMatch && activeMatch.row === viewStart + offset) {
-        // The active match: its row as plain text with the match marked. Presentation only.
-        const mark = `${background(UI_COLORS.selection)}${PRIMARY}`;
-        return `${SECONDARY}${row.plain.slice(0, activeMatch.start)}${RESET}${mark}${row.plain.slice(activeMatch.start, activeMatch.end)}${RESET}${SECONDARY}${row.plain.slice(activeMatch.end)}${RESET}`;
-      }
+      const marked = findSpans.get(viewStart + offset);
+      if (marked) return markSpans(row.plain, marked.spans, `${background(UI_COLORS.selection)}${PRIMARY}`, marked.active ? `${PRIMARY}` : SECONDARY,
+        marked.active ? '' : '\u001b[4m');
       const ansi = presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction);
       const focused = this.focusedCommandIndex !== undefined && row.lineIndex === this.output.recent(this.focusedCommandIndex + 1)?.startId;
       const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) ? blockAffordance(row, columns) : undefined;
@@ -5009,7 +5112,7 @@ export class TerminalApp {
         case 'separator': return [separator];
         case 'status': return [this.statusStripRow(columns)];
         case 'notices': return this.noticeRows(columns);
-        case 'find': return [this.findBarRow(columns)];
+        case 'find': return this.searchChrome(columns);
       }
     };
     const frameRows = new Array<string>(plan.rows).fill('');

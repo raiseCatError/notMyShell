@@ -78,7 +78,25 @@ test('HostActions: terminals are not editors; VISUAL/EDITOR fallback composes a 
   const codeEditor = resolveHostActions('auto', host({EDITOR: 'code -w'}, {code: '/bin/code'}));
   assert.equal(codeEditor.id, 'vscode', 'a GUI editor in EDITOR keeps its native integration');
   const forcedMissing = resolveHostActions('zed', host({}, {}));
-  assert.match((forcedMissing.openFile({path: '/x'}) as {reason: string}).reason, /zed CLI is not on PATH/u);
+  assert.match((forcedMissing.openFile({path: '/x'}) as {reason: string}).reason, /^Open with is Zed, but its CLI/u, 'not "detected" when only configured');
   assert.equal(normalizePromptConfiguration({openWith: 'sublime'}).openWith, 'auto');
   assert.equal(normalizePromptConfiguration({openWith: 'vscode'}).openWith, 'vscode');
+});
+
+test('HostActions: inside Zed or VS Code without its CLI the message names the editor and its own install step', () => {
+  const zed = resolveHostActions('auto', {...host({TERM_PROGRAM: 'zed', ZED_TERM: 'true'}), platform: 'darwin'});
+  assert.equal(zed.capabilities.integratedEditor, 'zed');
+  assert.equal(zed.capabilities.cliMissing, 'zed');
+  const zedReason = (zed.openFile({path: '/x'}) as {reason: string}).reason;
+  assert.match(zedReason, /^Zed detected, but its CLI \(zed\) is not on PATH\. In Zed: Cmd\+Shift\+P → "cli: install cli binary"/u);
+  assert.doesNotMatch(zedReason, /No editor is known/u);
+  const zedLinux = resolveHostActions('auto', {...host({TERM_PROGRAM: 'zed'}), platform: 'linux'});
+  assert.match((zedLinux.openDiff('/a', '/b') as {reason: string}).reason, /~\/\.local\/bin/u);
+  const code = resolveHostActions('auto', {...host({TERM_PROGRAM: 'vscode'}), platform: 'darwin'});
+  assert.equal(code.capabilities.cliMissing, 'code');
+  assert.match((code.openFile({path: '/x'}) as {reason: string}).reason, /^VS Code detected, but its CLI \(code\) is not on PATH\. In VS Code: Cmd\+Shift\+P → "Shell Command: Install 'code' command in PATH"/u);
+  const zeditor = resolveHostActions('auto', host({TERM_PROGRAM: 'zed'}, {zeditor: '/usr/bin/zeditor'}, '--diff'));
+  assert.deepEqual((zeditor.openFile({path: '/a.ts', line: 2}) as {command: string; args: string[]}).args, ['/a.ts:2'], 'installed CLI (any packaged name) works as before');
+  const generic = resolveHostActions('auto', host({TERM_PROGRAM: 'Apple_Terminal'}));
+  assert.match((generic.openFile({path: '/x'}) as {reason: string}).reason, /No editor is known here/u, 'a plain terminal keeps the generic message');
 });
