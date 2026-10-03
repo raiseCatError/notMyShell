@@ -1,6 +1,7 @@
 import {Highlighter} from '../input/Highlighter.js';
 import {graphemes} from '../input/inputLayout.js';
 import {completionLabel, type CompletionCandidate, type CompletionKind} from './completion.js';
+import type {CommandType} from './SemanticService.js';
 
 export interface CommandKnowledge {
   value: string;
@@ -56,10 +57,10 @@ export interface InspectorContext extends CommandKnowledge {
 
 /** Grapheme cursor, like CommandEditor. Highlighter owns lexical boundaries; no shell evaluation. */
 export function inspectCommand(buffer: string, cursor: number, cwd: string,
-  candidates: readonly CompletionCandidate[] = []): InspectorContext | undefined {
+  candidates: readonly CompletionCandidate[] = [], shellNames: ReadonlyMap<string, CommandType> = new Map()): InspectorContext | undefined {
   const chars = graphemes(buffer);
   const at = Math.max(0, Math.min(chars.length, cursor));
-  const tokens = new Highlighter().tokenize(chars, new Map());
+  const tokens = new Highlighter().tokenize(chars, new Map(shellNames));
   const token = tokens.find(item => item.start <= at && at < item.end)
     ?? tokens.find(item => item.end === at && item.type !== 'Normal');
   if (!token || ['Normal', 'Comment', 'Operator'].includes(token.type)) return undefined;
@@ -67,10 +68,14 @@ export function inspectCommand(buffer: string, cursor: number, cwd: string,
   // Restrict knowledge to simple commands. Substitutions, redirects and wrappers are context-only.
   let boundary = -1;
   before.forEach((item, index) => {
-    if (item.type === 'Operator' || item.type === 'Normal' && item.text.includes('\n')) boundary = index;
+    if (item.type === 'Operator' && ['|', '||', '&&', '&', ';', ';;', '(', ')'].includes(item.text)
+      || item.type === 'Normal' && item.text.includes('\n')) boundary = index;
   });
-  const words = before.slice(boundary + 1).filter(item => item.type !== 'Normal');
-  const commandToken = words.find(item => /Command$|^Command$/u.test(item.type));
+  const segment = before.slice(boundary + 1);
+  const words = segment.filter(item => !['Normal', 'Operator', 'Comment'].includes(item.type));
+  // Styling roles do not encode command position for quoted/path words.
+  // The first word after assignments is still a command, even without facts.
+  const commandToken = words.find(item => !/^[A-Za-z_][A-Za-z0-9_]*=/u.test(item.text));
   const command = commandToken?.text ?? '';
   const start = chars.slice(0, token.start).join('').length;
   const end = chars.slice(0, token.end).join('').length;
@@ -78,12 +83,15 @@ export function inspectCommand(buffer: string, cursor: number, cwd: string,
   const word = token.text;
   const candidate = candidates.find(item => item.context.buffer === buffer && item.context.cwd === cwd
     && item.replacement.start === start && item.replacement.end === end && item.value === word);
-  const simple = words[0] === commandToken && !/[\\'"$`]/u.test(word);
+  const simple = words[0] === commandToken && !segment.some(item => item.type === 'Operator')
+    && !/[\\'"$`]/u.test(word) && !/[\\'"$`]/u.test(command);
   const optionsEnded = words.slice(0, -1).some(item => item.text === '--');
   const known = simple && !optionsEnded ? localKnowledge(command, word, commandPosition) : undefined;
   const fact = known?.kind === 'subcommand' && words.length !== 2 ? undefined : known;
   const kind: CompletionKind = commandPosition ? 'command' : token.type === 'Flag' && !optionsEnded ? 'option' : 'argument';
+  const shellType = commandPosition ? shellNames.get(word) : undefined;
+  const shellDescription = shellType === 'alias' ? 'Alias visible in the current shell' : shellType === 'function' ? 'Function visible in the current shell' : undefined;
   return {value: completionLabel(word), kind: candidate?.kind ?? fact?.kind ?? kind,
-    description: completionLabel(candidate?.description || fact?.description || 'No local description available'),
-    usage: fact?.usage, start, end, command, source: candidate?.description ? candidate.source : fact ? 'local' : 'context'};
+    description: completionLabel(shellDescription || candidate?.description || fact?.description || 'No local description available'),
+    usage: shellDescription ? undefined : fact?.usage, start, end, command, source: shellDescription ? 'shell-metadata' : candidate?.description ? candidate.source : fact ? 'local' : 'context'};
 }
