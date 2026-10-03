@@ -119,6 +119,10 @@ import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.j
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {InstallProvenance} from '../tools/InstallProvenance.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
+import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
+import {fishQuote, posixQuote} from '../shell/adapters/ShellAdapter.js';
+import {compileQuery, createFind, findStatus, parseSearchArguments, refreshFind, revealStart, stepFind, type FindState} from '../output/TranscriptSearch.js';
 import {shellAdapter, shellAvailability} from '../shell/adapters/registry.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
 import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
@@ -321,6 +325,8 @@ export class TerminalApp {
   private shellId: ShellId = 'zsh';
   private shellPanel?: ShellPanelState;
   private shellSwitching = false;
+  /** The transcript find bar, while open. */
+  private findState?: FindState;
   /** Facts about the machine and shell setup; read once, never per frame. */
   private get platformInfo(): PlatformInfo { return this.cachedPlatform ??= detectPlatform(); }
   private cachedPlatform?: PlatformInfo;
@@ -1028,6 +1034,19 @@ export class TerminalApp {
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
       return;
     }
+    if (this.findState && !this.settingsPanelActive && this.handleFindKey(key)) return;
+    if (this.openPanel) {
+      const panel = this.openPanel;
+      const action = openPanelKey(panel, key);
+      if (action === 'close') { this.openPanel = undefined; this.returnFromPanel(); }
+      else if (action === 'open') {
+        const reference = panel.references[panel.selected]!;
+        this.openPanel = undefined;
+        void this.openLocation(`/open ${reference.text}`, `${reference.path}:${reference.line ?? ''}${reference.column ? `:${reference.column}` : ''}`.replace(/:$/u, ''), reference.cwd);
+      }
+      this.render();
+      return;
+    }
     if (this.shellPanel) {
       const action = shellPanelKey(this.shellPanel, key);
       if (action?.kind === 'close') { this.shellPanel = undefined; this.returnFromPanel(); }
@@ -1715,6 +1734,13 @@ export class TerminalApp {
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
+    else if (slash.kind === 'find') this.openFind(slash.arguments);
+    else if (slash.kind === 'open') {
+      if (slash.target) await this.openLocation(command, slash.target, this.shellCwd);
+      else { this.panelOrigin = undefined; this.openPanel = {references: this.recentReferences(), selected: 0, editor: this.hostActions().label}; }
+    }
+    else if (slash.kind === 'openDiff') await this.openDiff(command, slash.left, slash.right);
+    else if (slash.kind === 'filter') this.applyFilterCommand(command, slash.arguments);
     else if (slash.kind === 'shell') {
       if (slash.shell) await this.switchShell(slash.shell, command);
       else { this.panelOrigin = undefined; this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker()); }
@@ -2736,7 +2762,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2794,6 +2820,7 @@ export class TerminalApp {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4, this.promptConfiguration.presentation), columns);
     }
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
+    if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
@@ -3798,6 +3825,8 @@ export class TerminalApp {
         {label: 'Directory navigation', value: this.directoryService.status.detail ?? this.directoryService.status.active},
         {label: 'Picker', value: this.promptConfiguration.picker},
         {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
+        {label: 'Open with', value: (() => { const host = this.hostActions(); const caps = host.capabilities;
+          return host.id === 'none' ? 'no editor known (set VISUAL/EDITOR or Open with)' : `${host.label} · file ${caps.nativeFileOpen ? 'yes' : 'no'} · folder ${caps.nativeDirectoryOpen ? 'yes' : 'no'} · diff ${caps.nativeDiff ? 'yes' : 'no'}`; })()},
         {label: 'Completion sources', value: this.completionService.sourceIds.join(' + ')},
         {label: 'Session notices', value: config.sessionNotices ? (this.sessionMode === 'service' ? 'On' : 'On (needs the live-session service)') : 'Off'},
         {label: 'Agent activity', value: config.agentActivity ? 'On · local only' : 'Off'},
@@ -4476,10 +4505,13 @@ export class TerminalApp {
 
   private planWithNotices(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
     panelRows: number | undefined): ScreenPlan {
+    const find = panelRows === undefined && this.findState ? 1 : 0;
     const count = panelRows === undefined ? this.noticeRows(columns).length : 0;
     // Notices never squeeze the composer or transcript out: small screens simply do not show them.
-    if (count === 0 || rows < 12 + count) return this.planComposer(columns, rows, fullInput, suggestions, panelRows);
-    return withNoticeRows(this.planComposer(columns, rows - count, fullInput, suggestions, panelRows), count);
+    const notices = count > 0 && rows - find >= 12 + count ? count : 0;
+    const plan = this.planComposer(columns, rows - notices - find, fullInput, suggestions, panelRows);
+    // The find bar sits right above the composer, notices above it.
+    return withNoticeRows(withNoticeRows(plan, find, 'find'), notices);
   }
 
   /** One compact line per notice (max three, the last may summarize overflow). */
@@ -4567,6 +4599,141 @@ export class TerminalApp {
       if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
     } catch { /* A failed sample keeps the previous values. */ }
     finally { this.stripSampling = false; }
+  }
+
+  private openPanel?: OpenPanelState;
+
+  private hostActions(): HostActionAdapter {
+    return resolveHostActions(this.promptConfiguration.openWith);
+  }
+
+  /** path:line references in the newest outputs, each with the cwd its command ran in. */
+  private recentReferences(): OpenPanelState['references'] {
+    const references: OpenPanelState['references'] = [];
+    for (let index = 1; index <= 5 && references.length < 200; index += 1) {
+      const record = this.output.recent(index);
+      if (!record) break;
+      const cwd = record.historicalContext?.cwd ?? this.shellCwd;
+      const lines = stripAnsi(record.output).split('\n').slice(-2000).reverse();
+      for (const line of lines) for (const reference of findSourceReferences(line)) {
+        if (!references.some(item => item.text === reference.text && item.cwd === cwd)) references.push({...reference, cwd, command: record.command});
+      }
+    }
+    return references;
+  }
+
+  /** Delegate a location to the editor; relative paths resolve against the command's own cwd. */
+  private async openLocation(command: string, target: string, cwd: string): Promise<void> {
+    const report = (message: string, style: string) => { this.output.addFrontendInteraction(command, message, style); this.render(); };
+    const parsed = parseOpenArgument(target);
+    if (!parsed) return report('Usage: /open <path>[:line[:column]]', INFO);
+    const resolved = resolveLocation(parsed, cwd);
+    if (!resolved.ok) return report(resolved.reason, ERROR);
+    const adapter = this.hostActions();
+    const action = resolved.kind === 'directory' ? adapter.openDirectory(resolved.location.path) : adapter.openFile(resolved.location);
+    await this.performHostAction(action, report);
+  }
+
+  private async openDiff(command: string, left: string, right: string): Promise<void> {
+    const report = (message: string, style: string) => { this.output.addFrontendInteraction(command, message, style); this.render(); };
+    const paths: string[] = [];
+    for (const side of [left, right]) {
+      const resolved = resolveLocation({path: side}, this.shellCwd);
+      if (!resolved.ok) return report(resolved.reason, ERROR);
+      if (resolved.kind !== 'file') return report(`${resolved.location.path} is a directory; /open-diff compares two files.`, ERROR);
+      paths.push(resolved.location.path);
+    }
+    await this.performHostAction(this.hostActions().openDiff(paths[0]!, paths[1]!), report);
+  }
+
+  private async performHostAction(action: HostAction, report: (message: string, style: string) => void): Promise<void> {
+    if (action.kind === 'unsupported') return report(action.reason, INFO);
+    if (action.kind === 'compose') {
+      // Terminal editors take over the terminal: the exact command goes in the composer for you to run.
+      const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+      const line = action.argv.map(arg => (/^[\w@%+=:,./-]+$/u.test(arg) ? arg : quote(arg))).join(' ');
+      this.editor.clear();
+      this.editor.insert(line);
+      return report(`Ready to open in ${action.label}: press Enter to run it.`, INFO);
+    }
+    const failure = await runHostAction(action);
+    report(failure ? `Could not start ${action.label}: ${failure}` : `Opened in ${action.label}.`, failure ? ERROR : INFO);
+  }
+
+  /** Changes whenever presented rows may have changed; matches are recomputed only then. */
+  private findGeneration(wrapped: readonly WrappedRow[], columns: number): string {
+    const filter = this.output.activeFilter;
+    return `${wrapped.length}|${columns}|${this.lastOutputTime}|${filter ? `${filter.startId}:${filter.query}:${filter.invert}:${filter.context}` : ''}`;
+  }
+
+  private revealFindMatch(totalRows: number, height: number): void {
+    const match = this.findState?.matches[this.findState.active];
+    if (!match) return;
+    this.historyViewport.scrollLines(totalRows, height, revealStart(match.row, totalRows, height) - this.historyViewport.resolve(totalRows, height));
+  }
+
+  /** The block a block-scoped action targets: the focused block, else the newest completed one. */
+  private targetBlockStartId(): number | undefined {
+    const index = this.focusedCommandIndex ?? 0;
+    return this.output.recent(index + 1)?.startId;
+  }
+
+  private openFind(argumentsText: string): void {
+    const parsed = parseSearchArguments(argumentsText);
+    const block = parsed.block ? this.targetBlockStartId() : undefined;
+    this.findState = createFind(parsed.query, parsed.options, block === undefined ? 'transcript' : 'block', block);
+  }
+
+  private findBarRow(columns: number): string {
+    const state = this.findState!;
+    const query = `${ACCENT}${getCurrentGlyphMode() === 'safe' ? '/' : '⌕'}${RESET} ${PRIMARY}${state.query}${ACCENT}_${RESET}`;
+    const hints = 'Enter older · Shift+Enter newer · Tab options · Esc close';
+    return truncateAnsi(`${query}  ${state.error ? ERROR : SECONDARY}${findStatus(state)}${RESET}  ${SUBTLE}${hints}${RESET}`, columns);
+  }
+
+  /** Find bar keys. Returns false for keys the bar does not own (they reach the composer as usual). */
+  private handleFindKey(key: Key): boolean {
+    const state = this.findState!;
+    const {columns, rows} = this.dimensions();
+    const step = (direction: 'next' | 'previous') => {
+      stepFind(state, direction);
+      const total = this.output.wrapped(columns).length;
+      this.revealFindMatch(total, this.planFrame(columns, rows).viewportRows);
+    };
+    if (key.kind === 'escape' || key.kind === 'interrupt') { this.findState = undefined; this.render(); return true; }
+    if (key.kind === 'enter' || key.kind === 'up') step('next');
+    else if (key.kind === 'newline' || key.kind === 'down') step('previous');
+    else if (key.kind === 'complete') {
+      // Tab cycles: plain → case-sensitive → regex → regex + case.
+      const order = [[false, false], [false, true], [true, false], [true, true]] as const;
+      const current = order.findIndex(([regex, caseSensitive]) => regex === state.options.regex && caseSensitive === state.options.caseSensitive);
+      const [regex, caseSensitive] = order[(current + 1) % order.length]!;
+      state.options = {regex, caseSensitive};
+    } else if (key.kind === 'text') state.query += key.value;
+    else if (key.kind === 'paste') state.query += key.value.replace(/[\r\n]+/gu, ' ');
+    else if (key.kind === 'backspace') state.query = [...state.query].slice(0, -1).join('');
+    else if (key.kind === 'deleteWord' || key.kind === 'deleteLineBefore') state.query = '';
+    else return false;
+    this.render();
+    return true;
+  }
+
+  private applyFilterCommand(command: string, argumentsText: string): void {
+    const parsed = parseSearchArguments(argumentsText);
+    if (!parsed.query || parsed.query === 'clear') {
+      const had = this.output.activeFilter;
+      this.output.setOutputFilter(undefined);
+      this.output.addFrontendInteraction(command, had ? 'Filter cleared; the complete output is shown again.' : 'No filter is active.', INFO);
+      this.render();
+      return;
+    }
+    const startId = this.targetBlockStartId();
+    if (startId === undefined) { this.output.addFrontendInteraction(command, 'There is no command output to filter yet.', ERROR); this.render(); return; }
+    const check = compileQuery(parsed.query, parsed.options);
+    if (!check.ok) { this.output.addFrontendInteraction(command, `Invalid regular expression: ${check.error}`, ERROR); this.render(); return; }
+    this.output.setOutputFilter({startId, query: parsed.query, options: parsed.options, invert: parsed.invert, context: parsed.context});
+    this.historyViewport.latest();
+    this.render();
   }
 
   /** A factual reason the session cannot switch shells right now, checked before asking the session. */
@@ -4723,6 +4890,11 @@ export class TerminalApp {
     }
 
     const wrapped = this.output.wrapped(columns);
+    if (this.findState) {
+      const before = this.findState.active;
+      refreshFind(this.findState, wrapped, this.findGeneration(wrapped, columns));
+      if (this.findState.active !== before) this.revealFindMatch(wrapped.length, plan.viewportRows);
+    }
     const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
     // Flow's viewport scrolls by its capacity; the region shows only what is on screen.
     const outputHeight = plan.transcript.height;
@@ -4730,7 +4902,13 @@ export class TerminalApp {
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
       focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId,
       now: presentationNow().getTime()};
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
+    const activeMatch = this.findState ? this.findState.matches[this.findState.active] : undefined;
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
+      if (activeMatch && activeMatch.row === viewStart + offset) {
+        // The active match: its row as plain text with the match marked. Presentation only.
+        const mark = `${background(UI_COLORS.selection)}${PRIMARY}`;
+        return `${SECONDARY}${row.plain.slice(0, activeMatch.start)}${RESET}${mark}${row.plain.slice(activeMatch.start, activeMatch.end)}${RESET}${SECONDARY}${row.plain.slice(activeMatch.end)}${RESET}`;
+      }
       const ansi = presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction);
       const focused = this.focusedCommandIndex !== undefined && row.lineIndex === this.output.recent(this.focusedCommandIndex + 1)?.startId;
       const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) ? blockAffordance(row, columns) : undefined;
@@ -4818,6 +4996,7 @@ export class TerminalApp {
         case 'separator': return [separator];
         case 'status': return [this.statusStripRow(columns)];
         case 'notices': return this.noticeRows(columns);
+        case 'find': return [this.findBarRow(columns)];
       }
     };
     const frameRows = new Array<string>(plan.rows).fill('');

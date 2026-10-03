@@ -30,7 +30,9 @@ export type RegionKind =
   /** The optional NMSh status strip: one owned row at the top. */
   | 'status'
   /** Cross-session notices: frontend chrome immediately above the composer, never transcript. */
-  | 'notices';
+  | 'notices'
+  /** The transcript find bar (query, match count, options); frontend chrome above the composer. */
+  | 'find';
 
 export interface Region {
   kind: RegionKind;
@@ -215,12 +217,12 @@ const COMPOSER_KINDS: ReadonlySet<RegionKind> = new Set(['composerBorder', 'prom
  * moves, so the transcript keeps its geometry. Without a composer (a panel owns
  * the screen) the plan is returned unchanged.
  */
-export function withNoticeRows(plan: ScreenPlan, count: number): ScreenPlan {
+export function withNoticeRows(plan: ScreenPlan, count: number, kind: 'notices' | 'find' = 'notices'): ScreenPlan {
   const index = plan.regions.findIndex(region => COMPOSER_KINDS.has(region.kind));
   if (count <= 0 || index === -1 || plan.panelActive) return plan;
   const at = plan.regions[index]!.top;
   const shift = (region: Region): Region => (region.top >= at ? {...region, top: region.top + count} : region);
-  const regions = [...plan.regions.slice(0, index), {kind: 'notices' as const, top: at, height: count}, ...plan.regions.slice(index).map(shift)];
+  const regions = [...plan.regions.slice(0, index), {kind, top: at, height: count}, ...plan.regions.slice(index).map(shift)];
   return {...plan, rows: plan.rows + count, regions, transcript: shift(plan.transcript)};
 }
 

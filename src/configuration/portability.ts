@@ -34,6 +34,7 @@ export const PORTABLE_CATEGORIES = {
   sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention'],
   agents: ['agentActivity'],
   shell: ['shellBackend'],
+  editor: ['openWith'],
 } as const satisfies Record<string, readonly string[]>;
 
 export type PortableCategory = keyof typeof PORTABLE_CATEGORIES;

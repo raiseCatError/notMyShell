@@ -112,6 +112,7 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     separator: [separator],
     status: [],
     notices: [],
+    find: [],
   };
   const frame = new Array<string>(plan.rows).fill('');
   for (const region of plan.regions) {
