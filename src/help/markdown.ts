@@ -1,3 +1,4 @@
+import {resolveHostCapabilities} from '../host/capabilities.js';
 import {backgroundOf, foregroundOf, theme} from '../chroma/chroma.js';
 import {graphemes} from '../input/inputLayout.js';
 import {colorLevel} from '../presentation/capabilities.js';
@@ -35,9 +36,7 @@ const CONTROL = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/gu;
 
 /** Terminals known to implement OSC 8. `NMSH_HYPERLINKS=1|0` overrides detection. */
 export function supportsHyperlinks(env: NodeJS.ProcessEnv = process.env): boolean {
-  if (env.NMSH_HYPERLINKS === '1') return true;
-  if (env.NMSH_HYPERLINKS === '0' || env.TERM === 'dumb') return false;
-  return ['ghostty', 'iTerm.app', 'WezTerm', 'vscode', 'Hyper'].includes(env.TERM_PROGRAM ?? '') || Boolean(env.KITTY_WINDOW_ID);
+  return resolveHostCapabilities(env).hyperlinks;
 }
 
 // ---- Inline ---------------------------------------------------------------
