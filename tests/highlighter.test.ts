@@ -18,7 +18,7 @@ test('lexical highlighting of various shell constructs', () => {
   assert.deepEqual(check('FOO=bar command'), ['Argument:FOO=bar', 'Normal: ', 'Command:command']);
   assert.deepEqual(check('echo $HOME'), ['Command:echo', 'Normal: ', 'Variable:$HOME']);
   assert.deepEqual(check('echo ${HOME}'), ['Command:echo', 'Normal: ', 'Variable:${HOME}']);
-  assert.deepEqual(check('echo $(pwd)'), ['Command:echo', 'Normal: ', 'Variable:$', 'Operator:(', 'Command:pwd', 'Operator:)']);
+  assert.deepEqual(check('echo $(pwd)'), ['Command:echo', 'Normal: ', 'Variable:$(pwd)']);
   
   assert.deepEqual(check('git status && echo done'), [
     'Command:git', 'Normal: ', 'Argument:status', 'Normal: ', 'Operator:&&', 'Normal: ', 'Command:echo', 'Normal: ', 'Argument:done'

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {spawn} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
@@ -56,4 +57,20 @@ test('suite runner uses short roots, removes only its own root, and reports norm
     assert.equal(result.code, 1); assert.equal(result.leftovers.length, 1);
     assert.ok(!existsSync(result.root)); assert.ok(existsSync(fixture));
   } finally { rmSync(fixture, {recursive: true, force: true}); }
+});
+
+test('sandbox disposal waits for an untracked late writer whose cwd still owns the sandbox', async () => {
+  const sandbox = new LiveSandbox();
+  const child = spawn(process.execPath, ['-e', "setTimeout(() => require('node:fs').writeFileSync('late-journal.txt', 'done'), 150)"],
+    {cwd: sandbox.home, stdio: 'ignore'});
+  const exited = new Promise<number | null>(resolve => child.once('close', resolve));
+  try {
+    await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); });
+    await sandbox.dispose();
+    assert.equal(await exited, 0, 'root stays present until the last writer finishes');
+    assert.ok(!existsSync(sandbox.root));
+  } finally {
+    child.kill(); await exited;
+    await sandbox.dispose();
+  }
 });
