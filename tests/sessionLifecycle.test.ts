@@ -88,6 +88,8 @@ test('SIGHUP detaches; Ctrl+D and /zsh end the session', async () => {
     const third = sandbox.launch();
     await third.waitFor(/❯/);
     const {pid: thirdPid} = await onlySession(sandbox);
+    // The composer appears before the shell's first prompt; /zsh is refused while it starts, so wait for readiness.
+    await third.run('echo READY', /READY/);
     third.pty.write('/zsh\r');
     await until(async () => (await sandbox.sessions()).length === 0, 15000, '/zsh to end the managed session');
     await until(() => !processAlive(thirdPid), 15000, 'managed zsh to exit');

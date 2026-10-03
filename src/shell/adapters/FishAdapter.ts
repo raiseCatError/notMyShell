@@ -164,7 +164,7 @@ export const fishAdapter: ShellAdapter = {
   builtins: FISH_BUILTINS,
   resolveExecutable: resolveFish,
   unavailableReason(env) {
-    return resolveFish(env) ? undefined : 'Fish is not installed (no executable fish on PATH). NMSh does not install shells; install Fish with your package manager.';
+    return resolveFish(env) ? undefined : 'Fish is not installed (no executable fish on PATH). Select it in /shell to see how to install it.';
   },
   launch(context): ShellLaunch {
     const fish = resolveFish(context.env);

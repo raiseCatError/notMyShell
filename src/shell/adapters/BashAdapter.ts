@@ -227,9 +227,9 @@ export const bashAdapter: ShellAdapter = {
     const found = findShellExecutables('bash', env, ['/bin/bash']);
     if (found.length) {
       const version = bashVersionOf(found[0]!);
-      return `Bash ${version ? version.join('.') : '(unknown version)'} at ${found[0]} is too old: NMSh needs Bash ${MIN_BASH.join('.')} or newer (PS0). Install a newer Bash; NMSh does not install shells.`;
+      return `Bash ${version ? version.join('.') : '(unknown version)'} at ${found[0]} is too old: NMSh needs Bash ${MIN_BASH.join('.')} or newer (PS0). Select Bash in /shell to see how to install a newer one.`;
     }
-    return 'Bash is not installed. NMSh does not install shells.';
+    return 'Bash is not installed. Select it in /shell to see how to install it.';
   },
   launch(context): ShellLaunch {
     const bash = resolveBash(context.env);

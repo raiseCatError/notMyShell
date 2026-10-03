@@ -45,7 +45,7 @@ test('adapter contract: ids, quoting, capabilities declared honestly, nothing in
   assert.equal(knowledgeJobCount('alias x\njobs 2\ncomplete\n'), 2);
   assert.equal(knowledgeJobCount('complete\n'), undefined);
   const none = shellAvailability({PATH: '/nonexistent'});
-  assert.match(none.find(item => item.adapter.id === 'fish')!.reason!, /NMSh does not install shells/u);
+  assert.match(none.find(item => item.adapter.id === 'fish')!.reason!, /Select it in \/shell to see how to install it/u);
   assert.deepEqual(parseSlashCommand('/shell fish'), {kind: 'shell', shell: 'fish'});
   assert.deepEqual(parseSlashCommand('/shell'), {kind: 'shell'});
   assert.equal(parseSlashCommand('/shell nu')?.kind, 'unknown');
@@ -118,8 +118,8 @@ for (const id of SHELL_IDS) {
       assert.doesNotMatch(state.output.slice(before), /\u001b\[\?2004l/u, 'editor mode chrome never reaches output');
       const background = await run(state, 'sleep 30 &');
       assert.equal(knowledgeJobCount(background.knowledge), 1, 'background jobs are reported');
-      await run(state, 'kill %1');
-      await run(state, 'true');
+      // Reap the killed job before the next prompt so the count cannot race the signal.
+      await run(state, 'kill %1; wait');
       assert.equal(knowledgeJobCount(state.markers.at(-1)!.knowledge), 0);
       // Interrupt a foreground command through the PTY.
       const interrupted = once(state.shell, 'prompt');
@@ -289,7 +289,7 @@ test('hot swap in the service: zsh → fish → bash → zsh keeps session ident
       isolated.send({type: 'switch-shell', shell: 'fish', cwd: home});
       const unavailable = await isolated.next(m => m.type === 'error', mark);
       assert.equal(unavailable.type === 'error' && unavailable.code, 'unavailable');
-      assert.match(unavailable.type === 'error' ? unavailable.message : '', /does not install shells/u);
+      assert.match(unavailable.type === 'error' ? unavailable.message : '', /in \/shell to see how to install/u);
       isolated.send({type: 'terminate'});
       for (const pid of pids.slice(0, -1)) assert.equal(alive(pid), false, 'no orphan shell survives a switch');
     } finally {

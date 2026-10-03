@@ -65,6 +65,27 @@ test('old service + new frontend: missing capability known at connect; switch-sh
   } finally { await current.close(); rmSync(runtimeDir, {recursive: true, force: true}); }
 });
 
+test('handoffs: startup, background jobs and full-screen programs block /zsh /fish /bash and /exit through one path', () => {
+  const blockers: Array<[string, (instance: TerminalApp) => void, RegExp]> = [
+    ['startup', instance => { instance['startupPending'] = true; }, /the shell is still starting/u],
+    ['jobs', instance => { instance['shellJobs'] = 2; }, /2 background or stopped jobs would end with the session/u],
+    ['passthrough', instance => { instance['passthrough'] = true; }, /a full-screen program owns the terminal/u],
+  ];
+  for (const [name, block, reason] of blockers) {
+    for (const [shell, command] of [['zsh', '/zsh'], ['fish', '/fish'], ['bash', '/bash'], ['zsh', '/exit']] as const) {
+      if (!shellAdapter(shell).resolveExecutable(process.env)) continue;
+      const instance = app();
+      try {
+        block(instance);
+        instance['leaveForOrdinaryShell'](shell, command);
+        assert.equal(instance.shellHandoff, undefined, `${name} blocks ${command}`);
+        assert.equal(instance['stopped'], false);
+        assert.match(transcript(instance), reason);
+      } finally { instance['startupPending'] = false; instance['passthrough'] = false; instance['stop'](0); instance['session'].kill(); }
+    }
+  }
+});
+
 test('protocol: features are optional both ways; unknown feature names are ignored', () => {
   const withFeatures = decodeMessage(JSON.stringify({v: PROTOCOL_VERSION, type: 'welcome', version: PROTOCOL_VERSION, service: 'nmshd', features: 'shell-switch,future-x', build: '0.7.0 abc'}));
   assert.ok(withFeatures.ok && withFeatures.message.type === 'welcome');

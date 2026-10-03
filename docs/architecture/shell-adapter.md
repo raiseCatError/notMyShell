@@ -94,7 +94,8 @@ spawned or evaluated.
   the backend for new sessions; default zsh. A missing default falls back to
   zsh with a notice and the setting is kept.
 - `/shell` lists every backend with its executable and version, or why it is
-  unavailable. Nothing is installed.
+  unavailable. Nothing is installed without an explicit, previewed confirmation
+  (see Installing a missing shell).
 - `/shell fish|bash|zsh` (or Enter in the picker) switches the **current
   session** in place: the session service removes the old shell's listeners,
   ends it, starts the new backend in the session's cwd with the session's
@@ -123,6 +124,7 @@ nested in the managed shell), in the current cwd, with NMSh's markers
 `/exit` uses the configured **default backend** (Settings → Default shell, or
 D in `/shell`) — never `$SHELL` or the login shell; switching the current
 session does not change it. One decision path refuses while a command,
+background or stopped jobs,
 full-screen program or shell startup is in progress. A missing target keeps
 NMSh open with the reason and an install pointer; there is no silent fallback
 to another shell.

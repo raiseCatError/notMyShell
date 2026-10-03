@@ -227,7 +227,7 @@ test('app: any key dismisses, the key is not typed, and the draft, selection and
   } finally { cleanup(); }
 });
 
-test('app: mouse move, click, wheel, resize and new shell output all dismiss; focus loss pauses, focus return dismisses', () => {
+test('app: mouse move, click, wheel, resize and new shell output all dismiss; focus loss keeps it running, focus return dismisses', () => {
   const {app, cleanup} = harness();
   try {
     for (const input of ['\u001b[<35;10;5M', '\u001b[<0;10;5M', '\u001b[<64;10;5M']) {

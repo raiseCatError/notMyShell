@@ -118,7 +118,7 @@ import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {InstallProvenance} from '../tools/InstallProvenance.js';
-import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
 import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
 import {fishQuote, posixQuote} from '../shell/adapters/ShellAdapter.js';
@@ -447,6 +447,7 @@ export class TerminalApp {
     this.session.on('prompt', (marker, stamp) => {
       if (this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
+          this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
           this.semanticService.applyShellKnowledge(marker.knowledge);
           this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
@@ -559,6 +560,7 @@ export class TerminalApp {
     this.shellCwd = attached.cwd;
     this.streamSeq = attached.ackedSeq;
     if (attached.knowledge !== undefined) {
+      this.shellJobs = knowledgeJobCount(attached.knowledge) ?? 0;
       this.semanticService.applyShellKnowledge(attached.knowledge);
       this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
     }
@@ -4947,9 +4949,10 @@ export class TerminalApp {
     const blocker = this.switchBlocker();
     const refuse = (message: string) => { this.output.addFrontendInteraction(command, message, ERROR); this.render(); };
     if (target === this.shellId) { this.output.addFrontendInteraction(command, `This session already runs ${adapter.label}.`, INFO); this.render(); return; }
+    // The session's own limits (an older service, a running command) come first: they hold whatever shell is chosen.
+    if (blocker) return refuse(blocker);
     const unavailable = adapter.unavailableReason(process.env);
     if (unavailable) return refuse(unavailable);
-    if (blocker) return refuse(blocker);
     if (this.shellSwitching) return refuse('A shell switch is already in progress.');
     this.shellSwitching = true;
     const from = shellAdapter(this.shellId).label;
@@ -4960,6 +4963,7 @@ export class TerminalApp {
       return;
     } finally { this.shellSwitching = false; }
     this.shellId = target;
+    this.shellJobs = 0;
     // The new shell's first prompt is readiness, not a command completion.
     this.presetShellReady = true;
     this.bindShellServices(target, true);
@@ -5448,7 +5452,8 @@ export class TerminalApp {
     }
     const busy = this.running ? `"${this.running.command.slice(0, 60)}" is still running`
       : this.passthrough || this.externalPassthrough ? 'a full-screen program owns the terminal'
-      : this.startupPending ? 'the shell is still starting' : undefined;
+      : this.startupPending ? 'the shell is still starting'
+      : this.shellJobs ? `${this.shellJobs} background or stopped job${this.shellJobs === 1 ? '' : 's'} would end with the session (jobs, fg, kill %N)` : undefined;
     const decision: ShellHandoffDecision = chooseShellHandoff(busy ? `${busy}; finish or interrupt it, then run ${command} again.` : false, this.shellCwd, this.initialCwd);
     if (decision.kind === 'busy') {
       this.output.addFrontendInteraction(command, `Not leaving NMSh: ${decision.reason ?? 'the session is busy.'}`, INFO);
@@ -5461,6 +5466,8 @@ export class TerminalApp {
     this.stop(0);
   }
 
+  /** Background/stopped jobs in the managed shell, from its latest name snapshot. */
+  private shellJobs = 0;
   private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string};
 
   private stop(exitCode: number): void {

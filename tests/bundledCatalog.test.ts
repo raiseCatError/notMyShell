@@ -4,6 +4,7 @@ import {mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {deflateRawSync} from 'node:zlib';
+import {execFileSync} from 'node:child_process';
 import {BUNDLED_CATALOG_DIRECTORY, BundledCatalog, BundledCatalogSource, catalogCandidates, type CatalogNode} from '../src/shell/BundledCatalog.js';
 import {CompletionAggregator, DeclarativeSpecSource, MAX_SPEC_TOTAL_BYTES} from '../src/shell/CompletionSources.js';
 import {CompletionService, defaultCompletionSources} from '../src/shell/CompletionService.js';
@@ -147,4 +148,14 @@ test('custom specs: 2048 files and an aggregate byte budget', () => {
     const budgeted = new DeclarativeSpecSource(dir, 100 * 20);
     assert.ok(budgeted.load().size < 200 && budgeted.skipped > 0, 'files past the aggregate budget are skipped');
   } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('distribution: the npm package ships the catalog, its provenance, the upstream notices and the runtime', () => {
+  const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const [pack] = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts'], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']})) as Array<{files: Array<{path: string}>}>;
+  const files = new Set(pack!.files.map(file => file.path));
+  for (const path of ['assets/completion/catalog.bin', 'assets/completion/catalog-index.json', 'assets/completion/provenance.json',
+    'licenses/withfig-autocomplete-MIT.txt', 'licenses/carapace-bin-MIT.txt', 'src/shell/BundledCatalog.ts']) assert.ok(files.has(path), `${path} is packed`);
+  // The runtime resolves the catalog relative to its own module, two levels up from dist/shell or src/shell.
+  assert.equal(BUNDLED_CATALOG_DIRECTORY, join(import.meta.dirname, '..', 'assets', 'completion'));
 });
