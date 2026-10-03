@@ -406,15 +406,20 @@ export function layoutLabel(configuration: PromptConfiguration): string {
 export function describePromptConfiguration(configuration: PromptConfiguration): string {
   if (configuration.provider !== 'nmsh') return `${providerLabel(configuration.provider)} · ${layoutLabel(configuration)}`;
   const nmsh = configuration.nmsh;
-  return [
-    NATIVE_PROMPT_THEMES[nmsh.palette].label,
-    layoutLabel(configuration),
+  // Powerline geometry describes only Powerline; other styles name their own look.
+  const geometry = nmsh.style === 'powerline' ? [
     `${edgeStyleLabel(nmsh.startStyle).toLowerCase()} start`,
     `${SHAPE_LABELS[nmsh.connector].toLowerCase()} joins`,
     `gap ${nativeGapChoice(configuration)}`,
     `${edgeStyleLabel(nmsh.endStyle).toLowerCase()} end`,
+  ] : [`${PROMPT_STYLE_LABELS[nmsh.style].toLowerCase()} style`];
+  return [
+    NATIVE_PROMPT_THEMES[nmsh.palette].label,
+    layoutLabel(configuration),
+    ...geometry,
     `icons ${nmsh.icons === 'off' ? 'off' : 'on'}`,
-    ...(nmsh.style !== 'powerline' ? [`${PROMPT_STYLE_LABELS[nmsh.style].toLowerCase()} style`] : []),
+    ...(nmsh.vibrance !== 'standard' ? [`${VIBRANCE_LABELS[nmsh.vibrance].toLowerCase()} vibrance`] : []),
+    ...(configuration.presentation.preset !== 'off' ? [`${TREATMENT_PRESET_LABELS[configuration.presentation.preset]} Chroma`] : []),
   ].join(' · ');
 }
 
