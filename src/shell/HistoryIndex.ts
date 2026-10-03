@@ -1,6 +1,6 @@
-import {createHash, randomUUID} from 'node:crypto';
-import {mkdir, readFile, rename, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
+import {createHash} from 'node:crypto';
+import {mkdir, readFile, readdir, writeFile} from 'node:fs/promises';
+import {join} from 'node:path';
 import {isPrivateCommand, type CommandEntry} from '../suggestions/types.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import type {TranscriptSession} from '../sessions/TranscriptStore.js';
@@ -76,11 +76,22 @@ export class HistoryIndex {
       const data: unknown = JSON.parse(await readFile(this.deletionFile, 'utf8'));
       if (!data || typeof data !== 'object' || !('version' in data) || data.version !== 1 || !('ids' in data)
         || !Array.isArray(data.ids) || !data.ids.every(id => typeof id === 'string' && /^[a-f0-9]{64}$/u.test(id))) throw new Error('Invalid history deletion file');
-      this.deleted = new Set(data.ids);
+      for (const id of data.ids) this.deleted.add(id);
     } catch (error) {
       // Only absence is safe: an unreadable tombstone must not resurrect deleted commands.
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
+    try {
+      for (const entry of await readdir(`${this.deletionFile}.d`, {withFileTypes: true})) {
+        if (!entry.isFile() || !/^[a-f0-9]{64}$/u.test(entry.name)) throw new Error('Invalid history tombstone');
+        this.deleted.add(entry.name);
+      }
+    } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    this.revision += 1;
+  }
+
+  clearImported(): void {
+    for (const [id, entry] of this.entries) if (entry.source !== 'nmsh') this.entries.delete(id);
     this.revision += 1;
   }
 
@@ -126,13 +137,13 @@ export class HistoryIndex {
     this.deleted.add(id);
     this.revision += 1;
     if (!this.deletionFile) return;
-    const file = this.deletionFile;
-    const data = JSON.stringify({version: 1, ids: [...this.deleted]});
+    if (!/^[a-f0-9]{64}$/u.test(id)) throw new Error('Invalid history ID');
+    const directory = `${this.deletionFile}.d`;
     this.writes = this.writes.catch(() => {}).then(async () => {
-      await mkdir(dirname(file), {recursive: true, mode: 0o700});
-      const temporary = `${file}.${randomUUID()}.tmp`;
-      await writeFile(temporary, data, {mode: 0o600});
-      await rename(temporary, file);
+      await mkdir(directory, {recursive: true, mode: 0o700});
+      // Independent immutable IDs avoid lost updates between persistent-session frontends.
+      try { await writeFile(join(directory, id), '', {mode: 0o600, flag: 'wx'}); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
     });
     await this.writes;
   }

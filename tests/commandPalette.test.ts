@@ -11,7 +11,7 @@ import {decodeKeys} from '../src/terminal/keys.js';
 import {stripAnsi} from '../src/util/text.js';
 
 const ALLOWED = new Set(['slash', 'open', 'config', 'toggleComposerPosition', 'toggleTranscriptPresentation', 'cycleOutputFolding',
-  'theme', 'latest', 'toggleDetails']);
+  'theme', 'latest', 'toggleDetails', 'toggleInspector']);
 
 test('one registry lists slash commands, settings pages, config rows and explicit NMSh actions only', () => {
   const items = paletteItems();

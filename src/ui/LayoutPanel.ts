@@ -101,6 +101,7 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     gap: [],
     jump: [],
     panel: [],
+    inspector: [],
     suggestions: [],
     activity: plan.composerPosition === 'top'
       ? ['', `${SECONDARY}${activity.phrase}${SUBTLE}${activity.duration}${RESET}`]
