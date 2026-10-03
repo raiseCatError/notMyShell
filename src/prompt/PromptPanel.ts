@@ -368,7 +368,7 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
 
 const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
   project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
-  kubeContext: 'Kubernetes', dockerContext: 'Docker context',
+  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell',
 };
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
@@ -440,6 +440,7 @@ function moduleOption(module: PromptConfiguration['modules'][number]): string {
     case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
     case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
+    case 'shell': return module.condition === 'always' ? 'always' : 'when different';
     default: return 'always';
   }
 }
@@ -458,6 +459,8 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   }
   else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
     module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
+  } else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'shell') {
+    module.condition = module.condition === 'always' ? 'shellDiffers' : 'always';
   } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
     module.condition = module.condition === 'onCommand' ? 'always' : 'onCommand';
   } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {

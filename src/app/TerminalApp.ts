@@ -2445,7 +2445,9 @@ export class TerminalApp {
       && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
     const kubeContext = wanted('kubeContext') ? this.commandContexts.get('kubeContext') : undefined;
     const dockerContext = wanted('dockerContext') ? this.commandContexts.get('dockerContext') : undefined;
-    return {...this.context, commandWords: words, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
+    // Read live, so the current-shell module follows /shell and the default-shell setting immediately.
+    const shell = {current: this.shellId, differs: this.shellId !== this.promptConfiguration.shellBackend};
+    return {...this.context, commandWords: words, shell, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
   }
 
   private currentPromptSnapshot(command?: string): PromptSnapshot {

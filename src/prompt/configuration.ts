@@ -50,7 +50,7 @@ export const TRANSCRIPT_PRESENTATIONS: readonly TranscriptPresentation[] = ['nor
 export const TRANSCRIPT_PRESENTATION_LABELS: Record<TranscriptPresentation, string> = {normal: 'Normal', chat: 'Chat'};
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext' | 'shell';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
 /** Every module can sit in either area; narrow widths drop the right area first. */
@@ -58,7 +58,23 @@ export function modulePlacement(module: {placement?: ModulePlacement}): ModulePl
   return module.placement === 'right' ? 'right' : 'left';
 }
 /** `onCommand`: shown only while the typed command is one the module is about (show-on-command). */
-export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand';
+/** `shellDiffers`: shown only while this session's backend is not the default for new sessions (the `shell` module). */
+export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand' | 'shellDiffers';
+/** The current-shell module's visibility, stored as the module's visible flag and condition. */
+export type ShellModuleVisibility = 'whenDifferent' | 'always' | 'never';
+export const SHELL_MODULE_VISIBILITY: readonly ShellModuleVisibility[] = ['whenDifferent', 'always', 'never'];
+export const SHELL_MODULE_VISIBILITY_LABELS: Record<ShellModuleVisibility, string> = {whenDifferent: 'When different', always: 'Always', never: 'Never'};
+export function shellModuleVisibility(configuration: Pick<PromptConfiguration, 'modules'>): ShellModuleVisibility {
+  const module = configuration.modules.find(item => item.id === 'shell');
+  if (!module || !module.visible) return module ? 'never' : 'whenDifferent';
+  return module.condition === 'always' ? 'always' : 'whenDifferent';
+}
+export function applyShellModuleVisibility(configuration: Pick<PromptConfiguration, 'modules'>, visibility: ShellModuleVisibility): void {
+  let module = configuration.modules.find(item => item.id === 'shell');
+  if (!module) { module = {id: 'shell', visible: true, condition: 'shellDiffers'}; configuration.modules.push(module); }
+  module.visible = visibility !== 'never';
+  module.condition = visibility === 'always' ? 'always' : 'shellDiffers';
+}
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
@@ -465,14 +481,15 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
     {id: 'kubeContext', visible: true, condition: 'onCommand'},
     {id: 'dockerContext', visible: true, condition: 'onCommand'},
+    {id: 'shell', visible: true, condition: 'shellDiffers'},
   ],
   separator: '',
   gap: 1,
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
-const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
+const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand', 'shellDiffers']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -597,6 +614,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       visible: typeof item.visible === 'boolean' ? item.visible : fallback.visible,
       condition: typeof item.condition === 'string' && CONDITIONS.has(item.condition as ContextCondition)
         && (item.condition !== 'onCommand' || ON_COMMAND_MODULES.has(id))
+        && ((item.condition === 'shellDiffers') === (id === 'shell') || (id === 'shell' && item.condition === 'always'))
         ? item.condition as ContextCondition
         : fallback.condition,
     };
@@ -702,14 +720,16 @@ export function savePromptConfiguration(configuration: PromptConfiguration, path
 
 export function hasVisibleContextModule(
   configuration: PromptConfiguration,
-  context?: {branch?: string; exitStatus?: number; commandWords?: readonly string[]},
+  context?: {branch?: string; exitStatus?: number; commandWords?: readonly string[]; shell?: {differs: boolean}},
   /** Whether an on-command module is relevant to the typed command. */
   onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)
-    && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? [])));
+    && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? []))
+    && (module.id !== 'shell' || Boolean(context?.shell))
+    && (module.condition !== 'shellDiffers' || Boolean(context?.shell?.differs)));
 }
 
 /**

@@ -3,7 +3,7 @@ import {shellAdapter} from '../shell/adapters/registry.js';
 import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
-import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
+import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {withIdleColorSource} from '../idle/IdleVisuals.js';
@@ -250,6 +250,13 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
     values: SHELL_IDS, labels: SHELL_IDS.map(id => shellAdapter(id).label),
     get: config => config.shellBackend, set: (config, shellBackend) => ({...config, shellBackend})}),
+  enumRow({id: 'showShell', label: 'Show current shell', description: 'Prompt module naming this session\'s backend: only when it differs from the default, always, or never', category: 'Sessions',
+    values: SHELL_MODULE_VISIBILITY, labels: SHELL_MODULE_VISIBILITY.map(value => SHELL_MODULE_VISIBILITY_LABELS[value]),
+    get: config => shellModuleVisibility(config), set: (config, value) => {
+      const next = {...config, modules: config.modules.map(module => ({...module}))};
+      applyShellModuleVisibility(next, value);
+      return next;
+    }}),
   enumRow({id: 'openWith', label: 'Open with', description: 'Where /open and /open-diff hand files: the editor around NMSh (Auto), Zed, VS Code, or VISUAL/EDITOR', category: 'Sessions',
     values: OPEN_WITH_IDS, labels: ['Auto', 'Zed', 'VS Code', 'VISUAL / EDITOR'],
     get: config => config.openWith, set: (config, openWith) => ({...config, openWith})}),

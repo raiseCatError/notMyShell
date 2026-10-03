@@ -23,6 +23,8 @@ export interface PromptContext {
   /** Show-on-command lookups, present once resolved. */
   kubeContext?: string;
   dockerContext?: string;
+  /** The backend under this session (never $SHELL), and whether it differs from the default for new sessions. */
+  shell?: {current: string; differs: boolean};
 }
 
 export interface GitStatus {

@@ -272,7 +272,7 @@ test('saved configurations gain new modules at their default position', () => {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
   assert.equal(config.modules.find(module => module.id === 'exitStatus')!.visible, false);
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
@@ -319,7 +319,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',
-    'Modules         8 of 8 shown ›',
+    'Modules         9 of 9 shown ›',
     'unsaved preview',
   ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
@@ -340,7 +340,7 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
   assert.equal(state.draft.modules[1]!.visible, false);
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
-  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
   assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
   assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');

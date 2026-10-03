@@ -86,7 +86,7 @@ export interface SetupSection {
 
 /** Direct entry names to the section they open. */
 export const SETUP_ENTRIES: Readonly<Record<string, string>> = {
-  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', transcript: 'transcript',
+  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', transcript: 'transcript', shell: 'shell',
 };
 
 const configRow = (id: string): SettingsRow => {
@@ -219,6 +219,11 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
       : 'Built in · no installation required · use /dirs; NMSh does not define `z`'},
     providerRow('setupPicker', 'Picker', 'Interactive picker', 'History', PICKER_PROVIDERS,
       config => config.picker, (config, picker) => ({...config, picker})),
+  ]},
+  // The same shell rows as Settings: one configuration, one save path.
+  {id: 'shell', title: 'Shell', intro: ['NMSh runs over a real shell; its composer, transcript and settings stay the same on each.'], rows: [
+    {row: configRow('shellBackend'), note: () => 'Default shell: the real shell NMSh starts underneath new sessions. /shell switches this one.'},
+    {row: configRow('showShell'), note: () => 'Show current shell: the active backend always, only when it differs from the default, or never.'},
   ]},
   {id: 'welcomeScreen', title: 'Welcome', intro: ['What a new session shows first. Vespyr is the NMSh cat.'], rows: [
     providerRow('setupWelcome', 'Welcome', 'New-session welcome', 'Welcome', WELCOME_PROVIDERS.filter(provider => WELCOME_PROVIDER_IDS.includes(provider.id)),

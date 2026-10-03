@@ -302,6 +302,7 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
   if (config.condition === 'nonzeroExit' && status === 0) return [];
   // Toolchains filter per toolchain below; other on-command modules need a matching command.
   if (config.condition === 'onCommand' && config.id !== 'toolchain' && !isOnCommandRelevant(config.id, context.commandWords ?? [])) return [];
+  if (config.condition === 'shellDiffers' && !context.shell?.differs) return [];
 
   switch (config.id) {
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
@@ -336,6 +337,8 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
       .filter(id => config.condition !== 'onCommand' || matchesCommand(TOOLCHAIN_TRIGGERS[id], context.commandWords))
       .map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
     case 'kubeContext': return context.kubeContext ? [{text: withIcon('kubernetes', safePromptText(context.kubeContext), icons), role: 'kubernetes'}] : [];
+    // The managed backend uses the environment-context color (as the Kubernetes context does), so every theme colors it.
+    case 'shell': return context.shell ? [{text: withIcon('shell', safePromptText(context.shell.current), icons), role: 'kubernetes'}] : [];
     case 'dockerContext': return context.dockerContext ? [{text: withIcon('docker', safePromptText(context.dockerContext), icons), role: 'docker'}] : [];
     case 'exitStatus': return [{
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,
@@ -619,6 +622,7 @@ export function moduleShowcaseContext(home = homedir()): PromptContext {
     commandWords: ['kubectl', 'docker', 'npm'],
     kubeContext: 'dev-cluster',
     dockerContext: 'colima',
+    shell: {current: 'fish', differs: true},
   };
 }
 
