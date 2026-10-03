@@ -3,7 +3,7 @@ import {shellAdapter} from '../shell/adapters/registry.js';
 import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
-import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {withIdleColorSource} from '../idle/IdleVisuals.js';
@@ -257,6 +257,17 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
       applyShellModuleVisibility(next, value);
       return next;
     }}),
+  {id: 'askRecord', label: 'Record Ask in transcript', description: 'Keep Ask questions and replies with this session\'s transcript; commands or actions you approve still follow their normal history rules', category: 'Ask',
+    control: 'boolean', get: config => config.askRecord, set: (config, askRecord) => ({...config, askRecord})},
+  enumRow({id: 'localUnderstanding', label: 'Local understanding', description: 'Optional local language model for the features you enable; Off never loads one. Ask and Smart Folding work without it', category: 'Ask',
+    values: LOCAL_UNDERSTANDING_MODES, labels: LOCAL_UNDERSTANDING_MODES.map(mode => LOCAL_UNDERSTANDING_LABELS[mode]),
+    get: config => config.localUnderstanding.mode, set: (config, mode) => ({...config, localUnderstanding: {...config.localUnderstanding, mode}})}),
+  {id: 'localUnderstandingAsk', label: 'Use local model for Ask', description: 'Improve Ask\'s understanding of loosely worded requests (built-in understanding is used first in Auto)', category: 'Ask',
+    parent: 'localUnderstanding', when: config => config.localUnderstanding.mode !== 'off',
+    control: 'boolean', get: config => config.localUnderstanding.ask, set: (config, ask) => ({...config, localUnderstanding: {...config.localUnderstanding, ask}})},
+  {id: 'localUnderstandingFolding', label: 'Use local model for Smart Folding', description: 'Advisory hints for which output to fold; never hides errors or changes output', category: 'Ask',
+    parent: 'localUnderstanding', when: config => config.localUnderstanding.mode !== 'off',
+    control: 'boolean', get: config => config.localUnderstanding.folding, set: (config, folding) => ({...config, localUnderstanding: {...config.localUnderstanding, folding}})},
   enumRow({id: 'openWith', label: 'Open with', description: 'Where /open and /open-diff hand files: the editor around NMSh (Auto), Zed, VS Code, or VISUAL/EDITOR', category: 'Sessions',
     values: OPEN_WITH_IDS, labels: ['Auto', 'Zed', 'VS Code', 'VISUAL / EDITOR'],
     get: config => config.openWith, set: (config, openWith) => ({...config, openWith})}),

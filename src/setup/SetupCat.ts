@@ -86,7 +86,7 @@ export interface SetupSection {
 
 /** Direct entry names to the section they open. */
 export const SETUP_ENTRIES: Readonly<Record<string, string>> = {
-  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', transcript: 'transcript', shell: 'shell',
+  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask',
 };
 
 const configRow = (id: string): SettingsRow => {
@@ -224,6 +224,14 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'shell', title: 'Shell', intro: ['NMSh runs over a real shell; its composer, transcript and settings stay the same on each.'], rows: [
     {row: configRow('shellBackend'), note: () => 'Default shell: the real shell NMSh starts underneath new sessions. /shell switches this one.'},
     {row: configRow('showShell'), note: () => 'Show current shell: the active backend always, only when it differs from the default, or never.'},
+  ]},
+  // The same rows as Settings; nothing here implies NMSh needs a model.
+  {id: 'ask', title: 'Ask & local understanding', intro: ['/ask: ask NMSh what it can do in plain English. Ask works without a language model,',
+    'and so does NMSh\'s normal Smart Folding. A local model is optional; No local model is the default.'], rows: [
+    {row: configRow('askRecord'), note: draft => draft.askRecord ? 'Keep Ask conversations in transcripts' : 'Ask conversations are not saved; approved commands still are'},
+    {row: configRow('localUnderstanding'), note: draft => draft.localUnderstanding.mode === 'off' ? 'No local model: nothing is downloaded, loaded or run' : 'Choose the uses below; /providers sets up the model (previewed, nothing downloads without your Yes)'},
+    {row: configRow('localUnderstandingAsk'), note: () => 'Improve Ask understanding'},
+    {row: configRow('localUnderstandingFolding'), note: () => 'Improve Smart Folding'},
   ]},
   {id: 'welcomeScreen', title: 'Welcome', intro: ['What a new session shows first. Vespyr is the NMSh cat.'], rows: [
     providerRow('setupWelcome', 'Welcome', 'New-session welcome', 'Welcome', WELCOME_PROVIDERS.filter(provider => WELCOME_PROVIDER_IDS.includes(provider.id)),

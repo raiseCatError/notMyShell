@@ -374,6 +374,10 @@ export interface PromptConfiguration {
   uiChrome: UiChromeSettings;
   /** Compact cross-session notices above the composer (other sessions finished, failed, ended...). */
   sessionNotices: boolean;
+  /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
+  askRecord: boolean;
+  /** Optional local language understanding; Off by default, and every feature scope is opt-in. */
+  localUnderstanding: LocalUnderstandingSettings;
   /** Local-only agent CLI activity stats (durations and counts; never content). */
   agentActivity: boolean;
   /** Shell backend for new sessions; /shell switches only the current session unless saved as default. */
@@ -455,6 +459,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
   sessionNotices: true,
+  askRecord: true,
+  localUnderstanding: {mode: 'off', ask: false, folding: false},
   agentActivity: true,
   shellBackend: 'zsh',
   openWith: 'auto',
@@ -539,7 +545,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false,
+    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false,
+    localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
@@ -748,4 +755,44 @@ export function applyNativeGapChoice(configuration: PromptConfiguration, choice:
   else if (choice === 'wide') configuration.gap = 2;
   configuration.nmsh.connectorFadeColors = resolveFadeColors(configuration.nmsh.connectorFadeColors,
     configuration.nmsh.gapEnabled, configuration.gap);
+}
+
+/** Off never loads a model. Auto may, lazily, for enabled scopes. Always prefers it for enabled scopes. */
+export type LocalUnderstandingMode = 'off' | 'auto' | 'always';
+export const LOCAL_UNDERSTANDING_MODES: readonly LocalUnderstandingMode[] = ['off', 'auto', 'always'];
+export const LOCAL_UNDERSTANDING_LABELS: Record<LocalUnderstandingMode, string> = {off: 'Off', auto: 'Auto', always: 'Always'};
+export type LocalRuntimeKind = 'llama.cpp' | 'ollama' | 'lmstudio';
+
+/** The chosen model: NMSh's own download, or a compatible model found locally. Runtime state is never stored here. */
+export interface LocalModelChoice {
+  label: string;
+  runtime: LocalRuntimeKind;
+  /** GGUF file for llama.cpp. */
+  path?: string;
+  /** Model name for Ollama or LM Studio. */
+  name?: string;
+  /** NMSh downloaded it (and may remove it); otherwise it was found and is never deleted by NMSh. */
+  owned: boolean;
+}
+
+export interface LocalUnderstandingSettings {
+  mode: LocalUnderstandingMode;
+  /** Feature scopes; each is opt-in and kept when the mode is Off. */
+  ask: boolean;
+  folding: boolean;
+  model?: LocalModelChoice;
+}
+
+function normalizeLocalUnderstanding(value: unknown): LocalUnderstandingSettings {
+  const record = isRecord(value) ? value : {};
+  const mode = LOCAL_UNDERSTANDING_MODES.includes(record.mode as LocalUnderstandingMode) ? record.mode as LocalUnderstandingMode : 'off';
+  const settings: LocalUnderstandingSettings = {mode, ask: record.ask === true, folding: record.folding === true};
+  const model = isRecord(record.model) ? record.model : undefined;
+  const runtime = model && (['llama.cpp', 'ollama', 'lmstudio'] as const).includes(model.runtime as LocalRuntimeKind) ? model.runtime as LocalRuntimeKind : undefined;
+  if (model && runtime && typeof model.label === 'string' && model.label.length <= 120 && !/[\u0000-\u001f]/u.test(model.label)
+    && (typeof model.path === 'string' || typeof model.name === 'string')) {
+    settings.model = {label: model.label, runtime, owned: model.owned === true,
+      ...(typeof model.path === 'string' ? {path: model.path} : {}), ...(typeof model.name === 'string' ? {name: model.name} : {})};
+  }
+  return settings;
 }

@@ -1,0 +1,466 @@
+import {basename, relative} from 'node:path';
+import {slashCommands} from '../commands/slashCommands.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import {CLEAR_LEAD, matchFiles} from './files.js';
+import type {AskAction, AskContext, AskOption, AskOutcome, AskTranscript, CapabilityId, ReadCommand, SafetyClass} from './types.js';
+
+/**
+ * The deterministic Ask resolver: the primary product, useful with no model.
+ * Text is normalized, matched against a typed capability registry, and
+ * arguments are resolved only to factual objects from AskContext (files that
+ * exist, real worktrees, sessions, transcripts, providers). Nothing here runs
+ * anything; executable outcomes carry typed AskActions.
+ */
+
+export interface Capability {
+  id: CapabilityId;
+  title: string;
+  safety: SafetyClass;
+  /** Phrases a person might use; shown by "what can you do" and given to an optional model as the inventory. */
+  examples: string[];
+  /** Strong patterns: a match is high confidence. */
+  patterns: RegExp[];
+  /** Words that suggest the capability: partial overlap is medium confidence. */
+  keywords: string[];
+}
+
+const SHELL = '(zsh|fish|bash)';
+export const CAPABILITIES: readonly Capability[] = [
+  {id: 'shell.current', title: 'Which shell this session runs', safety: 'answer', examples: ['what shell am i using'],
+    patterns: [/\bwh(?:at|ich) shell\b/u, /\bshell (?:am i|is this|are we)\b/u, /\bcurrent shell\b/u], keywords: ['shell', 'using', 'current', 'which']},
+  {id: 'shell.switch', title: 'Switch this session to another shell', safety: 'navigate', examples: ['switch to fish', 'use bash here'],
+    patterns: [new RegExp(`\\b(?:switch|change|swap|move|go)\\b.*\\b(?:to|into)\\s+${SHELL}\\b`, 'u'), new RegExp(`\\b(?:use|run|start)\\s+${SHELL}\\b(?!.*\\bdefault\\b)`, 'u'), new RegExp(`^${SHELL}$`, 'u')],
+    keywords: ['switch', 'change', 'shell', 'fish', 'bash', 'zsh']},
+  {id: 'shell.install', title: 'Install a missing shell', safety: 'install', examples: ['install fish'],
+    patterns: [new RegExp(`\\binstall\\s+${SHELL}\\b`, 'u'), new RegExp(`\\bget\\s+${SHELL}\\b`, 'u')], keywords: ['install', 'shell']},
+  {id: 'shell.default', title: 'Default shell for new sessions', safety: 'navigate', examples: ['make fish my default shell'],
+    patterns: [new RegExp(`\\bdefault\\b.*\\b${SHELL}\\b`, 'u'), new RegExp(`\\b${SHELL}\\b.*\\bdefault\\b`, 'u'), /\bdefault shell\b/u], keywords: ['default', 'shell']},
+  {id: 'shell.leave', title: 'Leave NMSh for an ordinary shell (and come back)', safety: 'answer', examples: ['how do i leave nmsh'],
+    patterns: [/\b(?:leave|exit|quit|get out of|escape)\b.*\b(?:nmsh|this)\b/u, /\bordinary shell\b/u, /\bcome back\b/u], keywords: ['leave', 'exit', 'quit', 'nmsh']},
+  {id: 'session.list', title: 'Show live sessions', safety: 'navigate', examples: ['show my sessions'],
+    patterns: [/\b(?:show|list|see|what|which|open)\b.*\b(?:live )?sessions\b/u, /^sessions$/u], keywords: ['sessions', 'session', 'live', 'windows']},
+  {id: 'session.resume', title: 'Resume a session or transcript', safety: 'navigate', examples: ['resume yesterday\'s session', 'show old terminal output'],
+    patterns: [/\b(?:resume|restore|reopen|continue)\b.*\b(?:session|transcript|terminal)\b/u, /\bold (?:terminal )?output\b/u, /\b(?:yesterday|this morning|last night)\b.*\b(?:session|transcript|output)\b/u,
+      /\b(?:session|transcript)\b.*\b(?:yesterday|this morning|last night|earlier)\b/u, /\bprevious (?:session|transcript)\b/u], keywords: ['resume', 'transcript', 'session', 'yesterday', 'old', 'output', 'previous']},
+  {id: 'transcript.find', title: 'Find text in the transcript', safety: 'navigate', examples: ['find error in the transcript'],
+    patterns: [/\b(?:find|search|look for|grep)\b.+\b(?:in|through) (?:the )?(?:transcript|output|history|terminal)\b/u, /\b(?:find|search for)\s+\S+/u], keywords: ['find', 'search', 'transcript', 'output']},
+  {id: 'transcript.filter', title: 'Show only matching output lines', safety: 'navigate', examples: ['only show lines with warning'],
+    patterns: [/\bonly show\b.*\blines?\b/u, /\bfilter\b.*\b(?:output|transcript|lines|for|by)\b/u, /\bhide (?:lines|everything)\b/u], keywords: ['filter', 'only', 'lines']},
+  {id: 'file.open', title: 'Open a file or folder in your editor', safety: 'navigate', examples: ['open package.json', 'open src config', 'open this in zed'],
+    patterns: [/^(?:please )?(?:open|edit|show me|view)\s+(?!.*\b(?:settings|sessions|theme|tools|prompt|providers|screensaver)\b)\S+/u], keywords: ['open', 'file', 'edit']},
+  {id: 'editor.status', title: 'Editor bridge status', safety: 'answer', examples: ['why can\'t i open files'],
+    patterns: [/\bwhy\b.*\b(?:open|editor)\b/u, /\bwhich editor\b/u, /\beditor\b.*\b(?:work|working|set up|detected)\b/u], keywords: ['editor', 'open', 'zed', 'vscode']},
+  {id: 'git.status', title: 'Git status', safety: 'read', examples: ['check git status', 'what changed'],
+    patterns: [/\bgit status\b/u, /\b(?:what|which) (?:files )?(?:changed|is modified|did i change)\b/u, /\buntracked\b/u, /\bstatus of (?:the )?repo\b/u], keywords: ['git', 'status', 'changed', 'modified']},
+  {id: 'git.diff', title: 'Show the working-tree diff', safety: 'read', examples: ['show git diff', 'show changes in my other worktree'],
+    patterns: [/\bgit diff\b/u, /\b(?:show|see|view)\b.*\b(?:diff|changes)\b/u, /\bwhat (?:did i|have i) (?:change|changed)\b/u, /\bsince (?:my |the )?last commit\b/u],
+    keywords: ['diff', 'changes', 'changed', 'worktree', 'commit']},
+  {id: 'git.branch', title: 'Current Git branch', safety: 'answer', examples: ['what branch am i on'],
+    patterns: [/\bwh(?:at|ich) branch\b/u, /\bcurrent branch\b/u, /\bbranch am i\b/u], keywords: ['branch']},
+  {id: 'git.log', title: 'Recent commits', safety: 'read', examples: ['show recent commits'],
+    patterns: [/\bgit log\b/u, /\b(?:recent|last|latest) commits?\b/u, /\bcommit history\b/u], keywords: ['log', 'commits', 'history']},
+  {id: 'git.worktrees', title: 'Git worktrees', safety: 'answer', examples: ['show my worktrees'],
+    patterns: [/\bworktrees?\b(?!.*\b(?:diff|changes)\b)/u], keywords: ['worktree', 'worktrees']},
+  {id: 'settings.open', title: 'Open Settings', safety: 'navigate', examples: ['open settings'],
+    patterns: [/\b(?:open|show|change)\b.*\bsettings\b/u, /^settings$/u, /\bpreferences\b/u], keywords: ['settings', 'preferences', 'config']},
+  {id: 'theme.open', title: 'Change the theme', safety: 'navigate', examples: ['change theme'],
+    patterns: [/\b(?:change|switch|pick|choose|open)\b.*\b(?:theme|colou?rs|appearance|palette)\b/u, /^(?:theme|appearance)$/u], keywords: ['theme', 'colors', 'appearance']},
+  {id: 'prompt.open', title: 'Configure the prompt', safety: 'navigate', examples: ['change my prompt'],
+    patterns: [/\b(?:change|configure|edit|customi[sz]e|open)\b.*\bprompt\b(?!.*provider)/u], keywords: ['prompt']},
+  {id: 'tools.open', title: 'Optional tools and installs', safety: 'navigate', examples: ['install fastfetch', 'show optional tools'],
+    patterns: [/\binstall\s+(?!zsh\b|fish\b|bash\b)\S+/u, /\b(?:optional )?tools\b/u], keywords: ['tools', 'install']},
+  {id: 'screensaver.open', title: 'Screensaver', safety: 'navigate', examples: ['open the screensaver'],
+    patterns: [/\bscreen ?saver\b/u, /\bidle visuals?\b/u], keywords: ['screensaver', 'idle']},
+  {id: 'providers.open', title: 'Providers', safety: 'navigate', examples: ['what providers are installed'],
+    patterns: [/\bproviders?\b(?!.*\b(?:using|switch|use)\b)/u], keywords: ['providers', 'provider']},
+  {id: 'provider.status', title: 'Which provider is active', safety: 'answer', examples: ['what prompt provider am i using'],
+    patterns: [/\bwh(?:at|ich)\b.*\b(?:prompt|suggestions?|history|welcome|picker|navigation)\b.*\bprovider\b/u, /\bprovider am i\b/u], keywords: ['provider', 'using']},
+  {id: 'provider.switch', title: 'Switch a provider', safety: 'navigate', examples: ['switch suggestions to deja'],
+    patterns: [/\b(?:switch|change|set|use)\b.*\b(?:suggestions?|history|welcome|picker|navigation)\b.*\b(?:to|with)\b\s+\S+/u, /\buse\s+(?:deja|atuin|fzf|television|zoxide|fastfetch|neofetch|starship|powerlevel10k)\b/u],
+    keywords: ['switch', 'provider', 'use']},
+  {id: 'understanding.set', title: 'Local understanding (optional local model)', safety: 'navigate', examples: ['turn local understanding off', 'use my existing local model'],
+    patterns: [/\blocal (?:understanding|model)\b/u, /\buse (?:my )?(?:existing )?(?:local )?model\b/u, /\bqwen\b/u], keywords: ['local', 'model', 'understanding']},
+  {id: 'help.capabilities', title: 'What Ask can do', safety: 'answer', examples: ['what can you do'],
+    patterns: [/\bwhat can (?:you|ask|nmsh) do\b/u, /^help$/u, /\bwhat (?:are|is) (?:your|the) (?:commands|options)\b/u], keywords: ['help', 'can', 'do']},
+  {id: 'help.command', title: 'Explain an NMSh command', safety: 'answer', examples: ['what does /resume do'],
+    patterns: [/\/[a-z][\w-]*/u], keywords: []},
+];
+
+/** Destructive or authority-escalating requests Ask understands but never performs. */
+const UNSAFE = /\b(?:delete|remove|rm|wipe|erase|purge|destroy|nuke|reset --hard|hard reset|git reset|git clean|clean up untracked|force push|push|commit|chmod|chown|sudo|kill|uninstall|drop|format|overwrite|truncate|rewrite history|rebase|checkout --|discard)\b/u;
+/** Requests understood as writing or authoring, which Ask has no capability for. */
+const AUTHORING = /\b(?:write|create|generate|make|build|compile|refactor|fix|implement|send|email|translate)\b/u;
+/** Vague references that need context to resolve. */
+const VAGUE = /\b(?:thing|that one|the old one|the other one|from earlier|earlier|before|previous one|last one|it again)\b/u;
+
+export const CONFIDENCE = {high: 0.85, medium: 0.5} as const;
+
+export function normalizeRequest(text: string): string {
+  return text.toLowerCase()
+    .replace(/[’`]/gu, '\'')
+    .replace(/\bcan't\b/gu, 'cannot').replace(/\bwhat's\b/gu, 'what is').replace(/\bi'm\b/gu, 'i am').replace(/\bdon't\b/gu, 'do not')
+    .replace(/[?!,;]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+}
+
+export function scoreCapabilities(text: string): Array<{capability: Capability; score: number}> {
+  const words = new Set(text.split(/[^a-z0-9/.-]+/u).filter(Boolean));
+  return CAPABILITIES.map(capability => {
+    if (capability.patterns.some(pattern => pattern.test(text))) return {capability, score: 0.95};
+    const hits = capability.keywords.filter(keyword => words.has(keyword)).length;
+    return {capability, score: capability.keywords.length ? Math.min(0.7, hits * 0.3) : 0};
+  }).filter(item => item.score > 0).sort((a, b) => b.score - a.score);
+}
+
+export interface ResolveState {
+  /** Interpretation keys the person already rejected in this interaction. */
+  rejected?: ReadonlySet<string>;
+}
+
+const shellIn = (text: string): ShellId | undefined => (/\b(zsh|fish|bash)\b/u.exec(text)?.[1] as ShellId | undefined);
+const shellLabel = (context: AskContext, id: ShellId) => context.shells.find(shell => shell.id === id)?.label ?? id;
+
+/** One resolved request: the structured outcome, never free text to run. */
+export function resolveRequest(raw: string, context: AskContext, state: ResolveState = {}): AskOutcome {
+  const text = normalizeRequest(raw);
+  if (!text) return unclear(context, 'What can I help you with?');
+  const scored = scoreCapabilities(text);
+  // Explaining an NMSh command wins over acting on it.
+  const explain = /\b(?:what|how) (?:does|do|is)\b/u.test(text) && /\/[a-z][\w-]*/u.exec(text);
+  if (explain) return build('help.command', text, context, raw);
+  if (UNSAFE.test(text) && !scored.some(item => item.score >= CONFIDENCE.high && item.capability.safety === 'answer')) return unsafe(text, context);
+  const top = scored[0];
+  if (top && top.score >= CONFIDENCE.high) {
+    const close = scored.filter(item => item.score >= CONFIDENCE.high);
+    if (close.length > 1 && !preferFirst(close.map(item => item.capability.id))) {
+      return interpretations(close.map(item => build(item.capability.id, text, context, raw)), context, state, 'I can read that a few ways. Did you mean:');
+    }
+    return build(top.capability.id, text, context, raw);
+  }
+  if (VAGUE.test(text)) return vague(context, state);
+  const medium = scored.filter(item => item.score >= CONFIDENCE.medium);
+  if (medium.length) return interpretations(medium.slice(0, 4).map(item => build(item.capability.id, text, context, raw)), context, state, 'I\'m not completely sure what you mean. Did you mean:');
+  if (AUTHORING.test(text)) {
+    return {kind: 'unsupported', text: 'Ask doesn\'t write or change code or files; it finds, opens, shows and switches things in NMSh.',
+      alternative: {key: 'files', label: 'Open a file in your editor', refine: 'open '}};
+  }
+  return unclear(context, 'I\'m not sure what you mean yet.');
+}
+
+/** Some strong matches overlap by design; the more specific one wins. */
+function preferFirst(ids: CapabilityId[]): boolean {
+  const pairs: Array<[CapabilityId, CapabilityId]> = [['shell.install', 'tools.open'], ['shell.default', 'shell.switch'], ['git.diff', 'git.worktrees'],
+    ['provider.switch', 'providers.open'], ['provider.status', 'providers.open'], ['session.resume', 'session.list'], ['transcript.find', 'file.open'],
+    ['editor.status', 'file.open'], ['understanding.set', 'providers.open'], ['git.status', 'git.diff'], ['shell.leave', 'shell.current']];
+  return pairs.some(([first, second]) => ids[0] === first && ids.includes(second)) || ids.length === 1;
+}
+
+function interpretations(outcomes: AskOutcome[], context: AskContext, state: ResolveState, question: string): AskOutcome {
+  const options = dedupe(outcomes.map(optionFor)).filter(option => !state.rejected?.has(option.key));
+  if (options.length === 1) return options[0]!.outcome!;
+  if (!options.length) return unclear(context, 'None of those then. Tell me a little more about what you want.', state);
+  return {kind: 'choose', reason: 'ambiguous', question, options: options.slice(0, 5)};
+}
+
+function optionFor(outcome: AskOutcome): AskOption {
+  const key = outcome.kind === 'proposal' || outcome.kind === 'answer' ? outcome.capability
+    : outcome.kind === 'choose' ? `${outcome.capability ?? 'choose'}:${outcome.question}` : outcome.kind;
+  const label = outcome.kind === 'proposal' ? outcome.text : outcome.kind === 'answer' ? CAPABILITIES.find(item => item.id === outcome.capability)!.title
+    : outcome.kind === 'choose' ? (CAPABILITIES.find(item => item.id === outcome.capability)?.title ?? outcome.question) : outcome.text;
+  return {key, label: firstLine(label), outcome};
+}
+
+const dedupe = (options: AskOption[]) => options.filter((option, index) => options.findIndex(other => other.key === option.key) === index);
+const firstLine = (text: string) => text.split('\n')[0]!;
+
+/** Low confidence: factual categories from what exists here, not a canned menu. */
+function unclear(context: AskContext, text: string, state: ResolveState = {}): AskOutcome {
+  const categories: AskOption[] = [];
+  if (context.repoRoot) categories.push({key: 'cat:git', label: 'Git changes in this repository', refine: 'show git diff'});
+  categories.push({key: 'cat:files', label: `Files in ${context.repoRoot ? basename(context.repoRoot) : 'this folder'}`, refine: 'open '});
+  if (context.sessions.length > 1 || context.transcripts.length) categories.push({key: 'cat:sessions', label: 'Sessions and transcripts', refine: 'show my sessions'});
+  categories.push({key: 'cat:shell', label: 'Shell or provider settings', refine: 'what providers are installed'});
+  return {kind: 'unclear', text: `${text} Based on what you're working on, I can help with:`, categories: categories.filter(option => !state.rejected?.has(option.key))};
+}
+
+/** "The thing from earlier": rank real candidates from recent factual context. */
+function vague(context: AskContext, state: ResolveState): AskOutcome {
+  const options: AskOption[] = [];
+  if (context.repoRoot && context.dirty !== false) options.push({key: 'vague:diff', label: 'Show the latest Git diff in this repository', outcome: build('git.diff', 'show git diff', context, 'show git diff')});
+  const here = context.transcripts.filter(item => item.startCwd === context.cwd || item.finalCwd === context.cwd)[0] ?? context.transcripts[0];
+  if (here) options.push({key: `vague:transcript:${here.id}`, label: `Resume the most recent transcript (${transcriptLabel(here, context)})`, outcome: resumeProposal(here, context)});
+  const file = context.recentFiles[0];
+  if (file) options.push({key: `vague:file:${file}`, label: `Reopen ${displayPath(file, context)}`, outcome: openProposal(file, context)});
+  const remaining = options.filter(option => !state.rejected?.has(option.key));
+  if (!remaining.length) return unclear(context, 'I\'m not sure which one you mean.', state);
+  return {kind: 'choose', reason: 'ambiguous', question: 'I\'m not completely sure what you mean. Did you mean:', options: remaining};
+}
+
+function unsafe(text: string, context: AskContext): AskOutcome {
+  const git = /\b(?:git|untracked|commit|push|branch|rebase|reset|clean|checkout|discard|changes)\b/u.test(text);
+  const what = /\buntracked\b/u.test(text) ? 'delete untracked files' : /\bpush\b/u.test(text) ? 'push commits' : /\bcommit\b/u.test(text) ? 'commit changes'
+    : /\bkill\b/u.test(text) ? 'end processes' : /\bsudo\b/u.test(text) ? 'run commands as root' : 'change or delete things';
+  if (git && context.repoRoot) {
+    return {kind: 'unsafe', text: `I understand that you want to ${what}, but Ask won't run destructive or history-changing Git commands. I can show the affected files first.`,
+      alternative: {key: 'safe:status', label: 'Show Git status', outcome: build('git.status', 'git status', context, 'git status')}};
+  }
+  if (/\bkill\b.*\bsession\b/u.test(text)) {
+    return {kind: 'unsafe', text: 'Ask won\'t end sessions itself. /sessions can, with its own confirmation (Ctrl+K on a detached session).',
+      alternative: {key: 'safe:sessions', label: 'Open /sessions', outcome: build('session.list', 'show sessions', context, 'show sessions')}};
+  }
+  return {kind: 'unsafe', text: `I understand that you want to ${what}, but that is outside what Ask will do: it never runs destructive, privileged or arbitrary commands.`};
+}
+
+const READ_COMMANDS: Record<ReadCommand['id'], (command: ReadCommand) => string[]> = {
+  'git.status': command => ['git', ...(command.cwd ? ['-C', command.cwd] : []), 'status'],
+  'git.diff': command => ['git', ...(command.cwd ? ['-C', command.cwd] : []), 'diff', ...((command as {staged?: boolean}).staged ? ['--staged'] : [])],
+  'git.log': command => ['git', ...(command.cwd ? ['-C', command.cwd] : []), 'log', '--oneline', '-n', '20'],
+};
+
+/** The fixed argv for a read-only command; arguments other than a factual path never come from the request. */
+export function readArgv(command: ReadCommand): string[] {
+  return READ_COMMANDS[command.id](command);
+}
+
+function displayPath(path: string, context: AskContext): string {
+  const base = context.repoRoot ?? context.cwd;
+  const rel = relative(base, path);
+  if (!rel.startsWith('..') && rel !== '') return rel;
+  return path.startsWith(`${context.home}/`) ? `~${path.slice(context.home.length)}` : path;
+}
+
+function transcriptLabel(item: AskTranscript, context: AskContext): string {
+  const date = new Date(item.createdAt);
+  const day = sameDay(date, new Date(context.now)) ? 'today' : sameDay(date, new Date(context.now - 86_400_000)) ? 'yesterday' : date.toISOString().slice(0, 10);
+  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return `${day} ${time} · ${displayPath(item.finalCwd || item.startCwd, context)} · ${item.commandCount} command${item.commandCount === 1 ? '' : 's'}`;
+}
+
+const sameDay = (a: Date, b: Date) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+function resumeProposal(item: AskTranscript, context: AskContext): AskOutcome {
+  return {kind: 'proposal', capability: 'session.resume', safety: 'navigate', confidence: 0.9,
+    text: `Resume the transcript from ${transcriptLabel(item, context)}?`, action: {kind: 'resumeTranscript', id: item.id}};
+}
+
+function openProposal(path: string, context: AskContext): AskOutcome {
+  return {kind: 'proposal', capability: 'file.open', safety: 'navigate', confidence: 0.92,
+    text: `Open ${displayPath(path, context)} in ${context.editor.label}?`, action: {kind: 'openFile', path}};
+}
+
+function readProposal(capability: CapabilityId, command: ReadCommand, description: string): AskOutcome {
+  return {kind: 'proposal', capability, safety: 'read', confidence: 0.9, text: description, action: {kind: 'read', command}};
+}
+
+const navigate = (capability: CapabilityId, text: string, action: AskAction): AskOutcome =>
+  ({kind: 'proposal', capability, safety: 'navigate', confidence: 0.95, text, action});
+
+/** The request with filler words and the verb removed, for argument extraction. */
+function argumentText(raw: string, verb: RegExp): string {
+  return raw.replace(verb, '').replace(/\b(?:the|my|a|an|file|folder|please|in (?:zed|vs ?code|my editor|the editor))\b/giu, ' ').replace(/\s+/gu, ' ').trim();
+}
+
+export function build(id: CapabilityId, text: string, context: AskContext, raw: string): AskOutcome {
+  const shell = shellIn(text);
+  switch (id) {
+    case 'shell.current': {
+      const current = shellLabel(context, context.shell);
+      return {kind: 'answer', capability: id, text: context.shell === context.defaultShell
+        ? `This session runs ${current}, which is also your default for new sessions.`
+        : `This session runs ${current}. New sessions start ${shellLabel(context, context.defaultShell)} (your default).`};
+    }
+    case 'shell.switch': {
+      if (!shell) return {kind: 'choose', reason: 'missing', capability: id, question: 'Switch this session to which shell?',
+        options: context.shells.filter(item => item.id !== context.shell).map(item => ({key: `shell:${item.id}`, label: item.label, refine: `switch to ${item.id}`}))};
+      if (shell === context.shell) return {kind: 'answer', capability: id, text: `This session already runs ${shellLabel(context, shell)}.`};
+      const info = context.shells.find(item => item.id === shell);
+      if (info && !info.installed) return build('shell.install', `install ${shell}`, context, raw);
+      return {kind: 'proposal', capability: id, safety: 'navigate', confidence: 0.95, command: `/shell ${shell}`,
+        text: `Yes. NMSh can switch this session to ${shellLabel(context, shell)}. Same session and folder; ${shellLabel(context, context.shell)} aliases and variables stay behind.`,
+        action: {kind: 'switchShell', shell}};
+    }
+    case 'shell.install': {
+      if (!shell) return {kind: 'choose', reason: 'missing', capability: id, question: 'Install which shell?',
+        options: context.shells.filter(item => !item.installed).map(item => ({key: `install:${item.id}`, label: item.label, refine: `install ${item.id}`}))};
+      const info = context.shells.find(item => item.id === shell);
+      if (info?.installed) return {kind: 'answer', capability: id, text: `${info.label} is already installed. /shell ${shell} switches this session to it.`,
+        follow: {key: `switch:${shell}`, label: `Switch to ${info.label}`, outcome: build('shell.switch', `switch to ${shell}`, context, raw)}};
+      if (!info?.installable) return {kind: 'answer', capability: id, text: `${shellLabel(context, shell)} is not installed, and NMSh has no safe install recipe here. Install it with your system's package manager, then /shell lists it.`};
+      return {kind: 'proposal', capability: id, safety: 'install', confidence: 0.95,
+        text: `${shellLabel(context, shell)} is not installed. /shell can install it with its previewed recipe; nothing runs until you confirm there.`,
+        action: {kind: 'installShell', shell}};
+    }
+    case 'shell.default': {
+      if (!shell) return {kind: 'answer', capability: id, text: `New sessions start ${shellLabel(context, context.defaultShell)}. Say "make fish my default shell" to change it.`};
+      if (shell === context.defaultShell) return {kind: 'answer', capability: id, text: `${shellLabel(context, shell)} is already your default shell.`};
+      return {kind: 'proposal', capability: id, safety: 'navigate', confidence: 0.9,
+        text: `Make ${shellLabel(context, shell)} the default for new sessions? This session keeps ${shellLabel(context, context.shell)} until /shell changes it.`,
+        action: {kind: 'setting', setting: 'shellBackend', value: shell, label: `Default shell: ${shellLabel(context, shell)}`}};
+    }
+    case 'shell.leave':
+      return {kind: 'answer', capability: id, text: `Use /${context.shell === 'zsh' ? 'zsh' : context.shell} (or /exit for your default shell). It leaves NMSh for an ordinary shell`
+        + (context.sessionMode === 'service' ? ' and keeps this session; running `nmsh` there returns to it.' : '; this in-process session ends.')};
+    case 'session.list': return navigate(id, 'Opening /sessions.', {kind: 'slash', slash: {kind: 'sessions'}, label: '/sessions'});
+    case 'session.resume': return resolveTranscript(text, context);
+    case 'transcript.find': {
+      const query = argumentText(raw, /^(?:please )?(?:find|search(?: for)?|look for|grep)\s+/iu).replace(/\b(?:in|through) (?:the )?(?:transcript|output|history|terminal)\b.*$/iu, '').trim().replace(/^-+/u, '');
+      if (!query) return {kind: 'choose', reason: 'missing', capability: id, question: 'Find what?', options: []};
+      return navigate(id, `Finding "${query}" in the transcript.`, {kind: 'slash', slash: {kind: 'find', arguments: query}, label: `/find ${query}`});
+    }
+    case 'transcript.filter': {
+      const query = argumentText(raw, /^.*?\b(?:only show(?: lines)?(?: with| containing)?|filter(?: (?:the )?(?:output|transcript))?(?: (?:for|by))?)\s+/iu).replace(/^lines? (?:with|containing)\s+/iu, '').replace(/^-+/u, '');
+      if (!query) return {kind: 'choose', reason: 'missing', capability: id, question: 'Show only lines with what?', options: []};
+      return navigate(id, `Showing only lines with "${query}" in the latest output.`, {kind: 'slash', slash: {kind: 'filter', arguments: query}, label: `/filter ${query}`});
+    }
+    case 'file.open': return resolveFile(raw, text, context);
+    case 'editor.status':
+      return {kind: 'answer', capability: id, text: context.editor.available ? `Files open in ${context.editor.label} (/open, Settings → Open with).` : context.editor.reason ?? 'No editor is available for /open here.'};
+    case 'git.status': case 'git.diff': case 'git.log': {
+      if (!context.repoRoot) return {kind: 'answer', capability: id, text: 'This folder is not in a Git repository.'};
+      const worktree = /\bworktree\b/u.test(text) ? resolveWorktree(text, context, id) : undefined;
+      if (worktree && 'kind' in worktree) return worktree;
+      const cwd = worktree?.path;
+      const command: ReadCommand = id === 'git.diff' ? {id, ...(cwd ? {cwd} : {}), ...(/\bstaged\b/u.test(text) ? {staged: true} : {})} : {id, ...(cwd ? {cwd} : {})};
+      const where = cwd ? ` in ${displayPath(cwd, context)}` : '';
+      const description = id === 'git.status' ? `I can show Git status${where}.` : id === 'git.diff' ? `I can show the ${/\bstaged\b/u.test(text) ? 'staged' : 'working-tree'} diff${where}.` : `I can show the last 20 commits${where}.`;
+      return readProposal(id, command, description);
+    }
+    case 'git.branch':
+      return {kind: 'answer', capability: id, text: context.branch ? `You are on ${context.branch}.` : context.repoRoot ? 'HEAD is detached (no branch).' : 'This folder is not in a Git repository.'};
+    case 'git.worktrees':
+      if (!context.repoRoot) return {kind: 'answer', capability: id, text: 'This folder is not in a Git repository.'};
+      return {kind: 'answer', capability: id, text: context.worktrees.length <= 1 ? 'This repository has one worktree (this one).'
+        : `Worktrees:\n${context.worktrees.map(item => `  ${item.current ? '›' : ' '} ${displayPath(item.path, context)}${item.branch ? `  ${item.branch}` : ''}`).join('\n')}`};
+    case 'settings.open': return navigate(id, 'Opening Settings.', {kind: 'slash', slash: {kind: 'settings', view: 'config'}, label: '/settings'});
+    case 'theme.open': return navigate(id, 'Opening Appearance (themes).', {kind: 'slash', slash: {kind: 'appearance'}, label: '/appearance'});
+    case 'prompt.open': return navigate(id, 'Opening /prompt.', {kind: 'slash', slash: {kind: 'prompt'}, label: '/prompt'});
+    case 'tools.open': return navigate(id, 'Opening /tools: installs there are previewed and start on No.', {kind: 'slash', slash: {kind: 'tools'}, label: '/tools'});
+    case 'screensaver.open': return navigate(id, 'Opening /screensaver.', {kind: 'slash', slash: {kind: 'screensaver', start: false}, label: '/screensaver'});
+    case 'providers.open': return navigate(id, 'Opening /providers.', {kind: 'slash', slash: {kind: 'providers'}, label: '/providers'});
+    case 'provider.status': return providerStatus(text, context);
+    case 'provider.switch': return providerSwitch(text, context);
+    case 'understanding.set': return understanding(text, context);
+    case 'help.capabilities':
+      return {kind: 'answer', capability: id, text: `Ask finds, opens, shows and switches things in NMSh. For example:\n${['open package.json', 'show my sessions', 'switch to fish',
+        'check git diff', 'find error in the transcript', 'resume yesterday\'s session', 'what providers are installed'].map(example => `  ${example}`).join('\n')}\nIt never runs destructive or arbitrary commands.`};
+    case 'help.command': {
+      const name = /\/[a-z][\w-]*/u.exec(text)?.[0];
+      const known = slashCommands.find(command => command.name === name);
+      return {kind: 'answer', capability: id, text: known ? `${known.name}: ${known.description}.` : `${name ?? 'That'} is not an NMSh command. /help lists them.`};
+    }
+  }
+}
+
+function resolveFile(raw: string, text: string, context: AskContext): AskOutcome {
+  const query = argumentText(raw, /^(?:please )?(?:open|edit|show me|view)\s+/iu);
+  // "this", "that" and "it" mean the most recent file NMSh saw in output.
+  if (/^(?:this|that|it|the last one)?$/iu.test(query)) {
+    const recent = context.recentFiles[0];
+    if (recent) return openProposal(recent, context);
+    return {kind: 'choose', reason: 'missing', capability: 'file.open', question: 'Open which file?', options: []};
+  }
+  const root = context.repoRoot ?? context.cwd;
+  const matches = matchFiles(query, context.files ?? [], context.cwd, root);
+  const recent = context.recentFiles.filter(file => basename(file).toLowerCase().includes(query.toLowerCase().replace(/\s+/gu, '')));
+  const strong = matches.filter(match => match.score >= 0.88);
+  if (strong.length === 1 || (matches.length === 1 && matches[0]!.score >= 0.5)) return openProposal((strong[0] ?? matches[0])!.path, context);
+  // Several words that pick one file clearly ("src config") resolve; a single word ("config") asks.
+  if (!strong.length && query.trim().split(/\s+/u).length > 1 && matches.length > 1 && matches[0]!.score - matches[1]!.score >= CLEAR_LEAD) return openProposal(matches[0]!.path, context);
+  const candidates = [...new Set([...recent, ...(strong.length ? strong : matches).map(match => match.path)])].slice(0, 6);
+  if (!candidates.length) return {kind: 'answer', capability: 'file.open', text: `No file matching "${query}" under ${displayPath(root, context) || root}. /open <path> opens a path directly.`};
+  return {kind: 'choose', reason: 'ambiguous', capability: 'file.open', question: `I found ${candidates.length} matches. Which one?`,
+    options: candidates.map(path => ({key: `file:${path}`, label: displayPath(path, context), outcome: openProposal(path, context)}))};
+}
+
+function resolveWorktree(text: string, context: AskContext, id: CapabilityId): AskOutcome | {path: string} | undefined {
+  const others = context.worktrees.filter(item => !item.current);
+  const named = context.worktrees.find(item => text.includes(basename(item.path).toLowerCase()) || (item.branch && text.includes(item.branch.toLowerCase())));
+  if (named) return {path: named.path};
+  if (!/\bother\b/u.test(text) && !others.length) return undefined;
+  if (others.length === 1) return {path: others[0]!.path};
+  if (!others.length) return {kind: 'answer', capability: id, text: 'This repository has no other worktrees.'};
+  return {kind: 'choose', reason: 'missing', capability: id, question: 'Which worktree?',
+    options: others.map(item => ({key: `worktree:${item.path}`, label: `${displayPath(item.path, context)}${item.branch ? `  ${item.branch}` : ''}`,
+      outcome: build(id, `${id.replace('git.', 'git ')} worktree ${basename(item.path).toLowerCase()}`, context, '')}))};
+}
+
+function resolveTranscript(text: string, context: AskContext): AskOutcome {
+  const now = new Date(context.now);
+  const yesterday = new Date(context.now - 86_400_000);
+  let candidates = context.transcripts;
+  let when = '';
+  if (/\byesterday|last night\b/u.test(text)) { candidates = candidates.filter(item => sameDay(new Date(item.createdAt), yesterday)); when = ' from yesterday'; }
+  else if (/\bthis morning\b/u.test(text)) { candidates = candidates.filter(item => sameDay(new Date(item.createdAt), now) && new Date(item.createdAt).getHours() < 12); when = ' from this morning'; }
+  else if (/\btoday\b/u.test(text)) { candidates = candidates.filter(item => sameDay(new Date(item.createdAt), now)); when = ' from today'; }
+  if (/\b(?:this|the) (?:repo|repository|project|folder)\b|\bhere\b/u.test(text)) {
+    const root = context.repoRoot ?? context.cwd;
+    candidates = candidates.filter(item => [item.startCwd, item.finalCwd].some(path => path === root || path.startsWith(`${root}/`)));
+    when += ' in this project';
+  }
+  // A live detached session named by its shell ("the bash one") is a factual match too.
+  const shell = shellIn(text);
+  const live = context.sessions.filter(session => !session.current && session.state === 'detached' && (!shell || session.shell === shell));
+  if (shell && live.length) {
+    if (live.length === 1) return {kind: 'proposal', capability: 'session.resume', safety: 'navigate', confidence: 0.9,
+      text: `Switch this window to the detached ${shell} session in ${displayPath(live[0]!.cwd, context)}?`, action: {kind: 'attachSession', id: live[0]!.id}};
+  }
+  if (!/\bresume|restore|reopen|continue|yesterday|morning|today|last|latest|previous\b/u.test(text)) {
+    return navigate('session.resume', 'Opening /resume (live sessions and archived transcripts).', {kind: 'slash', slash: {kind: 'resume'}, label: '/resume'});
+  }
+  if (/\b(?:last|latest|previous|most recent)\b/u.test(text)) candidates = candidates.slice(0, 1);
+  if (candidates.length === 1) return resumeProposal(candidates[0]!, context);
+  if (!candidates.length) return {kind: 'answer', capability: 'session.resume', text: `No archived transcript${when}. /resume lists them all.`,
+    follow: {key: 'open:resume', label: 'Open /resume', outcome: navigate('session.resume', 'Opening /resume.', {kind: 'slash', slash: {kind: 'resume'}, label: '/resume'})}};
+  return {kind: 'choose', reason: 'ambiguous', capability: 'session.resume', question: `${candidates.length} transcripts${when}. Which one?`,
+    options: candidates.slice(0, 5).map(item => ({key: `transcript:${item.id}`, label: transcriptLabel(item, context), outcome: resumeProposal(item, context)}))};
+}
+
+const FAMILY_WORDS: Record<string, string> = {prompt: 'prompt', suggestion: 'suggestions', suggestions: 'suggestions', history: 'history', welcome: 'welcome', picker: 'picker', navigation: 'navigation'};
+
+function providerStatus(text: string, context: AskContext): AskOutcome {
+  const family = Object.entries(FAMILY_WORDS).find(([word]) => new RegExp(`\\b${word}\\b`, 'u').test(text))?.[1];
+  const active = context.providers.filter(provider => provider.active && (!family || provider.family === family));
+  if (!active.length) return {kind: 'answer', capability: 'provider.status', text: 'No provider information is available. /providers lists them.'};
+  return {kind: 'answer', capability: 'provider.status', text: active.map(provider => `${provider.family}: ${provider.label}`).join('\n')};
+}
+
+function providerSwitch(text: string, context: AskContext): AskOutcome {
+  const target = context.providers.find(provider => new RegExp(`\\b${provider.id.toLowerCase()}\\b|\\b${provider.label.toLowerCase().replace(/[^a-z0-9 ]/gu, '')}\\b`, 'u').test(text)
+    && !provider.active);
+  if (!target) return {kind: 'answer', capability: 'provider.switch', text: 'I couldn\'t match that to a provider NMSh knows. /providers lists them.',
+    follow: {key: 'open:providers', label: 'Open /providers', outcome: build('providers.open', '', context, '')}};
+  if (!target.available) return {kind: 'answer', capability: 'provider.switch', text: `${target.label} is not installed. /providers can install it with a previewed recipe.`,
+    follow: {key: 'open:providers', label: 'Open /providers', outcome: build('providers.open', '', context, '')}};
+  return {kind: 'proposal', capability: 'provider.switch', safety: 'navigate', confidence: 0.9, text: `Use ${target.label} for ${target.family}?`,
+    action: {kind: 'setting', setting: target.family as 'suggestions', value: target.id, label: `${target.family}: ${target.label}`}};
+}
+
+function understanding(text: string, context: AskContext): AskOutcome {
+  const mode = /\b(?:off|disable|stop|never|no)\b/u.test(text) ? 'off' : /\balways\b/u.test(text) ? 'always' : /\b(?:on|auto|enable|use|turn on)\b/u.test(text) ? 'auto' : undefined;
+  if (!mode) return navigate('understanding.set', 'Opening /providers (Local understanding).', {kind: 'slash', slash: {kind: 'providers'}, label: '/providers'});
+  return {kind: 'proposal', capability: 'understanding.set', safety: 'navigate', confidence: 0.9,
+    text: mode === 'off' ? 'Turn local understanding off? Ask and Smart Folding keep working without a model.' : `Set local understanding to ${mode === 'auto' ? 'Auto' : 'Always'}? It is used only for the features you enable in /providers, and only locally.`,
+    action: {kind: 'setting', setting: 'localUnderstanding', value: mode, label: `Local understanding: ${mode}`}};
+}
+
+/** Pick an option from a reply: a number, an ordinal, or words that match exactly one label. */
+export function pickOption(reply: string, options: readonly AskOption[]): number | undefined {
+  const text = normalizeRequest(reply);
+  const number = /^(\d+)$/u.exec(text);
+  if (number) { const index = Number(number[1]) - 1; return index >= 0 && index < options.length ? index : undefined; }
+  const ordinals = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth'];
+  const ordinal = ordinals.findIndex(word => new RegExp(`\\b${word}\\b`, 'u').test(text));
+  if (ordinal !== -1 && ordinal < options.length) return ordinal;
+  if (/\blast\b/u.test(text) && options.length) return options.length - 1;
+  const words = text.replace(/\b(?:the|one|please|that|this|use|open|pick)\b/gu, ' ').split(/\s+/u).filter(word => word.length > 1);
+  if (!words.length) return undefined;
+  const hits = options.map((option, index) => ({index, ok: words.every(word => `${option.label} ${option.detail ?? ''}`.toLowerCase().includes(word))})).filter(item => item.ok);
+  return hits.length === 1 ? hits[0]!.index : undefined;
+}
+
+/** Options whose label contains every typed word: typing narrows a picker. */
+export function filterOptions(filter: string, options: readonly AskOption[]): number[] {
+  const words = normalizeRequest(filter).split(/\s+/u).filter(Boolean);
+  return options.flatMap((option, index) => words.every(word => option.label.toLowerCase().includes(word)) ? [index] : []);
+}

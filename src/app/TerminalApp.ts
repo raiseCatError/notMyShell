@@ -50,7 +50,7 @@ import {
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync, readFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
-import {delimiter, join} from 'node:path';
+import {delimiter, join, resolve as resolvePath} from 'node:path';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
 import {localKnowledge} from '../shell/CommandKnowledge.js';
@@ -139,6 +139,12 @@ function markSpans(plain: string, spans: ReadonlyArray<{start: number; end: numb
   return `${output}${plain.slice(index)}\u001b[0m`;
 }
 import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/registry.js';
+import {askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
+import {readArgv, resolveRequest} from '../ask/resolver.js';
+import {listProjectFiles} from '../ask/files.js';
+import {gitWorktrees} from '../ask/git.js';
+import type {AskAction, AskContext, AskOutcome} from '../ask/types.js';
+import {askProviderFacts, PROVIDER_FAMILIES, selectProvider} from '../providers/families.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
 import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
 import {detectPlatform, type PlatformInfo} from '../host/platform.js';
@@ -1078,6 +1084,12 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.askState) {
+      const event = askKey(this.askState, key);
+      if (event) void this.handleAskEvent(event);
+      this.render();
+      return;
+    }
     if (this.shellPanel) {
       const action = shellPanelKey(this.shellPanel, key);
       if (action?.kind === 'close') { this.shellPanel = undefined; this.returnFromPanel(); }
@@ -1820,6 +1832,7 @@ export class TerminalApp {
       } else await this.openDirectoryPicker(slash.query);
     }
     else if (slash.kind === 'palette') this.openPalette();
+    else if (slash.kind === 'ask') this.openAsk(slash.request);
     else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
   }
 
@@ -1930,7 +1943,8 @@ export class TerminalApp {
     this.composerHistory.reset();
     if (!command.trim()) return;
     // Valid NMSh commands are recalled with the session; unknown slash input runs as typed and follows shell history.
-    this.sessionSubmissions.push({text: command, slash: Boolean(slash && slash.kind !== 'unknown')});
+    // With Ask recording off, the request text is not kept for recall either.
+    if (!(slash?.kind === 'ask' && !this.promptConfiguration.askRecord)) this.sessionSubmissions.push({text: command, slash: Boolean(slash && slash.kind !== 'unknown')});
     if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
 
     if (slash) {
@@ -2212,10 +2226,14 @@ export class TerminalApp {
     if (!browser) return;
     const selection = resumeSelection(browser);
     if (selection?.kind !== 'archived') return;
-    const selected = selection.session;
+    await this.restoreTranscriptById(selection.session.id);
+  }
+
+  /** Restore one archived transcript into this window (the current view is archived first). Shared by /resume and Ask. */
+  private async restoreTranscriptById(id: string): Promise<void> {
     let restored: TranscriptSession;
     try {
-      restored = await this.transcriptStore.load(selected.id);
+      restored = await this.transcriptStore.load(id);
       const current = this.output.transcript();
       if (current.welcome || current.records.length > 0 || current.lines.length > 0) await this.archiveCurrentPresentation();
     } catch {
@@ -2225,7 +2243,7 @@ export class TerminalApp {
     }
     this.output.restoreTranscript(restored.transcript);
     this.welcomeGeneration += 1;
-    this.presentationStartCwd = selected.startCwd;
+    this.presentationStartCwd = restored.startCwd;
     this.resumeBrowser = undefined;
     this.historyViewport.latest();
     try { await this.journal?.start(); this.journalActive = Boolean(this.journal); } catch {
@@ -2870,7 +2888,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2929,6 +2947,7 @@ export class TerminalApp {
     }
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.askState) return framePanel(renderAsk(this.askState, columns), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
     if (this.resumeBrowser?.liveOnly) return framePanel(this.sessionsViewRows(this.resumeBrowser, columns), columns);
     if (this.resumeBrowser) {
@@ -4924,6 +4943,146 @@ export class TerminalApp {
     this.output.setOutputFilter({startId, clauses: [...(current?.clauses ?? []), {query, options, invert, context}]});
     this.historyViewport.latest();
     this.render();
+  }
+
+  /** Ask's in-memory interaction; discarded on close (only visible turns may be recorded). */
+  private askState?: AskState;
+  private askGeneration = 0;
+
+  /** `/ask` and `/ask <request>` open the same Ask; with a request it is submitted at once. */
+  private openAsk(request: string): void {
+    this.panelOrigin = undefined;
+    this.askState = createAskState();
+    this.askGeneration += 1;
+    if (request) {
+      this.askState.turns.push({role: 'you', text: request});
+      this.askState.submitted = true;
+      this.askState.original = request;
+      this.askState.busy = true;
+      void this.handleAskEvent({kind: 'resolve', text: request});
+    }
+  }
+
+  private async handleAskEvent(event: AskEvent): Promise<void> {
+    const state = this.askState;
+    if (!state) return;
+    if (event.kind === 'close') { this.closeAsk(); this.render(); return; }
+    if (event.kind === 'resolve') {
+      const generation = this.askGeneration;
+      let outcome: AskOutcome;
+      try { outcome = await this.resolveAsk(event.text, state); } catch {
+        outcome = {kind: 'unclear', text: 'Something went wrong while looking that up.', categories: []};
+      }
+      if (this.askState !== state || generation !== this.askGeneration || this.stopped) return;
+      const next = receiveOutcome(state, outcome);
+      if (next) await this.handleAskEvent(next);
+      this.render();
+      return;
+    }
+    // Execute: the conversation is recorded first (when enabled), then the typed action runs through its normal handler.
+    this.closeAsk();
+    await this.executeAskAction(event.action);
+    this.render();
+  }
+
+  /** Close Ask; its visible turns join the transcript only when "Record Ask in transcript" is on. */
+  private closeAsk(): void {
+    const state = this.askState;
+    this.askState = undefined;
+    this.askGeneration += 1;
+    if (!state) return;
+    const recorded = this.promptConfiguration.askRecord ? askTranscriptText(state) : undefined;
+    if (recorded) this.output.addFrontendInteraction(`/ask ${recorded.request}`, recorded.body || 'Closed without an answer.', INFO);
+    this.returnFromPanel();
+  }
+
+  /** Deterministic resolution first; an optional local interpretation may refine it (see LocalUnderstanding). */
+  private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
+    const context = await this.askContext(text);
+    return resolveRequest(text, context, {rejected: state.rejected});
+  }
+
+  /** Bounded facts from existing services: no environment, file contents or output beyond these. */
+  /** Runtime-only detection of every external provider (cached, bounded); never persisted. */
+  private readonly providerStatuses = new Map<string, ProviderStatus>();
+  private async refreshProviderStatuses(): Promise<void> {
+    const descriptors = PROVIDER_FAMILIES.flatMap(family => family.providers).filter(descriptor => descriptor.kind === 'external');
+    const results = await Promise.all(descriptors.map(async descriptor => [descriptor.id, await detectProvider(descriptor)] as const));
+    for (const [id, status] of results) this.providerStatuses.set(id, status);
+  }
+
+  private async askContext(text: string): Promise<AskContext> {
+    const root = this.context.root;
+    const worktrees = root ? await gitWorktrees(this.shellCwd, root) : [];
+    await this.refreshProviderStatuses();
+    let sessions: AskContext['sessions'] = [];
+    if (this.sessionMode === 'service') {
+      try {
+        sessions = (await listLiveSessions()).map(session => ({id: session.id, state: session.state, current: session.id === this.sessionId,
+          cwd: session.cwd, createdAt: session.createdAt, ...(session.shell ? {shell: session.shell} : {}), ...(session.running ? {running: session.running} : {})}));
+      } catch { /* service unreachable: no live facts */ }
+    }
+    let transcripts: AskContext['transcripts'] = [];
+    try {
+      transcripts = (await this.transcriptStore.listSummaries()).filter(item => item.id !== this.journal?.id).slice(0, 40)
+        .map(item => ({id: item.id, createdAt: item.createdAt, startCwd: item.startCwd, finalCwd: item.finalCwd, project: item.project, commandCount: item.commandCount}));
+    } catch { /* no archives readable */ }
+    const host = this.hostActions();
+    const probe = host.openFile({path: this.shellCwd});
+    const brew = resolveCommand('brew');
+    const shells = shellAvailability(process.env).map(item => ({id: item.adapter.id, label: item.adapter.label, installed: Boolean(item.executable),
+      installable: shellInstall(item.adapter.id, brew).kind === 'recipe'}));
+    const statuses = this.providerStatuses;
+    const recentFiles = this.recentReferences().map(reference => resolvePath(reference.cwd, reference.path)).filter((path, index, all) => all.indexOf(path) === index).slice(0, 10);
+    const recentCommands: string[] = [];
+    for (let index = 1; index <= 8; index += 1) { const record = this.output.recent(index); if (!record) break; recentCommands.push(record.command.slice(0, 80)); }
+    // The project file list is read (names only, bounded) only for requests about opening things.
+    const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
+    return {cwd: this.shellCwd, home: homedir(), ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
+      ...(this.context.git ? {dirty: Boolean(this.context.git.staged || this.context.git.modified || this.context.git.untracked)} : {}),
+      worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
+      editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
+      providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {})};
+  }
+
+  /** Every Ask action is an existing NMSh handler; read-only commands are NMSh-built argv submitted visibly. */
+  private async executeAskAction(action: AskAction): Promise<void> {
+    switch (action.kind) {
+      case 'slash': await this.runSlash(action.label, action.slash); return;
+      case 'switchShell': await this.switchShell(action.shell, `/shell ${action.shell}`); return;
+      case 'installShell': {
+        this.openShellPanel(action.shell);
+        const recipe = shellInstall(action.shell, resolveCommand('brew'));
+        // Ask's own Yes (which starts on No) was the confirmation of this exact recipe.
+        if (recipe.kind === 'recipe') await this.installShell(action.shell, recipe);
+        return;
+      }
+      case 'openFile': await this.openLocation('/ask', action.path, this.shellCwd); return;
+      case 'read': {
+        const argv = readArgv(action.command);
+        const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+        // A normal, visible submission: the command and its output follow ordinary transcript and history rules.
+        this.editor.clear();
+        this.editor.insert(argv.map(part => /^[\w./=-]+$/u.test(part) ? part : quote(part)).join(' '));
+        await this.submit(false, true);
+        return;
+      }
+      case 'resumeTranscript': await this.restoreTranscriptById(action.id); return;
+      case 'attachSession': this.switchToLiveSession(action.id, 'detached'); return;
+      case 'setting': {
+        if (action.setting === 'shellBackend') {
+          if (isShellId(action.value)) this.updateConfiguration(configuration => { configuration.shellBackend = action.value as ShellId; });
+        } else if (action.setting === 'localUnderstanding') {
+          const mode = action.value as PromptConfiguration['localUnderstanding']['mode'];
+          if (['off', 'auto', 'always'].includes(mode)) this.updateConfiguration(configuration => { configuration.localUnderstanding = {...configuration.localUnderstanding, mode}; });
+        } else {
+          const next = selectProvider(this.promptConfiguration, action.setting, action.value);
+          if (next) this.applySettingsConfiguration(next);
+        }
+        this.output.addFrontendInteraction('/settings', `${action.label}.`, INFO);
+        return;
+      }
+    }
   }
 
   private openShellPanel(select?: ShellId): void {

@@ -34,14 +34,16 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/shell zsh', insertion: '/shell zsh', description: 'Switch this NMSh session to zsh (NMSh stays open)'},
   {name: '/shell fish', insertion: '/shell fish', description: 'Switch this NMSh session to Fish (NMSh stays open)'},
   {name: '/shell bash', insertion: '/shell bash', description: 'Switch this NMSh session to Bash (NMSh stays open)'},
-  {name: '/zsh', insertion: '/zsh', description: 'Leave NMSh for an ordinary interactive zsh (ends this NMSh session)'},
-  {name: '/fish', insertion: '/fish', description: 'Leave NMSh for an ordinary interactive Fish (ends this NMSh session)'},
-  {name: '/bash', insertion: '/bash', description: 'Leave NMSh for an ordinary interactive Bash (ends this NMSh session)'},
+  {name: '/zsh', insertion: '/zsh', description: 'Leave NMSh for an ordinary zsh; this session waits, and `nmsh` there returns to it'},
+  {name: '/fish', insertion: '/fish', description: 'Leave NMSh for an ordinary Fish; this session waits, and `nmsh` there returns to it'},
+  {name: '/bash', insertion: '/bash', description: 'Leave NMSh for an ordinary Bash; this session waits, and `nmsh` there returns to it'},
   {name: '/exit', insertion: '/exit', description: 'Leave NMSh for your configured default shell (Settings → Default shell)'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
+  {name: '/ask', insertion: '/ask ', description: 'Ask NMSh what it can do in plain English'},
+  {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
   {name: '/sessions', insertion: '/sessions', description: 'Live NMSh sessions right now: switch to a detached one, kill one (nmsh --sessions outside)'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
@@ -93,6 +95,8 @@ export type ParsedSlashCommand =
   | {kind: 'agents'; action: 'show' | 'on' | 'off' | 'reset'}
   | {kind: 'notices'; action: 'show' | 'on' | 'off' | 'clear'}
   | {kind: 'palette'}
+  | {kind: 'ask'; request: string}
+  | {kind: 'providers'}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
@@ -148,6 +152,9 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const notices = /^\/notices(?:\s+(on|off|clear))?\s*$/u.exec(input);
   if (notices) return {kind: 'notices', action: (notices[1] ?? 'show') as 'show' | 'on' | 'off' | 'clear'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
+  const ask = /^\/ask(?:\s+([\s\S]*))?$/u.exec(input);
+  if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
+  if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};
   const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);
   if (directories) return {kind: 'directories', query: (directories[1] ?? '').trim()};
   const history = /^\/history(?:\s+([\s\S]*))?$/u.exec(input);
