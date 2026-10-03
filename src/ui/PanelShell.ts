@@ -1,3 +1,4 @@
+import {paintTreatment, type TreatmentSettings} from '../chroma/treatment.js';
 import {background, foreground, UI_COLORS} from './palette.js';
 import {truncateAnsi, displayWidth} from '../util/text.js';
 import {theme} from '../chroma/chroma.js';
@@ -51,6 +52,8 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
 }
 
 /** Framing belongs to the live overlay, never to OutputBuffer or an archive. */
-export function framePanel(rows: string[], columns: number): string[] {
-  return renderSurface(rows, columns, {frame: 'topLine', frameColor: theme('separator')});
+export function framePanel(rows: string[], columns: number, treatment?: TreatmentSettings): string[] {
+  const framed = renderSurface(rows, columns, {frame: 'topLine', frameColor: theme('separator')});
+  if (treatment && treatment.preset !== 'off') framed[0] = paintTreatment(framed[0]!.replace(/\u001B\[[0-9;]*m/gu, ''), treatment, 'panel-frame', UI_COLORS.separator);
+  return framed;
 }

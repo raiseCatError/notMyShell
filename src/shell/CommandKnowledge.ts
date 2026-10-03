@@ -1,6 +1,7 @@
 import {Highlighter} from '../input/Highlighter.js';
 import {graphemes} from '../input/inputLayout.js';
 import {completionLabel, type CompletionCandidate, type CompletionKind} from './completion.js';
+import type {CommandType} from './SemanticService.js';
 
 export interface CommandKnowledge {
   value: string;
@@ -56,10 +57,10 @@ export interface InspectorContext extends CommandKnowledge {
 
 /** Grapheme cursor, like CommandEditor. Highlighter owns lexical boundaries; no shell evaluation. */
 export function inspectCommand(buffer: string, cursor: number, cwd: string,
-  candidates: readonly CompletionCandidate[] = []): InspectorContext | undefined {
+  candidates: readonly CompletionCandidate[] = [], shellNames: ReadonlyMap<string, CommandType> = new Map()): InspectorContext | undefined {
   const chars = graphemes(buffer);
   const at = Math.max(0, Math.min(chars.length, cursor));
-  const tokens = new Highlighter().tokenize(chars, new Map());
+  const tokens = new Highlighter().tokenize(chars, new Map(shellNames));
   const token = tokens.find(item => item.start <= at && at < item.end)
     ?? tokens.find(item => item.end === at && item.type !== 'Normal');
   if (!token || ['Normal', 'Comment', 'Operator'].includes(token.type)) return undefined;
@@ -88,7 +89,9 @@ export function inspectCommand(buffer: string, cursor: number, cwd: string,
   const known = simple && !optionsEnded ? localKnowledge(command, word, commandPosition) : undefined;
   const fact = known?.kind === 'subcommand' && words.length !== 2 ? undefined : known;
   const kind: CompletionKind = commandPosition ? 'command' : token.type === 'Flag' && !optionsEnded ? 'option' : 'argument';
+  const shellType = commandPosition ? shellNames.get(word) : undefined;
+  const shellDescription = shellType === 'alias' ? 'Alias visible in the current shell' : shellType === 'function' ? 'Function visible in the current shell' : undefined;
   return {value: completionLabel(word), kind: candidate?.kind ?? fact?.kind ?? kind,
-    description: completionLabel(candidate?.description || fact?.description || 'No local description available'),
-    usage: fact?.usage, start, end, command, source: candidate?.description ? candidate.source : fact ? 'local' : 'context'};
+    description: completionLabel(shellDescription || candidate?.description || fact?.description || 'No local description available'),
+    usage: shellDescription ? undefined : fact?.usage, start, end, command, source: shellDescription ? 'shell-metadata' : candidate?.description ? candidate.source : fact ? 'local' : 'context'};
 }
