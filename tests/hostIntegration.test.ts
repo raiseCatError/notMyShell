@@ -17,6 +17,6 @@ test('configuration adapter selection is passive and unavailable outside its hos
 test('general frontend, renderer, decoder and shell do not branch on host products', () => {
   for (const file of ['app/TerminalApp.ts', 'terminal/TerminalRenderer.ts', 'shell/ShellSession.ts', 'help/markdown.ts']) {
     const text = readFileSync(new URL(`../src/${file}`, import.meta.url), 'utf8');
-    assert.doesNotMatch(text, /ghostty|iTerm\.app|WezTerm|Apple_Terminal/iu, file);
+    assert.doesNotMatch(text, /ghostty|iTerm\.app|WezTerm|Apple_Terminal|KITTY_WINDOW_ID|process\.env\.TERM_PROGRAM|host\.name\s*===/iu, file);
   }
 });

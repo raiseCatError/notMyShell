@@ -1,6 +1,7 @@
 export interface ShellMarker {
   exitCode: number;
   cwd: string;
+  knowledge?: string;
 }
 
 export type ProtocolEvent =
