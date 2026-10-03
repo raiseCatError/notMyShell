@@ -16,7 +16,13 @@ import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
-import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
+import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
+import {createSetup, renderSetup, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
+  type InstallPromptState} from '../tools/InstallSuggestion.js';
+import {toolInstall} from '../tools/catalog.js';
+import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
+import type {CommandSource} from '../shell/SemanticService.js';
 import {GLYPHS, setIconStyle, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
@@ -51,7 +57,7 @@ import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, type ProviderStatus} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
@@ -131,6 +137,8 @@ const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
+/** The Settings row the glyph preview returns to. */
+const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(entry => entry.id === 'glyphPreview'));
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
@@ -221,6 +229,17 @@ export class TerminalApp {
   private presetFrontendReady = false;
   switchPreset?: SessionPreset;
   private toolsPanel?: ToolsPanel;
+  /** Setup Cat: one draft over the saved configuration; nothing persists until Apply. */
+  private setupState?: SetupState;
+  /** A missing curated command's install offer; the submitted text is kept until the user decides. */
+  private installPrompt?: InstallPromptState;
+  /** The last optional tool update check (bookkeeping file, read once). */
+  private toolUpdates: ToolUpdateState = loadToolUpdateState();
+  private toolUpdateCheckRunning = false;
+  /** What command words resolve to in the configured zsh, filled off the keypress path for the inspector. */
+  private readonly commandSources = new Map<string, CommandSource | null>();
+  /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
+  private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
   private misePanel?: MisePanel;
   private readonly miseService = new MiseProjectService();
   private toolConfigurationLoading = false;
@@ -306,6 +325,7 @@ export class TerminalApp {
       if (this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.semanticService.applyShellKnowledge(marker.knowledge);
+          this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
         }
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
@@ -602,6 +622,7 @@ export class TerminalApp {
     void this.loadHistory();
     this.render();
     void this.quietUpdateCheck();
+    void this.quietToolUpdateCheck();
     this.presetFrontendReady = true;
     if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
     const exitCode = await this.done;
@@ -721,6 +742,14 @@ export class TerminalApp {
     }
     if (this.misePanel) {
       void this.handleMiseKey(key, this.misePanel);
+      return;
+    }
+    if (this.installPrompt) {
+      void this.handleInstallPromptKey(key, this.installPrompt);
+      return;
+    }
+    if (this.setupState) {
+      this.handleSetupKey(key, this.setupState);
       return;
     }
     if (this.toolsPanel) {
@@ -1491,6 +1520,7 @@ export class TerminalApp {
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
+    else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
     else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
@@ -1606,14 +1636,23 @@ export class TerminalApp {
     }
   }
 
-  private async submit(realShell = false): Promise<void> {
+  private async submit(realShell = false, skipInstallCheck = false): Promise<void> {
     this.clearCorrection();
     const command = this.editor.text;
+    const slash = realShell ? undefined : parseSlashCommand(command);
+    if (!slash && !skipInstallCheck && !this.startupPending && installCandidate(command, this.promptConfiguration)) {
+      // Real zsh resolution decides first; the composer keeps the text while it is asked.
+      this.preparingCommand = true;
+      let offered = false;
+      try { offered = await this.offerInstallFor(command); } finally { this.preparingCommand = false; }
+      if (this.stopped) return;
+      if (offered) { this.render(); return; }
+      if (this.editor.text !== command) return;
+    }
     this.editor.clear();
     this.composerHistory.reset();
     if (!command.trim()) return;
 
-    const slash = realShell ? undefined : parseSlashCommand(command);
     if (slash) {
       await this.runSlash(command, slash);
       this.render();
@@ -2491,7 +2530,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
@@ -2501,6 +2540,8 @@ export class TerminalApp {
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
+    if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
+    if (this.setupState) return renderSetup(this.setupState, columns, this.dimensions().rows);
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
@@ -2592,7 +2633,7 @@ export class TerminalApp {
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
       this.settingsPanelState = undefined;
-      if (!onboarding) this.settingsPanelState = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: 1,
+      if (!onboarding) this.settingsPanelState = {section: 'root', view: 'settings', selectedIndex: 0, contentIndex: GLYPH_ENTRY_INDEX(),
         glyphStyle: style, onboarding: false};
       if (onboarding && !next.onboardingComplete) {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
@@ -2635,7 +2676,7 @@ export class TerminalApp {
   private handleSettingsKey(key: Key, state: SettingsPanelState): void {
     if (key.kind === 'escape' || key.kind === 'interrupt') {
       if (state.onboarding) this.saveGlyphChoice(state.glyphStyle);
-      else if (state.section === 'appearance') { state.section = 'root'; state.view = 'settings'; state.contentIndex = 1; }
+      else if (state.section === 'appearance') { state.section = 'root'; state.view = 'settings'; state.contentIndex = GLYPH_ENTRY_INDEX(); }
       else if (state.searchQuery || state.searchFocused) { state.searchQuery = ''; state.searchFocused = false; state.contentIndex = 0; }
       else this.settingsPanelState = undefined;
       return;
@@ -2687,6 +2728,12 @@ export class TerminalApp {
   }
 
   private openSettingsDestination(destination: SettingsDestination, view: SettingsView, rowIndex: number, state: SettingsPanelState): void {
+    if (destination === 'resetInstallSuggestions') {
+      const count = this.promptConfiguration.ignoredInstallSuggestions.length;
+      if (count) this.applySettingsConfiguration({...this.promptConfiguration, ignoredInstallSuggestions: []});
+      this.output.addFrontendInteraction('/settings', count ? `Install suggestions reset for ${count} tool${count === 1 ? '' : 's'}.` : 'No ignored install suggestions to reset.', INFO);
+      return;
+    }
     if (destination === 'glyph') {
       state.section = 'appearance';
       state.selectedIndex = this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1;
@@ -2697,6 +2744,7 @@ export class TerminalApp {
     this.panelOriginRow = rowIndex;
     this.settingsPanelState = undefined;
     if (destination === 'tools') this.startTools();
+    else if (destination === 'setup') this.startSetup();
     else if (destination === 'toolConfig') void this.startToolConfiguration('starship');
     else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
@@ -2765,6 +2813,7 @@ export class TerminalApp {
   private startTools(onboarding = false): void {
     const config = this.promptConfiguration;
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
+    state.updates = this.toolUpdates;
     void refreshTools(state, () => { if (!this.stopped && this.toolsPanel === state) this.render(); });
   }
 
@@ -2795,6 +2844,123 @@ export class TerminalApp {
         this.startProviderPanel(family);
       }
     } else if (action === 'refresh') await refreshTools(state, () => this.render());
+    else if (action === 'checkUpdates') await this.checkToolUpdates(state);
+    this.render();
+  }
+
+  /** An explicit or due background check: one batched package-manager call, never on render or keystrokes. */
+  private async checkToolUpdates(panel?: ToolsPanel): Promise<void> {
+    if (this.toolUpdateCheckRunning) return;
+    this.toolUpdateCheckRunning = true;
+    if (panel) { panel.checking = true; this.render(); }
+    try {
+      this.toolUpdates = await runToolUpdateCheck();
+    } finally {
+      this.toolUpdateCheckRunning = false;
+      if (panel) { panel.checking = false; panel.updates = this.toolUpdates; }
+    }
+    if (this.toolsPanel) this.toolsPanel.updates = this.toolUpdates;
+    if (!this.stopped) this.render();
+  }
+
+  private async quietToolUpdateCheck(): Promise<void> {
+    if (!toolUpdateCheckDue(this.promptConfiguration.toolUpdateChecks, this.toolUpdates)) return;
+    await this.checkToolUpdates();
+    const count = Object.keys(this.toolUpdates.outdated).length;
+    if (count && !this.stopped) {
+      this.output.addHistoryLine(`${SUBTLE}Optional tool updates available · /tools${RESET}`);
+      this.render();
+    }
+  }
+
+  private startSetup(entry?: string): void {
+    const state = this.setupState = createSetup(this.promptConfiguration, entry);
+    void this.loadSetupContext(state);
+  }
+
+  /** Provider install state and completion facts, detected once per Setup Cat open; never on render. */
+  private async loadSetupContext(state: SetupState): Promise<void> {
+    const descriptors = [...PICKER_PROVIDERS, ...NAVIGATION_PROVIDERS, ...HISTORY_PROVIDERS, ...SUGGESTION_PROVIDERS, ...WELCOME_PROVIDERS]
+      .filter(descriptor => descriptor.kind === 'external' && descriptor.executable);
+    const statuses: Record<string, ProviderStatus> = {};
+    const facts = this.semanticService.completionFacts().then(result => {
+      state.context = {...state.context, completion: result ?? {zshCompletions: false, fzfTab: false, completionSystem: false}};
+    });
+    await Promise.all(descriptors.map(async descriptor => { statuses[descriptor.executable!] = await detectProvider(descriptor); }));
+    const starship = await detectProvider({id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', description: '', executable: 'starship'});
+    statuses.starship = starship;
+    state.context = {...state.context, statuses};
+    await facts;
+    if (!this.stopped && this.setupState === state) this.render();
+  }
+
+  private handleSetupKey(key: Key, state: SetupState): void {
+    const result = setupKey(state, key);
+    if (!result) return;
+    this.setupState = undefined;
+    if (result.kind === 'cancel') { this.returnFromPanel(); return; }
+    const previous = this.promptConfiguration;
+    const next = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
+    if (result.changed && !setupIsIdempotent({...state, draft: next})) {
+      if (!this.applySettingsConfiguration(next)) return;
+      if (previous.suggestions !== next.suggestions) this.applySuggestionProvider();
+      if (previous.history !== next.history) void this.loadHistory();
+      if (previous.navigation !== next.navigation) { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
+      if (previous.provider !== next.provider) void this.refreshProviderPrompt().then(() => this.render());
+      this.output.addFrontendInteraction('/setup', 'Setup Cat applied your changes. Rerun /setup anytime; it starts from your current settings.', SUCCESS);
+    } else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
+    this.panelOrigin = undefined;
+    if (result.tools === 'recommended' || result.tools === 'enhanced' || result.tools === 'individual') {
+      this.startTools();
+      if (this.toolsPanel) this.toolsPanel.tier = result.tools === 'individual' ? undefined : result.tools;
+    }
+  }
+
+  /**
+   * Before a submitted command runs: when its first word exactly names a curated tool that the real
+   * zsh cannot resolve (no alias, function, builtin or executable), offer an install instead. Returns
+   * true when the offer is shown; the command text stays in the composer meanwhile.
+   */
+  private async offerInstallFor(command: string): Promise<boolean> {
+    const tool = installCandidate(command, this.promptConfiguration);
+    if (!tool || !tool.executable) return false;
+    const source = await this.semanticService.resolveSource(tool.executable);
+    const resolution = source === undefined ? 'unavailable' : source.kind;
+    const onPath = this.installProbe.onPath(tool.executable);
+    const recipe = this.installProbe.recipe(tool);
+    if (!shouldOfferInstall(tool, resolution, onPath, recipe)) return false;
+    this.installPrompt = createInstallPrompt(tool, recipe, command);
+    return true;
+  }
+
+  private async handleInstallPromptKey(key: Key, state: InstallPromptState): Promise<void> {
+    const action = installPromptKey(state, key);
+    if (!action) { this.render(); return; }
+    const restore = () => { this.editor.clear(); this.editor.insert(state.command); };
+    if (action === 'close' || action === 'later') { this.installPrompt = undefined; restore(); }
+    else if (action === 'run') { this.installPrompt = undefined; restore(); await this.submit(false, true); }
+    else if (action === 'ignoreTool' || action === 'never') {
+      this.installPrompt = undefined; restore();
+      this.applySettingsConfiguration(ignoreInstallSuggestion(this.promptConfiguration, action, state.tool));
+      this.output.addFrontendInteraction('/tools', action === 'never'
+        ? 'Install suggestions are off. Turn them back on in /settings (Tools).'
+        : `NMSh will not offer to install ${state.tool.label} again. Reset in /settings (Tools).`, INFO);
+    } else if (action === 'install') {
+      state.task = new TaskProgress(`Installing ${state.tool.label}`, () => this.renderTaskPresentation(), Date.now(), state.tool.label);
+      this.render();
+      const outcome = await state.task.run(state.recipe.command, [...state.recipe.args]);
+      if (this.stopped) return;
+      clearProviderDetection();
+      this.semanticService.cache.delete(state.tool.executable ?? '');
+      this.commandSources.clear();
+      const installed = resolveCommand(state.tool.executable ?? state.tool.id) !== undefined;
+      state.result = outcome.status === 'succeeded' && installed
+        ? {ok: true, message: `${state.tool.label} installed. Nothing was run.`}
+        : {ok: false, message: outcome.status === 'succeeded' ? `${state.recipe.label} finished, but ${state.tool.executable} was not found.`
+          : `${state.tool.label} was not installed. ${state.task.state.error ?? ''}`.trim()};
+      restore();
+      if (state.result.ok) this.pendingMilestone = true;
+    }
     this.render();
   }
 
@@ -2863,14 +3029,14 @@ export class TerminalApp {
   }
 
   /** Persists an inline Settings edit and applies it live; on failure the old value stays. */
-  private applySettingsConfiguration(next: PromptConfiguration | undefined): void {
-    if (!next) return;
+  private applySettingsConfiguration(next: PromptConfiguration | undefined): boolean {
+    if (!next) return false;
     try {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
     } catch (error) {
       this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
       this.render();
-      return;
+      return false;
     }
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
@@ -2879,6 +3045,7 @@ export class TerminalApp {
     this.output.setOutputFolding(next.outputFolding);
     this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
+    return true;
   }
 
   /**
@@ -3452,8 +3619,27 @@ export class TerminalApp {
    * focus, cursor and PTY sizing all call this instead of counting rows.
    */
   private inspectorRows(columns: number): string[] {
-    if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms || this.editor.text.startsWith('/')) return [];
-    return renderInspector(inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions, this.semanticService.cache), columns);
+    if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms) return [];
+    if (this.editor.text.startsWith('/')) {
+      const slash = describeSlashCommand(this.editor.text);
+      return slash ? [truncateText(`Inspect ${this.editor.text.trim().split(/\s+/u)[0]}`, columns), truncateText(slash, columns)] : [];
+    }
+    const context = inspectCommand(this.editor.text, this.editor.cursorIndex, this.shellCwd, this.shellSuggestions, this.semanticService.cache);
+    if (!context || context.kind !== 'command' || context.value !== context.command) return renderInspector(context, columns);
+    return renderInspector(context, columns, describeCommandSource(context.value, this.commandSource(context.value)));
+  }
+
+  /** Cached source lookup; a miss is resolved off the keypress path and re-renders when known. */
+  private commandSource(word: string): CommandSource | undefined {
+    if (this.commandSources.has(word)) return this.commandSources.get(word) ?? undefined;
+    if (this.commandSources.size >= 512) this.commandSources.delete(this.commandSources.keys().next().value!);
+    this.commandSources.set(word, null);
+    void this.semanticService.resolveSource(word).then(source => {
+      if (this.stopped) return;
+      if (source) this.commandSources.set(word, source); else this.commandSources.delete(word);
+      if (source && this.inspectorVisible) this.render();
+    });
+    return undefined;
   }
 
   private planFrame(
@@ -3810,6 +3996,7 @@ export class TerminalApp {
     this.endStartupWatch();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
+    this.installPrompt?.task?.dispose();
     this.providerPanelState?.task?.dispose();
     this.welcomeBlinkTimer?.();
     this.welcomeBlinkTimer = undefined;

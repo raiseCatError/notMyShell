@@ -12,6 +12,10 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
+  {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
+  {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
+  {name: '/setup appearance', insertion: '/setup appearance', description: 'Setup Cat: theme, vibrance and Chroma'},
+  {name: '/setup tools', insertion: '/setup tools', description: 'Setup Cat: optional tools, update checks and install suggestions'},
   {name: '/tools', insertion: '/tools', description: 'Browse optional tools, installation previews and supported configuration'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
@@ -39,6 +43,7 @@ export type ParsedSlashCommand =
   | {kind: 'prompt'}
   | {kind: 'chroma'}
   | {kind: 'tools'}
+  | {kind: 'setup'; entry?: string}
   | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
   | {kind: 'syntax'}
@@ -66,6 +71,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
+  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor))?\s*$/u.exec(input);
+  if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};

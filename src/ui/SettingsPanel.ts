@@ -66,7 +66,8 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
+  | 'setup' | 'resetInstallSuggestions';
 
 interface SettingsRowBase {
   id: string;
@@ -97,7 +98,7 @@ function withTranscript(config: PromptConfiguration, patch: Partial<TranscriptAp
   return {...config, transcript: {...config.transcript, ...patch}};
 }
 
-function enumRow<T>(row: SettingsRowBase & {values: readonly T[]; labels: readonly string[];
+export function enumRow<T>(row: SettingsRowBase & {values: readonly T[]; labels: readonly string[];
   get: (config: PromptConfiguration) => T; set: (config: PromptConfiguration, value: T) => PromptConfiguration}): SettingsRow {
   const {values, labels, get, set, ...base} = row;
   return {...base, control: 'enum', options: labels,
@@ -207,6 +208,13 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
   {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
+  enumRow({id: 'toolUpdateChecks', label: 'Optional tool update checks', description: 'Batched Homebrew outdated checks for optional tools; upgrades are always previewed and confirmed', category: 'Tools',
+    values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
+    get: config => config.toolUpdateChecks, set: (config, toolUpdateChecks) => ({...config, toolUpdateChecks})}),
+  {id: 'installSuggestions', label: 'Install suggestions', description: 'Offer to install a missing curated tool when its exact command is submitted', category: 'Tools',
+    control: 'boolean', get: config => config.installSuggestions, set: (config, installSuggestions) => ({...config, installSuggestions})},
+  {id: 'resetInstallSuggestions', label: 'Ignored install suggestions', description: 'Tools you asked NMSh not to offer again; Enter resets the list', category: 'Tools',
+    control: 'action', actionLabel: 'Reset', destination: 'resetInstallSuggestions'},
   enumRow({id: 'treatmentPreset', label: 'Chroma', description: 'Native prompt, history rules and Settings frame; /chroma for the full editor; external prompts keep their colors', category: 'Presentation',
     values: TREATMENT_PRESETS, labels: TREATMENT_PRESETS.map(preset => TREATMENT_PRESET_LABELS[preset]),
     get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
@@ -245,6 +253,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
+  {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
 
 /** Text cue (not color) that a value differs from its default. */

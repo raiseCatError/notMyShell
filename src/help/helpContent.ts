@@ -12,6 +12,14 @@ export function helpMarkdown(): AuthoredMarkdown {
 | --- | --- |
 ${commands}
 
+## Setup Cat and optional tools
+
+NMSh is complete out of the box. No external shell tools are required. Optional providers and integrations can be added later, and you can switch between Native and external providers anytime from Settings or Setup Cat.
+
+Run /setup (or /setup prompt, appearance, chroma, editor, tools) to revisit settings. Setup Cat starts from your current settings, changes nothing until you apply on its last step, and Esc discards the draft. /tools lists optional tools by tier (Recommended, Enhanced CLI); every install or upgrade shows its exact command and asks first. Optional tool update checks are Off unless you choose Daily or Weekly.
+
+When a submitted command is missing in your zsh and exactly names a curated tool, NMSh may offer to install it; aliases, functions, builtins and executables always win, and your command stays in the composer. The command inspector (palette: Toggle command inspector) shows what a command word resolves to: builtin, alias, function or executable path.
+
 ## Session presets
 
 Use /presets (also in the palette) to create, inspect, launch and delete named startup configurations. N creates one with an explicit cwd and optional commands, one per line; Tab changes fields, Ctrl+J adds a command line, Enter saves. Never put secrets in saved commands; reference your existing environment tooling instead.
