@@ -95,7 +95,7 @@ export function commandIdentity(value: string | undefined): CommandIdentity | un
   if (text === 'function' || text.includes('function')) return 'function';
   if (text === 'builtin' || text.includes('builtin')) return 'builtin';
   if (text === 'reserved' || text.includes('reserved') || text.includes('keyword')) return 'keyword';
-  if (text === 'executable' || text.includes('external command') || text === 'command') return 'executable';
+  if (text === 'executable' || text.includes('external command') || text === 'command' || text === 'commands') return 'executable';
   return undefined;
 }
 

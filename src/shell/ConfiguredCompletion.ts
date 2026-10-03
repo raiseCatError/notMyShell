@@ -34,6 +34,18 @@ export function completionWord(context: CompletionContext): {start: number; end:
   return {start, end: context.buffer.length};
 }
 
+/**
+ * zsh's `-d` display strings (from `_describe`) repeat the match, padded,
+ * before ` -- description`. Keep just the description; a display string that
+ * is only the match itself carries no description.
+ */
+export function describeOnly(display: string, raw: string): string {
+  const text = display.trim();
+  if (text === raw) return '';
+  const rest = raw && text.startsWith(raw) ? /^\s+--\s+(.*)$/u.exec(text.slice(raw.length)) : null;
+  return rest ? rest[1]!.trim() : text;
+}
+
 export function parseConfiguredCompletions(output: string, context: CompletionContext): CompletionCandidate[] {
   const range = completionWord(context);
   if (!range || Buffer.byteLength(output) > MAX_BYTES || !output.endsWith('\0')) return [];
@@ -49,7 +61,9 @@ export function parseConfiguredCompletions(output: string, context: CompletionCo
     // Quote the complete replacement, avoiding any dependence on plugin ZLE insertion.
     let insertionValue = value.replace(/([^\p{L}\p{N}_./:,@%+\-])/gu, '\\$1');
     const kind = category === 'directory' ? 'directory' : category === 'file' ? 'file'
-      : value.startsWith('-') ? 'option' : range.start === 0 ? 'command' : 'argument';
+      : value.startsWith('-') ? 'option' : range.start === 0 ? 'command'
+        // "common commands", "internal commands", "subcommand": a subcommand group after the command word.
+        : /\b(?:sub)?commands?$/iu.test(group ?? '') ? 'subcommand' : 'argument';
     // Preserve only the user's explicit, unquoted HOME expansion. Quoted/escaped
     // tildes and arbitrary completion values remain literal presentation data.
     if ((kind === 'file' || kind === 'directory') && value.startsWith('~/')
@@ -57,9 +71,10 @@ export function parseConfiguredCompletions(output: string, context: CompletionCo
       insertionValue = insertionValue.slice(1);
     }
     const label = completionLabel(display);
+    const cleanDescription = describeOnly(completionLabel(description), raw);
     const identity = kind === 'command' ? commandIdentity(group) : undefined;
-    candidates.push({value, display: label, name: label, description: completionLabel(description),
-      group: completionLabel(group), prefix, suffix, kind, ...(identity ? {identity} : {}), source: 'zsh-configured', replacement: range,
+    candidates.push({value, display: label, name: label, description: cleanDescription,
+      group: /^-.*-$/u.test(group ?? '') ? '' : completionLabel(group), prefix, suffix, kind, ...(identity ? {identity} : {}), source: 'zsh-configured', replacement: range,
       context: {...context}, insertionCursor: range.start + insertionValue.length,
       insertion: context.buffer.slice(0, range.start) + insertionValue + context.buffer.slice(range.end)});
   }

@@ -15,6 +15,8 @@ autoload -Uz compinit
 zmodload zsh/zutil
 # Completion expands knowledge, not arbitrary buffer expressions through _expand.
 zstyle ':completion:*' completer _complete
+# Group explanations ("external command", "local branch", ...) arrive as plain text via -X.
+zstyle ':completion:*:descriptions' format '%d'
 unfunction compadd 2>/dev/null
 compadd() {
   setopt localoptions extendedglob noksharrays
@@ -36,9 +38,13 @@ compadd() {
   builtin compadd -A nmshcap_hits -D nmsh_labels "$@"
   local -A nmshcap_pre nmshcap_hiddenpre nmshcap_suf nmshcap_hiddensuf nmshcap_groups nmshcap_unsorted nmshcap_ignoredpre nmshcap_ignoredsuf
   local -a nmshcap_ignored nmshcap_fileflag nmshcap_noquote
-  zparseopts -a nmshcap_ignored -E a k q Q=nmshcap_noquote e n U l 1 2 C F: W: X: x: r: R: o:: O: A: D: E: M: \
+  local -A nmshcap_explanation
+  zparseopts -a nmshcap_ignored -E a k q Q=nmshcap_noquote e n U l 1 2 C F: W: X:=nmshcap_explanation x: r: R: o:: O: A: D: E: M: \
     P:=nmshcap_pre p:=nmshcap_hiddenpre S:=nmshcap_suf s:=nmshcap_hiddensuf J:=nmshcap_groups V:=nmshcap_unsorted f=nmshcap_fileflag i:=nmshcap_ignoredpre I:=nmshcap_ignoredsuf
   local nmshcap_value nmshcap_description nmshcap_group=${nmshcap_groups[-J]:-${nmshcap_unsorted[-V]}}
+  # The human explanation names the group better than zsh's internal group tag.
+  [[ -n ${nmshcap_explanation[-X]} ]] && nmshcap_group=${nmshcap_explanation[-X]}
+  [[ $nmshcap_group == -*- ]] && nmshcap_group=''
   local nmshcap_prefix="${(Q)IPREFIX}${nmshcap_ignoredpre[-i]}${nmshcap_pre[-P]}${nmshcap_hiddenpre[-p]}"
   local nmshcap_suffix="${nmshcap_hiddensuf[-s]}${nmshcap_suf[-S]}${nmshcap_ignoredsuf[-I]}${(Q)ISUFFIX}"
   local nmshcap_kind=argument
