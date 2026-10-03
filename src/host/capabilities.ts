@@ -59,6 +59,16 @@ const ZED_PROFILE = {
   mouseReporting: true, mouseMovement: false, clickSupport: true, textSelectionInteraction: 'shift' as const,
 };
 
+/**
+ * Hosts whose documentation describes Kitty graphics support: Kitty, Ghostty
+ * and WezTerm. For these NMSh sends the graphics query; support is still only
+ * assumed from the reply (Kitty itself keeps its long-standing hint).
+ */
+export function shouldProbeGraphics(env: NodeJS.ProcessEnv): boolean {
+  const nested = Boolean(env.TMUX || env.STY || env.ZELLIJ) || /^(tmux|screen)/u.test(env.TERM ?? '');
+  return !nested && env.NMSH_IMAGES !== '0' && ['kitty', 'ghostty', 'wezterm'].includes(terminalProfile(env));
+}
+
 /** Adapter hints are subordinate to protocol evidence. Multiplexers hide outer hints. */
 export function resolveHostCapabilities(env: NodeJS.ProcessEnv = process.env): TerminalCapabilities {
   const result = {...BASELINE_CAPABILITIES};

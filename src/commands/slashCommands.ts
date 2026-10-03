@@ -37,6 +37,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
+  {name: '/about', insertion: '/about', description: 'About NMSh: build identity and logo (inline image where the terminal supports it)'},
   {name: '/agents', insertion: '/agents', description: 'Local agent CLI activity: durations, runs and a heatmap (on/off/reset)'},
   {name: '/notices', insertion: '/notices', description: 'Cross-session notices above the composer (on/off/clear)'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
@@ -69,6 +70,7 @@ export type ParsedSlashCommand =
   | {kind: 'presets'}
   | {kind: 'resume'}
   | {kind: 'help'}
+  | {kind: 'about'}
   | {kind: 'agents'; action: 'show' | 'on' | 'off' | 'reset'}
   | {kind: 'notices'; action: 'show' | 'on' | 'off' | 'clear'}
   | {kind: 'palette'}
@@ -109,6 +111,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/presets\s*$/u.test(input)) return {kind: 'presets'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
+  if (/^\/about\s*$/u.test(input)) return {kind: 'about'};
   const agents = /^\/agents(?:\s+(on|off|reset))?\s*$/u.exec(input);
   if (agents) return {kind: 'agents', action: (agents[1] ?? 'show') as 'show' | 'on' | 'off' | 'reset'};
   const notices = /^\/notices(?:\s+(on|off|clear))?\s*$/u.exec(input);

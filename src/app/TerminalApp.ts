@@ -48,7 +48,8 @@ import {
   SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {appendFileSync, existsSync} from 'node:fs';
+import {appendFileSync, existsSync, readFileSync} from 'node:fs';
+import {shouldProbeGraphics} from '../host/capabilities.js';
 import {delimiter, join} from 'node:path';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
@@ -118,6 +119,7 @@ import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.j
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {InstallProvenance} from '../tools/InstallProvenance.js';
 import {detectPlatform, type PlatformInfo} from '../host/platform.js';
+import {createImageOverlay, fitCells, pngSize, selectImageProtocol, type ImageOverlay, type ImageProtocol, type ImageSize} from '../presentation/ImageSurface.js';
 import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentReport} from '../shell/ShellEnvironment.js';
 import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
 import {detectAgentCommand} from '../agents/agents.js';
@@ -647,7 +649,7 @@ export class TerminalApp {
           process.stdin.resume();
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
-      });
+      }, undefined, {graphics: shouldProbeGraphics(process.env)});
       process.stdin.setRawMode(this.originalRawMode);
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
@@ -1014,6 +1016,14 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
+      return;
+    }
+    if (this.aboutPanel) {
+      // Read-only panel: any key closes it, and its image goes with it.
+      this.aboutPanel = undefined;
+      this.renderer.setImageOverlay(undefined);
+      this.returnFromPanel();
+      this.render();
       return;
     }
     if (this.resumeBrowser) {
@@ -1682,6 +1692,7 @@ export class TerminalApp {
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
+    else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
     else if (slash.kind === 'notices') await this.runNoticesCommand(command, slash.action);
     else if (slash.kind === 'history') {
       if (command.startsWith(HISTORY_SEARCH)) this.submitHistorySearch(slash.query, true);
@@ -2699,7 +2710,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2756,6 +2767,7 @@ export class TerminalApp {
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4, this.promptConfiguration.presentation), columns);
     }
+    if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
       const sessions = visibleResumeSessions(browser);
@@ -4737,9 +4749,50 @@ export class TerminalApp {
       // Flow can scroll the input row off screen.
       cursorVisible: !plan.panelActive && plan.inputHeight > 0,
     };
+    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
     this.presentationFrame = {frame, plan};
     this.paintPresentation(Date.now());
     this.syncPresentationClock();
+  }
+
+  /** /about: build identity and the logo, as an image where the host supports one, text otherwise. */
+  private aboutPanel?: {protocol: ImageProtocol; png?: Buffer};
+
+  private openAbout(): void {
+    const protocol = selectImageProtocol({capabilities: this.host.capabilities, env: process.env});
+    let png: Buffer | undefined;
+    if (protocol !== 'none') try { png = readFileSync(join(installRoot(), 'assets', 'brand', 'nmsh-logo.png')); } catch { /* text logo */ }
+    this.aboutPanel = {protocol: png ? protocol : 'none', ...(png ? {png} : {})};
+  }
+
+  private aboutLogoSize(columns: number): ImageSize {
+    const size = this.aboutPanel?.png && pngSize(this.aboutPanel.png);
+    return size ? fitCells(size.width, size.height, Math.max(8, columns - 6), 6) : {columns: 0, rows: 0};
+  }
+
+  private aboutRows(columns: number): string[] {
+    const panel = this.aboutPanel!;
+    const rows = [`${PRIMARY}  About NMSh${RESET}`, ''];
+    if (panel.protocol !== 'none') rows.push(...Array<string>(this.aboutLogoSize(columns).rows).fill(''));
+    else rows.push(`  ${ACCENT}\u001b[1mN${SECONDARY}❯${ACCENT}MSh${RESET}`, `  ${PRIMARY}not${ACCENT}My${PRIMARY}Shell${RESET}`);
+    const images = panel.protocol === 'kitty' ? 'Kitty graphics protocol' : panel.protocol === 'iterm2' ? 'iTerm2 inline images'
+      : 'not available in this terminal; NMSh works fully without them';
+    rows.push('', `  ${SUBTLE}${formatBuildIdentity(this.buildIdentity)}${RESET}`,
+      `  ${SUBTLE}Keep your terminal. Keep your shell. Upgrade the interaction layer.${RESET}`,
+      `  ${SUBTLE}Inline images: ${images}${RESET}`, '', `  ${SUBTLE}Any key closes${RESET}`);
+    return rows;
+  }
+
+  /** The logo overlay sits in the blank rows reserved by aboutRows inside the panel region. */
+  private aboutOverlay(plan: ScreenPlan, columns: number): ImageOverlay | undefined {
+    const panel = this.aboutPanel;
+    const region = plan.regions.find(item => item.kind === 'panel');
+    if (!panel?.png || panel.protocol === 'none' || !region) return undefined;
+    const size = this.aboutLogoSize(columns);
+    // framePanel's frame line leads the panel (it moves below the panel under Dock Top), then title and spacer.
+    const row = region.top + (plan.composerPosition === 'top' ? 0 : 1) + 2;
+    if (row + size.rows > region.top + region.height) return undefined;
+    return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2, size);
   }
 
   /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
