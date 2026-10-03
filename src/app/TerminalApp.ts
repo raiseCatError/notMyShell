@@ -116,6 +116,9 @@ import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
+import {InstallProvenance} from '../tools/InstallProvenance.js';
+import {detectPlatform, type PlatformInfo} from '../host/platform.js';
+import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentReport} from '../shell/ShellEnvironment.js';
 import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
 import {detectAgentCommand} from '../agents/agents.js';
 import {describeNotice, noticeKey, selectNotices, sessionLabel, type NoticeView, type SessionNotice} from '../session/SessionNotices.js';
@@ -150,6 +153,10 @@ const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const SEPARATOR = lazyForeground(UI_COLORS.separator);
 const ACCENT = lazyForeground(UI_COLORS.accent);
+/** NMSh ran this install with the user's confirmation; record it so an uninstall can be offered honestly. */
+function recordInstall(toolId: string, install: {label: string; command: string; args: readonly string[]}): void {
+  try { new InstallProvenance().record({id: toolId, package: install.args.at(-1) ?? toolId}, {...install, args: [...install.args]}); } catch { /* best effort */ }
+}
 /** Session notices change on human timescales; a slow poll keeps the service quiet. */
 const NOTICE_REFRESH_MS = 4000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
@@ -304,6 +311,11 @@ export class TerminalApp {
   /** Notices this window cleared while an older service could not clear them for everyone. */
   private readonly dismissedNotices = new Set<string>();
   private readonly agentActivity = new AgentActivityStore();
+  /** Facts about the machine and shell setup; read once, never per frame. */
+  private get platformInfo(): PlatformInfo { return this.cachedPlatform ??= detectPlatform(); }
+  private cachedPlatform?: PlatformInfo;
+  private get shellEnvironment(): ShellEnvironmentReport { return this.cachedEnvironment ??= detectShellEnvironment(); }
+  private cachedEnvironment?: ShellEnvironmentReport;
   private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
@@ -2584,7 +2596,7 @@ export class TerminalApp {
           this.starshipStatus = await detectStarship(process.env);
           state.starshipStatus = this.starshipStatus;
           if (!this.starshipStatus.installed) state.task.markFailure('Homebrew completed, but starship was not found on PATH.');
-          else this.milestoneEffect();
+          else { recordInstall('starship', {label: 'brew install starship', command: 'brew', args: ['install', 'starship']}); this.milestoneEffect(); }
         }
         state.step = 'installResult';
         state.selectedIndex = 0;
@@ -3680,6 +3692,7 @@ export class TerminalApp {
       this.semanticService.cache.delete(state.tool.executable ?? '');
       this.commandSources.clear();
       const installed = resolveCommand(state.tool.executable ?? state.tool.id) !== undefined;
+      if (outcome.status === 'succeeded' && installed) recordInstall(state.tool.id, state.recipe);
       state.result = outcome.status === 'succeeded' && installed
         ? {ok: true, message: `${state.tool.label} installed. Nothing was run.`}
         : {ok: false, message: outcome.status === 'succeeded' ? `${state.recipe.label} finished, but ${state.tool.executable} was not found.`
@@ -3727,6 +3740,7 @@ export class TerminalApp {
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
         {label: 'Platform', value: `${process.platform} ${process.arch}`},
+        {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
         {label: 'Node', value: process.version},
         {label: 'Shell', value: 'zsh'},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
@@ -3744,12 +3758,17 @@ export class TerminalApp {
         {label: 'Directory navigation', value: this.directoryService.status.detail ?? this.directoryService.status.active},
         {label: 'Picker', value: this.promptConfiguration.picker},
         {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
+        {label: 'Completion sources', value: this.completionService.sourceIds.join(' + ')},
+        {label: 'Session notices', value: config.sessionNotices ? (this.sessionMode === 'service' ? 'On' : 'On (needs the live-session service)') : 'Off'},
+        {label: 'Agent activity', value: config.agentActivity ? 'On · local only' : 'Off'},
+        ...shellEnvironmentRows(this.shellEnvironment).map(([label, value]) => ({label, value})),
         {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
       ],
       [
         {label: 'Session journal', value: this.journalActive ? 'active' : 'inactive', tone: this.journalActive ? 'success' : 'warning'},
         {label: 'Session retention', value: config.sessionRetention === null ? 'unlimited' : `${config.sessionRetention} sessions`},
         {label: 'Config file', value: tilde(promptConfigurationPath()), tone: 'muted'},
+        {label: 'Runtime directory', value: tilde(defaultRuntimeDir()), tone: 'muted'},
       ],
     ];
   }
@@ -3941,6 +3960,7 @@ export class TerminalApp {
         state.statuses[selected.id] = await detectProvider(selected);
         state.step = 'list';
         if (outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed') {
+          recordInstall(selected.executable ?? selected.id, install);
           // Installed and re-detected: use it right away, as the user asked.
           this.saveProviderChoice(state);
           this.milestoneEffect();
