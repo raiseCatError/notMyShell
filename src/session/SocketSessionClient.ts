@@ -2,6 +2,7 @@ import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ClientMessage, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
+import type {SessionNotice} from './SessionNotices.js';
 import type {AttachedSession, SessionClient, SessionClientEvents, SessionOptions} from './SessionClient.js';
 
 export interface SocketConnectOptions extends SessionOptions {
@@ -92,6 +93,21 @@ export async function listSessions(socketPath: string, timeoutMs = 3000): Promis
     message => (message.type === 'sessions' ? message.sessions : undefined));
   socket.end();
   return value;
+}
+
+/** Live sessions plus notices for recently ended ones (older services report none). */
+export async function listSessionsWithNotices(socketPath: string, timeoutMs = 3000): Promise<{sessions: SessionInfo[]; ended: SessionNotice[]}> {
+  const {value, socket} = await request(socketPath, timeoutMs, {type: 'list'},
+    message => (message.type === 'sessions' ? {sessions: message.sessions, ended: message.ended ?? []} : undefined));
+  socket.end();
+  return value;
+}
+
+/** Clear a session's notice in every attached frontend. */
+export async function dismissNotice(socketPath: string, sessionId: string, timeoutMs = 3000): Promise<void> {
+  const {socket} = await request(socketPath, timeoutMs, {type: 'dismiss', sessionId},
+    message => (message.type === 'dismissed' ? true : undefined));
+  socket.end();
 }
 
 export class SessionConnectError extends Error {

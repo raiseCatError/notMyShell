@@ -37,6 +37,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
+  {name: '/agents', insertion: '/agents', description: 'Local agent CLI activity: durations, runs and a heatmap (on/off/reset)'},
+  {name: '/notices', insertion: '/notices', description: 'Cross-session notices above the composer (on/off/clear)'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
   {name: '/dirs', insertion: '/dirs ', description: 'Find a directory; insert a visible cd command'},
@@ -67,6 +69,8 @@ export type ParsedSlashCommand =
   | {kind: 'presets'}
   | {kind: 'resume'}
   | {kind: 'help'}
+  | {kind: 'agents'; action: 'show' | 'on' | 'off' | 'reset'}
+  | {kind: 'notices'; action: 'show' | 'on' | 'off' | 'clear'}
   | {kind: 'palette'}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -105,6 +109,10 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/presets\s*$/u.test(input)) return {kind: 'presets'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
+  const agents = /^\/agents(?:\s+(on|off|reset))?\s*$/u.exec(input);
+  if (agents) return {kind: 'agents', action: (agents[1] ?? 'show') as 'show' | 'on' | 'off' | 'reset'};
+  const notices = /^\/notices(?:\s+(on|off|clear))?\s*$/u.exec(input);
+  if (notices) return {kind: 'notices', action: (notices[1] ?? 'show') as 'show' | 'on' | 'off' | 'clear'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
   const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);
   if (directories) return {kind: 'directories', query: (directories[1] ?? '').trim()};

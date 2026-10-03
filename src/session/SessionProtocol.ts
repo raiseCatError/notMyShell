@@ -9,6 +9,8 @@
  * rejected instead of partially applied.
  */
 
+import {NOTICE_KINDS, type SessionNotice} from './SessionNotices.js';
+
 // v2: a frontend going away detaches its session instead of ending it.
 export const PROTOCOL_VERSION = 2;
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
@@ -26,6 +28,8 @@ export type ClientMessage =
   | {type: 'ack'; seq: number; journalId: string}
   /** End a detached session this connection does not control (Kill Session). */
   | {type: 'kill'; sessionId: string}
+  /** Clear a session's cross-session notice everywhere (it was opened/focused). */
+  | {type: 'dismiss'; sessionId: string}
   | {type: 'terminate'};
 
 export type ServerMessage =
@@ -41,7 +45,9 @@ export type ServerMessage =
   | {type: 'startup'; output: string}
   | {type: 'input-rejected'; data: string; submission?: number}
   | {type: 'detached'; sessionId: string}
-  | {type: 'sessions'; sessions: SessionInfo[]}
+  /** ended: notices for sessions that ended recently (absent from older services). */
+  | {type: 'sessions'; sessions: SessionInfo[]; ended?: SessionNotice[]}
+  | {type: 'dismissed'; sessionId: string}
   /**
    * Shell stream events carry a per-session sequence number and the time the
    * service observed them, so a reattaching frontend can replay what it
@@ -85,6 +91,8 @@ export interface SessionInfo {
   attentionSince?: number;
   /** Exit code of the last finished command, while idle. */
   lastExit?: number;
+  /** The session's current cross-session notice, until it is focused (#v0.16; absent from older services). */
+  notice?: SessionNotice;
 }
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
@@ -97,7 +105,7 @@ export function encodeMessage(message: ProtocolMessage): string {
   return `${JSON.stringify({v: PROTOCOL_VERSION, ...message})}\n`;
 }
 
-type Kind = 'string' | 'int' | 'env' | 'int?' | 'string?' | 'sessions';
+type Kind = 'string' | 'int' | 'env' | 'int?' | 'string?' | 'sessions' | 'notice?' | 'notices?';
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<string, Shape> = {
@@ -110,6 +118,7 @@ const SHAPES: Record<string, Shape> = {
   resize: {columns: 'int', rows: 'int'},
   ack: {seq: 'int', journalId: 'string'},
   kill: {sessionId: 'string'},
+  dismiss: {sessionId: 'string'},
   terminate: {},
   welcome: {version: 'int', service: 'string', startupSafety: 'int?'},
   error: {code: 'string', message: 'string'},
@@ -119,7 +128,8 @@ const SHAPES: Record<string, Shape> = {
   startup: {output: 'string'},
   'input-rejected': {data: 'string', submission: 'int?'},
   detached: {sessionId: 'string'},
-  sessions: {sessions: 'sessions'},
+  sessions: {sessions: 'sessions', ended: 'notices?'},
+  dismissed: {sessionId: 'string'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?'},
   prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?'},
@@ -135,7 +145,15 @@ function isEnv(value: unknown): value is Record<string, string> {
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
   running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
-  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?'};
+  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?'};
+
+const NOTICE_SHAPE: Shape = {sessionId: 'string', kind: 'string', at: 'int', program: 'string?', agent: 'string?', exitCode: 'int?',
+  durationMs: 'int?', cwd: 'string?'};
+
+function decodeNotice(raw: unknown): SessionNotice | undefined {
+  const decoded = decodeShape(NOTICE_SHAPE, raw) as SessionNotice | undefined;
+  return decoded && (NOTICE_KINDS as readonly string[]).includes(decoded.kind) ? decoded : undefined;
+}
 
 function validField(kind: Kind, value: unknown): boolean {
   switch (kind) {
@@ -143,6 +161,8 @@ function validField(kind: Kind, value: unknown): boolean {
     case 'env': return isEnv(value);
     case 'sessions': return Array.isArray(value) && value.every(entry => decodeShape(INFO_SHAPE, entry) !== undefined
       && ((entry as SessionInfo).state === 'attached' || (entry as SessionInfo).state === 'detached'));
+    case 'notice?': return decodeNotice(value) !== undefined;
+    case 'notices?': return Array.isArray(value) && value.length <= 64 && value.every(entry => decodeNotice(entry) !== undefined);
     default: return Number.isSafeInteger(value);
   }
 }
@@ -153,10 +173,11 @@ function decodeShape(shape: Shape, raw: unknown): Record<string, unknown> | unde
   const decoded: Record<string, unknown> = {};
   for (const [field, kind] of Object.entries(shape)) {
     const value = record[field];
-    if ((kind === 'int?' || kind === 'string?') && value === undefined) continue;
+    if ((kind === 'int?' || kind === 'string?' || kind === 'notice?' || kind === 'notices?') && value === undefined) continue;
     if (!validField(kind === 'string?' ? 'string' : kind, value)) return undefined;
     decoded[field] = kind === 'env' ? {...(value as Record<string, string>)}
-      : kind === 'sessions' ? (value as unknown[]).map(entry => decodeShape(INFO_SHAPE, entry)) : value;
+      : kind === 'sessions' ? (value as unknown[]).map(entry => decodeShape(INFO_SHAPE, entry))
+        : kind === 'notice?' ? decodeNotice(value) : kind === 'notices?' ? (value as unknown[]).map(decodeNotice) : value;
   }
   return decoded;
 }

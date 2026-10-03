@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {resolveCommand, runExternal} from '../providers/providers.js';
-import {HistoryIndex, historyId, journalHistory, type HistoryEntry} from './HistoryIndex.js';
+import {HistoryIndex, historyId, journalHistory, type HistoryEntry, type HistoryRankContext, type RankedHistoryEntry, RANK_SCAN_LIMIT, rankHistory} from './HistoryIndex.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import {Worker} from 'node:worker_threads';
@@ -76,7 +76,12 @@ export class HistoryService {
     if (entry) this.index.add(entry);
   }
 
-  search(query: string, signal?: AbortSignal): Promise<HistoryEntry[]> { return this.index.search(query, signal); }
+  search(query: string, signal?: AbortSignal, limit?: number): Promise<HistoryEntry[]> { return this.index.search(query, signal, limit); }
+
+  /** Ranked against where you are now; Native only (an external provider's own order is respected via `search`). */
+  searchRanked(query: string, context: HistoryRankContext, signal?: AbortSignal): Promise<RankedHistoryEntry[]> {
+    return this.search(query, signal, RANK_SCAN_LIMIT).then(matches => (signal?.aborted ? [] : rankHistory(matches, query, context).slice(0, 100)));
+  }
 
   private async loadSource(provider: HistoryProviderId, signal: AbortSignal): Promise<{entries: CommandEntry[]; source: 'zsh' | 'atuin'; detail?: string}> {
     let detail: string | undefined;

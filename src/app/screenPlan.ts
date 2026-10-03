@@ -28,7 +28,9 @@ export type RegionKind =
   | 'input'
   | 'separator'
   /** The optional NMSh status strip: one owned row at the top. */
-  | 'status';
+  | 'status'
+  /** Cross-session notices: frontend chrome immediately above the composer, never transcript. */
+  | 'notices';
 
 export interface Region {
   kind: RegionKind;
@@ -203,6 +205,23 @@ function build(
 export function withStatusRow(plan: ScreenPlan): ScreenPlan {
   const shift = (region: Region): Region => ({...region, top: region.top + 1});
   return {...plan, rows: plan.rows + 1, regions: [{kind: 'status', top: 0, height: 1}, ...plan.regions.map(shift)], transcript: shift(plan.transcript)};
+}
+
+const COMPOSER_KINDS: ReadonlySet<RegionKind> = new Set(['composerBorder', 'prompt', 'input']);
+
+/**
+ * A plan (built for `plan.rows`) with `count` notice rows inserted immediately
+ * above the composer. Regions from the composer on move down; nothing above it
+ * moves, so the transcript keeps its geometry. Without a composer (a panel owns
+ * the screen) the plan is returned unchanged.
+ */
+export function withNoticeRows(plan: ScreenPlan, count: number): ScreenPlan {
+  const index = plan.regions.findIndex(region => COMPOSER_KINDS.has(region.kind));
+  if (count <= 0 || index === -1 || plan.panelActive) return plan;
+  const at = plan.regions[index]!.top;
+  const shift = (region: Region): Region => (region.top >= at ? {...region, top: region.top + count} : region);
+  const regions = [...plan.regions.slice(0, index), {kind: 'notices' as const, top: at, height: count}, ...plan.regions.slice(index).map(shift)];
+  return {...plan, rows: plan.rows + count, regions, transcript: shift(plan.transcript)};
 }
 
 export function regionOf(plan: ScreenPlan, kind: RegionKind): Region | undefined {
