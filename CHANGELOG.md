@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Shell backends:** a real ShellAdapter with zsh (unchanged behavior), Fish and Bash 4.4+ backends; `/shell` lists installed shells and switches the current session in place; Settings → Default shell for new sessions. See [docs/architecture/shell-adapter.md](docs/architecture/shell-adapter.md).
+- **Session notices:** up to three factual lines above the composer when other sessions finish, fail, ask for attention or end; cleared everywhere when the session is focused (`/notices`).
+- **Session viewer:** `/resume` rows lead with a factual state, proven agent identity, durations and ages.
+- **Agent activity:** local-only Claude Code / Codex CLI durations, counts and a heatmap (`/agents`, Off switch, reset); never prompts or output.
+- **History and completion:** context-ranked Native `/history` with `agent:`/`source:` filters; a multi-source completion layer with provenance and an opt-in declarative spec source.
+- **Transcript find and filter:** `/find` bar and presentation-only `/filter` for one output block.
+- **Editor bridge:** `/open path:line:col`, `/open` reference picker and `/open-diff`, delegated to Zed, VS Code or `$VISUAL`/`$EDITOR` (Open with setting).
+- **Portability and maintenance:** `nmsh config export|import`, `nmsh uninstall`, `nmsh doctor`, provenance-aware tool uninstall in `/tools`.
+- **Diagnostics:** read-only shell framework / plugin-manager detection, platform and WSL reporting in `/status`.
+- **Images:** capability-driven Kitty graphics / iTerm2 inline images for `/about`, with a text fallback.
+- **Linux:** freedesktop notifications via `notify-send` when available.
+
+### Notes
+- None of the above has passed physical terminal QA yet; see [docs/testing/v016-physical-qa.md](docs/testing/v016-physical-qa.md). Linux and WSL 2 are supported by automated validation only.
+
 ## [0.7.0] - 2026-10-01
 
 UI Foundation & Customization: a shared internal UI toolkit (notMyUI), Chroma color roles, reduced-presentation modes, Markdown-authored help, and Settings v2.
