@@ -20,20 +20,20 @@ export function handleKeyboardKey(key: Key, state: KeyboardState): boolean {
   return false;
 }
 
-export function renderKeyboardPanel(state: KeyboardState, columns: number): string[] {
+export function renderKeyboardPanel(state: KeyboardState, columns: number, hostName = 'the host'): string[] {
   const rows: string[] = [];
   rows.push(`${PRIMARY}  Keyboard Integration${RESET}`);
   rows.push('');
-  rows.push(`  ${WARNING}Note: Installing these bindings affects all Ghostty tabs globally.${RESET}`);
+  rows.push(`  ${WARNING}Note: Installing these bindings affects all ${hostName} tabs globally.${RESET}`);
   rows.push('');
   
   const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
   const labelColor = (index: number) => index === state.selectedIndex ? PRIMARY : SECONDARY;
 
-  rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Arrows, Opt+Backspace  Install for Ghostty${RESET}`);
+  rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Arrows, Opt+Backspace  Install for ${hostName}${RESET}`);
 
   rows.push('');
-  rows.push(`  ${SECONDARY}Ghostty normally collapses Backspace and Option+Backspace to the${RESET}`);
+  rows.push(`  ${SECONDARY}${hostName} normally collapses Backspace and Option+Backspace to the${RESET}`);
   rows.push(`  ${SECONDARY}same DEL byte. Installing this allows NMSh to distinguish them.${RESET}`);
   rows.push('');
   rows.push(`  ${SECONDARY}Enter install · Esc cancel${RESET}`);
