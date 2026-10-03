@@ -64,3 +64,36 @@ Protocol references: [iTerm2 OSC 8](https://iterm2.com/documentation-escape-code
 [WezTerm keyboard configuration](https://wezterm.org/config/key-encoding.html),
 [WezTerm mouse selection](https://wezterm.org/config/mouse.html), and
 [WezTerm graphics features](https://wezterm.org/features.html).
+
+## OSC 8 presentation
+
+`HyperlinkPresenter` recognizes targets on bounded source lines and returns
+cell copies; `TranscriptPresenter` uses them only when the current attachment's
+`TerminalHost.capabilities.hyperlinks` is true. The parser stores original
+program-emitted link metadata separately from SGR. NMSh-generated payloads never
+enter parser cells, transcript snapshots, journal events, command history or
+`/copy`. Wrapped rows close links at each boundary and reopen on continuation;
+sticky truncation closes before its ellipsis. OSC scanning cannot consume
+multiple adjacent sequences as one string.
+
+Generated targets allow only HTTP, HTTPS and local file URLs. URL parsing rejects
+credentials, terminal controls and remote file authorities. File URI encoding
+comes from `pathToFileURL`. Paths must be explicit whitespace-delimited tokens,
+exist at recognition time and have a recorded owning command cwd. Ambiguous
+paths with spaces, stack-trace locations and shell expansions remain plain.
+An explicit GitHub origin in that cwd's repository enables numeric references;
+there is no global repository assumption. `/issues/N` also resolves PR numbers.
+Repository discovery supports local worktree gitdir/commondir pointers without
+running shell commands and reads at most 64 KiB of config across 16 ancestors.
+
+Recognition uses a weak cache keyed by source line, parser revision and owning
+cwd, so unchanged history does not repeat token recognition or filesystem work.
+Each line is limited to 8192 columns/code units and 16 candidate tokens; the
+repository cache retains at most 128 cwd entries. Missing paths stay plain for
+that cached line; later filesystem changes do not retroactively refresh it.
+Filesystem checks are synchronous and bounded in count, but mounted filesystem
+latency is outside NMSh's control. Original links retain their own target and ID;
+recognized text overlapping them is never given a competing generated target.
+Program payloads containing controls or exceeding 4096 characters are dropped;
+oversized unfinished OSC strings are drained without unbounded retention.
+Physical click/selection behavior remains pending in the additive QA checklist.
