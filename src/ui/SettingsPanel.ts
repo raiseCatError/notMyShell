@@ -1,3 +1,4 @@
+import {TREATMENT_PRESETS, TREATMENT_GEOMETRIES, TREATMENT_MOTIONS} from '../chroma/treatment.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
 import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
@@ -201,6 +202,24 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
   {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
+  enumRow({id: 'treatmentPreset', label: 'Visual treatment', description: 'Native Minimal/Outline identity, history rules and Settings frame; external prompts retain their colors', category: 'Presentation',
+    values: TREATMENT_PRESETS, labels: ['Off', 'Lavender', 'Aurora', 'Theme', 'Custom'],
+    get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
+  enumRow({id: 'treatmentGeometry', level: 'advanced', label: 'Gradient geometry', description: 'Independent gradient direction', category: 'Presentation',
+    values: TREATMENT_GEOMETRIES, labels: ['Left to right', 'Center outward', 'Outside inward'],
+    get: c => c.presentation.geometry, set: (c, geometry) => ({...c, presentation: {...c.presentation, geometry}})}),
+  enumRow({id: 'treatmentMotion', level: 'advanced', label: 'Decorative motion', description: 'Live separator motion; history stays static', category: 'Presentation',
+    values: TREATMENT_MOTIONS, labels: ['Static', 'Travel', 'Breathe'],
+    get: c => c.presentation.motion, set: (c, motion) => ({...c, presentation: {...c.presentation, motion}})}),
+  {id: 'treatmentIntensity', level: 'advanced', label: 'Treatment intensity', description: 'Blend with ordinary surface foreground', category: 'Presentation',
+    control: 'stepper', steps: [0, 0.25, 0.5, 0.65, 1], format: v => `${Math.round(v * 100)}%`,
+    get: c => c.presentation.intensity, set: (c, intensity) => ({...c, presentation: {...c.presentation, intensity}})},
+  {id: 'reducedMotion', label: 'Reduced Motion', description: 'Static colors; no decorative movement or effects', category: 'Presentation', control: 'boolean',
+    get: c => c.presentation.reducedMotion, set: (c, reducedMotion) => ({...c, presentation: {...c.presentation, reducedMotion}})},
+  {id: 'effectsOff', label: 'Effects Off', description: 'Disable decorative animation and transient effects', category: 'Presentation', control: 'boolean',
+    get: c => c.presentation.effectsOff, set: (c, effectsOff) => ({...c, presentation: {...c.presentation, effectsOff}})},
+
+
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -472,6 +491,6 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
       }
     } else body.push(`${MARGIN}  ${SUBTLE}No settings match "${query}"${RESET}`);
   }
-  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns);
+  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns, config.presentation);
   return out.slice(0, Math.max(1, maxRows)).map(row => truncateAnsi(row, columns));
 }
