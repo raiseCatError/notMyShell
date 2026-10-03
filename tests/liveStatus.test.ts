@@ -109,7 +109,7 @@ test('end to end: a CLI’s own title and notification reach /resume across deta
     const a = sandbox.launch();
     await a.waitFor(/❯/);
     await a.run(`export PATH="${bin}:$PATH"`, /❯/);
-    await a.run('claude', /FAKE-AGENT-UP/);
+    await a.run('claude', /FAKE-AGENT-UP/, {completion: false});
     await until(async () => (await sandbox.sessions())[0]?.attentionSince !== undefined, 15000, 'attention recorded');
     const [live] = await sandbox.sessions();
     assert.equal(live!.running?.includes('claude'), true);

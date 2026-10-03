@@ -85,6 +85,7 @@ function app() {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
   Object.defineProperty(app, 'refreshContext', {value: async () => {}});
+  app['onShellPrompt'](0, process.cwd());
   app['promptConfiguration'].notifications = {...DEFAULT_NOTIFICATION_SETTINGS};
   return app;
 }
@@ -143,4 +144,11 @@ test('backend rejection and throw cannot prevent shell completion; passthrough a
     assert.ok(writes.at(-1)!.includes('\u001b[?1004h'));
     assert.equal(instance['terminalFocus'], 'unknown');
   } finally { t.mock.restoreAll(); dispose(instance); }
+});
+
+test('an absolute-path shell command notifies while recognized NMSh slash commands do not', () => {
+  const defaults = DEFAULT_NOTIFICATION_SETTINGS;
+  assert.ok(shouldNotify({...completed, command: '/usr/bin/make build'}, defaults, 'unknown'));
+  assert.ok(shouldNotify({...completed, command: '  /bin/sleep 61'}, defaults, 'unknown'));
+  for (const internal of ['/help', '/copy 2', '/dirs src']) assert.ok(!shouldNotify({...completed, command: internal}, defaults, 'unknown'), internal);
 });

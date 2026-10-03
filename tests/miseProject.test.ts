@@ -125,3 +125,21 @@ test('cancelling an in-flight inspection reaps it without caching a result', asy
     assert.equal(submissions,1);
   } finally {app['stop'](0);app['session'].kill();}
 });
+
+test('local mise config files change project identity and are markers', () => {
+  const f = fixture();
+  try {
+    for (const name of ['mise.local.toml', '.mise.local.toml']) {
+      const before = detectMiseProject(f.root, f.binary);
+      writeFileSync(join(f.root, name), '[tools]\nnode = "22"\n');
+      const after = detectMiseProject(f.root, f.binary);
+      assert.notEqual(after.identity, before.identity, name);
+      const localPath = join(f.root, name);
+      const localFact = (identity: string) => (JSON.parse(identity) as string[]).find(fact => fact.startsWith(localPath + ':'));
+      assert.ok(localFact(after.identity), 'identity includes the local marker itself');
+      writeFileSync(join(f.root, name), '[tools]\nnode = "24"\n');
+      const edited = detectMiseProject(f.root, f.binary);
+      assert.notEqual(localFact(edited.identity), localFact(after.identity), `${name} file identity changes on edit`);
+    }
+  } finally { f.close(); }
+});

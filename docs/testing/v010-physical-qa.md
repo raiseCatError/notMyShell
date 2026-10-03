@@ -75,3 +75,14 @@ reattaching from a capable host to a baseline host and back.
 
 See [coverage matrix](v010-compatibility.md) for automated vs optional vs pending
 status. All new physical entries remain pending.
+
+## Hardening and embedded-host additions
+
+- Reattach while a nested interactive UI owns enhanced keyboard modes; exit its
+  inner UI, then its outer UI. Each must receive the expected keys, and NMSh's
+  editor must regain its own modes without a stuck keyboard stack.
+- If Supacode or a similar host is already available, use two worktrees with
+  distinct cwd/environment, run streaming and interactive fixtures, resize, hide
+  and close panes, then detach/reattach NMSh. Check app-level shortcut interception,
+  shell persistence, mode restoration and copy/journal fidelity. This remains an
+  unperformed interoperability pass; no dedicated vendor adapter is claimed.
