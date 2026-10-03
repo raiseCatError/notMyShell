@@ -16,6 +16,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     this.shell.on('prompt', marker => this.emit('prompt', marker, NO_STAMP));
     this.shell.on('exec', (command, historyAllowed) => this.emit('exec', command, historyAllowed === undefined ? NO_STAMP : {historyAllowed}));
     this.shell.on('startup', tail => this.emit('startup', tail));
+    this.shell.on('inputRejected', (data, submission) => this.emit('inputRejected', data, submission));
     this.shell.on('exit', event => this.emit('exit', event));
   }
 

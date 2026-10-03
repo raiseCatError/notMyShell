@@ -39,11 +39,15 @@ test('unavailable, oversized, failing and hung backends reject without side effe
   const dir = mkdtempSync(join(tmpdir(), 'nmsh-clip-'));
   try {
     const script = (name: string, body: string) => { const path = join(dir, name); writeFileSync(path, `#!/bin/sh\n${body}\n`); chmodSync(path, 0o700); return path; };
-    const fail = script('fail', 'cat >/dev/null; exit 3'), hang = script('hang', 'sleep 30');
+    const fail = script('fail', 'cat >/dev/null; exit 3'), hang = script('hang', `sleep 30 &\necho $! > '${join(dir, 'descendant')}'\nwait`);
     await assert.rejects(writeClipboard('x', {platform: 'linux', env: {DISPLAY: ':0'}, resolve: () => fail}), /exited with code 3/);
     const started = Date.now();
-    await assert.rejects(writeClipboard('x', {platform: 'linux', env: {DISPLAY: ':0'}, resolve: () => hang, timeoutMs: 150}), /timed out/);
+    await assert.rejects(writeClipboard('x', {platform: 'linux', env: {DISPLAY: ':0'}, resolve: () => hang, timeoutMs: 2000}), /timed out/);
     assert.ok(Date.now() - started < 5000);
+    const pid = Number(readFileSync(join(dir, 'descendant'), 'utf8'));
+    try {
+      await until(() => !processAlive(pid), 3000, 'clipboard descendant exited');
+    } finally { try { process.kill(pid, 'SIGKILL'); } catch {} }
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });
 
@@ -53,7 +57,7 @@ test('payload reaches the backend on stdin via argv, including a forking selecti
     const out = join(dir, 'out'), argv = join(dir, 'argv');
     const path = join(dir, 'xclip');
     // Mimic xclip/wl-copy: a background child inherits the pipes and outlives the parent.
-    writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\ncat > '${out}'\n(sleep 2 &)\n`);
+    writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "$@" > '${argv}'\ncat > '${out}'\nsleep 30 &\necho $! > '${join(dir, 'owner')}'\n`);
     chmodSync(path, 0o700);
     const payload = 'héllo; $(touch pwned)\n🐈';
     const started = Date.now();
@@ -61,5 +65,23 @@ test('payload reaches the backend on stdin via argv, including a forking selecti
     assert.ok(Date.now() - started < 1500, 'does not wait for the background owner');
     assert.equal(readFileSync(out, 'utf8'), payload);
     assert.equal(readFileSync(argv, 'utf8'), '-selection\nclipboard\n');
+    const owner = Number(readFileSync(join(dir, 'owner'), 'utf8'));
+    assert.ok(processAlive(owner), 'successful selection owner survives');
+    process.kill(owner, 'SIGKILL');
+    await until(() => !processAlive(owner), 3000, 'test selection owner cleaned up');
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+import {until, processAlive} from './helpers/liveFrontend.js';
+
+test('clipboard stdin EPIPE rejects even when backend exits zero', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'nmsh-clip-'));
+  try {
+    const path = join(dir, 'closed');
+    writeFileSync(path, '#!/bin/sh\nexec 0<&-\nsleep 0.1\nexit 0\n');
+    chmodSync(path, 0o700);
+    await assert.rejects(writeClipboard('x'.repeat(CLIPBOARD_MAX_BYTES), {
+      platform: 'linux', env: {DISPLAY: ':0'}, resolve: () => path,
+    }), /EPIPE|pipe|stdin/i);
   } finally { rmSync(dir, {recursive: true, force: true}); }
 });

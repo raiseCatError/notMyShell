@@ -1,5 +1,5 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {readFileSync, writeFileSync, mkdirSync, lstatSync, statSync, realpathSync, renameSync, unlinkSync, linkSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdirSync, lstatSync, statSync, realpathSync, renameSync, unlinkSync, linkSync, rmdirSync} from 'node:fs';
 import {isAbsolute, join} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 
@@ -8,10 +8,12 @@ interface PresetFile {version: 1; presets: SessionPreset[]}
 export class PresetError extends Error {}
 function ownerPid(lock: string): number | undefined | 'gone' {
   try {
+    const stat = lstatSync(lock);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 32) return;
     const text = readFileSync(lock, 'utf8');
     if (!/^\d{1,10}\n?$/u.test(text)) return;
     const pid = Number.parseInt(text, 10);
-    return Number.isSafeInteger(pid) && pid > 0 ? pid : undefined;
+    return Number.isSafeInteger(pid) && pid > 0 && pid <= 0x7fffffff ? pid : undefined;
   } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'gone' : undefined; }
 }
 function processAlive(pid: number): boolean {
@@ -90,7 +92,7 @@ export class SessionPresetStore {
   /**
    * Take the cross-process lock the way TranscriptStore.withLock does: the owner pid is written to a private
    * file that is hard-linked into place, so the lock never exists without an owner. A lock whose owner process
-   * is gone is moved aside and retried; a live, reused or unreadable owner is never displaced.
+   * is gone is re-inspected under an exclusive recovery guard and removed; a live, reused or unreadable owner is never displaced.
    */
   private acquire(lock: string): void {
     const mine = `${lock}.${randomUUID()}`;
@@ -104,12 +106,24 @@ export class SessionPresetStore {
         const owner = ownerPid(lock);
         if (owner === 'gone') continue; // Released between our link attempt and the read.
         if (owner !== undefined && !processAlive(owner)) {
-          const aside = `${lock}.${randomUUID()}.stale`;
+          // Every recoverer must hold this guard BEFORE inspecting/removing the
+          // stale instance. A competing actor may already have replaced it.
+          // An abandoned guard fails closed; recovering it by read-then-remove
+          // would merely move the same race to another filename.
+          const recovery = `${lock}.recovery`;
+          let claimed = false;
           try {
-            renameSync(lock, aside);
-            if (ownerPid(aside) !== owner) linkSync(aside, lock); // A takeover raced us; put it back.
-            unlinkSync(aside);
-          } catch { /* another launch cleared it first */ }
+            mkdirSync(recovery, {mode: 0o700});
+            claimed = true;
+            const current = ownerPid(lock);
+            if (typeof current === 'number' && !processAlive(current)) unlinkSync(lock);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && (error as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw new PresetError(`Could not recover preset lock (${lock}); inspect ${recovery}.`);
+            }
+          } finally { if (claimed) rmdirSync(recovery); }
+          if (Date.now() >= deadline) throw new PresetError(`Preset storage is busy: inspect ${lock} and ${recovery}. Remove them only if no NMSh process is running.`);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
           continue;
         }
         if (owner === undefined || Date.now() >= deadline) {

@@ -19,8 +19,7 @@ export type ClientMessage =
   | {type: 'attach'; sessionId: string; columns: number; rows: number}
   | {type: 'detach'}
   | {type: 'list'}
-  /** submission=1 identifies a composer submission for rejection recovery; absent for raw input. */
-  | {type: 'input'; data: string; submission?: number}
+  | {type: 'input'; data: string}
   | {type: 'resize'; columns: number; rows: number}
   /** Everything up to seq is durable in the frontend journal journalId. */
   | {type: 'ack'; seq: number; journalId: string}
@@ -29,17 +28,11 @@ export type ClientMessage =
   | {type: 'terminate'};
 
 export type ServerMessage =
-  /** startupSafety=1 promises pre-ready input isolation, bounded rejection and startup state reporting. */
-  | {type: 'welcome'; version: number; service: string; startupSafety?: number}
+  | {type: 'welcome'; version: number; service: string}
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
   | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
-    journalId?: string; ackedSeq: number; knowledge?: string;
-    /** Present only while the shell has not reached its first prompt: the sanitized, bounded tail of its startup output. */
-    startup?: string}
-  /** Startup output of a shell still blocked or slow before its first prompt (bounded, sanitized, coalesced). */
-  | {type: 'startup'; output: string}
-  | {type: 'input-rejected'; data: string; submission?: number}
+    journalId?: string; ackedSeq: number; knowledge?: string}
   | {type: 'detached'; sessionId: string}
   | {type: 'sessions'; sessions: SessionInfo[]}
   /**
@@ -106,18 +99,16 @@ const SHAPES: Record<string, Shape> = {
   attach: {sessionId: 'string', columns: 'int', rows: 'int'},
   detach: {},
   list: {},
-  input: {data: 'string', submission: 'int?'},
+  input: {data: 'string'},
   resize: {columns: 'int', rows: 'int'},
   ack: {seq: 'int', journalId: 'string'},
   kill: {sessionId: 'string'},
   terminate: {},
-  welcome: {version: 'int', service: 'string', startupSafety: 'int?'},
+  welcome: {version: 'int', service: 'string'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
   attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
-    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?', startup: 'string?'},
-  startup: {output: 'string'},
-  'input-rejected': {data: 'string', submission: 'int?'},
+    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?'},
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},
   output: {data: 'string', seq: 'int?', at: 'int?'},

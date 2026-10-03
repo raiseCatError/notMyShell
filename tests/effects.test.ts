@@ -104,6 +104,7 @@ test('frontend effects restore exact base frame, bypass transcript scans and can
   const old = process.env.XDG_CONFIG_HOME;
   process.env.XDG_CONFIG_HOME = root;
   const app = new TerminalApp();
+  app['onShellPrompt'](0, process.cwd());
   try {
     app['presentationStarted'] = true;
     app['fetchSuggestions'] = async () => {};

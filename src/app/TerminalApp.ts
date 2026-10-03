@@ -289,6 +289,7 @@ export class TerminalApp {
     });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
       if (this.startupPanel) { this.startupPanel.tail = tail; this.render(); }
@@ -426,7 +427,7 @@ export class TerminalApp {
     }
     // Without a journal the running command is known only from the service.
     if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
-    if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+    if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.cancelPresentation();
       this.passthrough = true;
       this.attachedModes = attached.modes ?? '';
@@ -451,7 +452,7 @@ export class TerminalApp {
 
   private onActiveModeChange(mode: PresentationMode): void {
     if (this.replaying) return;
-    if (mode === 'PASSTHROUGH' && !this.passthrough) {
+    if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
       this.cancelPresentation();
       this.passthrough = true;
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
@@ -469,7 +470,19 @@ export class TerminalApp {
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
     this.effects.cancel();
-    if (this.running) { this.running.awaitingExec = false; this.running.historyAllowed = historyAllowed; return; }
+    if (this.running) {
+      this.running.awaitingExec = false;
+      this.running.historyAllowed = historyAllowed;
+      if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+        this.cancelPresentation();
+        this.terminalFocus = 'unknown';
+        this.passthrough = true;
+        this.renderer.suspendForPassthrough();
+        const dimensions = this.dimensions();
+        this.session.resize(dimensions.columns, dimensions.rows);
+      }
+      return;
+    }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
@@ -535,9 +548,8 @@ export class TerminalApp {
     } else if (!this.presetStartup && !this.promptConfiguration.toolsSetupComplete) {
       this.startTools(true);
     }
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
+    // Restored terminal modes are a visible handoff: keys can arrive at once.
+    // Install raw input first so the host cannot echo or translate those keys.
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -545,6 +557,9 @@ export class TerminalApp {
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
+    this.renderer.enter();
+    this.rendererEntered = true;
+    if (this.passthrough) this.enterAttachedPassthrough();
     if (earlyInput) this.onInput(earlyInput);
     process.stdout.on('resize', this.onResize);
     process.on('SIGTSTP', this.onSuspend);
@@ -578,7 +593,7 @@ export class TerminalApp {
       const escaped = JSON.stringify(data);
       appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
     }
-    if (this.passthrough) {
+    if (this.passthrough && !this.startupPending) {
       this.session.write(data);
       return;
     }
@@ -642,6 +657,7 @@ export class TerminalApp {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
     }
+    if (this.startupPending && key.kind === 'interrupt') { this.abortStartup(); return; }
     if (this.startupPanel) {
       // The shell is not ready; it may be waiting on a startup file. Abort is explicit, and nothing the
       // composer produces is submitted until the shell reaches its first prompt (typed text is kept).
@@ -1203,7 +1219,10 @@ export class TerminalApp {
           this.editor.clear();
           this.output.addFrontendInteraction('/resume', 'Wait for the foreground command to finish before switching transcripts.', INFO);
         } else {
-          this.session.write(`${this.editor.text}\r`);
+          const input = this.editor.text;
+          this.editor.clear();
+          this.session.write(`${input}\r`);
+          return;
         }
         this.editor.clear();
       } else {
@@ -1514,7 +1533,7 @@ export class TerminalApp {
     this.effects.cancel();
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
-      if (mode === 'PASSTHROUGH' && !this.passthrough) {
+      if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
         this.passthrough = true;
         this.terminalFocus = 'unknown';
@@ -1536,7 +1555,7 @@ export class TerminalApp {
     this.activityAnimationNow = startedAt;
 
     // Initial static heuristic, but dynamic can override
-    this.passthrough = shouldPassthrough(command);
+    this.passthrough = !this.startupPending && shouldPassthrough(command);
     if (this.passthrough) {
       this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough();
@@ -1837,8 +1856,24 @@ export class TerminalApp {
     this.output.addFrontendInteraction(command, helpText, INFO);
   }
 
+  private onInputRejected(data: string, submission: boolean): void {
+    if (submission && this.running?.awaitingExec) {
+      const command = this.running.command;
+      this.output.complete(1);
+      this.running = undefined;
+      if (!this.editor.text) this.editor.insert(command);
+    } else {
+      const input = data.replace(/\r$/u, '');
+      if (!this.editor.text) this.editor.insert(input);
+      else this.output.addFrontendInteraction('rejected input', input, ERROR);
+    }
+    this.output.addFrontendInteraction('session', 'Input was not sent: shell startup queue exceeds 64 KiB. Rejected input is retained. Wait for readiness, then submit again.', ERROR);
+    this.render();
+  }
+
   private onShellData(data: string): void {
     if (this.passthrough) {
+      this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
       this.commandModes.observeModes(data);
@@ -1848,6 +1883,7 @@ export class TerminalApp {
       this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
+        this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
         this.render();
