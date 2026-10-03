@@ -159,6 +159,16 @@ test('palette imports map explicitly onto NMSh roles and say so; garbage is reje
     green: '#13A10E', yellow: '#C19C00', blue: '#0037DA', purple: '#881798', cyan: '#3A96DD', brightBlack: '#767676', brightPurple: '#B4009E'}), themeDefaults())!;
   assert.equal(wt.theme.prompt.gitBranch, '#0037da');
   assert.equal(validateTheme(wt.theme).ok, true);
+  // Untrusted names never carry terminal controls to the screen.
+  const hostile = importBase16(base16.replace('scheme: "Ocean Test"', 'scheme: "Evil\u001b]0;pwned\u0007\u001b[2J"'), themeDefaults())!;
+  assert.equal(hostile.theme.name, 'Evil]0;pwned[2J');
+  const hostileJson = importBase16(JSON.stringify({scheme: '\u001b[31mRed', base00: '000000', base01: '111111', base02: '222222', base03: '333333',
+    base05: 'dddddd', base08: 'ff0000', base09: 'ff8800', base0A: 'ffff00', base0B: '00ff00', base0C: '00ffff', base0D: '0000ff', base0E: 'ff00ff'}), themeDefaults())!;
+  assert.equal(hostileJson.theme.name, '[31mRed');
+  const hostileWt = importWindowsTerminal(JSON.stringify({name: 'A\u009b2JB', background: '#000000', foreground: '#ffffff', black: '#000000', red: '#ff0000',
+    green: '#00ff00', yellow: '#ffff00', blue: '#0000ff', purple: '#ff00ff', cyan: '#00ffff', brightBlack: '#444444', brightPurple: '#ff88ff'}), themeDefaults())!;
+  assert.equal(hostileWt.theme.name, 'A2JB');
+  for (const theme of [hostile.theme, hostileJson.theme, hostileWt.theme]) assert.equal(validateTheme(theme).ok, true);
   assert.ok('errors' in importTheme('{"hello": 1}', themeDefaults()));
   assert.ok('errors' in importTheme('rm -rf / ; $(boom)', themeDefaults()));
   assert.ok('errors' in importTheme('x'.repeat(300 * 1024), themeDefaults()));

@@ -56,6 +56,11 @@ export function parseHexInput(value: string): string | undefined {
 
 const NAME = /^[^\u0000-\u001f\u007f-\u009f]{1,48}$/u;
 
+/** Printable text only (no C0/C1 controls, so no escape sequences), trimmed to 48 characters. */
+export function sanitizeName(value: string): string {
+  return value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, '').trim().slice(0, 48);
+}
+
 export type ThemeValidation = {ok: true; theme: CustomTheme; warnings: string[]} | {ok: false; errors: string[]};
 
 /**
@@ -155,7 +160,9 @@ export function importBase16(text: string, defaults: Record<UiThemeRole, string>
   if (!needed.every(key => colors[key])) return undefined;
   const c = colors as Record<string, string>;
   const dark = luminance(c.base00!) < 0.5;
-  const theme: CustomTheme = {schema: THEME_SCHEMA, version: THEME_SCHEMA_VERSION, name: (name || 'Imported Base16').slice(0, 48), basedOn: 'Base16 import', dark,
+  // Names come from untrusted files: only printable text reaches the screen.
+  const safeName = sanitizeName(name) || 'Imported Base16';
+  const theme: CustomTheme = {schema: THEME_SCHEMA, version: THEME_SCHEMA_VERSION, name: safeName, basedOn: 'Base16 import', dark,
     prompt: {project: c.base0e!, cwd: c.base02!, gitBranch: c.base0d!, node: c.base0b!, go: c.base0c!, python: c.base0a!, docker: c.base0d!,
       kubernetes: c.base09!, success: c.base0b!, failure: c.base08!},
     ui: {...defaults, accent: c.base0e!, separator: c.base03!, success: c.base0b!, warning: c.base0a!, failure: c.base08!, info: c.base0c!,
@@ -174,7 +181,7 @@ export function importWindowsTerminal(text: string, defaults: Record<UiThemeRole
   if (!keys.every(key => c[key])) return undefined;
   const dark = luminance(c.background!) < 0.5;
   const selection = pick('selectionBackground') ?? c.brightBlack!;
-  const name = typeof json.name === 'string' && NAME.test(json.name) ? json.name.slice(0, 48) : 'Imported scheme';
+  const name = typeof json.name === 'string' ? sanitizeName(json.name) || 'Imported scheme' : 'Imported scheme';
   const theme: CustomTheme = {schema: THEME_SCHEMA, version: THEME_SCHEMA_VERSION, name, basedOn: 'Windows Terminal scheme', dark,
     prompt: {project: c.purple!, cwd: c.brightBlack!, gitBranch: c.blue!, node: c.green!, go: c.cyan!, python: c.yellow!, docker: c.blue!,
       kubernetes: c.brightPurple!, success: c.green!, failure: c.red!},
