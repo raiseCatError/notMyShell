@@ -44,7 +44,7 @@ export async function attachSession(sessionId: string, options: ConnectSessionOp
         if (loaded.live?.sessionId === attached.sessionId) journal = loaded;
       } catch { /* fall through */ }
     }
-    return {client, mode: 'service', sessionId: client.sessionId, attached, ...(journal ? {journal} : {})};
+    return {client, mode: 'service', sessionId: client.sessionId, attached, shell: client.shell, ...(journal ? {journal} : {})};
   } catch (error) {
     const code = (error as {code?: string}).code ?? 'error';
     const reason = code === 'ENOENT' || code === 'ECONNREFUSED' ? 'no session service is running'
@@ -98,8 +98,8 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 export async function connectSession(options: ConnectSessionOptions): Promise<SessionConnection> {
   const env = options.env ?? process.env;
-  const sessionOptions = {cwd: options.cwd, columns: options.columns, rows: options.rows};
-  if (env[SESSION_SERVICE_ENV] === '0') return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process'};
+  const sessionOptions = {cwd: options.cwd, columns: options.columns, rows: options.rows, ...(options.shell ? {shell: options.shell} : {})};
+  if (env[SESSION_SERVICE_ENV] === '0') return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process', shell: options.shell ?? 'zsh'};
   try {
     const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(env);
     ensurePrivateRuntimeDir(runtimeDir);
@@ -111,7 +111,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
       try {
         const client = await SocketSessionClient.connect({...sessionOptions, socketPath, env: shellEnv,
           timeoutMs: Math.max(100, deadline - Date.now())});
-        return {client, mode: 'service', sessionId: client.sessionId};
+        return {client, mode: 'service', sessionId: client.sessionId, shell: client.shell};
       } catch (error) {
         const code = (error as {code?: string}).code;
         const retryable = code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'closed';
@@ -125,7 +125,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process',
+    return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process', shell: options.shell ?? 'zsh',
       notice: `Session service unavailable (${reason}); running the shell in-process. `
         + 'Closing this window ends its shell: it cannot be detached or reattached.'};
   }

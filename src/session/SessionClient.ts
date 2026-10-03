@@ -1,6 +1,7 @@
 import type {EventEmitter} from 'node:events';
 import type {ShellMarker} from '../shell/ShellProtocol.js';
 import type {TranscriptSession} from '../sessions/TranscriptStore.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 
 /** Position of an event in a service session's stream, when it has one. */
 export interface StreamStamp {
@@ -52,6 +53,12 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
   detach(): void;
   /** Stream events up to seq are durable in journalId; the service may drop them. */
   ack(seq: number, journalId: string): void;
+  /**
+   * Replace the shell backend of this same session, started in cwd. Resolves
+   * once the new shell is spawned (its readiness arrives as a normal prompt
+   * event); rejects with a factual reason when switching would lose anything.
+   */
+  switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}>;
 }
 
 /** State of a live session this frontend attached to rather than created. */
@@ -72,12 +79,16 @@ export interface AttachedSession {
   knowledge?: string;
   /** Set only while the shell has not reached its first prompt: its startup output so far. */
   startup?: string;
+  /** Backend of the session; absent from older services (zsh). */
+  shell?: string;
 }
 
 export interface SessionOptions {
   cwd: string;
   columns: number;
   rows: number;
+  /** Shell backend for a new session; zsh when absent. */
+  shell?: ShellId;
 }
 
 /** Exported into the managed shell so users can see which mode owns it. */
@@ -93,4 +104,6 @@ export interface SessionConnection {
   journal?: TranscriptSession;
   /** Set when the service was unavailable and the shell runs in-process. */
   notice?: string;
+  /** Backend actually running (an older service may only run zsh). */
+  shell?: ShellId;
 }

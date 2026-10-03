@@ -81,7 +81,17 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
   const {attachSession, connectSession, listLiveSessions, SESSION_SERVICE_ENV} = await import('./session/connectSession.js');
-  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)});
+  // New sessions start the default backend from Settings; a missing one falls back to zsh, said plainly.
+  const {loadPromptConfiguration: loadBackendConfiguration} = await import('./prompt/configuration.js');
+  const {shellAdapter} = await import('./shell/adapters/registry.js');
+  let backend = loadBackendConfiguration().shellBackend;
+  let backendNotice: string | undefined;
+  const missing = shellAdapter(backend).unavailableReason(process.env);
+  if (backend !== 'zsh' && missing) {
+    backendNotice = `${missing} Started zsh instead; your default stays ${shellAdapter(backend).label}.`;
+    backend = 'zsh';
+  }
+  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4), shell: backend});
   const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   let pendingPreset: SessionPreset | undefined;
@@ -171,6 +181,10 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
       }
     }
     connection ??= await connectSession(size());
+    if (backendNotice && !connection.attached) { notice = [notice, backendNotice].filter(Boolean).join(' ') || undefined; backendNotice = undefined; }
+    if (connection.shell && connection.shell !== backend && !connection.attached) {
+      notice = [notice, `The running session service started ${connection.shell} (it predates shell backends); end its sessions to use ${backend}.`].filter(Boolean).join(' ');
+    }
     if (notice) connection = {...connection, notice: [connection.notice, notice].filter(Boolean).join(' ')};
     if (pendingPreset && connection.mode !== 'service') {
       connection.client.kill();

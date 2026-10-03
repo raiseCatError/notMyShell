@@ -17,7 +17,8 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
 export type ClientMessage =
   | {type: 'hello'; version: number; client: string}
-  | {type: 'create'; cwd: string; env: Record<string, string>; columns: number; rows: number}
+  /** shell: backend id (zsh, fish, bash); absent means zsh (older frontends). */
+  | {type: 'create'; cwd: string; env: Record<string, string>; columns: number; rows: number; shell?: string}
   | {type: 'attach'; sessionId: string; columns: number; rows: number}
   | {type: 'detach'}
   | {type: 'list'}
@@ -30,15 +31,19 @@ export type ClientMessage =
   | {type: 'kill'; sessionId: string}
   /** Clear a session's cross-session notice everywhere (it was opened/focused). */
   | {type: 'dismiss'; sessionId: string}
+  /** Replace this session's shell backend in place, starting it in cwd. Refused while anything would be lost. */
+  | {type: 'switch-shell'; shell: string; cwd: string}
   | {type: 'terminate'};
 
 export type ServerMessage =
   /** startupSafety=1 promises pre-ready input isolation, bounded rejection and startup state reporting. */
   | {type: 'welcome'; version: number; service: string; startupSafety?: number}
   | {type: 'error'; code: string; message: string}
-  | {type: 'created'; sessionId: string; pid: number}
+  /** shell: the backend actually started (absent from older services: zsh). */
+  | {type: 'created'; sessionId: string; pid: number; shell?: string}
+  | {type: 'shell-switched'; shell: string; pid: number}
   | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
-    journalId?: string; ackedSeq: number; knowledge?: string;
+    journalId?: string; ackedSeq: number; knowledge?: string; shell?: string;
     /** Present only while the shell has not reached its first prompt: the sanitized, bounded tail of its startup output. */
     startup?: string}
   /** Startup output of a shell still blocked or slow before its first prompt (bounded, sanitized, coalesced). */
@@ -91,6 +96,8 @@ export interface SessionInfo {
   attentionSince?: number;
   /** Exit code of the last finished command, while idle. */
   lastExit?: number;
+  /** Shell backend id; absent from older services (zsh). */
+  shell?: string;
   /** The session's current cross-session notice, until it is focused (#v0.16; absent from older services). */
   notice?: SessionNotice;
 }
@@ -110,7 +117,9 @@ type Shape = Record<string, Kind>;
 
 const SHAPES: Record<string, Shape> = {
   hello: {version: 'int', client: 'string'},
-  create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int'},
+  create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int', shell: 'string?'},
+  'switch-shell': {shell: 'string', cwd: 'string'},
+  'shell-switched': {shell: 'string', pid: 'int'},
   attach: {sessionId: 'string', columns: 'int', rows: 'int'},
   detach: {},
   list: {},
@@ -122,9 +131,9 @@ const SHAPES: Record<string, Shape> = {
   terminate: {},
   welcome: {version: 'int', service: 'string', startupSafety: 'int?'},
   error: {code: 'string', message: 'string'},
-  created: {sessionId: 'string', pid: 'int'},
+  created: {sessionId: 'string', pid: 'int', shell: 'string?'},
   attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
-    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?', startup: 'string?'},
+    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?', startup: 'string?', shell: 'string?'},
   startup: {output: 'string'},
   'input-rejected': {data: 'string', submission: 'int?'},
   detached: {sessionId: 'string'},
@@ -145,7 +154,7 @@ function isEnv(value: unknown): value is Record<string, string> {
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
   running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
-  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?'};
+  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?'};
 
 const NOTICE_SHAPE: Shape = {sessionId: 'string', kind: 'string', at: 'int', program: 'string?', agent: 'string?', exitCode: 'int?',
   durationMs: 'int?', cwd: 'string?'};

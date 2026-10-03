@@ -56,7 +56,7 @@ import {CommandDescriptions, identityDescription} from '../shell/CommandDescript
 import {localKnowledge} from '../shell/CommandKnowledge.js';
 import {ComposerHistory, recallSource, SESSION_SUBMISSION_LIMIT, type SessionSubmission} from '../input/ComposerHistory.js';
 import {resolveAction} from '../ui/actions.js';
-import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
+import {CompletionService, defaultCompletionSources, type CompletionCandidate} from '../shell/CompletionService.js';
 import {classifyShellFailure, parseShellKnowledge} from '../shell/ShellKnowledge.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
@@ -118,6 +118,10 @@ import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {InstallProvenance} from '../tools/InstallProvenance.js';
+import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {shellAdapter, shellAvailability} from '../shell/adapters/registry.js';
+import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
+import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
 import {detectPlatform, type PlatformInfo} from '../host/platform.js';
 import {createImageOverlay, fitCells, pngSize, selectImageProtocol, type ImageOverlay, type ImageProtocol, type ImageSize} from '../presentation/ImageSurface.js';
 import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentReport} from '../shell/ShellEnvironment.js';
@@ -187,7 +191,7 @@ export class TerminalApp {
   private readonly renderer = new TerminalRenderer(undefined, this.host.capabilities);
   private readonly editor = new CommandEditor();
   private readonly highlighter = new Highlighter();
-  private readonly semanticService: SemanticService;
+  private semanticService: CommandClassifier;
   private readonly keyDecoder = new KeyDecoder();
   private readonly output = new OutputBuffer(() => {
     this.historyViewport.latest();
@@ -216,7 +220,7 @@ export class TerminalApp {
   /** Commands submitted this session, most recent first: the sequence context for suggestions. */
   private readonly submittedCommands: string[] = [];
   private readonly transcriptStore = new TranscriptStore();
-  private readonly completionService = new CompletionService();
+  private completionService = new CompletionService();
   private inspectorVisible = false;
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
@@ -313,6 +317,10 @@ export class TerminalApp {
   /** Notices this window cleared while an older service could not clear them for everyone. */
   private readonly dismissedNotices = new Set<string>();
   private readonly agentActivity = new AgentActivityStore();
+  /** The shell backend under this session (zsh, Fish or Bash). */
+  private shellId: ShellId = 'zsh';
+  private shellPanel?: ShellPanelState;
+  private shellSwitching = false;
   /** Facts about the machine and shell setup; read once, never per frame. */
   private get platformInfo(): PlatformInfo { return this.cachedPlatform ??= detectPlatform(); }
   private cachedPlatform?: PlatformInfo;
@@ -398,7 +406,9 @@ export class TerminalApp {
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
-    this.semanticService = new SemanticService(this.initialCwd);
+    this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
+    this.semanticService = this.shellId === 'zsh' ? new SemanticService(this.initialCwd) : new PathClassifier(shellAdapter(this.shellId));
+    if (this.shellId !== 'zsh') this.bindShellServices(this.shellId, false);
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
@@ -1016,6 +1026,18 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
+      return;
+    }
+    if (this.shellPanel) {
+      const action = shellPanelKey(this.shellPanel, key);
+      if (action?.kind === 'close') { this.shellPanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'switch') { this.shellPanel = undefined; void this.switchShell(action.shell, '/shell'); }
+      else if (action?.kind === 'default') {
+        this.updateConfiguration(configuration => { configuration.shellBackend = action.shell; });
+        this.shellPanel.defaultShell = action.shell;
+        this.shellPanel.message = `${shellAdapter(action.shell).label} is now the default for new sessions. This session is unchanged.`;
+      }
+      this.render();
       return;
     }
     if (this.aboutPanel) {
@@ -1693,6 +1715,10 @@ export class TerminalApp {
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
+    else if (slash.kind === 'shell') {
+      if (slash.shell) await this.switchShell(slash.shell, command);
+      else { this.panelOrigin = undefined; this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker()); }
+    }
     else if (slash.kind === 'notices') await this.runNoticesCommand(command, slash.action);
     else if (slash.kind === 'history') {
       if (command.startsWith(HISTORY_SEARCH)) this.submitHistorySearch(slash.query, true);
@@ -2710,7 +2736,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2768,6 +2794,7 @@ export class TerminalApp {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4, this.promptConfiguration.presentation), columns);
     }
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
+    if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
       const sessions = visibleResumeSessions(browser);
@@ -3754,7 +3781,8 @@ export class TerminalApp {
         {label: 'Platform', value: `${process.platform} ${process.arch}`},
         {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
         {label: 'Node', value: process.version},
-        {label: 'Shell', value: 'zsh'},
+        {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
+        {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
@@ -4539,6 +4567,63 @@ export class TerminalApp {
       if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
     } catch { /* A failed sample keeps the previous values. */ }
     finally { this.stripSampling = false; }
+  }
+
+  /** A factual reason the session cannot switch shells right now, checked before asking the session. */
+  private switchBlocker(): string | undefined {
+    if (this.running) return `"${this.running.command.slice(0, 60)}" is still running; switching would end it. Finish or interrupt it first.`;
+    if (this.passthrough) return 'A full-screen program owns the terminal; switching would end it.';
+    if (this.startupPending) return 'The shell is still starting; switch once it is ready.';
+    return undefined;
+  }
+
+  /**
+   * Replace this session's shell backend in place. The frontend, transcript,
+   * draft, session identity, settings and NMSh history stay; shell-specific
+   * services (classification, completion, shell history import) are rebound.
+   */
+  private async switchShell(target: ShellId, command: string): Promise<void> {
+    const adapter = shellAdapter(target);
+    const blocker = this.switchBlocker();
+    const refuse = (message: string) => { this.output.addFrontendInteraction(command, message, ERROR); this.render(); };
+    if (target === this.shellId) { this.output.addFrontendInteraction(command, `This session already runs ${adapter.label}.`, INFO); this.render(); return; }
+    const unavailable = adapter.unavailableReason(process.env);
+    if (unavailable) return refuse(unavailable);
+    if (blocker) return refuse(blocker);
+    if (this.shellSwitching) return refuse('A shell switch is already in progress.');
+    this.shellSwitching = true;
+    const from = shellAdapter(this.shellId).label;
+    try {
+      await this.session.switchShell(target, this.shellCwd);
+    } catch (error) {
+      refuse(`Did not switch to ${adapter.label}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    } finally { this.shellSwitching = false; }
+    this.shellId = target;
+    // The new shell's first prompt is readiness, not a command completion.
+    this.presetShellReady = true;
+    this.bindShellServices(target, true);
+    this.output.addFrontendInteraction(command, `Switched this session from ${from} to ${adapter.label} in ${this.shellCwd}. `
+      + `${from} aliases, functions, variables and jobs stayed with ${from}; NMSh history, transcript and settings carry over.`
+      + (target === this.promptConfiguration.shellBackend ? '' : ` New sessions still start ${shellAdapter(this.promptConfiguration.shellBackend).label} (/shell, D to change).`), INFO);
+    this.render();
+  }
+
+  /** Rebind everything that depends on the shell backend; NMSh-owned state is untouched. */
+  private bindShellServices(target: ShellId, reload: boolean): void {
+    const adapter = shellAdapter(target);
+    if (reload) {
+      this.semanticService.kill();
+      this.semanticService = target === 'zsh' ? new SemanticService(this.shellCwd) : new PathClassifier(adapter);
+    }
+    this.completionService.dispose();
+    this.completionService = target === 'zsh' ? new CompletionService() : new CompletionService(defaultCompletionSources(adapter.completionSource()));
+    this.commandUsageVersion = -1;
+    this.commandSources.clear();
+    this.shellSuggestions = [];
+    this.historyService.shellHistory = target === 'zsh' ? undefined
+      : {id: target, file: adapter.historyFile(process.env, homedir()), parse: content => adapter.parseHistory(content)};
+    if (reload) void this.loadHistory();
   }
 
   /** Apply one small settings change and persist it over a fresh read (other windows' edits survive). */

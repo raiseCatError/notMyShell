@@ -32,6 +32,7 @@ import {normalizeCustomTheme, type CustomTheme} from '../appearance/customTheme.
 import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 import {DEFAULT_UI_CHROME, normalizeUiChrome, type UiChromeSettings} from '../appearance/uiChrome.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
+import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
 export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
@@ -358,6 +359,8 @@ export interface PromptConfiguration {
   sessionNotices: boolean;
   /** Local-only agent CLI activity stats (durations and counts; never content). */
   agentActivity: boolean;
+  /** Shell backend for new sessions; /shell switches only the current session unless saved as default. */
+  shellBackend: ShellId;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -434,6 +437,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   statusStrip: {...DEFAULT_STATUS_STRIP},
   sessionNotices: true,
   agentActivity: true,
+  shellBackend: 'zsh',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
@@ -514,7 +518,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false, toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false,
+    shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
