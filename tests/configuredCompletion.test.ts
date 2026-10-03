@@ -7,6 +7,17 @@ import {ConfiguredCompletionSource, parseConfiguredCompletions} from '../src/she
 import {ShellCompletionSource} from '../src/shell/CompletionService.js';
 import {CompletionService} from '../src/shell/CompletionService.js';
 
+test('real configured candidate capture is bounded to 4096 records', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-large-completion-'));
+  writeFileSync(join(home, '.zshrc'), 'autoload -Uz compinit\ncompinit -D\n_large() { compadd -J large -- value{1..5000}; }\ncompdef _large large\n');
+  const source = new ConfiguredCompletionSource({env: {...process.env, HOME: home}, startupMs: 4000, queryMs: 2000});
+  try {
+    const values = await source.query({buffer: 'large v', cwd: home}, new AbortController().signal);
+    assert.equal(values.length, 4096);
+    assert.ok(values.every(value => value.group === 'large' && value.value.startsWith('value')));
+  } finally { source.dispose(); rmSync(home, {recursive: true, force: true}); }
+});
+
 test('configured records retain descriptions, groups, prefixes and safe quoted insertion', () => {
   const context = {buffer: 'demo "sp', cursor: 8, cwd: '/'};
   const records = ['space 世界', 'space 世界', 'a description', 'arguments', '', '', 'argument'].join('\0') + '\0';
@@ -16,6 +27,24 @@ test('configured records retain descriptions, groups, prefixes and safe quoted i
   assert.equal(candidate.insertion, 'demo space\\ 世界');
   assert.deepEqual(candidate.replacement, {start: 5, end: 8});
   assert.equal(parseConfiguredCompletions('bad', context).length, 0);
+});
+
+test('home filesystem completion preserves expansion and quoted tilde paths stay literal', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-completion-fixture-'));
+  mkdirSync(join(home, 'alpha dir'));
+  writeFileSync(join(home, 'alpha 世界.txt'), '');
+  mkdirSync(join(home, '~')); mkdirSync(join(home, '~', 'literal dir'));
+  writeFileSync(join(home, '.zshrc'), 'autoload -Uz compinit\ncompinit -D\n_demo() { _files; }\ncompdef _demo demo\n');
+  const source = new ConfiguredCompletionSource({env: {...process.env, HOME: home}, startupMs: 4000, queryMs: 1500});
+  try {
+    const values = await source.query({buffer: 'demo ~/al', cwd: home}, new AbortController().signal);
+    assert.ok(values.some(candidate => candidate.insertion === 'demo ~/alpha\\ 世界.txt'), JSON.stringify(values));
+    assert.ok(values.some(candidate => candidate.insertion === 'demo ~/alpha\\ dir/' && candidate.kind === 'directory'), JSON.stringify(values));
+    for (const buffer of ['demo "~/lit', "demo '~/lit", 'demo \\~/lit']) {
+      const literal = await source.query({buffer, cwd: home}, new AbortController().signal);
+      assert.ok(literal.some(candidate => candidate.insertion === 'demo \\~/literal\\ dir/'), JSON.stringify({buffer, literal}));
+    }
+  } finally { source.dispose(); rmSync(home, {recursive: true, force: true}); }
 });
 
 test('configured helper reuses trusted config, returns compdef knowledge, and cleans up', async () => {
@@ -166,5 +195,23 @@ test('explicit disposal cannot recreate helpers from queued requests', async () 
     assert.deepEqual(await first, []);
     assert.deepEqual(await queued, []);
     assert.equal(source['child'], undefined);
+  } finally { source.dispose(); rmSync(home, {recursive: true, force: true}); }
+});
+
+test('warm cancellation backs off configuration reloads during rapid typing', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-completion-fixture-'));
+  writeFileSync(join(home, '.zshrc'), 'autoload -Uz compinit\ncompinit -D\nprint x >> "$HOME/starts"\n_demo() { [[ $PREFIX == slow ]] && sleep 20; compadd -- alpha; }\ncompdef _demo demo\n');
+  const source = new ConfiguredCompletionSource({env: {...process.env, HOME: home}, startupMs: 4000});
+  let nativeCalls = 0;
+  const pipeline = new ShellCompletionSource(source, {id: 'native', query: async () => { nativeCalls++; return []; }});
+  try {
+    assert.equal((await source.query({buffer: 'demo a', cwd: home}, new AbortController().signal)).length, 1);
+    const controller = new AbortController();
+    const pending = source.query({buffer: 'demo slow', cwd: home}, controller.signal);
+    setTimeout(() => controller.abort(), 20);
+    assert.deepEqual(await pending, []);
+    for (let i = 0; i < 10; i++) await pipeline.query({buffer: 'demo a', cwd: home}, new AbortController().signal);
+    assert.equal(nativeCalls, 10, 'typing stays usable through native fallback');
+    assert.equal(readFileSync(join(home, 'starts'), 'utf8'), 'x\n', 'rapid queries must not reload executable config');
   } finally { source.dispose(); rmSync(home, {recursive: true, force: true}); }
 });

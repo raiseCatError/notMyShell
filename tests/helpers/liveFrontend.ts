@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import nodePty, {type IPty} from 'node-pty';
 import {listLiveSessions} from '../../src/session/connectSession.js';
+import {parseSlashCommand} from '../../src/commands/slashCommands.js';
 import {TranscriptStore} from '../../src/sessions/TranscriptStore.js';
 
 const TSX = import.meta.resolve('tsx');
@@ -66,7 +67,8 @@ export class LiveSandbox {
 
   /** Include externally launched PTYs in the same lifecycle, e.g. built CLI and screen fixtures. */
   trackFrontend(pty: IPty): Frontend {
-    const frontend = new Frontend(pty);
+    const frontend = new Frontend(pty, async command =>
+      (await this.transcripts().list()).flatMap(session => session.transcript.records).filter(record => record.command === command).length);
     this.frontends.push(frontend);
     return frontend;
   }
@@ -122,7 +124,7 @@ export class Frontend {
   exitCode: number | undefined;
   readonly exited: Promise<number>;
 
-  constructor(readonly pty: IPty) {
+  constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>) {
     pty.onData(data => { this.output += data; });
     this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; resolve(event.exitCode); }));
   }
@@ -134,10 +136,12 @@ export class Frontend {
       () => `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
   }
 
-  async run(command: string, expect: RegExp): Promise<void> {
+  async run(command: string, expect: RegExp, {completion = true} = {}): Promise<void> {
     const mark = this.mark;
+    const completed = await this.completedCount(command);
     this.pty.write(`${command}\r`);
     await this.waitFor(expect, mark);
+    if (completion && !parseSlashCommand(command)) await until(async () => await this.completedCount(command) > completed, 15000, `completed journal for ${command}`);
   }
 
   async waitExit(timeoutMs = 15000): Promise<number> {

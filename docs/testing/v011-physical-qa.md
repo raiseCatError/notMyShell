@@ -11,6 +11,7 @@ In Ghostty and Terminal.app where available:
   compdef functions and aliases. Check groups and insertion without command execution.
 - Complete paths containing spaces and Unicode, including an unfinished quote;
   complete in the middle of a word with trailing arguments. Check the caret.
+  Check `~/` home files/directories and quoted or escaped literal tilde paths.
 - Type/delete/move the cursor rapidly and change cwd. Old candidates must disappear.
 - Change completion configuration, then retry after the 60-second helper expiry
   or after a submitted command. Confirm refreshed knowledge and usable fallback.
@@ -22,3 +23,18 @@ In Ghostty and Terminal.app where available:
   the active application's input or render foreign plugin UI into NMSh.
 
 No physical QA has been performed for v0.11.
+
+## Native shell intelligence (#75)
+
+- Define an alias and function in the managed shell. Type their names and open
+  the inspector; check alias/function highlighting and name completion. Remove
+  them and check freshness after the next prompt. No function should run merely
+  because its name is typed or inspected.
+- Try assignments, leading redirects, pipelines/background operators, if/then,
+  quoted paths, parameter/command/arithmetic expansions and globbing. Incomplete
+  syntax must leave the composer usable.
+- Run a missing simple command, then a function that returns 127 internally.
+  Only the matching zsh diagnostic should produce the command-not-found label.
+  Try a parse error. Real diagnostics must remain visible, with one lifecycle row.
+- Check correction acceptance still edits only; compare `/copy` and stored journal
+  output with the actual diagnostics. Detach/reattach and verify live names refresh.
