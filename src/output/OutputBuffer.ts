@@ -1,3 +1,4 @@
+import {applyOutputFilter, type OutputFilter} from './TranscriptSearch.js';
 import {AnsiOutputParser, type SerializedLine} from './AnsiOutputParser.js';
 import {type WrappedRow} from './viewport.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -313,8 +314,29 @@ export class OutputBuffer {
 
   /** Rows for this transcript as the owned presenter draws them. */
   wrapped(width: number): WrappedRow[] {
-    return this.presenter.rows(this.view(), width);
+    const rows = this.presenter.rows(this.view(), width);
+    if (!this.outputFilter) return rows;
+    // Cached per presented rows + filter, so frames and hit-tests never re-filter.
+    if (this.filterCache?.rows === rows && this.filterCache.filter === this.outputFilter) return this.filterCache.result;
+    // Presentation only: stored lines, records and /copy payloads are untouched.
+    const result = applyOutputFilter(rows, this.outputFilter, line => !this.lineTypes.has(line));
+    this.filterCache = {rows, filter: this.outputFilter, result: result.rows};
+    this.filterStatus = {kept: result.kept, total: result.total, ...(result.error ? {error: result.error} : {})};
+    return result.rows;
   }
+
+  private outputFilter?: OutputFilter;
+  private filterCache?: {rows: WrappedRow[]; filter: OutputFilter; result: WrappedRow[]};
+  /** Last applied filter's counts, for status text. */
+  filterStatus?: {kept: number; total: number; error?: string};
+
+  /** Show only matching output lines of one block (presentation only); undefined clears it. */
+  setOutputFilter(filter: OutputFilter | undefined): void {
+    this.outputFilter = filter;
+    if (!filter) this.filterStatus = undefined;
+  }
+
+  get activeFilter(): OutputFilter | undefined { return this.outputFilter; }
 
   /** Read-only view of the transcript data for presentation. */
   view(): TranscriptView {
