@@ -24,6 +24,10 @@ When a submitted command is missing in your zsh and exactly names a curated tool
 
 Settings → Theme family picks NMSh themes or bundled families (Catppuccin with flavor and accent, Dracula, Tokyo Night, Gruvbox, Rosé Pine, Nord, Solarized, One Dark). Themes color NMSh-owned UI only; your terminal and editor keep their colors. /theme opens Theme Studio to clone, edit, import (NMSh Theme JSON, Base16, Windows Terminal schemes) and export a custom theme. Cursor shape and blink, the prompt symbol and the optional status strip are in Settings.
 
+## Idle visuals
+
+Optional and off by default (Never). /screensaver previews each mode live: Aurora Drift, Deep Space, Warp Starfield, Rain, Sparkles, Fireworks and Bouncing Vespyr. They run only inside NMSh at a quiet prompt; any key, mouse, focus return or new output ends them and leaves everything exactly as it was. Reduced Motion shows a still frame; Effects Off keeps them off.
+
 ## Session presets
 
 Use /presets (also in the palette) to create, inspect, launch and delete named startup configurations. N creates one with an explicit cwd and optional commands, one per line; Tab changes fields, Ctrl+J adds a command line, Enter saves. Never put secrets in saved commands; reference your existing environment tooling instead.

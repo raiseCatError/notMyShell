@@ -17,8 +17,12 @@ import {createConfigurationPanel, configurationKey, renderConfigurationPanel, ty
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {createSetup, renderSetup, SETUP_MIN_SIZE, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {createSetup, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
+import {CellGrid} from '../idle/CellGrid.js';
+import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
+import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
+  SCREENSAVER_MIN_SIZE, screensaverKey, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
 import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
@@ -241,6 +245,16 @@ export class TerminalApp {
   private presetFrontendReady = false;
   switchPreset?: SessionPreset;
   private toolsPanel?: ToolsPanel;
+  /** Idle visuals: one inactivity timer while armed, one frame subscription while showing; neither exists otherwise. */
+  private idleTimer?: NodeJS.Timeout;
+  private idle?: {mode: IdleMode; startedAt: number; frame: number; interval: number; preview: boolean; paused: boolean; still: boolean};
+  private idleSubscription?: () => void;
+  private readonly idleGrid = new CellGrid();
+  private lastActivity = Date.now();
+  private idleArmedFor = -1;
+  private screensaverPanel?: ScreensaverPanelState;
+  private screensaverAnimation?: () => void;
+  private readonly screensaverGrid = new CellGrid();
   /** Theme Studio: a custom theme draft; nothing persists until Save. */
   private themeStudio?: ThemeStudioState;
   /** Setup Cat: one draft over the saved configuration; nothing persists until Apply. */
@@ -450,6 +464,7 @@ export class TerminalApp {
    * handlers live output uses, and finishReplay() settles the final state.
    */
   private beginReattach(attached: AttachedSession, journal: TranscriptSession | undefined): void {
+    this.noteActivity();
     this.attachedSession = attached;
     this.replaying = true;
     this.shellCwd = attached.cwd;
@@ -515,6 +530,7 @@ export class TerminalApp {
   }
 
   private onActiveModeChange(mode: PresentationMode): void {
+    if (this.idle) this.dismissIdle(false);
     if (this.replaying) return;
     if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
       this.cancelPresentation();
@@ -643,6 +659,7 @@ export class TerminalApp {
     this.render();
     void this.quietUpdateCheck();
     void this.quietToolUpdateCheck();
+    this.armIdle();
     this.presetFrontendReady = true;
     if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
     const exitCode = await this.done;
@@ -663,6 +680,15 @@ export class TerminalApp {
       return;
     }
     const keys = this.keyDecoder.push(data);
+    if (this.idle) {
+      // The idle overlay owns input: losing focus pauses it; anything else dismisses it and is not passed on.
+      if (keys.length && keys.every(key => key.kind === 'focusOut')) { this.terminalFocus = 'blurred'; this.pauseIdle(); return; }
+      if (keys.some(key => key.kind === 'focusIn' || key.kind === 'focusOut')) this.terminalFocus = keys.at(-1)!.kind === 'focusOut' ? 'blurred' : 'focused';
+      if (keys.length) this.dismissIdle();
+      return;
+    }
+    // Focus reports alone are not user activity (a terminal can report them on its own).
+    if (keys.some(key => key.kind !== 'focusIn' && key.kind !== 'focusOut')) this.noteActivity();
     for (const key of keys) this.handleKey(key);
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
@@ -670,6 +696,8 @@ export class TerminalApp {
 
   private readonly onResize = (): void => {
     this.effects.cancel();
+    if (this.idle) this.dismissIdle(false);
+    this.noteActivity();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
     this.lastPtyRows = 0;
@@ -774,6 +802,10 @@ export class TerminalApp {
     }
     if (this.themeStudio) {
       this.handleThemeStudioKey(key, this.themeStudio);
+      return;
+    }
+    if (this.screensaverPanel) {
+      this.handleScreensaverKey(key, this.screensaverPanel);
       return;
     }
     if (this.toolsPanel) {
@@ -1546,6 +1578,13 @@ export class TerminalApp {
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
+    else if (slash.kind === 'screensaver') {
+      this.panelOrigin = undefined;
+      if (slash.start) {
+        if (slash.mode) this.applySettingsConfiguration({...this.promptConfiguration, idleVisuals: {...this.promptConfiguration.idleVisuals, mode: slash.mode}});
+        this.startIdle(true);
+      } else this.screensaverPanel = createScreensaverPanel(Date.now());
+    }
     else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
@@ -2032,6 +2071,8 @@ export class TerminalApp {
   }
 
   private onShellData(data: string): void {
+    // New output is activity: it ends idle visuals and restarts the inactivity timer.
+    this.noteActivity();
     if (this.passthrough) {
       this.renderer.observePassthrough(data);
       process.stdout.write(data);
@@ -2559,7 +2600,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
@@ -2567,6 +2608,7 @@ export class TerminalApp {
   private panelMinimum(): MinimumSize | undefined {
     if (this.setupState) return SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
+    if (this.screensaverPanel) return SCREENSAVER_MIN_SIZE;
     return undefined;
   }
 
@@ -2585,7 +2627,11 @@ export class TerminalApp {
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
-    if (this.setupState) return renderSetup(this.setupState, columns, this.dimensions().rows);
+    if (this.screensaverPanel) return this.renderScreensaverRows(this.screensaverPanel, columns);
+    if (this.setupState) {
+      this.setupState.context.idlePreview = this.setupIdlePreview(this.setupState, columns);
+      return renderSetup(this.setupState, columns, this.dimensions().rows);
+    }
     if (this.toolsPanel) return renderTools(this.toolsPanel, columns, this.dimensions().rows);
     if (this.settingsPanelState) {
       return renderSettingsPanel(this.settingsPanelState, columns, this.dimensions().rows, {configuration: this.promptConfiguration,
@@ -2789,6 +2835,7 @@ export class TerminalApp {
     this.settingsPanelState = undefined;
     if (destination === 'tools') this.startTools();
     else if (destination === 'setup') this.startSetup();
+    else if (destination === 'screensaver') this.screensaverPanel = createScreensaverPanel(Date.now());
     else if (destination === 'toolConfig') void this.startToolConfiguration('starship');
     else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
@@ -2941,6 +2988,157 @@ export class TerminalApp {
     }
   }
 
+  // ---- Idle visuals ---------------------------------------------------------------
+
+  /** Any input, output, resize or lifecycle change: restart the inactivity countdown (and end idle visuals). */
+  private noteActivity(): void {
+    this.lastActivity = Date.now();
+    if (this.idle) this.dismissIdle();
+    else this.armIdle();
+  }
+
+  /** One timer for the configured timeout; none when the timeout is Never or NMSh is not running. */
+  private armIdle(): void {
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    const minutes = this.promptConfiguration.idleVisuals.timeout;
+    if (!minutes || this.stopped || !this.presentationStarted) return;
+    const delay = Math.max(1000, this.lastActivity + minutes * 60_000 - Date.now());
+    this.idleTimer = setTimeout(() => { this.idleTimer = undefined; this.onIdleTimeout(); }, delay);
+    this.idleTimer.unref?.();
+  }
+
+  /**
+   * Starts only at a safe, quiet prompt that NMSh owns: no running or waiting command, no panel,
+   * picker or palette, no passthrough, not suspended, and not while the terminal is unfocused.
+   */
+  private idleEligible(): boolean {
+    return !this.stopped && this.presentationStarted && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
+      && !this.running && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
+      && !this.pickerOpening && this.terminalFocus !== 'blurred';
+  }
+
+  private onIdleTimeout(): void {
+    const minutes = this.promptConfiguration.idleVisuals.timeout;
+    if (!minutes) return;
+    if (Date.now() - this.lastActivity < minutes * 60_000 - 50) { this.armIdle(); return; }
+    if (this.idleEligible()) this.startIdle(false);
+    else { this.lastActivity = Date.now(); this.armIdle(); }
+  }
+
+  /** Begins the overlay; `preview` is an explicit start from /screensaver. Effects Off keeps idle visuals off. */
+  private startIdle(preview: boolean): void {
+    const motion = idleMotion(this.promptConfiguration);
+    if (motion.disabled) {
+      if (preview) this.output.addFrontendInteraction('/screensaver', 'Idle visuals are off while Effects Off is on.', INFO);
+      return;
+    }
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    this.screensaverPanel = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    const mode = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
+    this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still};
+    this.renderer.invalidate();
+    this.paintIdle();
+    if (!motion.still) this.idleSubscription = presentationClock.subscribe(now => this.tickIdle(now), this.idle.interval);
+  }
+
+  private tickIdle(now: number): void {
+    const idle = this.idle;
+    if (!idle || idle.paused) return;
+    idle.frame += 1;
+    const started = performance.now();
+    this.paintIdle(now);
+    // Adaptive cadence: a frame that costs too much slows the scene instead of the shell.
+    const cost = performance.now() - started;
+    if (cost > 35 && idle.interval < 500) {
+      idle.interval = Math.min(500, Math.round(idle.interval * 1.5));
+      this.stopIdleFrames();
+      this.idleSubscription = presentationClock.subscribe(next => this.tickIdle(next), idle.interval);
+    }
+  }
+
+  private paintIdle(now = Date.now()): void {
+    const idle = this.idle;
+    if (!idle) return;
+    const {columns, rows} = this.dimensions();
+    const time = idle.still ? 20_000 : sceneTime(now - idle.startedAt, idle.frame, idle.mode);
+    const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time,
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+    try { this.renderer.render({rows: frame, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
+    catch (error) { this.onTerminate(); throw error; }
+  }
+
+  private stopIdleFrames(): void {
+    this.idleSubscription?.(); this.idleSubscription = undefined;
+  }
+
+  /** An unfocused terminal: keep the overlay but stop drawing frames nobody can see. */
+  private pauseIdle(): void {
+    if (!this.idle || this.idle.paused) return;
+    this.idle.paused = true;
+    this.stopIdleFrames();
+  }
+
+  /** Restores the exact presentation underneath: nothing it covered was changed. */
+  private dismissIdle(render = true): void {
+    if (!this.idle) return;
+    this.stopIdleFrames();
+    this.idle = undefined;
+    this.lastActivity = Date.now();
+    this.renderer.invalidate();
+    if (render) this.render();
+    this.armIdle();
+  }
+
+  /** Setup Cat's idle step previews the draft's choice through the real renderer, animated while shown. */
+  private setupIdlePreview(state: SetupState, columns: number): string[] | undefined {
+    const onIdleStep = SETUP_SECTIONS[state.section]?.id === 'idle';
+    if (!onIdleStep) { this.screensaverAnimation?.(); this.screensaverAnimation = undefined; return undefined; }
+    const motion = idleMotion(state.draft);
+    if (motion.disabled) return ['  Effects Off: idle visuals stay off.'];
+    const mode = effectiveMode(state.draft.idleVisuals.mode, motion);
+    const elapsed = Date.now() - this.lastActivity;
+    const width = Math.max(10, Math.min(56, columns - 6));
+    const rows = idleFrameRows(this.screensaverGrid, {mode, width, height: 6, palette: idlePaletteFor(state.draft), level: colorLevel(),
+      nerd: getCurrentGlyphMode() === 'nerd', time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode)});
+    if (!motion.still && !this.screensaverAnimation) {
+      this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
+    }
+    return rows;
+  }
+
+  private renderScreensaverRows(state: ScreensaverPanelState, columns: number): string[] {
+    const {rows} = this.dimensions();
+    const settings = this.promptConfiguration.idleVisuals;
+    const motion = idleMotion(this.promptConfiguration);
+    const size = previewSize(columns, rows);
+    const mode = effectiveMode(settings.mode, motion);
+    const elapsed = Date.now() - state.startedAt;
+    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode, width: size.width, height: size.height,
+      time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode),
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+    // A real animated preview while the gallery is open; one timer, removed with the panel.
+    if (!motion.still && !motion.disabled && !this.screensaverAnimation) {
+      this.screensaverAnimation = presentationClock.subscribe(() => { if (this.screensaverPanel) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
+    }
+    return renderScreensaverPanel(state, columns, rows, {settings, motion, preview});
+  }
+
+  private handleScreensaverKey(key: Key, state: ScreensaverPanelState): void {
+    const action = screensaverKey(state, key, this.promptConfiguration.idleVisuals);
+    if (!action) return;
+    if (action.kind === 'close') {
+      this.screensaverPanel = undefined;
+      this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.returnFromPanel();
+    } else if (action.kind === 'change') {
+      this.applySettingsConfiguration({...this.promptConfiguration, idleVisuals: action.settings});
+      this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.armIdle();
+    } else this.startIdle(true);
+  }
+
   private startSetup(entry?: string): void {
     const state = this.setupState = createSetup(this.promptConfiguration, entry);
     void this.loadSetupContext(state);
@@ -2966,11 +3164,13 @@ export class TerminalApp {
     const result = setupKey(state, key);
     if (!result) return;
     this.setupState = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     if (result.kind === 'cancel') { this.returnFromPanel(); return; }
     const previous = this.promptConfiguration;
     const next = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
     if (result.changed && !setupIsIdempotent({...state, draft: next})) {
       if (!this.applySettingsConfiguration(next)) return;
+      this.armIdle();
       if (previous.suggestions !== next.suggestions) this.applySuggestionProvider();
       if (previous.history !== next.history) void this.loadHistory();
       if (previous.navigation !== next.navigation) { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
@@ -3109,6 +3309,7 @@ export class TerminalApp {
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
     this.renderer.setCursorStyle(cursorStyleSequence(next.cursor.shape, next.cursor.blink));
+    if (next.idleVisuals.timeout !== this.idleArmedFor) { this.idleArmedFor = next.idleVisuals.timeout; this.armIdle(); }
     this.output.setTranscriptAppearance(next.transcript);
     this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
@@ -3806,6 +4007,7 @@ export class TerminalApp {
 
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    if (this.idle) { this.paintIdle(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
     this.syncPanelAnimation();
@@ -3971,6 +4173,9 @@ export class TerminalApp {
 
   private cancelPresentation(): void {
     this.effects.cancel();
+    this.stopIdleFrames();
+    this.idle = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.stripTimer?.(); this.stripTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
@@ -4134,6 +4339,10 @@ export class TerminalApp {
     this.providerPanelState?.task?.dispose();
     this.welcomeBlinkTimer?.();
     this.welcomeBlinkTimer = undefined;
+    if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    this.stopIdleFrames();
+    this.idle = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
     process.off('SIGTSTP', this.onSuspend);

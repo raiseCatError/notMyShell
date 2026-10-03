@@ -29,6 +29,7 @@ import {normalizeStyleProfiles, type StyleProfiles} from './styles.js';
 import {normalizeCustomGlyph, normalizePromptSymbol, type PromptSymbolId} from './glyphChoices.js';
 import {normalizeCatppuccinAccent, type CatppuccinAccent} from '../appearance/themeFamilies.js';
 import {normalizeCustomTheme, type CustomTheme} from '../appearance/customTheme.js';
+import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
@@ -253,6 +254,21 @@ export function normalizeStatusStrip(value: unknown): StatusStripSettings {
     ramDisplay: RAM_DISPLAYS.includes(v.ramDisplay as RamDisplay) ? v.ramDisplay as RamDisplay : 'percent'};
 }
 
+/** Idle visuals: minutes of inactivity before the NMSh screensaver starts; 0 is Never (the default). */
+export const IDLE_TIMEOUTS = [0, 1, 5, 15, 30, 60] as const;
+export type IdleTimeout = typeof IDLE_TIMEOUTS[number];
+export const IDLE_COLOR_SOURCES = ['appearance', 'theme'] as const;
+export type IdleColorSource = typeof IDLE_COLOR_SOURCES[number];
+export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource}
+export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance'};
+
+export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
+  const v = isRecord(value) ? value : {};
+  return {timeout: IDLE_TIMEOUTS.includes(v.timeout as IdleTimeout) ? v.timeout as IdleTimeout : 0,
+    mode: IDLE_MODES.includes(v.mode as IdleMode) ? v.mode as IdleMode : 'aurora',
+    colorSource: IDLE_COLOR_SOURCES.includes(v.colorSource as IdleColorSource) ? v.colorSource as IdleColorSource : 'appearance'};
+}
+
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
   provider: PromptProviderId;
@@ -296,6 +312,7 @@ export interface PromptConfiguration {
   customTheme?: CustomTheme;
   cursor: CursorSettings;
   statusStrip: StatusStripSettings;
+  idleVisuals: IdleVisualSettings;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -370,6 +387,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
+  idleVisuals: {...DEFAULT_IDLE_VISUALS},
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true, vibrance: 'standard', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
@@ -446,7 +464,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider

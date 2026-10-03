@@ -48,6 +48,8 @@ export interface SetupContext {
   /** Detected provider/tool state by executable name; filled asynchronously, never on render. */
   statuses: Readonly<Record<string, ProviderStatus>>;
   completion?: CompletionFacts;
+  /** A live frame of the draft's idle visual from the real renderer, supplied while that step is shown. */
+  idlePreview?: readonly string[];
 }
 
 export interface SetupRow {
@@ -182,6 +184,12 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
       config => config.welcome, (config, welcome) => ({...config, welcome})),
     {row: configRow('statusStrip'), note: draft => draft.statusStrip.enabled ? 'Minimal: clock, plus battery only when this machine has one; more in /settings' : 'Off: no extra row'},
   ]},
+  {id: 'idle', title: 'Idle visuals', intro: ['An optional screensaver inside NMSh, only while it owns the terminal and nothing is running.',
+    'Off by default (Never). Any key, mouse or new output ends it and leaves everything exactly as it was.'], rows: [
+    {row: configRow('idleTimeout')},
+    {row: configRow('idleMode')},
+    {row: configRow('idleColor'), note: () => 'Follow Appearance uses Chroma when it is on, otherwise your theme'},
+  ], facts: (_draft, context) => context.idlePreview?.length ? ['', ...context.idlePreview] : []},
   {id: 'tools', title: 'Optional tools', intro: [NATIVE_FIRST_SHORT, 'Installing is never automatic: each install is previewed and confirmed in /tools.'], rows: [
     {row: configRow('toolUpdateChecks'), note: draft => draft.toolUpdateChecks === 'off' ? 'Off: NMSh never checks unless you ask in /tools' : 'Checks run in the background at startup, never while typing'},
     {row: configRow('installSuggestions')},

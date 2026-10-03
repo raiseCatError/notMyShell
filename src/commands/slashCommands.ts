@@ -1,3 +1,4 @@
+import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 export interface SlashCommand {
   name: string;
   insertion: string;
@@ -10,6 +11,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
+  {name: '/screensaver', insertion: '/screensaver', description: 'Idle visuals: live gallery, timeout and colors'},
+  {name: '/screensaver start', insertion: '/screensaver start', description: 'Start the selected idle visual now; any key or mouse stops it'},
   {name: '/theme', insertion: '/theme', description: 'Theme Studio: clone, edit, import and export a custom Native theme'},
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
@@ -44,6 +47,7 @@ export type ParsedSlashCommand =
   | {kind: 'prompt'}
   | {kind: 'chroma'}
   | {kind: 'theme'}
+  | {kind: 'screensaver'; start: boolean; mode?: IdleMode}
   | {kind: 'tools'}
   | {kind: 'setup'; entry?: string}
   | {kind: 'settings'; view: 'config' | 'status'}
@@ -73,6 +77,10 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
+  const screensaver = /^\/screensaver(?:\s+(start)(?:\s+(\w+))?)?\s*$/u.exec(input);
+  if (screensaver && (!screensaver[2] || (IDLE_MODES as readonly string[]).includes(screensaver[2]))) {
+    return {kind: 'screensaver', start: screensaver[1] === 'start', ...(screensaver[2] ? {mode: screensaver[2] as IdleMode} : {})};
+  }
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
   const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};

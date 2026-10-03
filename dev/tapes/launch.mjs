@@ -7,9 +7,11 @@ import {join, resolve} from 'node:path';
 const root = mkdtempSync(join(tmpdir(), 'nmsh-demo-'));
 const config = join(root, 'config', 'nmsh');
 mkdirSync(config, {recursive: true});
+// NMSH_DEMO_CONFIG (JSON) overlays demo-only settings, e.g. a Chroma palette or glyph style for a tape.
+const overlay = process.env.NMSH_DEMO_CONFIG ? JSON.parse(process.env.NMSH_DEMO_CONFIG) : {};
 writeFileSync(join(config, 'config.json'), JSON.stringify({onboardingComplete: true,
   glyphChoiceComplete: true, glyphStyle: 'safe', welcome: 'vespyr', updateChecks: false,
-  liveSessionStartup: 'never', composerPosition: 'bottom', transcriptPresentation: 'normal'}));
+  liveSessionStartup: 'never', composerPosition: 'bottom', transcriptPresentation: 'normal', ...overlay}));
 try {
   const child = spawn(process.execPath, [resolve('dist/index.js'), '--new'], {stdio: 'inherit',
     env: {...process.env, HOME: root, XDG_CONFIG_HOME: join(root, 'config'),

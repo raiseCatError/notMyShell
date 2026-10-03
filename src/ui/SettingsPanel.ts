@@ -1,6 +1,7 @@
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS} from '../chroma/treatment.js';
-import {CURSOR_BLINKS, CURSOR_SHAPES, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
+import {CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
+import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
 import {FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
@@ -71,7 +72,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions';
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver';
 
 interface SettingsRowBase {
   id: string;
@@ -269,6 +270,15 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: c => c.statusStrip.ramDisplay, set: (c, ramDisplay) => withStrip(c, {ramDisplay})}),
   {id: 'stripUptime', parent: 'statusStrip', when: stripOn, label: 'Uptime', description: 'Time since this machine booted', category: 'Status strip',
     control: 'boolean', get: c => c.statusStrip.uptime, set: (c, uptime) => withStrip(c, {uptime})},
+  enumRow({id: 'idleTimeout', label: 'Idle visuals', description: 'Screensaver after inactivity while NMSh owns the terminal; Never by default. /screensaver previews', category: 'Idle visuals',
+    values: IDLE_TIMEOUTS, labels: IDLE_TIMEOUTS.map(minutes => minutes === 0 ? 'Never' : minutes === 60 ? '60 minutes' : `${minutes} minute${minutes === 1 ? '' : 's'}`),
+    get: c => c.idleVisuals.timeout, set: (c, timeout) => ({...c, idleVisuals: {...c.idleVisuals, timeout}})}),
+  enumRow({id: 'idleMode', parent: 'idleTimeout', label: 'Mode', description: 'The idle visual; /screensaver shows each one live', category: 'Idle visuals',
+    values: IDLE_MODES, labels: IDLE_MODES.map(mode => IDLE_MODE_LABELS[mode]),
+    get: c => c.idleVisuals.mode, set: (c, mode) => ({...c, idleVisuals: {...c.idleVisuals, mode}})}),
+  enumRow({id: 'idleColor', parent: 'idleTimeout', label: 'Colors', description: 'Follow Appearance uses Chroma when it is on, otherwise the theme', category: 'Idle visuals',
+    values: IDLE_COLOR_SOURCES, labels: ['Follow Appearance', 'Current Theme'],
+    get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: {...c.idleVisuals, colorSource}})}),
   {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
   enumRow({id: 'toolUpdateChecks', label: 'Optional tool update checks', description: 'Batched Homebrew outdated checks for optional tools; upgrades are always previewed and confirmed', category: 'Tools',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
@@ -321,6 +331,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
   {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
   {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
+  {id: 'screensaver', label: 'Screensaver', description: 'Idle visuals: live gallery, timeout and colors', category: 'Idle visuals', control: 'child', destination: 'screensaver'},
   {id: 'setup', label: 'Setup Cat', description: 'Guided setup; rerun anytime, your current choices are kept', category: 'General', control: 'child', destination: 'setup'},
 ];
 
