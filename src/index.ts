@@ -1,26 +1,26 @@
-import {resolveZsh} from './shell/zshExecutable.js';
 import {SessionPresetStore, validatePresetCwd, presetNeedsAcknowledgement, type SessionPreset} from './session/SessionPresets.js';
 import {isVersionInvocation, formatBuildIdentity, readBuildIdentity} from './buildInfo.js';
-import {NESTED_NMSH_MESSAGE, createOrdinaryZshEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
+import {NESTED_NMSH_MESSAGE, createOrdinaryShellEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
 import {spawn} from 'node:child_process';
 import {PRODUCT_ABBREVIATION, PRODUCT_NAME} from './config.js';
 
-function startOrdinaryZsh(cwd?: string): Promise<number> {
+/** Hand the terminal to an ordinary interactive shell, spawned from this (parent) process with NMSh markers removed. */
+function startOrdinaryShell(target: {executable: string; label: string}, cwd?: string): Promise<number> {
   return new Promise(resolve => {
     try {
-      const shell = spawn(resolveZsh(), ['-i'], {
+      const shell = spawn(target.executable, ['-i'], {
         ...(cwd ? {cwd} : {}),
-        env: createOrdinaryZshEnvironment(),
+        env: createOrdinaryShellEnvironment(),
         stdio: 'inherit',
       });
       shell.once('error', error => {
-        process.stderr.write(`NMSh could not start ordinary zsh: ${error.message}\n`);
+        process.stderr.write(`NMSh could not start ordinary ${target.label}: ${error.message}\n`);
         resolve(1);
       });
       shell.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`NMSh could not start ordinary zsh: ${message}\n`);
+      process.stderr.write(`NMSh could not start ordinary ${target.label}: ${message}\n`);
       resolve(1);
     }
   });
@@ -181,6 +181,9 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
       }
     }
     connection ??= await connectSession(size());
+    if (connection.mode === 'service' && !connection.client.features.has('shell-switch')) {
+      notice = [notice, 'Connected to an older NMSh session service (still running its live sessions): shell switching is unavailable until those sessions end; the next launch after that starts the current service.'].filter(Boolean).join(' ');
+    }
     if (backendNotice && !connection.attached) { notice = [notice, backendNotice].filter(Boolean).join(' ') || undefined; backendNotice = undefined; }
     if (connection.shell && connection.shell !== backend && !connection.attached) {
       notice = [notice, `The running session service started ${connection.shell} (it predates shell backends); end its sessions to use ${backend}.`].filter(Boolean).join(' ');
@@ -214,9 +217,8 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
       explicit = false;
       continue;
     }
-    process.exitCode = app.isOrdinaryZshHandoffRequested
-      ? await startOrdinaryZsh(app.ordinaryZshHandoffCwd)
-      : exitCode;
+    const handoff = app.shellHandoff;
+    process.exitCode = handoff ? await startOrdinaryShell(handoff, handoff.cwd) : exitCode;
     break;
   }
 }

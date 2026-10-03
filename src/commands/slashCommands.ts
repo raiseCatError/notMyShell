@@ -30,11 +30,14 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/layout', insertion: '/layout', description: 'Preview and choose composer position and transcript presentation'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
-  {name: '/shell', insertion: '/shell', description: 'Shell backend: switch this session (zsh, Fish, Bash) or set the default'},
-  {name: '/shell fish', insertion: '/shell fish', description: 'Switch this session to Fish in the current directory'},
-  {name: '/shell bash', insertion: '/shell bash', description: 'Switch this session to Bash in the current directory'},
-  {name: '/shell zsh', insertion: '/shell zsh', description: 'Switch this session to zsh in the current directory'},
-  {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
+  {name: '/shell', insertion: '/shell', description: 'Managed backend switcher: NMSh stays open; install missing shells; D sets the default'},
+  {name: '/shell zsh', insertion: '/shell zsh', description: 'Switch this NMSh session to zsh (NMSh stays open)'},
+  {name: '/shell fish', insertion: '/shell fish', description: 'Switch this NMSh session to Fish (NMSh stays open)'},
+  {name: '/shell bash', insertion: '/shell bash', description: 'Switch this NMSh session to Bash (NMSh stays open)'},
+  {name: '/zsh', insertion: '/zsh', description: 'Leave NMSh for an ordinary interactive zsh (ends this NMSh session)'},
+  {name: '/fish', insertion: '/fish', description: 'Leave NMSh for an ordinary interactive Fish (ends this NMSh session)'},
+  {name: '/bash', insertion: '/bash', description: 'Leave NMSh for an ordinary interactive Bash (ends this NMSh session)'},
+  {name: '/exit', insertion: '/exit', description: 'Leave NMSh for your configured default shell (Settings → Default shell)'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
@@ -71,7 +74,8 @@ export type ParsedSlashCommand =
   | {kind: 'syntax'}
   | {kind: 'layout'}
   | {kind: 'keyboard'}
-  | {kind: 'zsh'}
+  /** Leave NMSh for an ordinary shell; no shell means the configured default (/exit). */
+  | {kind: 'handoff'; shell?: 'zsh' | 'fish' | 'bash'}
   | {kind: 'version'}
   | {kind: 'update'; apply: boolean}
   | {kind: 'clear'}
@@ -116,7 +120,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/syntax\s*$/u.test(input)) return {kind: 'syntax'};
   if (/^\/layout\s*$/u.test(input)) return {kind: 'layout'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
-  if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
+  const handoff = /^\/(zsh|fish|bash|exit)\s*$/u.exec(input);
+  if (handoff) return handoff[1] === 'exit' ? {kind: 'handoff'} : {kind: 'handoff', shell: handoff[1] as 'zsh' | 'fish' | 'bash'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
   const update = /^\/update(?:\s+(apply))?\s*$/u.exec(input);
   if (update) return {kind: 'update', apply: update[1] === 'apply'};

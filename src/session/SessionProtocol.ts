@@ -15,6 +15,19 @@ import {NOTICE_KINDS, type SessionNotice} from './SessionNotices.js';
 export const PROTOCOL_VERSION = 2;
 export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Optional capabilities negotiated in the welcome. A frontend sends a feature's
+ * messages only when the connected service advertised it, so a newer frontend
+ * talking to an older service (same protocol version, still running its live
+ * sessions) degrades factually instead of failing later.
+ */
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices'] as const;
+export type ServiceFeature = typeof SERVICE_FEATURES[number];
+
+export function parseFeatures(text: string | undefined): Set<ServiceFeature> {
+  return new Set((text ?? '').split(',').map(item => item.trim()).filter((item): item is ServiceFeature => (SERVICE_FEATURES as readonly string[]).includes(item)));
+}
+
 export type ClientMessage =
   | {type: 'hello'; version: number; client: string}
   /** shell: backend id (zsh, fish, bash); absent means zsh (older frontends). */
@@ -37,7 +50,12 @@ export type ClientMessage =
 
 export type ServerMessage =
   /** startupSafety=1 promises pre-ready input isolation, bounded rejection and startup state reporting. */
-  | {type: 'welcome'; version: number; service: string; startupSafety?: number}
+  /**
+   * features: comma-separated capabilities this service implements beyond the
+   * base protocol (see SERVICE_FEATURES); absent from older services, which
+   * therefore have none. build: the service's build identity, informational.
+   */
+  | {type: 'welcome'; version: number; service: string; startupSafety?: number; features?: string; build?: string}
   | {type: 'error'; code: string; message: string}
   /** shell: the backend actually started (absent from older services: zsh). */
   | {type: 'created'; sessionId: string; pid: number; shell?: string}
@@ -129,7 +147,7 @@ const SHAPES: Record<string, Shape> = {
   kill: {sessionId: 'string'},
   dismiss: {sessionId: 'string'},
   terminate: {},
-  welcome: {version: 'int', service: 'string', startupSafety: 'int?'},
+  welcome: {version: 'int', service: 'string', startupSafety: 'int?', features: 'string?', build: 'string?'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int', shell: 'string?'},
   attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',

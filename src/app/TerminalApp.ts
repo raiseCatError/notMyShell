@@ -137,7 +137,7 @@ function markSpans(plain: string, spans: ReadonlyArray<{start: number; end: numb
   }
   return `${output}${plain.slice(index)}\u001b[0m`;
 }
-import {shellAdapter, shellAvailability} from '../shell/adapters/registry.js';
+import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/registry.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
 import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
 import {detectPlatform, type PlatformInfo} from '../host/platform.js';
@@ -165,6 +165,7 @@ import {SessionJournal} from '../sessions/SessionJournal.js';
 import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
+import {OLDER_SERVICE_SWITCH} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {defaultRuntimeDir} from '../session/runtimeDir.js';
@@ -1073,6 +1074,7 @@ export class TerminalApp {
       const action = shellPanelKey(this.shellPanel, key);
       if (action?.kind === 'close') { this.shellPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'switch') { this.shellPanel = undefined; void this.switchShell(action.shell, '/shell'); }
+      else if (action?.kind === 'install') void this.installShell(action.shell, action.install);
       else if (action?.kind === 'default') {
         this.updateConfiguration(configuration => { configuration.shellBackend = action.shell; });
         this.shellPanel.defaultShell = action.shell;
@@ -1764,7 +1766,7 @@ export class TerminalApp {
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
     else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
     else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
-    else if (slash.kind === 'zsh') this.leaveForOrdinaryZsh();
+    else if (slash.kind === 'handoff') this.leaveForOrdinaryShell(slash.shell ?? this.promptConfiguration.shellBackend, command);
     else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
     else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
     else if (slash.kind === 'clear') await this.startFreshPresentation();
@@ -1782,7 +1784,7 @@ export class TerminalApp {
     else if (slash.kind === 'filter') this.applyFilterCommand(command, slash.arguments);
     else if (slash.kind === 'shell') {
       if (slash.shell) await this.switchShell(slash.shell, command);
-      else { this.panelOrigin = undefined; this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker()); }
+      else this.openShellPanel();
     }
     else if (slash.kind === 'notices') await this.runNoticesCommand(command, slash.action);
     else if (slash.kind === 'history') {
@@ -3862,6 +3864,12 @@ export class TerminalApp {
         {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
         {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
+        ...(this.sessionMode === 'service' ? [
+          {label: 'Session service', value: this.session.serviceBuild ? `connected · ${this.session.serviceBuild}` : 'connected · older build (no build reported)'},
+          {label: 'Shell switching', value: this.session.features.has('shell-switch') ? 'available' : 'unavailable (older service; ends with its sessions)',
+            ...(this.session.features.has('shell-switch') ? {} : {tone: 'warning' as const})},
+          ...(this.session.features.has('notices') ? [] : [{label: 'Session notices', value: 'basic (older service reports no notices)', tone: 'muted' as const}]),
+        ] : []),
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
         {label: 'Host capabilities', value: Object.entries(this.host.capabilities).filter(([, value]) => value === true).map(([key]) => key).join(', ') || 'baseline'},
@@ -4850,8 +4858,35 @@ export class TerminalApp {
     this.render();
   }
 
+  private openShellPanel(select?: ShellId): void {
+    this.panelOrigin = undefined;
+    this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker());
+    this.shellPanel.installFor = shell => shellInstall(shell, resolveCommand('brew'));
+    if (select) this.shellPanel.selected = Math.max(0, this.shellPanel.shells.findIndex(item => item.adapter.id === select));
+  }
+
+  /** Runs an explicitly confirmed `brew install <shell>` (argv, no sudo), then refreshes what is available. */
+  private async installShell(shell: ShellId, install: {command: string; args: string[]; label: string}): Promise<void> {
+    const panel = this.shellPanel;
+    if (!panel) return;
+    panel.installing = `Running ${install.label}…`;
+    this.render();
+    const task = new TaskProgress(`Installing ${shellAdapter(shell).label}`, () => this.render(), Date.now(), shellAdapter(shell).label);
+    const outcome = await task.run(install.command, [...install.args]);
+    if (this.stopped || this.shellPanel !== panel) return;
+    panel.installing = undefined;
+    clearProviderDetection();
+    panel.shells = shellAvailability(process.env, true);
+    const found = panel.shells.find(item => item.adapter.id === shell);
+    panel.message = outcome.status === 'succeeded' && found?.executable
+      ? `${shellAdapter(shell).label} is installed: ${found.version ?? found.executable}. Enter switches this session to it.`
+      : `${shellAdapter(shell).label} was not installed. ${outcome.status === 'succeeded' ? `${install.label} finished, but no usable ${shell} is on PATH.` : task.state.error ?? ''}`.trim();
+    this.render();
+  }
+
   /** A factual reason the session cannot switch shells right now, checked before asking the session. */
   private switchBlocker(): string | undefined {
+    if (!this.session.features.has('shell-switch')) return OLDER_SERVICE_SWITCH;
     if (this.running) return `"${this.running.command.slice(0, 60)}" is still running; switching would end it. Finish or interrupt it first.`;
     if (this.passthrough) return 'A full-screen program owns the terminal; switching would end it.';
     if (this.startupPending) return 'The shell is still starting; switch once it is ready.';
@@ -5343,28 +5378,46 @@ export class TerminalApp {
     };
   }
 
-  get ordinaryZshHandoffCwd(): string | undefined {
-    return this.shellHandoffCwd;
+  /** The ordinary shell to hand the terminal to after NMSh exits, when one was requested. */
+  get shellHandoff(): {shell: ShellId; executable: string; label: string; cwd?: string} | undefined {
+    return this.requestedHandoff;
   }
 
-  get isOrdinaryZshHandoffRequested(): boolean {
-    return this.shellHandoffRequested;
-  }
+  /** Kept for existing callers. */
+  get ordinaryZshHandoffCwd(): string | undefined { return this.requestedHandoff?.cwd; }
+  get isOrdinaryZshHandoffRequested(): boolean { return Boolean(this.requestedHandoff); }
 
-  private leaveForOrdinaryZsh(): void {
-    const decision: ShellHandoffDecision = chooseShellHandoff(Boolean(this.running), this.shellCwd, this.initialCwd);
-    if (decision.kind === 'busy') {
-      this.output.addFrontendInteraction('/zsh', 'Wait for the foreground command to finish or interrupt it, then run /zsh.', INFO);
+  /**
+   * Leave NMSh for an ordinary interactive shell: /zsh, /fish, /bash, or /exit
+   * (the configured default backend, never $SHELL). One decision path; a busy
+   * session or a missing shell keeps NMSh running and untouched.
+   */
+  private leaveForOrdinaryShell(target: ShellId, command: string): void {
+    const adapter = shellAdapter(target);
+    const executable = adapter.resolveExecutable(process.env);
+    if (!executable) {
+      const isDefault = command === '/exit';
+      this.output.addFrontendInteraction(command, `${isDefault ? `Your default shell (${adapter.label}) is not available. ` : ''}${adapter.unavailableReason(process.env) ?? `${adapter.label} is not available.`} `
+        + `NMSh stays open. ${isDefault ? 'Install it from /shell, or choose another default there (D). ' : 'Install it from /shell. '}No other shell was started.`, ERROR);
       this.render();
       return;
     }
-
-    this.shellHandoffCwd = decision.cwd;
-    this.shellHandoffRequested = true;
+    const busy = this.running ? `"${this.running.command.slice(0, 60)}" is still running`
+      : this.passthrough || this.externalPassthrough ? 'a full-screen program owns the terminal'
+      : this.startupPending ? 'the shell is still starting' : undefined;
+    const decision: ShellHandoffDecision = chooseShellHandoff(busy ? `${busy}; finish or interrupt it, then run ${command} again.` : false, this.shellCwd, this.initialCwd);
+    if (decision.kind === 'busy') {
+      this.output.addFrontendInteraction(command, `Not leaving NMSh: ${decision.reason ?? 'the session is busy.'}`, INFO);
+      this.render();
+      return;
+    }
+    this.requestedHandoff = {shell: target, executable, label: adapter.label, ...(decision.cwd ? {cwd: decision.cwd} : {})};
     this.shellEnded = true;
     this.session.kill();
     this.stop(0);
   }
+
+  private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string};
 
   private stop(exitCode: number): void {
     if (this.stopped) return;

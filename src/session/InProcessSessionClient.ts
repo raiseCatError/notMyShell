@@ -2,6 +2,7 @@ import {EventEmitter} from 'node:events';
 import {ShellSession} from '../shell/ShellSession.js';
 import {knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
+import {SERVICE_FEATURES, type ServiceFeature} from './SessionProtocol.js';
 import {SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
 
 type ShellLike = Pick<ShellSession, 'submit' | 'write' | 'interrupt' | 'endInput' | 'resize' | 'kill' | 'on'>
@@ -12,6 +13,8 @@ const NO_STAMP = {};
 export class InProcessSessionClient extends EventEmitter<SessionClientEvents> implements SessionClient {
   private shell: ShellLike;
   shellId: ShellId;
+  /** In-process means this very build: every feature is available. */
+  readonly features: ReadonlySet<ServiceFeature> = new Set(SERVICE_FEATURES);
   private size: {columns: number; rows: number};
   private running = false;
   private knowledge?: string;

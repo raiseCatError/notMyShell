@@ -2,6 +2,7 @@ import type {EventEmitter} from 'node:events';
 import type {ShellMarker} from '../shell/ShellProtocol.js';
 import type {TranscriptSession} from '../sessions/TranscriptStore.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import type {ServiceFeature} from './SessionProtocol.js';
 
 /** Position of an event in a service session's stream, when it has one. */
 export interface StreamStamp {
@@ -59,6 +60,10 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
    * event); rejects with a factual reason when switching would lose anything.
    */
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}>;
+  /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
+  readonly features: ReadonlySet<ServiceFeature>;
+  /** Build of the session service, when it reported one. */
+  readonly serviceBuild?: string;
 }
 
 /** State of a live session this frontend attached to rather than created. */

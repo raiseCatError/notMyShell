@@ -114,6 +114,38 @@ Protocol: optional `shell` on `create`/`created`/`attached`/`SessionInfo`, and
 `switch-shell` / `shell-switched`. Older services ignore `shell` (zsh);
 frontends detect that and say so.
 
+## Leaving NMSh: `/zsh`, `/fish`, `/bash`, `/exit`
+
+Different from `/shell`: these **end** the NMSh session and hand the terminal
+to an ordinary interactive shell started from the NMSh parent process (never
+nested in the managed shell), in the current cwd, with NMSh's markers
+(`NMSH_ACTIVE`, `NMSH_SESSION_MODE`) removed so `nmsh` can start again.
+`/exit` uses the configured **default backend** (Settings → Default shell, or
+D in `/shell`) — never `$SHELL` or the login shell; switching the current
+session does not change it. One decision path refuses while a command,
+full-screen program or shell startup is in progress. A missing target keeps
+NMSh open with the reason and an install pointer; there is no silent fallback
+to another shell.
+
+## Installing a missing shell
+
+`/shell` → select a missing shell → Enter or I shows a preview (`brew install
+fish`) that starts on No and states that it does not change the login shell,
+run `chsh`, modify startup files or use sudo. Only Homebrew formulas run as
+argv; without Homebrew NMSh gives guidance instead of guessing package names.
+After an install, availability is refreshed and the shell can be switched to
+immediately.
+
+## Service compatibility
+
+The session service's welcome advertises optional `features`
+(`shell-switch`, `shell-backends`, `notices`) and its build. An older service
+from an earlier build (same protocol version, still running its live sessions)
+advertises none, so the frontend knows at connect time: it shows a launch
+notice, `/status` reports "Shell switching: unavailable (older service)", and
+`switch-shell` is never sent to it. Its sessions are never killed to upgrade;
+when they end and it exits, the next launch starts the current service.
+
 ## Not implemented
 
 - **Nushell**: later; structurally different. First goal would be terminal

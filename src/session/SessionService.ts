@@ -5,7 +5,7 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SessionEvidence} from './SessionEvidence.js';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
+import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
 import {EndedNotices, SessionNoticeTracker} from './SessionNotices.js';
@@ -62,6 +62,8 @@ export interface SessionServiceOptions {
   backlogLimits?: BacklogLimits;
   /** Live sessions allowed at once; detached ones are never ended to make room. */
   maxSessions?: number;
+  /** Build identity reported in the welcome (informational). */
+  build?: string;
 }
 
 export const DEFAULT_MAX_SESSIONS = 16;
@@ -183,7 +185,8 @@ export class SessionService {
             return;
           }
           greeted = true;
-          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1});
+          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1, features: SERVICE_FEATURES.join(','),
+            ...(this.options.build ? {build: this.options.build} : {})});
           continue;
         }
         switch (message.type) {

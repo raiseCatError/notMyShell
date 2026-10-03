@@ -28,7 +28,11 @@ test('idle /zsh handoff preserves a valid managed cwd and refuses an active fore
   });
 });
 
-test('/zsh parses as an NMSh command', () => {
-  assert.deepEqual(parseSlashCommand('/zsh'), {kind: 'zsh'});
-  assert.deepEqual(parseSlashCommand('/zsh  '), {kind: 'zsh'});
+test('/zsh, /fish, /bash and /exit parse as one handoff command', () => {
+  assert.deepEqual(parseSlashCommand('/zsh'), {kind: 'handoff', shell: 'zsh'});
+  assert.deepEqual(parseSlashCommand('/zsh  '), {kind: 'handoff', shell: 'zsh'});
+  assert.deepEqual(parseSlashCommand('/fish'), {kind: 'handoff', shell: 'fish'});
+  assert.deepEqual(parseSlashCommand('/bash'), {kind: 'handoff', shell: 'bash'});
+  assert.deepEqual(parseSlashCommand('/exit'), {kind: 'handoff'}, '/exit uses the configured default');
+  assert.deepEqual(parseSlashCommand('/shell fish'), {kind: 'shell', shell: 'fish'}, 'switching is a different command');
 });
