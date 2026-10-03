@@ -102,6 +102,8 @@ test('Always and Never from the prompt persist; Never ends nothing and /resume s
     assert.doesNotMatch(strip(later.output), /detached live session/, 'Never: no prompt, no picker');
     assert.ok(![aPid].includes(await shellPid(later)));
     await detachedCount(sandbox, 2);
+    // PID output arrives before the prompt; wait for completion before a frontend command.
+    await until(async () => (await sandbox.sessions()).filter(session => session.state === 'attached').every(session => !session.running), 15000, 'attached shell idle');
     const mark = later.mark;
     later.pty.write('/resume\r');
     await later.waitFor(/LIVE[\s\S]*detached/, mark);

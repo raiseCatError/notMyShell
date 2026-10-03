@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmodSync, mkdirSync, writeFileSync} from 'node:fs';
+import {chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {CommandClassifier} from '../src/output/Classifier.js';
 import {AlternateScreenTracker} from '../src/session/TerminalModes.js';
@@ -124,13 +124,31 @@ test('an interactive UI that was detached is handed the terminal again on reatta
     first.pty.kill('SIGKILL');
     await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'detached');
 
-    const second = sandbox.launch(['--attach', id]);
+    // Observe the exact visible handoff inside the frontend process. Keys can
+    // arrive as soon as these modes are written, before another JS callback.
+    const handoff = join(sandbox.home, 'handoff.json');
+    const probe = join(sandbox.home, 'handoff.mjs');
+    writeFileSync(probe, `
+import {writeFileSync} from 'node:fs';
+const write = process.stdout.write.bind(process.stdout);
+let observed = false;
+process.stdout.write = (chunk, ...args) => {
+  if (!observed && typeof chunk === 'string' && chunk.includes('\\u001b[?2004l') && chunk.includes('\\u001b[?2004h')) {
+    observed = true;
+    writeFileSync(${JSON.stringify(handoff)}, JSON.stringify({raw: process.stdin.isRaw === true, listening: process.stdin.listenerCount('data') > 0}));
+  }
+  return write(chunk, ...args);
+};
+`);
+    const second = sandbox.launch(['--attach', id], {cols: 100, rows: 30}, {NODE_OPTIONS: `--import=${probe}`});
     await until(async () => (await sandbox.sessions())[0]?.state === 'attached', 15000, 'reattached');
     // Handed straight to the program, with its bracketed paste restored.
     await until(() => second.output.includes('\u001b[?2004l'), 15000, 'passthrough on reattach');
     assert.ok(second.output.indexOf('\u001b[?2004h', second.output.indexOf('\u001b[?2004l')) !== -1);
-    second.pty.write('\u001b[B');
-    second.pty.write('\r');
+    await until(() => existsSync(handoff), 15000, 'input state at handoff');
+    assert.deepEqual(JSON.parse(readFileSync(handoff, 'utf8')), {raw: true, listening: true},
+      'visible passthrough ownership must follow raw input setup');
+    second.pty.write('\u001b[B\r');
     await second.waitFor(/PICKED-1/);
     await second.run('echo AFTER-REATTACH', /AFTER-REATTACH/);
   } finally {
