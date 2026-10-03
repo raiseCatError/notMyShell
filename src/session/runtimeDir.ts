@@ -1,7 +1,7 @@
 import {lstatSync, mkdirSync, readdirSync} from 'node:fs';
 import {PROTOCOL_VERSION} from './SessionProtocol.js';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {isAbsolute, join} from 'node:path';
 
 export const RUNTIME_DIR_ENV = 'NMSH_RUNTIME_DIR';
 
@@ -10,8 +10,19 @@ function uid(): number {
 }
 
 /** Per-user runtime directory. macOS TMPDIR is already per-user; the uid suffix covers a shared /tmp. */
-export function defaultRuntimeDir(env: NodeJS.ProcessEnv = process.env): string {
-  return env[RUNTIME_DIR_ENV] || join(tmpdir(), `nmsh-${uid()}`);
+export function defaultRuntimeDir(env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
+  if (env[RUNTIME_DIR_ENV]) return env[RUNTIME_DIR_ENV];
+  const xdg = env.XDG_RUNTIME_DIR;
+  if (platform === 'linux' && xdg && isAbsolute(xdg)) {
+    const directory = join(xdg, 'nmsh');
+    try {
+      const stat = lstatSync(xdg);
+      // XDG runtime roots must already be private, owned directories. Do not repair them.
+      if (stat.isDirectory() && !stat.isSymbolicLink() && stat.uid === uid()
+        && (stat.mode & 0o077) === 0 && Buffer.byteLength(socketPathFor(directory)) <= 100) return directory;
+    } catch { /* A missing/unsafe root uses the existing private temporary fallback. */ }
+  }
+  return join(tmpdir(), `nmsh-${uid()}`);
 }
 
 /**
