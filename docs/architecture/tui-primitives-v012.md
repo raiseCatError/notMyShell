@@ -1,0 +1,17 @@
+# TUI primitives — #180 findings (current primary sources, 2026-10-02)
+
+| System | Reusable concept | NMSh application / conflict |
+| --- | --- | --- |
+| [Bubble Tea](https://github.com/charmbracelet/bubbletea) | Model/update/view with messages and commands; async results return as events. | Retain explicit event transitions and cancellation. Shell output is already an authoritative stream, not a view model to regenerate. |
+| [Lip Gloss](https://github.com/charmbracelet/lipgloss) | Separate styling, alignment, border and layout composition. | Existing Chroma + Surface + ScreenPlan separation fits. Measure display cells, not string length. Avoid a CSS-like theme language. |
+| [Bubbles](https://github.com/charmbracelet/bubbles) | Reusable text input, list, viewport, spinner and progress components. | Focus ownership and bounded viewport are useful; existing NMSh editor, pickers and #91 progress remain authoritative. |
+| [Huh](https://github.com/charmbracelet/huh) | Form grouping, validation and accessible mode. | Settings v2 should keep text changed/reset cues and keyboard focus independent of decorative color. No form-framework import. |
+| [Glamour](https://github.com/charmbracelet/glamour) | Width-aware themed markdown rendering. | Appropriate for authored help/panels, never arbitrary PTY output or captured provider ANSI. |
+| [OpenTUI renderer](https://github.com/anomalyco/opentui/blob/main/packages/web/src/content/docs/core-concepts/renderer.mdx) | One renderer owns scheduling and terminal lifecycle; renderables consume its context. | Unify existing activity/task animation ownership; do not import native renderer, input parser or scrollback ownership. |
+| [Ink](https://github.com/vadimdemedes/ink) | React composition, layout and explicit focus hooks. | Borrow focus semantics. Repository dependency presence does not justify migrating the custom PTY/row-diff renderer. |
+| [Ratatui rendering](https://ratatui.rs/concepts/rendering/) | Buffer-based immediate rendering and diffed terminal output. | Preserve stable projected rows and row diff; decorative frames can reuse cached underlying rows. No Rust rewrite or second cell renderer. |
+| [Textual workers](https://textual.textualize.io/guide/workers/) | Async worker lifecycle, cancellation/exclusivity and message-driven UI updates. | Use generation/cancellation guards and replace-active effect policy; no Python runtime or reactive DOM adoption. |
+
+Architecture decision (inference): the missing primitive is a demand-driven shared presentation clock, because TerminalApp and TaskProgress currently create independent 100ms intervals. It belongs in the focused effects child of #78 and directly supports #180; a duplicate clock issue would manufacture work. Pure Motion and Chroma samplers remain independent of it. Effects subscribe only while active and cancel at ownership boundaries. Existing actions/forms/focus and ScreenPlan need no new abstraction for this milestone.
+
+Avoid framework complexity from implicit focus, framework-specific geometry, per-widget clocks, recomputing the entire transcript per decorative frame, and coupling async task state to rendering. Frameworks often assume they own the screen and input; NMSh must hand those to real fullscreen applications and faithfully retain raw shell output. Accessibility remains explicit static/text equivalents and existing keyboard controls; color/movement carry no essential meaning. No wholesale migration and no new dependencies.

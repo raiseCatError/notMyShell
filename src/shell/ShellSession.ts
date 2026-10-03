@@ -1,14 +1,22 @@
+import {shellQuote} from '../host/terminalHost.js';
+import {resolveZsh} from './zshExecutable.js';
+import {BOOTSTRAP_TERM_COMPATIBILITY} from '../host/integration.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { spawn, type IPty } from 'node-pty';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync, statSync } from 'node:fs';
+import {MAX_SHELL_KNOWLEDGE_BYTES, shellKnowledgeBootstrap} from './ShellKnowledge.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {PENDING_INPUT_LIMIT, sanitizeStartupOutput, STARTUP_RAW_LIMIT, utf8Tail} from './startupOutput.js';
 import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
 
 interface SessionEvents {
   data: [string];
   prompt: [ShellMarker];
+  /** Sanitized, bounded tail of what the shell printed before its first prompt; emitted (coalesced) while startup is pending. */
+  startup: [string];
+  inputRejected: [string, boolean];
   exec: [string, number?];
   exit: [{ exitCode: number; signal?: number }];
 }
@@ -23,11 +31,17 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly protocol: ShellProtocolDecoder;
   private zdotdir: string;
   private ready = false;
+  /** Raw pre-ready output, bounded; the shell may be blocked on a prompt in the user's startup files. */
+  private startupRaw = '';
+  private startupTimer?: NodeJS.Timeout;
+  /** Input held until the shell is ready, so type-ahead can never answer a prompt in a startup file. */
+  private pendingInput = '';
   /** Set once the shell has exited or its PTY is closed; resizes after that are no-ops. */
   private exited = false;
 
   constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env) {
     super();
+    const shell = resolveZsh(env);
     const token = randomBytes(12).toString('hex');
     this.protocol = new ShellProtocolDecoder(token);
 
@@ -36,15 +50,15 @@ export class ShellSession extends EventEmitter<SessionEvents> {
 
     // Proxy .zshenv
     writeFileSync(join(zdotdir, '.zshenv'), `
-if [[ -f "${home}/.zshenv" ]]; then
-  ZDOTDIR="${home}" source "${home}/.zshenv"
+if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]]; then
+  ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshenv'))}
 fi
 `);
 
     // Proxy .zprofile
     writeFileSync(join(zdotdir, '.zprofile'), `
-if [[ -f "${home}/.zprofile" ]]; then
-  ZDOTDIR="${home}" source "${home}/.zprofile"
+if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zprofile'))} ]]; then
+  ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zprofile'))}
 fi
 `);
 
@@ -57,12 +71,10 @@ export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}/nmsh-disabled"
 
 # Suppress fastfetch via TERM
 local nmsh_orig_term=\$TERM
-if [[ "\$TERM" == "xterm-ghostty" ]]; then
-  export TERM="xterm-256color"
-fi
+${BOOTSTRAP_TERM_COMPATIBILITY}
 
-if [[ -f "${home}/.zshrc" ]]; then
-  ZDOTDIR="${home}" source "${home}/.zshrc"
+if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshrc'))} ]]; then
+  ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshrc'))}
 fi
 
 export TERM=\$nmsh_orig_term
@@ -83,6 +95,7 @@ function nmsh_tty_echo {
 
 function nmsh_precmd {
   local nmsh_status=$?
+  nmsh_capture_knowledge
   # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
   # may run before us in precmd_functions and repaint PROMPT/RPROMPT. NMSh
   # owns prompt rendering, so it always has the last word here.
@@ -110,6 +123,7 @@ function nmsh_preexec {
 # of clobbering precmd_functions/preexec_functions: tools like zoxide and
 # Atuin register non-UI hooks (directory tracking, history sync) into these
 # arrays, and overwriting them silently drops that behavior.
+${shellKnowledgeBootstrap(join(zdotdir, '.nmsh-knowledge'))}
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
@@ -119,23 +133,30 @@ add-zsh-hook preexec nmsh_preexec
 
     this.zdotdir = zdotdir;
 
-    this.pty = spawn('/bin/zsh', ['-i'], {
-      name: env.TERM || 'xterm-256color',
-      cols: Math.max(2, columns),
-      rows: Math.max(2, rows),
-      cwd,
-      env: {
-        ...env,
-        ZDOTDIR: zdotdir,
-        TERM: env.TERM || 'xterm-256color',
-        PAGER: 'cat',
-        GIT_PAGER: 'cat',
-      } as Record<string, string>,
-    });
+    try {
+      this.pty = spawn(shell, ['-i'], {
+        name: env.TERM || 'xterm-256color',
+        cols: Math.max(2, columns),
+        rows: Math.max(2, rows),
+        cwd,
+        env: {
+          ...env,
+          ZDOTDIR: zdotdir,
+          TERM: env.TERM || 'xterm-256color',
+          PAGER: 'cat',
+          GIT_PAGER: 'cat',
+        } as Record<string, string>,
+      });
+    } catch (error) {
+      this.cleanup();
+      throw error;
+    }
 
     this.pty.onData(data => this.receive(data));
     this.pty.onExit(event => {
       this.exited = true;
+      this.pendingInput = '';
+      if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
       this.cleanup();
       this.emit('exit', event);
     });
@@ -144,11 +165,11 @@ add-zsh-hook preexec nmsh_preexec
   private cleanup(): void {
     if (this.zdotdir) {
       try {
-        rmSync(this.zdotdir, { recursive: true, force: true });
+        rmSync(this.zdotdir, {recursive: true, force: true, maxRetries: 5, retryDelay: 10});
+        this.zdotdir = '';
       } catch (e) {
-        // Ignore errors during cleanup
+        // Retain ownership so the shell's exit event can retry a concurrent write.
       }
-      this.zdotdir = '';
     }
   }
 
@@ -161,12 +182,34 @@ add-zsh-hook preexec nmsh_preexec
     try { return this.pty.process || undefined; } catch { return undefined; }
   }
 
-  submit(command: string): void {
-    this.pty.write(`${command}\r`);
+  /** Whether the first prompt has been reached. */
+  get isReady(): boolean { return this.ready; }
+
+  /** Sanitized recent startup output while the shell has not reached its first prompt; undefined once ready. */
+  startupTail(): string | undefined {
+    return this.ready ? undefined : sanitizeStartupOutput(this.startupRaw);
   }
 
-  write(data: string): void {
-    this.pty.write(data);
+  pendingInputBytes(): number { return Buffer.byteLength(this.pendingInput, 'utf8'); }
+
+  submit(command: string): void {
+    this.send(`${command}\r`, true);
+  }
+
+  write(data: string, submission = false): void {
+    // An explicit interrupt is the one pre-ready input that acts immediately.
+    if (data === '\u0003') this.interrupt(); else this.send(data, submission);
+  }
+
+  /**
+   * Before the first prompt the shell may be reading from the terminal on behalf of the user's startup files
+   * (for example `read -k1` in .zshrc), where a queued command or keystroke would silently become the answer.
+   * Hold it, bounded, and release it in order once the shell reports ready.
+   */
+  private send(data: string, submission = false): void {
+    if (this.ready) { this.pty.write(data); return; }
+    if (this.pendingInputBytes() + Buffer.byteLength(data, 'utf8') <= PENDING_INPUT_LIMIT) this.pendingInput += data;
+    else this.emit('inputRejected', data, submission);
   }
 
   interrupt(): void {
@@ -195,22 +238,49 @@ add-zsh-hook preexec nmsh_preexec
   }
 
   kill(): void {
-    this.cleanup();
-    this.pty.kill();
+    this.pendingInput = '';
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+    try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
   private receive(data: string): void {
     for (const event of this.protocol.push(data)) {
       if (event.kind === 'data') {
         if (this.ready) this.emit('data', event.data);
+        else this.captureStartup(event.data);
       } else if (event.kind === 'exec') {
         if (this.ready) this.emit('exec', event.command, event.historyAllowed);
       } else if (!this.ready) {
         this.ready = true;
-        this.emit('prompt', event.marker);
+        this.startupRaw = '';
+        if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+        this.emit('prompt', this.withKnowledge(event.marker));
+        const pending = this.pendingInput;
+        this.pendingInput = '';
+        if (pending && !this.exited) this.pty.write(pending);
       } else {
-        this.emit('prompt', event.marker);
+        this.emit('prompt', this.withKnowledge(event.marker));
       }
     }
+  }
+
+  private captureStartup(data: string): void {
+    this.startupRaw = utf8Tail(this.startupRaw + data, STARTUP_RAW_LIMIT);
+    if (this.startupTimer || this.listenerCount('startup') === 0) return;
+    // Coalesce bursts: a chatty startup file must not become a flood of frontend messages.
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
+      const tail = this.startupTail();
+      if (tail !== undefined) this.emit('startup', tail);
+    }, 100);
+    this.startupTimer.unref?.();
+  }
+
+  private withKnowledge(marker: ShellMarker): ShellMarker {
+    try {
+      const path = join(this.zdotdir, '.nmsh-knowledge');
+      if (statSync(path).size <= MAX_SHELL_KNOWLEDGE_BYTES) return {...marker, knowledge: readFileSync(path, 'utf8')};
+    } catch { /* Older/unavailable metadata leaves isolated classification usable. */ }
+    return marker;
   }
 }

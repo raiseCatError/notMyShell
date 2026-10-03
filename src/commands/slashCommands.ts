@@ -5,6 +5,7 @@ export interface SlashCommand {
 }
 
 export const slashCommands: readonly SlashCommand[] = [
+  {name: '/effects', insertion: '/effects ', description: 'Preview sparkles or rain in owned chrome; /effects stop cancels'},
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
@@ -22,6 +23,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
+  {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
@@ -30,6 +32,7 @@ export const slashCommands: readonly SlashCommand[] = [
 ];
 
 export type ParsedSlashCommand =
+  | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'stop' | 'help'; placement: 'top' | 'bottom'}
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
   | {kind: 'prompt'}
@@ -43,6 +46,7 @@ export type ParsedSlashCommand =
   | {kind: 'version'}
   | {kind: 'update'; apply: boolean}
   | {kind: 'clear'}
+  | {kind: 'presets'}
   | {kind: 'resume'}
   | {kind: 'help'}
   | {kind: 'palette'}
@@ -52,6 +56,8 @@ export type ParsedSlashCommand =
 
 export function parseSlashCommand(input: string): ParsedSlashCommand | undefined {
   if (!input.startsWith('/')) return undefined;
+  const effect = /^\/effects(?:\s+(sparkles|rain|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
+  if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
@@ -68,6 +74,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const update = /^\/update(?:\s+(apply))?\s*$/u.exec(input);
   if (update) return {kind: 'update', apply: update[1] === 'apply'};
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
+  if (/^\/presets\s*$/u.test(input)) return {kind: 'presets'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
