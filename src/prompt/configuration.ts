@@ -239,6 +239,12 @@ export interface PromptConfiguration {
   navigation: NavigationProviderId;
   /** Predict a whole command on an empty prompt from the previous one. */
   suggestionsOnEmpty: boolean;
+  /** Batched outdated checks for optional external tools; Off by default, never on render. */
+  toolUpdateChecks: UpdateCheckFrequency;
+  /** Offer an install when a submitted command is a missing curated tool (exact name only). */
+  installSuggestions: boolean;
+  /** Curated tool ids the user asked not to be offered again. */
+  ignoredInstallSuggestions: string[];
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -305,6 +311,9 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   picker: 'native',
   navigation: 'native',
   suggestionsOnEmpty: false,
+  toolUpdateChecks: 'off',
+  installSuggestions: true,
+  ignoredInstallSuggestions: [],
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true, vibrance: 'standard', styleProfiles: normalizeStyleProfiles(undefined)},
@@ -374,6 +383,13 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const picker: PickerProviderId = value.picker === 'fzf' || value.picker === 'television' ? value.picker : 'native';
   const history: HistoryProviderId = value.history === 'atuin' ? 'atuin' : 'native';
   const suggestionsOnEmpty = value.suggestionsOnEmpty === true;
+  const toolUpdateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.toolUpdateChecks as UpdateCheckFrequency)
+    ? value.toolUpdateChecks as UpdateCheckFrequency : 'off';
+  const installSuggestions = value.installSuggestions !== false;
+  const ignoredInstallSuggestions = Array.isArray(value.ignoredInstallSuggestions)
+    ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
+    : [];
+  const tooling = {toolUpdateChecks, installSuggestions, ignoredInstallSuggestions};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
     : 'nmsh';
@@ -424,7 +440,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator, ...tooling};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -467,7 +483,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
     glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap};
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap, ...tooling};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {

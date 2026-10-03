@@ -8,9 +8,49 @@ import {parseShellKnowledge} from './ShellKnowledge.js';
 
 export type CommandType = 'executable' | 'builtin' | 'alias' | 'function' | 'reserved' | 'unknown';
 
+/** What a command word is in the configured zsh; `missing` means zsh reported nothing at all. */
+export interface CommandSource {
+  kind: CommandType | 'missing';
+  /** An alias's first word, when it is a plain command name. The alias body is never exposed. */
+  aliasTarget?: string;
+  /** The executable zsh would run for the word (or the alias target). */
+  path?: string;
+}
+
+const SAFE_PATH = /^\/[^\u0000-\u001f\u007f-\u009f]{1,1024}$/u;
+
+export function parseCommandSource(line: string, live?: CommandType): CommandSource | undefined {
+  const [tag, kind, target, path] = line.split('\t');
+  if (tag !== 'source' || kind === undefined) return undefined;
+  const mapped: CommandSource['kind'] = kind === 'command' ? 'executable' : kind === 'builtin' ? 'builtin' : kind === 'alias' ? 'alias'
+    : kind === 'function' ? 'function' : kind === 'reserved' ? 'reserved' : kind === 'none' ? 'missing' : 'unknown';
+  // The live session knows aliases/functions defined interactively that a fresh shell cannot.
+  const effective = mapped === 'missing' && live ? live : mapped;
+  return {kind: effective,
+    ...(effective === 'alias' && target && /^[\p{L}\p{N}_.+-]{1,128}$/u.test(target) ? {aliasTarget: target} : {}),
+    ...(path && SAFE_PATH.test(path) ? {path} : {})};
+}
+
+export interface CompletionFacts {
+  /** A zsh-completions directory is on the configured fpath. */
+  zshCompletions: boolean;
+  /** fzf-tab is loaded; NMSh keeps its own completion UI regardless. */
+  fzfTab: boolean;
+  /** The zsh completion system (compinit) is configured. */
+  completionSystem: boolean;
+}
+
+export function parseCompletionFacts(line: string): CompletionFacts | undefined {
+  const [tag, zc, ft, cs] = line.split('\t');
+  if (tag !== 'facts') return undefined;
+  return {zshCompletions: zc === '1', fzfTab: ft === '1', completionSystem: cs === '1'};
+}
+
 export class SemanticService {
   private child: ReturnType<typeof spawn>;
   private pending = new Map<number, (result: CommandType) => void>();
+  /** Raw single-line replies for read-only `source` and `facts` lookups. */
+  private rawPending = new Map<number, (line: string) => void>();
   private nextId = 0;
   public cache = new Map<string, CommandType>();
   private buffer = '';
@@ -27,6 +67,8 @@ export class SemanticService {
     for (const [name, type] of this.shellNames) this.cache.set(name, type);
     for (const resolve of this.pending.values()) resolve('unknown');
     this.pending.clear();
+    for (const resolve of this.rawPending.values()) resolve('');
+    this.rawPending.clear();
   }
 
   constructor(cwd: string) {
@@ -90,6 +132,28 @@ PS1=""
 
     this.child.stdin!.write(`
 while builtin read -r id mode cmd; do
+  if [[ $mode == source ]]; then
+    nmsh_kind=$(builtin whence -w -- "$cmd" 2>/dev/null)
+    nmsh_kind=\${nmsh_kind#*: }
+    nmsh_target='' nmsh_path=''
+    if [[ $nmsh_kind == alias ]]; then
+      nmsh_target=\${\${(z)aliases[$cmd]}[1]}
+      [[ $nmsh_target == [[:alnum:]_.+-]## ]] || nmsh_target=''
+      [[ -n $nmsh_target ]] && nmsh_path=$(builtin whence -p -- "$nmsh_target" 2>/dev/null)
+    elif [[ -n $nmsh_kind ]]; then
+      nmsh_path=$(builtin whence -p -- "$cmd" 2>/dev/null)
+    fi
+    builtin printf '%s source\t%s\t%s\t%s\n' "$id" "\${nmsh_kind:-none}" "$nmsh_target" "$nmsh_path"
+    continue
+  fi
+  if [[ $mode == facts ]]; then
+    nmsh_zc=0 nmsh_ft=0 nmsh_cs=0
+    (( \${fpath[(I)*zsh-completions*]} )) && nmsh_zc=1
+    (( $+functions[fzf-tab-complete] || $+functions[enable-fzf-tab] || $+functions[-ftb-complete] )) && nmsh_ft=1
+    (( $+functions[compdef] || $+functions[_main_complete] )) && nmsh_cs=1
+    builtin printf '%s facts\t%s\t%s\t%s\n' "$id" $nmsh_zc $nmsh_ft $nmsh_cs
+    continue
+  fi
   res=$(builtin whence -w -- "$cmd" 2>/dev/null)
   if [[ $mode == plain && ( $res == *': alias' || $res == *': function' ) ]]; then
     if (( $+builtins[$cmd] )); then
@@ -122,6 +186,8 @@ done\n`);
         const id = parseInt(idStr, 10);
         if (isNaN(id)) continue;
 
+        const raw = this.rawPending.get(id);
+        if (raw) { this.rawPending.delete(id); raw(result); continue; }
         let type: CommandType = 'unknown';
         if (result === 'command') type = 'executable';
         else if (result === 'builtin') type = 'builtin';
@@ -179,6 +245,38 @@ done\n`);
     });
   }
   
+  /** One raw lookup line, or undefined when the helper is unavailable or slow. */
+  private rawQuery(mode: 'source' | 'facts', word: string): Promise<string | undefined> {
+    if (this.isDead || !this.child.stdin?.writable || this.rawPending.size >= 32) return Promise.resolve(undefined);
+    const id = this.nextId++;
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { this.rawPending.delete(id); resolve(undefined); }, 1500);
+      timer.unref?.();
+      this.rawPending.set(id, line => { clearTimeout(timer); resolve(line || undefined); });
+      try { this.child.stdin!.write(`${id} ${mode} ${word.replace(/[\r\n\0\s]/gu, '')}\n`); }
+      catch { clearTimeout(timer); this.rawPending.delete(id); resolve(undefined); }
+    });
+  }
+
+  /**
+   * What a command word resolves to in the user's configured zsh: the kind,
+   * an alias's first word (names only, never the alias body), and the
+   * executable path where one exists. Uses only `whence`; nothing runs.
+   */
+  async resolveSource(word: string): Promise<CommandSource | undefined> {
+    if (!word || word.length > 256 || /[\s\u0000-\u001f]/u.test(word)) return undefined;
+    const live = this.shellNames?.get(word);
+    const line = await this.rawQuery('source', word);
+    if (line === undefined) return live ? {kind: live} : undefined;
+    return parseCommandSource(line, live);
+  }
+
+  /** Read-only completion-system facts from the configured zsh: fpath and defined function names. */
+  async completionFacts(): Promise<CompletionFacts | undefined> {
+    const line = await this.rawQuery('facts', 'facts');
+    return line === undefined ? undefined : parseCompletionFacts(line);
+  }
+
   kill() {
     this.isDead = true;
     try {
@@ -192,6 +290,8 @@ done\n`);
       resolve('unknown');
     }
     this.pending.clear();
+    for (const resolve of this.rawPending.values()) resolve('');
+    this.rawPending.clear();
     
     if (this.zdotdir) {
       try {
