@@ -31,14 +31,11 @@
   "license": "GPL-3.0-only",
   "type": "module",
   "dependencies": {
-    "ink": "^7.1.1",
     "node-pty": "^1.1.0",
-    "react": "^19.3.0",
     "string-width": "^8.2.0"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
-    "@types/react": "^19.3.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2"
   },
