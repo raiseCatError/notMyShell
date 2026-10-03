@@ -229,7 +229,7 @@ test('mouse reports reach a fullscreen app in passthrough, including after reatt
     // Injected reports only prove forwarding. The host terminal must also be
     // told to generate them again: after the frontend's own mouse-off, the
     // app's modes have to be re-enabled on this new terminal.
-    const hostBound = b.output.slice(b.output.lastIndexOf('\u001b[?1000l'));
+    const hostBound = b.output.slice(Math.max(0, b.output.lastIndexOf('\u001b[?1000l')));
     assert.ok(hostBound.includes('\u001b[?1000h') && hostBound.includes('\u001b[?1006h'),
       'the reattached terminal is put back into the app\'s mouse reporting modes');
     mark = b.mark;
@@ -251,15 +251,23 @@ test('tmux inside NMSh runs in passthrough and repaints after reattach', {skip: 
   try {
     const a = await started(sandbox);
     let mark = a.mark;
-    a.pty.write(`tmux -L ${socket} -f /dev/null new-session 'echo TMUX-INSIDE; stty size; exec sleep 600'\r`);
-    await a.waitFor(/TMUX-INSIDE/, mark);
+    const command = `tmux -L ${socket} -f /dev/null new-session 'echo TMUX-INSIDE; stty size; exec sleep 600'`;
+    a.pty.write(`${command}\r`);
+    // The marker also appears in NMSh's submitted command. Pane dimensions
+    // prove tmux actually started before killing or reattaching its frontend.
+    await a.waitFor(/\b[1-9]\d* 100\b/, mark);
     const [{id}] = await sandbox.sessions() as [{id: string}];
     a.pty.kill('SIGKILL');
     await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'detached');
     const b = sandbox.launch(['--attach', id], {cols: 110, rows: 36});
     await b.waitFor(/TMUX-INSIDE/);
+    await until(() => spawnSync('tmux', ['-L', socket, 'list-clients', '-F', '#{client_width} #{client_height}'],
+      {encoding: 'utf8'}).stdout.trim() === '110 36', 15000, 'reattached tmux client size');
     mark = b.mark;
-    spawnSync('tmux', ['-L', socket, 'kill-server']);
+    const stopped = spawnSync('tmux', ['-L', socket, 'kill-server'], {encoding: 'utf8'});
+    assert.equal(stopped.status, 0, stopped.stderr);
+    await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records)
+      .some(record => record.command === command), 15000, 'tmux completion journal');
     await b.waitFor(/❯/, mark);
     await b.run('echo AFTER-TMUX', /AFTER-TMUX/);
   } finally {
