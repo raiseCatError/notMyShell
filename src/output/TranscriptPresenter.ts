@@ -1,3 +1,5 @@
+import {paintTreatment, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
+import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
@@ -50,7 +52,7 @@ export interface TranscriptView {
   lines: readonly StyledLine[];
   completed: readonly CompletedCommand[];
   /** The running command, when one is active. */
-  active?: {activities: readonly SecondaryActivity[]};
+  active?: {activities: readonly SecondaryActivity[]; start?: number; historicalContext?: HistoricalContextSnapshot};
   visualGaps: ReadonlySet<number>;
   lineTypes: ReadonlyMap<number, 'command' | 'metadata'>;
   historicalContexts: ReadonlyMap<number, HistoricalContextSnapshot>;
@@ -74,6 +76,22 @@ export interface RowInteraction {
  * frame) lives here and is never serialized.
  */
 export class TranscriptPresenter {
+  private hyperlinks = false;
+  private readonly links = new HyperlinkPresenter();
+
+  setHyperlinks(enabled: boolean): void { this.hyperlinks = enabled; }
+
+  private wrap(view: TranscriptView, index: number, width: number): WrappedRow[] {
+    const owner = view.ownerOf(index);
+    const context = owner === undefined ? undefined : view.historicalContexts.get(owner);
+    const line = view.lines[index] ?? [];
+    return wrapStyledLine(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
+  }
+
+  private treatment = DEFAULT_TREATMENT_SETTINGS;
+
+  setTreatment(settings: TreatmentSettings): void { this.treatment = {...settings, motion: 'static'}; }
+
   private appearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
   private welcomeFrame: WelcomeCatFrame = 'open';
   private layout: TranscriptLayout = 'normal';
@@ -105,7 +123,7 @@ export class TranscriptPresenter {
       if (cached !== undefined) return cached;
       let widest = 0;
       for (let index = start; view.lineTypes.get(index) === 'command' && (ownerOf(index) ?? index) === start; index += 1) {
-        for (const row of wrapStyledLine(lines[index] ?? [], column!)) widest = Math.max(widest, displayWidth(row.plain));
+        for (const row of this.wrap(view, index, column!)) widest = Math.max(widest, displayWidth(row.plain));
       }
       blockWidths.set(start, widest);
       return widest;
@@ -127,7 +145,7 @@ export class TranscriptPresenter {
 
       const historicalContext = historicalContexts.get(i);
       // Chat: the header (prompt snapshot + local divider) spans the command column on the right.
-      const rendered = historicalContext && renderHistoricalContext(historicalContext, column ?? width, this.appearance);
+      const rendered = historicalContext && renderHistoricalContext(historicalContext, column ?? width, this.appearance, this.treatment);
       const header = rendered && column ? indentRow(rendered, width - displayWidth(rendered.plain)) : rendered;
       if (header) {
         const owner = ownerOf(i);
@@ -155,7 +173,7 @@ export class TranscriptPresenter {
               const {head, tail} = foldWindow(hiddenLines);
               const pushLines = (from: number, to: number) => {
                 for (let line = from; line < to; line += 1) {
-                  for (const row of wrapStyledLine(lines[line] ?? '', width)) result.push({...row, lineIndex: line, commandIndex});
+                  for (const row of this.wrap(view, line, width)) result.push({...row, lineIndex: line, commandIndex});
                 }
               };
               pushLines(cmd.outputStartId, cmd.outputStartId + head);
@@ -186,7 +204,7 @@ export class TranscriptPresenter {
           continue;
         } else {
           result.push(renderActivityRow(activity, width));
-          if (activity.expanded) appendActivityOutput(result, lines, activity, width);
+          if (activity.expanded) appendActivityOutput(result, lines, activity, width, (index, columns) => this.wrap(view, index, columns));
           skipUntil = Math.max(skipUntil, activity.outputEndId);
           continue;
         }
@@ -195,8 +213,8 @@ export class TranscriptPresenter {
       const parentDisclosure = completed.find(command => command.activities?.length && command.endId === i);
       const chatCommand = column !== undefined && view.lineTypes.get(i) === 'command';
       const wrappedRows = chatCommand
-        ? wrapStyledLine(lines[i], column!).map(row => indentRow(row, width - commandBlockWidth(i)))
-        : wrapStyledLine(lines[i], parentDisclosure ? Math.max(1, width - 2) : width);
+        ? this.wrap(view, i, column!).map(row => indentRow(row, width - commandBlockWidth(i)))
+        : this.wrap(view, i, parentDisclosure ? Math.max(1, width - 2) : width);
       const cmdIndex = completed.findIndex(c => c.startId <= i);
       if (parentDisclosure && wrappedRows.length > 0) {
         const finalRow = wrappedRows[wrappedRows.length - 1];
@@ -218,7 +236,7 @@ export class TranscriptPresenter {
     if (active) {
       for (const activity of active.activities) {
         result.push(renderActivityRow(activity, width));
-        if (activity.expanded) appendActivityOutput(result, lines, activity, width);
+        if (activity.expanded) appendActivityOutput(result, lines, activity, width, (index, columns) => this.wrap(view, index, columns));
       }
     }
     for (const row of result) {
@@ -238,7 +256,7 @@ export class TranscriptPresenter {
     if (width <= 0 || view.lineTypes.get(startId) !== 'command') return undefined;
     const line = view.lines[startId];
     if (!line) return undefined;
-    const ansi = wrapStyledLine(line, Number.MAX_SAFE_INTEGER)[0]?.ansi ?? '';
+    const ansi = this.wrap(view, startId, Number.MAX_SAFE_INTEGER)[0]?.ansi ?? '';
     const continues = view.lineTypes.get(startId + 1) === 'command' && view.ownerOf(startId + 1) === startId;
     if (continues && displayWidth(ansi) < width) return `${ansi}${foreground(UI_COLORS.secondary)}…\u001B[0m`;
     return truncateAnsi(ansi, width);
@@ -326,9 +344,9 @@ function foldHint(summary: string, disclosure: string, width: number): string {
   return `${truncateText(summary, width - displayWidth(suffix))}${suffix}`;
 }
 
-function appendActivityOutput(result: WrappedRow[], lines: readonly StyledLine[], activity: SecondaryActivity, width: number): void {
+function appendActivityOutput(result: WrappedRow[], lines: readonly StyledLine[], activity: SecondaryActivity, width: number, wrap: (index: number, width: number) => WrappedRow[]): void {
   for (let lineIndex = activity.outputStartId; lineIndex < Math.min(activity.outputEndId, lines.length); lineIndex += 1) {
-    for (const row of wrapStyledLine(lines[lineIndex] ?? [], Math.max(1, width - 4))) {
+    for (const row of wrap(lineIndex, Math.max(1, width - 4))) {
       result.push({
         ansi: `    ${row.ansi}`,
         plain: `    ${row.plain}`,
@@ -447,12 +465,13 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
  * raw PTY output are never modified.
  */
 export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
-  appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE): WrappedRow | undefined {
+  appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE,
+  treatment: TreatmentSettings = DEFAULT_TREATMENT_SETTINGS): WrappedRow | undefined {
   if (!appearance.divider && !appearance.historicalPrompt) return undefined;
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
   if (!appearance.historicalPrompt) {
     const line = repeatToWidth(divider.glyph, width);
-    return {ansi: `${divider.color}${line}\u001B[0m`, plain: line, isHistoricalHeader: true};
+    return {ansi: `${treatment.preset === 'off' ? divider.color + line : paintTreatment(line, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
   const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
   const prompt = typeof parts === 'string' ? parts : parts.left;
@@ -466,7 +485,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
   const rightAnsi = right ? ` ${right}\u001B[0m` : '';
-  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
+  return {ansi: `${prompt}\u001B[0m ${treatment.preset === 'off' ? divider.color + fill : paintTreatment(fill, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {

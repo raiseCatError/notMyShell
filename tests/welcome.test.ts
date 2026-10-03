@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {homedir, tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {basename, join} from 'node:path';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {readBuildIdentity} from '../src/buildInfo.js';
 import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js';
@@ -28,7 +28,7 @@ test('fresh welcome shows compiled identity, start cwd, zsh, compact cat, and on
     assert.ok(rows[0]!.plain.includes(`notMyShell ${/^\d/u.test(version) ? 'v' : ''}${version}`));
     assert.match(rows[1]!.plain, /build /u);
     assert.match(rows[3]!.plain, /zsh/u);
-    assert.match(rows[2]!.plain, /~\/Projects\/notMyShell|\/notMyShell/u);
+    assert.ok(rows[2]!.plain.includes(basename(process.cwd())), 'welcome shows the checkout directory whatever its name');
     assert.equal(rows[4]!.plain, '─'.repeat(80));
     assert.ok(rows.every(row => row.lineIndex === undefined && !row.isLiveActivity));
   } finally {
