@@ -1,6 +1,7 @@
 import {spawn, type ChildProcess, type SpawnOptions} from 'node:child_process';
 import {PRODUCT_NAME} from '../config.js';
 import type {NotificationSettings} from '../prompt/configuration.js';
+import {parseSlashCommand} from '../commands/slashCommands.js';
 import {formatDuration} from '../status/commandTiming.js';
 
 /** Terminal focus as learned from focus reports; unknown until the terminal sends one. */
@@ -19,8 +20,14 @@ export function commandSucceeded(completed: CompletedCommand): boolean {
 }
 
 /** The master filter: settings are the current ones, read when the command completes. */
+/** Only a recognized NMSh slash command is internal; an absolute-path shell command is a real command. */
+function isInternalCommand(command: string): boolean {
+  const parsed = parseSlashCommand(command.trim());
+  return parsed !== undefined && parsed.kind !== 'unknown';
+}
+
 export function shouldNotify(completed: CompletedCommand, settings: NotificationSettings, focus: TerminalFocus): boolean {
-  if (!settings.enabled || completed.command.trimStart().startsWith('/') || !Number.isFinite(completed.elapsedMs)) return false;
+  if (!settings.enabled || isInternalCommand(completed.command) || !Number.isFinite(completed.elapsedMs)) return false;
   if (completed.elapsedMs < settings.thresholdSeconds * 1000) return false;
   const success = commandSucceeded(completed);
   if (success && !settings.onSuccess) return false;

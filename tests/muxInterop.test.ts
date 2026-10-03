@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {writeFileSync} from 'node:fs';
+import {join} from 'node:path';
 import nodePty from 'node-pty';
 import {detectTerminalHost} from '../src/host/terminalHost.js';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
@@ -103,6 +105,9 @@ test('NMSh inside tmux: environment, resize, job control, fullscreen, paste; kil
       pane.keys('seq 1 500 | less', 'Enter');
       await pane.waitFor(/^:\s*$/mu, 'less prompt');
       pane.keys('q');
+      await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records)
+        .some(record => record.command === 'seq 1 500 | less'), 20000, 'less completion journal');
+      await pane.waitFor(/❯/, 'composer owns terminal after less');
       await pane.run('echo BACK-FROM-LESS', /BACK-FROM-LESS/);
 
       // Bracketed paste through tmux stays a paste in the composer: nothing runs.
@@ -278,5 +283,26 @@ test('mouse-enabled tmux client detach/reattach preserves one attached NMSh and 
       await second.waitFor(/INTERACTIVE-EXIT-0/, mark);
       await pane.run('echo AFTER-TMUX-CLIENT', /AFTER-TMUX-CLIENT/);
       assert.equal((await sandbox.sessions())[0]!.id, live!.id);
+    } finally { pane.kill(); await sandbox.dispose(); }
+  });
+
+test('real tmux: a foreground program SIGKILLed with terminal modes enabled leaves the pane in NMSh\'s mode state',
+  {skip: hasTmux ? false : 'tmux is not installed'}, async () => {
+    const sandbox = new LiveSandbox();
+    const pane = new TmuxPane(sandbox);
+    const flags = () => pane.tmux('display-message', '-p', '-t', 'p',
+      '#{alternate_on}|#{mouse_any_flag}|#{mouse_standard_flag}|#{mouse_button_flag}|#{mouse_all_flag}|#{mouse_sgr_flag}|#{mouse_utf8_flag}|#{keypad_flag}|#{keypad_cursor_flag}').trim();
+    try {
+      await pane.waitFor(/❯/, 'composer');
+      const baseline = flags();
+      const script = join(sandbox.home, 'leak.cjs');
+      // Alternate screen, every mouse protocol, application keypad/cursor keys, then death with no cleanup.
+      writeFileSync(script, `process.stdout.write('\\u001b[?1049h\\u001b[?1000h\\u001b[?1002h\\u001b[?1003h\\u001b[?1005h\\u001b[?1006h\\u001b[?1h\\u001b=LEAK-READY\\n');\nsetTimeout(() => process.kill(process.pid, 'SIGKILL'), 3000);\nsetInterval(() => {}, 1000);\n`);
+      pane.keys(`node ${quote(script)}`, 'Enter');
+      await until(() => flags() !== baseline, 20000, () => `fixture modes active in tmux; got ${flags()}`);
+      // The program dies without cleanup; NMSh regains the terminal and must reconcile it.
+      await until(() => flags() === baseline, 20000, () => `tmux pane modes after kill; got ${flags()}, want ${baseline}`);
+      await pane.run('echo AFTER-KILL', /AFTER-KILL/);
+      assert.equal(flags(), baseline, 'tmux pane modes equal NMSh\'s own state from before the program ran');
     } finally { pane.kill(); await sandbox.dispose(); }
   });
