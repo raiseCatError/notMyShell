@@ -5440,7 +5440,7 @@ export class TerminalApp {
   }
 
   /** The ordinary shell to hand the terminal to after NMSh exits, when one was requested. */
-  get shellHandoff(): {shell: ShellId; executable: string; label: string; cwd?: string} | undefined {
+  get shellHandoff(): {shell: ShellId; executable: string; label: string; cwd?: string; returnSession?: string} | undefined {
     return this.requestedHandoff;
   }
 
@@ -5473,9 +5473,18 @@ export class TerminalApp {
       this.render();
       return;
     }
-    this.requestedHandoff = {shell: target, executable, label: adapter.label, ...(decision.cwd ? {cwd: decision.cwd} : {})};
-    this.shellEnded = true;
-    this.session.kill();
+    // A service session is detached, not ended: `nmsh` in the ordinary shell returns to exactly this session.
+    // In-process there is no service to keep it, so the session ends as before.
+    const keep = this.sessionMode === 'service' && Boolean(this.sessionId);
+    this.requestedHandoff = {shell: target, executable, label: adapter.label, ...(decision.cwd ? {cwd: decision.cwd} : {}),
+      ...(keep ? {returnSession: this.sessionId!} : {})};
+    if (keep) {
+      this.detaching = true;
+      this.session.detach();
+    } else {
+      this.shellEnded = true;
+      this.session.kill();
+    }
     this.stop(0);
   }
 
@@ -5483,7 +5492,7 @@ export class TerminalApp {
   private switchedShellStarting = false;
   /** Background/stopped jobs in the managed shell, from its latest name snapshot. */
   private shellJobs = 0;
-  private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string};
+  private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string; returnSession?: string};
 
   private stop(exitCode: number): void {
     if (this.stopped) return;

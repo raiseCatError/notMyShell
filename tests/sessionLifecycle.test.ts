@@ -6,7 +6,7 @@ import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
 import {attachSession} from '../src/session/connectSession.js';
 import {socketPathFor} from '../src/session/runtimeDir.js';
 import {formatSessionList} from '../src/session/sessionList.js';
-import {LiveSandbox, processAlive, until} from './helpers/liveFrontend.js';
+import {ENTRY, LiveSandbox, processAlive, strip, TSX, until} from './helpers/liveFrontend.js';
 
 /**
  * Real processes end to end: nmsh frontends in PTYs, the on-demand nmshd
@@ -65,7 +65,7 @@ test('SIGKILLed frontend detaches; the same shell keeps running and a new fronte
   }
 });
 
-test('SIGHUP detaches; Ctrl+D and /zsh end the session', async () => {
+test('SIGHUP detaches; Ctrl+D ends the session; /zsh detaches it for the ordinary shell', async () => {
   const sandbox = new LiveSandbox();
   try {
     const first = sandbox.launch();
@@ -91,8 +91,53 @@ test('SIGHUP detaches; Ctrl+D and /zsh end the session', async () => {
     // The composer appears before the shell's first prompt; /zsh is refused while it starts, so wait for readiness.
     await third.run('echo READY', /READY/);
     third.pty.write('/zsh\r');
-    await until(async () => (await sandbox.sessions()).length === 0, 15000, '/zsh to end the managed session');
-    await until(() => !processAlive(thirdPid), 15000, 'managed zsh to exit');
+    // A deliberate handoff keeps the session: detached, its shell still alive, waiting for `nmsh`.
+    await waitState(sandbox, 'detached');
+    assert.ok(processAlive(thirdPid), 'the managed shell survives /zsh');
+  } finally {
+    await sandbox.dispose();
+  }
+});
+
+test('/zsh → nmsh returns to the exact session without a picker, and leaving again returns to the waiting shell', async () => {
+  const sandbox = new LiveSandbox({liveSessionStartup: 'ask'});
+  try {
+    const other = sandbox.launch();
+    await other.waitFor(/❯/);
+    await other.run('echo OTHER-READY', /OTHER-READY/);
+    other.pty.kill('SIGHUP');
+    await waitState(sandbox, 'detached');
+    const frontend = sandbox.launch(['--new']);
+    await frontend.waitFor(/❯/);
+    await frontend.run('echo READY', /READY/);
+    const sessions = await sandbox.sessions();
+    const mine = sessions.find(session => session.state === 'attached')!;
+    frontend.pty.write('/zsh\r');
+    await until(async () => (await sandbox.sessions()).every(session => session.state === 'detached'), 15000, 'both sessions detached');
+    // The ordinary zsh carries the exact return session; print it and this shell's pid.
+    frontend.pty.write('printf "RET=%s PID=%s\\n" "$NMSH_RETURN_SESSION" "$$"\r');
+    await frontend.waitFor(/RET=\S+ PID=\d+/);
+    const first = /RET=(\S+) PID=(\d+)/.exec(strip(frontend.output))!;
+    assert.equal(first[1], mine.id);
+    const mark = frontend.mark;
+    frontend.pty.write(`${process.execPath} --import=${TSX} ${ENTRY}\r`);
+    await frontend.waitFor(new RegExp(`Reattached live session ${mine.id.slice(0, 8)}`), mark);
+    assert.doesNotMatch(strip(frontend.output.slice(mark)), /Not now|Always resume/u, 'no startup picker for the deliberate return');
+    assert.equal((await sandbox.sessions()).find(session => session.id === mine.id)?.state, 'attached');
+    await frontend.run('echo BACK-AGAIN', /BACK-AGAIN/);
+    const again = frontend.mark;
+    frontend.pty.write('/zsh\r');
+    await waitState(sandbox, 'detached');
+    // Keys typed while the nested NMSh is still restoring the terminal may go to it; probe until the shell answers.
+    await until(() => {
+      if (/PID2=\d+/.test(strip(frontend.output.slice(again)))) return true;
+      frontend.pty.write('printf "PID2=%s\\n" "$$"\r');
+      return false;
+    }, 15000, 'the waiting shell');
+    assert.equal(/PID2=(\d+)/.exec(strip(frontend.output.slice(again)))![1], first[2], 'back in the same waiting shell, not a new nested one');
+    frontend.pty.write('exit\r');
+    await frontend.waitExit();
+    assert.equal((await sandbox.sessions()).length, 2, 'leaving the ordinary shell ends neither session');
   } finally {
     await sandbox.dispose();
   }

@@ -117,17 +117,42 @@ frontends detect that and say so.
 
 ## Leaving NMSh: `/zsh`, `/fish`, `/bash`, `/exit`
 
-Different from `/shell`: these **end** the NMSh session and hand the terminal
-to an ordinary interactive shell started from the NMSh parent process (never
-nested in the managed shell), in the current cwd, with NMSh's markers
-(`NMSH_ACTIVE`, `NMSH_SESSION_MODE`) removed so `nmsh` can start again.
-`/exit` uses the configured **default backend** (Settings → Default shell, or
-D in `/shell`) — never `$SHELL` or the login shell; switching the current
-session does not change it. One decision path refuses while a command or
-full-screen program runs, while the shell is still starting, or while
-background or stopped jobs exist. A missing target keeps
-NMSh open with the reason and an install pointer; there is no silent fallback
-to another shell.
+Different from `/shell`: these hand the terminal to an ordinary interactive
+shell started from the NMSh parent process (never nested in the managed
+shell), in the current cwd, with NMSh's markers (`NMSH_ACTIVE`,
+`NMSH_SESSION_MODE`) removed so `nmsh` can start again. `/exit` uses the
+configured **default backend** (Settings → Default shell, or D in `/shell`) —
+never `$SHELL` or the login shell; switching the current session does not
+change it. One decision path refuses while a command or full-screen program
+runs, while the shell is still starting, or while background or stopped jobs
+exist. A missing target keeps NMSh open with the reason and an install
+pointer; there is no silent fallback to another shell.
+
+### Deliberate round trip
+
+For a service-backed session these commands **detach** the session instead of
+ending it; the managed shell keeps running under the session service. The
+ordinary shell receives two private markers (only it and its descendants see
+them):
+
+- `NMSH_RETURN_SESSION` — the exact detached session.
+- `NMSH_HANDOFF_SHELL` — which ordinary shell is waiting.
+
+`nmsh` started there verifies that exact session is still live and detached
+and attaches it directly, without the startup picker. `--new`, `--attach` and
+`--preset` win over the marker. If the session ended (or is attached
+elsewhere), NMSh says so and starts normally; it never substitutes another
+detached session, and an "Always resume" policy asks instead for that launch.
+
+Leaving again to the same shell, for the same session, returns to the waiting
+ordinary shell instead of starting another one, so repeated round trips do
+not grow a chain of nested shells. Leaving to a different shell (or after
+switching to another session) starts a new ordinary shell as before.
+
+In in-process mode nothing can keep the session alive, so leaving ends it as
+before and no return marker is set. Running plain `zsh`, `fish` or `bash`
+inside NMSh starts a normal nested shell; `nmsh` there is refused and says to
+run `exit` to return.
 
 ## Installing a missing shell
 

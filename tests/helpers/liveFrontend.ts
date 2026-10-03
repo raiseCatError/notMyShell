@@ -9,8 +9,8 @@ import {listLiveSessions} from '../../src/session/connectSession.js';
 import {parseSlashCommand} from '../../src/commands/slashCommands.js';
 import {TranscriptStore} from '../../src/sessions/TranscriptStore.js';
 
-const TSX = import.meta.resolve('tsx');
-const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
+export const TSX = import.meta.resolve('tsx');
+export const ENTRY = fileURLToPath(new URL('../../src/index.ts', import.meta.url));
 
 export const strip = (value: string) => value.replace(/\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[=>()][0-9A-B]?/g, '');
 

@@ -1,16 +1,16 @@
 import {SessionPresetStore, validatePresetCwd, presetNeedsAcknowledgement, type SessionPreset} from './session/SessionPresets.js';
 import {isVersionInvocation, formatBuildIdentity, readBuildIdentity} from './buildInfo.js';
-import {NESTED_NMSH_MESSAGE, createOrdinaryShellEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
+import {NESTED_NMSH_MESSAGE, createOrdinaryShellEnvironment, decideHandoffReturn, handoffReturnSession, isManagedNmshEnvironment, returnsToWaitingShell, type HandoffReturn} from './shell/ShellHandoff.js';
 import {spawn} from 'node:child_process';
 import {PRODUCT_ABBREVIATION, PRODUCT_NAME} from './config.js';
 
 /** Hand the terminal to an ordinary interactive shell, spawned from this (parent) process with NMSh markers removed. */
-function startOrdinaryShell(target: {executable: string; label: string}, cwd?: string): Promise<number> {
+function startOrdinaryShell(target: {executable: string; label: string}, cwd?: string, handoff?: HandoffReturn): Promise<number> {
   return new Promise(resolve => {
     try {
       const shell = spawn(target.executable, ['-i'], {
         ...(cwd ? {cwd} : {}),
-        env: createOrdinaryShellEnvironment(),
+        env: createOrdinaryShellEnvironment(process.env, handoff),
         stdio: 'inherit',
       });
       shell.once('error', error => {
@@ -141,7 +141,19 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
       }
     } catch { /* recovery is best effort and never blocks launch */ }
   }
-  if (!pendingPreset && !explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
+  // Launched from the ordinary shell a deliberate /zsh, /fish, /bash or /exit
+  // started: return to exactly that session, without the startup picker.
+  // --new, --attach and --preset win; a gone session is never substituted.
+  const returnSession = pendingPreset || explicit ? undefined : handoffReturnSession(process.env, args);
+  let returnUnavailable = false;
+  if (returnSession && process.env[SESSION_SERVICE_ENV] !== '0') {
+    let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
+    try { live = await listLiveSessions(); } catch { /* no usable service */ }
+    const decision = decideHandoffReturn(returnSession, live);
+    if (decision.kind === 'attach') target = decision.sessionId;
+    else { notice = [notice, decision.notice].filter(Boolean).join(' '); returnUnavailable = true; }
+  }
+  if (!target && !pendingPreset && !explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
     let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
     try { live = await listLiveSessions(); } catch { /* no usable service: start fresh */ }
     const {restoreAtStartup} = await import('./session/startupRestore.js');
@@ -150,7 +162,8 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
     const {loadPromptConfiguration, savePromptConfiguration} = await import('./prompt/configuration.js');
     const config = loadPromptConfiguration();
     const restored = await restoreAtStartup(live, {
-      policy: {startup: config.liveSessionStartup, multiple: config.liveSessionMultiple},
+      // After a failed return, never silently attach a different session: ask instead of Always.
+      policy: {startup: returnUnavailable && config.liveSessionStartup === 'always' ? 'ask' : config.liveSessionStartup, multiple: config.liveSessionMultiple},
       saveStartup: startup => {
         try { const base = loadPromptConfiguration(); savePromptConfiguration({...base, liveSessionStartup: startup}, undefined, base); } catch { /* keep going; applies this launch */ }
       },
@@ -218,7 +231,12 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
       continue;
     }
     const handoff = app.shellHandoff;
-    process.exitCode = handoff ? await startOrdinaryShell(handoff, handoff.cwd) : exitCode;
+    if (handoff && returnsToWaitingShell(process.env, handoff.shell, handoff.returnSession)) {
+      // This NMSh was started from the very shell that is waiting for this session: go back to it, don't nest another.
+      process.exitCode = 0;
+      break;
+    }
+    process.exitCode = handoff ? await startOrdinaryShell(handoff, handoff.cwd, handoff.returnSession ? {sessionId: handoff.returnSession, shell: handoff.shell} : undefined) : exitCode;
     break;
   }
 }
