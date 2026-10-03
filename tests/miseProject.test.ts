@@ -134,9 +134,12 @@ test('local mise config files change project identity and are markers', () => {
       writeFileSync(join(f.root, name), '[tools]\nnode = "22"\n');
       const after = detectMiseProject(f.root, f.binary);
       assert.notEqual(after.identity, before.identity, name);
-      assert.ok(after.marker?.endsWith(name) || after.marker, name);
+      const localPath = join(f.root, name);
+      const localFact = (identity: string) => (JSON.parse(identity) as string[]).find(fact => fact.startsWith(localPath + ':'));
+      assert.ok(localFact(after.identity), 'identity includes the local marker itself');
       writeFileSync(join(f.root, name), '[tools]\nnode = "24"\n');
-      assert.notEqual(detectMiseProject(f.root, f.binary).identity, after.identity, `${name} edit`);
+      const edited = detectMiseProject(f.root, f.binary);
+      assert.notEqual(localFact(edited.identity), localFact(after.identity), `${name} file identity changes on edit`);
     }
   } finally { f.close(); }
 });

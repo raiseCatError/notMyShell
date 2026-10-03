@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdirSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawn, spawnSync} from 'node:child_process';
@@ -40,7 +40,7 @@ test('a live owner is never displaced, however old the lock', withStore((store, 
 
 test('empty or malformed ownership fails safe and names the lock path', withStore((store, root) => {
   const lock = `${store.path}.lock`;
-  for (const content of ['', 'garbage', '-5\n', '0', '12abc9999999999999999']) {
+  for (const content of ['', 'garbage', '-5\n', '0', '12abc9999999999999999', '9999999999\n']) {
     writeFileSync(lock, content);
     assert.throws(() => store.create({name: 'one', cwd: root, commands: []}), (error: Error) => /busy/.test(error.message) && error.message.includes(lock), content);
     assert.equal(readFileSync(lock, 'utf8'), content);
@@ -58,4 +58,15 @@ for (let i = 0; i < 6; i++) store.create({name: process.argv[2] + i, cwd: proces
   assert.deepEqual(await Promise.all([run('a'), run('b'), run('c')]), [0, 0, 0]);
   assert.equal(store.list().length, 18);
   assert.equal(existsSync(`${store.path}.lock`), false);
+}));
+
+test('abandoned recovery guard fails closed with actionable paths and does not remove stale lock', withStore((store, root) => {
+  const lock = `${store.path}.lock`, recovery = `${lock}.recovery`;
+  const owner = `${deadPid()}\n`;
+  writeFileSync(lock, owner);
+  mkdirSync(recovery);
+  assert.throws(() => store.create({name: 'one', cwd: root, commands: []}),
+    (error: Error) => /busy/.test(error.message) && error.message.includes(lock) && error.message.includes(recovery));
+  assert.equal(readFileSync(lock, 'utf8'), owner);
+  assert.ok(existsSync(recovery));
 }));

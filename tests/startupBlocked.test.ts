@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {once} from 'node:events';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {ShellSession} from '../src/shell/ShellSession.js';
-import {sanitizeStartupOutput, STARTUP_TAIL_CHARS} from '../src/shell/startupOutput.js';
+import {sanitizeStartupOutput, STARTUP_TAIL_CHARS, PENDING_INPUT_LIMIT} from '../src/shell/startupOutput.js';
 
 function homeWith(zshrc: string): {home: string; done: () => void} {
   const home = mkdtempSync(join(tmpdir(), 'nmsh-startup-'));
@@ -70,14 +70,32 @@ test('startup output capture is bounded and carries no terminal control sequence
   } finally { session.kill(); fixture.done(); }
 });
 
-test('huge pre-ready input is bounded rather than queued without limit', async () => {
+test('startup queue accepts exact UTF-8 boundary and explicitly rejects oversized and cumulative overflow', async () => {
   const fixture = homeWith('read -k1 "?Wait> "\n');
   const session = open(fixture.home);
   try {
-    for (let i = 0; i < 64; i += 1) session.write('z'.repeat(64 * 1024));
-    await sleep(200);
-    assert.ok(session.pendingInputBytes() <= 64 * 1024, `queued ${session.pendingInputBytes()}`);
+    const rejected: string[] = [];
+    session.on('inputRejected', data => rejected.push(data));
+    const oversized = 'x'.repeat(PENDING_INPUT_LIMIT + 1);
+    session.write(oversized);
+    assert.deepEqual(rejected, [oversized], 'oversized input must be explicitly rejected');
+    assert.equal(session.pendingInputBytes(), 0);
+    session.write('界'.repeat(100));
+    session.write('x'.repeat(PENDING_INPUT_LIMIT - 300));
+    assert.equal(session.pendingInputBytes(), PENDING_INPUT_LIMIT);
+    session.write('y');
+    assert.equal(rejected.at(-1), 'y');
+    assert.equal(session.pendingInputBytes(), PENDING_INPUT_LIMIT, 'accepted writes remain intact');
+    session.kill();
+    assert.equal(session.pendingInputBytes(), 0);
   } finally { session.kill(); fixture.done(); }
+});
+
+test('sanitized startup tail has a true UTF-8 bound without splitting code points', () => {
+  const tail = sanitizeStartupOutput('界🐈'.repeat(2048));
+  assert.ok(Buffer.byteLength(tail, 'utf8') <= 2048);
+  assert.ok(tail.endsWith('界🐈'));
+  assert.doesNotMatch(tail, /[\uD800-\uDFFF]/u);
 });
 
 test('sanitizer strips escapes and controls, normalises line ends and keeps the newest text', () => {
@@ -164,15 +182,17 @@ test('frontend: a command submitted early during a slow bootstrap still runs exa
 });
 
 test('service: detach and reattach during a blocked startup keep the state, the held input and the prompt text', async () => {
-  const sandbox = new LiveSandbox({}, NOTICE);
+  const sandbox = new LiveSandbox({}, {NMSH_STARTUP_NOTICE_MS: '1500'});
   try {
     const gate = join(sandbox.home, 'gate');
     zshrc(sandbox, `print -n "Waiting for gate> "\nwhile [ ! -f ${gate} ]; do sleep 0.05; done\n`);
     const first = sandbox.launch();
-    await first.waitFor(/Waiting for gate>/);
+    await first.waitFor(/❯/);
     await until(async () => (await sandbox.sessions()).length === 1, 15000, 'live session listed');
     const {id, pid} = (await sandbox.sessions())[0]!;
-    first.pty.write('echo HELD-$((1+1))\r'); // held by the Enter guard, never reaches the shell
+    first.pty.write('echo HELD-$((1+1))\r'); // submitted before notice, held by service queue
+    await first.waitFor(/Shell startup is still running/);
+    await until(async () => (await sandbox.transcripts().list()).some(j => j.live?.running?.command === 'echo HELD-$((1+1))'), 15000, 'submission checkpoint');
     first.pty.kill('SIGHUP');
     await first.waitExit();
     await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'detached');
@@ -181,9 +201,10 @@ test('service: detach and reattach during a blocked startup keep the state, the 
     await second.waitFor(/Shell startup is still running/);
     await second.waitFor(/Waiting for gate>/);
     writeFileSync(gate, '');
-    await second.waitFor(/❯/, second.output.indexOf('Shell startup'));
+    await second.waitFor(/HELD-2/, second.output.indexOf('Shell startup'));
+    await until(async () => (await sandbox.transcripts().list()).flatMap(j => j.transcript.records).filter(r => r.command === 'echo HELD-$((1+1))').length === 1, 15000, 'held command completed exactly once');
     await second.run('echo BACK-FROM-BLOCKED', /BACK-FROM-BLOCKED/);
-    assert.doesNotMatch(strip(second.output), /HELD-2/);
+    assert.equal((strip(second.output).match(/HELD-2/gu) ?? []).length, 1);
     second.pty.write('\u0004');
     await second.waitExit();
     await until(async () => (await sandbox.sessions()).length === 0, 15000, 'session ended');
@@ -203,4 +224,47 @@ test('service: shutting down the shell during a blocked startup leaves no sessio
     await until(async () => (await sandbox.sessions()).length === 0, 15000, 'service session removed');
     await until(() => !processAlive(pid), 15000, 'zsh gone');
   } finally { await sandbox.dispose(); }
+});
+
+for (const command of ['less', 'vim']) {
+  test(`frontend: early ${command} cannot steal ownership from SIGINT-ignoring startup`, async () => {
+    const sandbox = new LiveSandbox({}, {NMSH_STARTUP_NOTICE_MS: '1500'});
+    try {
+      const answered = join(sandbox.home, 'answered');
+      zshrc(sandbox, `if [[ -t 0 ]]; then trap '' INT; read -k1 "?Blocked> "; print "$REPLY" > ${answered}; fi\n`);
+      const app = sandbox.launch();
+      await app.waitFor(/❯/);
+      app.pty.write(`${command}\r`);
+      await app.waitFor(/Shell startup is still running/);
+      assert.equal(existsSync(answered), false);
+      const [{pid}] = await sandbox.sessions();
+      app.pty.write('q');
+      app.pty.write('\u0003');
+      assert.equal(await app.waitExit(), 130);
+      await until(async () => (await sandbox.sessions()).length === 0, 15000, 'aborted session removed');
+      await until(() => !processAlive(pid), 15000, 'shell exited');
+      assert.equal(existsSync(answered), false);
+    } finally { await sandbox.dispose(); }
+  });
+}
+
+import {TerminalApp} from '../src/app/TerminalApp.js';
+import {InProcessSessionClient} from '../src/session/InProcessSessionClient.js';
+
+test('frontend restores an oversized submitted command and clears awaitingExec on rejection', async () => {
+  const fixture = homeWith('read -k1 "?Blocked> "\n');
+  const shell = open(fixture.home);
+  const client = new InProcessSessionClient({cwd: fixture.home, columns: 80, rows: 24}, () => shell);
+  const app = new TerminalApp({client, mode: 'in-process'});
+  Object.defineProperty(app, 'render', {value: () => {}});
+  const command = 'echo ' + 'x'.repeat(65536);
+  try {
+    app['editor'].insert(command);
+    await app['submit']();
+    assert.equal(app['editor'].text, command, 'entire rejected command restored');
+    assert.equal(app['running'], undefined, 'no awaitingExec deadlock');
+    assert.equal(app['passthrough'], false);
+    assert.equal(shell.pendingInputBytes(), 0);
+    assert.match(app['output'].view().lines.map(line => line.map(cell => cell?.text ?? '').join('')).join('\n'), /Input was not sent/);
+  } finally { app['stop'](0); app['session'].kill(); shell.kill(); fixture.done(); }
 });

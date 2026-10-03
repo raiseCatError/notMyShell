@@ -66,18 +66,31 @@ export async function writeClipboard(text: string, options: ClipboardEnvironment
   await new Promise<void>((resolve, reject) => {
     // Clipboard tools may fork a background selection owner that keeps inherited pipes open,
     // so only the tool's own exit is awaited and its output is not captured.
-    const child = spawn(backend.command, backend.args, {stdio: ['pipe', 'ignore', 'ignore']});
+    const child = spawn(backend.command, backend.args, {detached: process.platform !== 'win32', stdio: ['pipe', 'ignore', 'ignore']});
     let settled = false;
+    let inputDone = false;
+    let exitedSuccessfully = false;
+    const killTree = () => {
+      if (child.pid && process.platform !== 'win32') {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already ended */ }
+      } else child.kill('SIGKILL');
+    };
     const finish = (error?: Error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (error) reject(error); else resolve();
+      if (error) { killTree(); reject(error); } else resolve();
     };
-    const timer = setTimeout(() => { child.kill('SIGKILL'); finish(new Error(`${backend.command} timed out`)); }, timeoutMs);
+    const timer = setTimeout(() => { finish(new Error(`${backend.command} timed out`)); }, timeoutMs);
     child.once('error', finish);
-    child.stdin.once('error', () => { /* surfaced through exit status */ });
-    child.once('exit', code => finish(code === 0 ? undefined : new Error(`${backend.command} exited with code ${code}`)));
+    child.stdin.once('error', error => finish(new Error(`${backend.command} stdin failed: ${error.message}`)));
+    child.once('exit', code => {
+      if (code !== 0) finish(new Error(`${backend.command} exited with code ${code}`));
+      else { exitedSuccessfully = true; if (inputDone) finish(); }
+    });
+    // Writable 'finish' means all input was written successfully; end callbacks
+    // also run on write errors, potentially before the stream's error event.
+    child.stdin.once('finish', () => { inputDone = true; if (exitedSuccessfully) finish(); });
     child.stdin.end(text);
   });
 }

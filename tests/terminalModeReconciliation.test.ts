@@ -15,6 +15,7 @@ function physicalAfterPassthrough(profile: Record<string, string>, appBytes: str
   const renderer = new TerminalRenderer(data => { model.feed(String(data)); }, resolveHostCapabilities(profile));
   renderer.enter();
   renderer.suspendForPassthrough();
+  renderer.observePassthrough(appBytes);
   model.feed(appBytes); // the foreground program's own bytes; it was killed before it could clean up
   if (leaveWhileSuspended) { renderer.leave(); return model.snapshot(); }
   renderer.resumeAfterPassthrough();
@@ -78,3 +79,25 @@ test('real frontend: a foreground program SIGKILLed with modes enabled leaves th
     assert.equal(finalState.screen, 'alternate');
   } finally { await sandbox.dispose(); }
 });
+
+for (const leaveSuspended of [false, true]) {
+  test(`Kitty child stacks on both screens preserve inherited state (suspended exit=${leaveSuspended})`, () => {
+    const model = new TerminalModeModel();
+    model.feed('\u001b[>9u\u001b[?1049h\u001b[>7u\u001b[?1049l');
+    const renderer = new TerminalRenderer(data => model.feed(data), resolveHostCapabilities({TERM_PROGRAM: 'ghostty'}));
+    renderer.enter();
+    assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7', '1']});
+    renderer.suspendForPassthrough();
+    const child = '\u001b[>31u\u001b[?1049l\u001b[>5u\u001b[?1049h\u001b[>3u\u001b[?1049l';
+    renderer.observePassthrough(child);
+    model.feed(child); // abnormal exit on the MAIN screen
+    if (!leaveSuspended) {
+      renderer.resumeAfterPassthrough();
+      assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7', '1']});
+      assert.equal(model.snapshot().screen, 'alternate');
+    }
+    renderer.leave();
+    assert.equal(model.snapshot().screen, 'main');
+    assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7']});
+  });
+}

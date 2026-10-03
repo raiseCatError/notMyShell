@@ -1,4 +1,5 @@
 import {BASELINE_CAPABILITIES, type TerminalCapabilities} from '../host/capabilities.js';
+import {AlternateScreenTracker} from '../session/TerminalModes.js';
 import {displayWidth} from '../util/text.js';
 
 export interface TerminalFrame {
@@ -27,6 +28,7 @@ export class TerminalRenderer {
   private previousCursor?: {row: number; column: number; visible: boolean};
 
   private suspended = false;
+  private readonly childModes = new AlternateScreenTracker();
   constructor(private readonly write: (data: string) => unknown = data => process.stdout.write(data),
     private capabilities: Readonly<TerminalCapabilities> = BASELINE_CAPABILITIES) {}
 
@@ -60,8 +62,8 @@ export class TerminalRenderer {
       wanted.add(1000); wanted.add(1006);
       if (this.capabilities.mouseMovement) wanted.add(1003);
     }
-    // Pop every keyboard-protocol entry the program left, then restore only NMSh's own entry.
-    let sequence = '\u001B[<255u';
+    // Child entries belong to independent screen stacks; inherited entries stay intact.
+    let sequence = this.childModes.releaseKeyboardSequence();
     for (const mode of [1000, 1002, 1003, 1005, 1006, 1015]) if (!wanted.has(mode)) sequence += `\u001B[?${mode}l`;
     // Keypad and cursor-key modes are never wanted by NMSh's own composer.
     sequence += '\u001B>\u001B[?1l';
@@ -115,9 +117,16 @@ export class TerminalRenderer {
     if (!this.active || this.suspended) return;
     this.suspended = true;
     // Pop kitty mode while still on the alt screen
+    this.childModes.reset('alternate');
+    this.childModes.observeModes(restore);
     this.write(`${this.inputModes(false)}\u001B[?25h\u001B[2J\u001B[H${restore}`);
     this.previous = [];
     this.previousCursor = undefined;
+  }
+
+  /** Observe only bytes actually sent to the host terminal while the child owns it. */
+  observePassthrough(data: string): void {
+    if (this.suspended) this.childModes.observeModes(data);
   }
 
   resumeAfterPassthrough(): void {
@@ -125,9 +134,9 @@ export class TerminalRenderer {
     this.suspended = false;
     this.previous = [];
     this.previousCursor = undefined;
-    // Re-assert the alternate screen (a program that left it, or died elsewhere, must not strand NMSh on the
-    // main screen; entering when already there is a no-op) then NMSh's exact mode set.
-    this.write(`\u001B[?1049h${this.reconcileModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
+    // Clean each child keyboard stack on its own screen, finish on alternate,
+    // then restore NMSh's modes even if the child exited abnormally.
+    this.write(`${this.reconcileModes(true)}\u001B[?25l\u001B[2J\u001B[H`);
   }
 
   invalidate(): void {
