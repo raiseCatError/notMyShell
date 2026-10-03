@@ -1,5 +1,6 @@
 import {enrichCompletion} from './CommandKnowledge.js';
 import {CompletionAggregator, DeclarativeSpecSource} from './CompletionSources.js';
+import {BundledCatalog, BundledCatalogSource} from './BundledCatalog.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {ConfiguredCompletionSource} from './ConfiguredCompletion.js';
 import type {CommandType} from './SemanticService.js';
@@ -86,9 +87,12 @@ export function completionSpecDirectory(env: NodeJS.ProcessEnv = process.env): s
  * declarative specs as an additional, lower-priority source. One menu.
  */
 export function defaultCompletionSources(shell: CompletionSource = new ShellCompletionSource()): CompletionAggregator {
+  // Priority: the live shell, then the user's own specs, then the bundled catalog.
+  const custom = new DeclarativeSpecSource(completionSpecDirectory());
   return new CompletionAggregator([
     {source: shell, priority: 0, timeoutMs: 3000},
-    {source: new DeclarativeSpecSource(completionSpecDirectory()), priority: 10, timeoutMs: 250},
+    {source: custom, priority: 10, timeoutMs: 250},
+    {source: new BundledCatalogSource(new BundledCatalog(), root => custom.load().has(root)), priority: 20, timeoutMs: 250},
   ]);
 }
 

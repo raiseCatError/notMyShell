@@ -1,0 +1,9 @@
+{
+  "name": "nmsh-completion-catalog-importer",
+  "private": true,
+  "description": "Build-time importer for the bundled completion catalog. Not part of the NMSh runtime; run only to regenerate assets/completion.",
+  "type": "module",
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

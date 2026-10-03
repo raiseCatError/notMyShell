@@ -100,20 +100,42 @@ descriptions, and deterministic ranking (match tier, source priority, source
 order). When only one source contributes, its order is kept exactly, so zsh's
 grouped order is unchanged.
 
-Default sources: the shell's own (zsh configured completion with native
-fallback; Fish `complete -C`; Bash completion), then optional declarative
-specs.
+Default sources, in priority order: the shell's own (zsh configured
+completion with native fallback; Fish `complete -C`; Bash completion), then
+the user's custom declarative specs, then the bundled catalog. A custom spec
+for a command replaces the bundled knowledge for that command entirely.
 
-### Upstream research
+### Custom specs
 
-| Source | License (checked) | Decision |
-|---|---|---|
-| [withfig/autocomplete](https://github.com/withfig/autocomplete) | MIT | Not vendored. Specs are TypeScript modules with generators that run code; NMSh does not execute third-party spec code. |
-| [inshellisense](https://github.com/microsoft/inshellisense) | MIT | Consumes Fig specs through a Node runtime per session; not adopted, since NMSh must not spawn a JS runtime per keystroke or show a second menu. |
-| [amazon-q-developer-cli](https://github.com/aws/amazon-q-developer-cli) (Fig lineage) | MIT (dual-licensed file `LICENSE.MIT`) | Not adopted; a separate runtime owning its own UI. |
+`DeclarativeSpecSource` loads a JSON subset of the Fig model (names,
+descriptions, subcommands, options) from `<config>/completion-specs/*.json`:
+data only (generators are ignored, never run), at most 2048 files of at most
+512 KiB each and 48 MiB in total, loaded once and answered from memory.
 
-Instead NMSh ships the adapter boundary: `DeclarativeSpecSource` loads a
-JSON subset of the Fig model (names, descriptions, subcommands, options) from
-`<config>/completion-specs/*.json`. Specs are data only — unknown fields such
-as generators are ignored, never run — bounded in size and count, loaded once
-and answered from memory. No specs are bundled.
+### Bundled catalog (`assets/completion/`)
+
+Static command knowledge imported at build time by
+`scripts/completion-catalog/build.mjs` from
+[withfig/autocomplete](https://github.com/withfig/autocomplete) (primary) and
+[carapace-bin](https://github.com/carapace-sh/carapace-bin) (secondary, static
+cobra declarations only). Both are MIT; their notices are in `licenses/`.
+Upstream TypeScript and Go are parsed as syntax only — nothing upstream is
+executed. Generators, callbacks and other dynamic completions are dropped and
+counted (so, for example, `kubectl get <resource>` names are not offered;
+the shell may still offer them). inshellisense and Amazon Q consume the same
+Fig specs and are not imported separately. Files with unclear licensing
+(`expo.ts`, `expo-cli.ts`: third-party copyright without a grant) are
+excluded.
+
+- Pack: `catalog-index.json` (root name → entry key, entry key → offset and
+  length) and `catalog.bin` (deflateRaw'd JSON per entry). A subcommand larger
+  than 16 KiB is its own entry keyed by command path (`aws s3`), so a lookup
+  inflates only the entries on the path being completed; a small LRU keeps
+  recent ones. Not subject to the custom-spec limits.
+- Supports subcommands, options (with persistent inheritance), static option
+  and positional value choices with descriptions.
+- `provenance.json`: upstream repositories, commits, licenses, per-file
+  outcome (full, partial with dropped count, skipped with reason) and totals.
+- Regenerate: `cd scripts/completion-catalog && npm install && node build.mjs
+  --fig <checkout> --carapace <checkout>`. The importer's TypeScript
+  dependency is local to that directory and not part of NMSh.

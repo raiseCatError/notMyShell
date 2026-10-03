@@ -119,8 +119,9 @@ export class CompletionAggregator implements CompletionSource {
 
 /**
  * A small declarative spec format (a JSON subset of the Fig/withfig autocomplete
- * model: names, descriptions, subcommands, options). NMSh ships no third-party
- * specs; users may place their own or converted specs in the spec directory.
+ * model: names, descriptions, subcommands, options) for the user's own or
+ * converted specs in the spec directory. The bundled catalog is a separate,
+ * indexed source (BundledCatalog.ts); custom specs win over it.
  * Specs are data only: no generators, scripts or dynamic code are executed.
  */
 export interface DeclarativeSpec {
@@ -131,7 +132,9 @@ export interface DeclarativeSpec {
 }
 
 const MAX_SPEC_BYTES = 512 * 1024;
-const MAX_SPECS = 512;
+const MAX_SPECS = 2048;
+/** Aggregate bound on custom spec bytes read in one load; the bundled catalog is separate and lazy. */
+export const MAX_SPEC_TOTAL_BYTES = 48 * 1024 * 1024;
 const names = (value: string | string[]) => (Array.isArray(value) ? value : [value]).filter(name => typeof name === 'string' && /^[^\s\u0000-\u001f]{1,128}$/u.test(name));
 
 export function normalizeSpec(value: unknown, depth = 0): DeclarativeSpec | undefined {
@@ -186,10 +189,10 @@ export function specCandidates(specs: ReadonlyMap<string, DeclarativeSpec>, cont
 export class DeclarativeSpecSource implements CompletionSource {
   readonly id = 'spec';
   private specs?: Map<string, DeclarativeSpec>;
-  /** Files skipped as invalid, oversize or unreadable. */
+  /** Files skipped as invalid, oversize, unreadable or over the aggregate budget. */
   skipped = 0;
 
-  constructor(private readonly directory: string | undefined) {}
+  constructor(private readonly directory: string | undefined, private readonly budget = MAX_SPEC_TOTAL_BYTES) {}
 
   load(): Map<string, DeclarativeSpec> {
     if (this.specs) return this.specs;
@@ -197,10 +200,13 @@ export class DeclarativeSpecSource implements CompletionSource {
     if (!this.directory) return this.specs;
     let files: string[] = [];
     try { files = readdirSync(this.directory).filter(name => name.endsWith('.json')).sort().slice(0, MAX_SPECS); } catch { return this.specs; }
+    let total = 0;
     for (const file of files) {
       try {
         const path = join(this.directory, file);
-        if (statSync(path).size > MAX_SPEC_BYTES) { this.skipped += 1; continue; }
+        const size = statSync(path).size;
+        if (size > MAX_SPEC_BYTES || total + size > this.budget) { this.skipped += 1; continue; }
+        total += size;
         const spec = normalizeSpec(JSON.parse(readFileSync(path, 'utf8')));
         if (!spec) { this.skipped += 1; continue; }
         for (const name of names(spec.name)) if (!this.specs.has(name)) this.specs.set(name, spec);
