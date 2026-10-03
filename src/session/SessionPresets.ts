@@ -1,17 +1,30 @@
 import {createHash, randomUUID} from 'node:crypto';
-import {readFileSync, writeFileSync, mkdirSync, lstatSync, statSync, realpathSync, renameSync, unlinkSync, openSync, closeSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdirSync, lstatSync, statSync, realpathSync, renameSync, unlinkSync, linkSync, rmdirSync} from 'node:fs';
 import {isAbsolute, join} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 
 export interface SessionPreset {name: string; cwd: string; commands: string[]; acknowledged?: string}
 interface PresetFile {version: 1; presets: SessionPreset[]}
 export class PresetError extends Error {}
+function ownerPid(lock: string): number | undefined | 'gone' {
+  try {
+    const stat = lstatSync(lock);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 32) return;
+    const text = readFileSync(lock, 'utf8');
+    if (!/^\d{1,10}\n?$/u.test(text)) return;
+    const pid = Number.parseInt(text, 10);
+    return Number.isSafeInteger(pid) && pid > 0 && pid <= 0x7fffffff ? pid : undefined;
+  } catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'gone' : undefined; }
+}
+function processAlive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch (error) { return (error as NodeJS.ErrnoException).code === 'EPERM'; }
+}
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const safeText = (value: unknown, max: number): value is string => typeof value === 'string' && value.length <= max && !/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u.test(value);
 export function validatePreset(value: unknown): SessionPreset {
   if (!object(value) || typeof value.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9 _-]{0,63}$/u.test(value.name) || value.name.trim() !== value.name) throw new PresetError('Invalid preset name. Use 1–64 letters, numbers, spaces, _ or -.');
   if (!safeText(value.cwd,4096) || !isAbsolute(value.cwd) || /[\r\n\t]/u.test(value.cwd)) throw new PresetError('Preset cwd must be an absolute directory path.');
-  if (!Array.isArray(value.commands) || value.commands.length > 16 || !value.commands.every(command => safeText(command,4096) && command.trim().length > 0 && !command.includes('\r')) || value.commands.join('').length > 16384) throw new PresetError('Invalid startup commands (maximum 16 commands / 16 KiB).');
+  if (!Array.isArray(value.commands) || value.commands.length > 16 || !value.commands.every(command => safeText(command,4096) && command.trim().length > 0 && !command.includes('\r')) || Buffer.byteLength(value.commands.join(''),'utf8') > 16384) throw new PresetError('Invalid startup commands (maximum 16 commands / 16 KiB).');
   if (value.acknowledged !== undefined && (typeof value.acknowledged !== 'string' || !/^[a-f0-9]{64}$/u.test(value.acknowledged))) throw new PresetError('Malformed preset acknowledgement.');
   return {name:value.name, cwd:value.cwd, commands:[...value.commands], ...(value.acknowledged ? {acknowledged:value.acknowledged as string} : {})};
 }
@@ -58,23 +71,68 @@ export class SessionPresetStore {
   private mutate(change: (file: PresetFile)=>void): void {
     mkdirSync(this.directory,{recursive:true,mode:0o700});
     const lock = `${this.path}.lock`, temporary = `${this.path}.${randomUUID()}.tmp`;
-    let descriptor: number;
-    try { descriptor = openSync(lock,'wx',0o600); }
-    catch { throw new PresetError('Preset storage is busy or not writable.'); }
+    this.acquire(lock);
     try {
       const original = this.diskContents();
       const file = this.read();
       if (this.diskContents() !== original) throw new PresetError('Preset storage changed; retry after inspecting it.');
       change(file);
       if (file.presets.length > 100) throw new PresetError('Preset limit reached (100).');
-      writeFileSync(temporary, JSON.stringify(file,null,2)+'\n',{flag:'wx',mode:0o600});
+      const contents = JSON.stringify(file,null,2)+'\n';
+      if (Buffer.byteLength(contents,'utf8') > 256 * 1024) throw new PresetError('Preset storage limit reached (256 KiB); existing presets were preserved.');
+      writeFileSync(temporary,contents,{flag:'wx',mode:0o600});
       this.read(); // Refuse symlinks or a malformed intervening replacement.
       if (this.diskContents() !== original) throw new PresetError('Preset storage changed; retry after inspecting it.');
       renameSync(temporary,this.path);
     } finally {
-      closeSync(descriptor);
       try { unlinkSync(temporary); } catch { /* no staged file */ }
       unlinkSync(lock);
+    }
+  }
+  /**
+   * Take the cross-process lock the way TranscriptStore.withLock does: the owner pid is written to a private
+   * file that is hard-linked into place, so the lock never exists without an owner. A lock whose owner process
+   * is gone is re-inspected under an exclusive recovery guard and removed; a live, reused or unreadable owner is never displaced.
+   */
+  private acquire(lock: string): void {
+    const mine = `${lock}.${randomUUID()}`;
+    writeFileSync(mine, `${process.pid}\n`, {flag: 'wx', mode: 0o600});
+    const deadline = Date.now() + 1000;
+    try {
+      for (;;) {
+        try { linkSync(mine, lock); return; } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw new PresetError(`Preset storage is not writable (${lock}).`);
+        }
+        const owner = ownerPid(lock);
+        if (owner === 'gone') continue; // Released between our link attempt and the read.
+        if (owner !== undefined && !processAlive(owner)) {
+          // Every recoverer must hold this guard BEFORE inspecting/removing the
+          // stale instance. A competing actor may already have replaced it.
+          // An abandoned guard fails closed; recovering it by read-then-remove
+          // would merely move the same race to another filename.
+          const recovery = `${lock}.recovery`;
+          let claimed = false;
+          try {
+            mkdirSync(recovery, {mode: 0o700});
+            claimed = true;
+            const current = ownerPid(lock);
+            if (typeof current === 'number' && !processAlive(current)) unlinkSync(lock);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'EEXIST' && (error as NodeJS.ErrnoException).code !== 'ENOENT') {
+              throw new PresetError(`Could not recover preset lock (${lock}); inspect ${recovery}.`);
+            }
+          } finally { if (claimed) rmdirSync(recovery); }
+          if (Date.now() >= deadline) throw new PresetError(`Preset storage is busy: inspect ${lock} and ${recovery}. Remove them only if no NMSh process is running.`);
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+          continue;
+        }
+        if (owner === undefined || Date.now() >= deadline) {
+          throw new PresetError(`Preset storage is busy: ${lock} is held by ${owner === undefined ? 'an unreadable owner' : `process ${owner}`}. Remove it only if no NMSh process is running.`);
+        }
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+      }
+    } finally {
+      try { unlinkSync(mine); } catch { /* already gone */ }
     }
   }
   private diskContents(): string | undefined {
