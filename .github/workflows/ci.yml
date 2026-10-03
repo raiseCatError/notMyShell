@@ -73,7 +73,7 @@ jobs:
       - name: Bounded platform timing smoke
         run: |
           node --import=tsx scripts/platform-benchmarks.ts
-          NMSH_BENCH_SAMPLES=5 NMSH_BENCH_WARMUP=1 npm run bench -- completion/configured-cold completion/configured-warm composer/screen-plan
+          NMSH_BENCH_SAMPLES=5 NMSH_BENCH_WARMUP=1 npm run bench -- completion/configured-cold completion/configured-warm composer/screen-plan transcript/wrap-present-10000
 
       - name: Run tests
         run: npm test -- --test-timeout=120000

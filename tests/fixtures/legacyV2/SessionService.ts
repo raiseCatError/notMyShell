@@ -1,12 +1,12 @@
 import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
-import {ShellSession} from '../shell/ShellSession.js';
-import {SessionEvidence} from './SessionEvidence.js';
+import {ShellSession} from './ShellSession.js';
+import {SessionEvidence} from '../../../src/session/SessionEvidence.js';
 import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
-import {SESSION_MODE_ENV} from './SessionClient.js';
-import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
-import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
+import {SESSION_MODE_ENV} from '../../../src/session/SessionClient.js';
+import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from '../../../src/session/runtimeDir.js';
+import {StreamBacklog, type BacklogEvent, type BacklogLimits} from '../../../src/session/StreamBacklog.js';
 
 export const SERVICE_NAME = 'nmshd';
 
@@ -39,8 +39,8 @@ interface ManagedSession {
   knowledge?: string;
 }
 
-export {AlternateScreenTracker} from './TerminalModes.js';
-import {AlternateScreenTracker} from './TerminalModes.js';
+export {AlternateScreenTracker} from '../../../src/session/TerminalModes.js';
+import {AlternateScreenTracker} from '../../../src/session/TerminalModes.js';
 
 /** Delay between the two resizes that force a fullscreen app to repaint on attach. */
 const REDRAW_NUDGE_MS = 40;
@@ -167,7 +167,7 @@ export class SessionService {
             return;
           }
           greeted = true;
-          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1});
+          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME});
           continue;
         }
         switch (message.type) {
@@ -197,8 +197,7 @@ export class SessionService {
               ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
               ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq,
-              ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge}),
-              ...(session.shell.isReady ? {} : {startup: session.shell.startupTail() ?? ''})});
+              ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge})});
             // Everything the journal does not have yet, then the live stream continues.
             const missed = backlog.events();
             for (const event of missed) send(toMessage(event));
@@ -217,15 +216,7 @@ export class SessionService {
           case 'list':
             send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
             break;
-          case 'input':
-            owned?.evidence.onInput();
-            if (owned) {
-              const rejected = (data: string, submission: boolean) => send({type: 'input-rejected', data, submission: submission ? 1 : 0});
-              owned.shell.once('inputRejected', rejected);
-              owned.shell.write(message.data, message.submission === 1);
-              owned.shell.off('inputRejected', rejected);
-            }
-            break;
+          case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
           case 'resize':
             if (owned) { owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
             break;
@@ -315,7 +306,6 @@ export class SessionService {
       if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
       else session.controller?.({type: 'output', data});
     });
-    shell.on('startup', output => session.controller?.({type: 'startup', output}));
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       session.running = {command, since: at};

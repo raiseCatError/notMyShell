@@ -120,7 +120,7 @@ if (isVersionInvocation(args)) {
     const restored = await restoreAtStartup(live, {
       policy: {startup: config.liveSessionStartup, multiple: config.liveSessionMultiple},
       saveStartup: startup => {
-        try { savePromptConfiguration({...loadPromptConfiguration(), liveSessionStartup: startup}); } catch { /* keep going; applies this launch */ }
+        try { const base = loadPromptConfiguration(); savePromptConfiguration({...base, liveSessionStartup: startup}, undefined, base); } catch { /* keep going; applies this launch */ }
       },
       askOne: session => picker.runStartupScreen(columns => picker.renderSinglePrompt(session, columns, Date.now()), picker.singlePromptKey),
       pick: sessions => {
