@@ -1,4 +1,4 @@
-import {resolveCommand, type ProviderDescriptor, type ProviderInstall, type ProviderFamily} from '../providers/providers.js';
+import {installUnavailableReason, providerInstall, resolveCommand, type ProviderDescriptor, type ProviderInstall, type ProviderFamily} from '../providers/providers.js';
 
 export const TOOL_CATEGORIES = ['Search & Files', 'Git & Development', 'Navigation & History',
   'Data / Structured Text', 'Environment & Secrets', 'Shell / Workflow', 'Containers / Infrastructure', 'Project / Language Tooling'] as const;
@@ -47,7 +47,11 @@ export const TOOLS: readonly Tool[] = [
 ];
 
 /** No sudo, install scripts, custom taps, interpolation or automatic fallback. */
-export function toolInstall(tool: Tool, hasBrew = resolveCommand('brew') !== undefined): ProviderInstall | undefined {
-  if (!hasBrew) return undefined;
-  return {label: `brew install ${tool.package}`, command: 'brew', args: ['install', tool.package]};
+export function toolInstall(tool: Tool, hasBrew = resolveCommand('brew') !== undefined, platform: NodeJS.Platform = process.platform): ProviderInstall | undefined {
+  return providerInstall({...tool, recipe: {brew: tool.package}}, platform, hasBrew);
+}
+
+/** Factual reason a catalog tool has no install here. */
+export function toolInstallUnavailable(tool: Tool, hasBrew = resolveCommand('brew') !== undefined, platform: NodeJS.Platform = process.platform): string {
+  return installUnavailableReason({...tool, recipe: {brew: tool.package}}, platform, hasBrew);
 }

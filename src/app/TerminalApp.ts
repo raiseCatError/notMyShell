@@ -49,7 +49,7 @@ import {CommandEditor} from '../input/CommandEditor.js';
 import {OutputBuffer, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider, resolveCommand, resolveProvider} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
@@ -156,6 +156,8 @@ export class TerminalApp {
   private readonly composerHistory = new ComposerHistory();
   /** Unsubscribes the Chroma panel preview from the presentation clock. */
   private panelAnimation?: () => void;
+  /** A milestone effect waiting for the owning panel to close. */
+  private pendingMilestone = false;
   private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
     reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
@@ -1433,7 +1435,7 @@ export class TerminalApp {
   /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
   private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
     if (slash.kind === 'effects') {
-      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Effects Off suppress previews.', INFO);
+      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain|confetti [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Effects Off suppress previews.', INFO);
       else if (slash.effect === 'stop') this.effects.cancel();
       else if (!this.running && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended) {
         this.effects.trigger(slash.effect, slash.placement, Date.now(), 0x4e4d5348, {...this.promptConfiguration.presentation,
@@ -1888,6 +1890,7 @@ export class TerminalApp {
         this.render();
       });
       this.offeredUpdate = undefined;
+      if (result.ok) this.milestoneEffect();
       this.output.addHistoryLine(result.ok
         ? `${SUCCESS}NMSh ${release.version} is installed. Restart NMSh to use it; this session keeps running ${current}.${RESET}`
         : `${ERROR}The update did not complete; the lines above say what happened.${RESET}`);
@@ -2127,6 +2130,23 @@ export class TerminalApp {
     this.render();
   }
 
+  /**
+   * A brief, restrained effect for a real milestone (a confirmed install,
+   * an applied update, finished setup). Respects Milestone effects, Reduced
+   * Motion and Effects Off; never during a command, passthrough or panel.
+   */
+  private milestoneEffect(): boolean {
+    const presentation = this.promptConfiguration.presentation;
+    if (presentation.autoEffects === false || presentation.effectsOff || presentation.reducedMotion || isReducedMotion()) return false;
+    // Panels own the screen and leave no decorative gap: celebrate once the panel closes.
+    if (this.settingsPanelActive || this.running || this.passthrough || this.externalPassthrough || this.frontendSuspended) {
+      this.pendingMilestone = true;
+      return false;
+    }
+    this.pendingMilestone = false;
+    return this.effects.trigger('confetti', 'bottom', Date.now(), Date.now() >>> 0, presentation);
+  }
+
   private async runPowerlevel10kWizard(status: Powerlevel10kStatus): Promise<number> {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
     if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
@@ -2327,6 +2347,7 @@ export class TerminalApp {
           this.starshipStatus = await detectStarship(process.env);
           state.starshipStatus = this.starshipStatus;
           if (!this.starshipStatus.installed) state.task.markFailure('Homebrew completed, but starship was not found on PATH.');
+          else this.milestoneEffect();
         }
         state.step = 'installResult';
         state.selectedIndex = 0;
@@ -2708,6 +2729,7 @@ export class TerminalApp {
   private async handleToolsKey(key: Key, state: ToolsPanel): Promise<void> {
     if (state.confirm) {
       await confirmToolInstall(state, key, () => this.renderTaskPresentation());
+      if (state.task?.state.status === 'succeeded' && state.detail && state.statuses[state.detail.id]?.state === 'installed') this.milestoneEffect();
       this.render();
       return;
     }
@@ -2715,6 +2737,8 @@ export class TerminalApp {
     const action = toolsKey(state, key);
     if (wasOnboarding && (action === 'close' || action === 'finishOnboarding')) {
       this.applySettingsConfiguration({...this.promptConfiguration, toolsSetupComplete: true});
+      // First-run setup is complete; a skip is not a milestone.
+      if (action === 'finishOnboarding') this.milestoneEffect();
     }
     if (action === 'close') { this.toolsPanel = undefined; this.returnFromPanel(); }
     else if (action === 'mise') {
@@ -2969,21 +2993,29 @@ export class TerminalApp {
       else { this.providerPanelState = undefined; this.returnFromPanel(); }
     } else if (key.kind === 'enter') {
       const selected = providerPanelSelection(state);
-      if (state.step === 'installConfirm' && selected.install) {
+      const install = providerInstall(selected);
+      if (state.step === 'installConfirm' && install) {
         state.step = 'installProgress';
         state.task = new TaskProgress(`Installing ${selected.label}`, () => this.renderTaskPresentation(), Date.now(), selected.label);
         this.render();
-        const outcome = await state.task.run(selected.install.command, [...selected.install.args]);
+        const outcome = await state.task.run(install.command, [...install.args]);
         if (this.stopped) return;
         clearProviderDetection();
         state.statuses[selected.id] = await detectProvider(selected);
         state.step = 'list';
-        state.message = outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed'
-          ? `${selected.label} installed.` : `${selected.label} was not installed. ${state.task.state.error ?? ''}`.trim();
+        if (outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed') {
+          // Installed and re-detected: use it right away, as the user asked.
+          this.saveProviderChoice(state);
+          this.milestoneEffect();
+        } else {
+          state.message = outcome.status === 'succeeded'
+            ? `${install.label} finished, but ${selected.label} was not found on PATH; nothing was selected.`
+            : `${selected.label} was not installed. ${state.task.state.error ?? ''}`.trim();
+        }
       } else {
         const action = providerPanelEnterAction(state);
         if (action === 'installConfirm') state.step = 'installConfirm';
-        else if (action === 'unavailable') state.message = `${selected.label} is not available on this system.`;
+        else if (action === 'unavailable') state.message = installUnavailableReason(selected);
         else this.saveProviderChoice(state);
       }
     } else if (!handleProviderPanelKey(key, state)) return;
@@ -3418,6 +3450,7 @@ export class TerminalApp {
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
     this.syncPanelAnimation();
+    if (this.pendingMilestone && !this.settingsPanelActive && !this.running) this.milestoneEffect();
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();

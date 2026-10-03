@@ -28,8 +28,16 @@ export interface ProviderDescriptor<Id extends string = string> {
   versionArgs?: readonly string[];
   /** Upstream is archived; kept for compatibility, never recommended. */
   legacy?: boolean;
-  /** Offered only with explicit confirmation. */
+  /** Offered only with explicit confirmation. Prefer `recipe`; a fixed `install` is used as given. */
   install?: ProviderInstall;
+  /**
+   * Curated Homebrew formula (core, or a fixed `owner/tap/formula`). Used on
+   * macOS, and on Linux only where Homebrew is actually installed; NMSh never
+   * guesses distribution package names, runs install scripts or uses sudo.
+   */
+  recipe?: {brew: string; platforms?: readonly NodeJS.Platform[]};
+  /** Official upstream page, named when no recipe applies. */
+  source?: string;
   /** One-line setup note shown while the provider is highlighted. */
   setup?: string;
 }
@@ -218,4 +226,31 @@ export function providerRowText(descriptor: ProviderDescriptor, options: {draft?
   const badge = options.status === 'none' ? '' : `  [${providerStatusLabel(descriptor, options.status)}]`;
   return `${descriptor.label} · ${descriptor.description}${badge}`
     + `${options.draft === descriptor.id ? '  ●' : ''}${options.saved === descriptor.id ? '  ✓ saved' : ''}`;
+}
+
+/** The install this platform supports for a provider, or undefined. Pure apart from the brew lookup. */
+export function providerInstall(descriptor: ProviderDescriptor, platform: NodeJS.Platform = process.platform,
+  hasBrew: boolean = resolveCommand('brew') !== undefined): ProviderInstall | undefined {
+  if (descriptor.install) return descriptor.install;
+  const recipe = descriptor.recipe;
+  if (!recipe || !hasBrew || (platform !== 'darwin' && platform !== 'linux')) return undefined;
+  if (recipe.platforms && !recipe.platforms.includes(platform)) return undefined;
+  return {label: `brew install ${recipe.brew}`, command: 'brew', args: ['install', recipe.brew]};
+}
+
+/** Why no install is offered, in plain words, instead of a dead-end "not available". */
+export function installUnavailableReason(descriptor: ProviderDescriptor, platform: NodeJS.Platform = process.platform,
+  hasBrew: boolean = resolveCommand('brew') !== undefined): string {
+  const source = descriptor.source ? ` See ${descriptor.source}.` : '';
+  if (descriptor.legacy) return `${descriptor.label} is archived upstream; NMSh uses it only if it is already installed.`;
+  if (!descriptor.recipe && !descriptor.install) return `NMSh has no curated install for ${descriptor.label}. Install it yourself, then reopen this list.${source}`;
+  if (descriptor.recipe?.platforms && !descriptor.recipe.platforms.includes(platform)) {
+    return `The curated ${descriptor.label} install is for ${descriptor.recipe.platforms.map(name => name === 'darwin' ? 'macOS' : name).join(', ')} only.${source}`;
+  }
+  if (!hasBrew) {
+    return platform === 'linux'
+      ? `Homebrew is not installed, and NMSh does not guess distribution package names. Install ${descriptor.label} with your package manager.${source}`
+      : `Homebrew is not installed. Install ${descriptor.label} from its official source.${source}`;
+  }
+  return `NMSh has no install for ${descriptor.label} on this platform.${source}`;
 }

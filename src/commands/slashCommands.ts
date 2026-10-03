@@ -5,7 +5,7 @@ export interface SlashCommand {
 }
 
 export const slashCommands: readonly SlashCommand[] = [
-  {name: '/effects', insertion: '/effects ', description: 'Preview sparkles or rain in owned chrome; /effects stop cancels'},
+  {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
@@ -33,7 +33,7 @@ export const slashCommands: readonly SlashCommand[] = [
 ];
 
 export type ParsedSlashCommand =
-  | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'stop' | 'help'; placement: 'top' | 'bottom'}
+  | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
   | {kind: 'prompt'}
@@ -58,8 +58,8 @@ export type ParsedSlashCommand =
 
 export function parseSlashCommand(input: string): ParsedSlashCommand | undefined {
   if (!input.startsWith('/')) return undefined;
-  const effect = /^\/effects(?:\s+(sparkles|rain|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
-  if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
+  const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
+  if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};

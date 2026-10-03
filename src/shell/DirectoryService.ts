@@ -10,7 +10,7 @@ export interface DirectoryCandidate {path: string; score: number; visits?: numbe
 export const NAVIGATION_PROVIDERS: readonly ProviderDescriptor<NavigationProviderId>[] = [
   {id: 'native', family: 'navigation', label: 'NMSh Native', kind: 'native', description: 'frequency and recency from approved command history'},
   {id: 'zoxide', family: 'navigation', label: 'zoxide', kind: 'external', executable: 'zoxide', versionArgs: ['--version'],
-    description: 'rank your existing directories through a private database snapshot'},
+    description: 'rank your existing directories through a private database snapshot', recipe: {brew: 'zoxide'}, source: 'https://github.com/ajeetdsouza/zoxide'},
 ];
 const safePath = (path: string): boolean => isAbsolute(path) && !/[\u0000-\u001f\u007f-\u009f]/u.test(path);
 /** Literal zsh argument; expansions, option parsing and aliases cannot turn a path into code. */

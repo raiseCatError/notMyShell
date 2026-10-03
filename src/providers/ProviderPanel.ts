@@ -3,7 +3,8 @@ import {renderControls} from '../ui/controls.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
-import {providerRowText, providerUsable, type ProviderDescriptor, type ProviderFamily, type ProviderStatus} from './providers.js';
+import {installUnavailableReason, providerInstall, providerRowText, providerUsable, type ProviderDescriptor, type ProviderFamily, type ProviderInstall,
+  type ProviderStatus} from './providers.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -39,10 +40,11 @@ export function providerPanelSelection<Id extends string>(state: ProviderPanelSt
 }
 
 /** What Enter does for the highlighted provider. */
-export function providerPanelEnterAction(state: ProviderPanelState): 'save' | 'installConfirm' | 'unavailable' {
+export function providerPanelEnterAction(state: ProviderPanelState, install: (descriptor: ProviderDescriptor) => ProviderInstall | undefined = providerInstall):
+'save' | 'installConfirm' | 'unavailable' {
   const selected = providerPanelSelection(state);
   if (providerUsable(selected, state.statuses[selected.id])) return 'save';
-  return selected.install && state.statuses[selected.id]?.state === 'missing' ? 'installConfirm' : 'unavailable';
+  return install(selected) && state.statuses[selected.id]?.state === 'missing' ? 'installConfirm' : 'unavailable';
 }
 
 export function handleProviderPanelKey(key: Key, state: ProviderPanelState): boolean {
@@ -61,7 +63,8 @@ export function renderProviderPanel(state: ProviderPanelState, columns: number, 
   const rows = [`${PRIMARY}  ${state.title}${RESET}`, `${SUBTLE}  Current  ${SECONDARY}${savedLabel}${RESET}`, ''];
   const selected = providerPanelSelection(state);
   if (state.step === 'installConfirm') {
-    rows.push(`${PRIMARY}Install ${selected.label}?${RESET}`, `${SECONDARY}Runs: ${selected.install?.label ?? ''}${RESET}`, '',
+    rows.push(`${PRIMARY}Install ${selected.label}?${RESET}`, `${SECONDARY}Runs: ${providerInstall(selected)?.label ?? ''}${RESET}`,
+      `${SUBTLE}Changes installed software only; shell hooks and settings are not touched. After it succeeds, ${selected.label} is selected.${RESET}`, '',
       renderControls([['Enter', 'install'], ['Esc', 'back']]));
     return rows.map(row => truncateAnsi(row, columns));
   }
@@ -74,7 +77,11 @@ export function renderProviderPanel(state: ProviderPanelState, columns: number, 
     rows.push(`${active ? ACCENT : SECONDARY}${active ? '›' : ' '} ${providerRowText(provider,
       {draft: selected.id, saved: state.saved, status: state.statuses[provider.id]})}${RESET}`);
   });
+  const missing = selected.kind === 'external' && state.statuses[selected.id]?.state === 'missing';
+  const recipe = missing ? providerInstall(selected) : undefined;
   const footer = [
+    ...(missing ? ['', recipe ? `${SUBTLE}Not installed · Enter installs with ${recipe.label} after you confirm${RESET}`
+      : `${SUBTLE}${installUnavailableReason(selected)}${RESET}`] : []),
     ...(selected.setup ? ['', `${SUBTLE}${selected.setup}${RESET}`] : []),
     ...(state.message ? ['', `${SECONDARY}${state.message}${RESET}`] : []),
     '', renderControls([['↑↓', 'preview'], ['Enter', 'use'], ['Esc', 'cancel']]),

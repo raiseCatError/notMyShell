@@ -1,15 +1,19 @@
 import type {Region, ScreenPlan} from '../app/screenPlan.js';
-import {colorEscape} from '../chroma/escape.js';
+import {colorEscape, type Rgb} from '../chroma/escape.js';
 import {BRAND_LAVENDER, mixRgb} from '../chroma/chroma.js';
 import type {TreatmentSettings} from '../chroma/treatment.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 
 export const EFFECT_DURATION_MS = 3000;
 export const MAX_PARTICLES = 64;
-export type EffectKind = 'sparkles' | 'rain';
+export type EffectKind = 'sparkles' | 'rain' | 'confetti';
+export const EFFECT_KINDS: readonly EffectKind[] = ['sparkles', 'rain', 'confetti'];
+/** Confetti: a few theme-colored pieces drifting down; used for real milestones only. */
+const CONFETTI: readonly Rgb[] = [{red: 166, green: 124, blue: 243}, {red: 62, green: 232, blue: 181}, {red: 242, green: 158, blue: 76},
+  {red: 79, green: 184, blue: 247}, {red: 228, green: 108, blue: 200}];
 export type EffectPlacement = 'top' | 'bottom';
 export interface ActiveEffect {kind: EffectKind; placement: EffectPlacement; startedAt: number; seed: number}
-export interface EffectCell {row: number; column: number; glyph: string; intensity: number}
+export interface EffectCell {row: number; column: number; glyph: string; intensity: number; hue?: number}
 
 /** Replace-active policy. No particles, timers or escapes are persisted. */
 export class EffectState {
@@ -53,9 +57,12 @@ export function effectCells(effect: ActiveEffect, region: Region, columns: numbe
     const phase = noise(effect.seed, index * 3);
     return {
       column: Math.floor(noise(effect.seed, index * 3 + 1) * width),
-      row: region.top + (effect.kind === 'rain' ? (Math.floor(phase * height) + frame) % height : Math.floor(noise(effect.seed, index * 3 + 2) * height)),
-      glyph: effect.kind === 'rain' ? '|' : safe ? '+' : '·',
+      row: region.top + (effect.kind === 'rain' ? (Math.floor(phase * height) + frame) % height
+        : effect.kind === 'confetti' ? (Math.floor(phase * height) + Math.floor(frame / 3)) % height
+          : Math.floor(noise(effect.seed, index * 3 + 2) * height)),
+      glyph: effect.kind === 'rain' ? '|' : effect.kind === 'confetti' ? (safe ? '*' : ['▪', '•', '◆', '▴'][index % 4]!) : safe ? '+' : '·',
       intensity: (1 + Math.sin((phase + frame / 12) * 2 * Math.PI)) / 2,
+      ...(effect.kind === 'confetti' ? {hue: index % CONFETTI.length} : {}),
     };
   });
 }
@@ -66,7 +73,9 @@ export function applyEffect(rows: readonly string[], effect: ActiveEffect, regio
   const width = Math.max(1, Math.min(512, Math.floor(columns)));
   const grid = Array.from({length: Math.min(4, region.height)}, () => Array<string>(width).fill(' '));
   for (const cell of effectCells(effect, region, columns, now, safe)) {
-    grid[cell.row - region.top]![cell.column] = `${colorEscape(38, mixRgb(BRAND_LAVENDER, {red: 235, green: 220, blue: 255}, cell.intensity), level)}${cell.glyph}`;
+    const color = cell.hue === undefined ? mixRgb(BRAND_LAVENDER, {red: 235, green: 220, blue: 255}, cell.intensity)
+      : mixRgb(CONFETTI[cell.hue]!, {red: 255, green: 255, blue: 255}, cell.intensity * 0.3);
+    grid[cell.row - region.top]![cell.column] = `${colorEscape(38, color, level)}${cell.glyph}`;
   }
   grid.forEach((row, index) => { next[region.top + index] = row.join('') + (level === 'none' ? '' : '\u001B[0m'); });
   return next;
