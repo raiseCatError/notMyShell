@@ -30,6 +30,7 @@ import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
 import {renderCompletion, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
+import {ComposerHistory} from '../input/ComposerHistory.js';
 import {resolveAction} from '../ui/actions.js';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
 import {classifyShellFailure, parseShellKnowledge} from '../shell/ShellKnowledge.js';
@@ -151,6 +152,8 @@ export class TerminalApp {
   private readonly historyViewport = new HistoryViewport();
   private readonly session: SessionClient;
   private readonly historyService = new HistoryService();
+  /** Shell-style Up/Down recall in the ordinary composer. Frontend-local; never persisted. */
+  private readonly composerHistory = new ComposerHistory();
   private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
     reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
@@ -1059,7 +1062,9 @@ export class TerminalApp {
     if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
       && !this.suggestions.alternativesOpen) {
       const action = resolveAction(COMPLETION_ACTIONS, key);
-      if (action?.id === 'move') {
+      // Up from the first candidate leaves the menu for shell history, as Up
+      // from an editor's first line does; Down still enters the menu.
+      if (action?.id === 'move' && !(key.kind === 'up' && this.selectedSuggestion === 0)) {
         this.selectedSuggestion = (this.selectedSuggestion + (key.kind === 'down' ? 1 : -1) + this.shellSuggestions.length) % this.shellSuggestions.length;
         return;
       }
@@ -1182,13 +1187,13 @@ export class TerminalApp {
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
     else if (key.kind === 'up') {
       const {columns} = this.dimensions();
-      this.editor.moveUp(columns, this.inputFirstLinePrefix(columns));
+      if (!this.editor.moveUp(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
       this.editor.selectUp(columns, this.inputFirstLinePrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
-      this.editor.moveDown(columns, this.inputFirstLinePrefix(columns));
+      if (!this.editor.moveDown(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('next');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
       this.editor.selectDown(columns, this.inputFirstLinePrefix(columns));
@@ -1233,6 +1238,23 @@ export class TerminalApp {
   }
 
 
+  /**
+   * Up past the editor's first row recalls older commands; Down past its last
+   * row walks newer ones and finally restores the unsent draft. Only text is
+   * placed in the composer: nothing runs until Enter.
+   */
+  private recallHistory(direction: 'previous' | 'next'): void {
+    if (this.editor.hasPasteAtoms) return;
+    const current = this.editor.text;
+    const text = direction === 'previous'
+      ? this.composerHistory.previous(current, () => historyCommands(this.historyService.index.all()))
+      : this.composerHistory.next(current);
+    if (text === undefined) return;
+    this.editor.replaceText(text);
+    this.selectedSuggestion = 0;
+    this.shellSuggestions = [];
+  }
+
   private async fetchSuggestions(): Promise<void> {
     const input = this.editor.text;
     if (!this.directorySearchActive && this.directoryQuery !== undefined) {
@@ -1245,7 +1267,9 @@ export class TerminalApp {
     }
     const cwd = this.context.cwd;
     const cursor = this.completionCursor;
-    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim());
+    // A recalled command is not being typed: no completion menu claims Up/Down until it is edited.
+    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim())
+      && !this.composerHistory.showing(input);
     const key = eligible ? JSON.stringify([input, cursor, cwd]) : '';
     if (key === this.lastSuggestionInput) return;
     this.lastSuggestionInput = key;
@@ -1520,6 +1544,7 @@ export class TerminalApp {
     this.clearCorrection();
     const command = this.editor.text;
     this.editor.clear();
+    this.composerHistory.reset();
     if (!command.trim()) return;
 
     const slash = realShell ? undefined : parseSlashCommand(command);
@@ -1629,7 +1654,7 @@ export class TerminalApp {
 
   private async startAppearance(): Promise<void> {
     if (!this.host.capabilities.appearanceIntegration || !this.host.integration) {
-      this.output.addFrontendInteraction('/appearance', `Host: ${this.host.name}\nWindow opacity and blur are controlled by the host.`, INFO);
+      this.output.addFrontendInteraction('/appearance', `Host: ${this.host.name}\n${this.host.appearanceGuidance ?? 'Window opacity and blur are controlled by the host.'}`, INFO);
       this.returnFromPanel();
       this.render();
       return;
@@ -3628,4 +3653,9 @@ export class TerminalApp {
     this.semanticService.kill();
     this.finish(exitCode);
   }
+}
+
+/** Commands newest first, read lazily so navigation stops at its bound. */
+function* historyCommands(entries: readonly {command: string}[]): Iterable<string> {
+  for (const entry of entries) yield entry.command;
 }

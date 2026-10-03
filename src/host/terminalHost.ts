@@ -14,6 +14,8 @@ export interface TerminalHost {
   capabilities: Readonly<TerminalCapabilities>;
   integration?: HostIntegration;
   keyboardGuidance?: string;
+  /** Factual /appearance copy for hosts NMSh does not configure. */
+  appearanceGuidance?: string;
   /** How to open a new window running `argv`, if this host supports it. */
   newWindow?: (argv: readonly string[]) => {command: string; args: string[]};
 }
@@ -66,7 +68,10 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
     return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }
   if (program === 'vscode') return {capabilities, integration, keyboardGuidance: guidance, name: 'VS Code'};
-  if (program === 'zed' || env.ZED_TERM) return {capabilities, integration, keyboardGuidance: guidance, name: 'Zed'};
+  // Zed exposes no documented way to open a command in a new integrated
+  // terminal, so sessions beyond the first use /resume or `nmsh --attach`.
+  if (program === 'zed' || env.ZED_TERM) return {capabilities, integration, keyboardGuidance: guidance, name: 'Zed',
+    appearanceGuidance: 'Appearance is configured by Zed.'};
   return {capabilities, integration, keyboardGuidance: guidance, name: program || 'this terminal'};
 }
 
