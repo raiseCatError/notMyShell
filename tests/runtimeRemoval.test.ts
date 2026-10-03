@@ -24,6 +24,6 @@ test('archived mascot is outside normal TypeScript and test paths', async () => 
   const tsconfig = JSON.parse(await readFile('tsconfig.json', 'utf8')) as {include: string[]};
   const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {scripts: {test: string}};
   assert.deepEqual(tsconfig.include, ['src']);
-  assert.equal(packageJson.scripts.test, 'node --import=tsx --test tests/**/*.test.ts');
+  assert.equal(packageJson.scripts.test, 'node scripts/test.mjs');
   assert.match(await readFile('archive/mascot-prototype/README.md', 'utf8'), /intentionally disabled/u);
 });

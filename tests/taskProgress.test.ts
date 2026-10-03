@@ -49,3 +49,16 @@ test('installer panel shows active, finished, and bounded sanitized detail state
   assert.doesNotMatch(details, /\u001B|\[2J/u);
   assert.match(details, /extra details/u);
 });
+
+
+test('persisted presentation motion controls freeze task decoration without freezing measured duration', () => {
+  const task = new TaskProgress('Installing tool', () => {}, 1000);
+  task.setReducedMotion(true);
+  assert.equal(taskProgressBar(task.state, 1200), taskProgressBar(task.state, 1800));
+  const first = renderTaskProgress(task.state, 1200)[0]!;
+  const second = renderTaskProgress(task.state, 1800)[0]!;
+  assert.equal(first.split('\u001B[0m')[0], second.split('\u001B[0m')[0]);
+  assert.notEqual(first, second, 'factual elapsed time still advances');
+  task.setReducedMotion(false);
+  assert.notEqual(taskProgressBar(task.state, 1200), taskProgressBar(task.state, 1800));
+});

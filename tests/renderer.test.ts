@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {resolveHostCapabilities} from '../src/host/capabilities.js';
 import {TerminalRenderer} from '../src/terminal/TerminalRenderer.js';
 
 test('renderer hides during paint, positions the hardware cursor, then shows it', () => {
@@ -28,12 +29,12 @@ test('cursor-only updates still explicitly reposition and live-activity changes 
 
 test('passthrough restores cursor and bracketed-paste modes in both directions', () => {
   const writes: string[] = [];
-  const renderer = new TerminalRenderer(data => writes.push(data));
+  const renderer = new TerminalRenderer(data => writes.push(data), resolveHostCapabilities({TERM_PROGRAM: 'ghostty'}));
   renderer.enter();
   renderer.suspendForPassthrough();
   assert.match(writes.at(-1) ?? '', /\?2004l.*\?25h/u);
   renderer.resumeAfterPassthrough();
   assert.match(writes.at(-1) ?? '', /\?2004h.*\?25l/u);
   renderer.leave();
-  assert.match(writes.at(-1) ?? '', /\?1006l.*\?1000l.*\?2004l.*\?25h.*<u.*\?1049l/u);
+  assert.match(writes.at(-1) ?? '', /<u.*\?2004l.*\?1000l.*\?1006l.*\?25h.*\?1049l/u);
 });
