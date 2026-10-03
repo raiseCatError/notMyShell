@@ -1,9 +1,32 @@
-import test from 'node:test';
+import test, {beforeEach, afterEach} from 'node:test';
+import {mkdtempSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import assert from 'node:assert';
 import {SemanticService} from '../src/shell/SemanticService.js';
 
-test('SemanticService lifecycle and strict stdio configuration', async () => {
+let fixtureHome: string;
+let originalHome: string | undefined;
+const services: SemanticService[] = [];
+beforeEach(() => {
+  originalHome = process.env.HOME;
+  fixtureHome = mkdtempSync(join(tmpdir(), 'nmsh-semantic-test-'));
+  process.env.HOME = fixtureHome;
+});
+afterEach(() => {
+  for (const service of services.splice(0)) service.kill();
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
+  rmSync(fixtureHome, {recursive: true, force: true});
+});
+function createService(): SemanticService {
   const service = new SemanticService(process.cwd());
+  services.push(service);
+  return service;
+}
+
+test('SemanticService lifecycle and strict stdio configuration', async () => {
+  const service = createService();
   const child = (service as any).child;
 
   // PROVE: SemanticService uses detached process group, NOT 'inherit'
@@ -35,7 +58,7 @@ test('SemanticService handles host-identifying environment variables gracefully'
   const originalTerm = process.env.TERM_PROGRAM;
   process.env.TERM_PROGRAM = 'Apple_Terminal';
   
-  const service = new SemanticService(process.cwd());
+  const service = createService();
   const echoType = await service.classifyCommand('echo');
   assert.equal(echoType, 'builtin', 'must resolve successfully under Apple_Terminal');
   
@@ -48,7 +71,7 @@ test('SemanticService handles host-identifying environment variables gracefully'
 });
 
 test('SemanticService settles pending promises on unexpected child exit', async () => {
-  const service = new SemanticService(process.cwd());
+  const service = createService();
   
   const promise1 = service.classifyCommand('long_pending_cmd_1');
   const promise2 = service.classifyCommand('long_pending_cmd_2');
@@ -66,7 +89,7 @@ test('SemanticService settles pending promises on unexpected child exit', async 
 });
 
 test('SemanticService ignores commands when dead and cleans resources', async () => {
-  const service = new SemanticService(process.cwd());
+  const service = createService();
   const zdotdir = (service as any).zdotdir;
   
   service.kill();

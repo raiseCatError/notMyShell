@@ -5,6 +5,55 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {ShellSession} from '../src/shell/ShellSession.js';
 import type {ShellMarker} from '../src/shell/ShellProtocol.js';
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
+import {once} from 'node:events';
+import {spawnSync} from 'node:child_process';
+
+test('synchronous PTY spawn failure removes its managed-shell bootstrap root', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nmsh-spawn-failure-'));
+  const module = new URL('../src/shell/ShellSession.ts', import.meta.url).href;
+  const program = `import {createRequire} from 'node:module';
+    import {readdirSync} from 'node:fs'; import assert from 'node:assert/strict';
+    createRequire(import.meta.url)('node-pty').spawn=()=>{throw new Error('injected spawn failure');};
+    const {ShellSession}=await import(${JSON.stringify(module)});
+    assert.throws(()=>new ShellSession(process.env.TMPDIR,80,24,process.env.TMPDIR),/injected spawn failure/);
+    assert.equal(readdirSync(process.env.TMPDIR).filter(name=>name.startsWith('nmsh-zdotdir-')).length,0);`;
+  try {
+    const child = spawnSync(process.execPath, ['--import=tsx', '--input-type=module', '-e', program], {
+      env: {...process.env, TMPDIR: root}, encoding: 'utf8', timeout: 5000,
+    });
+    assert.equal(child.status, 0, child.stderr);
+  } finally { rmSync(root, {recursive: true, force: true}); }
+});
+
+test('managed shell exit retries an owned-root removal that failed during kill', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-cleanup-home-'));
+  writeFileSync(join(home, '.zshrc'), '');
+  const session = new ShellSession(home, 80, 24, home);
+  const root = session['zdotdir'];
+  const original = fs.rmSync;
+  let injected = false;
+  try {
+    await once(session, 'prompt');
+    fs.rmSync = ((path, options) => {
+      if (path === root && !injected) {
+        injected = true;
+        throw Object.assign(new Error('concurrent shell metadata write'), {code: 'ENOTEMPTY'});
+      }
+      return original(path, options);
+    }) as typeof fs.rmSync;
+    syncBuiltinESMExports();
+    const exited = once(session, 'exit');
+    session.kill();
+    await exited;
+    assert.equal(injected, true);
+    assert.equal(existsSync(root), false, 'exit must retain and retry the owned path');
+  } finally {
+    fs.rmSync = original; syncBuiltinESMExports();
+    session.kill(); rmSync(root, {recursive: true, force: true}); rmSync(home, {recursive: true, force: true});
+  }
+});
 
 /**
  * Real tools (zoxide, Atuin, fzf) install their own non-UI lifecycle hooks by
