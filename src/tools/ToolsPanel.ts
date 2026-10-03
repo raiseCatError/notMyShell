@@ -6,8 +6,11 @@ import {renderTabStrip, framePanel} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {foregroundOf} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
-import {stripAnsi, truncateAnsi} from '../util/text.js';
-import {TOOLS, TOOL_CATEGORIES, toolInstall, type Tool} from './catalog.js';
+import {displayWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
+import {TOOLS, TOOL_CATEGORIES, toolInstall, toolInstallUnavailable, type Tool} from './catalog.js';
+import {background, foreground, UI_COLORS} from '../ui/palette.js';
+import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
+import {renderControls} from '../ui/controls.js';
 
 export type ToolsTab = 'discover' | 'installed' | 'configure' | 'errors';
 const TABS: readonly ToolsTab[] = ['discover', 'installed', 'configure', 'errors'];
@@ -67,7 +70,7 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     if (key.value.toLowerCase() === 'i' && state.statuses[state.detail.id]?.state === 'missing') {
       state.recipe = toolInstall(state.detail);
       if (state.recipe) state.confirm = createConfirm();
-      else state.message = 'No supported package manager found. Use the official source; nothing was installed.';
+      else state.message = `${toolInstallUnavailable(state.detail)} Nothing was installed.`;
     } else if (key.value.toLowerCase() === 'c' && state.detail.configuration && state.statuses[state.detail.id]?.state === 'installed') return 'configure';
     else if (key.value.toLowerCase() === 'p' && state.detail.providerFamily) return 'provider';
     else if (key.value.toLowerCase() === 'r') return 'refresh';
@@ -113,34 +116,120 @@ function statusText(state: ToolsPanel, tool: Tool): string {
   return status.state === 'installed' ? (state.configured.has(tool.id) ? 'Installed / Configured in NMSh' : 'Installed')
     : status.state === 'missing' ? 'Missing' : 'Needs attention';
 }
+
+// Resolved per render so color capability changes (NO_COLOR, NMSH_COLOR) apply immediately.
+let PRIMARY = '', SECONDARY = '', SUBTLE = '', ACCENT = '', SUCCESS = '', FAILURE = '', SELECTED = '';
+function resolveColors(): void {
+  PRIMARY = foreground(UI_COLORS.primary); SECONDARY = foreground(UI_COLORS.secondary); SUBTLE = foreground(UI_COLORS.subtle);
+  ACCENT = foreground(UI_COLORS.accent); SUCCESS = foreground(UI_COLORS.success); FAILURE = foreground(UI_COLORS.failure);
+  SELECTED = background(UI_COLORS.selection);
+}
+const RESET = '\u001b[0m';
+
+/** Status badge: a glyph plus a word, so meaning never depends on color alone. */
+function statusBadge(state: ToolsPanel, tool: Tool): {text: string; color: string} {
+  const status = state.statuses[tool.id];
+  const nerd = getCurrentGlyphMode() === 'nerd';
+  if (!status) return {text: `${nerd ? '…' : '.'} Checking`, color: SUBTLE};
+  if (status.state === 'installed') return {text: `${nerd ? '●' : '*'} Installed`, color: SUCCESS};
+  if (status.state === 'missing') return {text: `${nerd ? '○' : 'o'} Missing`, color: SUBTLE};
+  return {text: '! Needs attention', color: FAILURE};
+}
+
+function tags(state: ToolsPanel, tool: Tool): string[] {
+  return [...(tool.recommended ? ['Recommended'] : []), ...(state.configured.has(tool.id) ? ['Configured in NMSh'] : []),
+    ...(state.errors[tool.id] ? ['Error'] : [])];
+}
+
+/** One aligned tool row; the selected row gets the shared selection background, a pointer and a bright label. */
+function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: number): string {
+  const badge = statusBadge(state, tool);
+  const labelWidth = columns >= 60 ? 22 : Math.max(8, columns - 18);
+  const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
+  const pointer = selected ? `${ACCENT}${GLYPHS.selection}` : ' ';
+  const status = columns >= 34 ? `${badge.color}${badge.text.padEnd(18)}` : `${badge.color}${badge.text.slice(0, 1)} `;
+  const extra = columns >= 60 ? `${selected ? SECONDARY : SUBTLE}${tags(state, tool).join(' · ')}` : '';
+  const row = `  ${pointer} ${selected ? `${BOLD}${PRIMARY}` : SECONDARY}${label}${RESET}${selected ? SELECTED : ''}${status}${extra}`;
+  if (!selected) return truncateAnsi(`${row}${RESET}`, columns);
+  // Fill the whole row so the selection reads as a band, not just colored text.
+  const plain = truncateAnsi(row, columns);
+  return `${SELECTED}${plain}${SELECTED}${' '.repeat(Math.max(0, columns - displayWidth(plain)))}${RESET}`;
+}
+
+const BOLD = '\u001b[1m';
+
+/** Category headers and tool rows in display order; headers are not selectable. */
+function groupedRows(tools: readonly Tool[]): Array<{kind: 'header'; category: string} | {kind: 'tool'; tool: Tool; index: number}> {
+  const rows: Array<{kind: 'header'; category: string} | {kind: 'tool'; tool: Tool; index: number}> = [];
+  tools.forEach((tool, index) => {
+    if (index === 0 || tools[index - 1]!.category !== tool.category) rows.push({kind: 'header', category: tool.category});
+    rows.push({kind: 'tool', tool, index});
+  });
+  return rows;
+}
+
 export function renderTools(state: ToolsPanel, columns: number, height: number): string[] {
-  const rows: string[] = ['  Optional shell tools — NMSh works without them',
-    renderTabStrip(['Discover', 'Installed', 'Configure', 'Errors'], TABS.indexOf(state.tab), columns), ''];
+  resolveColors();
+  const tabsRow = renderTabStrip(['Discover', 'Installed', 'Configure', 'Errors'], TABS.indexOf(state.tab), columns);
+  const rows: string[] = [`${PRIMARY}  Tools${RESET}  ${SUBTLE}optional shell tools · NMSh works without them${RESET}`, tabsRow, ''];
+  let footer: Array<[string, string]> = [['↑↓', 'select'], ['←→', 'tabs'], ['Enter', 'details'], ['type', 'search'], ['Esc', state.query ? 'clear search' : 'close']];
   if (state.onboarding !== undefined) {
-    rows.push('  Optional tools: choose how to browse.', '  Browsing changes nothing. Each install requires confirmation.',
-      ...['Recommended', 'Choose individually', 'Skip'].map((label, i) => `  ${i === state.onboarding ? '>' : ' '} ${label}`), '  Up/Down choose; Enter continue; Esc skip');
-  } else if (state.confirm) rows.push('  Install optional tool?', `  Runs: ${state.recipe?.label}`, '  Changes installed software; no shell-hook setup.',
-    renderConfirm(state.confirm, {focused: true, color: colorLevel() !== 'none'}), '  Arrows choose; Enter confirms; Esc cancels');
-  else if (state.task?.state.status === 'running') rows.push(...renderTaskProgress(state.task.state));
-  else if (state.detail) {
+    rows.push(`${PRIMARY}  Optional tools: choose how to browse.${RESET}`, `${SUBTLE}  Browsing changes nothing. Each install requires confirmation.${RESET}`, '',
+      ...['Recommended', 'Choose individually', 'Skip'].map((label, i) => i === state.onboarding
+        ? `  ${ACCENT}${GLYPHS.selection} ${PRIMARY}${label}${RESET}` : `    ${SECONDARY}${label}${RESET}`));
+    footer = [['↑↓', 'choose'], ['Enter', 'continue'], ['Esc', 'skip']];
+  } else if (state.confirm) {
+    rows.push(`${PRIMARY}  Install ${state.detail?.label ?? 'tool'}?${RESET}`, '', `  ${SUBTLE}Runs${RESET}  ${PRIMARY}${state.recipe?.label ?? ''}${RESET}`,
+      `  ${SUBTLE}Changes installed software only; shell hooks and settings are not touched.${RESET}`, '',
+      `  ${renderConfirm(state.confirm, {focused: true, color: colorLevel() !== 'none'})}`);
+    footer = [['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'cancel']];
+  } else if (state.task?.state.status === 'running') {
+    rows.push(...renderTaskProgress(state.task.state));
+    footer = [['Please wait', 'installation in progress']];
+  } else if (state.detail) {
     const tool = state.detail;
-    rows.push(`  ${tool.label} — ${statusText(state, tool)}${tool.recommended ? ' / Recommended' : ''}`, `  ${tool.category}`, `  ${tool.description}`,
-      `  Source: ${tool.source}`, `  Install source: Homebrew (${tool.package}) when available`);
-    if (tool.language) rows.push(`  Language: ${foregroundOf(languageIdentity(tool.language))}${tool.language}\u001b[0m`);
+    const badge = statusBadge(state, tool);
+    const field = (label: string, value: string) => `  ${SUBTLE}${label.padEnd(10)}${RESET}${SECONDARY}${value}${RESET}`;
+    rows.push(`  ${PRIMARY}${BOLD}${tool.label}${RESET}  ${badge.color}${badge.text}${RESET}${tags(state, tool).length ? `  ${SUBTLE}${tags(state, tool).join(' · ')}${RESET}` : ''}`,
+      `  ${SUBTLE}${tool.description}${RESET}`, '',
+      field('Category', tool.category), field('Source', tool.source),
+      field('Install', state.statuses[tool.id]?.state === 'missing'
+        ? toolInstall(tool)?.label ?? toolInstallUnavailable(tool) : `Homebrew formula ${tool.package}`));
+    if (tool.language) rows.push(`  ${SUBTLE}${'Language'.padEnd(10)}${RESET}${foregroundOf(languageIdentity(tool.language))}${tool.language}${RESET}`);
     const version = state.statuses[tool.id]?.version;
-    if (version) rows.push(`  Version: ${stripAnsi(version).replace(/[\u0000-\u001f\u007f-\u009f]/gu, '')}`);
-    rows.push('  Shell hook state is not inferred; existing hooks stay authoritative.',
-      `  ${state.statuses[tool.id]?.state === 'missing' ? 'I install preview; ' : ''}${tool.id === 'mise' ? 'M project awareness; ' : ''}${tool.configuration ? 'C configure; ' : ''}${tool.providerFamily ? 'P provider selection; ' : ''}R refresh; Esc back`);
+    if (version) rows.push(field('Version', stripAnsi(version).replace(/[\u0000-\u001f\u007f-\u009f]/gu, '')));
+    if (state.configured.has(tool.id)) rows.push(field('NMSh', 'Configured in NMSh'));
+    rows.push('', `  ${SUBTLE}Shell hook state is not inferred; existing hooks stay authoritative.${RESET}`);
+    footer = [
+      ...(state.statuses[tool.id]?.state === 'missing' ? [['I', 'install…'] as [string, string]] : []),
+      ...(tool.id === 'mise' ? [['M', 'project awareness'] as [string, string]] : []),
+      ...(tool.configuration && state.statuses[tool.id]?.state === 'installed' ? [['C', 'configure'] as [string, string]] : []),
+      ...(tool.providerFamily ? [['P', 'provider'] as [string, string]] : []),
+      ['R', 'refresh'], ['Esc', 'back']];
   } else {
-    rows.push(`  Search: ${state.query || '_'}${state.recommendedOnly ? ' / Recommended only' : ''}`);
+    rows.push(`  ${SUBTLE}Search${RESET}  ${state.query ? `${PRIMARY}${state.query}` : `${SUBTLE}type to filter`}${RESET}${state.recommendedOnly ? `  ${ACCENT}Recommended only${RESET}` : ''}`, '');
     const tools = visibleTools(state);
     state.selected = Math.max(0, Math.min(state.selected, tools.length - 1));
-    const budget = Math.max(1, height - 8);
-    const start = Math.max(0, state.selected - budget + 1);
-    tools.slice(start, start + budget).forEach((tool, i) => rows.push(`  ${start + i === state.selected ? '>' : ' '} ${tool.label} / ${statusText(state, tool)}${tool.recommended ? ' / Recommended' : ''} / ${tool.category}`));
-    if (!tools.length) rows.push(state.tab === 'errors' ? '  No tool problems detected.' : '  No matching tools.');
-    rows.push('  Type search; Up/Down select; Left/Right tabs; Enter details; Esc back');
+    const display = groupedRows(tools);
+    // Rows left for the list after title, tabs, search, description and footer.
+    // Below the list: a "more" cue, the description, an optional message, the footer, and the frame line.
+    const budget = Math.max(1, height - rows.length - 6 - (state.message ? 2 : 0));
+    const selectedRow = display.findIndex(row => row.kind === 'tool' && row.index === state.selected);
+    let start = Math.max(0, Math.min(selectedRow - Math.floor(budget / 2), display.length - budget));
+    // Keep the selected tool's category header in view when it fits.
+    if (start > 0 && display[start]?.kind === 'tool' && selectedRow - start < budget - 1) {
+      for (let back = start - 1; back >= 0 && selectedRow - back < budget; back -= 1) if (display[back]!.kind === 'header') { start = back; break; }
+    }
+    for (const row of display.slice(start, start + budget)) {
+      rows.push(row.kind === 'header' ? `  ${ACCENT}${row.category}${RESET}` : toolRow(state, row.tool, row.index === state.selected, columns));
+    }
+    const more = display.length - start - budget;
+    if (more > 0) rows.push(`  ${SUBTLE}${getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'} ${display.slice(start + budget).filter(row => row.kind === 'tool').length} more${RESET}`);
+    if (!tools.length) rows.push(`  ${SUBTLE}${state.tab === 'errors' ? 'No tool problems detected.' : 'No matching tools.'}${RESET}`);
+    const selected = tools[state.selected];
+    if (selected) rows.push('', `  ${SUBTLE}${state.errors[selected.id] ?? selected.description}${RESET}`);
   }
-  if (state.message) rows.push(`  ${state.message}`);
+  if (state.message) rows.push('', `  ${SECONDARY}${state.message}${RESET}`);
+  rows.push('', renderControls(footer));
   return framePanel(rows.map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, height));
 }

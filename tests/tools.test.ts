@@ -96,3 +96,39 @@ test('task timeout/cancellation settle and reduced-motion progress stays still',
   try { assert.equal(taskProgressBar(task.state, 1000), taskProgressBar(task.state, 1500)); }
   finally { if (old === undefined) delete process.env.NMSH_REDUCED_MOTION; else process.env.NMSH_REDUCED_MOTION = old; }
 });
+
+test('Tools v2: Discover groups by category with aligned status columns, a selection band and the selected description', () => {
+  const state = createToolsPanel(new Set(['fzf']));
+  for (const tool of TOOLS) state.statuses[tool.id] = tool.id === 'lazygit' ? {state: 'missing'} : {state: 'installed'};
+  const rows = renderTools(state, 100, 40);
+  const plain = rows.map(stripAnsi);
+  const header = plain.findIndex(row => row.trim() === 'Search & Files');
+  assert.ok(header > 0, 'category header');
+  assert.ok(plain.some(row => row.trim() === 'Git & Development'));
+  const ripgrep = plain.find(row => row.includes('ripgrep'))!;
+  const fd = plain.find(row => /\bfd\b/u.test(row) && row.includes('Installed'))!;
+  assert.equal(ripgrep.indexOf('Installed'), fd.indexOf('Installed'), 'status column aligned');
+  assert.match(ripgrep, /Installed\s+Recommended/u);
+  assert.ok(!plain.some(row => / \/ Installed/u.test(row)), 'no slash-separated prose');
+  const first = visibleTools(state)[0]!;
+  const selected = rows.find(row => stripAnsi(row).includes('›') && stripAnsi(row).includes(first.label))!;
+  assert.match(selected, /\u001b\[48;/u, 'selected row has a background band');
+  assert.ok(plain.some(row => row.trim() === first.description), 'muted description of the selection');
+  assert.match(plain.at(-1)!, /↑↓ select · ←→ tabs · Enter details/u);
+  const lazygit = plain.find(row => row.includes('lazygit'))!;
+  assert.match(lazygit, /Missing/u);
+});
+
+test('Tools v2: long lists scroll with a factual "more" cue; narrow widths keep rows within the panel', () => {
+  const state = createToolsPanel();
+  const rows = renderTools(state, 90, 18).map(stripAnsi);
+  assert.ok(rows.some(row => /↓ \d+ more/u.test(row)));
+  for (let index = 0; index < 30; index += 1) toolsKey(state, {kind: 'down'});
+  const end = renderTools(state, 90, 18).map(stripAnsi);
+  assert.ok(end.some(row => row.includes('›') && row.includes('Python')), 'selection stays visible at the end');
+  for (const width of [20, 33, 45, 59, 61]) {
+    const narrow = renderTools(state, width, 18);
+    assert.ok(narrow.every(row => displayWidth(row) <= width), `@${width}`);
+    assert.ok(narrow.map(stripAnsi).some(row => row.includes('›')), `selection visible @${width}`);
+  }
+});
