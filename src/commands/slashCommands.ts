@@ -125,8 +125,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (/^\/about\s*$/u.test(input)) return {kind: 'about'};
-  const openDiff = /^\/open-diff\s+("[^"]+"|'[^']+'|\S+)\s+("[^"]+"|'[^']+'|\S+)\s*$/u.exec(input);
-  if (openDiff) return {kind: 'openDiff', left: openDiff[1]!.replace(/^["']|["']$/gu, ''), right: openDiff[2]!.replace(/^["']|["']$/gu, '')};
+  const openDiff = /^\/open-diff(?:\s+("[^"]+"|'[^']+'|\S+))?(?:\s+("[^"]+"|'[^']+'|\S+))?\s*$/u.exec(input);
+  if (openDiff) return {kind: 'openDiff', left: (openDiff[1] ?? '').replace(/^["']|["']$/gu, ''), right: (openDiff[2] ?? '').replace(/^["']|["']$/gu, '')};
   const open = /^\/open(?:\s+([\s\S]*))?$/u.exec(input);
   if (open) return {kind: 'open', target: (open[1] ?? '').trim()};
   const find = /^\/find(?:\s+([\s\S]*))?$/u.exec(input);
