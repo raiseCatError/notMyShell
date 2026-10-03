@@ -13,6 +13,7 @@ import {toolOwner, toolUpgrade, UNKNOWN_OWNER_UPDATE, type ToolUpdateState} from
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
+import {InstallProvenance, planToolUninstall, type UninstallPlan} from './InstallProvenance.js';
 
 export type ToolsTab = 'discover' | 'installed' | 'configure' | 'errors';
 const TABS: readonly ToolsTab[] = ['discover', 'installed', 'configure', 'errors'];
@@ -29,6 +30,12 @@ export interface ToolsPanel {
   upgrading?: boolean;
   /** An explicit update check is running. */
   checking?: boolean;
+  /** The pending confirmation removes software; set with its reviewed plan. */
+  uninstall?: UninstallPlan;
+  /** External (not NMSh-installed) Homebrew removal needs a first, explicit advanced acknowledgement. */
+  advancedAcknowledged?: boolean;
+  /** Install records; injectable for tests. */
+  provenance?: InstallProvenance;
 }
 export const ONBOARDING_CHOICES = ['Recommended', 'Recommended + Enhanced', 'Choose individually', 'Skip'] as const;
 const SKIP = ONBOARDING_CHOICES.length - 1;
@@ -93,6 +100,16 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
       else state.message = `${UNKNOWN_OWNER_UPDATE} NMSh did not install ${state.detail.label} and does not guess its package manager.`;
       return undefined;
     }
+    if (key.value.toLowerCase() === 'x' && state.statuses[state.detail.id]?.state === 'installed') {
+      const provenance = state.provenance ?? new InstallProvenance();
+      const plan = planToolUninstall(state.detail, provenance.find(state.detail.id), toolOwner(state.statuses[state.detail.id]?.binary));
+      if (plan.kind === 'manual') { state.message = plan.provenance; return undefined; }
+      state.uninstall = plan;
+      state.advancedAcknowledged = plan.kind === 'recorded';
+      state.recipe = {label: plan.label, command: plan.command, args: plan.args};
+      state.confirm = createConfirm();
+      return undefined;
+    }
     if (key.value.toLowerCase() === 'i' && state.statuses[state.detail.id]?.state === 'missing') {
       state.recipe = toolInstall(state.detail);
       if (state.recipe) state.confirm = createConfirm();
@@ -119,8 +136,15 @@ export async function confirmToolInstall(state: ToolsPanel, key: Key, changed: (
   run?: (task: TaskProgress, recipe: ProviderInstall) => Promise<void>): Promise<void> {
   if (!state.confirm || !state.recipe || !state.detail) return;
   const decision = handleConfirmKey(key.kind === 'interrupt' ? {kind: 'escape'} : key, state.confirm);
-  if (decision === 'cancel') { state.confirm = undefined; state.recipe = undefined; return; }
+  if (decision === 'cancel') { state.confirm = undefined; state.recipe = undefined; state.uninstall = undefined; state.advancedAcknowledged = undefined; return; }
   if (decision !== 'confirm') return;
+  if (state.uninstall && !state.advancedAcknowledged) {
+    // Software NMSh did not install: a second, fresh confirmation, again starting on No.
+    state.advancedAcknowledged = true;
+    state.confirm = createConfirm();
+    return;
+  }
+  if (state.uninstall) { await runUninstall(state, changed, run); return; }
   const recipe = state.recipe;
   const tool = state.detail;
   const upgrading = state.upgrading === true;
@@ -132,6 +156,7 @@ export async function confirmToolInstall(state: ToolsPanel, key: Key, changed: (
   state.statuses[tool.id] = await detectProvider(tool);
   if (task.state.status === 'succeeded' && state.statuses[tool.id]?.state === 'installed') {
     delete state.errors[tool.id];
+    if (!upgrading) try { (state.provenance ?? new InstallProvenance()).record(tool, recipe); } catch { /* provenance is best effort */ }
     if (upgrading && state.updates && tool.package) {
       const {[tool.package]: _upgraded, ...rest} = state.updates.outdated;
       state.updates = {...state.updates, outdated: rest};
@@ -143,6 +168,29 @@ export async function confirmToolInstall(state: ToolsPanel, key: Key, changed: (
   }
   changed();
 }
+async function runUninstall(state: ToolsPanel, changed: () => void, run?: (task: TaskProgress, recipe: ProviderInstall) => Promise<void>): Promise<void> {
+  const recipe = state.recipe!;
+  const tool = state.detail!;
+  state.confirm = undefined; state.recipe = undefined; state.uninstall = undefined; state.advancedAcknowledged = undefined;
+  const task = state.task = new TaskProgress(`Uninstalling ${tool.label}`, changed, Date.now(), tool.label);
+  // argv only: no shell, no sudo, no interpolation.
+  if (run) await run(task, recipe);
+  else await task.run(recipe.command, [...recipe.args]);
+  clearProviderDetection();
+  state.statuses[tool.id] = await detectProvider(tool);
+  if (task.state.status === 'succeeded') {
+    try { (state.provenance ?? new InstallProvenance()).forget(tool.id); } catch { /* record cleanup is best effort */ }
+    state.message = state.statuses[tool.id]?.state === 'missing'
+      ? `${tool.label} uninstalled. Your settings and shell config were not changed.`
+      : `${recipe.label} finished, but ${tool.label} is still on PATH (another installation provides it).`;
+    delete state.errors[tool.id];
+  } else {
+    state.errors[tool.id] = `Uninstall failed: ${task.state.error ?? 'unknown error'}`;
+    state.message = state.errors[tool.id];
+  }
+  changed();
+}
+
 function statusText(state: ToolsPanel, tool: Tool): string {
   const status = state.statuses[tool.id];
   if (!status) return 'Checking';
@@ -216,6 +264,16 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
       ...ONBOARDING_CHOICES.map((label, i) => i === state.onboarding
         ? `  ${ACCENT}${GLYPHS.selection} ${PRIMARY}${label}${RESET}` : `    ${SECONDARY}${label}${RESET}`));
     footer = [['↑↓', 'choose'], ['Enter', 'continue'], ['Esc', 'skip']];
+  } else if (state.confirm && state.uninstall) {
+    const external = state.uninstall.kind === 'external-homebrew';
+    rows.push(`${PRIMARY}  Uninstall ${state.detail?.label ?? 'tool'}?${RESET}`, '',
+      `  ${SUBTLE}Provenance${RESET}  ${SECONDARY}${state.uninstall.provenance}${RESET}`,
+      `  ${SUBTLE}Runs${RESET}        ${PRIMARY}${state.recipe?.label ?? ''}${RESET}  ${SUBTLE}(no sudo, no shell)${RESET}`,
+      ...(external && !state.advancedAcknowledged ? ['', `  ${FAILURE}Advanced: this removes software NMSh did not install. Continue to the final confirmation?${RESET}`] : []),
+      ...(external && state.advancedAcknowledged ? ['', `  ${FAILURE}Final confirmation for software NMSh did not install.${RESET}`] : []),
+      `  ${SUBTLE}Your NMSh settings and shell config are not changed.${RESET}`, '',
+      `  ${renderConfirm(state.confirm, {focused: true, color: colorLevel() !== 'none'})}`);
+    footer = [['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'cancel']];
   } else if (state.confirm) {
     rows.push(`${PRIMARY}  ${state.upgrading ? 'Upgrade' : 'Install'} ${state.detail?.label ?? 'tool'}?${RESET}`, '', `  ${SUBTLE}Runs${RESET}  ${PRIMARY}${state.recipe?.label ?? ''}${RESET}`,
       `  ${SUBTLE}Changes installed software only; shell hooks and settings are not touched.${RESET}`, '',
@@ -247,6 +305,7 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     rows.push('', `  ${SUBTLE}Shell hook state is not inferred; existing hooks stay authoritative.${RESET}`);
     footer = [
       ...(state.statuses[tool.id]?.state === 'missing' ? [['I', 'install…'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'installed' ? [['X', 'uninstall…'] as [string, string]] : []),
       ...(toolHasUpdate(state, tool) ? [['U', 'update…'] as [string, string]] : []),
       ...(tool.id === 'mise' ? [['M', 'project awareness'] as [string, string]] : []),
       ...(tool.configuration && state.statuses[tool.id]?.state === 'installed' ? [['C', 'configure'] as [string, string]] : []),
