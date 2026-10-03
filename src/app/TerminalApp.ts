@@ -29,7 +29,9 @@ import {
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync} from 'node:fs';
 import {delimiter, join} from 'node:path';
-import {renderCompletion, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
+import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
+import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
+import {localKnowledge} from '../shell/CommandKnowledge.js';
 import {ComposerHistory} from '../input/ComposerHistory.js';
 import {resolveAction} from '../ui/actions.js';
 import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
@@ -158,6 +160,8 @@ export class TerminalApp {
   private panelAnimation?: () => void;
   /** A milestone effect waiting for the owning panel to close. */
   private pendingMilestone = false;
+  private readonly commandDescriptions = new CommandDescriptions();
+  private commandUsageVersion = -1;
   private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
     reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
@@ -1262,6 +1266,43 @@ export class TerminalApp {
 
 
   /**
+   * The highlighted candidate's description: structured completion text,
+   * local knowledge, the session-identity fallback (alias/function bodies are
+   * never shown), or a local man-page summary looked up off the keypress path.
+   */
+  private completionDescription(candidate: CompletionCandidate): string {
+    if (candidate.description) return candidate.description;
+    if (candidate.kind !== 'command') return '';
+    const known = localKnowledge(candidate.value, candidate.value, true)?.description ?? identityDescription(candidate);
+    if (known) return known;
+    const cached = this.commandDescriptions.cached(candidate.value);
+    if (cached !== undefined) return cached;
+    void this.commandDescriptions.request(candidate.value).then(description => {
+      const current = this.shellSuggestions[this.selectedSuggestion];
+      if (description && !this.stopped && current?.value === candidate.value) this.render();
+    });
+    return '';
+  }
+
+  /** Command-name use from the eligible history index, recomputed only when it changed. */
+  private refreshCommandUsage(): void {
+    const index = this.historyService.index;
+    if (index.version === this.commandUsageVersion) return;
+    this.commandUsageVersion = index.version;
+    const usage = new Map<string, {count: number; last: number}>();
+    const entries = index.all();
+    for (let position = 0; position < Math.min(entries.length, 5000); position += 1) {
+      const entry = entries[position]!;
+      const name = /^\s*([^\s=;|&()<>]+)(?=\s|$)/u.exec(entry.command)?.[1];
+      if (!name) continue;
+      const known = usage.get(name);
+      if (known) known.count += 1;
+      else usage.set(name, {count: 1, last: entry.at ?? 0});
+    }
+    this.completionService.setCommandUsage(usage);
+  }
+
+  /**
    * Up past the editor's first row recalls older commands; Down past its last
    * row walks newer ones and finally restores the unsent draft. Only text is
    * placed in the composer: nothing runs until Enter.
@@ -1302,6 +1343,7 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.selectedSuggestion = 0;
     if (!eligible) return;
+    this.refreshCommandUsage();
     const comps = await this.completionService.suggest(input, cwd, cursor);
     if (!this.stopped && generation === this.completionGeneration && this.editor.text === input && this.context.cwd === cwd
       && this.completionCursor === cursor && !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms) {
@@ -3458,12 +3500,16 @@ export class TerminalApp {
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.suggestionGhost();
     const fullInput = this.layoutEditorInput(columns);
-    const plan = this.planFrame(columns, rows, fullInput, availableSuggestions.length, panelRows?.length);
+    const completionMenu = availableSuggestions === this.shellSuggestions && availableSuggestions.length > 0;
+    const plan = this.planFrame(columns, rows, fullInput, completionMenu ? completionMenuRows(availableSuggestions.length) : availableSuggestions.length, panelRows?.length);
     const input = plan.panelActive
       ? {...fullInput, rows: [], caretRow: 0, caretColumn: 0}
       : this.layoutEditorInput(columns, plan.inputHeight);
     const effectiveSelection = Math.max(0, Math.min(availableSuggestions.length - 1, this.selectedSuggestion));
-    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, plan.suggestionCount);
+    // A bounded completion viewport: when candidates overflow it, the last row says how many follow.
+    const menuOverflow = completionMenu && plan.suggestionCount > 1 && availableSuggestions.length > plan.suggestionCount;
+    const suggestionView = suggestionWindow(availableSuggestions, effectiveSelection, menuOverflow ? plan.suggestionCount - 1 : plan.suggestionCount);
+    const hiddenBelow = menuOverflow ? availableSuggestions.length - suggestionView.start - suggestionView.items.length : 0;
     if (this.lastPtyRows !== plan.ptyRows || this.lastPtyColumns !== columns) {
       this.lastPtyRows = plan.ptyRows;
       this.lastPtyColumns = columns;
@@ -3542,15 +3588,17 @@ export class TerminalApp {
         case 'panel': return plan.composerPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'inspector': return this.inspectorRows(columns);
-        case 'suggestions': return suggestionView.items.map((suggestion, visibleIndex) => {
+        case 'suggestions': return [...suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
           if ('correction' in suggestion) return renderCorrection(suggestion, columns);
-          if ('source' in suggestion && 'replacement' in suggestion) return renderCompletion(suggestion, selected, columns);
+          if ('source' in suggestion && 'replacement' in suggestion) {
+            return renderCompletion(suggestion, selected, columns, selected ? this.completionDescription(suggestion) : suggestion.description);
+          }
           return truncateAnsi(
             `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
             columns,
           );
-        });
+        }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])];
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': {
           if (!this.running) return [];
@@ -3776,6 +3824,7 @@ export class TerminalApp {
     this.terminalFocus = 'unknown';
     try { this.renderer.leave(); } catch { /* A closed terminal must not prevent resource cleanup. */ }
     this.completionService.dispose();
+    this.commandDescriptions.dispose();
     this.historyQueryAbort?.abort();
     this.clearCorrection();
     this.directoryQueryAbort?.abort();

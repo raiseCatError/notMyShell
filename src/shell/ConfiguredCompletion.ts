@@ -4,7 +4,7 @@ import {mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, statSync} 
 import {tmpdir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {completionLabel, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
+import {commandIdentity, completionLabel, type CompletionCandidate, type CompletionContext, type CompletionSource} from './completion.js';
 
 const MAX_BYTES = 1024 * 1024;
 const shellQuote = (value: string): string => "'" + value.replace(/'/gu, "'\\''") + "'";
@@ -57,8 +57,9 @@ export function parseConfiguredCompletions(output: string, context: CompletionCo
       insertionValue = insertionValue.slice(1);
     }
     const label = completionLabel(display);
+    const identity = kind === 'command' ? commandIdentity(group) : undefined;
     candidates.push({value, display: label, name: label, description: completionLabel(description),
-      group: completionLabel(group), prefix, suffix, kind, source: 'zsh-configured', replacement: range,
+      group: completionLabel(group), prefix, suffix, kind, ...(identity ? {identity} : {}), source: 'zsh-configured', replacement: range,
       context: {...context}, insertionCursor: range.start + insertionValue.length,
       insertion: context.buffer.slice(0, range.start) + insertionValue + context.buffer.slice(range.end)});
   }

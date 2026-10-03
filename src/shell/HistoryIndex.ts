@@ -108,6 +108,11 @@ export class HistoryIndex {
     }
   }
 
+  /** Changes whenever entries or deletions change; cheap staleness check for derived views. */
+  get version(): number {
+    return this.revision;
+  }
+
   all(): readonly HistoryEntry[] {
     if (this.snapshotRevision !== this.revision) {
       this.snapshot = [...this.entries.values()].filter(entry => !this.deleted.has(entry.id)).sort((a, b) => (b.at ?? 0) - (a.at ?? 0));

@@ -1,5 +1,10 @@
 /** Source-independent completion data. Offsets are UTF-16 indices in context.buffer. */
 export type CompletionKind = 'command' | 'subcommand' | 'option' | 'argument' | 'file' | 'directory' | 'value';
+/**
+ * What a command-position name is in the current zsh session, separate from
+ * the syntactic kind: an alias and a PATH executable are both `command`s.
+ */
+export type CommandIdentity = 'executable' | 'alias' | 'function' | 'builtin' | 'keyword';
 
 export interface CompletionContext {
   buffer: string;
@@ -25,6 +30,8 @@ export interface CompletionCandidate {
   insertion: string;
   insertionCursor?: number;
   name: string;
+  /** Command-position candidates only: what the name is in the session. */
+  identity?: CommandIdentity;
 }
 
 export interface CompletionSource {
@@ -78,4 +85,62 @@ export function filterCompletions(candidates: readonly CompletionCandidate[], qu
     scored.push({candidate, score, index});
   });
   return scored.sort((a, b) => a.score - b.score || a.index - b.index).map(item => item.candidate);
+}
+
+/** zsh `_command_names` group tags and semantic-metadata types, to one identity. */
+export function commandIdentity(value: string | undefined): CommandIdentity | undefined {
+  if (!value) return undefined;
+  const text = value.toLowerCase();
+  if (text === 'alias' || text.includes('alias')) return 'alias';
+  if (text === 'function' || text.includes('function')) return 'function';
+  if (text === 'builtin' || text.includes('builtin')) return 'builtin';
+  if (text === 'reserved' || text.includes('reserved') || text.includes('keyword')) return 'keyword';
+  if (text === 'executable' || text.includes('external command') || text === 'command') return 'executable';
+  return undefined;
+}
+
+/**
+ * Plugin and completion-system helpers (`_fzf_*`, `__atuin_*`, `_zoxide_*`)
+ * stay known to NMSh but are not offered while typing a command name unless
+ * the user's word itself starts with `_`.
+ */
+export function isInternalHelper(candidate: CompletionCandidate, word: string): boolean {
+  return candidate.kind === 'command' && candidate.value.startsWith('_') && !word.startsWith('_');
+}
+
+/** Local use counts and recency for command names, from eligible (non-private) history. */
+export interface CommandUsage {
+  count: number;
+  /** Most recent use, epoch ms. */
+  last: number;
+}
+
+/**
+ * A command candidate's frecency: frequent and recent names score higher.
+ * Bounded and pure; equal-quality matches only are reordered by it.
+ */
+export function usageScore(usage: CommandUsage | undefined, now: number): number {
+  if (!usage) return 0;
+  const days = Math.max(0, (now - usage.last) / 86_400_000);
+  const recency = days < 1 ? 4 : days < 7 ? 2 : days < 30 ? 1 : 0.5;
+  return Math.log2(1 + usage.count) * recency;
+}
+
+/** Match quality tier for a candidate against the typed word: lower is better. */
+export function matchTier(value: string, word: string): number {
+  const text = value.toLowerCase();
+  const needle = word.toLowerCase();
+  if (!needle) return 2;
+  return text === needle ? 0 : text.startsWith(needle) ? 1 : 2;
+}
+
+/**
+ * Command-position ordering: match tier first (exact, prefix, fuzzy), then
+ * frecency, then the source's own order. Deterministic for equal inputs.
+ */
+export function rankCommandCandidates(candidates: readonly CompletionCandidate[], word: string,
+  usage: ReadonlyMap<string, CommandUsage>, now: number): CompletionCandidate[] {
+  return candidates.map((candidate, index) => ({candidate, index, tier: matchTier(candidate.value, word), score: usageScore(usage.get(candidate.value), now)}))
+    .sort((a, b) => a.tier - b.tier || b.score - a.score || a.index - b.index)
+    .map(entry => entry.candidate);
 }
