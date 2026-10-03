@@ -1,3 +1,4 @@
+import {paintTreatment, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
 import {wrapStyledLine, type WrappedRow} from './viewport.js';
@@ -87,6 +88,10 @@ export class TranscriptPresenter {
     return wrapStyledLine(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
   }
 
+  private treatment = DEFAULT_TREATMENT_SETTINGS;
+
+  setTreatment(settings: TreatmentSettings): void { this.treatment = {...settings, motion: 'static'}; }
+
   private appearance: TranscriptAppearance = {...DEFAULT_TRANSCRIPT_APPEARANCE};
   private welcomeFrame: WelcomeCatFrame = 'open';
   private layout: TranscriptLayout = 'normal';
@@ -140,7 +145,7 @@ export class TranscriptPresenter {
 
       const historicalContext = historicalContexts.get(i);
       // Chat: the header (prompt snapshot + local divider) spans the command column on the right.
-      const rendered = historicalContext && renderHistoricalContext(historicalContext, column ?? width, this.appearance);
+      const rendered = historicalContext && renderHistoricalContext(historicalContext, column ?? width, this.appearance, this.treatment);
       const header = rendered && column ? indentRow(rendered, width - displayWidth(rendered.plain)) : rendered;
       if (header) {
         const owner = ownerOf(i);
@@ -460,12 +465,13 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
  * raw PTY output are never modified.
  */
 export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
-  appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE): WrappedRow | undefined {
+  appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE,
+  treatment: TreatmentSettings = DEFAULT_TREATMENT_SETTINGS): WrappedRow | undefined {
   if (!appearance.divider && !appearance.historicalPrompt) return undefined;
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
   if (!appearance.historicalPrompt) {
     const line = repeatToWidth(divider.glyph, width);
-    return {ansi: `${divider.color}${line}\u001B[0m`, plain: line, isHistoricalHeader: true};
+    return {ansi: `${treatment.preset === 'off' ? divider.color + line : paintTreatment(line, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
   const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
   const prompt = typeof parts === 'string' ? parts : parts.left;
@@ -479,7 +485,7 @@ export function renderHistoricalContext(context: HistoricalContextSnapshot, widt
   const remaining = Math.max(0, width - displayWidth(prompt) - 1 - rightWidth);
   const fill = repeatToWidth(divider.glyph, remaining);
   const rightAnsi = right ? ` ${right}\u001B[0m` : '';
-  return {ansi: `${prompt}\u001B[0m ${divider.color}${fill}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
+  return {ansi: `${prompt}\u001B[0m ${treatment.preset === 'off' ? divider.color + fill : paintTreatment(fill, {...treatment, motion: 'static'}, 'divider', ARCHIVE_DIVIDER_COLOR)}\u001B[0m${rightAnsi}`, plain: `${stripAnsi(prompt)} ${fill}${right ? ` ${stripAnsi(right)}` : ''}`, isHistoricalHeader: true};
 }
 
 function rgbStyle(foregroundColor?: Rgb, backgroundColor?: Rgb): string {
