@@ -162,7 +162,7 @@ See [ROADMAP.md](ROADMAP.md) for planned shell compatibility, multi-shell adapte
 - macOS
 - Node.js (v22+)
 - zsh
-- A compatible terminal host (Ghostty, macOS Terminal, VS Code)
+- A compatible terminal host (Zed, Ghostty, macOS Terminal, Kitty, VS Code)
 
 Clone the repository and install dependencies:
 
@@ -209,9 +209,13 @@ Do not instruct macOS to change your default login shell to NMSh. NMSh is a fron
 
 | Host | Status | Notes |
 |------|--------|-------|
-| Ghostty | Primary | Full integration available (`/keyboard`, `/appearance`). |
-| macOS Terminal | Supported | Shift+Enter works out of the box. |
+| Zed integrated terminal | Primary development and QA host | Wheel/trackpad scrolling of the transcript through standard SGR mouse reporting; Shift keeps Zed's own text selection. Appearance is configured by Zed. Additional sessions use `/resume` or `nmsh --attach`. |
+| Ghostty | First-class, enhanced | Full integration available (`/keyboard`, `/appearance`), new windows for sessions. |
+| macOS Terminal | Baseline compatibility | Shift+Enter works out of the box; keyboard scrolling (PageUp/PageDown). |
+| Kitty | Advanced compatibility | Kitty keyboard protocol and mouse reporting; new windows need `allow_remote_control`. |
 | VS Code Integrated Terminal | Supported | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
+
+NMSh's core stays terminal-host agnostic: host profiles only supply conservative capability hints, and optional protocols still come from the shared probe.
 
 ## Keyboard Behavior
 
@@ -224,7 +228,8 @@ Do not instruct macOS to change your default login shell to NMSh. NMSh is a fron
 - **Cmd+A:** Select all input (requires Ghostty forwarding setup)
 - **Cmd+Up/Down:** Jump to top/bottom of buffer (requires Ghostty forwarding setup)
 - **Shift+Left/Right:** Character selection
-- **PageUp/PageDown:** Scroll output history
+- **Up/Down:** Recall previous/next submitted commands when the caret is on the first/last editor line; Down past the newest restores your unsent draft. Multiline drafts move by line first; open menus and panels keep their own Up/Down.
+- **PageUp/PageDown, mouse wheel:** Scroll output history
 
 *(Note: In VS Code, Shift+Enter is often indistinguishable from Enter by default. Use Ctrl+J as a reliable multiline fallback.)*
 
@@ -237,6 +242,7 @@ The `/appearance` slash command provides an interactive UI to adjust Ghostty's w
 ## Known Limitations
 
 - **Mouse behavior:** Native mouse selection or Shift-drag behavior may feel different because NMSh enables mouse reporting.
+- **Hosts without mouse reporting:** on baseline hosts (for example Terminal.app) scroll the transcript with PageUp/PageDown. A host setting that turns wheel scrolling into arrow keys on the alternate screen makes the wheel walk command history instead.
 - **ZLE widgets:** Certain complex third-party ZLE (Zsh Line Editor) widgets are not directly portable.
 - **zsh grammar:** Syntax highlighting intentionally does not implement the entire, exhaustive zsh grammar; it focuses on providing fast semantic assistance for common command structures. Highlighting colors are theme-aware via `/syntax`.
 - **Completion:** The completion bridge is not full parity with a configured interactive zsh, and native `fzf-tab` is not supported yet ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
