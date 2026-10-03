@@ -28,7 +28,9 @@ for (const profile of [{TERM_PROGRAM: 'ghostty'}, {TERM_PROGRAM: 'nmsh-test'}]) 
     const clean = physicalAfterPassthrough(profile, '');
     assert.deepEqual(leaked, clean, 'terminal state equals the state NMSh itself would have set');
     assert.equal(leaked.screen, 'alternate');
-    for (const mode of [1002, 1005, 1015]) assert.equal(leaked.modes[mode], false, `?${mode}`);
+    for (const mode of [1005, 1015]) assert.equal(leaked.modes[mode], false, `?${mode}`);
+    // 1002 (drag motion, for NMSh's transcript selection) is NMSh's own, exactly when its 1000 is.
+    assert.equal(Boolean(leaked.modes[1002]), Boolean(leaked.modes[1000]), '?1002 follows NMSh mouse reporting');
     assert.equal(leaked.modes[1], false, 'application cursor keys');
     assert.equal(leaked.keypadApplication, false);
     assert.ok(leaked.kittyStack.alternate.length <= 1, `kitty stack ${leaked.kittyStack.alternate}`);

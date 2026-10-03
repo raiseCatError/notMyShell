@@ -95,3 +95,46 @@ test('app: a dangerous request never executes anything', async () => {
     assert.equal(submitted, 0);
   } finally { instance['stop'](0); instance['session'].kill(); }
 });
+
+test('app: Auto asks the model only when built-in understanding is unsure; Always asks first; model failure keeps the deterministic answer', async () => {
+  const instance = app(true);
+  try {
+    const calls: string[] = [];
+    let reply: unknown = {capability: 'git.branch', confidence: 0.9, arguments: {}};
+    const understanding = instance['understanding'];
+    understanding.interpretAsk = async (request: {text: string}) => { calls.push(request.text); return reply as never; };
+    instance['configuration'] = {...instance['configuration'], localUnderstanding: {mode: 'auto', ask: true, folding: false,
+      model: {label: 'Qwen3 0.6B', runtime: 'llama.cpp', path: '/m.gguf', owned: true}}};
+    instance['context'] = {...instance['context'], root: process.cwd(), branch: 'main'};
+    const state = (await import('../src/ask/AskPanel.js')).createAskState();
+    const confident = await instance['resolveAsk']('what shell am i using', state);
+    assert.equal(confident.kind, 'answer');
+    assert.deepEqual(calls, [], 'a confident built-in answer never loads the model in Auto');
+    const vague = await instance['resolveAsk']('flibbertigibbet', state);
+    assert.deepEqual(calls, ['flibbertigibbet']);
+    // The branch itself comes from the live prompt context, which a background refresh may update.
+    assert.equal(vague.kind === 'answer' && vague.capability, 'git.branch', 'a valid interpretation maps to a typed capability');
+    instance['configuration'] = {...instance['configuration'], localUnderstanding: {...instance['configuration'].localUnderstanding, mode: 'always'}};
+    await instance['resolveAsk']('what shell am i using', state);
+    assert.equal(calls.length, 2, 'Always prefers the model for the enabled scope');
+    reply = undefined;
+    assert.equal((await instance['resolveAsk']('what shell am i using', state)).kind, 'answer', 'no model answer: deterministic result');
+    instance['configuration'] = {...instance['configuration'], localUnderstanding: {...instance['configuration'].localUnderstanding, mode: 'always', ask: false}};
+    await instance['resolveAsk']('flibbertigibbet', state);
+    assert.equal(calls.length, 3, 'a disabled Ask scope never reaches the model');
+  } finally { instance['stop'](0); instance['session'].kill(); }
+});
+
+test('app: with local understanding Off, a finished command never requests a folding hint', async () => {
+  const instance = app(true);
+  try {
+    let hints = 0;
+    instance['understanding'].foldHint = async () => { hints += 1; return undefined; };
+    instance['configuration'] = {...instance['configuration'], localUnderstanding: {mode: 'off', ask: false, folding: true,
+      model: {label: 'Qwen3 0.6B', runtime: 'llama.cpp', path: '/m.gguf', owned: true}}};
+    instance['output'].beginCommand('tool run', ['tool run']);
+    instance['output'].write(Array.from({length: 40}, (_, index) => `step ${index}`).join('\n') + '\n');
+    await instance['adviseFolding'](instance['output'].complete(0));
+    assert.equal(hints, 0);
+  } finally { instance['stop'](0); instance['session'].kill(); }
+});

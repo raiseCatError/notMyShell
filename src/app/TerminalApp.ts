@@ -50,7 +50,7 @@ import {
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync, readFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
-import {delimiter, join, resolve as resolvePath} from 'node:path';
+import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
 import {localKnowledge} from '../shell/CommandKnowledge.js';
@@ -70,7 +70,7 @@ import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
-import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
+import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
 import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, type ProviderStatus} from '../providers/providers.js';
@@ -118,7 +118,6 @@ import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
-import {InstallProvenance} from '../tools/InstallProvenance.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
 import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
@@ -145,6 +144,15 @@ import {listProjectFiles} from '../ask/files.js';
 import {gitWorktrees} from '../ask/git.js';
 import type {AskAction, AskContext, AskOutcome} from '../ask/types.js';
 import {askProviderFacts, PROVIDER_FAMILIES, selectProvider} from '../providers/families.js';
+import {LocalUnderstanding, understandingStatusRows, understandingWelcomeText} from '../understanding/LocalUnderstanding.js';
+import {createUnderstandingPanel, renderUnderstandingPanel, understandingKey, type UnderstandingFacts, type UnderstandingPanelState} from '../understanding/UnderstandingPanel.js';
+import {downloadPinned, loadRecommendedModel} from '../understanding/recommended.js';
+import {modelChoice, nmshModelDirectory} from '../understanding/discovery.js';
+import {foldExcerpt} from '../understanding/tasks.js';
+import {applyFoldHint, hintEligible} from '../output/FoldPolicy.js';
+import {CAPABILITIES, resolveWithInterpretation} from '../ask/resolver.js';
+import {createProvidersOverview, providersOverviewKey, renderProvidersOverview, type ProvidersOverviewState} from '../providers/ProvidersOverview.js';
+import {InstallProvenance} from '../tools/InstallProvenance.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
 import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
 import {detectPlatform, type PlatformInfo} from '../host/platform.js';
@@ -286,8 +294,13 @@ export class TerminalApp {
     return config;
   }
   private set promptConfiguration(next: PromptConfiguration) {
+    const turnedOff = next.localUnderstanding.mode === 'off' && this.configuration.localUnderstanding.mode !== 'off';
     this.configuration = next;
+    // Off: no model use from this window, and the shared service is told to unload.
+    if (turnedOff) this.understanding?.modeChanged();
   }
+  /** Optional local understanding; creates nothing until a feature is eligible to use it. */
+  private readonly understanding = new LocalUnderstanding(() => this.configuration.localUnderstanding);
   private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
   private starshipStatus?: StarshipStatus;
   /** Live Starship/Powerlevel10k rendering for the effective provider. */
@@ -1084,6 +1097,20 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.understandingPanel) {
+      const action = understandingKey(this.understandingPanel, key, this.understandingFacts());
+      if (action) void this.handleUnderstandingAction(action);
+      this.render();
+      return;
+    }
+    if (this.providersOverview) {
+      const action = providersOverviewKey(this.providersOverview, key);
+      if (action?.kind === 'close') { this.providersOverview = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'detect') void this.refreshProvidersOverview(true);
+      else if (action?.kind === 'open') this.openProviderFamily(action.row);
+      this.render();
+      return;
+    }
     if (this.askState) {
       const event = askKey(this.askState, key);
       if (event) void this.handleAskEvent(event);
@@ -1833,6 +1860,7 @@ export class TerminalApp {
     }
     else if (slash.kind === 'palette') this.openPalette();
     else if (slash.kind === 'ask') this.openAsk(slash.request);
+    else if (slash.kind === 'providers') this.openProvidersOverview();
     else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
   }
 
@@ -2419,6 +2447,7 @@ export class TerminalApp {
       this.directoryQueryAbort?.abort();
       this.historyService.record(completedRecord, this.journal?.id ?? this.sessionId ?? 'current');
       this.historyQuery = undefined;
+      if (!this.replaying) void this.adviseFolding(completedRecord);
     }
     this.suggestions.record({command: command.command, cwd: command.cwd, exitCode, at: command.startedAt, previous: this.submittedCommands[0]});
     this.submittedCommands.unshift(command.command);
@@ -2888,7 +2917,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.providersOverview || this.understandingPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2948,6 +2977,8 @@ export class TerminalApp {
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
     if (this.askState) return framePanel(renderAsk(this.askState, columns), columns);
+    if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
+    if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
     if (this.resumeBrowser?.liveOnly) return framePanel(this.sessionsViewRows(this.resumeBrowser, columns), columns);
     if (this.resumeBrowser) {
@@ -3043,6 +3074,8 @@ export class TerminalApp {
   private settingsMemory?: {contentIndex: number; searchQuery: string; showAdvanced: boolean};
 
   private openSettingsPanel(view: SettingsView): void {
+    // Status reports the shared model service as it is now (never starts it).
+    if (view === 'status') void this.understanding.refreshStatus().then(() => this.render(), () => undefined);
     const memory = view === 'config' ? this.settingsMemory : undefined;
     this.settingsPanelState = {section: 'root', view, selectedIndex: 0, contentIndex: memory?.contentIndex ?? 0,
       searchQuery: memory?.searchQuery, showAdvanced: memory?.showAdvanced,
@@ -3950,6 +3983,8 @@ export class TerminalApp {
         {label: 'Node', value: process.version},
         {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
         {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},
+        ...understandingStatusRows(this.promptConfiguration.localUnderstanding, this.understanding.status)
+          .map(row => ({label: `Local understanding ${row.label === 'Mode' ? '' : row.label.toLowerCase()}`.trim(), value: row.value})),
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         ...(this.sessionMode === 'service' ? [
           {label: 'Session service', value: this.session.serviceBuild ? `connected · ${this.session.serviceBuild}` : 'connected · older build (no build reported)'},
@@ -4027,12 +4062,12 @@ export class TerminalApp {
   private startWelcome(cwd: string): void {
     const generation = ++this.welcomeGeneration;
     const provider = this.promptConfiguration.welcome;
-    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId));
+    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId, this.welcomeUnderstanding()));
     if (provider === 'none') return;
     if (provider === 'vespyr') { vespyr(); return; }
     void captureWelcome(provider, cwd).then(result => {
       if (generation !== this.welcomeGeneration || this.stopped) return;
-      if (result.ok) this.output.setWelcome({...createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId), provider, captured: result.lines});
+      if (result.ok) this.output.setWelcome({...createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId, this.welcomeUnderstanding()), provider, captured: result.lines});
       else {
         vespyr();
         this.output.addHistoryLine(`${SUBTLE}${welcomeProvider(provider).label} welcome ${result.reason}; showing Vespyr.${RESET}`);
@@ -4945,6 +4980,144 @@ export class TerminalApp {
     this.render();
   }
 
+  private providersOverview?: ProvidersOverviewState;
+  private understandingPanel?: UnderstandingPanelState;
+
+  /** The welcome's factual local-understanding text at presentation start; it never claims a model it has not seen loaded. */
+  private welcomeUnderstanding(): string {
+    return understandingWelcomeText(this.configuration.localUnderstanding, this.understanding?.status);
+  }
+
+  private async refreshUnderstandingDiscovery(again: boolean): Promise<void> {
+    try { await this.understanding.discover(again); } catch { /* discovery is best effort */ }
+    try { await this.understanding.refreshStatus(); } catch { /* no service: idle */ }
+  }
+
+  /** /providers' Local understanding row: what is in use, and the facts behind it. */
+  private understandingSummary(): {active: string; detail: string[]} {
+    const settings = this.promptConfiguration.localUnderstanding;
+    const loaded = this.understanding.status && (this.understanding.status.state === 'ready' || this.understanding.status.state === 'busy');
+    const active = settings.mode === 'off' || !settings.model ? 'Built-in' : loaded ? `${settings.model.label}` : `Built-in (${settings.model.label} idle)`;
+    const found = this.understanding.discovery;
+    const detail = understandingStatusRows(settings, this.understanding.status).map(row => `${row.label}: ${row.value}`);
+    if (found) detail.push(`Found locally: ${found.models.filter(model => model.suitability !== 'unsuitable').length} usable model(s); runtimes: ${found.runtimes.map(runtime => runtime.label).join(', ') || 'none'}`);
+    return {active, detail};
+  }
+
+  private openUnderstandingPanel(): void {
+    this.panelOrigin = undefined;
+    this.understandingPanel = createUnderstandingPanel();
+    void this.refreshUnderstandingDiscovery(false).then(() => this.render());
+  }
+
+  private understandingFacts(): UnderstandingFacts {
+    const brew = resolveCommand('brew');
+    const recommended = loadRecommendedModel();
+    return {settings: this.promptConfiguration.localUnderstanding, ...(this.understanding.discovery ? {discovery: this.understanding.discovery} : {}),
+      ...(this.understanding.status ? {status: this.understanding.status} : {}), ...(recommended ? {recommended} : {}),
+      ...(brew && (process.platform === 'darwin' || process.platform === 'linux') ? {runtimeRecipe: 'brew install llama.cpp'} : {})};
+  }
+
+  /** Approved steps run here, then are verified and activated; nothing runs without the panel's Yes. */
+  private async handleUnderstandingAction(action: import('../understanding/UnderstandingPanel.js').UnderstandingAction): Promise<void> {
+    const panel = this.understandingPanel;
+    if (!panel) return;
+    const update = (change: (settings: PromptConfiguration['localUnderstanding']) => PromptConfiguration['localUnderstanding']) =>
+      this.updateConfiguration(configuration => { configuration.localUnderstanding = change({...configuration.localUnderstanding}); });
+    if (action.kind === 'close') { this.understandingPanel = undefined; this.returnFromPanel(); return; }
+    if (action.kind === 'detect') { await this.refreshUnderstandingDiscovery(true); panel.message = 'Detected again.'; this.render(); return; }
+    if (action.kind === 'mode') {
+      const modes = ['off', 'auto', 'always'] as const;
+      update(settings => ({...settings, mode: modes[(modes.indexOf(settings.mode) + action.delta + modes.length) % modes.length]!}));
+      return;
+    }
+    if (action.kind === 'scope') { update(settings => ({...settings, [action.scope]: !settings[action.scope]})); return; }
+    if (action.kind === 'use') {
+      update(settings => ({...settings, model: modelChoice(action.model), mode: settings.mode === 'off' ? 'auto' : settings.mode}));
+      panel.message = `Using ${action.model.label}${action.model.owned ? '' : ' (found on this machine; NMSh will not delete it)'}.`
+        + (this.promptConfiguration.localUnderstanding.ask || this.promptConfiguration.localUnderstanding.folding ? '' : ' Enable Ask or Smart Folding above to use it.');
+      return;
+    }
+    if (action.kind === 'runtime') {
+      panel.working = 'Running brew install llama.cpp…';
+      this.render();
+      const task = new TaskProgress('Installing llama.cpp', () => this.render(), Date.now(), 'llama.cpp');
+      const outcome = await task.run(resolveCommand('brew') ?? 'brew', ['install', 'llama.cpp']);
+      panel.working = undefined;
+      clearProviderDetection();
+      await this.refreshUnderstandingDiscovery(true);
+      const found = this.understanding.discovery?.runtimes.some(runtime => runtime.kind === 'llama.cpp');
+      if (outcome.status === 'succeeded' && found) recordInstall('llama-server', {label: 'brew install llama.cpp', command: 'brew', args: ['install', 'llama.cpp']});
+      panel.message = outcome.status === 'succeeded' && found ? 'llama.cpp is installed and detected.'
+        : outcome.status === 'succeeded' ? 'brew finished, but llama-server was not found on PATH; nothing was changed.' : `llama.cpp was not installed. ${task.state.error ?? ''}`.trim();
+      this.render();
+      return;
+    }
+    if (action.kind === 'download') {
+      const artifact = loadRecommendedModel()?.artifact;
+      if (!artifact) { panel.message = 'No verified download is pinned in this build.'; return; }
+      panel.working = 'Downloading… 0 MB';
+      this.render();
+      try {
+        const path = await downloadPinned(artifact, nmshModelDirectory(), received => { panel.working = `Downloading… ${Math.round(received / 1e6)} of ${Math.round(artifact.bytes / 1e6)} MB`; this.render(); });
+        panel.working = undefined;
+        update(settings => ({...settings, mode: settings.mode === 'off' ? 'auto' : settings.mode,
+          model: {label: `Qwen3 0.6B ${artifact.quantization}`, runtime: 'llama.cpp', path, owned: true}}));
+        await this.refreshUnderstandingDiscovery(true);
+        panel.message = 'Downloaded and verified (sha256). It loads on first use and unloads when idle.';
+      } catch (error) {
+        panel.working = undefined;
+        panel.message = `Download failed: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`;
+      }
+      this.render();
+    }
+  }
+
+  /** Optional, advisory, bounded: a late hint may tip only a borderline block the user has not touched. */
+  private async adviseFolding(record: CompletedCommand): Promise<void> {
+    if (!this.understanding.eligible('folding')) return;
+    const input = {command: record.command, output: record.output, exitCode: record.exitCode ?? 0, lineCount: (record.endId ?? record.outputStartId) - record.outputStartId};
+    if (!hintEligible(this.promptConfiguration.outputFolding, input)) return;
+    const hint = await this.understanding.foldHint(foldExcerpt(record.command, record.output, record.exitCode ?? 0));
+    if (!hint || this.stopped) return;
+    if (this.output.applyAdvisoryFold(record.startId, applyFoldHint(input, hint))) this.render();
+  }
+
+  private openProvidersOverview(): void {
+    this.panelOrigin = undefined;
+    this.providersOverview = createProvidersOverview();
+    void this.refreshProvidersOverview(false);
+  }
+
+  /** Local detection only (PATH and known locations); R forgets cached results first. */
+  private async refreshProvidersOverview(again: boolean): Promise<void> {
+    const state = this.providersOverview;
+    if (!state) return;
+    state.detecting = true;
+    if (again) { clearProviderDetection(); this.providerStatuses.clear(); }
+    await this.refreshProviderStatuses();
+    await this.refreshUnderstandingDiscovery(again);
+    state.detecting = false;
+    if (again) state.message = 'Detected again.';
+    if (this.providersOverview === state) this.render();
+  }
+
+  private providersOverviewFacts() {
+    let installedByNmsh = new Set<string>();
+    try { installedByNmsh = new Set(new InstallProvenance().list().map(record => record.toolId)); } catch { /* no provenance yet */ }
+    return {configuration: this.promptConfiguration, statuses: this.providerStatuses, installedByNmsh,
+      understanding: this.understandingSummary(), shell: {current: shellAdapter(this.shellId).label, defaultShell: shellAdapter(this.promptConfiguration.shellBackend).label}};
+  }
+
+  /** Each family opens its existing panel: switching, previewed installs and configuration live there. */
+  private openProviderFamily(row: string): void {
+    this.providersOverview = undefined;
+    if (row === 'prompt') void this.startPromptSettings(false);
+    else if (row === 'shell') this.openShellPanel();
+    else if (row === 'understanding') this.openUnderstandingPanel();
+    else this.startProviderPanel(row as 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation');
+  }
+
   /** Ask's in-memory interaction; discarded on close (only visible turns may be recorded). */
   private askState?: AskState;
   private askGeneration = 0;
@@ -4999,7 +5172,21 @@ export class TerminalApp {
   /** Deterministic resolution first; an optional local interpretation may refine it (see LocalUnderstanding). */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
-    return resolveRequest(text, context, {rejected: state.rejected});
+    const deterministic = resolveRequest(text, context, {rejected: state.rejected});
+    if (!this.understanding.eligible('ask')) return deterministic;
+    // Auto: built-in understanding first; the model is asked only when it is unsure. Always: the model is asked first.
+    const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
+    if (!this.understanding.prefersModel && !unsure) return deterministic;
+    const ids = new Set(CAPABILITIES.map(capability => capability.id));
+    const facts: Record<string, string | string[]> = {shell: context.shell, defaultShell: context.defaultShell,
+      ...(context.repoRoot ? {repository: basename(context.repoRoot)} : {}), ...(context.branch ? {branch: context.branch} : {}),
+      ...(context.worktrees.length > 1 ? {worktrees: context.worktrees.map(item => basename(item.path))} : {}),
+      ...(context.recentFiles.length ? {recentFiles: context.recentFiles.slice(0, 5).map(path => basename(path))} : {}),
+      ...(context.transcripts.length ? {transcripts: context.transcripts.slice(0, 5).map(item => `${item.createdAt.slice(0, 16)} ${basename(item.finalCwd)}`)} : {})};
+    const interpretation = await this.understanding.interpretAsk({text, capabilities: CAPABILITIES.map(item => ({id: item.id, title: item.title})), facts}, ids);
+    // A missing, failed or unsure model keeps the deterministic outcome: model failure is not the user's ambiguity.
+    const modelled = interpretation ? resolveWithInterpretation(text, interpretation as never, context, {rejected: state.rejected}) : undefined;
+    return modelled ?? deterministic;
   }
 
   /** Bounded facts from existing services: no environment, file contents or output beyond these. */
@@ -5709,6 +5896,7 @@ export class TerminalApp {
   private stop(exitCode: number): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.understanding.dispose();
     this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();

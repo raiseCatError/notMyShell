@@ -155,7 +155,9 @@ test('distribution: the npm package ships the catalog, its provenance, the upstr
   const [pack] = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--json', '--ignore-scripts'], {encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore']})) as Array<{files: Array<{path: string}>}>;
   const files = new Set(pack!.files.map(file => file.path));
   for (const path of ['assets/completion/catalog.bin', 'assets/completion/catalog-index.json', 'assets/completion/provenance.json',
-    'licenses/withfig-autocomplete-MIT.txt', 'licenses/carapace-bin-MIT.txt', 'src/shell/BundledCatalog.ts']) assert.ok(files.has(path), `${path} is packed`);
+    'licenses/withfig-autocomplete-MIT.txt', 'licenses/carapace-bin-MIT.txt', 'src/shell/BundledCatalog.ts',
+    'assets/understanding/recommended-model.json', 'src/modelService.ts', 'src/understanding/ModelService.ts']) assert.ok(files.has(path), `${path} is packed`);
+  assert.ok(![...files].some(path => /\.(?:gguf|safetensors|bin)$/u.test(path) && !path.startsWith('assets/completion/')), 'no model weights are ever packaged');
   // The runtime resolves the catalog relative to its own module, two levels up from dist/shell or src/shell.
   assert.equal(BUNDLED_CATALOG_DIRECTORY, join(import.meta.dirname, '..', 'assets', 'completion'));
 });

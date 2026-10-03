@@ -23,14 +23,19 @@ export interface WelcomeSnapshot {
   cwd: string;
   /** The backend NMSh manages for this presentation (never $SHELL). */
   shell: ShellId;
+  /**
+   * Local understanding as it was when this presentation began (e.g. "Off",
+   * "Auto · model idle · Ask"). Snapshotted: later model loads never rewrite it.
+   */
+  understanding?: string;
   /** External welcome captured once at session start; absent means Vespyr. */
   provider?: Exclude<WelcomeProviderId, 'vespyr' | 'none'>;
   /** SGR-only rows the external provider printed. */
   captured?: string[];
 }
 
-export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shell: ShellId = 'zsh'): WelcomeSnapshot {
-  return {identity: {...identity}, cwd, shell};
+export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shell: ShellId = 'zsh', understanding?: string): WelcomeSnapshot {
+  return {identity: {...identity}, cwd, shell, ...(understanding ? {understanding} : {})};
 }
 
 function safe(value: string): string {
@@ -151,7 +156,8 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
       ...(identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
     ],
     [{text: shortCwd(snapshot.cwd), color: UI_COLORS.secondary}],
-    [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}}],
+    [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}},
+      ...(snapshot.understanding ? [{text: ` · Local understanding ${safe(snapshot.understanding)}`, color: UI_COLORS.subtle}] : [])],
   ];
   const gutter = 2;
   const cat = width >= 42;

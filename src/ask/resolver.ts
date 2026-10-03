@@ -375,7 +375,8 @@ function resolveFile(raw: string, text: string, context: AskContext): AskOutcome
 
 function resolveWorktree(text: string, context: AskContext, id: CapabilityId): AskOutcome | {path: string} | undefined {
   const others = context.worktrees.filter(item => !item.current);
-  const named = context.worktrees.find(item => text.includes(basename(item.path).toLowerCase()) || (item.branch && text.includes(item.branch.toLowerCase())));
+  const word = (value: string) => new RegExp(`(?:^|[\\s/])${value.toLowerCase().replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}(?:$|[\\s/])`, 'u').test(text);
+  const named = context.worktrees.find(item => !item.current && (word(basename(item.path)) || (item.branch && word(item.branch))));
   if (named) return {path: named.path};
   if (!/\bother\b/u.test(text) && !others.length) return undefined;
   if (others.length === 1) return {path: others[0]!.path};
@@ -463,4 +464,39 @@ export function pickOption(reply: string, options: readonly AskOption[]): number
 export function filterOptions(filter: string, options: readonly AskOption[]): number[] {
   const words = normalizeRequest(filter).split(/\s+/u).filter(Boolean);
   return options.flatMap((option, index) => words.every(word => option.label.toLowerCase().includes(word)) ? [index] : []);
+}
+
+/** What the optional model returned, already strictly validated (see understanding/tasks.ts). */
+export interface ValidatedInterpretation {
+  capability: CapabilityId | null;
+  confidence: number;
+  arguments: Partial<Record<'shell' | 'target' | 'worktree' | 'when' | 'query' | 'provider', string>>;
+}
+
+export const MODEL_CONFIDENCE = 0.6;
+
+/**
+ * Turn a model interpretation into an outcome without trusting it with
+ * objects: the capability must exist, and its arguments are words that the
+ * deterministic builders resolve against facts (files that exist, real
+ * worktrees, sessions, providers). A model cannot introduce a path, session
+ * or command; a low-confidence or empty interpretation yields undefined, so
+ * the caller keeps the deterministic outcome.
+ */
+export function resolveWithInterpretation(raw: string, interpretation: ValidatedInterpretation, context: AskContext, state: ResolveState = {}): AskOutcome | undefined {
+  const id = interpretation.capability;
+  if (!id || interpretation.confidence < MODEL_CONFIDENCE || !CAPABILITIES.some(capability => capability.id === id)) return undefined;
+  const args = interpretation.arguments;
+  const words = [args.shell, args.worktree ? `worktree ${args.worktree}` : undefined, args.when, args.provider].filter(Boolean).join(' ');
+  const text = normalizeRequest(`${raw} ${words}`);
+  const phrased = id === 'file.open' && args.target ? `open ${args.target}`
+    : id === 'transcript.find' && args.query ? `find ${args.query}`
+    : id === 'transcript.filter' && args.query ? `only show lines with ${args.query}`
+    : raw;
+  const outcome = build(id, text, context, phrased);
+  if (outcome.kind === 'proposal' || outcome.kind === 'answer') {
+    const option = {key: outcome.capability, label: ''};
+    if (state.rejected?.has(option.key)) return undefined;
+  }
+  return outcome;
 }

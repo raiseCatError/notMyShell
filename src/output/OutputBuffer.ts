@@ -388,7 +388,22 @@ export class OutputBuffer {
     const cmd = this.completed[commandIndex];
     if (cmd) {
       cmd.expanded = !cmd.expanded;
+      this.userToggled.add(cmd.startId);
     }
+  }
+
+  /** Blocks the user expanded or collapsed themselves; advisory hints never override them. */
+  private readonly userToggled = new Set<number>();
+
+  /**
+   * Advisory folding from a late semantic hint: only for a block the user has
+   * not touched. Presentation only; the output itself is never changed.
+   */
+  applyAdvisoryFold(startId: number, folded: boolean): boolean {
+    const record = this.completed.find(item => item.startId === startId);
+    if (!record || this.userToggled.has(startId) || record.activities?.length || record.expanded === !folded) return false;
+    record.expanded = !folded;
+    return true;
   }
 
   toggleActivityExpanded(activityId: string): void {

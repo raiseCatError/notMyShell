@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "model": "Qwen3 0.6B",
+  "upstream": {
+    "repository": "https://huggingface.co/Qwen/Qwen3-0.6B",
+    "license": "Apache-2.0"
+  },
+  "quantization": "Q4_K_M",
+  "artifact": null,
+  "note": "No artifact is pinned in this build. A maintainer pins one with scripts/local-model/pin-model.mjs, which records the exact revision, file, byte size and sha256 from the publisher. Until then NMSh offers compatible models already on this machine and does not download."
+}

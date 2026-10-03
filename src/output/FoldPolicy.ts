@@ -147,3 +147,30 @@ export function shouldAutoFold(mode: OutputFoldingMode, input: FoldInput): boole
 export function foldWindow(lineCount: number): {head: number; tail: number} {
   return lineCount >= FOLD_HEAD_LINES + FOLD_TAIL_LINES + 5 ? {head: FOLD_HEAD_LINES, tail: FOLD_TAIL_LINES} : {head: 0, tail: 0};
 }
+
+/** Advisory semantic hint from optional local understanding: never content, only a classification. */
+export interface SemanticFoldHint {kind: 'noise' | 'progress' | 'test-detail' | 'summary' | 'warning' | 'error' | 'mixed'; confidence: number}
+
+/** Deterministic decisions close to the threshold are the only ones a hint may tip. */
+export const HINT_BAND = {low: -1, high: FOLD_THRESHOLD} as const;
+
+export function hintEligible(mode: OutputFoldingMode, input: FoldInput): boolean {
+  if (mode !== 'smart' || input.exitCode !== 0 || !isFoldable(input.lineCount)) return false;
+  const decision = evaluateFold(input);
+  return decision.score >= HINT_BAND.low && decision.score < HINT_BAND.high + 2 && !decision.reasons.some(reason => /error-like|stack trace|compiler|diff-like/u.test(reason));
+}
+
+/**
+ * Applying a hint to the deterministic decision. Biased toward keeping output
+ * visible: an error or warning hint always expands; a noise hint folds only a
+ * borderline block with no failure signals and only when confident. A hint
+ * never changes content, only whether the block starts collapsed.
+ */
+export function applyFoldHint(input: FoldInput, hint: SemanticFoldHint | undefined): boolean {
+  const decision = evaluateFold(input);
+  if (!hint) return decision.fold;
+  if (decision.reasons.some(reason => /error-like|stack trace|compiler|diff-like/u.test(reason))) return false;
+  if ((hint.kind === 'error' || hint.kind === 'warning' || hint.kind === 'summary') && hint.confidence >= 0.5) return false;
+  if ((hint.kind === 'noise' || hint.kind === 'progress' || hint.kind === 'test-detail') && hint.confidence >= 0.75 && decision.score >= HINT_BAND.low) return true;
+  return decision.fold;
+}

@@ -45,16 +45,16 @@ test('app hot swap: zsh → fish → bash → zsh keeps draft, transcript and cw
       await app['switchShell']('bash', '/shell bash');
       assert.equal(app['shellId'], 'fish');
       assert.match(transcript(app), /still starting/u);
-      await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady);
+      await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady && !app['switchedShellStarting']);
       pids.push(shellPid());
       await app['switchShell']('zsh', '/shell zsh');
-      await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady && shellPid() !== pids.at(-1));
+      await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady && !app['switchedShellStarting'] && shellPid() !== pids.at(-1));
       pids.push(shellPid());
       for (const target of ['fish', 'bash', 'zsh'] as const) {
         await app['switchShell'](target, `/shell ${target}`);
         assert.equal(app['shellId'], target);
         await until(() => alive(shellPid()) && shellPid() !== pids.at(-1));
-        await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady);
+        await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady && !app['switchedShellStarting']);
         await until(() => !alive(pids.at(-1)!), 5000);
         pids.push(shellPid());
         assert.equal(app['editor'].text, 'git status --short', 'the unsent draft survives every switch');
