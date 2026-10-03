@@ -19,7 +19,9 @@ covers only the continuation.
 | 3 | Live completion notifications | #106 | #246 `feature/v08-command-notifications` | `7919fdf` |
 | 4 | Test temp lifecycle | #208 | #247 `test/208-tmpdir-hygiene` | `573ca03` |
 | 5 | Inspector cursor-role hardening | #242 | #248 `fix/v08-continuation-hardening` | `8e61137` |
-| 6 | This acceptance and additive QA | — | `docs/v08-continuation-acceptance` | See PR head |
+| 6 | Architecture and additive QA snapshot | — | #249 `docs/v08-continuation-acceptance` | `0de4805` |
+| 7 | Fixture writer ownership barrier | #208 | #250 `test/208-fixture-writers` | `b1ab55e` |
+| 8 | Final acceptance evidence | — | `docs/v08-continuation-final-verification` | See PR head |
 
 Each PR targets its immediate predecessor branch; #244 targets #241's branch.
 Review/integrate in this order, after the original stack. Keep all branches
@@ -130,7 +132,14 @@ unverified: osascript exit 0 does not prove Notification Center presentation.
 Direct TerminalApp tests already had teardown; current leakage was reproduced
 from intentional SIGKILL fixtures sharing host TMPDIR. `LiveSandbox` now owns
 its nested TMPDIR and awaits tracked frontend exits, including external PTYs.
-Completed wait-exit timers are cleared. Production lifecycle is unchanged.
+Completed wait-exit timers are cleared. #250 adds a test-only ownership barrier
+using the suite's existing lsof tool: no process may hold the sandbox subtree
+(including cwd references) when removal starts. This covers mux frontends
+finishing journal writes after the outer PTY exits. A regression starts an
+untracked late writer and proves it exits successfully before directory
+removal. The barrier also exposed a background sleep left by the live-status
+fixture; that fixture now records and kills its own background PID. Production
+lifecycle is unchanged.
 Normal stop/kill cleanup is tested without a sweep; a killed frontend's temp
 directory is explicitly observed to remain until fixture disposal.
 
@@ -139,21 +148,24 @@ Unix socket paths small. Root-level semantic/zsh leftovers fail the run and
 are reported **before** cleanup. Only that run's root is removed; pre-existing
 host artifacts are untouched. Regression fixtures prove leak detection itself.
 Two repeated full suites passed **732/732**, with host artifact count **2079
-before and after**, zero additions and zero private roots remaining. A final
-full run also passed 732/732. Build, typecheck and diff check passed. Local full
+before and after**, zero additions and zero private roots remaining. The final
+writer-ownership follow-up passes **733/733**. Build, typecheck and diff check
+passed. Local full
 PTY/socket suites required sandbox escalation; inherited NO_COLOR was unset
 for existing ANSI assertion tests. Dedicated NO_COLOR tests remain present.
 
 CI is explicitly workflow-dispatched because these PR bases are stacked
-branches. Both Node 22 and Node 26 pass on the inspector, notification and
-cumulative hygiene heads. Earlier block-head Node 22 attempts failed in
-existing fixtures: GNU screen teardown raced a journal write (`ENOTEMPTY`),
-`/resume` arrived before the preceding prompt, and idle Ctrl+Z input arrived
-before completion. These were not block-action assertion failures. Test hygiene
-awaits fixture exit and synchronizes the two input sequences on observed
-completion; its cumulative matrix is green. The standalone block-head failed
-run remains visible and is not described as green. Check the final acceptance
-PR's dispatched matrix and required checks before integration.
+branches. Node 22 and Node 26 passed on #244, #246, #247 and the #249 acceptance
+snapshot. Historical #245 Node 22 attempts failed in existing fixtures: GNU
+screen teardown raced a journal write (`ENOTEMPTY`), `/resume` arrived before
+the preceding prompt, and idle Ctrl+Z input arrived before completion. These
+were not block-action assertion failures. #247 awaits fixture exit and
+synchronizes the two input sequences on observed completion. #248 Node 26
+passed, but Node 22 exposed the remaining GNU screen writer race after the
+outer PTY had exited. #250 addresses that gap with the ownership barrier and
+explicit background-job cleanup; it has its own dispatched matrix. Historical
+failed runs are retained and are not described as green. The final acceptance
+matrix and current required checks must pass before integration.
 
 Informational measurements on local Node 26.8.1 / macOS arm64: shared benchmark
 completion/filter-500 p95 0.11ms; ScreenPlan p95 0.02ms or less; the existing

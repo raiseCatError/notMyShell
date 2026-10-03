@@ -5,7 +5,7 @@ import {dirname} from 'node:path';
 export type BacklogEvent =
   | {kind: 'output'; seq: number; at: number; data: string}
   | {kind: 'exec'; seq: number; at: number; command: string; historyAllowed?: number}
-  | {kind: 'prompt'; seq: number; at: number; exitCode: number; cwd: string};
+  | {kind: 'prompt'; seq: number; at: number; exitCode: number; cwd: string; knowledge?: string};
 
 /** Non-event spool records: journal acknowledgements, truncation and the shell's end. */
 type SpoolRecord = BacklogEvent
@@ -23,7 +23,7 @@ export interface BacklogLimits {
 export const DEFAULT_BACKLOG_LIMITS: BacklogLimits = {memoryBytes: 1024 * 1024, spoolBytes: 64 * 1024 * 1024};
 
 function eventBytes(event: BacklogEvent): number {
-  return event.kind === 'output' ? event.data.length : event.kind === 'exec' ? event.command.length : event.cwd.length;
+  return event.kind === 'output' ? event.data.length : event.kind === 'exec' ? event.command.length : event.cwd.length + (event.knowledge?.length ?? 0);
 }
 
 function validEvent(value: unknown): value is SpoolRecord {
@@ -33,7 +33,8 @@ function validEvent(value: unknown): value is SpoolRecord {
   switch (record.kind) {
     case 'output': return int('seq') && int('at') && typeof record.data === 'string';
     case 'exec': return int('seq') && int('at') && typeof record.command === 'string';
-    case 'prompt': return int('seq') && int('at') && int('exitCode') && typeof record.cwd === 'string';
+    case 'prompt': return int('seq') && int('at') && int('exitCode') && typeof record.cwd === 'string'
+      && (record.knowledge === undefined || typeof record.knowledge === 'string' && Buffer.byteLength(record.knowledge) <= 65536);
     case 'ack': return int('seq') && typeof record.journalId === 'string';
     case 'truncated': return int('bytes');
     case 'exit': return int('exitCode') && int('at');
