@@ -1,4 +1,5 @@
 export type Key =
+  | {kind: 'focusIn' | 'focusOut'}
   | {kind: 'text'; value: string}
   | {kind: 'paste'; value: string}
   | {kind: 'deleteWord' | 'deleteLineBefore' | 'deleteLineAfter' | 'wordLeft' | 'wordRight' | 'selectWordLeft' | 'selectWordRight'} 
@@ -9,6 +10,8 @@ export type Key =
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  ['\u001B[I', 'focusIn'],
+  ['\u001B[O', 'focusOut'],
   // Kitty keyboard protocol (CSI > 1 u, enabled by TerminalRenderer on entry;
   // Ghostty honors it) encodes Escape as its functional key code (27) rather
   // than a lone raw ESC byte. Without these, Escape falls through to the

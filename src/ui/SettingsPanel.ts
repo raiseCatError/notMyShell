@@ -1,3 +1,4 @@
+import {TREATMENT_PRESETS, TREATMENT_GEOMETRIES, TREATMENT_MOTIONS} from '../chroma/treatment.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
 import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
@@ -8,11 +9,14 @@ import {
   type GlyphStyle,
   type HistoryColorMode,
   type PromptConfiguration,
+  type NotificationSettings,
   type TranscriptAppearance,
 } from '../prompt/configuration.js';
 import {providerLabel} from '../prompt/PromptPanel.js';
 import {welcomeProvider} from '../output/WelcomeProviders.js';
 import {PROMPT_STYLES, PROMPT_STYLE_LABELS} from '../prompt/powerline.js';
+import {NAVIGATION_PROVIDERS} from '../shell/DirectoryService.js';
+import {PICKER_PROVIDERS} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foregroundOf, status, theme} from '../chroma/chroma.js';
@@ -60,7 +64,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 }
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
-export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history';
+export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools';
 
 interface SettingsRowBase {
   id: string;
@@ -81,6 +85,8 @@ export type SettingsRow = SettingsRowBase & (
     select: (config: PromptConfiguration, index: number) => PromptConfiguration}
   | {control: 'boolean'; get: (config: PromptConfiguration) => boolean;
     set: (config: PromptConfiguration, value: boolean) => PromptConfiguration}
+  | {control: 'stepper'; steps: readonly number[]; format: (value: number) => string;
+    get: (config: PromptConfiguration) => number; set: (config: PromptConfiguration, value: number) => PromptConfiguration}
   | {control: 'child'; destination: SettingsDestination; value?: (config: PromptConfiguration) => string}
   | {control: 'action'; actionLabel: string; destination: SettingsDestination}
 );
@@ -101,7 +107,28 @@ const GLYPH_STYLES: readonly GlyphStyle[] = ['nerd', 'safe'];
 const DENSITIES: readonly DividerDensity[] = ['normal', 'compact'];
 const COLOR_MODES: readonly HistoryColorMode[] = ['followPrompt', 'theme', 'grayscale'];
 
+function withNotifications(config: PromptConfiguration, patch: Partial<NotificationSettings>): PromptConfiguration {
+  return {...config, notifications: {...config.notifications, ...patch}};
+}
+
+/** Step to the next preset above (or below) the current value, wrapping at the ends. */
+export function stepPreset(steps: readonly number[], current: number, delta: -1 | 1): number {
+  if (delta === 1) return steps.find(step => step > current) ?? steps[0]!;
+  return [...steps].reverse().find(step => step < current) ?? steps[steps.length - 1]!;
+}
+
+export function formatThreshold(seconds: number): string {
+  if (seconds <= 60) return `${seconds}s`;
+  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
+  return seconds % 60 === 0 ? `${seconds / 60}m` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
 /** Config: the flat list of real, inline-editable values (plus the prompt provider, edited in its panel). */
+const NOTIFICATION_CATEGORY = 'Command notifications';
+const ON_OFF = [true, false] as const;
+const FOCUS_POLICIES = ['suppress', 'notify'] as const;
+const NOTIFICATION_THRESHOLD_STEPS = [5, 10, 30, 60, 120, 300, 600, 1800, 3600];
+
 export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
@@ -152,8 +179,47 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     value: config => SUGGESTION_PROVIDERS.find(provider => provider.id === config.suggestions)?.label ?? config.suggestions},
   {id: 'history', label: 'Command history provider', description: 'Native journals and zsh history, or explicit local read-only Atuin', category: 'History',
     control: 'child', destination: 'history', value: config => HISTORY_PROVIDERS.find(provider => provider.id === config.history)?.label ?? config.history},
+  {id: 'picker', label: 'Picker provider', description: 'Native composer search, fzf, or Television; selections never execute', category: 'History',
+    control: 'child', destination: 'picker', value: config => PICKER_PROVIDERS.find(provider => provider.id === config.picker)?.label ?? config.picker},
+  {id: 'navigation', label: 'Directory navigation', description: 'Native command-history frecency or read-only zoxide snapshot', category: 'History',
+    control: 'child', destination: 'navigation', value: config => NAVIGATION_PROVIDERS.find(provider => provider.id === config.navigation)?.label ?? config.navigation},
   {id: 'suggestionsOnEmpty', level: 'advanced', label: 'Empty-prompt prediction', description: 'Suggest the likely next command before typing', category: 'Suggestions',
     control: 'boolean', get: config => config.suggestionsOnEmpty, set: (config, suggestionsOnEmpty) => ({...config, suggestionsOnEmpty})},
+  enumRow({id: 'notifications', label: 'Notifications', description: 'Notify when a long-running command finishes', category: NOTIFICATION_CATEGORY,
+    values: ON_OFF, labels: ['On', 'Off'],
+    get: config => config.notifications.enabled, set: (config, enabled) => withNotifications(config, {enabled})}),
+  {id: 'notifyAfter', label: 'Notify after', description: 'Minimum command duration before notifying', category: NOTIFICATION_CATEGORY,
+    control: 'stepper', steps: NOTIFICATION_THRESHOLD_STEPS, format: formatThreshold,
+    get: config => config.notifications.thresholdSeconds,
+    set: (config, thresholdSeconds) => withNotifications(config, {thresholdSeconds})},
+  enumRow({id: 'notifyOnSuccess', label: 'On success', description: 'Notify when a long command exits 0', category: NOTIFICATION_CATEGORY,
+    values: ON_OFF, labels: ['On', 'Off'],
+    get: config => config.notifications.onSuccess, set: (config, onSuccess) => withNotifications(config, {onSuccess})}),
+  enumRow({id: 'notifyOnFailure', label: 'On failure', description: 'Notify when a long command fails or is interrupted', category: NOTIFICATION_CATEGORY,
+    values: ON_OFF, labels: ['On', 'Off'],
+    get: config => config.notifications.onFailure, set: (config, onFailure) => withNotifications(config, {onFailure})}),
+  enumRow({id: 'notifyWhenFocused', label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: NOTIFICATION_CATEGORY,
+    values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
+    get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
+  {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
+  enumRow({id: 'treatmentPreset', label: 'Visual treatment', description: 'Native Minimal/Outline identity, history rules and Settings frame; external prompts retain their colors', category: 'Presentation',
+    values: TREATMENT_PRESETS, labels: ['Off', 'Lavender', 'Aurora', 'Theme', 'Custom'],
+    get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
+  enumRow({id: 'treatmentGeometry', level: 'advanced', label: 'Gradient geometry', description: 'Independent gradient direction', category: 'Presentation',
+    values: TREATMENT_GEOMETRIES, labels: ['Left to right', 'Center outward', 'Outside inward'],
+    get: c => c.presentation.geometry, set: (c, geometry) => ({...c, presentation: {...c.presentation, geometry}})}),
+  enumRow({id: 'treatmentMotion', level: 'advanced', label: 'Decorative motion', description: 'Live separator motion; history stays static', category: 'Presentation',
+    values: TREATMENT_MOTIONS, labels: ['Static', 'Travel', 'Breathe'],
+    get: c => c.presentation.motion, set: (c, motion) => ({...c, presentation: {...c.presentation, motion}})}),
+  {id: 'treatmentIntensity', level: 'advanced', label: 'Treatment intensity', description: 'Blend with ordinary surface foreground', category: 'Presentation',
+    control: 'stepper', steps: [0, 0.25, 0.5, 0.65, 1], format: v => `${Math.round(v * 100)}%`,
+    get: c => c.presentation.intensity, set: (c, intensity) => ({...c, presentation: {...c.presentation, intensity}})},
+  {id: 'reducedMotion', label: 'Reduced Motion', description: 'Static colors; no decorative movement or effects', category: 'Presentation', control: 'boolean',
+    get: c => c.presentation.reducedMotion, set: (c, reducedMotion) => ({...c, presentation: {...c.presentation, reducedMotion}})},
+  {id: 'effectsOff', label: 'Effects Off', description: 'Disable decorative animation and transient effects', category: 'Presentation', control: 'boolean',
+    get: c => c.presentation.effectsOff, set: (c, effectsOff) => ({...c, presentation: {...c.presentation, effectsOff}})},
+
+
 ];
 
 /** Settings: entry points to the richer panels. Their values live in Config / the panels themselves. */
@@ -164,9 +230,11 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
   {id: 'transcript', label: 'Transcript', description: 'History colors, dividers, and prompt snapshots', category: 'Transcript', control: 'child', destination: 'transcript'},
   {id: 'syntax', label: 'Syntax', description: 'Editor highlighting and syntax colors', category: 'Syntax', control: 'child', destination: 'syntax'},
   {id: 'keyboard', label: 'Keyboard', description: 'Terminal key bindings', category: 'Keyboard', control: 'child', destination: 'keyboard'},
-  {id: 'welcome', label: 'Welcome', description: 'Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
+  {id: 'welcome', label: 'Welcome', description: 'Native, optional external fetch provider, or None', category: 'Welcome', control: 'child', destination: 'welcome'},
   {id: 'suggestionsPanel', label: 'Suggestions', description: 'Ghost-text prediction provider', category: 'Suggestions', control: 'child', destination: 'suggestions'},
   {id: 'layout', label: 'Layout', description: 'Preview and choose composer position and transcript presentation', category: 'Layout', control: 'child', destination: 'layout'},
+  {id: 'toolConfig', label: 'Tool configuration', description: 'Review supported Starship module changes', category: 'Tools', control: 'child', destination: 'toolConfig'},
+  {id: 'tools', label: 'Tools', description: 'Discover and manage optional shell tools', category: 'Tools', control: 'child', destination: 'tools'},
 ];
 
 /** Text cue (not color) that a value differs from its default. */
@@ -192,12 +260,13 @@ export function settingsItemCount(state: SettingsPanelState): number {
 }
 
 export function isInlineEditable(row: SettingsRow | undefined): boolean {
-  return row?.control === 'enum' || row?.control === 'boolean';
+  return row?.control === 'enum' || row?.control === 'boolean' || row?.control === 'stepper';
 }
 
 /** ←/→ on an enum or boolean row; undefined when the row has nothing to change inline. */
 export function adjustSettingsRow(row: SettingsRow, config: PromptConfiguration, delta: -1 | 1): PromptConfiguration | undefined {
   if (row.control === 'boolean') return row.set(config, toggleValue(row.get(config)));
+  if (row.control === 'stepper') return row.set(config, stepPreset(row.steps, row.get(config), delta));
   if (row.control !== 'enum') return undefined;
   return row.select(config, stepIndex(row.options.length, row.index(config), delta));
 }
@@ -210,6 +279,7 @@ export function toggleSettingsRow(row: SettingsRow, config: PromptConfiguration)
 /** True when an inline-editable row differs from the shipped default. */
 export function settingsRowChanged(row: SettingsRow, config: PromptConfiguration): boolean {
   if (row.control === 'enum') return row.index(config) !== row.index(DEFAULT_PROMPT_CONFIGURATION);
+  if (row.control === 'stepper') return row.get(config) !== row.get(DEFAULT_PROMPT_CONFIGURATION);
   if (row.control === 'boolean') return row.get(config) !== row.get(DEFAULT_PROMPT_CONFIGURATION);
   return false;
 }
@@ -222,6 +292,7 @@ export function settingsRowDefaultLabel(row: SettingsRow): string | undefined {
 /** Configuration with only this row reset to its default; undefined when the row has no inline value. */
 export function resetSettingsRow(row: SettingsRow, config: PromptConfiguration): PromptConfiguration | undefined {
   if (row.control === 'enum') return row.select(config, row.index(DEFAULT_PROMPT_CONFIGURATION));
+  if (row.control === 'stepper') return row.set(config, row.get(DEFAULT_PROMPT_CONFIGURATION));
   if (row.control === 'boolean') return row.set(config, row.get(DEFAULT_PROMPT_CONFIGURATION));
   return undefined;
 }
@@ -234,6 +305,7 @@ export function settingsRowDestination(row: SettingsRow): SettingsDestination | 
 export function settingsRowValue(row: SettingsRow, config: PromptConfiguration): string | undefined {
   switch (row.control) {
     case 'enum': return row.options[row.index(config)];
+    case 'stepper': return row.format(row.get(config));
     case 'boolean': return row.get(config) ? 'true' : 'false';
     case 'child': return row.value?.(config);
     case 'action': return row.actionLabel;
@@ -419,6 +491,6 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
       }
     } else body.push(`${MARGIN}  ${SUBTLE}No settings match "${query}"${RESET}`);
   }
-  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns);
+  const out = framePanel([...header, ...body, ...(tight ? [] : footer)], columns, config.presentation);
   return out.slice(0, Math.max(1, maxRows)).map(row => truncateAnsi(row, columns));
 }

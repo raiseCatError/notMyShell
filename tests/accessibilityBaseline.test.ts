@@ -13,20 +13,20 @@ function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T 
     for (const [name, value] of Object.entries(saved)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
   }
 }
-const CLEAN = {NO_COLOR: undefined, NMSH_COLOR: undefined, NMSH_REDUCED_MOTION: undefined, NMSH_DETERMINISTIC: undefined, TERM: 'xterm-256color'};
+const CLEAN = {NO_COLOR: undefined, NMSH_COLOR: undefined, NMSH_REDUCED_MOTION: undefined, NMSH_DETERMINISTIC: undefined, TERM: 'xterm-256color', TERM_PROGRAM: '', COLORTERM: '', GHOSTTY_RESOURCES_DIR: ''};
 
-test('color level only drops on explicit signals', () => {
-  assert.equal(colorLevel({TERM: 'xterm-256color'}), 'truecolor');
-  assert.equal(colorLevel({}), 'truecolor');
+test('color defaults follow conservative host capabilities; explicit settings win', () => {
+  assert.equal(colorLevel({TERM: 'xterm-256color'}), 'ansi256');
+  assert.equal(colorLevel({}), 'ansi16');
   assert.equal(colorLevel({NO_COLOR: '1'}), 'none');
-  assert.equal(colorLevel({NO_COLOR: ''}), 'truecolor');
+  assert.equal(colorLevel({NO_COLOR: ''}), 'ansi16');
   assert.equal(colorLevel({TERM: 'dumb'}), 'none');
   assert.equal(colorLevel({NO_COLOR: '1', NMSH_COLOR: 'truecolor'}), 'truecolor');
   assert.equal(colorLevel({NMSH_COLOR: 'none'}), 'none');
 });
 
 test('palette helpers emit no color escapes under NO_COLOR', () => {
-  withEnv({...CLEAN}, () => assert.match(foreground(UI_COLORS.accent), /^\u001B\[38;2;/u));
+  withEnv({...CLEAN}, () => assert.match(foreground(UI_COLORS.accent), /^\u001B\[38;5;/u));
   withEnv({...CLEAN, NO_COLOR: '1'}, () => {
     assert.equal(foreground(UI_COLORS.accent), '');
     assert.equal(background(UI_COLORS.accent), '');

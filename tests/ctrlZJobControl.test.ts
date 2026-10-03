@@ -25,14 +25,14 @@ async function jobControlThroughFrontend(mode: 'service' | 'in-process', ctrlZ: 
   try {
     const app = sandbox.launch();
     await app.waitFor(/❯/);
-    await app.run('echo MODE=$NMSH_SESSION_MODE', new RegExp(`MODE=${mode}`));
+    await app.run('echo MODE=$NMSH_SESSION_MODE', new RegExp(`MODE=${mode}[\\s\\S]*Completed`));
 
     // Idle composer: Ctrl+Z is ignored and leaves the draft intact.
     let mark = app.mark;
     app.pty.write('echo idle');
     app.pty.write(ctrlZ);
     app.pty.write('-kept\r');
-    await app.waitFor(/idle-kept/, mark);
+    await app.waitFor(/idle-kept[\s\S]*Completed/, mark);
 
     // Wait until the sleep is the terminal's foreground job before Ctrl+Z, instead of guessing a delay.
     const duration = uniqueSleep(`${ctrlZ.length}${mode.length}`);

@@ -1,3 +1,4 @@
+import {paintTreatment, type TreatmentSettings} from '../chroma/treatment.js';
 import {background, foreground, type RgbColor} from '../ui/palette.js';
 import {getCurrentGlyphMode, GLYPHS, powerlineShapeGlyphs, type PowerlineShape} from '../ui/glyphs.js';
 import {fadePromptColor} from './snapshot.js';
@@ -40,6 +41,7 @@ export function normalizePromptStyle(value: unknown): PromptStyle {
 }
 
 export interface PowerlineBlock {
+  treatment?: TreatmentSettings;
   /** Visual style; every block of one prompt carries the same one. Missing means Powerline. */
   style?: PromptStyle;
   text: string;
@@ -445,7 +447,8 @@ function renderTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | 
   const separator = ' '.repeat(style === 'minimal' ? Math.max(2, gap + 1) : Math.max(1, gap));
   const parts = modules.map(block => {
     const tone = foreground(textTone(block.background));
-    const text = block.compact ? (safe ? '*' : '●') : block.text;
+    const plain = block.compact ? (safe ? '*' : '●') : block.text;
+    const text = block.treatment ? paintTreatment(plain, block.treatment, 'native-identity', textTone(block.background)) : plain;
     return style === 'minimal'
       ? `${tone}${text}`
       : `${tone}${open}${pad}${text}${pad}${close}`;

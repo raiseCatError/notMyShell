@@ -5,6 +5,7 @@ import {renderCompletion} from '../src/shell/CompletionMenu.js';
 import {setIconStyle} from '../src/ui/glyphs.js';
 import {stripAnsi, displayWidth} from '../src/util/text.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
+import {parseConfiguredCompletions} from '../src/shell/ConfiguredCompletion.js';
 
 const context = {buffer: 'git ', cwd: '/'};
 const values = () => parseNativeCompletions('status -- working tree\nstash -- save changes\nshow -- objects\ncheckout -- branches', context);
@@ -37,6 +38,7 @@ test('menu shows descriptions, source groups, safe icons and degrades at narrow 
 function appForTest(): TerminalApp {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
+  app['context'].cwd = context.cwd;
   return app;
 }
 function cleanup(app: TerminalApp): void { app['stop'](0); app['session'].kill(); }
@@ -79,6 +81,31 @@ test('changed buffer clears old rows immediately and ABA requests cannot repaint
     assert.equal(app['shellSuggestions'].length, 4);
     app['editor'].clear(); app['editor'].insert('/history ');
     await app['fetchSuggestions']();
+    assert.deepEqual(app['shellSuggestions'], []);
+  } finally { cleanup(app); }
+});
+
+test('cursor and cwd changes reject old completion; configured insertion preserves tail/caret', async () => {
+  const app = appForTest();
+  const pending: Array<(items: ReturnType<typeof values>) => void> = [];
+  app['completionService'].suggest = () => new Promise(resolve => pending.push(resolve));
+  try {
+    app['editor'].insert('git s tail');
+    const first = app['fetchSuggestions']();
+    app['editor'].moveLeft();
+    const second = app['fetchSuggestions']();
+    pending[0]!(values()); await first;
+    assert.deepEqual(app['shellSuggestions'], []);
+    app['context'].cwd = '/other';
+    pending[1]!(values()); await second;
+    assert.deepEqual(app['shellSuggestions'], []);
+    const record = ['status', 'status', '', 'commands', '', '', 'argument'].join('\0') + '\0';
+    const [candidate] = parseConfiguredCompletions(record, {buffer: 'git s tail', cursor: 5, cwd: '/other'});
+    app['applySuggestion'](candidate!);
+    assert.equal(app['editor'].text, 'git status tail');
+    assert.equal(app['completionCursor'], 10);
+    app['shellSuggestions'] = [{...candidate!, context: {...candidate!.context, expiresAt: 1}}];
+    app['handleKey']({kind: 'complete'});
     assert.deepEqual(app['shellSuggestions'], []);
   } finally { cleanup(app); }
 });
