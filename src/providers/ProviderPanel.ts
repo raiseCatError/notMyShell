@@ -4,7 +4,7 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {installUnavailableReason, providerInstall, providerRowText, providerUsable, type ProviderDescriptor, type ProviderFamily, type ProviderInstall,
-  type ProviderStatus} from './providers.js';
+  type ProviderStatus, lifecycleNote} from './providers.js';
 
 const PRIMARY = foreground(UI_COLORS.primary);
 const SECONDARY = foreground(UI_COLORS.secondary);
@@ -82,6 +82,8 @@ export function renderProviderPanel(state: ProviderPanelState, columns: number, 
   const footer = [
     ...(missing ? ['', recipe ? `${SUBTLE}Not installed · Enter installs with ${recipe.label} after you confirm${RESET}`
       : `${SUBTLE}${installUnavailableReason(selected)}${RESET}`] : []),
+    ...(lifecycleNote(selected) ? ['', `${SUBTLE}${lifecycleNote(selected)}${RESET}`] : []),
+    ...(selected.kind === 'native' ? ['', `${SUBTLE}Built in · no installation required. External providers are optional; switch anytime.${RESET}`] : []),
     ...(selected.setup ? ['', `${SUBTLE}${selected.setup}${RESET}`] : []),
     ...(state.message ? ['', `${SECONDARY}${state.message}${RESET}`] : []),
     '', renderControls([['↑↓', 'preview'], ['Enter', 'use'], ['Esc', 'cancel']]),

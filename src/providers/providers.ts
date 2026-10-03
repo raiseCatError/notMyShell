@@ -28,6 +28,13 @@ export interface ProviderDescriptor<Id extends string = string> {
   versionArgs?: readonly string[];
   /** Upstream is archived; kept for compatibility, never recommended. */
   legacy?: boolean;
+  /**
+   * Curated upstream lifecycle, updated deliberately during NMSh release work
+   * (never discovered over the network). `legacy` implies Legacy / archived.
+   */
+  lifecycle?: ProviderLifecycle;
+  /** A maintained alternative named factually when this one is legacy. */
+  successor?: string;
   /** Offered only with explicit confirmation. Prefer `recipe`; a fixed `install` is used as given. */
   install?: ProviderInstall;
   /**
@@ -40,6 +47,25 @@ export interface ProviderDescriptor<Id extends string = string> {
   source?: string;
   /** One-line setup note shown while the provider is highlighted. */
   setup?: string;
+}
+
+export type ProviderLifecycle = 'active' | 'maintenance' | 'legacy';
+export const LIFECYCLE_LABELS: Record<ProviderLifecycle, string> = {active: 'Active', maintenance: 'Maintenance mode', legacy: 'Legacy / archived'};
+
+/** Curated lifecycle; Active when nothing says otherwise. */
+export function providerLifecycle(descriptor: Pick<ProviderDescriptor, 'legacy' | 'lifecycle'>): ProviderLifecycle {
+  return descriptor.legacy ? 'legacy' : descriptor.lifecycle ?? 'active';
+}
+
+/**
+ * A muted, factual lifecycle note, or undefined for active providers. It
+ * names a successor only for legacy providers and never switches anything.
+ */
+export function lifecycleNote(descriptor: Pick<ProviderDescriptor, 'legacy' | 'lifecycle' | 'successor'>): string | undefined {
+  const lifecycle = providerLifecycle(descriptor);
+  if (lifecycle === 'active') return undefined;
+  const successor = lifecycle === 'legacy' && descriptor.successor ? ` · ${descriptor.successor} is the recommended maintained alternative.` : '';
+  return `${LIFECYCLE_LABELS[lifecycle]}${successor}`;
 }
 
 export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy';

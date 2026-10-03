@@ -48,10 +48,11 @@ test('install needs a new confirmation; default cancel and failure preserve sett
 
 test('onboarding defaults to Skip; recommendations only browse; legacy config stays complete', () => {
   const state = createToolsPanel(new Set(), true);
-  assert.equal(state.onboarding, 2);
+  assert.equal(state.onboarding, 3);
   assert.equal(toolsKey(state, {kind: 'enter'}), 'close');
   const recommended = createToolsPanel(new Set(), true);
   toolsKey(recommended, {kind: 'down'});
+  assert.equal(recommended.onboarding, 0, 'wraps from Skip to Recommended');
   assert.equal(toolsKey(recommended, {kind: 'enter'}), 'finishOnboarding');
   assert.ok(visibleTools(recommended).every(tool => tool.recommended));
   assert.equal(recommended.task, undefined);
