@@ -4648,6 +4648,7 @@ export class TerminalApp {
 
   private async openDiff(command: string, left: string, right: string): Promise<void> {
     const report = (message: string, style: string) => { this.output.addFrontendInteraction(command, message, style); this.render(); };
+    if (!left || !right) return report('Usage: /open-diff <old-file> <new-file> (opens your editor\'s diff view)', INFO);
     const paths: string[] = [];
     for (const side of [left, right]) {
       const resolved = resolveLocation({path: side}, this.shellCwd);
