@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync} from 'node:fs';
+import {existsSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, statSync, symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {spawn, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {SessionPresetStore, presetCommands, presetNeedsAcknowledgement, PresetStartup, validatePreset} from '../src/session/SessionPresets.js';
 import {createPresetPanel, presetPanelKey, presetReviewRows, renderPresetPanel} from '../src/session/PresetPanel.js';
@@ -324,4 +324,75 @@ test('preset writes enforce the same byte limit as reads without making existing
     assert.equal(store.list().length,21);
     assert.throws(()=>validatePreset({name:'unicode',cwd:root,commands:Array.from({length:3},()=> 'echo '+ '界'.repeat(4000))}),/16 KiB/);
   } finally {rmSync(root,{recursive:true,force:true});}
+});
+
+test('competing stale recoverers cannot displace a writer paused inside its critical section', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'preset-recovery-race-'));
+  const lock = join(root, 'presets.json.lock');
+  writeFileSync(lock, '2147483647\n');
+  const entry = fileURLToPath(new URL('../src/session/SessionPresets.ts', import.meta.url));
+  const children: ReturnType<typeof spawn>[] = [];
+  const results: Promise<number | null>[] = [];
+  const launch = (role: string) => {
+    const source = `
+      import fs from 'node:fs';
+      import {syncBuiltinESMExports} from 'node:module';
+      const root = ${JSON.stringify(root)}, lock = ${JSON.stringify(lock)}, role = ${JSON.stringify(role)};
+      const wait = name => { const end = Date.now()+15000; while (!fs.existsSync(root+'/'+name)) {
+        if (Date.now()>end) throw new Error('gate timeout '+name);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,10);
+      }};
+      if (role === 'A') {
+        const read = fs.readFileSync, rename = fs.renameSync;
+        let paused = false;
+        fs.readFileSync = function(path, ...args) {
+          const value = read.call(this,path,...args);
+          if (String(path) === lock && !paused) { paused=true; fs.writeFileSync(root+'/observed',''); wait('resume'); }
+          return value;
+        };
+        fs.renameSync = function(from,to) {
+          const value = rename.call(this,from,to);
+          if (String(from) === lock) { fs.writeFileSync(root+'/displaced',''); wait('continue-A'); }
+          return value;
+        };
+        syncBuiltinESMExports();
+      }
+      const {SessionPresetStore} = await import(${JSON.stringify(entry)});
+      const store = new SessionPresetStore(root);
+      try {
+        if (role === 'B') store['mutate'](file => {
+          fs.writeFileSync(root+'/writer',''); wait('release');
+          file.presets.push({name:'B',cwd:root,commands:[]});
+        });
+        else store.create({name:role,cwd:root,commands:[]});
+        fs.writeFileSync(root+'/'+role+'-result','acquired');
+      } catch (error) { fs.writeFileSync(root+'/'+role+'-result',String(error)); }
+    `;
+    const child = spawn(process.execPath, ['--import=tsx', '--input-type=module', '-e', source], {stdio: ['ignore','ignore','pipe']});
+    children.push(child);
+    child.stderr!.on('data', chunk => process.stderr.write(chunk));
+    results.push(new Promise(resolve => child.once('exit', code => resolve(code))));
+  };
+  try {
+    launch('A');
+    await until(() => existsSync(join(root,'observed')), 10000, 'A observed stale owner');
+    launch('B');
+    await until(() => existsSync(join(root,'writer')), 10000, 'B owns critical section');
+    writeFileSync(join(root,'resume'), '');
+    await until(() => existsSync(join(root,'displaced')) || existsSync(join(root,'A-result')), 10000, 'A recovery result');
+    launch('C');
+    await until(() => existsSync(join(root,'C-result')), 10000, 'C acquisition result');
+    assert.match(readFileSync(join(root,'C-result'),'utf8'), /busy/, 'C cannot acquire while B writes');
+    assert.equal(readFileSync(lock,'utf8').trim(), String(children[1]!.pid), 'B still owns exact live lock');
+    assert.match(readFileSync(join(root,'A-result'),'utf8'), /busy/);
+    writeFileSync(join(root,'release'), '');
+    writeFileSync(join(root,'continue-A'), '');
+    assert.deepEqual(await Promise.all(results), [0, 0, 0]);
+    assert.deepEqual(new SessionPresetStore(root).list().map(p => p.name), ['B']);
+    new SessionPresetStore(root).create({name:'after',cwd:root,commands:[]});
+  } finally {
+    for (const child of children) if (child.exitCode === null) child.kill('SIGKILL');
+    await Promise.allSettled(results);
+    rmSync(root,{recursive:true,force:true});
+  }
 });

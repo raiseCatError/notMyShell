@@ -8,13 +8,14 @@ import {SemanticService} from '../src/shell/SemanticService.js';
 import {CompletionService} from '../src/shell/CompletionService.js';
 import {inspectCommand} from '../src/shell/CommandKnowledge.js';
 import {once} from 'node:events';
-import {mkdtempSync, mkdirSync, writeFileSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {SessionService} from '../src/session/SessionService.js';
 import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
 import {StreamBacklog, readSpool} from '../src/session/StreamBacklog.js';
 import {until} from './helpers/liveFrontend.js';
+import {TerminalApp} from '../src/app/TerminalApp.js';
 
 test('shell name metadata is bounded, ignores bodies, and preserves alias precedence', () => {
   const names = parseShellKnowledge('function fun\nalias ll\nfunction ll\nalias unsafe\u001b\nbody execute-me\n');
@@ -182,4 +183,49 @@ test('name snapshots survive spool replay and reattachment after prompt acknowle
     first?.detach(); second?.detach(); await service.close();
     rmSync(root, {recursive: true, force: true});
   }
+});
+
+test('an unresponsive semantic helper times out, removes its root and retains live positive knowledge', async () => {
+  const home = mkdtempSync(join(tmpdir(), 'nmsh-hung-semantic-'));
+  writeFileSync(join(home, '.zshrc'), 'while true; do sleep 1; done\n');
+  const previous = process.env.HOME; process.env.HOME = home;
+  const service = new SemanticService(home);
+  const helperRoot = service['zdotdir'];
+  try {
+    service.applyShellKnowledge('alias live_alias\ncomplete\n');
+    assert.equal(await service.classifyCommand('pending_unknown'), 'unknown');
+    assert.equal(service['child'].killed, true);
+    assert.equal(existsSync(helperRoot), false);
+    assert.equal(await service.classifyCommand('live_alias'), 'alias');
+  } finally {
+    service.kill();
+    if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;
+    rmSync(home, {recursive: true, force: true});
+  }
+});
+
+test('unavailable classification does not cause an uncached render microtask loop', async () => {
+  const app = new TerminalApp();
+  // This regression measures classifier-triggered redraws only. A real startup
+  // prompt may legitimately render while the assertion awaits its microtask.
+  app['session'].removeAllListeners();
+  app['session'].kill();
+  app['semanticService'].kill();
+  let requests = 0;
+  Object.defineProperty(app, 'fetchSuggestions', {value: async () => {}});
+  app['renderer'].render = () => {};
+  app['session'].resize = () => {};
+  app['semanticService'].cache.clear();
+  app['semanticService'].classifyCommand = async name => {
+    // Stop the old loop after three requests so the regression fails rather
+    // than starving the test runner's event loop forever.
+    if (++requests === 3) app['semanticService'].cache.set(name, 'unknown');
+    return 'unknown';
+  };
+  try {
+    app['editor'].insert('unavailable_classifier');
+    app['render']();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(requests, 1);
+  } finally { app['stop'](0); app['session'].kill(); }
 });

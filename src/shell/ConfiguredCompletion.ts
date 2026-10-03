@@ -1,3 +1,4 @@
+import {resolveZsh} from './zshExecutable.js';
 import {spawn, type ChildProcess} from 'node:child_process';
 import {mkdtempSync, writeFileSync, readFileSync, rmSync, existsSync, statSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -46,9 +47,15 @@ export function parseConfiguredCompletions(output: string, context: CompletionCo
     if (!raw || /[\u0000-\u001f\u007f-\u009f]/u.test(value) || seen.has(value)) continue;
     seen.add(value);
     // Quote the complete replacement, avoiding any dependence on plugin ZLE insertion.
-    const insertionValue = value.replace(/([^\p{L}\p{N}_./:,@%+\-])/gu, '\\$1');
+    let insertionValue = value.replace(/([^\p{L}\p{N}_./:,@%+\-])/gu, '\\$1');
     const kind = category === 'directory' ? 'directory' : category === 'file' ? 'file'
       : value.startsWith('-') ? 'option' : range.start === 0 ? 'command' : 'argument';
+    // Preserve only the user's explicit, unquoted HOME expansion. Quoted/escaped
+    // tildes and arbitrary completion values remain literal presentation data.
+    if ((kind === 'file' || kind === 'directory') && value.startsWith('~/')
+      && context.buffer.slice(range.start, range.end).startsWith('~/')) {
+      insertionValue = insertionValue.slice(1);
+    }
     const label = completionLabel(display);
     candidates.push({value, display: label, name: label, description: completionLabel(description),
       group: completionLabel(group), prefix, suffix, kind, source: 'zsh-configured', replacement: range,
@@ -88,7 +95,16 @@ export class ConfiguredCompletionSource implements CompletionSource {
       } catch { /* The helper may not have reached startup yet. */ }
     }
     if (child?.pid) {
-      try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already exited. */ }
+      const pid = child.pid;
+      // Let the zpty parent reap an inner shell even before its PID file exists.
+      const deadline = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* Already exited. */ }
+      }, 100);
+      child.once('close', () => {
+        clearTimeout(deadline);
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* Group already gone. */ }
+      });
+      try { process.kill(-pid, 'SIGTERM'); } catch { clearTimeout(deadline); }
     }
     this.wait?.resolve(false);
     this.wait = undefined;
@@ -117,18 +133,19 @@ export class ConfiguredCompletionSource implements CompletionSource {
   private async start(cwd: string, signal: AbortSignal): Promise<boolean> {
     this.reset();
     const env = {...(this.options.env ?? process.env)};
+    const shell = resolveZsh(env);
     const home = env.HOME ?? '';
     this.root = mkdtempSync(join(tmpdir(), 'nmsh-completion-'));
     const root = this.root;
     // Same HOME-based startup trust boundary as ShellSession. Suppress UI before sourcing.
-    writeFileSync(join(root, '.zshenv'), `print -r -- $$ > ${shellQuote(join(root, 'pid'))}\nunsetopt monitor\n[[ -f ${shellQuote(join(home, '.zshenv'))} ]] && source ${shellQuote(join(home, '.zshenv'))}\nZDOTDIR=${shellQuote(root)}\n`, {mode: 0o600});
-    writeFileSync(join(root, '.zshrc'), `unsetopt zle\nexport POWERLEVEL9K_DISABLE_PROMPT=true\nTERM=dumb\nif [[ -f ${shellQuote(join(home, '.zshrc'))} ]]; then\n ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshrc'))}\nfi\nsetopt noaliases\nbuiltin cd -- ${shellQuote(cwd)} || exit 1\nexport NMSH_COMPLETION_ROOT=${shellQuote(root)}\nbuiltin source ${shellQuote(script('configured-widget.zsh'))}\n`, {mode: 0o600});
+    writeFileSync(join(root, '.zshenv'), `print -r -- $$ > ${shellQuote(join(root, 'pid'))}\nunsetopt monitor\n[[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]] && source ${shellQuote(join(home, '.zshenv'))}\nZDOTDIR=${shellQuote(root)}\n`, {mode: 0o600});
+    writeFileSync(join(root, '.zshrc'), `unsetopt zle\nexport POWERLEVEL9K_DISABLE_PROMPT=true\nTERM=dumb\nif [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshrc'))} ]]; then\n ZDOTDIR=${shellQuote(home)} source ${shellQuote(join(home, '.zshrc'))}\nfi\nsetopt noaliases\nbuiltin cd -- ${shellQuote(cwd)} || exit 1\nexport NMSH_COMPLETION_ROOT=${shellQuote(root)}\nbuiltin source ${shellQuote(script('configured-widget.zsh'))}\n`, {mode: 0o600});
     delete env.TERM_PROGRAM;
     delete env.TERM_PROGRAM_VERSION;
     this.cwd = cwd;
     this.started = Date.now();
-    const child = spawn('/bin/zsh', ['-f', script('configured-completion.zsh')], {cwd, env: {...env,
-      TERM: 'dumb', ZDOTDIR: root, NMSH_COMPLETION_ROOT: root,
+    const child = spawn(shell, ['-f', script('configured-completion.zsh')], {cwd, env: {...env,
+      TERM: 'dumb', NMSH_ZSH_EXECUTABLE: shell, ZDOTDIR: root, NMSH_COMPLETION_ROOT: root,
       NMSH_COMPLETION_STARTUP_MS: String(Math.min(this.options.startupMs ?? 1500, 5000)),
       NMSH_COMPLETION_QUERY_MS: String(Math.min(this.options.queryMs ?? 300, 2000))}, detached: true, stdio: ['pipe', 'pipe', 'ignore']});
     this.child = child;
@@ -165,13 +182,17 @@ export class ConfiguredCompletionSource implements CompletionSource {
       if (signal.aborted || epoch !== this.epoch) return [];
       const root = this.root!;
       writeFileSync(join(root, 'buffer'), context.buffer, {mode: 0o600});
+      const range = completionWord(context)!;
+      writeFileSync(join(root, 'home-expansion'), context.buffer.slice(range.start, range.end).startsWith('~/') ? '1' : '0', {mode: 0o600});
       // zsh counts Unicode code points; NMSh context offsets are UTF-16.
       writeFileSync(join(root, 'cursor'), String([...context.buffer.slice(0, context.cursor ?? context.buffer.length)].length), {mode: 0o600});
       writeFileSync(join(root, 'results'), '', {mode: 0o600});
       rmSync(join(root, 'done'), {force: true});
       const id = ++this.sequence;
       if (!await this.expect(`DONE ${id}`, this.options.queryMs ?? 300, signal, () => this.child?.stdin!.write(`${id}\n`))) {
-        if (!signal.aborted) this.retryAfter = Date.now() + 5000;
+        // A slow warm query canceled by typing must not source executable config
+        // again on every subsequent keystroke. Native remains available meanwhile.
+        this.retryAfter = Date.now() + (signal.aborted ? 1000 : 5000);
         return [];
       }
       if (statSync(join(root, 'results')).size > MAX_BYTES) { this.reset(); return []; }

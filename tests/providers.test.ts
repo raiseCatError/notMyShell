@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {chmod, mkdtemp, rm, writeFile} from 'node:fs/promises';
+import {chmod, mkdtemp, rm, writeFile, readFile, access} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
@@ -15,6 +15,7 @@ import {
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, renderProviderPanel} from '../src/providers/ProviderPanel.js';
 import {PROMPT_PROVIDERS, providerLabel} from '../src/prompt/PromptPanel.js';
 import {stripAnsi} from '../src/util/text.js';
+import {until, processAlive} from './helpers/liveFrontend.js';
 
 type Id = 'native' | 'tool' | 'none';
 const PROVIDERS: readonly ProviderDescriptor<Id>[] = [
@@ -106,5 +107,28 @@ test('external cancellation is bounded and pre-aborted requests never launch', a
     const request = runExternal(join(path, 'nmsh-test-tool'), [], {signal: active.signal});
     active.abort();
     assert.deepEqual(await request, {ok: false, stdout: '', error: 'cancelled'});
+  });
+});
+
+test('graceful parent termination still kills TERM-ignoring group descendants', async () => {
+  await withTool(`trap 'exit 0' TERM
+(trap '' TERM; : > "$2"; exec sleep 20) >/dev/null 2>&1 &
+echo $! > "$1"
+while :; do sleep .05; done`, async path => {
+    const controller = new AbortController();
+    const pidfile = join(path, 'pid'); const ready = join(path, 'ready');
+    const request = runExternal(join(path, 'nmsh-test-tool'), [pidfile, ready], {signal: controller.signal, terminationGraceMs: 100});
+    let pid = 0;
+    try {
+      await until(async () => {
+        try { await access(ready); pid = Number(await readFile(pidfile, 'utf8')); return pid > 1; } catch { return false; }
+      }, 2000, 'TERM-ignoring descendant');
+      controller.abort();
+      assert.equal((await request).error, 'cancelled');
+      await until(() => !processAlive(pid), 2000, 'remaining provider group cleanup');
+    } finally {
+      controller.abort(); await request;
+      if (pid) { try { process.kill(pid, 'SIGKILL'); } catch { /* Already reaped. */ } }
+    }
   });
 });

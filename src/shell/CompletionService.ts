@@ -34,7 +34,7 @@ export class NativeCompletionSource implements CompletionSource {
       let result;
       try {
         result = await runExternal('zsh', ['-f', script, parent], {
-          cwd: context.cwd, env: {...process.env, NMSH_CAPTURE_ROOT: root}, signal, timeoutMs: 2000, maxBytes: 1024 * 1024,
+          cwd: context.cwd, env: {...process.env, NMSH_CAPTURE_ROOT: root}, signal, timeoutMs: 2000, maxBytes: 1024 * 1024, terminationGraceMs: 100,
         });
       } finally {
         // zpty children have their own process group; the outer group is insufficient.
