@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {copyFile, mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -21,6 +21,10 @@ try {
 }
 
 await mkdir(outputDirectory, {recursive: true});
+await mkdir(join(outputDirectory, 'shell'), {recursive: true});
+for (const name of ['capture.zsh', 'configured-completion.zsh', 'configured-widget.zsh']) {
+  await copyFile(join(root, 'src/shell', name), join(outputDirectory, 'shell', name));
+}
 await writeFile(join(outputDirectory, 'build-info.json'), `${JSON.stringify({
   version: typeof packageJson.version === 'string' ? packageJson.version : 'unknown',
   commit,

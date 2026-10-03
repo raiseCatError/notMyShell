@@ -7,6 +7,9 @@
 | **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
 | **Development branch** | `dev` |
 | **Next direction** | [v0.8.0 — Command Intelligence & Navigation](https://github.com/raiseCatError/notMyShell/milestone/8), in development |
+| **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), development-complete, unmerged; physical QA pending |
+| **Prior stacked milestone** | [v0.10.0 — Terminal Hosts & Compatibility](https://github.com/raiseCatError/notMyShell/milestone/10), development acceptance complete as an unmerged stack; [evidence and limitations](docs/testing/v010-acceptance.md), physical QA pending |
+| **Current stacked milestone** | [v0.13.0 — Portability & Platform Foundations](https://github.com/raiseCatError/notMyShell/milestone/13), Linux runtime/CI and Windows feasibility; unmerged, physical QA deferred |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -120,6 +123,42 @@ Native structured completion, command-level history, reusable optional pickers, 
 
 The earlier milestone #7 now represents unscheduled Discoverability & Integrations; its unrelated scope remains separate.
 
+The continuation's final acceptance head is [#251](https://github.com/raiseCatError/notMyShell/pull/251),
+`docs/v08-continuation-final-verification` at `2dfbf9c12c54ada8af364bc44db87bc70f0b77c0`.
+It includes command inspector, block actions, notifications and fixture hygiene.
+These remain implemented/unmerged with cumulative physical QA pending, not reopened backlog.
+
+## Stacked development — v0.9.0 Tools, Integrations & Workflows
+
+[Milestone #9](https://github.com/raiseCatError/notMyShell/milestone/9) adopts #9,
+#83, #153, #154, #176, #177 and #178. Research children #252 (supported config)
+and #253 (mise awareness) are also included. #176/#177/#178 moved from the
+unscheduled grouping; #179/#180 remain there. The stack consumes the pinned
+final v0.8 head without modifying or merging it; package version remains 0.7.0.
+
+Review order: #251 → #182 → #181 → #183 → #254 → #255 → #256 (#253)
+→ #257 (#153) → final acceptance on `docs/v09-final-acceptance`.
+Linguist identity, external welcome adapters, deterministic VHS tooling,
+supported Starship configuration, Tools discovery/install, consent-based optional
+mise awareness and new-live-session presets are implemented in the unmerged stack.
+The ENOSPC checkpoint was resumed and #255 local verification passed; it is ready
+for review. See the [final development record](docs/development/v0.9.0-final-acceptance.md)
+and [single additive QA checklist](docs/qa/v0.9.0-physical-qa.md).
+Physical QA remains pending, issues remain open, version remains 0.7.0, and v0.9
+has not shipped. No unrelated backlog or release preparation is included.
+
+## Stacked development — v0.13.0 Portability & Platform Foundations
+
+[Milestone #13](https://github.com/raiseCatError/notMyShell/milestone/13) contains
+Linux research #18, Windows research #19, Linux implementation #279 and
+portability hardening #281. Its frozen cumulative base is PR #278 at
+`cfc9c08a5fb7b5f3bc637400a59da7a714a58ae4`; lower published branches are unchanged.
+Review #278 → #280 (Linux baseline/CI) → #282 (portability hardening) → final
+v0.13 acceptance/docs PR. Every PR targets its immediate predecessor; no merge
+or release is authorized. Package and lockfile remain 0.7.0. Physical QA is
+intentionally deferred. Custom prompts #73, graphics #151, layout #79 and new
+shell backends are outside this milestone.
+
 ## Backlog — Research and Future Features
 
 These remain open and are not scheduled for a release.
@@ -128,13 +167,8 @@ These remain open and are not scheduled for a release.
 |---|---|
 | [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability |
 | [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins |
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and first-run setup |
 | [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules |
 | [#78](https://github.com/raiseCatError/notMyShell/issues/78) | Chroma: gradients, animated color treatments, and transient visual effects |
-| [#83](https://github.com/raiseCatError/notMyShell/issues/83) | Tool configuration center inside `/settings` |
-| [#84](https://github.com/raiseCatError/notMyShell/issues/84) | Command inspector |
-| [#85](https://github.com/raiseCatError/notMyShell/issues/85) | Interactive command/output block controls |
-| [#106](https://github.com/raiseCatError/notMyShell/issues/106) | Command completion notifications for long-running commands |
 
 zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
 
@@ -156,7 +190,7 @@ NMSh provides the surrounding interaction and presentation layer; tools such as 
 
 ## Longer Term — Shells and Platforms
 
-zsh remains the only first-class backend. ShellAdapter research and Linux/Windows investigations remain future work; multi-shell and those platform targets are not promised today.
+zsh remains the only first-class backend. v0.13 implements a Linux development baseline and researches Windows/ConPTY/WSL; it is not a public platform release. Native Windows and additional shell backends remain unsupported. See [Linux foundations](docs/architecture/v013-linux-foundations.md), [Windows feasibility](docs/architecture/v013-windows-feasibility.md), and [deferred portability QA](docs/testing/v013-physical-qa.md).
 
 | Issue | Title |
 |---|---|
