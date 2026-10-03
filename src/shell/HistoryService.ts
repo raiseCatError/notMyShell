@@ -45,8 +45,8 @@ export class HistoryService {
     this.entries = loaded.entries;
     this.status = {selected: provider, active: loaded.source === 'atuin' ? 'atuin' : 'native', detail: loaded.detail};
     this.index.clearImported();
-    this.entries.forEach(entry => this.index.add({...entry, id: 'id' in entry && typeof entry.id === 'string' ? entry.id
-      : historyId(loaded.source, `${entry.at ?? 0}:${entry.command}`), source: loaded.source}));
+    await indexImportedHistory(this.index, this.entries, loaded.source, request.signal);
+    if (generation !== this.generation || request.signal.aborted) return false;
     await this.loadJournals(generation);
     if (generation !== this.generation || request.signal.aborted) return false;
     this.index.all();
@@ -85,7 +85,11 @@ export class HistoryService {
       if (atuin) {
         const result = await runExternal(atuin, ['history', 'list', '--format', ATUIN_METADATA_FORMAT, '--print0', '--timezone', '+0'],
           {timeoutMs: 15000, maxBytes: 128 * 1024 * 1024, env: this.env, signal});
-        if (result.ok) return {entries: await parseAtuinMetadataInChunks(result.stdout), source: 'atuin'};
+        if (result.ok) {
+          const entries = await parseAtuinMetadataInChunks(result.stdout);
+          if (!result.stdout.trim() || entries.length || result.stdout.split('\0').some(record => record.startsWith('nmsh-v1\u001f')))
+            return {entries, source: 'atuin'};
+        }
         detail = `Atuin unavailable (${result.error ?? 'query failed'}); using Native`;
       } else detail = 'Atuin is not installed; using Native';
     }
@@ -103,6 +107,16 @@ export class HistoryService {
   /** Commands with whatever metadata the source had, oldest first. */
   getEntries(): readonly CommandEntry[] {
     return this.entries;
+  }
+}
+
+/** Hashing and indexing imports must yield too, not only source parsing. */
+export async function indexImportedHistory(index: HistoryIndex, entries: readonly CommandEntry[], source: 'zsh' | 'atuin', signal?: AbortSignal): Promise<void> {
+  for (let position = 0; position < entries.length; position++) {
+    if (signal?.aborted) return;
+    const entry = entries[position]!;
+    index.add({...entry, id: 'id' in entry && typeof entry.id === 'string' ? entry.id : historyId(source, `${entry.at ?? 0}:${entry.command}`), source});
+    if (position % 1024 === 1023) await new Promise<void>(resolve => setImmediate(resolve));
   }
 }
 
@@ -187,7 +201,7 @@ export function parseAtuinMetadata(output: string): HistoryEntry[] {
   return [...atuinMetadataEntries(output)].sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
 }
 
-async function parseAtuinMetadataInChunks(output: string): Promise<HistoryEntry[]> {
+export async function parseAtuinMetadataInChunks(output: string): Promise<HistoryEntry[]> {
   const entries: HistoryEntry[] = [];
   for (const entry of atuinMetadataEntries(output)) {
     entries.push(entry);

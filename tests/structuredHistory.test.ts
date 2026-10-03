@@ -41,7 +41,7 @@ test('deletion survives reload without storing commands; corrupt deletion metada
   try {
     const index = new HistoryIndex(file); await index.loadDeletions(); index.add(entry); await index.delete(entry.id);
     assert.deepEqual(await index.search(''), []);
-    assert.doesNotMatch(await readFile(file, 'utf8'), /git status|\/work/u);
+    assert.equal(await readFile(join(`${file}.d`, entry.id), 'utf8'), '');
     const restored = new HistoryIndex(file); await restored.loadDeletions(); restored.add(entry);
     assert.deepEqual(await restored.search(''), []);
     await writeFile(file, '{broken');
@@ -81,10 +81,10 @@ test('real zsh reports unexported HISTORY_IGNORE without changing hooks or execu
   shell.on('exec', (_command, allowed) => { flags.push(allowed); });
   try {
     await once(shell, 'prompt');
-    for (const command of ['echo public', 'echo secret', 'pwd']) {
+    for (const command of ['echo public', 'echo secret', 'pwd', ' echo private']) {
       const done = once(shell, 'prompt'); shell.submit(command); await done;
     }
-    assert.deepEqual(flags, [1, 0, 0]);
+    assert.deepEqual(flags, [1, 0, 0, 0]);
   } finally { shell.kill(); await rm(home, {recursive: true, force: true}); }
 });
 

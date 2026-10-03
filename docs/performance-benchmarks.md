@@ -52,3 +52,7 @@ Same macOS arm64 / Node 26.8.1 host, 20 samples after 3 warmups. Native aggregat
 | Cached fuzzy query from 100k history | 0.02 ms | 0.03 ms |
 
 These fixtures contain 80 unique directories. They measure native work, not private zoxide database latency or external picker rendering. zoxide queries use a bounded temporary database copy because upstream query sorts and saves its database.
+
+### History index import (v0.8 hardening)
+
+Hashing imported source identities and populating the native index: 5 samples after 1 warmup on the same host. 10k records: p50 8.16 ms, p95 19.02 ms; 100k: p50 107.08 ms, p95 121.41 ms. These are total wall times, with a yield every 1,024 records so the work is spread across event-loop turns. File I/O, source parsing and final sorting are separate. Warm bounded queries remain as measured above; an import is background work, not a keystroke query.
