@@ -180,6 +180,24 @@ export class KeyDecoder {
     this.keyBuffer = '';
   }
 
+  /**
+   * A lone ESC is held in case an escape sequence follows. Terminals send a
+   * whole sequence in one write, so a lone ESC still held after a short pause
+   * is the Escape key; the owner flushes it then. Otherwise it would be
+   * delivered only with the next keystroke (ESC then → became Escape + Right).
+   */
+  get pendingEscape(): boolean {
+    return this.pasteBuffer === undefined && this.keyBuffer === '\u001B';
+  }
+
+  /** Decodes whatever is held as complete keys (a held lone ESC becomes Escape). */
+  flush(): Key[] {
+    if (this.pasteBuffer !== undefined || !this.keyBuffer) return [];
+    const held = this.keyBuffer;
+    this.keyBuffer = '';
+    return decodeKeys(held);
+  }
+
   push(input: string): Key[] {
     const keys: Key[] = [];
     let remaining = this.keyBuffer + input;

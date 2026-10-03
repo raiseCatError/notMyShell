@@ -1,4 +1,4 @@
-import {fromOklch, hexColor, toOklch} from '../chroma/color.js';
+import {fromOklch, hexColor, parseHexColor, toOklch} from '../chroma/color.js';
 import type {Rgb} from '../chroma/escape.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import type {NativePaletteId} from '../prompt/configuration.js';
@@ -29,9 +29,15 @@ export interface UiChromeSettings {
   preset: ChromePreset;
   /** Used with preset `custom`; kept when another preset is chosen. */
   colors?: Record<UiThemeRole, string>;
+  /**
+   * Theme text: the active theme supplies NMSh-owned text tiers (primary,
+   * secondary, muted). Off keeps NMSh's neutral text. Separators, selection
+   * and semantic status colors keep their own roles either way.
+   */
+  themeText?: boolean;
 }
 
-export const DEFAULT_UI_CHROME: UiChromeSettings = {source: 'theme', preset: 'lavender'};
+export const DEFAULT_UI_CHROME: UiChromeSettings = {source: 'theme', preset: 'lavender', themeText: true};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -42,7 +48,7 @@ export function normalizeUiChrome(value: unknown): UiChromeSettings {
     ? Object.fromEntries(UI_THEME_ROLES.map(role => [role, (colorsValue[role] as string).toLowerCase()])) as Record<UiThemeRole, string> : undefined;
   const preset = CHROME_PRESETS.includes(v.preset as ChromePreset) ? v.preset as ChromePreset : 'lavender';
   return {source: CHROME_SOURCES.includes(v.source as ChromeSource) ? v.source as ChromeSource : 'theme',
-    preset: preset === 'custom' && !colors ? 'lavender' : preset, ...(colors ? {colors} : {})};
+    preset: preset === 'custom' && !colors ? 'lavender' : preset, ...(colors ? {colors} : {}), themeText: v.themeText !== false};
 }
 
 /** Neutral chrome: gray accents and rules; status colors keep their meaning. */
@@ -81,6 +87,18 @@ export function chromeFromColors(colors: Record<UiThemeRole, string>): UiThemeIn
     primary: colors.primary, secondary: colors.secondary, subtle: colors.subtle, selection: colors.selection};
 }
 
+/**
+ * Text tiers for a theme that has no dark-terminal text roles of its own
+ * (light variants, NMSh Native themes): readable light tones of the theme's
+ * accent hue, in a clear primary → secondary → muted hierarchy.
+ */
+export function derivedThemeText(accentHex: string): Pick<UiThemeInput, 'primary' | 'secondary' | 'subtle'> {
+  const lch = toOklch(parseHexColor(accentHex) ?? {red: 197, green: 185, blue: 232});
+  const neutral = lch.c < 0.03;
+  const at = (l: number, c: number) => hexColor(fromOklch({l, c: neutral ? 0 : c, h: lch.h}));
+  return {primary: at(0.93, 0.022), secondary: at(0.8, 0.04), subtle: at(0.64, 0.045)};
+}
+
 /** The chrome to apply for a configuration; undefined means the shipped NMSh chrome. */
 export function resolveChrome(chrome: UiChromeSettings, palette: NativePaletteId, accent: CatppuccinAccent, custom: CustomTheme | undefined): UiThemeInput | undefined {
   if (chrome.source === 'custom') {
@@ -88,7 +106,14 @@ export function resolveChrome(chrome: UiChromeSettings, palette: NativePaletteId
     if (chrome.preset === 'custom' && chrome.colors) return chromeFromColors(chrome.colors);
     return undefined;
   }
-  return uiThemeInput(palette, accent, custom) ?? nativeThemeChrome(palette);
+  const input = uiThemeInput(palette, accent, custom) ?? nativeThemeChrome(palette);
+  if (!input) return undefined;
+  if (chrome.themeText === false) {
+    // Theme text Off: NMSh's neutral text tiers; the theme still colors chrome roles.
+    const {primary: _primary, secondary: _secondary, subtle: _subtle, ...roles} = input;
+    return roles;
+  }
+  return input.primary ? input : {...input, ...derivedThemeText(input.accent)};
 }
 
 /** Editable starting colors for Custom chrome: whatever chrome is in effect now. */

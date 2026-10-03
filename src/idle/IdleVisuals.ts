@@ -1,8 +1,8 @@
 import type {Key} from '../terminal/keys.js';
 import type {IdleVisualSettings, PromptConfiguration} from '../prompt/configuration.js';
-import {IDLE_COLOR_SOURCES, IDLE_TIMEOUTS} from '../prompt/configuration.js';
+import {IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS} from '../prompt/configuration.js';
 import {PRESET_STOPS} from '../chroma/treatment.js';
-import {parseHexColor} from '../chroma/color.js';
+import {hexColor, parseHexColor} from '../chroma/color.js';
 import type {Rgb} from '../chroma/escape.js';
 import {themeChromaStops} from '../prompt/prompt.js';
 import {isDeterministicPresentation} from '../presentation/environment.js';
@@ -33,12 +33,17 @@ export function timeoutLabel(minutes: number): string {
 }
 
 /**
- * Follow Appearance: the active Chroma palette when Chroma is on, otherwise
- * the current theme's own colors. Current Theme always uses the theme.
+ * Follow Chroma / Theme: the active Chroma palette when Chroma is on,
+ * otherwise the current theme's own colors. Theme only always uses the
+ * theme. Custom uses the idle visuals' own stops.
  */
 export function idleStops(configuration: PromptConfiguration, source = configuration.idleVisuals.colorSource): Rgb[] {
   const presentation = configuration.presentation;
   const theme = () => themeChromaStops(configuration.nmsh.palette, configuration.nmsh.vibrance);
+  if (source === 'custom') {
+    const custom = configuration.idleVisuals.customStops.map(hex => parseHexColor(hex)).filter((color): color is Rgb => Boolean(color));
+    if (custom.length) return custom;
+  }
   if (source === 'theme' || presentation.preset === 'off' || presentation.preset === 'theme') return theme();
   const hexes = presentation.preset === 'custom' ? presentation.customStops : PRESET_STOPS[presentation.preset];
   const stops = hexes.map(hex => parseHexColor(hex)).filter((color): color is Rgb => Boolean(color));
@@ -96,23 +101,35 @@ export function createScreensaverPanel(now: number): ScreensaverPanelState {
   return {selected: 0, startedAt: now};
 }
 
-export type ScreensaverAction = {kind: 'close'} | {kind: 'start'} | {kind: 'change'; settings: IdleVisualSettings} | undefined;
+export type ScreensaverAction = {kind: 'close'} | {kind: 'start'} | {kind: 'editColors'} | {kind: 'change'; settings: IdleVisualSettings} | undefined;
+
+/** Choosing Custom starts from the colors in effect, so nothing jumps; existing custom stops are kept. */
+export function withIdleColorSource(configuration: PromptConfiguration, colorSource: IdleVisualSettings['colorSource']): IdleVisualSettings {
+  const settings = configuration.idleVisuals;
+  const customStops = colorSource === 'custom' && !settings.customStops.length
+    ? idleStops(configuration, 'appearance').slice(0, 8).map(hexColor) : settings.customStops;
+  return {...settings, colorSource, customStops: colorSource === 'custom' && customStops.length < 2 ? [...PRESET_STOPS.lavender] : customStops};
+}
 
 const cycle = <T>(values: readonly T[], value: T, delta: number): T => values[(values.indexOf(value) + delta + values.length) % values.length]!;
 
 /** ↑↓ rows, ←→ change (saved immediately, like Config rows), Enter on Start preview runs it full screen. */
-export function screensaverKey(state: ScreensaverPanelState, key: Key, settings: IdleVisualSettings): ScreensaverAction {
+export function screensaverKey(state: ScreensaverPanelState, key: Key, settings: IdleVisualSettings, configuration?: PromptConfiguration): ScreensaverAction {
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (key.kind === 'up') state.selected = (state.selected + ROWS.length - 1) % ROWS.length;
   else if (key.kind === 'down') state.selected = (state.selected + 1) % ROWS.length;
   else if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'p')) {
     if (ROWS[state.selected] === 'preview' || key.kind === 'text') return {kind: 'start'};
+    if (ROWS[state.selected] === 'color' && settings.colorSource === 'custom') return {kind: 'editColors'};
     state.selected = ROWS.indexOf('preview');
   } else if (key.kind === 'left' || key.kind === 'right') {
     const delta = key.kind === 'left' ? -1 : 1;
     switch (ROWS[state.selected]) {
       case 'mode': return {kind: 'change', settings: {...settings, mode: cycle(IDLE_MODES, settings.mode, delta)}};
-      case 'color': return {kind: 'change', settings: {...settings, colorSource: cycle(IDLE_COLOR_SOURCES, settings.colorSource, delta)}};
+      case 'color': {
+        const colorSource = cycle(IDLE_COLOR_SOURCES, settings.colorSource, delta);
+        return {kind: 'change', settings: configuration ? withIdleColorSource({...configuration, idleVisuals: settings}, colorSource) : {...settings, colorSource}};
+      }
       case 'timeout': return {kind: 'change', settings: {...settings, timeout: cycle(IDLE_TIMEOUTS, settings.timeout, delta)}};
       default: return undefined;
     }
@@ -140,7 +157,7 @@ export function renderScreensaverPanel(state: ScreensaverPanelState, columns: nu
     return `  ${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${label.padEnd(14)}${reset}${selected && index < 3 ? `${accent}‹ ${value} ›` : `${secondary}${value}`}${reset}`;
   };
   out.push(row(0, 'Mode', IDLE_MODE_LABELS[settings.mode]));
-  out.push(row(1, 'Colors', settings.colorSource === 'appearance' ? 'Follow Appearance' : 'Current Theme'));
+  out.push(row(1, 'Colors', `${IDLE_COLOR_LABELS[settings.colorSource]}${settings.colorSource === 'custom' ? ' · Enter edits' : ''}`));
   out.push(row(2, 'Start after', timeoutLabel(settings.timeout)));
   out.push(row(3, 'Start preview', 'Enter · any key or mouse stops it'));
   out.push('', `  ${subtle}${IDLE_MODE_NOTES[settings.mode]}${reset}`);

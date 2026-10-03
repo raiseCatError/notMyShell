@@ -2,7 +2,8 @@ import type {CompletionCandidate} from './completion.js';
 export {filterCompletions} from './completion.js';
 import {completionLabel} from './completion.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
-import {background, foreground, UI_COLORS} from '../ui/palette.js';
+import {background, foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {contrastOn} from '../chroma/color.js';
 import {truncateAnsi, truncateText, displayWidth} from '../util/text.js';
 import type {UiAction} from '../ui/actions.js';
 
@@ -58,35 +59,47 @@ export function completionTypeLabel(candidate: CompletionCandidate): string {
 }
 
 /**
- * One selectable row. The selected row carries the shared selection band, an
- * accent pointer, a bright label and its muted description; others stay calm.
+ * One selectable row: icon, a stable name column, then the quiet type word and
+ * the description in whatever width is left (truncated with an ellipsis,
+ * never wrapped, never pushing the name). Every row shows its description;
+ * it stays secondary to the name.
+ *
+ * The selected row is one coherent state on the shared selection band: each
+ * part keeps its own hue but is contrast-corrected against the active
+ * selection background (theme, Grayscale or Custom chrome alike), so the
+ * name, icon and description stay readable without turning uniformly white.
  */
 export function renderCompletion(candidate: CompletionCandidate, selected: boolean, columns: number,
   description = candidate.description): string {
   const RESET = '\u001b[0m';
-  const pointer = selected ? `${foreground(UI_COLORS.accent)}${GLYPHS.selection}` : ' ';
+  const band = UI_COLORS.selection;
+  const on = (color: RgbColor, minimum: number) => selected ? contrastOn(color, band, minimum) : color;
+  const pointer = selected ? `${foreground(on(UI_COLORS.accent, 3))}${GLYPHS.selection}` : ' ';
   const icon = completionIcon(candidate);
   const label = completionLabel(candidate.display);
   const type = completionTypeLabel(candidate);
-  const prefix = `${pointer} ${foreground(selected ? UI_COLORS.accent : UI_COLORS.subtle)}${icon} `;
+  const prefix = `${pointer} ${foreground(selected ? on(UI_COLORS.accent, 3) : UI_COLORS.subtle)}${icon} `;
   const prefixWidth = 2 + displayWidth(icon) + 1;
   const width = Math.max(0, columns - prefixWidth);
-  const labelColor = selected ? `\u001b[1m${foreground(UI_COLORS.primary)}` : foreground(UI_COLORS.secondary);
+  const labelColor = selected ? `\u001b[1m${foreground(on(UI_COLORS.primary, 7))}` : foreground(UI_COLORS.secondary);
+  // Muted on ordinary rows; lifted to a readable secondary tone on the selection band.
+  const detailColor = foreground(selected ? on(UI_COLORS.secondary, 4.5) : UI_COLORS.subtle);
   let row: string;
   if (width < 28) row = `${prefix}${labelColor}${truncateText(label, width)}${RESET}`;
   else {
     const labelWidth = Math.min(28, Math.floor(width * 0.45));
     const shown = truncateText(label, labelWidth);
     const typeText = type ? truncateText(type, 18) : '';
-    const detail = selected && description ? completionLabel(description) : '';
+    const detailText = [typeText, description ? completionLabel(description) : ''].filter(Boolean).join('  ');
+    const room = Math.max(0, width - labelWidth - 1);
     row = `${prefix}${labelColor}${shown}${RESET}${' '.repeat(Math.max(1, labelWidth - displayWidth(shown) + 1))}`
-      + `${foreground(UI_COLORS.subtle)}${typeText}${detail ? `${typeText ? '  ' : ''}${detail}` : ''}${RESET}`;
+      + `${detailColor}${truncateText(detailText, room)}${RESET}`;
   }
   const fitted = truncateAnsi(row, columns);
   if (!selected) return fitted;
   // A full-width band, so the selection does not rely on color of the text alone.
-  const band = background(UI_COLORS.selection);
-  return `${band}${fitted.replaceAll(RESET, `${RESET}${band}`)}${' '.repeat(Math.max(0, columns - displayWidth(fitted)))}${RESET}`;
+  const fill = background(band);
+  return `${fill}${fitted.replaceAll(RESET, `${RESET}${fill}`)}${' '.repeat(Math.max(0, columns - displayWidth(fitted)))}${RESET}`;
 }
 
 /** The cue under a scrolled list: how many candidates follow the window, or, at its end, how many precede it. */

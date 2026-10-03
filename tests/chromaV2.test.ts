@@ -29,7 +29,8 @@ const hueDistance = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Ma
 
 test('settings: v2 fields normalize additively; pre-v2 values keep their exact meaning', () => {
   const legacy = normalizeTreatmentSettings({preset: 'aurora', geometry: 'center-out', motion: 'travel', intensity: 0.65});
-  assert.deepEqual([legacy.speed, legacy.curve, legacy.direction, legacy.scope, legacy.customColors], ['normal', 'linear', 'forward', 'identity', false]);
+  assert.deepEqual([legacy.speed, legacy.curve, legacy.direction, legacy.scope, legacy.customColors], ['normal', 'linear', 'forward', 'prompt', false]);
+  assert.equal(normalizeTreatmentSettings({preset: 'aurora', scope: 'identity'}).scope, 'identity', 'an explicitly saved scope stays');
   assert.equal(treatmentInfluence(legacy), 'mixed', 'the 0.65 default reads as Mixed');
   assert.equal(motionCycleMs('travel', 'normal'), 6000, 'pre-v2 travel timing');
   assert.equal(motionCycleMs('breathe', 'normal'), 4000, 'pre-v2 breathe timing');

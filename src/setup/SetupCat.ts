@@ -38,6 +38,11 @@ export const NATIVE_FIRST_MESSAGE = 'NMSh is complete out of the box. No externa
 export const NATIVE_FIRST_DETAIL = 'Optional providers and integrations can be added later, and you can switch between Native and external providers anytime from Settings or Setup Cat.';
 /** Installs are real side effects; settings are not. Said wherever an install can start. */
 export const INSTALL_DRAFT_NOTE = 'Tool installation happens immediately after confirmation. Your NMSh settings remain a draft until Apply.';
+/** Prompt step: a neutral recommendation; external providers are first-class choices. */
+export const NATIVE_PROMPT_RECOMMENDATION = 'NMSh Native is recommended for the full NMSh prompt experience. You can try it now and switch to Starship or Powerlevel10k anytime.';
+export const NATIVE_ONLY_NOTE = 'Native prompt style settings apply only to NMSh Native.';
+export {CHROMA_PREVIEW_NOTE, CHROMA_SCOPE_NOTE} from '../appearance/chromaNotes.js';
+import {CHROMA_SCOPE_NOTE} from '../appearance/chromaNotes.js';
 export const NATIVE_FIRST_SHORT = 'NMSh works fully with its Native providers. External tools are optional alternatives or enhancements. You can change providers anytime.';
 
 /** What happens with optional tools after Apply. Installs are always separate, explicit confirmations. */
@@ -141,6 +146,9 @@ const SEPARATOR_ROW: SettingsRow = {id: 'setupSeparator', parent: 'promptStyle',
       [style]: {...config.nmsh.styleProfiles[style], separator: id}}}};
   }};
 
+/** Rows that only affect the Native prompt disappear while an external prompt provider is selected. */
+const nativeOnly = (row: SettingsRow): SettingsRow => ({...row, when: config => config.provider === 'nmsh' && (row.when?.(config) ?? true)});
+
 const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider', 'Prompt provider', 'Native prompt, or your existing Starship / Powerlevel10k', 'Prompt',
   PROMPT_PROVIDERS, config => config.provider, (config, provider) => ({...config, provider}));
 
@@ -157,21 +165,25 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('cursorShape'), note: () => 'Applied only while NMSh owns the composer; full-screen programs get your normal cursor'},
     {row: configRow('cursorBlink')},
   ]},
-  {id: 'prompt', title: 'Prompt', intro: ['How the prompt above the composer looks.'], rows: [
+  {id: 'prompt', title: 'Prompt', intro: [NATIVE_PROMPT_RECOMMENDATION, 'Deep prompt customization lives in /prompt.'], rows: [
     {...PROMPT_PROVIDER_ROW, note: (draft, context) => draft.provider === 'nmsh' ? 'Built in · no installation required'
-      : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · details in /prompt`},
-    {row: configRow('promptStyle')},
-    {row: SEPARATOR_ROW},
+      : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · ${NATIVE_ONLY_NOTE}`},
+    {row: nativeOnly(configRow('promptStyle'))},
+    {row: nativeOnly(SEPARATOR_ROW)},
     {row: configRow('promptSymbol')},
   ]},
-  {id: 'appearance', title: 'Appearance', intro: ['Theme and Chroma color NMSh-owned UI only; your terminal and editor keep their own colors.'], rows: [
-    {row: configRow('themeFamily'), note: () => 'Themes NMSh-owned UI only; your terminal and editor keep their colors. /theme makes your own'},
+  {id: 'appearance', title: 'Appearance', intro: [
+    'Theme: the base NMSh prompt/UI palette · Theme text: whether it colors NMSh text · UI chrome: frames, tabs, selection, separators, accents.',
+    'Chroma: an optional treatment over the Native prompt/effects and opted-in surfaces; Full Chroma may override the prompt\'s theme colors. Your terminal and editor keep their own colors.',
+  ], rows: [
+    {row: configRow('themeFamily'), note: () => '/theme makes your own'},
     {row: configRow('themeVariant')},
     {row: configRow('themeAccent')},
+    {row: configRow('themeText')},
     {row: configRow('promptVibrance')},
-    {row: configRow('uiChrome'), note: () => 'Frames, rules, tabs and selection; Follow theme matches the theme above'},
+    {row: configRow('uiChrome')},
     {row: configRow('uiChromePreset')},
-    {row: configRow('treatmentPreset'), note: () => 'Chroma colors NMSh-owned prompt, rules and frames; /chroma has every option'},
+    {row: configRow('treatmentPreset'), note: () => `${CHROMA_SCOPE_NOTE} /chroma has every option`},
     {row: configRow('treatmentIntensity')},
     {row: configRow('treatmentSemantic')},
     {row: configRow('treatmentMotion')},
@@ -208,7 +220,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Off by default (Never). Any key, mouse or new output ends it and leaves everything exactly as it was.'], rows: [
     {row: configRow('idleTimeout')},
     {row: configRow('idleMode')},
-    {row: configRow('idleColor'), note: () => 'Follow Appearance uses Chroma when it is on, otherwise your theme'},
+    {row: configRow('idleColor'), note: draft => draft.idleVisuals.colorSource === 'custom' ? 'Edit the Custom gradient in /screensaver' : undefined},
   ]},
   {id: 'tools', title: 'Optional tools', intro: [NATIVE_FIRST_SHORT, INSTALL_DRAFT_NOTE], rows: [
     {row: configRow('toolUpdateChecks'), note: draft => draft.toolUpdateChecks === 'off' ? 'Off: NMSh never checks unless you ask in /tools' : 'Checks run in the background at startup, never while typing'},
@@ -241,6 +253,11 @@ export interface SetupState {
    * and installer). The draft and section are untouched while it is open.
    */
   toolBrowser?: ToolsPanel;
+  /**
+   * Enter on an option row lists every choice under it: ↑↓ preview each one
+   * live in the draft, Enter keeps it, Esc restores the value it had.
+   */
+  chooser?: {rowId: string; index: number; before: PromptConfiguration};
   context: SetupContext;
 }
 
@@ -336,6 +353,7 @@ function toolChoiceNote(choice: ToolChoice): string {
  */
 export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
   const changes = () => setupChanges(state).length > 0;
+  if (state.chooser) { chooserKey(state, state.chooser, key); return undefined; }
   if (state.confirmDiscard) {
     if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'y')) return {kind: 'cancel'};
     if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value.toLowerCase() === 'n')) state.confirmDiscard = false;
@@ -364,6 +382,9 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
     }
   } else if (key.kind === 'enter' && rows[state.row]?.row.control === 'action') {
     return {kind: 'browseTools'};
+  } else if (key.kind === 'enter' && rows[state.row] && rows[state.row]!.row.id !== TOOL_CHOICE_ROW.row.id && chooserOptions(rows[state.row]!.row, state.draft).length) {
+    const {row} = rows[state.row]!;
+    state.chooser = {rowId: row.id, index: row.control === 'enum' ? row.index(state.draft) : 0, before: state.draft};
   } else if (key.kind === 'text' && key.value.toLowerCase() === 'i' && rows[state.row]) {
     const tool = installableTool(rows[state.row]!, state);
     if (tool) return {kind: 'browseTools', toolId: tool};
@@ -375,6 +396,28 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
     }
   }
   return undefined;
+}
+
+/** The visible choices of an option row (enum rows only; booleans and actions have none to browse). */
+export function chooserOptions(row: SettingsRow, config: PromptConfiguration): readonly string[] {
+  return row.control === 'enum' ? row.optionsFor?.(config) ?? row.options : [];
+}
+
+function chooserKey(state: SetupState, chooser: NonNullable<SetupState['chooser']>, key: Key): void {
+  const row = currentRows(state).find(item => item.row.id === chooser.rowId)?.row;
+  const options = row ? chooserOptions(row, chooser.before) : [];
+  if (!row || row.control !== 'enum' || !options.length || key.kind === 'escape' || key.kind === 'interrupt') {
+    state.draft = chooser.before;
+    state.chooser = undefined;
+    return;
+  }
+  if (key.kind === 'enter' || key.kind === 'complete' || key.kind === 'focusPrevious') { state.chooser = undefined; return; }
+  if (key.kind === 'up' || key.kind === 'down' || key.kind === 'left' || key.kind === 'right') {
+    const delta = key.kind === 'up' || key.kind === 'left' ? -1 : 1;
+    chooser.index = (chooser.index + delta + options.length) % options.length;
+    // Preview the highlighted choice live; Esc puts the earlier value back.
+    state.draft = row.select(chooser.before, chooser.index);
+  }
 }
 
 /**
@@ -438,6 +481,15 @@ export function renderSetup(state: SetupState, columns: number, height: number):
       const control = item.row.control === 'action' ? `${selected ? accent : secondary}${value}${reset}`
         : selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
       top.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${(indent(item.row) + item.row.label).padEnd(labelWidth)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
+      if (selected && state.chooser?.rowId === item.row.id) {
+        // Every choice, visible: the highlighted one is previewed live below.
+        const options = chooserOptions(item.row, state.chooser.before);
+        const savedValue = rowValue(item.row, state.saved);
+        options.forEach((option, optionIndex) => {
+          const current = optionIndex === state.chooser!.index;
+          top.push(`  ${' '.repeat(labelWidth + 2)}${current ? `${accent}${nerd ? '●' : '*'} ${bold}${primary}` : `${subtle}${nerd ? '○' : 'o'} ${secondary}`}${option}${reset}${option === savedValue ? ` ${subtle}${nerd ? '✓' : '(saved)'}${reset}` : ''}`);
+        });
+      }
     });
     const selected = rows[state.row];
     if (selected) {
@@ -451,13 +503,18 @@ export function renderSetup(state: SetupState, columns: number, height: number):
   // Bottom area: the live preview starts below the controls and gives way first on short terminals.
   const facts = section.facts?.(state.draft, state.context) ?? [];
   const preview = [...(state.context.preview ?? []), ...facts.map(line => `  ${subtle}${line}${reset}`)];
+  const selectedRow = section.id === 'review' ? undefined : currentRows(state)[state.row];
+  const browsable = Boolean(selectedRow && selectedRow.row.id !== TOOL_CHOICE_ROW.row.id && chooserOptions(selectedRow.row, state.draft).length);
   const footer = state.confirmDiscard
     ? renderControls([['Enter', 'discard changes'], ['Esc', 'keep editing']])
-    : renderControls([
-      ...(section.rows.length || section.id === 'tools' ? [['↑↓', 'select'] as [string, string], ['←→', 'change'] as [string, string]] : []),
-      ['Tab', 'next section'],
-      ['Enter', state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length ? 'apply' : 'close') : 'next'],
-      ['Esc', 'cancel']]);
+    : state.chooser
+      ? renderControls([['↑↓', 'preview choice'], ['Enter', 'keep'], ['Esc', 'restore']])
+      : renderControls([
+        ...(section.rows.length || section.id === 'tools' ? [['↑↓', 'select'] as [string, string], ['←→', 'change'] as [string, string]] : []),
+        ['Tab', 'next'], ['Shift+Tab', 'previous section'],
+        ['Enter', browsable ? 'choices' : selectedRow?.row.control === 'action' ? 'open'
+          : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length ? 'apply' : 'close') : 'next'],
+        ['Esc', 'cancel']]);
   // Frame line, head, footer and its blank line are fixed; controls come next; the preview gets what is left.
   const budget = Math.max(1, height - 1 - head.length - 2);
   const controls = top.slice(0, budget);

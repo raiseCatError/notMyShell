@@ -1,4 +1,5 @@
 import {applyCurve, mixRgb, sampleGradient, solid, theme, type ColorRef, type Curve} from './chroma.js';
+import {UI_COLORS} from '../ui/palette.js';
 import {colorEscape, type Rgb} from './escape.js';
 import {fromOklch, mixOklch, parseHexColor, toOklch} from './color.js';
 import {colorLevel, type ColorLevel} from '../presentation/capabilities.js';
@@ -13,9 +14,10 @@ export const TREATMENT_PRESET_LABELS: Record<typeof TREATMENT_PRESETS[number], s
   off: 'Off', lavender: 'Lavender', aurora: 'Aurora', theme: 'Current Theme', rainbow: 'Rainbow', nebula: 'Nebula',
   blackhole: 'Black Hole', warm: 'Warm', cool: 'Cool', monochrome: 'Monochrome', custom: 'Custom',
 };
-export const TREATMENT_GEOMETRIES = ['linear', 'center-out', 'outside-in'] as const;
+/** Spatial layout of the gradient; independent of motion, so a static gradient can run either way. */
+export const TREATMENT_GEOMETRIES = ['linear', 'linear-reverse', 'center-out', 'outside-in'] as const;
 export const TREATMENT_GEOMETRY_LABELS: Record<typeof TREATMENT_GEOMETRIES[number], string> = {
-  linear: 'Left → Right', 'center-out': 'Center → Outward', 'outside-in': 'Outside → Center',
+  linear: 'Left → Right', 'linear-reverse': 'Right → Left', 'center-out': 'Center → Outward', 'outside-in': 'Outside → Center',
 };
 export const TREATMENT_MOTIONS = ['static', 'breathe', 'comet', 'pulse', 'travel'] as const;
 export const TREATMENT_MOTION_LABELS: Record<typeof TREATMENT_MOTIONS[number], string> = {
@@ -27,7 +29,9 @@ export const TREATMENT_SPEED_LABELS: Record<typeof TREATMENT_SPEEDS[number], str
 };
 export const TREATMENT_CURVES: readonly Curve[] = ['linear', 'ease-in', 'ease-out', 'ease-in-out'];
 export const TREATMENT_CURVE_LABELS: Record<Curve, string> = {linear: 'Linear', 'ease-in': 'Ease In', 'ease-out': 'Ease Out', 'ease-in-out': 'Ease In-Out'};
+/** Travel and Comet only: which way the motion runs (the spatial layout is Geometry). */
 export const TREATMENT_DIRECTIONS = ['forward', 'reverse'] as const;
+export const TREATMENT_DIRECTION_LABELS: Record<typeof TREATMENT_DIRECTIONS[number], string> = {forward: 'Forward', reverse: 'Reverse'};
 /** Identity: project, path and toolchains. Prompt: every module except protected status/Git-state meaning. */
 export const TREATMENT_SCOPES = ['identity', 'prompt'] as const;
 export const TREATMENT_SCOPE_LABELS: Record<typeof TREATMENT_SCOPES[number], string> = {identity: 'Identity modules', prompt: 'Whole prompt'};
@@ -67,11 +71,17 @@ export interface TreatmentSettings {
    * contrast correction still carry the meaning).
    */
   semantic?: typeof SEMANTIC_MODES[number];
-  /** Where Chroma paints besides the Native prompt: `rules` adds composer and history rules. */
+  /**
+   * Divider lines (stored as `rules`): true follows Chroma on the composer and
+   * command-history divider lines, false follows the UI theme separator.
+   */
   rules?: boolean;
   /** The event-driven light sweep (selection, value change, submit, confirmation, live working text). */
   shimmer?: 'on' | 'off';
 }
+
+export const DIVIDER_LINES_HELP = 'Colors the composer and command-history divider lines. Panel borders follow UI chrome.';
+export const dividerLinesLabel = (followChroma: boolean): string => followChroma ? 'Follow Chroma' : 'Follow UI theme';
 
 export const SEMANTIC_MODES = ['preserve', 'override'] as const;
 export const SEMANTIC_MODE_LABELS: Record<typeof SEMANTIC_MODES[number], string> = {preserve: 'Preserve', override: 'Override'};
@@ -80,10 +90,10 @@ export const SEMANTIC_MODE_LABELS: Record<typeof SEMANTIC_MODES[number], string>
 export const DEFAULT_INTENSITY = 0.9;
 
 export const DEFAULT_TREATMENT_SETTINGS: TreatmentSettings = {
-  preset: 'off', geometry: 'linear', motion: 'static', intensity: DEFAULT_INTENSITY, semantic: 'override', rules: false,
+  preset: 'off', geometry: 'linear', motion: 'static', intensity: DEFAULT_INTENSITY, semantic: 'override', rules: true,
   shimmer: 'on',
   customStops: [], reducedMotion: false, effectsOff: false,
-  speed: 'normal', curve: 'linear', direction: 'forward', scope: 'identity', customColors: false, autoEffects: true,
+  speed: 'normal', curve: 'linear', direction: 'forward', scope: 'prompt', customColors: false, autoEffects: true,
 };
 
 export const MIN_CUSTOM_STOPS = 2;
@@ -105,7 +115,8 @@ export function normalizeTreatmentSettings(value: unknown): TreatmentSettings {
   // An explicit semantic choice is kept; otherwise Full Chroma overrides and gentler influences preserve.
   const semantic = pick(SEMANTIC_MODES, v.semantic, treatmentInfluence({intensity}) === 'full' ? 'override' : 'preserve');
   return {
-    semantic, rules: v.rules === true,
+    // Saves write every field, so a missing value is a new configuration: new defaults apply, saved choices stay.
+    semantic, rules: v.rules !== false,
     shimmer: v.shimmer === 'off' ? 'off' : 'on',
     preset: preset === 'custom' && !customStops.length ? 'off' : preset,
     geometry: pick(TREATMENT_GEOMETRIES, v.geometry, 'linear'),
@@ -115,7 +126,7 @@ export function normalizeTreatmentSettings(value: unknown): TreatmentSettings {
     speed: pick(TREATMENT_SPEEDS, v.speed, 'normal'),
     curve: pick(TREATMENT_CURVES, v.curve, 'linear'),
     direction: pick(TREATMENT_DIRECTIONS, v.direction, 'forward'),
-    scope: pick(TREATMENT_SCOPES, v.scope, 'identity'),
+    scope: pick(TREATMENT_SCOPES, v.scope, 'prompt'),
     customColors: v.customColors === true,
     autoEffects: v.autoEffects !== false,
   };
@@ -230,6 +241,7 @@ function animate(treatment: Treatment, position: number, time: number, still: bo
 }
 
 function geometryPosition(geometry: Treatment['geometry'], position: number): number {
+  if (geometry === 'linear-reverse') return 1 - position;
   if (geometry === 'center-out') return Math.abs(2 * position - 1);
   if (geometry === 'outside-in') return 1 - Math.abs(2 * position - 1);
   return position;
@@ -298,6 +310,26 @@ export function paintTreatment(text: string, settings: TreatmentSettings, role: 
   const treatment = treatmentFor(settings);
   return treatment ? treatmentText(text, treatment, {role, base, reducedMotion: settings.reducedMotion || isReducedMotion(), effectsOff: settings.effectsOff}, time)
     : `${colorEscape(38, base)}${text}`;
+}
+
+/**
+ * Every NMSh-owned divider line (composer top and bottom, the prompt row's
+ * divider fill, command-history dividers) takes its color here, so they can
+ * never disagree. Follow Chroma paints the Chroma gradient over the UI
+ * separator; `live` surfaces may move, history is always static.
+ * Follow UI theme (or Chroma Off) is the UI separator role.
+ */
+export function paintDivider(text: string, settings: TreatmentSettings, time = 0, live = true, base: Rgb = UI_COLORS.separator): string {
+  if (!text || colorLevel() === 'none') return text;
+  if (settings.preset !== 'off' && settings.rules !== false) {
+    return `${paintTreatment(text, live ? settings : {...settings, motion: 'static'}, 'divider', {...UI_COLORS.separator}, time)}\u001B[39m`;
+  }
+  return `${colorEscape(38, base)}${text}\u001B[39m`;
+}
+
+/** Whether divider lines follow a moving Chroma (and so need presentation frames while live). */
+export function dividerAnimated(settings: TreatmentSettings): boolean {
+  return settings.rules !== false && treatmentAnimated(settings);
 }
 
 /** Preview swatch: the preset's own gradient across `width` cells. */

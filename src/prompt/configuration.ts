@@ -1,4 +1,4 @@
-import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
+import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
@@ -258,16 +258,43 @@ export function normalizeStatusStrip(value: unknown): StatusStripSettings {
 /** Idle visuals: minutes of inactivity before the NMSh screensaver starts; 0 is Never (the default). */
 export const IDLE_TIMEOUTS = [0, 1, 5, 15, 30, 60] as const;
 export type IdleTimeout = typeof IDLE_TIMEOUTS[number];
-export const IDLE_COLOR_SOURCES = ['appearance', 'theme'] as const;
+/**
+ * Idle colors. Follow Chroma / Theme (stored `appearance`): Chroma when it is
+ * on, otherwise the active theme. Theme only: always the theme, ignoring
+ * Chroma. Custom: the idle visuals' own gradient stops.
+ */
+export const IDLE_COLOR_SOURCES = ['appearance', 'theme', 'custom'] as const;
 export type IdleColorSource = typeof IDLE_COLOR_SOURCES[number];
-export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource}
-export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance'};
+export const IDLE_COLOR_LABELS: Record<IdleColorSource, string> = {appearance: 'Follow Chroma / Theme', theme: 'Theme only', custom: 'Custom'};
+export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource; customStops: string[]}
+export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []};
 
 export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
   const v = isRecord(value) ? value : {};
+  const customStops = validCustomStops(v.customStops) ? v.customStops.map(stop => stop.toLowerCase()) : [];
+  const colorSource = IDLE_COLOR_SOURCES.includes(v.colorSource as IdleColorSource) ? v.colorSource as IdleColorSource : 'appearance';
   return {timeout: IDLE_TIMEOUTS.includes(v.timeout as IdleTimeout) ? v.timeout as IdleTimeout : 0,
     mode: IDLE_MODES.includes(v.mode as IdleMode) ? v.mode as IdleMode : 'aurora',
-    colorSource: IDLE_COLOR_SOURCES.includes(v.colorSource as IdleColorSource) ? v.colorSource as IdleColorSource : 'appearance'};
+    colorSource: colorSource === 'custom' && !customStops.length ? 'appearance' : colorSource, customStops};
+}
+
+/**
+ * Live activity colors: the running-command line ("• Running sleep 5 · 3.4s").
+ * Follow appearance uses Chroma when it is on (Semantic Preserve keeps the
+ * working color), otherwise the theme. Only the live line moves; a finished
+ * command is the ordinary, static semantic result.
+ */
+export const LIVE_ACTIVITY_COLORS = ['appearance', 'lavender', 'grayscale', 'custom'] as const;
+export type LiveActivityColors = typeof LIVE_ACTIVITY_COLORS[number];
+export const LIVE_ACTIVITY_COLOR_LABELS: Record<LiveActivityColors, string> = {appearance: 'Follow appearance', lavender: 'Native Lavender', grayscale: 'Grayscale', custom: 'Custom'};
+export interface LiveActivitySettings {colors: LiveActivityColors; customStops: string[]}
+export const DEFAULT_LIVE_ACTIVITY: LiveActivitySettings = {colors: 'appearance', customStops: []};
+
+export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
+  const v = isRecord(value) ? value : {};
+  const customStops = validCustomStops(v.customStops) ? v.customStops.map(stop => stop.toLowerCase()) : [];
+  const colors = LIVE_ACTIVITY_COLORS.includes(v.colors as LiveActivityColors) ? v.colors as LiveActivityColors : 'appearance';
+  return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops};
 }
 
 export interface PromptConfiguration {
@@ -314,6 +341,7 @@ export interface PromptConfiguration {
   cursor: CursorSettings;
   statusStrip: StatusStripSettings;
   idleVisuals: IdleVisualSettings;
+  liveActivity: LiveActivitySettings;
   /** Where NMSh chrome (frames, rules, tabs, selection, accents) takes its colors from. */
   uiChrome: UiChromeSettings;
   nmsh: {
@@ -390,7 +418,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
-  idleVisuals: {...DEFAULT_IDLE_VISUALS},
+  idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
+  liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
@@ -468,7 +497,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), uiChrome: normalizeUiChrome(value.uiChrome), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider

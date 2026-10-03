@@ -1,4 +1,7 @@
-import {SEMANTIC_MODES, SEMANTIC_MODE_LABELS} from '../chroma/treatment.js';
+import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
+export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
+import {CHROMA_PREVIEW_NOTE} from '../appearance/chromaNotes.js';
+import {DIVIDER_LINES_HELP, dividerLinesLabel, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_DIRECTION_LABELS} from '../chroma/treatment.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, THEME_FAMILIES} from '../appearance/themeFamilies.js';
@@ -47,14 +50,6 @@ import {providerRowText, type ProviderDescriptor} from '../providers/providers.j
 
 export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'gradient' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 
-/** The custom gradient editor: a working copy of the stops, never executable. */
-export interface GradientEditorState {
-  stops: string[];
-  index: number;
-  /** Hex text being typed for the selected stop; undefined when not editing. */
-  editing?: string;
-  error?: string;
-}
 export interface PromptPanelState {
   onboarding: boolean;
   step: PromptPanelStep;
@@ -262,11 +257,11 @@ export function chromaRows(configuration: PromptConfiguration): AppearanceRow[] 
     {id: 'semantic', label: '  Semantic colors', value: c => SEMANTIC_MODE_LABELS[c.presentation.semantic ?? 'preserve'],
       change: (c, d) => { c.presentation.semantic = cycle(SEMANTIC_MODES, c.presentation.semantic ?? 'preserve', d); },
       note: c => (c.presentation.semantic ?? 'preserve') === 'override' ? 'symbols and readable text keep success, failure and Git meaning' : 'success, failure and Git state keep their colors'},
-    {id: 'scope', label: 'Applies to', value: c => TREATMENT_SCOPE_LABELS[c.presentation.scope ?? 'identity'],
-      change: (c, d) => { c.presentation.scope = cycle(TREATMENT_SCOPES, c.presentation.scope ?? 'identity', d); }},
-    {id: 'rules', label: 'Rules', value: c => c.presentation.rules ? 'Chroma' : 'UI chrome',
-      change: c => { c.presentation.rules = !c.presentation.rules; }, note: () => 'composer and history rules; frames never'},
-    {id: 'geometry', label: 'Geometry', value: c => TREATMENT_GEOMETRY_LABELS[c.presentation.geometry],
+    {id: 'scope', label: 'Applies to', value: c => TREATMENT_SCOPE_LABELS[c.presentation.scope ?? 'prompt'],
+      change: (c, d) => { c.presentation.scope = cycle(TREATMENT_SCOPES, c.presentation.scope ?? 'prompt', d); }},
+    {id: 'rules', label: 'Divider lines', value: c => dividerLinesLabel(c.presentation.rules !== false),
+      change: c => { c.presentation.rules = c.presentation.rules === false; }, note: () => DIVIDER_LINES_HELP},
+    {id: 'geometry', label: 'Gradient layout', value: c => TREATMENT_GEOMETRY_LABELS[c.presentation.geometry],
       change: (c, d) => { c.presentation.geometry = cycle(TREATMENT_GEOMETRIES, c.presentation.geometry, d); }},
     {id: 'motion', label: 'Motion', value: c => TREATMENT_MOTION_LABELS[c.presentation.motion],
       change: (c, d) => { c.presentation.motion = cycle(TREATMENT_MOTIONS, c.presentation.motion, d); },
@@ -280,7 +275,7 @@ export function chromaRows(configuration: PromptConfiguration): AppearanceRow[] 
       {id: 'curve', label: 'Ramp', value: c => TREATMENT_CURVE_LABELS[c.presentation.curve ?? 'linear'],
         change: (c, d) => { c.presentation.curve = cycle(TREATMENT_CURVES, c.presentation.curve ?? 'linear', d); }},
     );
-    if (motionHasDirection(p.motion)) rows.push({id: 'direction', label: 'Direction', value: c => (c.presentation.direction ?? 'forward') === 'forward' ? 'Forward' : 'Reverse',
+    if (motionHasDirection(p.motion)) rows.push({id: 'direction', label: 'Motion direction', value: c => TREATMENT_DIRECTION_LABELS[c.presentation.direction ?? 'forward'],
       change: (c, d) => { c.presentation.direction = cycle(TREATMENT_DIRECTIONS, c.presentation.direction ?? 'forward', d); }});
   }
   // Only meaningful when some module actually has explicit colors.
@@ -329,63 +324,11 @@ export function closeGradientEditor(state: PromptPanelState): void {
   state.selectedIndex = Math.max(0, chromaRows(state.draft).findIndex(row => row.opens === 'gradient'));
 }
 
-/** Normalize typed hex (with or without #); undefined when invalid. */
-export function parseStopInput(value: string): string | undefined {
-  const text = value.trim().toLowerCase();
-  const hex = text.startsWith('#') ? text : `#${text}`;
-  return parseHexColor(hex) ? hex : undefined;
-}
-
-/**
- * Stop editor keys. ↑↓ select · Enter edit/confirm hex · A add · D/Delete
- * remove · Shift+↑↓ reorder · R reset. Values are plain hex only.
- */
+/** The shared stop editor; R resets to the saved Custom stops (or Lavender). */
 export function handleGradientKey(key: Key, state: PromptPanelState): boolean {
   const gradient = state.gradient;
   if (!gradient) return false;
-  if (gradient.editing !== undefined) {
-    if (key.kind === 'enter') {
-      const value = parseStopInput(gradient.editing);
-      if (!value) { gradient.error = 'Use a hex color like #a67cf3'; return true; }
-      gradient.stops[gradient.index] = value;
-      gradient.editing = undefined;
-      gradient.error = undefined;
-      return true;
-    }
-    if (key.kind === 'escape') { gradient.editing = undefined; gradient.error = undefined; return true; }
-    if (key.kind === 'backspace') { gradient.editing = [...gradient.editing].slice(0, -1).join(''); return true; }
-    if ((key.kind === 'text' || key.kind === 'paste') && /^[#0-9a-f]*$/iu.test(key.value)) {
-      gradient.editing = (gradient.editing + key.value).slice(0, 7);
-      gradient.error = undefined;
-      return true;
-    }
-    return key.kind === 'text' || key.kind === 'paste';
-  }
-  const count = gradient.stops.length;
-  if (key.kind === 'up') gradient.index = (gradient.index - 1 + count) % count;
-  else if (key.kind === 'down') gradient.index = (gradient.index + 1) % count;
-  else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
-    const target = gradient.index + (key.kind === 'selectUp' ? -1 : 1);
-    if (target < 0 || target >= count) return true;
-    [gradient.stops[gradient.index], gradient.stops[target]] = [gradient.stops[target]!, gradient.stops[gradient.index]!];
-    gradient.index = target;
-  } else if (key.kind === 'enter') {
-    gradient.editing = gradient.stops[gradient.index]!;
-  } else if (key.kind === 'text' && /^[aA]$/u.test(key.value)) {
-    if (count >= MAX_CUSTOM_STOPS) { gradient.error = `At most ${MAX_CUSTOM_STOPS} stops`; return true; }
-    gradient.stops.splice(gradient.index + 1, 0, gradient.stops[gradient.index]!);
-    gradient.index += 1;
-    gradient.editing = gradient.stops[gradient.index]!;
-  } else if ((key.kind === 'text' && /^[dD]$/u.test(key.value)) || key.kind === 'delete') {
-    if (count <= MIN_CUSTOM_STOPS) { gradient.error = `At least ${MIN_CUSTOM_STOPS} stops`; return true; }
-    gradient.stops.splice(gradient.index, 1);
-    gradient.index = Math.min(gradient.index, gradient.stops.length - 1);
-  } else if (key.kind === 'text' && /^[rR]$/u.test(key.value)) {
-    gradient.stops = [...(state.saved?.presentation.customStops.length ? state.saved.presentation.customStops : PRESET_STOPS.lavender)];
-    gradient.index = 0;
-  } else return false;
-  gradient.error = undefined;
-  return true;
+  return gradientEditorKey(gradient, key, () => state.saved?.presentation.customStops.length ? state.saved.presentation.customStops : PRESET_STOPS.lavender);
 }
 
 export function connectorFadeLabel(value: ConnectorFadeStyle): string {
@@ -540,8 +483,7 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
       ['M', `mirror right: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
   }
   if (state.step === 'gradient') {
-    if (state.gradient?.editing !== undefined) return [['0-9 a-f', 'type hex'], ['Enter', 'apply'], ['Esc', 'cancel edit']];
-    return [['↑↓', 'stop'], ['Enter', 'edit'], ['A', 'add'], ['D', 'remove'], ['Shift+↑↓', 'reorder'], ['R', 'reset'], ['Esc', 'done']];
+    return state.gradient ? gradientEditorControls(state.gradient) : [['Esc', 'done']];
   }
   if (state.step === 'appearance') {
     if (state.focus === 'tabs') return [['←→', 'switch view'], ['↓', 'select'], ['Enter', 'save'], escape];
@@ -766,15 +708,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       `${choice.label}${index === draftChoice ? '  ●' : ''}${index === savedChoice ? '  ✓ saved' : ''}`)));
   } else if (state.step === 'gradient' && state.gradient) {
     const gradient = state.gradient;
-    rows.push(`${PRIMARY}Custom gradient${RESET}  ${SUBTLE}${gradient.stops.length} of ${MIN_CUSTOM_STOPS}–${MAX_CUSTOM_STOPS} stops · hex colors only${RESET}`);
-    gradient.stops.forEach((stop, index) => {
-      const selected = index === gradient.index;
-      const swatch = `${colorEscape(38, parseHexColor(stop)!)}████${RESET}`;
-      const editing = selected && gradient.editing !== undefined
-        ? `${ACCENT}${gradient.editing}${INVERSE} ${RESET}` : `${selected ? PRIMARY : SECONDARY}${stop}`;
-      rows.push(`${selected ? `${ACCENT}›` : ' '} ${SECONDARY}${String(index + 1).padStart(2)}${RESET}  ${swatch}  ${editing}${RESET}`);
-    });
-    if (gradient.error) rows.push(`  ${ERROR}${gradient.error}${RESET}`);
+    rows.push(...renderGradientEditorRows(gradient, 'Custom gradient'));
     const stops = gradient.stops.length >= MIN_CUSTOM_STOPS ? gradient.stops : state.draft.presentation.customStops;
     rows.push(`  ${SUBTLE}Gradient  ${RESET}${treatmentSwatch({...state.draft.presentation, preset: 'custom', customStops: stops}, Math.max(8, Math.min(40, columns - 14)))}${RESET}`);
   } else if (state.step === 'modules') {
@@ -841,6 +775,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     if (themePreviews.length && view === 'main') {
       rows.push('');
       rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
+      if (state.draft.presentation.preset !== 'off' && state.draft.provider === 'nmsh') rows.push(`${SUBTLE}${CHROMA_PREVIEW_NOTE}${RESET}`);
       galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;

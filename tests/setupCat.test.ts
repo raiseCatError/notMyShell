@@ -74,7 +74,8 @@ test('cancel preserves the exact saved configuration; unapplied edits ask first'
 test('apply with no edits is idempotent and reports unchanged', () => {
   const saved = lived();
   const state = createSetup(saved);
-  for (let i = 0; i < SETUP_SECTIONS.length - 1; i++) assert.equal(press(state, {kind: 'enter'}), undefined);
+  // Tab moves between sections (Enter on an option row opens its choices).
+  for (let i = 0; i < SETUP_SECTIONS.length - 1; i++) assert.equal(press(state, {kind: 'complete'}), undefined);
   assert.match(plain(renderSetup(state, 100, 30)), /No changes/u);
   const result = press(state, {kind: 'enter'});
   assert.equal(result?.kind, 'apply');
@@ -213,7 +214,8 @@ test('app: /setup never writes on open or cancel; Apply persists through the nor
   const state = app['setupState']!;
   state.row = rowIndex(state, 'composerPosition');
   app['handleKey']({kind: 'right'});
-  for (let i = state.section; i < SETUP_SECTIONS.length; i++) app['handleKey']({kind: 'enter'});
+  for (let i = state.section; i < SETUP_SECTIONS.length - 1; i++) app['handleKey']({kind: 'complete'});
+  app['handleKey']({kind: 'enter'});
   assert.equal(app['setupState'], undefined);
   const saved = JSON.parse(await readFile(path, 'utf8'));
   assert.equal(saved.composerPosition, 'top');
@@ -223,6 +225,7 @@ test('app: /setup never writes on open or cancel; Apply persists through the nor
   // Rerun with no edits: applying writes nothing new.
   const afterApply = await readFile(path, 'utf8');
   await app['runSlash']('/setup', {kind: 'setup'});
-  for (let i = 0; i < SETUP_SECTIONS.length; i++) app['handleKey']({kind: 'enter'});
+  for (let i = 0; i < SETUP_SECTIONS.length - 1; i++) app['handleKey']({kind: 'complete'});
+  app['handleKey']({kind: 'enter'});
   assert.equal(await readFile(path, 'utf8'), afterApply);
 }, {glyphStyle: 'safe', onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true, futureField: 'kept'}));

@@ -1,7 +1,8 @@
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
-  TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS} from '../chroma/treatment.js';
-import {CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
+  TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
+import {CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
+import {withIdleColorSource} from '../idle/IdleVisuals.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
@@ -73,7 +74,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor';
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors';
 
 interface SettingsRowBase {
   id: string;
@@ -176,6 +177,9 @@ const THEME_ROWS: readonly SettingsRow[] = [
       const options = variantOptions(familyOf(c.nmsh.palette));
       return {...c, nmsh: {...c.nmsh, palette: options[((index % options.length) + options.length) % options.length]!.id}};
     }},
+  enumRow({id: 'themeText', parent: 'themeFamily', label: 'Theme text', description: 'On: the theme colors NMSh text tiers (primary, secondary, muted). Off: NMSh neutral text. Status colors keep their meaning', category: 'Appearance',
+    values: [true, false], labels: ['On', 'Off'],
+    get: c => c.uiChrome.themeText !== false, set: (c, themeText) => ({...c, uiChrome: {...c.uiChrome, themeText}})}),
   enumRow({id: 'themeAccent', parent: 'themeFamily', when: c => familyOf(c.nmsh.palette) === 'catppuccin', label: 'Accent',
     description: 'Catppuccin accent for the project module and NMSh accents', category: 'Appearance',
     values: CATPPUCCIN_ACCENTS, labels: CATPPUCCIN_ACCENTS.map(accent => CATPPUCCIN_ACCENT_LABELS[accent]),
@@ -291,9 +295,17 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'idleMode', parent: 'idleTimeout', label: 'Mode', description: 'The idle visual; /screensaver shows each one live', category: 'Idle visuals',
     values: IDLE_MODES, labels: IDLE_MODES.map(mode => IDLE_MODE_LABELS[mode]),
     get: c => c.idleVisuals.mode, set: (c, mode) => ({...c, idleVisuals: {...c.idleVisuals, mode}})}),
-  enumRow({id: 'idleColor', parent: 'idleTimeout', label: 'Colors', description: 'Follow Appearance uses Chroma when it is on, otherwise the theme', category: 'Idle visuals',
-    values: IDLE_COLOR_SOURCES, labels: ['Follow Appearance', 'Current Theme'],
-    get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: {...c.idleVisuals, colorSource}})}),
+  enumRow({id: 'idleColor', parent: 'idleTimeout', label: 'Colors', description: 'Follow Chroma / Theme: Chroma when it is on, otherwise the theme. Theme only ignores Chroma. Custom: your own idle gradient', category: 'Idle visuals',
+    values: IDLE_COLOR_SOURCES, labels: IDLE_COLOR_SOURCES.map(source => IDLE_COLOR_LABELS[source]),
+    get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: withIdleColorSource(c, colorSource)})}),
+  {id: 'idleCustomColors', parent: 'idleColor', when: c => c.idleVisuals.colorSource === 'custom', label: 'Edit colors',
+    description: 'The idle visuals\' own gradient stops, with a live preview', category: 'Idle visuals', control: 'action', actionLabel: 'Edit ›', destination: 'idleColors'},
+  enumRow({id: 'activityColors', label: 'Live activity colors', description: 'The running-command line. Follow appearance uses Chroma when it is on, otherwise the theme. Only live work moves; finished commands show their plain result', category: 'Live activity',
+    values: LIVE_ACTIVITY_COLORS, labels: LIVE_ACTIVITY_COLORS.map(colors => LIVE_ACTIVITY_COLOR_LABELS[colors]),
+    get: c => c.liveActivity.colors, set: (c, colors) => ({...c, liveActivity: {...c.liveActivity, colors,
+      customStops: colors === 'custom' && c.liveActivity.customStops.length < 2 ? [...PRESET_STOPS.lavender] : c.liveActivity.customStops}})}),
+  {id: 'activityCustomColors', parent: 'activityColors', when: c => c.liveActivity.colors === 'custom', label: 'Edit colors',
+    description: 'Gradient stops for the live activity line', category: 'Live activity', control: 'action', actionLabel: 'Edit ›', destination: 'activityColors'},
   {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
   enumRow({id: 'toolUpdateChecks', label: 'Optional tool update checks', description: 'Batched Homebrew outdated checks for optional tools; upgrades are always previewed and confirmed', category: 'Tools',
     values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
@@ -316,16 +328,16 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'treatmentSemantic', parent: 'treatmentIntensity', when: chromaOn, label: 'Semantic colors', description: 'Override lets Chroma recolor success, failure and Git state; their symbols and readable text keep the meaning', category: 'Presentation',
     values: SEMANTIC_MODES, labels: SEMANTIC_MODES.map(mode => SEMANTIC_MODE_LABELS[mode]),
     get: c => c.presentation.semantic ?? 'preserve', set: (c, semantic) => ({...c, presentation: {...c.presentation, semantic}})}),
-  enumRow({id: 'treatmentScope', parent: 'treatmentPreset', when: chromaOn, label: 'Scope', description: 'Identity modules only, or the whole Native prompt', category: 'Presentation',
+  enumRow({id: 'treatmentScope', parent: 'treatmentPreset', when: chromaOn, label: 'Applies to', description: 'The whole Native prompt (default), or identity modules only', category: 'Presentation',
     values: TREATMENT_SCOPES, labels: TREATMENT_SCOPES.map(scope => TREATMENT_SCOPE_LABELS[scope]),
-    get: c => c.presentation.scope ?? 'identity', set: (c, scope) => ({...c, presentation: {...c.presentation, scope}})}),
-  enumRow({id: 'chromaRules', parent: 'treatmentPreset', when: chromaOn, label: 'Rules', description: 'Also color the composer and history rules with Chroma; frames and other chrome never are', category: 'Presentation',
-    values: [false, true], labels: ['UI chrome', 'Chroma'],
-    get: c => c.presentation.rules === true, set: (c, rules) => ({...c, presentation: {...c.presentation, rules}})}),
-  enumRow({id: 'treatmentGeometry', parent: 'treatmentPreset', when: chromaOn, label: 'Geometry', description: 'Independent gradient direction', category: 'Presentation',
+    get: c => c.presentation.scope ?? 'prompt', set: (c, scope) => ({...c, presentation: {...c.presentation, scope}})}),
+  enumRow({id: 'chromaRules', parent: 'treatmentPreset', when: chromaOn, label: 'Divider lines', description: DIVIDER_LINES_HELP, category: 'Presentation',
+    values: [true, false], labels: [dividerLinesLabel(true), dividerLinesLabel(false)],
+    get: c => c.presentation.rules !== false, set: (c, rules) => ({...c, presentation: {...c.presentation, rules}})}),
+  enumRow({id: 'treatmentGeometry', parent: 'treatmentPreset', when: chromaOn, label: 'Gradient layout', description: 'Where the gradient runs: Left → Right, Right → Left, Center → Outward or Outside → Center; works with Static', category: 'Presentation',
     values: TREATMENT_GEOMETRIES, labels: TREATMENT_GEOMETRIES.map(geometry => TREATMENT_GEOMETRY_LABELS[geometry]),
     get: c => c.presentation.geometry, set: (c, geometry) => ({...c, presentation: {...c.presentation, geometry}})}),
-  enumRow({id: 'treatmentMotion', parent: 'treatmentPreset', when: chromaOn, label: 'Motion', description: 'Live prompt motion (and rules when Rules is Chroma); history stays static', category: 'Presentation',
+  enumRow({id: 'treatmentMotion', parent: 'treatmentPreset', when: chromaOn, label: 'Motion', description: 'Live prompt motion (and divider lines when they follow Chroma); history stays static', category: 'Presentation',
     values: TREATMENT_MOTIONS, labels: TREATMENT_MOTIONS.map(motion => TREATMENT_MOTION_LABELS[motion]),
     get: c => c.presentation.motion, set: (c, motion) => ({...c, presentation: {...c.presentation, motion}})}),
   enumRow({id: 'treatmentSpeed', parent: 'treatmentMotion', when: chromaMoving, label: 'Speed', description: 'Chroma animation cycle length', category: 'Presentation',

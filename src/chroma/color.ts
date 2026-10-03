@@ -107,6 +107,23 @@ export function readableForeground(background: Rgb, preferred?: Rgb, minimum = 4
     : contrastRatio(LIGHT_TEXT, background) >= contrastRatio(DARK_TEXT, background) ? LIGHT_TEXT : DARK_TEXT;
 }
 
+/**
+ * `color` made readable on `background` while keeping its hue: lightness moves
+ * away from the background until the contrast holds (chroma eases slightly),
+ * so a selected row keeps its distinctions instead of turning uniformly white.
+ */
+export function contrastOn(color: Rgb, background: Rgb, minimum = 4.5): Rgb {
+  if (contrastRatio(color, background) >= minimum) return color;
+  const lch = toOklch(color);
+  const lighten = toOklch(background).l < 0.6;
+  for (let step = 1; step <= 24; step += 1) {
+    const amount = step / 24;
+    const candidate = fromOklch({l: lighten ? lch.l + (0.985 - lch.l) * amount : lch.l * (1 - 0.85 * amount), c: lch.c * (1 - 0.4 * amount), h: lch.h});
+    if (contrastRatio(candidate, background) >= minimum) return candidate;
+  }
+  return readableForeground(background, undefined, minimum);
+}
+
 /** Soft / Standard / Vibrant: how strongly theme-derived colors separate. Standard is identity. */
 export type Vibrance = 'soft' | 'standard' | 'vibrant';
 export const VIBRANCE_LEVELS: readonly Vibrance[] = ['soft', 'standard', 'vibrant'];

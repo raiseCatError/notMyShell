@@ -1,6 +1,6 @@
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
-import {paintTreatment, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
+import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
@@ -17,7 +17,8 @@ import {createConfigurationPanel, configurationKey, renderConfigurationPanel, ty
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {createSetup, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, type SetupState} from '../setup/SetupCat.js';
+import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
 import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
@@ -36,6 +37,9 @@ import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChrom
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
 import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {providerExplanation} from '../setup/providerExplanations.js';
+import {liveActivityPaint} from '../status/liveActivityColors.js';
+import {renderControls} from '../ui/controls.js';
+import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
   settingsView, statusLineCount, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
@@ -264,6 +268,8 @@ export class TerminalApp {
   private readonly screensaverGrid = new CellGrid();
   /** Custom UI chrome colors draft. */
   private chromeEditor?: ChromeEditorState;
+  /** Custom colors for idle visuals or Live activity, in the shared gradient stop editor. */
+  private stopsEditor?: {target: 'idle' | 'activity'; gradient: GradientEditorState};
   /** Theme Studio: a custom theme draft; nothing persists until Save. */
   private themeStudio?: ThemeStudioState;
   /** Setup Cat: one draft over the saved configuration; nothing persists until Apply. */
@@ -689,6 +695,27 @@ export class TerminalApp {
       return;
     }
     const keys = this.keyDecoder.push(data);
+    this.scheduleEscapeFlush();
+    this.handleDecodedKeys(keys);
+  };
+
+  /** The Escape key flush timer (see KeyDecoder.pendingEscape); at most one, cleared by the next input. */
+  private escapeFlushTimer?: NodeJS.Timeout;
+  private static readonly ESCAPE_FLUSH_MS = 35;
+
+  private scheduleEscapeFlush(): void {
+    if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
+    if (!this.keyDecoder.pendingEscape) return;
+    this.escapeFlushTimer = setTimeout(() => {
+      this.escapeFlushTimer = undefined;
+      if (this.stopped) return;
+      const keys = this.keyDecoder.flush();
+      if (keys.length) this.handleDecodedKeys(keys);
+    }, TerminalApp.ESCAPE_FLUSH_MS);
+    this.escapeFlushTimer.unref?.();
+  }
+
+  private handleDecodedKeys(keys: Key[]): void {
     if (this.idle) {
       // The idle overlay owns input: losing focus pauses it; anything else dismisses it and is not passed on.
       if (keys.length && keys.every(key => key.kind === 'focusOut')) { this.terminalFocus = 'blurred'; this.pauseIdle(); return; }
@@ -701,7 +728,7 @@ export class TerminalApp {
     for (const key of keys) this.handleKey(key);
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
-  };
+  }
 
   private readonly onResize = (): void => {
     this.effects.cancel();
@@ -815,6 +842,10 @@ export class TerminalApp {
     }
     if (this.screensaverPanel) {
       this.handleScreensaverKey(key, this.screensaverPanel);
+      return;
+    }
+    if (this.stopsEditor) {
+      this.handleStopsEditorKey(key, this.stopsEditor);
       return;
     }
     if (this.chromeEditor) {
@@ -1383,8 +1414,8 @@ export class TerminalApp {
     const cached = this.commandDescriptions.cached(candidate.value);
     if (cached !== undefined) return cached;
     void this.commandDescriptions.request(candidate.value).then(description => {
-      const current = this.shellSuggestions[this.selectedSuggestion];
-      if (description && !this.stopped && current?.value === candidate.value) this.render();
+      // Every visible row shows its description, so any candidate still listed repaints.
+      if (description && !this.stopped && this.shellSuggestions.some(item => item.value === candidate.value)) this.render();
     });
     return '';
   }
@@ -1603,6 +1634,7 @@ export class TerminalApp {
     }
     // The cursor has one configuration: /cursor opens its existing Settings rows.
     else if (slash.kind === 'cursor') { this.panelOrigin = undefined; this.focusConfigRow('cursorShape'); }
+    else if (slash.kind === 'activity') { this.panelOrigin = undefined; this.focusConfigRow('activityColors'); }
     else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
@@ -2620,7 +2652,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
@@ -2629,7 +2661,7 @@ export class TerminalApp {
     if (this.setupState) return SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
     if (this.screensaverPanel) return SCREENSAVER_MIN_SIZE;
-    if (this.chromeEditor) return CHROME_EDITOR_MIN_SIZE;
+    if (this.chromeEditor || this.stopsEditor) return CHROME_EDITOR_MIN_SIZE;
     return undefined;
   }
 
@@ -2649,6 +2681,7 @@ export class TerminalApp {
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.screensaverPanel) return this.renderScreensaverRows(this.screensaverPanel, columns);
+    if (this.stopsEditor) return this.renderStopsEditor(this.stopsEditor, columns);
     if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
     if (this.setupState) {
       const state = this.setupState;
@@ -2864,6 +2897,7 @@ export class TerminalApp {
       const config = this.promptConfiguration;
       this.chromeEditor = createChromeEditor(config.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...config.uiChrome, source: 'theme'}, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
     }
+    else if (destination === 'idleColors' || destination === 'activityColors') this.openStopsEditor(destination === 'idleColors' ? 'idle' : 'activity');
     else if (destination === 'toolConfig') void this.startToolConfiguration('starship');
     else if (destination === 'appearance') void this.startAppearance();
     else if (destination === 'prompt') void this.startPromptSettings(false);
@@ -3141,9 +3175,8 @@ export class TerminalApp {
         break;
       }
       case 'terminal': {
-        const nerdSample = `${SECONDARY}Nerd Font${RESET}   ~/Projects   main   node`;
-        const safeSample = `${SECONDARY}Safe/ASCII${RESET}  < ~/Projects > git: main > node >`;
-        rows.push(`  ${draft.glyphStyle === 'nerd' ? ACCENT + '›' : ' '}${RESET} ${nerdSample}`, `  ${draft.glyphStyle === 'safe' ? ACCENT + '›' : ' '}${RESET} ${safeSample}`, '');
+        // The real production glyphs in both modes, column by column, so a font problem is visible.
+        rows.push(...glyphDiagnosticRows(draft.glyphStyle).map(row => `  ${row}`), '');
         // A drawn caret only: the real terminal cursor is never changed by a preview.
         const caret = draft.cursor.shape === 'block' ? `${INVERSE}s${RESET}` : draft.cursor.shape === 'bar' ? `${ACCENT}▏${RESET}s`
           : draft.cursor.shape === 'underline' ? `\u001B[4ms\u001B[24m` : `${SUBTLE}▏${RESET}s`;
@@ -3153,10 +3186,15 @@ export class TerminalApp {
         break;
       }
       case 'prompt': {
-        const context = themePreviewContext();
-        rows.push(`${label('Prompt')}${buildContextLine(context, width - 12, draft, 'composer')}${RESET}`);
-        rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git status${RESET}`);
-        if (draft.provider !== 'nmsh') rows.push(`  ${SUBTLE}${providerExplanation('prompt', draft.provider)}${RESET}`);
+        if (draft.provider === 'nmsh') {
+          rows.push(`${label('Prompt')}${buildContextLine(themePreviewContext(), width - 12, draft, 'composer', Date.now())}${RESET}`);
+          rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git status${RESET}`);
+          animate ||= treatmentAnimated(draft.presentation);
+          break;
+        }
+        // An external provider's own prompt, never the Native one standing in for it.
+        rows.push(this.setupExternalPromptRow(draft, width - 12, label(providerLabel(draft.provider))));
+        rows.push(`  ${SUBTLE}${providerExplanation('prompt', draft.provider)}${RESET}`, `  ${SUBTLE}${NATIVE_ONLY_NOTE}${RESET}`);
         break;
       }
       case 'appearance': {
@@ -3164,7 +3202,14 @@ export class TerminalApp {
         rows.push(`${label('Chrome')}${renderTabStrip(['Settings', 'Status', 'Config'], 2, Math.min(36, width - 12), true)}`);
         rows.push(`${label('')}${SEPARATOR}${repeatToWidth(GLYPHS.separator, Math.min(36, width - 12))}${RESET}`);
         rows.push(`${label('')}${background(UI_COLORS.selection)}${ACCENT}${GLYPHS.selection} ${PRIMARY}Selected row${' '.repeat(Math.max(0, Math.min(36, width - 12) - 14))}${RESET}`);
-        if (draft.presentation.preset !== 'off') rows.push(`${label('Chroma')}${treatmentSwatch(draft.presentation, Math.min(36, width - 12), themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance))}${RESET}`);
+        if (draft.presentation.preset !== 'off') {
+          // The selected treatment, live: Breathe breathes, Comet and Travel move, Static stays still.
+          const treatment = treatmentFor({...draft.presentation, intensity: 1}, themeChromaStops(draft.nmsh.palette, draft.nmsh.vibrance));
+          const swatch = treatment ? treatmentText('█'.repeat(Math.max(4, Math.min(36, width - 12))), treatment,
+            {role: 'effect', base: {red: 40, green: 40, blue: 46}, reducedMotion: draft.presentation.reducedMotion || isReducedMotion(), effectsOff: draft.presentation.effectsOff}, Date.now()) : '';
+          rows.push(`${label('Chroma')}${swatch}${RESET}  ${SUBTLE}${TREATMENT_MOTION_LABELS[draft.presentation.motion]}${RESET}`);
+          if (draft.provider === 'nmsh') rows.push(`  ${SUBTLE}${CHROMA_PREVIEW_NOTE}${RESET}`);
+        }
         rows.push(`  ${SUBTLE}${draft.presentation.effectsOff ? 'Decorative effects Off: Chroma motion, sparkles and idle visuals stay still.'
           : draft.presentation.reducedMotion ? 'Reduced Motion: colors stay, movement stops.' : 'Decorative effects On: Chroma motion and effects may move.'}${RESET}`);
         // The light sweep over a semantic sample: with Semantic Preserve, ✔ and ✘ keep their hues.
@@ -3183,11 +3228,7 @@ export class TerminalApp {
         break;
       }
       case 'editor': {
-        const syntax = renderSyntaxPreviewLine('git commit -m "fix" ~/src', draft.syntax, draft.nmsh.palette);
-        const ghost = draft.suggestions === 'none' ? '' : `${SECONDARY} --amend${RESET}`;
-        rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${syntax}${ghost}`);
-        rows.push(`  ${SUBTLE}Composer docks ${draft.composerPosition === 'flow' ? 'after the newest output (Flow)' : `at the ${draft.composerPosition}`}; transcript ${draft.transcriptPresentation === 'chat' ? 'in Chat rows' : 'in Normal rows'}.${RESET}`);
-        rows.push(`  ${SUBTLE}${providerExplanation('suggestions', draft.suggestions)}${RESET}`);
+        rows.push(...this.setupEditorPreview(draft, width));
         break;
       }
       case 'history': {
@@ -3227,6 +3268,53 @@ export class TerminalApp {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
     } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
     return rows.map(row => truncateAnsi(row, columns - 2));
+  }
+
+  /**
+   * A compact, representative picture of the Editor step: where the composer
+   * sits, Normal or Chat transcript rows, a folded output block, syntax
+   * colors, ghost text and the empty-prompt prediction, each following the draft.
+   */
+  private setupEditorPreview(draft: PromptConfiguration, width: number): string[] {
+    const inner = Math.max(20, Math.min(60, width));
+    const chat = draft.transcriptPresentation === 'chat';
+    const command = (text: string) => {
+      const painted = `${renderSyntaxPreviewLine(text, draft.syntax, draft.nmsh.palette)}${RESET}`;
+      return chat ? `${' '.repeat(Math.max(1, inner - displayWidth(text) - 2))}${painted} ${SUBTLE}${GLYPHS.prompt}${RESET}` : `${SUBTLE}${GLYPHS.prompt}${RESET} ${painted}`;
+    };
+    const transcript = [command('npm test'), `${SECONDARY}  ${GLYPHS.success} 42 passed${RESET}`];
+    if (draft.outputFolding !== 'never') transcript.push(`${SUBTLE}  ${getCurrentGlyphMode() === 'nerd' ? '▸' : '>'} 318 more lines folded${RESET}`);
+    const ghost = draft.suggestions === 'none' ? '' : `${SECONDARY} --amend${RESET}`;
+    const composer = [`${ACCENT}${GLYPHS.prompt}${RESET} ${renderSyntaxPreviewLine('git commit -m "fix"', draft.syntax, draft.nmsh.palette)}${ghost}`];
+    const rule = `${SUBTLE}${repeatToWidth(GLYPHS.separator, inner)}${RESET}`;
+    const body = draft.composerPosition === 'top' ? [...composer, rule, ...transcript] : [...transcript, rule, ...composer];
+    const rows = body.map(line => `  ${SUBTLE}│${RESET} ${line}`);
+    const where = draft.composerPosition === 'flow' ? 'Flow: the composer follows the newest output' : `Composer docked at the ${draft.composerPosition}`;
+    rows.push(`  ${SUBTLE}${where} · ${chat ? 'Chat' : 'Normal'} transcript · syntax ${draft.syntax.highlighting ? 'on' : 'off'} · folding ${draft.outputFolding}${RESET}`);
+    rows.push(draft.suggestionsOnEmpty && draft.suggestions !== 'none'
+      ? `  ${SUBTLE}Empty prompt:${RESET} ${ACCENT}${GLYPHS.prompt}${RESET} ${SECONDARY}git push${RESET}  ${SUBTLE}predicted before typing${RESET}`
+      : `  ${SUBTLE}Empty prompt: no prediction until you type${RESET}`);
+    rows.push(`  ${SUBTLE}${providerExplanation('suggestions', draft.suggestions)}${RESET}`);
+    return rows;
+  }
+
+  /** Setup Cat's external prompt preview, rendered off the render path once per provider. */
+  private setupExternalPrompt?: {provider: PromptProviderId; result?: StarshipPromptResult; error?: string};
+
+  private setupExternalPromptRow(draft: PromptConfiguration, width: number, label: string): string {
+    const provider = draft.provider;
+    const cached = this.setupExternalPrompt?.provider === provider ? this.setupExternalPrompt : undefined;
+    if (!cached) {
+      const entry: NonNullable<TerminalApp['setupExternalPrompt']> = {provider};
+      this.setupExternalPrompt = entry;
+      void this.renderExternalPrompt(draft).then(result => { entry.result = result; }, (error: unknown) => {
+        entry.error = error instanceof Error ? error.message : String(error);
+      }).then(() => { if (!this.stopped && this.setupState && this.setupExternalPrompt === entry) this.render(); });
+      return `${label}${SUBTLE}Checking ${providerLabel(provider)}…${RESET}`;
+    }
+    if (cached.result) return `${label}${this.externalPromptRow(cached.result, width, 'composer')}${RESET}`;
+    if (cached.error) return `${label}${SUBTLE}${truncateText(`No preview: ${cached.error}`, width)}${RESET}`;
+    return `${label}${SUBTLE}Checking ${providerLabel(provider)}…${RESET}`;
   }
 
   /** The Setup Cat title takes the current one-shot sweep when the step changes; otherwise it rests. */
@@ -3342,8 +3430,14 @@ export class TerminalApp {
   }
 
   private handleScreensaverKey(key: Key, state: ScreensaverPanelState): void {
-    const action = screensaverKey(state, key, this.promptConfiguration.idleVisuals);
+    const action = screensaverKey(state, key, this.promptConfiguration.idleVisuals, this.promptConfiguration);
     if (!action) return;
+    if (action.kind === 'editColors') {
+      this.screensaverPanel = undefined;
+      this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+      this.openStopsEditor('idle');
+      return;
+    }
     if (action.kind === 'close') {
       this.screensaverPanel = undefined;
       this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
@@ -3355,7 +3449,50 @@ export class TerminalApp {
     } else this.startIdle(true);
   }
 
+  private openStopsEditor(target: 'idle' | 'activity'): void {
+    const config = this.promptConfiguration;
+    const stops = target === 'idle' ? config.idleVisuals.customStops : config.liveActivity.customStops;
+    this.stopsEditor = {target, gradient: {stops: [...(stops.length >= MIN_CUSTOM_STOPS ? stops : PRESET_STOPS.lavender)], index: 0}};
+  }
+
+  /** The draft stops applied to a copy of the configuration, for live previews. */
+  private stopsDraft(editor: NonNullable<TerminalApp['stopsEditor']>): PromptConfiguration {
+    const config = this.promptConfiguration;
+    const customStops = editor.gradient.stops.length >= MIN_CUSTOM_STOPS ? [...editor.gradient.stops] : [...PRESET_STOPS.lavender];
+    return editor.target === 'idle'
+      ? {...config, idleVisuals: {...config.idleVisuals, colorSource: 'custom', customStops}}
+      : {...config, liveActivity: {colors: 'custom', customStops}};
+  }
+
+  /** Shared stop editor keys; Esc (when not typing a hex) saves the stops and returns. */
+  private handleStopsEditorKey(key: Key, editor: NonNullable<TerminalApp['stopsEditor']>): void {
+    const saved = editor.target === 'idle' ? this.promptConfiguration.idleVisuals.customStops : this.promptConfiguration.liveActivity.customStops;
+    if (gradientEditorKey(editor.gradient, key, () => saved.length >= MIN_CUSTOM_STOPS ? saved : PRESET_STOPS.lavender)) return;
+    if (key.kind !== 'escape' && key.kind !== 'interrupt') return;
+    if (key.kind === 'escape' && this.applySettingsConfiguration(this.stopsDraft(editor))) this.armIdle();
+    this.stopsEditor = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.returnFromPanel();
+  }
+
+  private renderStopsEditor(editor: NonNullable<TerminalApp['stopsEditor']>, columns: number): string[] {
+    const draft = this.stopsDraft(editor);
+    const title = editor.target === 'idle' ? 'Idle visuals · Custom colors' : 'Live activity · Custom colors';
+    const rows = ['', ...renderGradientEditorRows(editor.gradient, title).map(row => `  ${row}`), '', `  ${SUBTLE}${GLYPHS.separator.repeat(2)} Preview${RESET}`];
+    if (editor.target === 'idle') {
+      rows.push(...idleFrameRows(this.screensaverGrid, {mode: draft.idleVisuals.mode, width: Math.max(10, Math.min(56, columns - 6)), height: 5,
+        palette: idlePaletteFor(draft), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: 20_000}).map(line => `  ${line}`));
+    } else {
+      const {cells, style} = liveActivityPaint('• Running sleep 5 · ', draft);
+      rows.push(`  ${sweepCells(cells, Number.POSITIVE_INFINITY, style, colorLevel(), true)}${SECONDARY}3.4s${RESET}`,
+        `  ${SUBTLE}Only live work uses these colors; finished commands show their plain success or failure.${RESET}`);
+    }
+    rows.push('', renderControls(gradientEditorControls(editor.gradient)));
+    return framePanel(rows.map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, this.dimensions().rows));
+  }
+
   private startSetup(entry?: string): void {
+    this.setupExternalPrompt = undefined;
     const state = this.setupState = createSetup(this.promptConfiguration, entry);
     void this.loadSetupContext(state);
   }
@@ -3981,7 +4118,7 @@ export class TerminalApp {
 
   private currentPromptLine(width: number, time = Date.now()): string {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
-      return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement);
+      return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement, time);
     }
     return buildContextLine(this.promptContext(), width, this.promptConfiguration, this.promptConfiguration.placement, time);
   }
@@ -4020,10 +4157,10 @@ export class TerminalApp {
   }
 
   /** External provider content follows the native placement rule: the divider fill only in header placement. */
-  private externalPromptRow(prompt: StarshipPromptResult, width: number, placement: PromptConfiguration['placement']): string {
+  private externalPromptRow(prompt: StarshipPromptResult, width: number, placement: PromptConfiguration['placement'], time = Date.now()): string {
     const content = truncateAnsi(prompt.ansi, Math.max(0, width - 1));
     if (placement === 'composer') return `${content}${RESET}`;
-    return `${content}${RESET}${SEPARATOR}${repeatToWidth(GLYPHS.separator, Math.max(0, width - displayWidth(content)))}${RESET}`;
+    return `${content}${RESET}${paintDivider(repeatToWidth(GLYPHS.separator, Math.max(0, width - displayWidth(content))), this.promptConfiguration.presentation, time)}${RESET}`;
   }
 
   private scroll(direction: -1 | 1): void {
@@ -4362,7 +4499,8 @@ export class TerminalApp {
     });
 
     // The plan decides where each region lives; this only decides what paints into it.
-    const separator = `${SEPARATOR}${repeatToWidth(GLYPHS.separator, columns)}${RESET}`;
+    // Composer top and bottom divider lines; the prompt row's divider fill uses the same source.
+    const separator = `${paintDivider(repeatToWidth(GLYPHS.separator, columns), this.promptConfiguration.presentation, Date.now())}${RESET}`;
     const regionRows = (region: Region): string[] => {
       switch (region.kind) {
         case 'transcript': return visible;
@@ -4376,7 +4514,7 @@ export class TerminalApp {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
           if ('correction' in suggestion) return renderCorrection(suggestion, columns);
           if ('source' in suggestion && 'replacement' in suggestion) {
-            return renderCompletion(suggestion, selected, columns, selected ? this.completionDescription(suggestion) : suggestion.description);
+            return renderCompletion(suggestion, selected, columns, this.completionDescription(suggestion));
           }
           return truncateAnsi(
             `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
@@ -4439,6 +4577,7 @@ export class TerminalApp {
   private cancelPresentation(): void {
     this.effects.cancel();
     this.endSweep();
+    if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
     this.stopIdleFrames();
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
@@ -4463,12 +4602,12 @@ export class TerminalApp {
         const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
-      // Rules are UI chrome; they carry Chroma only when the user chose Chroma on rules.
-      if ((region.kind === 'separator' || region.kind === 'composerBorder') && settings.rules) {
-        rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
+      // Live composer divider lines move with Chroma only when Divider lines follow Chroma.
+      if ((region.kind === 'separator' || region.kind === 'composerBorder') && dividerAnimated(settings)) {
+        rows[region.top] = paintDivider(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, now) + RESET;
       }
-      // The prompt row is re-rendered from the same semantic modules; only Chroma colors move.
-      if (region.kind === 'prompt' && region.height > 0 && this.promptChromaAnimated() && this.decorativeMotionAllowed()) {
+      // The prompt row is re-rendered from the same semantic modules; only Chroma colors move (its divider fill too).
+      if (region.kind === 'prompt' && region.height > 0 && (this.promptChromaAnimated() || dividerAnimated(settings)) && this.decorativeMotionAllowed()) {
         rows[region.top] = this.currentPromptLine(frame.columns ?? 80, now);
       }
     }
@@ -4499,8 +4638,8 @@ export class TerminalApp {
     if (!this.presentationStarted || this.stopped) return;
     this.syncStatusStrip();
     const settings = this.promptConfiguration.presentation;
-    const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
-      && settings.rules === true && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
+    const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder'
+      || (region.kind === 'prompt' && region.height > 0)) && dividerAnimated(settings) && colorLevel() !== 'none';
     const animatedPrompt = this.presentationFrame?.plan.regions.some(region => region.kind === 'prompt' && region.height > 0) && this.promptChromaAnimated();
     const needsFrames = Boolean(this.running || this.effects.active || ((animatedRule || animatedPrompt) && this.decorativeMotionAllowed()));
     if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
@@ -4518,9 +4657,9 @@ export class TerminalApp {
     const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
     const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
     // A soft light sweep over the working phrase: its own colors lifted in place, never moved; faster while output arrives.
-    const style = sweepStyleFor(this.promptConfiguration);
-    const base = mixRgb(UI_COLORS.workingBase, UI_COLORS.workingPeak, 0.35);
-    const cells = graphemes(parts.phrase).map(glyph => ({glyph, color: glyph === ' ' ? undefined : base}));
+    // Colors come from Live activity colors; the sweep is the same light sweep everywhere.
+    const still = !this.decorativeMotionAllowed() || sweepStill(this.promptConfiguration);
+    const {cells, style} = liveActivityPaint(parts.phrase, this.promptConfiguration, this.activityAnimationNow, still);
     const phrase = sweepCells(cells, animationElapsed * (isActive ? 1.4 : 1), style, colorLevel(), !this.decorativeMotionAllowed());
     return `${phrase}${SECONDARY}${parts.duration}${RESET}`;
   }

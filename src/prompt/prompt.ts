@@ -1,6 +1,6 @@
 import {accentedVariant, THEME_VARIANTS, type CatppuccinAccent, type ThemeVariant} from '../appearance/themeFamilies.js';
 import type {CustomTheme} from '../appearance/customTheme.js';
-import {treatmentAnimated, treatmentFor, type TreatmentSettings} from '../chroma/treatment.js';
+import {paintDivider, treatmentAnimated, treatmentFor, type TreatmentSettings} from '../chroma/treatment.js';
 import {applyVibrance, fromOklch, readableForeground, toOklch, type Vibrance} from '../chroma/color.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
@@ -23,7 +23,6 @@ import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, reso
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
-const LINE = lazyForeground(UI_COLORS.separator);
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 /** NMSh brand/project lavender. */
 export const NMSH_BRAND_LAVENDER: RgbColor = {red: 166, green: 124, blue: 243};
@@ -447,7 +446,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     // Per-module custom colors are for the module's identity, not its Git states.
     const custom = !isGitStateRole(segment.role);
     const explicit = custom && Boolean(segment.module.foreground || segment.module.background);
-    const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'identity', presentation.semantic ?? 'preserve')
+    const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'prompt', presentation.semantic ?? 'preserve')
       && (!explicit || presentation.customColors === true);
     return {
       ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
@@ -569,18 +568,20 @@ export function buildContextLine(
   time = 0,
 ): string {
   if (width <= 0) return '';
-  if (width < 8) return `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}`;
+  // The divider fill is a composer divider line: the same source as the composer rules.
+  const divider = (cells: number) => `${paintDivider(repeatToWidth(GLYPHS.separator, cells), configuration.presentation, time)}${RESET}`;
+  if (width < 8) return divider(width);
 
   const modules = renderedModules(context, configuration);
   if (modules.length === 0) {
-    return placement === 'header' ? `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}` : '';
+    return placement === 'header' ? divider(width) : '';
   }
 
   const {left, right} = fitContextRow(fittedModules(context, configuration, width), width, configuration, time);
   const rightPart = right ? ` ${right}${RESET}` : '';
   const fillWidth = Math.max(0, width - displayWidth(left) - displayWidth(rightPart));
   if (placement === 'composer') return rightPart ? `${left}${RESET}${' '.repeat(fillWidth)}${rightPart}` : `${left}${RESET}`;
-  return `${left}${LINE}${repeatToWidth(GLYPHS.separator, fillWidth)}${RESET}${rightPart}`;
+  return `${left}${RESET}${divider(fillWidth)}${rightPart}`;
 }
 
 /**

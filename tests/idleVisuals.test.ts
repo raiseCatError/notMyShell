@@ -22,8 +22,8 @@ const frame = (mode: IdleMode, width: number, height: number, time: number, leve
 };
 
 test('defaults: timeout Never, Aurora Drift selected, Follow Appearance; old configs load unchanged', () => {
-  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance'});
-  assert.deepEqual(normalizePromptConfiguration({}).idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance'});
+  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []});
+  assert.deepEqual(normalizePromptConfiguration({}).idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []});
   for (const timeout of [0, 1, 5, 15, 30, 60]) assert.equal(normalizePromptConfiguration({idleVisuals: {timeout}}).idleVisuals.timeout, timeout);
   for (const timeout of [2, 10, 120, -1, '5']) assert.equal(normalizePromptConfiguration({idleVisuals: {timeout}}).idleVisuals.timeout, 0);
   assert.equal(normalizePromptConfiguration({idleVisuals: {mode: 'matrix'}}).idleVisuals.mode, 'aurora');

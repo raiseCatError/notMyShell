@@ -47,13 +47,13 @@ test('types get distinct icons with Safe fallbacks; command and subcommand diffe
   for (const item of kinds) assert.doesNotMatch(stripAnsi(renderCompletion(item, false, 100)), /\[command\]/u);
 });
 
-test('selection is a full band with pointer and bright label; description only on the highlighted row', () => {
+test('selection is a full band with pointer and bright label; descriptions on every row', () => {
   const item = candidate('git', {identity: 'executable', description: 'Distributed version control'});
   const selected = renderCompletion(item, true, 80);
   assert.match(selected, /\u001b\[48;/u, 'selection band');
   assert.equal(displayWidth(selected), 80, 'band spans the row');
   assert.match(stripAnsi(selected), /› \S git +Distributed version control/u);
-  assert.doesNotMatch(stripAnsi(renderCompletion(item, false, 80)), /Distributed/u, 'unselected rows stay calm');
+  assert.match(stripAnsi(renderCompletion(item, false, 80)), /git +Distributed version control/u, 'unselected rows show the description too');
   for (const width of [1, 6, 27, 40, 120]) assert.ok(displayWidth(renderCompletion(item, true, width)) <= width);
 });
 

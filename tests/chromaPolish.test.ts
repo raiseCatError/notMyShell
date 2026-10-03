@@ -60,7 +60,7 @@ test('ownership: Chroma never paints the Settings frame; Chroma Off and On give 
   assert.ok(on[0]!.includes(foreground(UI_COLORS.separator)), 'frame uses the chrome separator');
 });
 
-test('ownership: history rules follow UI chrome unless Rules is Chroma', () => {
+test('ownership: history divider lines follow Chroma by default (static), UI theme when chosen', () => {
   const rule = (presentation: object) => {
     const output = new OutputBuffer();
     output.presenter.setTreatment(normalizeTreatmentSettings(presentation));
@@ -71,8 +71,9 @@ test('ownership: history rules follow UI chrome unless Rules is Chroma', () => {
   };
   const off = rule({preset: 'off'});
   assert.ok(off.length > 0);
-  assert.equal(rule({preset: 'rainbow'}), off, 'Chroma on, Rules = UI chrome: unchanged rule');
-  assert.notEqual(rule({preset: 'rainbow', rules: true}), off, 'Rules = Chroma: treated');
+  assert.equal(rule({preset: 'rainbow', rules: false}), off, 'Chroma on, Divider lines = Follow UI theme: unchanged rule');
+  assert.notEqual(rule({preset: 'rainbow'}), off, 'Divider lines follow Chroma by default');
+  assert.equal(rule({preset: 'rainbow', motion: 'breathe'}), rule({preset: 'rainbow'}), 'history stays static under motion');
   assert.equal(rule({preset: 'off', rules: true}), off, 'Chroma Off restores the base rule exactly');
 });
 
@@ -87,15 +88,15 @@ function harness(config: object): {app: TerminalApp; frames: TerminalFrame[]; cl
   return {app, frames, cleanup: () => { app['stop'](0); app['session'].kill(); applyUiTheme(undefined); isolation.restore(); }};
 }
 
-test('ownership: composer rules are UI chrome by default and Chroma only when chosen; no frame timer for chrome rules', () => {
-  const chrome = harness({presentation: {preset: 'rainbow', motion: 'breathe'}});
+test('ownership: composer divider lines follow Chroma by default, UI theme when chosen; no frame timer for UI-theme lines', () => {
+  const chrome = harness({presentation: {preset: 'rainbow', motion: 'breathe', rules: false}});
   try {
     chrome.app['render']();
     const frame = chrome.frames.at(-1)!;
     const separator = foreground(UI_COLORS.separator);
     assert.ok(frame.rows.some(item => item.startsWith(separator) && stripAnsi(item).startsWith('───')), 'composer rule in chrome color');
   } finally { chrome.cleanup(); }
-  const chroma = harness({presentation: {preset: 'rainbow', motion: 'static', rules: true}});
+  const chroma = harness({presentation: {preset: 'rainbow', motion: 'static'}});
   try {
     chroma.app['render']();
     const rules = chroma.frames.at(-1)!.rows.filter(item => stripAnsi(item).startsWith('────'));
@@ -105,7 +106,7 @@ test('ownership: composer rules are UI chrome by default and Chroma only when ch
 
 test('UI chrome: Follow theme default; Lavender keeps the shipped chrome; Native themes derive their own', () => {
   const config = normalizePromptConfiguration({});
-  assert.deepEqual(config.uiChrome, {source: 'theme', preset: 'lavender'});
+  assert.deepEqual(config.uiChrome, {source: 'theme', preset: 'lavender', themeText: true});
   assert.equal(resolveChrome(config.uiChrome, 'lavender', 'mauve', undefined), undefined, 'shipped chrome for Lavender');
   const forest = nativeThemeChrome('forest')!;
   assert.ok(forest, 'Forest has its own chrome');
@@ -122,8 +123,8 @@ test('UI chrome: Custom presets (Native Lavender, Grayscale, custom colors) and 
   const colors = {accent: '#ff8800', primary: '#eeeeee', secondary: '#cccccc', subtle: '#888888', separator: '#445566', selection: '#223344',
     success: '#00aa00', warning: '#aaaa00', failure: '#aa0000', info: '#0088aa'};
   assert.equal(resolveChrome({source: 'custom', preset: 'custom', colors}, 'nord', 'mauve', undefined)?.accent, '#ff8800');
-  assert.deepEqual(normalizeUiChrome({source: 'custom', preset: 'custom', colors: {accent: 'red'}}), {source: 'custom', preset: 'lavender'});
-  assert.deepEqual(normalizeUiChrome({source: 'bogus'}), {source: 'theme', preset: 'lavender'});
+  assert.deepEqual(normalizeUiChrome({source: 'custom', preset: 'custom', colors: {accent: 'red'}}), {source: 'custom', preset: 'lavender', themeText: true});
+  assert.deepEqual(normalizeUiChrome({source: 'bogus'}), {source: 'theme', preset: 'lavender', themeText: true});
   // Borders, rules, selected tabs and selection all read the applied chrome.
   try {
     applyUiTheme(uiColorsFor(chromeFromColors(colors)));
