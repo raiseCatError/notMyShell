@@ -23,9 +23,12 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** Plain factual listing for `nmsh --sessions`: one live session per line. */
+/**
+ * Plain factual listing for `nmsh --sessions`: one live session per line. The
+ * same facts /sessions shows (backend, state); the CLI keeps full ids for --attach.
+ */
 export function formatSessionList(sessions: readonly SessionInfo[], now: number): string {
   if (sessions.length === 0) return 'No live NMSh sessions.\n';
   return sessions.map(session => [session.id, session.state, `pid ${session.pid}`, `age ${formatAge(now - session.createdAt)}`,
-    session.cwd, liveStatusParts(session, now).join(' · ')].join('  ')).join('\n') + '\n';
+    session.cwd, liveStatusParts(session, now).join(' · '), `shell ${session.shell ?? 'zsh'}`].join('  ')).join('\n') + '\n';
 }

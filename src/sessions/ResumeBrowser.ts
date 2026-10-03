@@ -15,6 +15,9 @@ export interface ResumeBrowserState {
   week: number;
   selectedIndex: number;
   indexing: boolean;
+  /** /sessions: live sessions only (archives are /resume's), including this window's own. */
+  liveOnly?: boolean;
+  currentId?: string;
 }
 
 function weekStart(date: Date): number {
@@ -39,8 +42,10 @@ export function createResumeBrowser(sessions: TranscriptSummary[], live: Session
 
 export function visibleLiveSessions(state: ResumeBrowserState): SessionInfo[] {
   const query = state.query.toLocaleLowerCase().trim();
-  if (!query) return state.live;
-  return state.live.filter(session => `${session.cwd} ${session.running ?? ''}`.toLocaleLowerCase().includes(query));
+  // /sessions lists in start order, so #N matches session notices.
+  const live = state.liveOnly ? [...state.live].sort((a, b) => a.createdAt - b.createdAt) : state.live;
+  if (!query) return live;
+  return live.filter(session => `${session.cwd} ${session.running ?? ''} ${session.shell ?? ''}`.toLocaleLowerCase().includes(query));
 }
 
 export type ResumeSelection =
@@ -69,6 +74,7 @@ export function describeLiveSession(session: SessionInfo, now: number): string {
 }
 
 export function visibleResumeSessions(state: ResumeBrowserState): TranscriptSummary[] {
+  if (state.liveOnly) return [];
   const query = state.query.toLocaleLowerCase().trim();
   return state.sessions.filter(session => {
     if (!query) return weekStart(new Date(session.createdAt)) === state.week;
@@ -154,4 +160,10 @@ export function describeArchivedRow(session: TranscriptSummary, now: number): st
   const span = Number.isFinite(ended) && Number.isFinite(started) ? `ran ${formatAge(Math.max(0, ended - started))}` : `${formatAge(Math.max(0, now - started))} ago`;
   const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
   return `${session.project || 'notMyShell'} · ${tildePath(session.finalCwd)} · ${session.commandCount} command${session.commandCount === 1 ? '' : 's'} · ${span}${interrupted}`;
+}
+
+/** /sessions: the existing browser in live-only mode, with this window's session included. */
+export function createSessionsView(live: SessionInfo[], currentId: string | undefined): ResumeBrowserState {
+  return {live, sessions: [], commandText: new Map(), query: '', week: 0, selectedIndex: 0, indexing: false, liveOnly: true,
+    ...(currentId ? {currentId} : {})};
 }

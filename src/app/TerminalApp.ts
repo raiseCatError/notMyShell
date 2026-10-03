@@ -162,6 +162,8 @@ import {formatBytes} from '../session/sessionList.js';
 import type {PresentationMode} from '../output/PresentationMode.js';
 import type {SessionInfo} from '../session/SessionProtocol.js';
 import {SessionJournal} from '../sessions/SessionJournal.js';
+import {createSessionsView} from '../sessions/ResumeBrowser.js';
+import {liveSessionRows} from '../sessions/LiveSessionView.js';
 import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
@@ -1103,7 +1105,7 @@ export class TerminalApp {
         this.resumeBrowser = undefined;
       } else if (key.kind === 'deleteLineAfter') {
         const selection = resumeSelection(browser);
-        if (selection?.kind === 'live' && selection.session.state === 'detached') browser.confirmKill = selection.session.id;
+        if (selection?.kind === 'live' && selection.session.state === 'detached' && selection.session.id !== browser.currentId) browser.confirmKill = selection.session.id;
       } else if (key.kind === 'up') {
         browser.selectedIndex = Math.max(0, browser.selectedIndex - 1);
       } else if (key.kind === 'down') {
@@ -1120,7 +1122,10 @@ export class TerminalApp {
         browser.selectedIndex = 0;
       } else if (key.kind === 'enter') {
         const selection = resumeSelection(browser);
-        if (selection?.kind === 'live') this.switchToLiveSession(selection.session.id, selection.session.state);
+        if (selection?.kind === 'live' && selection.session.id === browser.currentId) {
+          this.resumeBrowser = undefined;
+          this.output.addFrontendInteraction('/sessions', 'That is this window\'s session; nothing to switch.', INFO);
+        } else if (selection?.kind === 'live') this.switchToLiveSession(selection.session.id, selection.session.state);
         else void this.resumeSelectedSession();
       }
       this.render();
@@ -1772,6 +1777,7 @@ export class TerminalApp {
     else if (slash.kind === 'clear') await this.startFreshPresentation();
     else if (slash.kind === 'presets') this.startPresets();
     else if (slash.kind === 'resume') await this.openResumePicker();
+    else if (slash.kind === 'sessions') await this.openSessionsView();
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
@@ -2116,6 +2122,43 @@ export class TerminalApp {
       this.output.addFrontendInteraction('/resume', `Could not kill that session: ${error instanceof Error ? error.message : String(error)}.`, ERROR);
     }
     this.render();
+  }
+
+  /** /sessions: live sessions right now, through the same browser /resume uses (live-only mode). */
+  private async openSessionsView(): Promise<void> {
+    if (this.sessionMode !== 'service') {
+      this.output.addFrontendInteraction('/sessions', 'This window runs its shell in-process (no session service), so it is the only live session it can see. /resume lists archived transcripts.', INFO);
+      return;
+    }
+    let live: SessionInfo[] = [];
+    try { live = await listLiveSessions(); } catch {
+      this.output.addFrontendInteraction('/sessions', 'The session service did not answer; try again.', ERROR);
+      return;
+    }
+    this.panelOrigin = undefined;
+    this.resumeBrowser = createSessionsView(live, this.sessionId);
+  }
+
+  private sessionsViewRows(browser: ResumeBrowserState, columns: number): string[] {
+    const now = Date.now();
+    const safe = getCurrentGlyphMode() === 'safe';
+    const visible = visibleLiveSessions(browser);
+    const rows = liveSessionRows(visible, browser.currentId, now);
+    const out = [`${PRIMARY}  Sessions${RESET}  ${SUBTLE}live now · archived transcripts are in /resume${RESET}`, ''];
+    if (browser.query) out.push(`${SECONDARY}  Search: ${browser.query}${RESET}`, '');
+    if (!rows.length) out.push(`  ${SUBTLE}No live NMSh sessions${browser.query ? ' match' : ''}.${RESET}`);
+    rows.forEach((row, index) => {
+      const selected = index === browser.selectedIndex;
+      const marker = row.current ? (safe ? '*' : '●') : row.session.state === 'detached' ? (safe ? '-' : '◌') : (safe ? 'o' : '○');
+      const color = row.state === 'failed' ? ERROR : row.state === 'attention' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
+      const who = row.agent ? `${agentColor(row.agent.color)}${safe ? row.agent.safeGlyph : row.agent.glyph} ${row.agent.short}${RESET} ` : '';
+      out.push(truncateAnsi(`${selected ? `${ACCENT}›` : ' '} ${marker} ${PRIMARY}${(row.current ? 'this' : `#${row.ordinal}`).padEnd(5)}${RESET}${SECONDARY}${row.shell.padEnd(5)}${RESET} `
+        + `${color}${row.stateLabel.padEnd(16)}${RESET}${who}${selected ? PRIMARY : SECONDARY}${row.summary}${RESET}`, columns));
+    });
+    const confirming = browser.live.find(session => session.id === browser.confirmKill);
+    if (confirming) out.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
+    else out.push('', `${SUBTLE}  ↑↓ move · type to search · Enter switch to a detached session · Ctrl+K kill a detached session · Esc close${RESET}`);
+    return out;
   }
 
   private async openResumePicker(): Promise<void> {
@@ -2863,6 +2906,7 @@ export class TerminalApp {
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
+    if (this.resumeBrowser?.liveOnly) return framePanel(this.sessionsViewRows(this.resumeBrowser, columns), columns);
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
       const sessions = visibleResumeSessions(browser);

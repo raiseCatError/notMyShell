@@ -33,6 +33,19 @@ plain text), then cwd, the command and its duration, attached/detached and
 age. Archived rows show "Archived", project, cwd, command count and how long
 the session ran. No second session browser was added.
 
+## `/sessions`
+
+The live-session view: the same browser as `/resume` in a live-only mode
+(no archives), including this window's session, ordered by start time so `#N`
+matches session notices. Rows show this/`#N`, backend (zsh/Fish/Bash), state,
+a proven agent, cwd, what runs and for how long, attachment and age, and a
+pending notice. Enter on this window's session does nothing; on a session
+attached in another window it refuses (never taken over); on a detached one
+it attaches through the existing safe path (which clears its notice in the
+service). Ctrl+K kills a detached session with the existing confirmation.
+`nmsh --sessions` prints the same facts non-interactively. In in-process mode
+there is no service, and `/sessions` says so.
+
 ## Agent activity
 
 - Detection (`src/agents/agents.ts`): the program word of the command line

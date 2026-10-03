@@ -43,6 +43,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
+  {name: '/sessions', insertion: '/sessions', description: 'Live NMSh sessions right now: switch to a detached one, kill one (nmsh --sessions outside)'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
   {name: '/find', insertion: '/find ', description: 'Add a find term (Ctrl+F); terms AND together. -r regex, -c case; /find remove N, /find clear'},
   {name: '/filter', insertion: '/filter ', description: 'Add a filter term to the newest/focused output (terms AND together; -v, -C N, -r, -c); /filter remove N, /filter clear'},
@@ -81,6 +82,7 @@ export type ParsedSlashCommand =
   | {kind: 'clear'}
   | {kind: 'presets'}
   | {kind: 'resume'}
+  | {kind: 'sessions'}
   | {kind: 'help'}
   | {kind: 'about'}
   | {kind: 'find'; arguments: string}
@@ -128,6 +130,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
   if (/^\/presets\s*$/u.test(input)) return {kind: 'presets'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
+  if (/^\/sessions\s*$/u.test(input)) return {kind: 'sessions'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
   if (/^\/about\s*$/u.test(input)) return {kind: 'about'};
   const openDiff = /^\/open-diff(?:\s+("[^"]+"|'[^']+'|\S+))?(?:\s+("[^"]+"|'[^']+'|\S+))?\s*$/u.exec(input);
