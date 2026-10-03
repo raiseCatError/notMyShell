@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {nmshConfigDirectory} from '../src/configuration/paths.js';
 import {resolveZsh} from '../src/shell/zshExecutable.js';
 import {defaultRuntimeDir} from '../src/session/runtimeDir.js';
 import {resolveHostCapabilities} from '../src/host/capabilities.js';
@@ -49,4 +50,11 @@ test('Linux host fixtures retain passive capabilities and optional notifications
   const service = createNotificationService('linux');
   assert.equal(service.supported, false);
   assert.deepEqual(await service.notify({title: 'NMSh', subtitle: 'Complete', body: 'Complete'}), {ok: false, reason: 'unsupported'});
+});
+
+test('configuration ignores relative XDG paths and uses the OS home when HOME is missing', () => {
+  assert.equal(nmshConfigDirectory({HOME: '/home/工具 user', XDG_CONFIG_HOME: 'relative'}, 'linux'), '/home/工具 user/.config/nmsh');
+  assert.equal(nmshConfigDirectory({}, 'linux'), join(homedir(), '.config', 'nmsh'));
+  assert.equal(nmshConfigDirectory({HOME: 'relative'}, 'linux'), join(homedir(), '.config', 'nmsh'));
+  assert.equal(nmshConfigDirectory({HOME: '/home/user', XDG_CONFIG_HOME: '/mnt/config dir'}, 'linux'), '/mnt/config dir/nmsh');
 });

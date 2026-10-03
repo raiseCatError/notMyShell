@@ -21,6 +21,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
         os: [macos-latest, ubuntu-24.04]
         node-version: [22.x, 26.x]
@@ -39,6 +40,24 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh build-essential python3
 
+      - name: Verify secure Linux system completion paths
+        if: runner.os == 'Linux'
+        run: |
+          # Hosted image completion directories can be group-writable. Global
+          # compinit then prompts before NMSh's isolated startup files run.
+          insecure="$(zsh -fc 'autoload -Uz compaudit; compaudit' 2>/dev/null || true)"
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            case "$path" in
+              /usr/share/zsh|/usr/share/zsh/*|/usr/local/share/zsh|/usr/local/share/zsh/*)
+                sudo chown root:root "$path"
+                sudo chmod go-w "$path"
+                ;;
+              *) echo "::error::Unexpected insecure completion path: $path"; exit 1 ;;
+            esac
+          done <<< "$insecure"
+          zsh -fc 'autoload -Uz compaudit; compaudit'
+
       - name: Install dependencies
         run: npm ci
 
@@ -49,10 +68,15 @@ jobs:
         run: npm run typecheck
 
       - name: Typecheck benchmark script
-        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts
+        run: npx tsc --ignoreConfig --noEmit --types node --target ES2022 --module NodeNext --moduleResolution NodeNext --esModuleInterop --skipLibCheck scripts/benchmarks.ts scripts/platform-benchmarks.ts
+
+      - name: Bounded platform timing smoke
+        run: |
+          node --import=tsx scripts/platform-benchmarks.ts
+          NMSH_BENCH_SAMPLES=5 NMSH_BENCH_WARMUP=1 npm run bench -- completion/configured-cold completion/configured-warm composer/screen-plan transcript/wrap-present-10000
 
       - name: Run tests
-        run: npm test
+        run: npm test -- --test-timeout=120000
 
       - name: Verify working tree clean
         run: git diff --check
