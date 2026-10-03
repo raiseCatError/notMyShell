@@ -10,6 +10,7 @@
 | **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), development-complete, unmerged; physical QA pending |
 | **Prior stacked milestone** | [v0.10.0 — Terminal Hosts & Compatibility](https://github.com/raiseCatError/notMyShell/milestone/10), development acceptance complete as an unmerged stack; [evidence and limitations](docs/testing/v010-acceptance.md), physical QA pending |
 | **Current stacked milestone** | [v0.13.0 — Portability & Platform Foundations](https://github.com/raiseCatError/notMyShell/milestone/13), Linux runtime/CI and Windows feasibility; unmerged, physical QA deferred |
+| **v0.16 implementation** | Sessions & agents, portability, images, Linux/WSL, ShellAdapter with Fish and Bash, transcript find and editor bridge — branch `feature/v016-platform-portability-agents`, unmerged; [physical QA pending](docs/testing/v016-physical-qa.md) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
@@ -190,7 +191,7 @@ NMSh provides the surrounding interaction and presentation layer; tools such as 
 
 ## Longer Term — Shells and Platforms
 
-zsh remains the only first-class backend. v0.13 implements a Linux development baseline and researches Windows/ConPTY/WSL; it is not a public platform release. Native Windows and additional shell backends remain unsupported. See [Linux foundations](docs/architecture/v013-linux-foundations.md), [Windows feasibility](docs/architecture/v013-windows-feasibility.md), and [deferred portability QA](docs/testing/v013-physical-qa.md).
+As of v0.16 (unmerged) zsh, Fish and Bash are implemented backends behind a real [ShellAdapter](docs/architecture/shell-adapter.md); Nushell and native Windows (ConPTY + PowerShell/Nu) remain later. Before v0.16: zsh remained the only first-class backend. v0.13 implements a Linux development baseline and researches Windows/ConPTY/WSL; it is not a public platform release. Native Windows and additional shell backends remain unsupported. See [Linux foundations](docs/architecture/v013-linux-foundations.md), [Windows feasibility](docs/architecture/v013-windows-feasibility.md), and [deferred portability QA](docs/testing/v013-physical-qa.md).
 
 | Issue | Title |
 |---|---|
