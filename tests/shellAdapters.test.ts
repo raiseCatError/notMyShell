@@ -129,8 +129,16 @@ for (const id of SHELL_IDS) {
       state.shell.interrupt();
       const [stopped] = await interrupted as [ShellMarker];
       assert.notEqual(stopped.exitCode, 0);
-    } finally { state.shell.kill(); rmSync(state.home, {recursive: true, force: true}); }
+    } finally { await stopShell(state); }
   });
+}
+
+/** End the shell and wait for it before removing its home: an exiting shell still writes its history there. */
+async function stopShell(state: Lifecycle): Promise<void> {
+  const exited = new Promise(resolve => { state.shell.once('exit', resolve); setTimeout(resolve, 5000).unref(); });
+  state.shell.kill();
+  await exited;
+  rmSync(state.home, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
 }
 
 test('fish: a leading space is private, and Fish completion feeds structured candidates', {skip: !available('fish') && 'fish is not installed', timeout: 60_000}, async () => {
@@ -143,7 +151,7 @@ test('fish: a leading space is private, and Fish completion feeds structured can
     assert.ok(results.some(item => item.value === '--erase' && item.description.length > 0), 'Fish descriptions come through');
     const commands = await source.query({buffer: 'stri', cwd: state.home, cursor: 4}, new AbortController().signal);
     assert.ok(commands.some(item => item.value === 'string' && item.kind === 'command'));
-  } finally { state.shell.kill(); rmSync(state.home, {recursive: true, force: true}); }
+  } finally { await stopShell(state); }
 });
 
 test('bash: unrecorded lines are reported as not recorded; completion degrades honestly to names', {skip: !available('bash') && 'bash >= 4.4 is not installed', timeout: 60_000}, async () => {
@@ -159,7 +167,7 @@ test('bash: unrecorded lines are reported as not recorded; completion degrades h
     assert.equal(files[0]!.description, '');
     const commands = await source.query({buffer: 'ech', cwd: state.home, cursor: 3}, new AbortController().signal);
     assert.ok(commands.some(item => item.value === 'echo'));
-  } finally { state.shell.kill(); rmSync(state.home, {recursive: true, force: true}); }
+  } finally { await stopShell(state); }
 });
 
 test('shell panel: unavailable shells are listed, not switchable; blocked sessions explain why; D sets the default only', () => {

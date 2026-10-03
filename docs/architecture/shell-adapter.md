@@ -123,9 +123,9 @@ nested in the managed shell), in the current cwd, with NMSh's markers
 (`NMSH_ACTIVE`, `NMSH_SESSION_MODE`) removed so `nmsh` can start again.
 `/exit` uses the configured **default backend** (Settings → Default shell, or
 D in `/shell`) — never `$SHELL` or the login shell; switching the current
-session does not change it. One decision path refuses while a command,
-background or stopped jobs,
-full-screen program or shell startup is in progress. A missing target keeps
+session does not change it. One decision path refuses while a command or
+full-screen program runs, while the shell is still starting, or while
+background or stopped jobs exist. A missing target keeps
 NMSh open with the reason and an install pointer; there is no silent fallback
 to another shell.
 
