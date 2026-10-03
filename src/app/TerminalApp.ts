@@ -1,3 +1,8 @@
+import {presentationClock} from '../motion/PresentationClock.js';
+import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
+import {paintTreatment} from '../chroma/treatment.js';
+import {colorLevel} from '../presentation/capabilities.js';
+import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
 import {probeHost} from '../host/probe.js';
 import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type SessionPreset} from '../session/SessionPresets.js';
@@ -12,7 +17,7 @@ import {createConfigurationPanel, configurationKey, renderConfigurationPanel, ty
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {GLYPHS, setIconStyle} from '../ui/glyphs.js';
+import {GLYPHS, setIconStyle, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
@@ -70,7 +75,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
-import {copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
@@ -88,6 +93,7 @@ import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard
 import {Highlighter} from '../input/Highlighter.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel, type SyntaxPanelState} from '../input/SyntaxPanel.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
+import {renderStartupPanel} from '../ui/StartupPanel.js';
 import {createLayoutPanel, handleLayoutPanelKey, renderLayoutPanel, type LayoutPanelState} from '../ui/LayoutPanel.js';
 import {syntaxCharStyles, syntaxSgrForConfiguration, type SyntaxSgr} from '../input/syntaxTheme.js';
 import {SemanticService} from '../shell/SemanticService.js';
@@ -114,6 +120,7 @@ const SEPARATOR = foreground(UI_COLORS.separator);
 const ACCENT = foreground(UI_COLORS.accent);
 const SUCCESS = foreground(UI_COLORS.success);
 const ERROR = foreground(UI_COLORS.failure);
+const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
   'deleteLineBefore', 'deleteLineAfter', 'enter', 'newline', 'complete', 'historySearch']);
@@ -121,8 +128,6 @@ const STOPPED = foreground({red: 198, green: 156, blue: 109});
 const INFO = SECONDARY;
 const RESET = '\u001B[0m';
 const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
-const STATUS_REFRESH_MS = 100;
-
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
@@ -208,7 +213,7 @@ export class TerminalApp {
   /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean};
   private hoveredLineIndex?: number;
   private focusedLineIndex?: number;
   private focusedActivityId?: string;
@@ -217,10 +222,13 @@ export class TerminalApp {
   private externalPassthrough = false;
   private lastOutputTime = 0;
   private selectedSuggestion = 0;
-  private activityTimer?: NodeJS.Timeout;
+  private presentationStarted = false;
+  private presentationSubscription?: () => void;
+  private readonly effects = new EffectState();
+  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan};
   private activityAnimationNow = Date.now();
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
-  private welcomeBlinkTimer?: NodeJS.Timeout;
+  private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
   private contextGeneration = 0;
   private appearanceState?: AppearanceState;
@@ -258,6 +266,7 @@ export class TerminalApp {
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
+    this.output.presenter.setTreatment(this.promptConfiguration.presentation);
     this.output.setOutputFolding(this.promptConfiguration.outputFolding);
     this.output.presenter.setLayout(this.promptConfiguration.transcriptPresentation);
     this.output.presenter.setHyperlinks(this.host.capabilities.hyperlinks);
@@ -280,6 +289,11 @@ export class TerminalApp {
     });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
+    this.session.on('startup', tail => {
+      this.startupTail = tail;
+      if (this.startupPanel) { this.startupPanel.tail = tail; this.render(); }
+    });
     this.session.on('exit', event => {
       this.shellEnded = true;
       if (event.lost) {
@@ -294,7 +308,50 @@ export class TerminalApp {
     if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
     // After any restored transcript, or reattaching would erase the launch notice.
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
+    this.beginStartupWatch(connection?.attached);
     this.session.start();
+  }
+
+  /** The shell has not reached its first prompt; set for a new session, or a reattached one still starting. */
+  private startupPending = false;
+  private startupTail = '';
+  private startupTimer?: NodeJS.Timeout;
+  private startupPanel?: {since: number; tail: string};
+
+  /**
+   * Normal startup finishes before this fires and shows nothing. A shell that is still not at its first prompt
+   * (slow, or blocked on a startup file waiting for input) gets an explicit state instead of a composer that
+   * looks ready; commands stay held by the shell until it is.
+   */
+  private beginStartupWatch(attached: AttachedSession | undefined): void {
+    this.startupPending = attached ? attached.startup !== undefined : true;
+    this.startupTail = attached?.startup ?? '';
+    if (!this.startupPending) return;
+    const configured = Number(process.env.NMSH_STARTUP_NOTICE_MS);
+    const delay = Number.isFinite(configured) && configured >= 50 ? Math.min(60_000, configured) : 1500;
+    this.startupTimer = setTimeout(() => {
+      this.startupTimer = undefined;
+      if (!this.startupPending || this.stopped) return;
+      this.startupPanel = {since: Date.now() - delay, tail: this.startupTail};
+      this.render();
+    }, delay);
+    this.startupTimer.unref?.();
+  }
+
+  /** Explicit recovery from a blocked startup: end the shell and this session; nothing is left detached. */
+  private abortStartup(): void {
+    this.shellEnded = true;
+    this.detaching = false;
+    try { this.session.kill(); } catch { /* the shell may already be gone */ }
+    this.stop(130);
+    process.stderr.write('NMSh: shell startup aborted; the session was ended.\n');
+  }
+
+  private endStartupWatch(): void {
+    this.startupPending = false;
+    this.startupTail = '';
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
+    this.startupPanel = undefined;
   }
 
   /** Last shell stream event reflected in the transcript (service sessions). */
@@ -348,7 +405,10 @@ export class TerminalApp {
       if (running) {
         this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
         this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
-          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed};
+          startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
+          // A submission checkpoint can precede the very first shell event.
+          // Its replayed readiness prompt must not complete the queued command.
+          awaitingExec: this.streamSeq === 0};
       }
     }
   }
@@ -367,7 +427,8 @@ export class TerminalApp {
     }
     // Without a journal the running command is known only from the service.
     if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
-    if (this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+    if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
+      this.cancelPresentation();
       this.passthrough = true;
       this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
@@ -391,7 +452,8 @@ export class TerminalApp {
 
   private onActiveModeChange(mode: PresentationMode): void {
     if (this.replaying) return;
-    if (mode === 'PASSTHROUGH' && !this.passthrough) {
+    if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
+      this.cancelPresentation();
       this.passthrough = true;
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
       this.terminalFocus = 'unknown';
@@ -407,7 +469,20 @@ export class TerminalApp {
    * detached, or came from type-ahead): give it its own transcript block.
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
-    if (this.running) { this.running.historyAllowed = historyAllowed; return; }
+    this.effects.cancel();
+    if (this.running) {
+      this.running.awaitingExec = false;
+      this.running.historyAllowed = historyAllowed;
+      if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+        this.cancelPresentation();
+        this.terminalFocus = 'unknown';
+        this.passthrough = true;
+        this.renderer.suspendForPassthrough();
+        const dimensions = this.dimensions();
+        this.session.resize(dimensions.columns, dimensions.rows);
+      }
+      return;
+    }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
@@ -473,9 +548,8 @@ export class TerminalApp {
     } else if (!this.presetStartup && !this.promptConfiguration.toolsSetupComplete) {
       this.startTools(true);
     }
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
+    // Restored terminal modes are a visible handoff: keys can arrive at once.
+    // Install raw input first so the host cannot echo or translate those keys.
     if (process.stdin.isTTY) {
       this.originalRawMode = process.stdin.isRaw;
       process.stdin.setRawMode(true);
@@ -483,6 +557,9 @@ export class TerminalApp {
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
+    this.renderer.enter();
+    this.rendererEntered = true;
+    if (this.passthrough) this.enterAttachedPassthrough();
     if (earlyInput) this.onInput(earlyInput);
     process.stdout.on('resize', this.onResize);
     process.on('SIGTSTP', this.onSuspend);
@@ -496,12 +573,7 @@ export class TerminalApp {
         this.renderer.leave();
       }
     });
-    this.activityTimer = setInterval(() => {
-      if (!this.running) return;
-      this.activityAnimationNow = Date.now();
-      this.output.tickActiveCommand();
-      this.render();
-    }, STATUS_REFRESH_MS);
+    this.presentationStarted = true;
     this.scheduleWelcomeBlink();
     void this.loadHistory();
     this.render();
@@ -521,7 +593,7 @@ export class TerminalApp {
       const escaped = JSON.stringify(data);
       appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
     }
-    if (this.passthrough) {
+    if (this.passthrough && !this.startupPending) {
       this.session.write(data);
       return;
     }
@@ -532,6 +604,7 @@ export class TerminalApp {
   };
 
   private readonly onResize = (): void => {
+    this.effects.cancel();
     if (this.externalPassthrough) return;
     this.renderer.invalidate();
     this.lastPtyRows = 0;
@@ -555,6 +628,7 @@ export class TerminalApp {
   private frontendSuspended = false;
   private readonly onSuspend = (): void => {
     if (this.stopped || this.externalPassthrough) return;
+    this.cancelPresentation();
     this.frontendSuspended = true;
     this.terminalFocus = 'unknown';
     this.renderer.leave();
@@ -576,9 +650,19 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    if (this.effects.active && (key.kind === 'escape' || (key.kind === 'interrupt' && !this.running))) {
+      this.effects.cancel(); this.render(); return;
+    }
     if (key.kind === 'focusIn' || key.kind === 'focusOut') {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
+    }
+    if (this.startupPending && key.kind === 'interrupt') { this.abortStartup(); return; }
+    if (this.startupPanel) {
+      // The shell is not ready; it may be waiting on a startup file. Abort is explicit, and nothing the
+      // composer produces is submitted until the shell reaches its first prompt (typed text is kept).
+      if (key.kind === 'interrupt') { this.abortStartup(); return; }
+      if (key.kind === 'enter' || key.kind === 'newline') return;
     }
     if (this.presetStartup?.active) {
       if (key.kind === 'interrupt') {
@@ -1135,7 +1219,10 @@ export class TerminalApp {
           this.editor.clear();
           this.output.addFrontendInteraction('/resume', 'Wait for the foreground command to finish before switching transcripts.', INFO);
         } else {
-          this.session.write(`${this.editor.text}\r`);
+          const input = this.editor.text;
+          this.editor.clear();
+          this.session.write(`${input}\r`);
+          return;
         }
         this.editor.clear();
       } else {
@@ -1258,6 +1345,7 @@ export class TerminalApp {
     const controller = new AbortController();
     const abort = () => controller.abort();
     const ignoreInterrupt = () => { /* The foreground picker handles Ctrl+C. */ };
+    this.cancelPresentation();
     this.externalPassthrough = true;
     let detached = false;
     let released = false;
@@ -1299,7 +1387,16 @@ export class TerminalApp {
 
   /** Runs one NMSh slash command; the palette and the composer share this dispatch. */
   private async runSlash(command: string, slash: NonNullable<ReturnType<typeof parseSlashCommand>>): Promise<void> {
-    if (slash.kind === 'copy') await this.copyRecent(slash.index);
+    if (slash.kind === 'effects') {
+      if (slash.effect === 'help') this.output.addFrontendInteraction(command, '/effects sparkles|rain [top|bottom] · /effects stop · Escape cancels. Owned gaps/rules only; Reduced Motion and Effects Off suppress previews.', INFO);
+      else if (slash.effect === 'stop') this.effects.cancel();
+      else if (!this.running && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended) {
+        this.effects.trigger(slash.effect, slash.placement, Date.now(), 0x4e4d5348, {...this.promptConfiguration.presentation,
+          reducedMotion: this.promptConfiguration.presentation.reducedMotion || isReducedMotion()});
+      }
+      this.render();
+    }
+    else if (slash.kind === 'copy') await this.copyRecent(slash.index);
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
@@ -1356,7 +1453,7 @@ export class TerminalApp {
     const payload = blockCopyPayload(record, action);
     if (payload !== undefined) {
       try { await writeClipboard(payload); }
-      catch { this.output.addFrontendInteraction('/copy', 'Clipboard copy failed', ERROR); }
+      catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
     else if (action === 'edit' || action === 'rerun') {
       this.clearBlockFocus();
@@ -1433,9 +1530,11 @@ export class TerminalApp {
     }
 
     const contextAtSubmission = this.context;
+    this.effects.cancel();
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
-      if (mode === 'PASSTHROUGH' && !this.passthrough) {
+      if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
+        this.cancelPresentation();
         this.passthrough = true;
         this.terminalFocus = 'unknown';
         this.renderer.suspendForPassthrough();
@@ -1449,14 +1548,14 @@ export class TerminalApp {
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
-    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd};
+    this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd, awaitingExec: true};
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
     });
     this.activityAnimationNow = startedAt;
 
     // Initial static heuristic, but dynamic can override
-    this.passthrough = shouldPassthrough(command);
+    this.passthrough = !this.startupPending && shouldPassthrough(command);
     if (this.passthrough) {
       this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough();
@@ -1556,8 +1655,8 @@ export class TerminalApp {
       const payload = serializeCopyPayload(record);
       await writeClipboard(payload);
       this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
-    } catch {
-      this.output.addFrontendInteraction(command, 'Clipboard copy failed', ERROR);
+    } catch (error) {
+      this.output.addFrontendInteraction(command, clipboardFailure(error), ERROR);
     }
   }
 
@@ -1757,8 +1856,24 @@ export class TerminalApp {
     this.output.addFrontendInteraction(command, helpText, INFO);
   }
 
+  private onInputRejected(data: string, submission: boolean): void {
+    if (submission && this.running?.awaitingExec) {
+      const command = this.running.command;
+      this.output.complete(1);
+      this.running = undefined;
+      if (!this.editor.text) this.editor.insert(command);
+    } else {
+      const input = data.replace(/\r$/u, '');
+      if (!this.editor.text) this.editor.insert(input);
+      else this.output.addFrontendInteraction('rejected input', input, ERROR);
+    }
+    this.output.addFrontendInteraction('session', 'Input was not sent: shell startup queue exceeds 64 KiB. Rejected input is retained. Wait for readiness, then submit again.', ERROR);
+    this.render();
+  }
+
   private onShellData(data: string): void {
     if (this.passthrough) {
+      this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
       this.commandModes.observeModes(data);
@@ -1768,6 +1883,7 @@ export class TerminalApp {
       this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
+        this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
         this.render();
@@ -1780,8 +1896,17 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    this.endStartupWatch();
+    const initialPrompt = !this.presetShellReady;
     this.presetShellReady = true;
     this.context.exitStatus = exitCode;
+    // A slow global/user bootstrap may finish after the frontend submits.
+    // Its initial prompt is readiness, not completion of that queued command.
+    if (initialPrompt && this.running?.awaitingExec) {
+      void this.refreshContext(cwd);
+      this.render();
+      return;
+    }
     if (!this.running) {
       void this.refreshContext(cwd);
       this.render();
@@ -1917,8 +2042,9 @@ export class TerminalApp {
       this.externalPromptError = error instanceof Error ? error.message : String(error);
       this.externalPrompt = undefined;
       this.effectivePromptProvider = 'nmsh';
+      const saved = structuredClone(this.promptConfiguration);
       this.promptConfiguration.provider = 'nmsh';
-      try { savePromptConfiguration(this.promptConfiguration); } catch { /* Runtime fallback remains in effect. */ }
+      try { savePromptConfiguration(this.promptConfiguration, undefined, saved); } catch { /* Runtime fallback remains in effect. */ }
     }
   }
 
@@ -1950,6 +2076,7 @@ export class TerminalApp {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
     if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
     const ignoreInterrupt = (): void => { /* The foreground wizard handles Ctrl+C. */ };
+    this.cancelPresentation();
     this.externalPassthrough = true;
     let inputDetached = false;
     let rawModeReleased = false;
@@ -2137,7 +2264,7 @@ export class TerminalApp {
         state.step = 'starship'; state.selectedIndex = 0;
       } else {
         state.step = 'installProgress';
-        state.task = new TaskProgress('Installing Starship with Homebrew', () => this.render(), Date.now(), 'Starship');
+        state.task = new TaskProgress('Installing Starship with Homebrew', () => this.renderTaskPresentation(), Date.now(), 'Starship');
         this.render();
         const outcome = await state.task.run('brew', ['install', 'starship']);
         if (this.stopped) return;
@@ -2170,7 +2297,7 @@ export class TerminalApp {
     if (!state) return;
     state.draft.onboardingComplete = true;
     try {
-      savePromptConfiguration(state.draft);
+      savePromptConfiguration(state.draft, undefined, this.promptConfiguration);
       this.promptConfiguration = structuredClone(state.draft);
       this.promptPanelState = undefined;
       if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
@@ -2245,10 +2372,11 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
   }
 
   private settingsPanelRows(columns: number): string[] {
+    if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
@@ -2339,7 +2467,7 @@ export class TerminalApp {
   private saveGlyphChoice(style: PromptConfiguration['glyphStyle']): void {
     const next = {...this.promptConfiguration, glyphStyle: style, glyphChoiceComplete: true};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       setIconStyle(style);
       const onboarding = this.settingsPanelState?.onboarding;
@@ -2350,8 +2478,9 @@ export class TerminalApp {
         this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(next.provider),
           draft: structuredClone(next), saved: structuredClone(next)};
       }
-    } catch {
+    } catch (error) {
       // Keep the chooser visible so the user can retry without losing their choice.
+      this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
       if (this.settingsPanelState) this.settingsPanelState.glyphStyle = style;
     }
   }
@@ -2521,7 +2650,7 @@ export class TerminalApp {
 
   private async handleToolsKey(key: Key, state: ToolsPanel): Promise<void> {
     if (state.confirm) {
-      await confirmToolInstall(state, key, () => this.render());
+      await confirmToolInstall(state, key, () => this.renderTaskPresentation());
       this.render();
       return;
     }
@@ -2582,7 +2711,9 @@ export class TerminalApp {
       [
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
-        {label: 'Shell', value: 'zsh (/bin/zsh)'},
+        {label: 'Platform', value: `${process.platform} ${process.arch}`},
+        {label: 'Node', value: process.version},
+        {label: 'Shell', value: 'zsh'},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
@@ -2612,13 +2743,16 @@ export class TerminalApp {
   private applySettingsConfiguration(next: PromptConfiguration | undefined): void {
     if (!next) return;
     try {
-      savePromptConfiguration(next);
-    } catch {
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
+    } catch (error) {
+      this.output.addHistoryLine(`${ERROR}${error instanceof Error ? error.message : String(error)}${RESET}`);
+      this.render();
       return;
     }
     this.promptConfiguration = next;
     setIconStyle(next.glyphStyle);
     this.output.setTranscriptAppearance(next.transcript);
+    this.output.presenter.setTreatment(next.presentation);
     this.output.setOutputFolding(next.outputFolding);
     this.output.presenter.setLayout(next.transcriptPresentation);
     if (this.settingsPanelState) this.settingsPanelState.glyphStyle = next.glyphStyle;
@@ -2780,7 +2914,7 @@ export class TerminalApp {
       const selected = providerPanelSelection(state);
       if (state.step === 'installConfirm' && selected.install) {
         state.step = 'installProgress';
-        state.task = new TaskProgress(`Installing ${selected.label}`, () => this.render(), Date.now(), selected.label);
+        state.task = new TaskProgress(`Installing ${selected.label}`, () => this.renderTaskPresentation(), Date.now(), selected.label);
         this.render();
         const outcome = await state.task.run(selected.install.command, [...selected.install.args]);
         if (this.stopped) return;
@@ -2808,7 +2942,7 @@ export class TerminalApp {
       : state.family === 'history' ? {...structuredClone(this.promptConfiguration), history: selected.id as PromptConfiguration['history']}
       : {...structuredClone(this.promptConfiguration), suggestions: selected.id as PromptConfiguration['suggestions']};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.providerPanelState = undefined;
       if (state.family === 'suggestions') this.applySuggestionProvider();
@@ -2841,9 +2975,10 @@ export class TerminalApp {
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft)};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
+    this.output.presenter.setTreatment(next.presentation);
       this.transcriptPanelState = undefined;
       this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
     } catch (error) {
@@ -2886,7 +3021,7 @@ export class TerminalApp {
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), syntax: structuredClone(state.draft)};
     try {
-      savePromptConfiguration(next);
+      savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.syntaxPanelState = undefined;
       this.returnFromPanel();
@@ -2949,23 +3084,25 @@ export class TerminalApp {
    * change. Blinks are skipped (not queued) while no welcome is present.
    */
   private scheduleWelcomeBlink(): void {
-    if (this.stopped || isReducedMotion()) return;
-    this.welcomeBlinkTimer = setTimeout(() => {
-      if (this.stopped) return;
+    if (this.stopped || !this.decorativeMotionAllowed() || !this.output.hasWelcome) return;
+    this.welcomeBlinkTimer = presentationClock.after(() => {
+      this.welcomeBlinkTimer = undefined;
+      if (this.stopped || !this.decorativeMotionAllowed()) return;
       if (!this.output.hasWelcome || this.passthrough) {
         this.welcomeBlinkCount += 1;
         this.scheduleWelcomeBlink();
         return;
       }
       this.output.setWelcomeFrame('blink');
-      this.render();
-      this.welcomeBlinkTimer = setTimeout(() => {
+      this.welcomeBlinkTimer = presentationClock.after(() => {
+        this.welcomeBlinkTimer = undefined;
         this.output.setWelcomeFrame('open');
         if (this.stopped) return;
-        this.render();
         this.welcomeBlinkCount += 1;
         this.scheduleWelcomeBlink();
+        this.render();
       }, WELCOME_BLINK_CLOSED_MS);
+      this.render();
     }, welcomeBlinkDelay(this.welcomeBlinkCount));
   }
 
@@ -3161,7 +3298,9 @@ export class TerminalApp {
   }
 
   private render(): void {
-    if (this.stopped || this.passthrough || this.externalPassthrough) return;
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
+    if (!this.decorativeMotionAllowed()) this.effects.cancel();
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();
@@ -3280,23 +3419,108 @@ export class TerminalApp {
       for (let index = 0; index < region.height; index += 1) frameRows[region.top + index] = content[index] ?? '';
     }
 
-    this.renderer.render({
+    const frame: TerminalFrame = {
       rows: frameRows,
       columns,
       cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
       cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
       // Flow can scroll the input row off screen.
       cursorVisible: !plan.panelActive && plan.inputHeight > 0,
-    });
+    };
+    this.presentationFrame = {frame, plan};
+    this.paintPresentation(Date.now());
+    this.syncPresentationClock();
+  }
+
+  /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
+  private renderTaskPresentation(): void {
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    const cached = this.presentationFrame;
+    const region = cached?.plan.regions.find(item => item.kind === 'panel');
+    if (!cached || !region) { this.render(); return; }
+    for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
+    const content = this.settingsPanelRows(cached.frame.columns ?? 80);
+    if (Math.min(cached.plan.rows, content.length) !== region.height) { this.render(); return; }
+    const projected = cached.plan.composerPosition === 'top' && /^[─-]+$/u.test(stripAnsi(content[0] ?? ''))
+      ? [...content.slice(1), content[0]!] : content;
+    const rows = [...cached.frame.rows];
+    for (let index = 0; index < region.height; index++) rows[region.top + index] = projected[index] ?? '';
+    this.presentationFrame = {...cached, frame: {...cached.frame, rows}};
+    this.paintPresentation(Date.now());
+  }
+
+  private decorativeMotionAllowed(): boolean {
+    return !isReducedMotion() && !this.promptConfiguration.presentation.reducedMotion && !this.promptConfiguration.presentation.effectsOff;
+  }
+
+  private cancelPresentation(): void {
+    this.effects.cancel();
+    this.presentationSubscription?.(); this.presentationSubscription = undefined;
+    this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
+    this.output.setWelcomeFrame('open');
+    this.presentationFrame = undefined;
+  }
+
+  /** Decorative frames reuse the base projection; they never walk transcript history. */
+  private paintPresentation(now: number): void {
+    const cached = this.presentationFrame;
+    if (!cached) return;
+    const {frame, plan} = cached;
+    const settings = this.promptConfiguration.presentation;
+    const rows = [...frame.rows];
+    for (const region of plan.regions) {
+      if (region.kind === 'activity' && this.running) {
+        const line = truncateAnsi(this.currentActivity(), frame.columns ?? 80);
+        const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
+        for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
+      }
+      if (region.kind === 'separator' || region.kind === 'composerBorder') {
+        rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
+      }
+    }
+    const active = this.effects.active;
+    const region = active && effectRegion(plan, active.placement);
+    if (active && !region) this.effects.cancel();
+    try {
+      this.renderer.render({...frame, rows: active && region
+        ? applyEffect(rows, active, region, frame.columns ?? 80, now, getCurrentGlyphMode() === 'safe', colorLevel()) : rows});
+    } catch (error) { this.onTerminate(); throw error; }
+  }
+
+  private renderPresentation(now: number): void {
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    if (!this.decorativeMotionAllowed()) this.effects.cancel();
+    this.effects.expire(now);
+    if (this.running) {
+      this.activityAnimationNow = now;
+      this.output.tickActiveCommand();
+      if (this.passthrough) { this.cancelPresentation(); return; }
+    }
+    this.paintPresentation(now);
+    this.syncPresentationClock();
+  }
+
+  private syncPresentationClock(): void {
+    if (!this.presentationStarted || this.stopped) return;
+    const settings = this.promptConfiguration.presentation;
+    const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
+      && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
+    const needsFrames = Boolean(this.running || this.effects.active || (animatedRule && this.decorativeMotionAllowed()));
+    if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
+    if (!needsFrames) { this.presentationSubscription?.(); this.presentationSubscription = undefined; }
+    if (this.decorativeMotionAllowed() && this.output.hasWelcome && !this.welcomeBlinkTimer) this.scheduleWelcomeBlink();
+    if (!this.decorativeMotionAllowed()) {
+      this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined; this.output.setWelcomeFrame('open');
+    }
   }
 
   private currentActivity(): string {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
-    const animationElapsed = presentationAnimationElapsed(elapsed);
+    const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
     const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
-    return `${shimmerText(parts.phrase, animationElapsed, isReducedMotion() ? false : isActive)}${SECONDARY}${parts.duration}${RESET}`;
+    return `${shimmerText(parts.phrase, animationElapsed, this.decorativeMotionAllowed() ? isActive : false)}${SECONDARY}${parts.duration}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -3376,13 +3600,14 @@ export class TerminalApp {
   private stop(exitCode: number): void {
     if (this.stopped) return;
     this.stopped = true;
-    if (this.activityTimer) clearInterval(this.activityTimer);
+    this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();
+    this.endStartupWatch();
     this.miseService.cancel();
     this.toolsPanel?.task?.dispose();
     this.providerPanelState?.task?.dispose();
-    if (this.welcomeBlinkTimer) clearTimeout(this.welcomeBlinkTimer);
+    this.welcomeBlinkTimer?.();
     this.welcomeBlinkTimer = undefined;
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
@@ -3393,7 +3618,7 @@ export class TerminalApp {
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
     process.stdin.pause();
     this.terminalFocus = 'unknown';
-    this.renderer.leave();
+    try { this.renderer.leave(); } catch { /* A closed terminal must not prevent resource cleanup. */ }
     this.completionService.dispose();
     this.historyQueryAbort?.abort();
     this.clearCorrection();

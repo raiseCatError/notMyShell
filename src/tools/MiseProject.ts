@@ -6,7 +6,7 @@ import {resolveCommand} from '../providers/providers.js';
 export interface MiseProject {cwd: string; identity: string; binary?: string; marker?: string}
 export interface MiseMetadata {tools: {name: string; version: string}[]; tasks: string[]}
 export type MiseResult = {state: 'available'; metadata: MiseMetadata} | {state: 'failed'};
-const MARKERS = ['mise.toml', '.mise.toml', '.mise/config.toml', '.config/mise/config.toml', '.tool-versions'];
+const MARKERS = ['mise.toml', '.mise.toml', 'mise.local.toml', '.mise.local.toml', '.mise/config.toml', '.config/mise/config.toml', '.tool-versions'];
 
 /** Filesystem facts only: never read/evaluate config or invoke mise. */
 export function detectMiseProject(cwd: string, binary = resolveCommand('mise')): MiseProject {
