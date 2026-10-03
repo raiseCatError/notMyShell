@@ -19,7 +19,8 @@ export type ClientMessage =
   | {type: 'attach'; sessionId: string; columns: number; rows: number}
   | {type: 'detach'}
   | {type: 'list'}
-  | {type: 'input'; data: string}
+  /** submission=1 identifies a composer submission for rejection recovery; absent for raw input. */
+  | {type: 'input'; data: string; submission?: number}
   | {type: 'resize'; columns: number; rows: number}
   /** Everything up to seq is durable in the frontend journal journalId. */
   | {type: 'ack'; seq: number; journalId: string}
@@ -28,11 +29,17 @@ export type ClientMessage =
   | {type: 'terminate'};
 
 export type ServerMessage =
-  | {type: 'welcome'; version: number; service: string}
+  /** startupSafety=1 promises pre-ready input isolation, bounded rejection and startup state reporting. */
+  | {type: 'welcome'; version: number; service: string; startupSafety?: number}
   | {type: 'error'; code: string; message: string}
   | {type: 'created'; sessionId: string; pid: number}
   | {type: 'attached'; sessionId: string; pid: number; cwd: string; fullscreen: number; modes?: string; running?: string; runningSince?: number;
-    journalId?: string; ackedSeq: number}
+    journalId?: string; ackedSeq: number; knowledge?: string;
+    /** Present only while the shell has not reached its first prompt: the sanitized, bounded tail of its startup output. */
+    startup?: string}
+  /** Startup output of a shell still blocked or slow before its first prompt (bounded, sanitized, coalesced). */
+  | {type: 'startup'; output: string}
+  | {type: 'input-rejected'; data: string; submission?: number}
   | {type: 'detached'; sessionId: string}
   | {type: 'sessions'; sessions: SessionInfo[]}
   /**
@@ -41,8 +48,8 @@ export type ServerMessage =
    * missed exactly once with the original timing.
    */
   | {type: 'output'; data: string; seq?: number; at?: number}
-  | {type: 'exec'; command: string; seq: number; at: number}
-  | {type: 'prompt'; exitCode: number; cwd: string; seq?: number; at?: number}
+  | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number}
+  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
   | {type: 'killed'; sessionId: string}
@@ -99,21 +106,23 @@ const SHAPES: Record<string, Shape> = {
   attach: {sessionId: 'string', columns: 'int', rows: 'int'},
   detach: {},
   list: {},
-  input: {data: 'string'},
+  input: {data: 'string', submission: 'int?'},
   resize: {columns: 'int', rows: 'int'},
   ack: {seq: 'int', journalId: 'string'},
   kill: {sessionId: 'string'},
   terminate: {},
-  welcome: {version: 'int', service: 'string'},
+  welcome: {version: 'int', service: 'string', startupSafety: 'int?'},
   error: {code: 'string', message: 'string'},
   created: {sessionId: 'string', pid: 'int'},
   attached: {sessionId: 'string', pid: 'int', cwd: 'string', fullscreen: 'int', modes: 'string?', running: 'string?', runningSince: 'int?',
-    journalId: 'string?', ackedSeq: 'int'},
+    journalId: 'string?', ackedSeq: 'int', knowledge: 'string?', startup: 'string?'},
+  startup: {output: 'string'},
+  'input-rejected': {data: 'string', submission: 'int?'},
   detached: {sessionId: 'string'},
   sessions: {sessions: 'sessions'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
-  exec: {command: 'string', seq: 'int', at: 'int'},
-  prompt: {exitCode: 'int', cwd: 'string', seq: 'int?', at: 'int?'},
+  exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?'},
+  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},

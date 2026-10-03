@@ -32,6 +32,10 @@ export interface SecondaryActivity {
 }
 
 export interface CompletedCommand {
+  /** Only explicitly eligible commands enter command history; transcript retention is separate. */
+  historyEligible?: boolean;
+  startedAt?: number;
+  durationMs?: number;
   command: string;
   output: string;
   lifecycleText: string;
