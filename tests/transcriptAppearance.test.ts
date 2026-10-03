@@ -1,3 +1,4 @@
+import {NATIVE_PALETTE_IDS} from '../src/prompt/configuration.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
@@ -107,7 +108,7 @@ test('/transcript panel edits a draft with saved markers, previews, and a theme 
   assert.ok(rows.some(row => row.includes('Divider            ‹ Off ›  saved: On')));
   assert.ok(rows.some(row => row.includes('History colors     ‹ Choose theme ›  saved: Follow prompt')));
   assert.ok(rows.some(row => row.startsWith('History themes')));
-  assert.equal(rows.filter(row => /^[●○] /u.test(row)).length, 5, 'one preview row per theme');
+  assert.equal(rows.filter(row => /^[●○] /u.test(row)).length, NATIVE_PALETTE_IDS.length, 'one preview row per theme');
   assert.ok(rows.some(row => row.includes('unsaved preview')));
   assert.equal(rows.at(-1), '↑↓ move · ←→ change · Enter save · Esc cancel');
   key('down'); key('right');

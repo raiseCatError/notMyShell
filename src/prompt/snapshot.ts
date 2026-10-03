@@ -1,5 +1,6 @@
 import type {RgbColor} from '../ui/palette.js';
 import type {ConnectorFadeColors, PowerlineShape, PromptStyle} from './powerline.js';
+import type {ProfiledStyle, StyleProfiles} from './styles.js';
 import type {ComposerLayout, ConnectorFadeStyle, GitColorMode, GitConnectorFade, GitGeometry, NativeConnectorStyle, NativeEndStyle, NativePaletteId, NativeStartStyle, PromptProviderId} from './configuration.js';
 
 export interface PromptSegmentSnapshot {
@@ -26,6 +27,8 @@ export interface PromptSnapshot {
   segments: PromptSegmentSnapshot[];
   /** Native visual style at submission; missing means Powerline. */
   style?: PromptStyle;
+  /** That style's profile at submission (non-Powerline styles); missing replays the legacy gap/spacing look. */
+  styleProfile?: StyleProfiles[ProfiledStyle];
   endStyle?: NativeEndStyle;
   /** Older transcripts may hold the legacy `pointed`; renderers normalize it. */
   startStyle?: NativeStartStyle;

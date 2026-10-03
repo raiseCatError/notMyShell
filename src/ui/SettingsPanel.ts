@@ -1,4 +1,6 @@
-import {TREATMENT_PRESETS, TREATMENT_GEOMETRIES, TREATMENT_MOTIONS} from '../chroma/treatment.js';
+import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
+  TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS} from '../chroma/treatment.js';
+import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
 import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
@@ -151,9 +153,12 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'syntaxColors', level: 'advanced', label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
     values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
-  enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look: Powerline, Soft, Minimal, or Outline', category: 'Prompt',
+  enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look; each style keeps its own settings in /prompt', category: 'Prompt',
     values: PROMPT_STYLES, labels: PROMPT_STYLES.map(style => PROMPT_STYLE_LABELS[style]),
     get: config => config.nmsh.style, set: (config, style) => ({...config, nmsh: {...config.nmsh, style}})}),
+  enumRow({id: 'promptVibrance', label: 'Prompt vibrance', description: 'Soft, Standard or Vibrant theme colors; explicit module colors are kept', category: 'Prompt',
+    values: VIBRANCE_LEVELS, labels: VIBRANCE_LEVELS.map(level => VIBRANCE_LABELS[level]),
+    get: config => config.nmsh.vibrance, set: (config, vibrance) => ({...config, nmsh: {...config.nmsh, vibrance}})}),
   enumRow({id: 'composerPosition', label: 'Composer position', description: 'Dock the composer at the bottom or top, or Flow it after the newest output', category: 'Layout',
     values: COMPOSER_POSITIONS, labels: COMPOSER_POSITIONS.map(position => COMPOSER_POSITION_LABELS[position]),
     get: config => config.composerPosition, set: (config, composerPosition) => ({...config, composerPosition})}),
@@ -202,15 +207,18 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
   {id: 'tools', label: 'Tools', description: 'Optional discovery, installed state, installation previews and supported configuration', category: 'Tools', control: 'child', destination: 'tools'},
-  enumRow({id: 'treatmentPreset', label: 'Visual treatment', description: 'Native Minimal/Outline identity, history rules and Settings frame; external prompts retain their colors', category: 'Presentation',
-    values: TREATMENT_PRESETS, labels: ['Off', 'Lavender', 'Aurora', 'Theme', 'Custom'],
+  enumRow({id: 'treatmentPreset', label: 'Chroma', description: 'Native prompt, history rules and Settings frame; /chroma for the full editor; external prompts keep their colors', category: 'Presentation',
+    values: TREATMENT_PRESETS, labels: TREATMENT_PRESETS.map(preset => TREATMENT_PRESET_LABELS[preset]),
     get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
   enumRow({id: 'treatmentGeometry', level: 'advanced', label: 'Gradient geometry', description: 'Independent gradient direction', category: 'Presentation',
-    values: TREATMENT_GEOMETRIES, labels: ['Left to right', 'Center outward', 'Outside inward'],
+    values: TREATMENT_GEOMETRIES, labels: TREATMENT_GEOMETRIES.map(geometry => TREATMENT_GEOMETRY_LABELS[geometry]),
     get: c => c.presentation.geometry, set: (c, geometry) => ({...c, presentation: {...c.presentation, geometry}})}),
   enumRow({id: 'treatmentMotion', level: 'advanced', label: 'Decorative motion', description: 'Live separator motion; history stays static', category: 'Presentation',
-    values: TREATMENT_MOTIONS, labels: ['Static', 'Travel', 'Breathe'],
+    values: TREATMENT_MOTIONS, labels: TREATMENT_MOTIONS.map(motion => TREATMENT_MOTION_LABELS[motion]),
     get: c => c.presentation.motion, set: (c, motion) => ({...c, presentation: {...c.presentation, motion}})}),
+  enumRow({id: 'treatmentSpeed', level: 'advanced', label: 'Motion speed', description: 'Chroma animation cycle length', category: 'Presentation',
+    values: TREATMENT_SPEEDS, labels: TREATMENT_SPEEDS.map(speed => TREATMENT_SPEED_LABELS[speed]),
+    get: c => c.presentation.speed ?? 'normal', set: (c, speed) => ({...c, presentation: {...c.presentation, speed}})}),
   {id: 'treatmentIntensity', level: 'advanced', label: 'Treatment intensity', description: 'Blend with ordinary surface foreground', category: 'Presentation',
     control: 'stepper', steps: [0, 0.25, 0.5, 0.65, 1], format: v => `${Math.round(v * 100)}%`,
     get: c => c.presentation.intensity, set: (c, intensity) => ({...c, presentation: {...c.presentation, intensity}})},
@@ -218,6 +226,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: c => c.presentation.reducedMotion, set: (c, reducedMotion) => ({...c, presentation: {...c.presentation, reducedMotion}})},
   {id: 'effectsOff', label: 'Effects Off', description: 'Disable decorative animation and transient effects', category: 'Presentation', control: 'boolean',
     get: c => c.presentation.effectsOff, set: (c, effectsOff) => ({...c, presentation: {...c.presentation, effectsOff}})},
+  {id: 'autoEffects', label: 'Milestone effects', description: 'A brief effect after a successful tool install, update or setup', category: 'Presentation', control: 'boolean',
+    get: c => c.presentation.autoEffects !== false, set: (c, autoEffects) => ({...c, presentation: {...c.presentation, autoEffects}})},
 
 
 ];

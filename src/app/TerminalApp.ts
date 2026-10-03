@@ -1,6 +1,6 @@
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
-import {paintTreatment} from '../chroma/treatment.js';
+import {paintTreatment, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
@@ -54,7 +54,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
 import {handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -63,7 +63,7 @@ import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type St
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
-import {APPEARANCE_MODULES_ROW, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
+import {appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
 import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
@@ -154,6 +154,8 @@ export class TerminalApp {
   private readonly historyService = new HistoryService();
   /** Shell-style Up/Down recall in the ordinary composer. Frontend-local; never persisted. */
   private readonly composerHistory = new ComposerHistory();
+  /** Unsubscribes the Chroma panel preview from the presentation clock. */
+  private panelAnimation?: () => void;
   private readonly nativeSuggestions = new NativeSuggestions(ignorePatternFromEnv());
   private readonly suggestions = new SuggestionController(() => this.render(),
     reason => this.output.addHistoryLine(`${SUBTLE}Suggestion provider unavailable (${reason}); using NMSh Native.${RESET}`));
@@ -179,7 +181,20 @@ export class TerminalApp {
   private historyResults: HistoryEntry[] = [];
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
   private readonly commandContexts = new CommandContextCache(() => this.render());
-  private promptConfiguration: PromptConfiguration = loadPromptConfiguration();
+  private configuration: PromptConfiguration = loadPromptConfiguration();
+  /** Decorative surfaces without prompt context follow the active Native theme for Current Theme Chroma. */
+  private themeStopsKey = '';
+  private get promptConfiguration(): PromptConfiguration {
+    const key = `${this.configuration.nmsh.palette}:${this.configuration.nmsh.vibrance}`;
+    if (key !== this.themeStopsKey) {
+      this.themeStopsKey = key;
+      setActiveThemeStops(themeChromaStops(this.configuration.nmsh.palette, this.configuration.nmsh.vibrance));
+    }
+    return this.configuration;
+  }
+  private set promptConfiguration(next: PromptConfiguration) {
+    this.configuration = next;
+  }
   private effectivePromptProvider: PromptProviderId = this.promptConfiguration.provider;
   private starshipStatus?: StarshipStatus;
   /** Live Starship/Powerlevel10k rendering for the effective provider. */
@@ -812,7 +827,13 @@ export class TerminalApp {
       if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
         // Esc leaves the module manager, keeping its draft edits for the final save.
         this.promptPanelState.step = 'appearance';
-        this.promptPanelState.selectedIndex = APPEARANCE_MODULES_ROW;
+        this.promptPanelState.selectedIndex = appearanceModulesRow(this.promptPanelState.draft);
+        this.render();
+      } else if (this.promptPanelState.step === 'gradient' && (key.kind === 'escape' || key.kind === 'enter' || key.kind === 'interrupt')) {
+        // The stop editor owns Enter (edit/apply) and Esc (cancel an edit, else return with its stops).
+        const editing = this.promptPanelState.gradient?.editing !== undefined;
+        if (key.kind === 'enter' || editing) handlePromptPanelKey(key.kind === 'interrupt' ? {kind: 'escape'} : key, this.promptPanelState);
+        else closeGradientEditor(this.promptPanelState);
         this.render();
       } else if (key.kind === 'escape' || key.kind === 'interrupt') {
         if (this.promptPanelState.onboarding) void this.savePromptSettings();
@@ -1423,6 +1444,7 @@ export class TerminalApp {
     else if (slash.kind === 'copy') await this.copyRecent(slash.index);
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
@@ -2097,6 +2119,14 @@ export class TerminalApp {
     this.render();
   }
 
+  /** /chroma: the /prompt Chroma view directly, editing the same presentation settings. */
+  private startChromaSettings(): void {
+    this.promptPanelState = {onboarding: false, step: 'appearance', view: 'chroma', selectedIndex: 0,
+      draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    this.panelExternalPrompt = undefined;
+    this.render();
+  }
+
   private async runPowerlevel10kWizard(status: Powerlevel10kStatus): Promise<number> {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
     if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
@@ -2308,9 +2338,11 @@ export class TerminalApp {
     } else if (onModulesRow(state)) {
       state.step = 'modules';
       state.selectedIndex = 0;
+    } else if (onGradientRow(state)) {
+      openGradientEditor(state);
     } else if (state.step === 'modules') {
       state.step = 'appearance';
-      state.selectedIndex = APPEARANCE_MODULES_ROW;
+      state.selectedIndex = appearanceModulesRow(state.draft);
     } else {
       await this.savePromptSettings();
     }
@@ -3059,11 +3091,54 @@ export class TerminalApp {
 
   private renderedPromptPanel(columns: number): string[] {
     if (!this.promptPanelState) return [];
-    const preview = this.promptPanelState.step.startsWith('install') ? [] : this.promptPanelPreview(columns);
-    const full = renderPromptPanel(this.promptPanelState, columns, preview, this.promptThemePreviews(columns), this.dimensions().rows - 1,
-      this.promptGitShowcase(columns));
+    const now = Date.now();
+    const state = this.promptPanelState;
+    const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
+    const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
+    const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
+      this.promptGitShowcase(columns), stops);
     // Short terminals keep the editable rows and live preview; the theme gallery goes first.
-    return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(this.promptPanelState, columns, preview, [], this.dimensions().rows - 1);
+    return full.length <= this.dimensions().rows - 3 ? full : renderPromptPanel(state, columns, preview, [], this.dimensions().rows - 1, [], stops);
+  }
+
+  private chromaPanelActive(state: PromptPanelState): boolean {
+    return state.step === 'gradient' || (state.step === 'appearance' && state.view === 'chroma');
+  }
+
+  /** The Chroma draft (including stops being edited) the previews render. */
+  private chromaPreviewDraft(state: PromptPanelState): PromptConfiguration {
+    const draft = structuredClone(state.draft);
+    // Previews show the Native treatment even while an external provider is selected.
+    draft.provider = 'nmsh';
+    if (state.step === 'gradient' && state.gradient && state.gradient.stops.length >= 2) {
+      draft.presentation = {...draft.presentation, preset: 'custom', customStops: [...state.gradient.stops]};
+    }
+    return draft;
+  }
+
+  /**
+   * Chroma preview: the user's current prompt (live context, saved style,
+   * theme, vibrance, modules, icons) and the synthetic full-module showcase,
+   * both through the real renderer with the draft treatment at `now`.
+   */
+  private chromaPanelPreview(columns: number, now: number): string[] {
+    const state = this.promptPanelState!;
+    const width = Math.max(1, columns - 16);
+    const draft = this.chromaPreviewDraft(state);
+    const label = (text: string) => `  ${SECONDARY}${text.padEnd(12)}${RESET}`;
+    const current = buildContextLine(this.promptContext(), width, draft, 'composer', now);
+    const showcase = structuredClone(draft);
+    showcase.modules = showcase.modules.map(module => ({...module, visible: true}));
+    return [`${label('Current')}${current}${RESET}`, `${label('Showcase')}${buildContextLine(moduleShowcaseContext(), width, showcase, 'composer', now)}${RESET}`];
+  }
+
+  /** Panels with an animated Chroma preview repaint on the shared clock; nothing ticks otherwise. */
+  private syncPanelAnimation(): void {
+    const state = this.promptPanelState;
+    const animated = Boolean(state && this.chromaPanelActive(state) && treatmentAnimated(this.chromaPreviewDraft(state).presentation)
+      && colorLevel() !== 'none' && !this.stopped);
+    if (animated && !this.panelAnimation) this.panelAnimation = presentationClock.subscribe(() => this.render(), 120);
+    if (!animated && this.panelAnimation) { this.panelAnimation(); this.panelAnimation = undefined; }
   }
 
   /** Rich Git view rows: the draft's colors and geometry over synthetic states; never runs Git. */
@@ -3077,9 +3152,17 @@ export class TerminalApp {
   }
 
   /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */
-  private promptThemePreviews(columns: number): string[] {
+  private promptThemePreviews(columns: number, now = Date.now()): string[] {
     const state = this.promptPanelState;
     if (!state || state.step !== 'appearance' || state.view === 'git') return [];
+    if (state.view === 'chroma') {
+      // One row per palette: the showcase prompt in the draft style, theme and vibrance.
+      const width = Math.max(1, columns - 20);
+      const draft = this.chromaPreviewDraft(state);
+      return TREATMENT_PRESETS.map(preset => buildThemePreviewLine({...draft, presentation: {...draft.presentation, preset,
+        customStops: draft.presentation.customStops.length ? draft.presentation.customStops : [...PRESET_STOPS.lavender]}},
+      draft.nmsh.palette, width, now));
+    }
     const width = Math.max(1, columns - 22);
     return NATIVE_PALETTE_IDS.map(palette => buildThemePreviewLine(state.draft, palette, width));
   }
@@ -3096,11 +3179,16 @@ export class TerminalApp {
     return hasVisibleContextModule(this.promptConfiguration, this.promptContext(), isOnCommandRelevant);
   }
 
-  private currentPromptLine(width: number): string {
+  private currentPromptLine(width: number, time = Date.now()): string {
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement);
     }
-    return buildContextLine(this.promptContext(), width, this.promptConfiguration);
+    return buildContextLine(this.promptContext(), width, this.promptConfiguration, this.promptConfiguration.placement, time);
+  }
+
+  /** Animated Chroma on the Native prompt row needs presentation frames; external prompts never do. */
+  private promptChromaAnimated(): boolean {
+    return this.effectivePromptProvider === 'nmsh' && treatmentAnimated(this.promptConfiguration.presentation) && colorLevel() !== 'none';
   }
 
   /**
@@ -3326,6 +3414,7 @@ export class TerminalApp {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
+    this.syncPanelAnimation();
     void this.fetchSuggestions();
     const {columns, rows} = this.dimensions();
     const availableSuggestions = this.composerSuggestions();
@@ -3480,6 +3569,7 @@ export class TerminalApp {
 
   private cancelPresentation(): void {
     this.effects.cancel();
+    this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
     this.output.setWelcomeFrame('open');
@@ -3501,6 +3591,10 @@ export class TerminalApp {
       }
       if (region.kind === 'separator' || region.kind === 'composerBorder') {
         rows[region.top] = paintTreatment(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, 'divider', UI_COLORS.separator, now) + RESET;
+      }
+      // The prompt row is re-rendered from the same semantic modules; only Chroma colors move.
+      if (region.kind === 'prompt' && region.height > 0 && this.promptChromaAnimated() && this.decorativeMotionAllowed()) {
+        rows[region.top] = this.currentPromptLine(frame.columns ?? 80, now);
       }
     }
     const active = this.effects.active;
@@ -3530,7 +3624,8 @@ export class TerminalApp {
     const settings = this.promptConfiguration.presentation;
     const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder')
       && settings.preset !== 'off' && settings.motion !== 'static' && colorLevel() !== 'none';
-    const needsFrames = Boolean(this.running || this.effects.active || (animatedRule && this.decorativeMotionAllowed()));
+    const animatedPrompt = this.presentationFrame?.plan.regions.some(region => region.kind === 'prompt' && region.height > 0) && this.promptChromaAnimated();
+    const needsFrames = Boolean(this.running || this.effects.active || ((animatedRule || animatedPrompt) && this.decorativeMotionAllowed()));
     if (needsFrames && !this.presentationSubscription) this.presentationSubscription = presentationClock.subscribe(now => this.renderPresentation(now));
     if (!needsFrames) { this.presentationSubscription?.(); this.presentationSubscription = undefined; }
     if (this.decorativeMotionAllowed() && this.output.hasWelcome && !this.welcomeBlinkTimer) this.scheduleWelcomeBlink();

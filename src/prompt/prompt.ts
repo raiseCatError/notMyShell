@@ -1,4 +1,6 @@
-import type {TreatmentSettings} from '../chroma/treatment.js';
+import {treatmentAnimated, treatmentFor, type TreatmentSettings} from '../chroma/treatment.js';
+import {applyVibrance, fromOklch, readableForeground, toOklch, type Vibrance} from '../chroma/color.js';
+import {isReducedMotion} from '../presentation/environment.js';
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
@@ -15,7 +17,7 @@ import {
 import {homedir} from 'node:os';
 import {COMMAND_CONTEXT_TRIGGERS, matchesCommand, TOOLCHAIN_TRIGGERS} from './commandContext.js';
 import {displayPath, PATH_DISPLAY_LEVELS} from './pathDisplay.js';
-import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape, type PromptStyle} from './powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape, type PromptChroma, type PromptStyle, type RenderExtras} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
@@ -64,6 +66,9 @@ export function isPromptRole(value: unknown): value is PromptRole {
 }
 
 const hex = (value: string): RgbColor => colorFromHex(value, {red: 0, green: 0, blue: 0});
+/** Newer themes give only backgrounds; text is chosen for >= 4.5:1 contrast on each. */
+const auto = (backgrounds: Record<keyof ThemeRoles, string>): ThemeRoles => Object.fromEntries(Object.entries(backgrounds)
+  .map(([role, value]) => [role, {background: hex(value), foreground: readableForeground(hex(value))}])) as ThemeRoles;
 const pair = (backgroundHex: string, foregroundHex: string): SegmentColors => ({background: hex(backgroundHex), foreground: hex(foregroundHex)});
 const STATUS_COLORS = {
   success: {background: UI_COLORS.success, foreground: hex('#10231b')},
@@ -189,6 +194,34 @@ export const NATIVE_PROMPT_THEMES: Record<NativePaletteId, NativePromptTheme> = 
     success: pair('#8e9196', '#111214'),
     failure: pair('#e4e5e7', '#111214'),
   }),
+  aurora: theme('aurora', 'Aurora', 'polar green, teal and violet', auto({
+    project: '#3fbf9a', cwd: '#2f6f8f', gitBranch: '#6a4fc4', node: '#5fae5a', go: '#2aa7c9', python: '#c9b94a',
+    docker: '#3d7fd6', kubernetes: '#4b63c9', success: '#4fae84', failure: '#c45a7a',
+  })),
+  ocean: theme('ocean', 'Ocean', 'deep blue, sea teal and spray', auto({
+    project: '#2f8fd8', cwd: '#25506e', gitBranch: '#1f7a8c', node: '#3b9e8f', go: '#3ab0d0', python: '#5fa8c8',
+    docker: '#2c6fb5', kubernetes: '#3b5fb0', success: '#3aa58c', failure: '#d0605e',
+  })),
+  sunset: theme('sunset', 'Sunset', 'coral, plum and gold', auto({
+    project: '#f08a5d', cwd: '#7a4a6a', gitBranch: '#b8456b', node: '#d9a441', go: '#c75d8a', python: '#f2c14e',
+    docker: '#8a5fa8', kubernetes: '#6b4f9e', success: '#7fae5a', failure: '#d64550',
+  })),
+  forest: theme('forest', 'Forest', 'moss, pine and bark', auto({
+    project: '#5f9e5a', cwd: '#4a5a3c', gitBranch: '#2f6b4f', node: '#8aa64a', go: '#3f8f7f', python: '#b8a84a',
+    docker: '#4f7f6a', kubernetes: '#3e6f5a', success: '#6fae6a', failure: '#b85a4a',
+  })),
+  rose: theme('rose', 'Rose', 'rose, mauve and apricot', auto({
+    project: '#e07a9a', cwd: '#6e4a5a', gitBranch: '#a8507a', node: '#c98a9a', go: '#9a6aa8', python: '#e0a87a',
+    docker: '#8a5a8a', kubernetes: '#7a5a9a', success: '#7aa88a', failure: '#c94a5a',
+  })),
+  nebula: theme('nebula', 'Nebula', 'violet, magenta and starlight blue', auto({
+    project: '#8a4fd8', cwd: '#3a2f6e', gitBranch: '#c04fa8', node: '#4f6fd8', go: '#3fa8d8', python: '#d86fa8',
+    docker: '#5a4fc8', kubernetes: '#6a3fb0', success: '#4fa89a', failure: '#e0507a',
+  })),
+  highContrast: theme('highContrast', 'High Contrast Neon', 'saturated neon on maximum contrast', auto({
+    project: '#ff3df2', cwd: '#24243a', gitBranch: '#00e5ff', node: '#39ff14', go: '#00b3ff', python: '#ffe600',
+    docker: '#2f6bff', kubernetes: '#8a5cff', success: '#00ff9c', failure: '#ff2e63',
+  })),
 };
 
 function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
@@ -289,6 +322,63 @@ export function richGitGeometry(nmsh: PromptConfiguration['nmsh']): {geometry?: 
   return {...(geometry ? {geometry} : {}), fade};
 }
 
+const IDENTITY_ROLES: ReadonlySet<PromptRole> = new Set(['project', 'cwd', 'node', 'go', 'python', 'docker']);
+
+/**
+ * Status and Git-state meaning is protected: Chroma never recolors success,
+ * failure or Rich Git state segments. Identity scope treats project, path and
+ * toolchains; Whole prompt also treats the branch and context modules.
+ */
+export function chromaEligibleRole(role: PromptRole, scope: 'identity' | 'prompt'): boolean {
+  if (role === 'success' || role === 'failure' || isGitStateRole(role)) return false;
+  return scope === 'prompt' || IDENTITY_ROLES.has(role);
+}
+
+/** Theme colors after vibrance, with text re-chosen when the fill moved. Semantic Git colors are not theme colors. */
+export function vibrantRoleColors(role: PromptRole, palette: NativePaletteId, gitColors: GitColorMode, vibrance: Vibrance): SegmentColors {
+  const colors = promptRoleColors(role, palette, gitColors);
+  if (vibrance === 'standard' || (isGitStateRole(role) && gitColors !== 'followTheme')) return colors;
+  const fill = applyVibrance(colors.background, vibrance);
+  return {background: fill, foreground: readableForeground(fill, colors.foreground)};
+}
+
+const THEME_STOP_ROLES: readonly PromptRole[] = ['project', 'cwd', 'gitBranch', 'node', 'go', 'python', 'docker', 'kubernetes'];
+
+/**
+ * Current Theme Chroma stops from the actual Native theme (after vibrance):
+ * the theme's own module fills in prompt order, lightness held in a band
+ * and chroma kept up so the sweep stays recognizably that theme instead of
+ * washing toward white. Near-duplicate hues collapse.
+ */
+export function themeChromaStops(palette: NativePaletteId, vibrance: Vibrance = 'standard'): RgbColor[] {
+  const stops: RgbColor[] = [];
+  const hues: number[] = [];
+  for (const role of THEME_STOP_ROLES) {
+    const lch = toOklch(vibrantRoleColors(role, palette, 'semantic', vibrance).background);
+    const neutral = lch.c < 0.03;
+    if (!neutral && hues.some(hue => Math.min(Math.abs(hue - lch.h), 360 - Math.abs(hue - lch.h)) < 18)) continue;
+    if (!neutral) hues.push(lch.h);
+    stops.push(fromOklch({l: Math.max(0.5, Math.min(0.74, lch.l)), c: neutral ? lch.c : Math.max(0.09, lch.c), h: lch.h}));
+    if (stops.length >= 5) break;
+  }
+  return stops;
+}
+
+/** The Chroma a live render uses at `time`; undefined when Off. */
+export function promptChroma(configuration: PromptConfiguration, time = 0): PromptChroma | undefined {
+  const presentation = configuration.presentation;
+  const found = treatmentFor(presentation, themeChromaStops(configuration.nmsh.palette, configuration.nmsh.vibrance));
+  if (!found) return undefined;
+  const treatment = presentation.preset === 'theme' ? {...found, own: true} : found;
+  const still = !treatmentAnimated(presentation) || isReducedMotion();
+  return {treatment, time: still ? 0 : time, still};
+}
+
+/** Render options for a live Native prompt: the selected style's profiles and its Chroma. */
+export function promptRenderExtras(configuration: PromptConfiguration, time = 0): RenderExtras {
+  return {profiles: configuration.nmsh.styleProfiles, chroma: promptChroma(configuration, time)};
+}
+
 /** `pathLevel` shortens the cwd module (see PATH_DISPLAY_LEVELS); 0 is the full, width-independent form. */
 export function renderedModules(context: PromptContext, configuration: PromptConfiguration, pathLevel = 0): RenderedModule[] {
   const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons, configuration.nmsh.gitEnabled, pathLevel)
@@ -299,14 +389,19 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
   const project = eligible.find(segment => segment.role === 'project');
   const visible = eligible.filter(segment => !(segment.role === 'cwd' && project?.text === segment.text));
   const richGit = richGitGeometry(configuration.nmsh);
+  const presentation = configuration.presentation;
   return visible.map(segment => {
-    const colors = promptRoleColors(segment.role, configuration.nmsh.palette, configuration.nmsh.gitColors);
+    // Order of operations: semantic theme → vibrance → explicit module colors.
+    // Chroma, contrast correction and capability degradation happen at render.
+    const colors = vibrantRoleColors(segment.role, configuration.nmsh.palette, configuration.nmsh.gitColors, configuration.nmsh.vibrance);
     // Per-module custom colors are for the module's identity, not its Git states.
     const custom = !isGitStateRole(segment.role);
+    const explicit = custom && Boolean(segment.module.foreground || segment.module.background);
+    const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'identity')
+      && (!explicit || presentation.customColors === true);
     return {
       ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
-      ...(configuration.provider === 'nmsh' && ['project', 'cwd', 'toolchain'].includes(segment.role) && !segment.module.foreground
-        ? {treatment: configuration.presentation} : {}),
+      ...(chroma ? {treatment: presentation} : {}),
       id: segment.module.id,
       role: segment.role,
       text: segment.text,
@@ -336,7 +431,8 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     provider: 'nmsh',
     layout: configuration.composerLayout,
     segments,
-    ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
+    ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style,
+      styleProfile: structuredClone(configuration.nmsh.styleProfiles[configuration.nmsh.style])} : {}),
     endStyle: configuration.nmsh.endStyle,
     startStyle: configuration.nmsh.startStyle,
     connector: configuration.nmsh.connector,
@@ -366,26 +462,27 @@ export interface ContextRowParts {
  * Fit one prompt row: the left prompt takes what it needs first, then the
  * right context gets what remains after a one-cell minimum gap, or drops.
  */
-export function fitContextRow(modules: readonly RenderedModule[], width: number, configuration: PromptConfiguration): ContextRowParts {
+export function fitContextRow(modules: readonly RenderedModule[], width: number, configuration: PromptConfiguration, time = 0): ContextRowParts {
   const nmsh = configuration.nmsh;
+  const extras = promptRenderExtras(configuration, time);
   const gap = nmsh.gapEnabled ? configuration.gap : 0;
   const fade = resolveConnectorFade(nmsh.connectorFade, nmsh.connector);
   const leftBlocks = modules.filter(module => module.placement !== 'right');
   const rightBlocks = modules.filter(module => module.placement === 'right');
   const left = fitPowerlineBlocks(leftBlocks, gap, configuration.spacing, width, nmsh.endStyle, nmsh.gapEnabled,
-    nmsh.startStyle, nmsh.connector, fade, nmsh.connectorFadeColors);
+    nmsh.startStyle, nmsh.connector, fade, nmsh.connectorFadeColors, extras);
   const remaining = width - displayWidth(left) - (left ? 1 : 0);
   const right = rightBlocks.length === 0 || remaining < 3 ? '' : fitRightPowerlineBlocks(rightBlocks, remaining,
     blocks => renderPowerlineBlocks(blocks, gap, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
-      fade, nmsh.connectorFadeColors, nmsh.mirrorRight ? 'mirrored' : 'normal'));
+      fade, nmsh.connectorFadeColors, nmsh.mirrorRight ? 'mirrored' : 'normal', extras));
   return {left, right};
 }
 
 /** Right-aligned context alone, for rows whose left side is the editor (one-line composer). */
-export function buildRightContext(context: PromptContext, width: number, configuration: PromptConfiguration): string {
+export function buildRightContext(context: PromptContext, width: number, configuration: PromptConfiguration, time = 0): string {
   if (width <= 0) return '';
   const modules = renderedModules(context, configuration).filter(module => module.placement === 'right');
-  return modules.length === 0 ? '' : fitContextRow(modules, width, configuration).right;
+  return modules.length === 0 ? '' : fitContextRow(modules, width, configuration, time).right;
 }
 
 /**
@@ -397,9 +494,11 @@ function fittedModules(context: PromptContext, configuration: PromptConfiguratio
   let modules = renderedModules(context, configuration);
   const cwd = modules.find(module => module.role === 'cwd');
   if (!cwd) return modules;
+  // Widths never depend on Chroma, so fitting measures the plain style.
+  const extras: RenderExtras = {profiles: nmsh.styleProfiles};
   const render = (blocks: readonly RenderedModule[], mirrored = false) => blocks.length === 0 ? 0 : displayWidth(renderPowerlineBlocks(blocks,
     nmsh.gapEnabled ? configuration.gap : 0, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
-    resolveConnectorFade(nmsh.connectorFade, nmsh.connector), nmsh.connectorFadeColors, mirrored ? 'mirrored' : 'normal'));
+    resolveConnectorFade(nmsh.connectorFade, nmsh.connector), nmsh.connectorFadeColors, mirrored ? 'mirrored' : 'normal', extras));
   for (let level = 0; level < PATH_DISPLAY_LEVELS; level += 1) {
     if (level > 0) modules = renderedModules(context, configuration, level);
     const left = render(modules.filter(module => module.placement !== 'right'));
@@ -416,6 +515,8 @@ export function buildContextLine(
   width: number,
   configuration: PromptConfiguration,
   placement: 'header' | 'composer' = configuration.placement,
+  /** Presentation time for animated Chroma; the static treatment ignores it. */
+  time = 0,
 ): string {
   if (width <= 0) return '';
   if (width < 8) return `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}`;
@@ -425,7 +526,7 @@ export function buildContextLine(
     return placement === 'header' ? `${LINE}${repeatToWidth(GLYPHS.separator, width)}${RESET}` : '';
   }
 
-  const {left, right} = fitContextRow(fittedModules(context, configuration, width), width, configuration);
+  const {left, right} = fitContextRow(fittedModules(context, configuration, width), width, configuration, time);
   const rightPart = right ? ` ${right}${RESET}` : '';
   const fillWidth = Math.max(0, width - displayWidth(left) - displayWidth(rightPart));
   if (placement === 'composer') return rightPart ? `${left}${RESET}${' '.repeat(fillWidth)}${rightPart}` : `${left}${RESET}`;
@@ -492,11 +593,11 @@ export function buildRichGitShowcaseLine(configuration: PromptConfiguration, git
 }
 
 /** One theme row for /prompt: real geometry from the draft, synthetic modules, all visible. */
-export function buildThemePreviewLine(configuration: PromptConfiguration, palette: NativePaletteId, width: number): string {
+export function buildThemePreviewLine(configuration: PromptConfiguration, palette: NativePaletteId, width: number, time = 0): string {
   const preview = structuredClone(configuration);
   preview.nmsh.palette = palette;
   preview.modules = DEFAULT_PROMPT_CONFIGURATION.modules.map(module => ({...module, visible: true}));
-  return buildContextLine(themePreviewContext(), width, preview, 'composer');
+  return buildContextLine(themePreviewContext(), width, preview, 'composer', time);
 }
 
 /** Context plus the editable input prompt, sized to leave at least one input cell. */
@@ -504,6 +605,7 @@ export function buildInlineContextPrefix(
   context: PromptContext,
   width: number,
   configuration: PromptConfiguration,
+  time = 0,
 ): string {
   if (width <= 0) return '';
   if (width <= displayWidth(GLYPHS.prompt) + 2) return `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET}`;
@@ -511,7 +613,7 @@ export function buildInlineContextPrefix(
   // One-line: the prefix is the left prompt; right context sits at the end of the input row.
   const leftOnly = {...configuration, modules: configuration.modules.filter(module => modulePlacement(module) === 'left')};
   const modules = moduleWidth >= 8
-    ? buildContextLine(context, moduleWidth, leftOnly, 'composer')
+    ? buildContextLine(context, moduleWidth, leftOnly, 'composer', time)
     : '';
   return `${modules}${modules ? ' ' : ''}${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET} `;
 }

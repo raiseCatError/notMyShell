@@ -9,6 +9,7 @@ import {formatDuration} from '../status/commandTiming.js';
 import {shimmerTextWithColors} from '../status/shimmer.js';
 import {homedir} from 'node:os';
 import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, normalizeConnectorFadeColors, normalizePromptStyle, normalizeConnectorStyle, normalizeEdgeStyle, resolveConnectorFade, type PowerlineBlock, type PowerlineShape} from '../prompt/powerline.js';
+import {normalizeStyleProfiles} from '../prompt/styles.js';
 import {renderWelcome, type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {foldWindow} from './FoldPolicy.js';
 import {archiveColor, grayscaleArchiveColor} from '../prompt/snapshot.js';
@@ -444,13 +445,16 @@ function historicalPrompt(context: HistoricalContextSnapshot, width: number, app
     const fade = snapshot.connectorFade === undefined ? undefined
       : resolveConnectorFade(normalizeConnectorFade(snapshot.connectorFade), connector);
     const fadeColors = normalizeConnectorFadeColors(snapshot.connectorFadeColors);
+    // History replays the submitted style profile; Chroma is a live treatment and never replays.
+    const submitted = normalizePromptStyle(snapshot.style);
+    const extras = {profiles: normalizeStyleProfiles(submitted === 'powerline' ? undefined : {[submitted]: snapshot.styleProfile}, gapEnabled ? gap : 0, spacing)};
     const left = fitPowerlineBlocks(blocks.filter((_, index) => segments[index]!.placement !== 'right'), gap, spacing, width,
-      endStyle, gapEnabled, startStyle, connector, fade, fadeColors);
+      endStyle, gapEnabled, startStyle, connector, fade, fadeColors, extras);
     const right = blocks.filter((_, index) => segments[index]!.placement === 'right');
     if (right.length === 0) return left;
     return {left, right: fitRightPowerlineBlocks(right, width - displayWidth(left) - 1 - RIGHT_CONTEXT_MIN_DIVIDER,
       candidate => renderPowerlineBlocks(candidate, gap, spacing, endStyle, gapEnabled, startStyle, connector, fade, fadeColors,
-        snapshot.mirrorRight ? 'mirrored' : 'normal'))};
+        snapshot.mirrorRight ? 'mirrored' : 'normal', extras))};
   }
   const plainSpans = segments.map(segment => `${rgbStyle(
     historyColor(segment.foreground, ARCHIVE_DIVIDER_COLOR, 'foreground', segment, appearance),

@@ -25,6 +25,8 @@ import {
   normalizePromptStyle,
   type PromptStyle,
 } from './powerline.js';
+import {normalizeStyleProfiles, type StyleProfiles} from './styles.js';
+import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
 export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
@@ -58,7 +60,7 @@ export type NativeStartStyle = PowerlineEdgeStyle;
 export type NativeConnectorStyle = PowerlineConnectorStyle;
 /** `nerd` shows Nerd Font module icons; a future `text` mode can join without migration. */
 export type NativeIconMode = 'nerd' | 'off';
-export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale';
+export type NativePaletteId = 'lavender' | 'brand' | 'cool' | 'warm' | 'grayscale' | 'aurora' | 'ocean' | 'sunset' | 'forest' | 'rose' | 'nebula' | 'highContrast';
 export type NativeGapChoice = 'off' | 'compact' | 'normal' | 'wide';
 /**
  * Rich Git state colors: `semantic` keeps meaningful Git colors under any
@@ -97,7 +99,8 @@ export function normalizeConnectorFade(value: unknown): ConnectorFadeStyle {
   return CONNECTOR_FADE_STYLES.includes(value as ConnectorFadeStyle) ? value as ConnectorFadeStyle : 'off';
 }
 
-export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale'];
+export const NATIVE_PALETTE_IDS: readonly NativePaletteId[] = ['lavender', 'brand', 'cool', 'warm', 'grayscale',
+  'aurora', 'ocean', 'sunset', 'forest', 'rose', 'nebula', 'highContrast'];
 
 /** Retired theme ids keep working: Soft Semantic overlapped Brand / Semantic. */
 export function normalizePaletteId(value: unknown, fallback: NativePaletteId = 'lavender'): NativePaletteId {
@@ -255,6 +258,14 @@ export interface PromptConfiguration {
     gitConnectorFade: GitConnectorFade;
     /** Right-aligned context faces left (reflected geometry); missing in older configs means On. */
     mirrorRight: boolean;
+    /** Theme color strength; missing in older configs means Standard (unchanged colors). */
+    vibrance: Vibrance;
+    /**
+     * Per-style settings for every style except Powerline, whose settings are
+     * the fields above plus the root gap/spacing. Missing profiles are seeded
+     * from the legacy shared gap/spacing so upgrades look the same.
+     */
+    styleProfiles: StyleProfiles;
   };
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
@@ -296,7 +307,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   suggestionsOnEmpty: false,
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
-    mirrorRight: true},
+    mirrorRight: true, vibrance: 'standard', styleProfiles: normalizeStyleProfiles(undefined)},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -388,7 +399,9 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     gitColors: normalizeGitColorMode(nativeValue.gitColors),
     gitGeometry: normalizeGitGeometry(nativeValue.gitGeometry),
     gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade),
-    mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true};
+    mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true,
+    vibrance: normalizeVibrance(nativeValue.vibrance),
+    styleProfiles: normalizeStyleProfiles(undefined)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
     ? starshipValue.configPath
     : null;
@@ -403,6 +416,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const gap = typeof value.gap === 'number' && Number.isFinite(value.gap)
     ? Math.max(0, Math.min(3, Math.round(value.gap)))
     : DEFAULT_PROMPT_CONFIGURATION.gap;
+  nmsh.styleProfiles = normalizeStyleProfiles(nativeValue.styleProfiles, nmsh.gapEnabled ? gap : 0, spacing);
   // Mixed needs a Normal or Wide gap; an unreleased Compact/Off + Mixed reads as Previous.
   nmsh.connectorFadeColors = resolveFadeColors(nmsh.connectorFadeColors, nmsh.gapEnabled, gap);
   const separator = validSeparator(value.separator) ? value.separator : DEFAULT_PROMPT_CONFIGURATION.separator;
