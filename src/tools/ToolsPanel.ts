@@ -41,7 +41,7 @@ export function visibleTools(state: ToolsPanel): Tool[] {
     .sort((a, b) => TOOL_CATEGORIES.indexOf(a.category) - TOOL_CATEGORIES.indexOf(b.category)
       || Number(state.statuses[a.id]?.state === 'installed') - Number(state.statuses[b.id]?.state === 'installed') || a.label.localeCompare(b.label));
 }
-export type ToolsAction = 'close' | 'configure' | 'provider' | 'refresh' | 'finishOnboarding';
+export type ToolsAction = 'close' | 'configure' | 'provider' | 'refresh' | 'finishOnboarding' | 'mise';
 /** No key handler installs until a separate reviewed confirmation. */
 export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
   if (state.task?.state.status === 'running') return undefined;
@@ -63,6 +63,7 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     else return 'close';
   } else if (state.detail) {
     if (key.kind !== 'text') return undefined;
+    if (key.value.toLowerCase() === 'm' && state.detail.id === 'mise') return 'mise';
     if (key.value.toLowerCase() === 'i' && state.statuses[state.detail.id]?.state === 'missing') {
       state.recipe = toolInstall(state.detail);
       if (state.recipe) state.confirm = createConfirm();
@@ -129,7 +130,7 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     const version = state.statuses[tool.id]?.version;
     if (version) rows.push(`  Version: ${stripAnsi(version).replace(/[\u0000-\u001f\u007f-\u009f]/gu, '')}`);
     rows.push('  Shell hook state is not inferred; existing hooks stay authoritative.',
-      `  ${state.statuses[tool.id]?.state === 'missing' ? 'I install preview; ' : ''}${tool.configuration ? 'C configure; ' : ''}${tool.providerFamily ? 'P provider selection; ' : ''}R refresh; Esc back`);
+      `  ${state.statuses[tool.id]?.state === 'missing' ? 'I install preview; ' : ''}${tool.id === 'mise' ? 'M project awareness; ' : ''}${tool.configuration ? 'C configure; ' : ''}${tool.providerFamily ? 'P provider selection; ' : ''}R refresh; Esc back`);
   } else {
     rows.push(`  Search: ${state.query || '_'}${state.recommendedOnly ? ' / Recommended only' : ''}`);
     const tools = visibleTools(state);
