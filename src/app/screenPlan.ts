@@ -20,6 +20,7 @@ export type RegionKind =
   | 'gap'
   | 'jump'
   | 'panel'
+  | 'inspector'
   | 'suggestions'
   | 'activity'
   | 'composerBorder'
@@ -40,6 +41,7 @@ export interface ScreenPlanInput {
   inputRows: number;
   /** Suggestion rows the composer would like to show. */
   suggestions: number;
+  inspectorRows?: number;
   running: boolean;
   detached: boolean;
   hasOutput: boolean;
@@ -95,8 +97,9 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     return build(rows, top ? [...panel, ...transcript] : [...transcript, ...panel],
       {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: input.composerPosition ?? 'bottom'});
   }
+  const inspectorHeight = Math.min(Math.max(0, input.inspectorRows ?? 0), Math.max(0, rows - 8));
   const layout = calculateScreenLayout(
-    rows,
+    rows - inspectorHeight,
     input.inputRows,
     input.suggestions,
     input.running,
@@ -117,6 +120,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
       ['prompt', Number(layout.showPrompt)],
       ['input', layout.inputHeight],
       ['separator', Number(layout.showSeparator)],
+      ['inspector', inspectorHeight],
       ['suggestions', layout.suggestionCount],
       ['gap', Number(layout.showGap)],
       ['transcript', shown],
@@ -130,7 +134,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     // Geometry is measured as if following, so the PTY never resizes as output
     // grows or the view scrolls back.
     const followLayout = input.detached
-      ? calculateScreenLayout(rows, input.inputRows, input.suggestions, input.running, false, input.hasOutput,
+      ? calculateScreenLayout(rows - inspectorHeight, input.inputRows, input.suggestions, input.running, false, input.hasOutput,
         input.contextPlacement, input.hasVisibleContext, input.composerLayout)
       : layout;
     const capacity = followLayout.outputHeight;
@@ -144,6 +148,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
       ['transcript', shown],
       ['gap', Number(followLayout.showGap)],
       ['activity', followLayout.showLiveActivity ? 2 : 0],
+      ['inspector', inspectorHeight],
       ['composerBorder', Number(followLayout.showComposerTopBorder)],
       ['prompt', Number(followLayout.showPrompt)],
       ['input', followLayout.inputHeight],
@@ -162,6 +167,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     ['suggestions', layout.suggestionCount],
     // Activity line plus its blank spacer.
     ['activity', layout.showLiveActivity ? 2 : 0],
+    ['inspector', inspectorHeight],
     ['composerBorder', Number(layout.showComposerTopBorder)],
     ['prompt', Number(layout.showPrompt)],
     ['input', layout.inputHeight],
