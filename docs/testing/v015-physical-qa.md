@@ -1,6 +1,13 @@
-# Setup Cat, appearance studio and idle visuals: physical QA (pending)
+# Setup Cat, appearance studio and idle visuals: physical QA
 
-Nothing below has passed physical QA. Automated tests validate protocols,
+**Maintainer report (2026-10-03):** the maintainer physically QA'd the
+integrated pre-v0.16 state (`dev` at `04ec6b56c81a90fbb847a2346e0ce2439d35594c`,
+which contains the v0.14/v0.15 stack #292–#302) and reports that it works.
+The report does not itemize hosts, so no individual host below is marked
+physically validated by it; record host-specific results here when they are
+available.
+
+Before that report, nothing below had passed physical QA. Automated tests validate protocols,
 rendering and lifecycle in fixtures, not a physical terminal. Record host and
 version, macOS version, font (Nerd or Safe), commit, actual result and any
 failure. Tracking: #297.

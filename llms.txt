@@ -2,11 +2,13 @@
 
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 
-Current primary backend:
-- zsh
+Shell backends (real persistent shells, via ShellAdapter):
+- zsh (default), Fish, Bash 4.4+; /shell switches the current session in place
 
-Current primary platform:
-- macOS
+Platforms:
+- macOS (supported)
+- Linux (automated tests; physical validation pending)
+- Windows only through WSL 2 (WSL 1 and native Windows unsupported)
 
 Terminal hosts:
 - intentionally terminal-host independent; no host is required or preferred
@@ -20,7 +22,13 @@ Core architecture:
 
 Terminal host
 → NMSh frontend
-→ persistent real zsh PTY
+→ ShellAdapter (zsh / Fish / Bash)
+→ persistent real shell PTY
+
+Product boundary: NMSh owns terminal-native interaction (composer,
+completion menu, transcript, find/filter, sessions, history, prompt);
+the editor around it owns editing, project search, rich diff and
+navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 
 ## Core capabilities
 
@@ -41,6 +49,13 @@ Terminal host
 - zoxide integration
 - Atuin/history bridge where accurate
 - fzf/fullscreen passthrough where accurate
+- cross-session notices and the /resume session viewer
+- local-only agent activity stats (/agents) for Claude Code and Codex CLI
+- /find and /filter over the transcript
+- /open and /open-diff delegation to Zed, VS Code or $VISUAL/$EDITOR
+- nmsh config export/import, nmsh uninstall, nmsh doctor
+- capability-driven inline images (/about) with text fallback
+- no plugin manager required; read-only framework/plugin diagnostics
 
 ## NMSh is NOT
 
@@ -54,6 +69,11 @@ Terminal host
 
 src/app/TerminalApp.ts
 src/shell/ShellSession.ts
+src/shell/adapters/ (ShellAdapter, Zsh/Fish/Bash adapters)
+src/session/SessionService.ts, src/session/SessionNotices.ts
+src/host/HostActions.ts, src/host/platform.ts
+src/output/TranscriptSearch.ts
+src/presentation/ImageSurface.ts
 src/shell/SemanticService.ts
 src/input/Highlighter.ts
 src/input/CommandEditor.ts
@@ -72,6 +92,11 @@ SECURITY.md
 CHANGELOG.md
 SUPPORT.md
 LICENSE
+docs/architecture/shell-adapter.md
+docs/architecture/platforms.md
+docs/architecture/host-actions.md
+docs/architecture/image-surface.md
+docs/privacy.md
 
 ## Repository
 

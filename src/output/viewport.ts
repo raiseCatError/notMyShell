@@ -16,6 +16,8 @@ export interface WrappedRow {
   blockStartId?: number;
   /** Leading alignment columns (Chat); surfaces and hit bounds start after them. */
   indent?: number;
+  /** The synthetic "filter active" row; presentation only, never transcript data. */
+  isFilterHint?: boolean;
 }
 
 export interface StickyHeader {

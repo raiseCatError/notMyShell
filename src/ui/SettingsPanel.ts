@@ -1,3 +1,6 @@
+import {SHELL_IDS} from '../shell/adapters/ShellAdapter.js';
+import {shellAdapter} from '../shell/adapters/registry.js';
+import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, type StatusStripSettings} from '../prompt/configuration.js';
@@ -240,6 +243,16 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'liveSessionMultiple', level: 'advanced', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
     values: LIVE_SESSION_MULTIPLE, labels: ['Ask which', 'Open all'],
     get: config => config.liveSessionMultiple, set: (config, liveSessionMultiple) => ({...config, liveSessionMultiple})}),
+  {id: 'sessionNotices', label: 'Session notices', description: 'Up to three factual lines above the composer when other sessions finish, fail, ask for attention or end', category: 'Sessions',
+    control: 'boolean', get: config => config.sessionNotices, set: (config, sessionNotices) => ({...config, sessionNotices})},
+  {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
+    control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
+  enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
+    values: SHELL_IDS, labels: SHELL_IDS.map(id => shellAdapter(id).label),
+    get: config => config.shellBackend, set: (config, shellBackend) => ({...config, shellBackend})}),
+  enumRow({id: 'openWith', label: 'Open with', description: 'Where /open and /open-diff hand files: the editor around NMSh (Auto), Zed, VS Code, or VISUAL/EDITOR', category: 'Sessions',
+    values: OPEN_WITH_IDS, labels: ['Auto', 'Zed', 'VS Code', 'VISUAL / EDITOR'],
+    get: config => config.openWith, set: (config, openWith) => ({...config, openWith})}),
   {id: 'welcome', label: 'Welcome provider', description: 'What new sessions show first: Vespyr, Fastfetch, Neofetch, or None', category: 'Welcome',
     control: 'child', destination: 'welcome', value: config => welcomeProvider(config.welcome).label},
   {id: 'suggestions', label: 'Suggestions', description: 'Ghost-text prediction provider: NMSh Native, Deja, or None', category: 'Suggestions',

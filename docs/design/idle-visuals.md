@@ -22,15 +22,22 @@ draft, selection, scroll position, history, prompt or session state.
 
 Starts only when NMSh owns the screen, the shell is at an interactive prompt
 with no running or waiting command, no panel, picker or palette is open, no
-passthrough program owns the terminal, the terminal is not known to be
-unfocused, and nothing (keys, mouse, focus changes, output, resize) happened
-for the timeout.
+passthrough program owns the terminal, and nothing (keys, mouse, output,
+resize) happened for the timeout. Focus does not matter: an unfocused
+terminal is often still visible (another monitor, beside a browser or
+editor), so blur neither blocks activation, resets the countdown, nor pauses
+the scene.
+
+While active, the idle scene is the **only** presentation owner: every other
+animation subscription (prompt/divider Chroma, effects, task panels, status
+strip, notices, the gallery preview) is stopped, and the normal paint paths
+return without drawing. Starting is idempotent and arms no timer.
 
 Ends immediately on any key, mouse move, click, wheel, focus return, resize,
-new shell output, passthrough or session lifecycle change. The waking key is
-not typed into the composer. Losing focus pauses frames instead of drawing for
-nobody. Dismissal invalidates the renderer and repaints the exact presentation
-underneath.
+new shell output, passthrough or session lifecycle change. The waking key or
+focus report is not typed into the composer. Dismissal invalidates the
+renderer, repaints the exact presentation underneath (including an open
+`/screensaver` gallery, whose preview resumes) and re-arms the countdown.
 
 ## Shipped modes
 

@@ -127,7 +127,7 @@ test('end to end: a CLI’s own title and notification reach /resume across deta
     backgroundPid = Number(/BG-STARTED=(\d+)/u.exec(strip(viewer.output.slice(backgroundMark)))![1]);
     const mark = viewer.mark;
     viewer.pty.write('/resume\r');
-    await viewer.waitFor(/Claude Code · needs attention[\s\S]*Fake agent: ready/, mark);
+    await viewer.waitFor(/Needs attention[\s\S]*Claude[\s\S]*Fake agent: ready/, mark);
     viewer.pty.write('\u001b');
 
     const b = sandbox.launch(['--attach', live!.id]);

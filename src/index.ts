@@ -26,11 +26,33 @@ function startOrdinaryZsh(cwd?: string): Promise<number> {
   });
 }
 
+async function runMaintenanceCommand(argv: string[]): Promise<number> {
+  const out = (text: string) => process.stdout.write(text);
+  const err = (text: string) => process.stderr.write(text);
+  const version = readBuildIdentity().version;
+  if (argv[0] === 'doctor') {
+    const {doctorReport} = await import('./cli/doctor.js');
+    out(doctorReport());
+    return 0;
+  }
+  const {ttyConfirm} = await import('./cli/configCommand.js');
+  const confirm = process.stdin.isTTY && process.stderr.isTTY ? ttyConfirm : undefined;
+  if (argv[0] === 'config') {
+    const {runConfigCommand} = await import('./cli/configCommand.js');
+    return runConfigCommand(argv.slice(1), {out, err, confirm, version});
+  }
+  const {runUninstallCommand} = await import('./cli/uninstallCommand.js');
+  return runUninstallCommand(argv.slice(1), {out, err, confirm});
+}
+
 const args = process.argv.slice(2);
 const attachIndex = args.indexOf('--attach');
 const presetIndex = args.indexOf('--preset');
 
-if (isVersionInvocation(args)) {
+if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
+  // Non-interactive maintenance commands: allowed from inside an NMSh-managed shell too.
+  process.exitCode = await runMaintenanceCommand(args);
+} else if (isVersionInvocation(args)) {
   process.stdout.write(`${formatBuildIdentity(readBuildIdentity())}\n`);
 } else if (args.includes('--presets')) {
   try { process.stdout.write(new SessionPresetStore().list().map(preset => `${preset.name}  ${preset.cwd}  ${preset.commands.length} startup command(s)`).join('\n') + '\n'); }
@@ -59,7 +81,17 @@ if (isVersionInvocation(args)) {
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
   const {attachSession, connectSession, listLiveSessions, SESSION_SERVICE_ENV} = await import('./session/connectSession.js');
-  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)});
+  // New sessions start the default backend from Settings; a missing one falls back to zsh, said plainly.
+  const {loadPromptConfiguration: loadBackendConfiguration} = await import('./prompt/configuration.js');
+  const {shellAdapter} = await import('./shell/adapters/registry.js');
+  let backend = loadBackendConfiguration().shellBackend;
+  let backendNotice: string | undefined;
+  const missing = shellAdapter(backend).unavailableReason(process.env);
+  if (backend !== 'zsh' && missing) {
+    backendNotice = `${missing} Started zsh instead; your default stays ${shellAdapter(backend).label}.`;
+    backend = 'zsh';
+  }
+  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4), shell: backend});
   const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   let pendingPreset: SessionPreset | undefined;
@@ -149,6 +181,10 @@ if (isVersionInvocation(args)) {
       }
     }
     connection ??= await connectSession(size());
+    if (backendNotice && !connection.attached) { notice = [notice, backendNotice].filter(Boolean).join(' ') || undefined; backendNotice = undefined; }
+    if (connection.shell && connection.shell !== backend && !connection.attached) {
+      notice = [notice, `The running session service started ${connection.shell} (it predates shell backends); end its sessions to use ${backend}.`].filter(Boolean).join(' ');
+    }
     if (notice) connection = {...connection, notice: [connection.notice, notice].filter(Boolean).join(' ')};
     if (pendingPreset && connection.mode !== 'service') {
       connection.client.kill();

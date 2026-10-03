@@ -1,3 +1,4 @@
+import type {ImageOverlay} from '../presentation/ImageSurface.js';
 import {BASELINE_CAPABILITIES, type TerminalCapabilities} from '../host/capabilities.js';
 import {AlternateScreenTracker} from '../session/TerminalModes.js';
 import {displayWidth} from '../util/text.js';
@@ -112,6 +113,32 @@ export class TerminalRenderer {
     this.write(`\u001B[?1049h${this.inputModes(true)}\u001B[?25l\u001B[2J\u001B[H${this.cursorStyle}`);
   }
 
+  /** The one raster overlay NMSh may show (see presentation/ImageSurface); undefined for none. */
+  private overlay?: ImageOverlay;
+  private overlayTransmitted = false;
+  private overlayPlaced = false;
+
+  /**
+   * Show, replace or remove the image overlay. Removing it sends the
+   * protocol's delete and repaints its rows, so no image outlives its panel.
+   */
+  setImageOverlay(next: ImageOverlay | undefined): void {
+    if (next?.key === this.overlay?.key) return;
+    this.clearOverlay();
+    this.overlay = next;
+  }
+
+  private clearOverlay(): void {
+    const previous = this.overlay;
+    if (!previous) return;
+    if (this.active && !this.suspended && (this.overlayTransmitted || this.overlayPlaced) && previous.cleanup) this.write(previous.cleanup);
+    // Force its rows to repaint: plain text over the box removes iTerm2 image cells too.
+    for (let row = previous.row; row < previous.row + previous.size.rows; row += 1) if (row < this.previous.length) this.previous[row] = '\u0000';
+    this.overlay = undefined;
+    this.overlayTransmitted = false;
+    this.overlayPlaced = false;
+  }
+
   render(frame: TerminalFrame): void {
     if (!this.active || this.suspended) return;
     const maximum = Math.max(this.previous.length, frame.rows.length);
@@ -120,6 +147,9 @@ export class TerminalRenderer {
       const next = frame.rows[index] ?? '';
       if (this.previous[index] !== next) changedRows.push(index);
     }
+    const overlay = this.overlay;
+    const placeOverlay = Boolean(overlay && (!this.overlayPlaced
+      || changedRows.some(row => row >= overlay.row && row < overlay.row + overlay.size.rows)));
     const cursor = {
       row: frame.cursorRow,
       column: frame.cursorColumn,
@@ -129,12 +159,17 @@ export class TerminalRenderer {
       || cursor.row !== this.previousCursor.row
       || cursor.column !== this.previousCursor.column
       || cursor.visible !== this.previousCursor.visible;
-    if (changedRows.length === 0 && !cursorChanged) return;
+    if (changedRows.length === 0 && !cursorChanged && !placeOverlay) return;
 
     let output = '\u001B[?25l';
     for (const index of changedRows) {
       const next = frame.rows[index] ?? '';
       output += `\u001B[${index + 1};1H\u001B[2K${rowForTerminal(next, frame.columns)}\u001B[0m`;
+    }
+    if (overlay && placeOverlay) {
+      if (!this.overlayTransmitted) { output += overlay.transmit; this.overlayTransmitted = true; }
+      output += `\u001B[${overlay.row + 1};${overlay.column + 1}H${overlay.place}`;
+      this.overlayPlaced = true;
     }
     output += `\u001B[${frame.cursorRow};${frame.cursorColumn}H`;
     if (cursor.visible) output += '\u001B[?25h';
@@ -149,6 +184,8 @@ export class TerminalRenderer {
   /** `restore` re-applies the foreground app's own terminal modes, e.g. after reattaching to it. */
   suspendForPassthrough(restore = ''): void {
     if (!this.active || this.suspended) return;
+    // A foreground program owns the screen now: no NMSh image may stay on it.
+    this.clearOverlay();
     this.suspended = true;
     // Pop kitty mode while still on the alt screen
     this.childModes.reset('alternate');
@@ -167,6 +204,7 @@ export class TerminalRenderer {
   resumeAfterPassthrough(): void {
     if (!this.active || !this.suspended) return;
     this.suspended = false;
+    this.overlayPlaced = false;
     this.previous = [];
     this.previousCursor = undefined;
     // Clean each child keyboard stack on its own screen, finish on alternate,
@@ -177,10 +215,12 @@ export class TerminalRenderer {
   invalidate(): void {
     this.previous = [];
     this.previousCursor = undefined;
+    this.overlayPlaced = false;
   }
 
   leave(): void {
     if (!this.active) return;
+    this.clearOverlay();
     this.active = false;
     this.previous = [];
     this.previousCursor = undefined;

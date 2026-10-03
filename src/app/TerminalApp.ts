@@ -48,14 +48,15 @@ import {
   SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {appendFileSync, existsSync} from 'node:fs';
+import {appendFileSync, existsSync, readFileSync} from 'node:fs';
+import {shouldProbeGraphics} from '../host/capabilities.js';
 import {delimiter, join} from 'node:path';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
 import {localKnowledge} from '../shell/CommandKnowledge.js';
 import {ComposerHistory, recallSource, SESSION_SUBMISSION_LIMIT, type SessionSubmission} from '../input/ComposerHistory.js';
 import {resolveAction} from '../ui/actions.js';
-import {CompletionService, type CompletionCandidate} from '../shell/CompletionService.js';
+import {CompletionService, defaultCompletionSources, type CompletionCandidate} from '../shell/CompletionService.js';
 import {classifyShellFailure, parseShellKnowledge} from '../shell/ShellKnowledge.js';
 import {HistoryService} from '../shell/HistoryService.js';
 import {SuggestionController} from '../suggestions/SuggestionController.js';
@@ -115,7 +116,23 @@ import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type Stat
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
-import {cursorScreenRow, planScreen, regionAt, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {AgentActivityStore} from '../agents/AgentActivityStore.js';
+import {InstallProvenance} from '../tools/InstallProvenance.js';
+import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
+import {openPanelKey, renderOpenPanel, type OpenPanelState} from '../host/OpenPanel.js';
+import {fishQuote, posixQuote} from '../shell/adapters/ShellAdapter.js';
+import {compileQuery, createFind, findStatus, parseSearchArguments, refreshFind, revealStart, stepFind, type FindState} from '../output/TranscriptSearch.js';
+import {shellAdapter, shellAvailability} from '../shell/adapters/registry.js';
+import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
+import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
+import {detectPlatform, type PlatformInfo} from '../host/platform.js';
+import {createImageOverlay, fitCells, pngSize, selectImageProtocol, type ImageOverlay, type ImageProtocol, type ImageSize} from '../presentation/ImageSurface.js';
+import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentReport} from '../shell/ShellEnvironment.js';
+import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
+import {detectAgentCommand} from '../agents/agents.js';
+import {describeNotice, noticeKey, selectNotices, sessionLabel, type NoticeView, type SessionNotice} from '../session/SessionNotices.js';
+import {cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
@@ -131,9 +148,9 @@ import {formatBytes} from '../session/sessionList.js';
 import type {PresentationMode} from '../output/PresentationMode.js';
 import type {SessionInfo} from '../session/SessionProtocol.js';
 import {SessionJournal} from '../sessions/SessionJournal.js';
-import {createResumeBrowser, describeLiveSession, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
+import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
-import {listLiveSessions} from '../session/connectSession.js';
+import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {defaultRuntimeDir} from '../session/runtimeDir.js';
@@ -146,6 +163,12 @@ const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const SEPARATOR = lazyForeground(UI_COLORS.separator);
 const ACCENT = lazyForeground(UI_COLORS.accent);
+/** NMSh ran this install with the user's confirmation; record it so an uninstall can be offered honestly. */
+function recordInstall(toolId: string, install: {label: string; command: string; args: readonly string[]}): void {
+  try { new InstallProvenance().record({id: toolId, package: install.args.at(-1) ?? toolId}, {...install, args: [...install.args]}); } catch { /* best effort */ }
+}
+/** Session notices change on human timescales; a slow poll keeps the service quiet. */
+const NOTICE_REFRESH_MS = 4000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
 const ERROR = lazyForeground(UI_COLORS.failure);
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
@@ -172,7 +195,7 @@ export class TerminalApp {
   private readonly renderer = new TerminalRenderer(undefined, this.host.capabilities);
   private readonly editor = new CommandEditor();
   private readonly highlighter = new Highlighter();
-  private readonly semanticService: SemanticService;
+  private semanticService: CommandClassifier;
   private readonly keyDecoder = new KeyDecoder();
   private readonly output = new OutputBuffer(() => {
     this.historyViewport.latest();
@@ -201,7 +224,7 @@ export class TerminalApp {
   /** Commands submitted this session, most recent first: the sequence context for suggestions. */
   private readonly submittedCommands: string[] = [];
   private readonly transcriptStore = new TranscriptStore();
-  private readonly completionService = new CompletionService();
+  private completionService = new CompletionService();
   private inspectorVisible = false;
   private shellSuggestions: CompletionCandidate[] = [];
   private lastSuggestionInput = "";
@@ -290,6 +313,25 @@ export class TerminalApp {
   private statsSource: StatsSource = new LocalStats();
   private stripStats: SystemStats = {};
   private stripTimer?: () => void;
+  /** Cross-session notices from the session service; frontend chrome only. */
+  private noticeView: NoticeView = {notices: [], hidden: 0};
+  private noticeLabels = new Map<string, string>();
+  private noticeTimer?: () => void;
+  private noticePolling = false;
+  /** Notices this window cleared while an older service could not clear them for everyone. */
+  private readonly dismissedNotices = new Set<string>();
+  private readonly agentActivity = new AgentActivityStore();
+  /** The shell backend under this session (zsh, Fish or Bash). */
+  private shellId: ShellId = 'zsh';
+  private shellPanel?: ShellPanelState;
+  private shellSwitching = false;
+  /** The transcript find bar, while open. */
+  private findState?: FindState;
+  /** Facts about the machine and shell setup; read once, never per frame. */
+  private get platformInfo(): PlatformInfo { return this.cachedPlatform ??= detectPlatform(); }
+  private cachedPlatform?: PlatformInfo;
+  private get shellEnvironment(): ShellEnvironmentReport { return this.cachedEnvironment ??= detectShellEnvironment(); }
+  private cachedEnvironment?: ShellEnvironmentReport;
   private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
@@ -370,7 +412,9 @@ export class TerminalApp {
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
-    this.semanticService = new SemanticService(this.initialCwd);
+    this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
+    this.semanticService = this.shellId === 'zsh' ? new SemanticService(this.initialCwd) : new PathClassifier(shellAdapter(this.shellId));
+    if (this.shellId !== 'zsh') this.bindShellServices(this.shellId, false);
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
@@ -621,7 +665,7 @@ export class TerminalApp {
           process.stdin.resume();
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
-      });
+      }, undefined, {graphics: shouldProbeGraphics(process.env)});
       process.stdin.setRawMode(this.originalRawMode);
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
@@ -722,10 +766,10 @@ export class TerminalApp {
 
   private handleDecodedKeys(keys: Key[]): void {
     if (this.idle) {
-      // The idle overlay owns input: losing focus pauses it; anything else dismisses it and is not passed on.
-      if (keys.length && keys.every(key => key.kind === 'focusOut')) { this.terminalFocus = 'blurred'; this.pauseIdle(); return; }
-      if (keys.some(key => key.kind === 'focusIn' || key.kind === 'focusOut')) this.terminalFocus = keys.at(-1)!.kind === 'focusOut' ? 'blurred' : 'focused';
-      if (keys.length) this.dismissIdle();
+      // The idle overlay owns input and passes nothing on. Losing focus keeps it running
+      // (the terminal may still be visible); focus returning or any real input dismisses it.
+      if (keys.some(key => key.kind === 'focusIn' || key.kind === 'focusOut')) this.terminalFocus = [...keys].reverse().find(key => key.kind === 'focusIn' || key.kind === 'focusOut')!.kind === 'focusOut' ? 'blurred' : 'focused';
+      if (keys.some(key => key.kind !== 'focusOut')) this.dismissIdle();
       return;
     }
     // Focus reports alone are not user activity (a terminal can report them on its own).
@@ -988,6 +1032,39 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
+      return;
+    }
+    if (this.findState && !this.settingsPanelActive && this.handleFindKey(key)) return;
+    if (this.openPanel) {
+      const panel = this.openPanel;
+      const action = openPanelKey(panel, key);
+      if (action === 'close') { this.openPanel = undefined; this.returnFromPanel(); }
+      else if (action === 'open') {
+        const reference = panel.references[panel.selected]!;
+        this.openPanel = undefined;
+        void this.openLocation(`/open ${reference.text}`, `${reference.path}:${reference.line ?? ''}${reference.column ? `:${reference.column}` : ''}`.replace(/:$/u, ''), reference.cwd);
+      }
+      this.render();
+      return;
+    }
+    if (this.shellPanel) {
+      const action = shellPanelKey(this.shellPanel, key);
+      if (action?.kind === 'close') { this.shellPanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'switch') { this.shellPanel = undefined; void this.switchShell(action.shell, '/shell'); }
+      else if (action?.kind === 'default') {
+        this.updateConfiguration(configuration => { configuration.shellBackend = action.shell; });
+        this.shellPanel.defaultShell = action.shell;
+        this.shellPanel.message = `${shellAdapter(action.shell).label} is now the default for new sessions. This session is unchanged.`;
+      }
+      this.render();
+      return;
+    }
+    if (this.aboutPanel) {
+      // Read-only panel: any key closes it, and its image goes with it.
+      this.aboutPanel = undefined;
+      this.renderer.setImageOverlay(undefined);
+      this.returnFromPanel();
+      this.render();
       return;
     }
     if (this.resumeBrowser) {
@@ -1655,6 +1732,20 @@ export class TerminalApp {
     else if (slash.kind === 'presets') this.startPresets();
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'help') this.showHelp(command);
+    else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
+    else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
+    else if (slash.kind === 'find') this.openFind(slash.arguments);
+    else if (slash.kind === 'open') {
+      if (slash.target) await this.openLocation(command, slash.target, this.shellCwd);
+      else { this.panelOrigin = undefined; this.openPanel = {references: this.recentReferences(), selected: 0, editor: this.hostActions().label}; }
+    }
+    else if (slash.kind === 'openDiff') await this.openDiff(command, slash.left, slash.right);
+    else if (slash.kind === 'filter') this.applyFilterCommand(command, slash.arguments);
+    else if (slash.kind === 'shell') {
+      if (slash.shell) await this.switchShell(slash.shell, command);
+      else { this.panelOrigin = undefined; this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker()); }
+    }
+    else if (slash.kind === 'notices') await this.runNoticesCommand(command, slash.action);
     else if (slash.kind === 'history') {
       if (command.startsWith(HISTORY_SEARCH)) this.submitHistorySearch(slash.query, true);
       else await this.openHistoryPicker(slash.query);
@@ -2176,6 +2267,15 @@ export class TerminalApp {
     }
 
     const command = this.running;
+    // Program identity only (the command's program word); never the agent's prompt or output.
+    const agent = detectAgentCommand(command.command);
+    if (agent && this.promptConfiguration.agentActivity && !command.cleared) {
+      const interrupted = command.interrupted || exitCode === 130;
+      try {
+        this.agentActivity.record({agent: agent.id, startedAt: command.startedAt, durationMs: Math.max(0, at - command.startedAt),
+          ...(interrupted ? {} : {exitCode})}, `${this.sessionId ?? this.journal?.id ?? 'local'}:${command.startedAt}`);
+      } catch { /* local stats are best effort and never affect the command */ }
+    }
     const notification = {command: command.command, elapsedMs: Math.max(0, at - command.startedAt), exitCode,
       interrupted: command.interrupted || exitCode === 130};
     if (!this.replaying && shouldNotify(notification, this.promptConfiguration.notifications, this.terminalFocus)) {
@@ -2207,6 +2307,7 @@ export class TerminalApp {
       const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
       if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
+      else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -2558,7 +2659,7 @@ export class TerminalApp {
           this.starshipStatus = await detectStarship(process.env);
           state.starshipStatus = this.starshipStatus;
           if (!this.starshipStatus.installed) state.task.markFailure('Homebrew completed, but starship was not found on PATH.');
-          else this.milestoneEffect();
+          else { recordInstall('starship', {label: 'brew install starship', command: 'brew', args: ['install', 'starship']}); this.milestoneEffect(); }
         }
         state.step = 'installResult';
         state.selectedIndex = 0;
@@ -2661,7 +2762,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2718,6 +2819,9 @@ export class TerminalApp {
     if (this.transcriptPanelState) {
       return framePanel(renderTranscriptPanel(this.transcriptPanelState, columns, this.transcriptPreviewSample(), this.dimensions().rows - 4, this.promptConfiguration.presentation), columns);
     }
+    if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
+    if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
     if (this.resumeBrowser) {
       const browser = this.resumeBrowser;
       const sessions = visibleResumeSessions(browser);
@@ -2730,9 +2834,16 @@ export class TerminalApp {
       if (live.length > 0) {
         const now = Date.now();
         rows.push(`${SUBTLE}  LIVE${RESET}`);
+        const safe = getCurrentGlyphMode() === 'safe';
         live.forEach((session, index) => {
           const selected = index === browser.selectedIndex;
-          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ● ${describeLiveSession(session, now)}${RESET}`, columns));
+          const state = liveRowState(session, now);
+          const stateColor = state === 'failed' ? ERROR : state === 'attention' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
+          const agent = liveRowAgent(session);
+          // Agent color only when identity is proven and color is allowed; generic otherwise.
+          const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${who}`
+            + `${selected ? ACCENT : SECONDARY}${describeLiveRow(session, now)}${RESET}`, columns));
         });
         rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
       }
@@ -2748,8 +2859,7 @@ export class TerminalApp {
         lastDay = day;
         const selected = index + live.length === browser.selectedIndex;
         const time = new Date(session.createdAt).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-        const interrupted = session.journaled && !session.endedAt ? ' · interrupted' : '';
-        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${session.project || 'notMyShell'} · ${session.finalCwd} · ${session.commandCount} commands${interrupted}${RESET}`, columns));
+        rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${time}  ${SUBTLE}Archived${RESET}${selected ? ACCENT : SECONDARY}  ${describeArchivedRow(session, Date.now())}${RESET}`, columns));
       }
       if (sessions.length === 0) rows.push(`${SUBTLE}  No matching archived sessions${RESET}`);
       const confirming = browser.live.find(session => session.id === browser.confirmKill);
@@ -3072,7 +3182,8 @@ export class TerminalApp {
   private armIdle(): void {
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
     const minutes = this.promptConfiguration.idleVisuals.timeout;
-    if (!minutes || this.stopped || !this.presentationStarted) return;
+    // While idle visuals own the screen there is nothing to count down to.
+    if (!minutes || this.stopped || !this.presentationStarted || this.idle) return;
     const delay = Math.max(1000, this.lastActivity + minutes * 60_000 - Date.now());
     this.idleTimer = setTimeout(() => { this.idleTimer = undefined; this.onIdleTimeout(); }, delay);
     this.idleTimer.unref?.();
@@ -3080,12 +3191,13 @@ export class TerminalApp {
 
   /**
    * Starts only at a safe, quiet prompt that NMSh owns: no running or waiting command, no panel,
-   * picker or palette, no passthrough, not suspended, and not while the terminal is unfocused.
+   * picker or palette, no passthrough, not suspended. Focus does not matter: an unfocused
+   * terminal is often still visible (another monitor, beside a browser or editor).
    */
   private idleEligible(): boolean {
     return !this.stopped && this.presentationStarted && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
       && !this.running && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
-      && !this.pickerOpening && this.terminalFocus !== 'blurred';
+      && !this.pickerOpening;
   }
 
   private onIdleTimeout(): void {
@@ -3103,10 +3215,11 @@ export class TerminalApp {
       if (preview) this.output.addFrontendInteraction('/screensaver', 'Idle visuals stay off while Decorative effects are Off.', INFO);
       return;
     }
-    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended || this.idle) return;
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
-    this.screensaverPanel = undefined;
-    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    // Exclusive ownership: every other presentation owner stops before the first idle frame.
+    // The gallery (if any) stays open underneath and resumes its own preview on dismissal.
+    this.suspendPresentationOwners();
     const mode = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
     this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still};
     this.renderer.invalidate();
@@ -3144,11 +3257,20 @@ export class TerminalApp {
     this.idleSubscription?.(); this.idleSubscription = undefined;
   }
 
-  /** An unfocused terminal: keep the overlay but stop drawing frames nobody can see. */
-  private pauseIdle(): void {
-    if (!this.idle || this.idle.paused) return;
-    this.idle.paused = true;
-    this.stopIdleFrames();
+  /**
+   * Stop every animation subscription that paints the normal UI, so the idle
+   * scene is the only thing drawn while it is active. Each one is recreated by
+   * the normal render path after dismissal (render → syncPresentationClock,
+   * syncPanelAnimation, the gallery's own preview subscription).
+   */
+  private suspendPresentationOwners(): void {
+    this.effects.cancel();
+    this.endSweep();
+    this.presentationSubscription?.(); this.presentationSubscription = undefined;
+    this.panelAnimation?.(); this.panelAnimation = undefined;
+    this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
+    this.stripTimer?.(); this.stripTimer = undefined;
+    this.noticeTimer?.(); this.noticeTimer = undefined;
   }
 
   /** Restores the exact presentation underneath: nothing it covered was changed. */
@@ -3648,6 +3770,7 @@ export class TerminalApp {
       this.semanticService.cache.delete(state.tool.executable ?? '');
       this.commandSources.clear();
       const installed = resolveCommand(state.tool.executable ?? state.tool.id) !== undefined;
+      if (outcome.status === 'succeeded' && installed) recordInstall(state.tool.id, state.recipe);
       state.result = outcome.status === 'succeeded' && installed
         ? {ok: true, message: `${state.tool.label} installed. Nothing was run.`}
         : {ok: false, message: outcome.status === 'succeeded' ? `${state.recipe.label} finished, but ${state.tool.executable} was not found.`
@@ -3695,8 +3818,10 @@ export class TerminalApp {
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
         {label: 'Platform', value: `${process.platform} ${process.arch}`},
+        {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
         {label: 'Node', value: process.version},
-        {label: 'Shell', value: 'zsh'},
+        {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
+        {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         {label: 'Working directory', value: tilde(this.shellCwd)},
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
@@ -3712,12 +3837,19 @@ export class TerminalApp {
         {label: 'Directory navigation', value: this.directoryService.status.detail ?? this.directoryService.status.active},
         {label: 'Picker', value: this.promptConfiguration.picker},
         {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
+        {label: 'Open with', value: (() => { const host = this.hostActions(); const caps = host.capabilities;
+          return host.id === 'none' ? 'no editor known (set VISUAL/EDITOR or Open with)' : `${host.label} · file ${caps.nativeFileOpen ? 'yes' : 'no'} · folder ${caps.nativeDirectoryOpen ? 'yes' : 'no'} · diff ${caps.nativeDiff ? 'yes' : 'no'}`; })()},
+        {label: 'Completion sources', value: this.completionService.sourceIds.join(' + ')},
+        {label: 'Session notices', value: config.sessionNotices ? (this.sessionMode === 'service' ? 'On' : 'On (needs the live-session service)') : 'Off'},
+        {label: 'Agent activity', value: config.agentActivity ? 'On · local only' : 'Off'},
+        ...shellEnvironmentRows(this.shellEnvironment).map(([label, value]) => ({label, value})),
         {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
       ],
       [
         {label: 'Session journal', value: this.journalActive ? 'active' : 'inactive', tone: this.journalActive ? 'success' : 'warning'},
         {label: 'Session retention', value: config.sessionRetention === null ? 'unlimited' : `${config.sessionRetention} sessions`},
         {label: 'Config file', value: tilde(promptConfigurationPath()), tone: 'muted'},
+        {label: 'Runtime directory', value: tilde(defaultRuntimeDir()), tone: 'muted'},
       ],
     ];
   }
@@ -3909,6 +4041,7 @@ export class TerminalApp {
         state.statuses[selected.id] = await detectProvider(selected);
         state.step = 'list';
         if (outcome.status === 'succeeded' && state.statuses[selected.id]?.state === 'installed') {
+          recordInstall(selected.executable ?? selected.id, install);
           // Installed and re-detected: use it right away, as the user asked.
           this.saveProviderChoice(state);
           this.milestoneEffect();
@@ -4314,7 +4447,10 @@ export class TerminalApp {
       const active = new AbortController();
       this.historyQueryAbort = active;
       this.historyResults = [];
-      void this.historyService.search(query, active.signal).then(entries => {
+      const ranked = this.historyService.status.active === 'native'
+        ? this.historyService.searchRanked(query, {cwd: this.shellCwd, project: this.context.project, session: this.journal?.id ?? this.sessionId, now: Date.now()}, active.signal)
+        : this.historyService.search(query, active.signal);
+      void ranked.then(entries => {
         if (this.stopped || active.signal.aborted || this.historyQuery !== query) return;
         this.historyResults = entries;
         this.selectedSuggestion = 0;
@@ -4322,7 +4458,8 @@ export class TerminalApp {
       }).catch(() => {});
     }
     return this.historyResults.map(entry => ({id: entry.id, name: entry.command.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' '), insertion: entry.command,
-      description: [entry.exitCode === undefined ? undefined : `exit ${entry.exitCode}`,
+      description: ['count' in entry && typeof entry.count === 'number' && entry.count > 1 ? `×${entry.count}` : undefined,
+        entry.agent ? `agent ${entry.agent}` : undefined, entry.exitCode === undefined ? undefined : `exit ${entry.exitCode}`,
         entry.durationMs === undefined ? undefined : `${entry.durationMs}ms`, entry.cwd, entry.project].filter(Boolean).join(' · ') || 'History'}));
   }
 
@@ -4374,8 +4511,73 @@ export class TerminalApp {
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
     // The status strip owns one top row only when it is on, fits, and no panel owns the screen.
-    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planComposer(columns, rows - 1, fullInput, suggestions, panelRows));
-    return this.planComposer(columns, rows, fullInput, suggestions, panelRows);
+    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planWithNotices(columns, rows - 1, fullInput, suggestions, panelRows));
+    return this.planWithNotices(columns, rows, fullInput, suggestions, panelRows);
+  }
+
+  private planWithNotices(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
+    panelRows: number | undefined): ScreenPlan {
+    const find = panelRows === undefined && this.findState ? 1 : 0;
+    const count = panelRows === undefined ? this.noticeRows(columns).length : 0;
+    // Notices never squeeze the composer or transcript out: small screens simply do not show them.
+    const notices = count > 0 && rows - find >= 12 + count ? count : 0;
+    const plan = this.planComposer(columns, rows - notices - find, fullInput, suggestions, panelRows);
+    // The find bar sits right above the composer, notices above it.
+    return withNoticeRows(withNoticeRows(plan, find, 'find'), notices);
+  }
+
+  /** One compact line per notice (max three, the last may summarize overflow). */
+  private noticeRows(columns: number): string[] {
+    if (!this.promptConfiguration.sessionNotices || this.passthrough) return [];
+    const {notices, hidden} = this.noticeView;
+    const now = Date.now();
+    const safe = getCurrentGlyphMode() === 'safe';
+    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷'};
+    const rows = notices.map(notice => {
+      const parts = describeNotice(notice, this.noticeLabels.get(notice.sessionId) ?? sessionLabel(notice.sessionId), now);
+      const color = parts.symbol === 'failed' ? ERROR : parts.symbol === 'attention' ? ACCENT : parts.symbol === 'done' ? SUCCESS : SECONDARY;
+      return truncateAnsi(`${color}${symbols[parts.symbol]}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
+    });
+    if (hidden > 0) rows.push(truncateAnsi(`${SECONDARY}… ${hidden} more session update${hidden === 1 ? '' : 's'} · /resume · /notices clear${RESET}`, columns));
+    return rows;
+  }
+
+  /** Poll the service's session list on a slow cadence while notices are on and NMSh owns the screen. */
+  private syncNotices(): void {
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
+      && this.sessionMode === 'service' && this.promptConfiguration.sessionNotices;
+    if (wanted && !this.noticeTimer) {
+      this.noticeTimer = presentationClock.subscribe(() => void this.refreshNotices(), NOTICE_REFRESH_MS);
+      void this.refreshNotices();
+    } else if (!wanted && this.noticeTimer) {
+      this.noticeTimer(); this.noticeTimer = undefined;
+    }
+    if (!wanted && !this.promptConfiguration.sessionNotices && this.noticeView.notices.length) this.noticeView = {notices: [], hidden: 0};
+  }
+
+  private async refreshNotices(): Promise<void> {
+    if (this.noticePolling) return;
+    this.noticePolling = true;
+    try {
+      const {sessions, ended} = await listSessionNotices();
+      if (this.stopped) return;
+      const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
+      this.noticeLabels = new Map(ordered.map((session, index) => [session.id, sessionLabel(session.id, index + 1)]));
+      const all: SessionNotice[] = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
+      const next = selectNotices(all, this.sessionId, this.dismissedNotices);
+      const changed = JSON.stringify(next) !== JSON.stringify(this.noticeView);
+      this.noticeView = next;
+      if (changed) this.render();
+    } catch { /* notices are best effort */ } finally { this.noticePolling = false; }
+  }
+
+  /** Clear every visible notice, for every attached frontend where the service supports it. */
+  private async clearNotices(): Promise<void> {
+    const shown = [...this.noticeView.notices];
+    for (const notice of shown) this.dismissedNotices.add(noticeKey(notice));
+    this.noticeView = {notices: [], hidden: 0};
+    await Promise.all(shown.map(notice => dismissSessionNotice(notice.sessionId)));
+    await this.refreshNotices();
   }
 
   private stripActive(columns: number, rows: number): boolean {
@@ -4409,6 +4611,238 @@ export class TerminalApp {
       if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
     } catch { /* A failed sample keeps the previous values. */ }
     finally { this.stripSampling = false; }
+  }
+
+  private openPanel?: OpenPanelState;
+
+  private hostActions(): HostActionAdapter {
+    return resolveHostActions(this.promptConfiguration.openWith);
+  }
+
+  /** path:line references in the newest outputs, each with the cwd its command ran in. */
+  private recentReferences(): OpenPanelState['references'] {
+    const references: OpenPanelState['references'] = [];
+    for (let index = 1; index <= 5 && references.length < 200; index += 1) {
+      const record = this.output.recent(index);
+      if (!record) break;
+      const cwd = record.historicalContext?.cwd ?? this.shellCwd;
+      const lines = stripAnsi(record.output).split('\n').slice(-2000).reverse();
+      for (const line of lines) for (const reference of findSourceReferences(line)) {
+        if (!references.some(item => item.text === reference.text && item.cwd === cwd)) references.push({...reference, cwd, command: record.command});
+      }
+    }
+    return references;
+  }
+
+  /** Delegate a location to the editor; relative paths resolve against the command's own cwd. */
+  private async openLocation(command: string, target: string, cwd: string): Promise<void> {
+    const report = (message: string, style: string) => { this.output.addFrontendInteraction(command, message, style); this.render(); };
+    const parsed = parseOpenArgument(target);
+    if (!parsed) return report('Usage: /open <path>[:line[:column]]', INFO);
+    const resolved = resolveLocation(parsed, cwd);
+    if (!resolved.ok) return report(resolved.reason, ERROR);
+    const adapter = this.hostActions();
+    const action = resolved.kind === 'directory' ? adapter.openDirectory(resolved.location.path) : adapter.openFile(resolved.location);
+    await this.performHostAction(action, report);
+  }
+
+  private async openDiff(command: string, left: string, right: string): Promise<void> {
+    const report = (message: string, style: string) => { this.output.addFrontendInteraction(command, message, style); this.render(); };
+    if (!left || !right) return report('Usage: /open-diff <old-file> <new-file> (opens your editor\'s diff view)', INFO);
+    const paths: string[] = [];
+    for (const side of [left, right]) {
+      const resolved = resolveLocation({path: side}, this.shellCwd);
+      if (!resolved.ok) return report(resolved.reason, ERROR);
+      if (resolved.kind !== 'file') return report(`${resolved.location.path} is a directory; /open-diff compares two files.`, ERROR);
+      paths.push(resolved.location.path);
+    }
+    await this.performHostAction(this.hostActions().openDiff(paths[0]!, paths[1]!), report);
+  }
+
+  private async performHostAction(action: HostAction, report: (message: string, style: string) => void): Promise<void> {
+    if (action.kind === 'unsupported') return report(action.reason, INFO);
+    if (action.kind === 'compose') {
+      // Terminal editors take over the terminal: the exact command goes in the composer for you to run.
+      const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+      const line = action.argv.map(arg => (/^[\w@%+=:,./-]+$/u.test(arg) ? arg : quote(arg))).join(' ');
+      this.editor.clear();
+      this.editor.insert(line);
+      return report(`Ready to open in ${action.label}: press Enter to run it.`, INFO);
+    }
+    const failure = await runHostAction(action);
+    report(failure ? `Could not start ${action.label}: ${failure}` : `Opened in ${action.label}.`, failure ? ERROR : INFO);
+  }
+
+  /** Changes whenever presented rows may have changed; matches are recomputed only then. */
+  private findGeneration(wrapped: readonly WrappedRow[], columns: number): string {
+    const filter = this.output.activeFilter;
+    return `${wrapped.length}|${columns}|${this.lastOutputTime}|${filter ? `${filter.startId}:${filter.query}:${filter.invert}:${filter.context}` : ''}`;
+  }
+
+  private revealFindMatch(totalRows: number, height: number): void {
+    const match = this.findState?.matches[this.findState.active];
+    if (!match) return;
+    this.historyViewport.scrollLines(totalRows, height, revealStart(match.row, totalRows, height) - this.historyViewport.resolve(totalRows, height));
+  }
+
+  /** The block a block-scoped action targets: the focused block, else the newest completed one. */
+  private targetBlockStartId(): number | undefined {
+    const index = this.focusedCommandIndex ?? 0;
+    return this.output.recent(index + 1)?.startId;
+  }
+
+  private openFind(argumentsText: string): void {
+    const parsed = parseSearchArguments(argumentsText);
+    const block = parsed.block ? this.targetBlockStartId() : undefined;
+    this.findState = createFind(parsed.query, parsed.options, block === undefined ? 'transcript' : 'block', block);
+  }
+
+  private findBarRow(columns: number): string {
+    const state = this.findState!;
+    const query = `${ACCENT}${getCurrentGlyphMode() === 'safe' ? '/' : '⌕'}${RESET} ${PRIMARY}${state.query}${ACCENT}_${RESET}`;
+    const hints = 'Enter older · Shift+Enter newer · Tab options · Esc close';
+    return truncateAnsi(`${query}  ${state.error ? ERROR : SECONDARY}${findStatus(state)}${RESET}  ${SUBTLE}${hints}${RESET}`, columns);
+  }
+
+  /** Find bar keys. Returns false for keys the bar does not own (they reach the composer as usual). */
+  private handleFindKey(key: Key): boolean {
+    const state = this.findState!;
+    const {columns, rows} = this.dimensions();
+    const step = (direction: 'next' | 'previous') => {
+      stepFind(state, direction);
+      const total = this.output.wrapped(columns).length;
+      this.revealFindMatch(total, this.planFrame(columns, rows).viewportRows);
+    };
+    if (key.kind === 'escape' || key.kind === 'interrupt') { this.findState = undefined; this.render(); return true; }
+    if (key.kind === 'enter' || key.kind === 'up') step('next');
+    else if (key.kind === 'newline' || key.kind === 'down') step('previous');
+    else if (key.kind === 'complete') {
+      // Tab cycles: plain → case-sensitive → regex → regex + case.
+      const order = [[false, false], [false, true], [true, false], [true, true]] as const;
+      const current = order.findIndex(([regex, caseSensitive]) => regex === state.options.regex && caseSensitive === state.options.caseSensitive);
+      const [regex, caseSensitive] = order[(current + 1) % order.length]!;
+      state.options = {regex, caseSensitive};
+    } else if (key.kind === 'text') state.query += key.value;
+    else if (key.kind === 'paste') state.query += key.value.replace(/[\r\n]+/gu, ' ');
+    else if (key.kind === 'backspace') state.query = [...state.query].slice(0, -1).join('');
+    else if (key.kind === 'deleteWord' || key.kind === 'deleteLineBefore') state.query = '';
+    else return false;
+    this.render();
+    return true;
+  }
+
+  private applyFilterCommand(command: string, argumentsText: string): void {
+    const parsed = parseSearchArguments(argumentsText);
+    if (!parsed.query || parsed.query === 'clear') {
+      const had = this.output.activeFilter;
+      this.output.setOutputFilter(undefined);
+      this.output.addFrontendInteraction(command, had ? 'Filter cleared; the complete output is shown again.' : 'No filter is active.', INFO);
+      this.render();
+      return;
+    }
+    const startId = this.targetBlockStartId();
+    if (startId === undefined) { this.output.addFrontendInteraction(command, 'There is no command output to filter yet.', ERROR); this.render(); return; }
+    const check = compileQuery(parsed.query, parsed.options);
+    if (!check.ok) { this.output.addFrontendInteraction(command, `Invalid regular expression: ${check.error}`, ERROR); this.render(); return; }
+    this.output.setOutputFilter({startId, query: parsed.query, options: parsed.options, invert: parsed.invert, context: parsed.context});
+    this.historyViewport.latest();
+    this.render();
+  }
+
+  /** A factual reason the session cannot switch shells right now, checked before asking the session. */
+  private switchBlocker(): string | undefined {
+    if (this.running) return `"${this.running.command.slice(0, 60)}" is still running; switching would end it. Finish or interrupt it first.`;
+    if (this.passthrough) return 'A full-screen program owns the terminal; switching would end it.';
+    if (this.startupPending) return 'The shell is still starting; switch once it is ready.';
+    return undefined;
+  }
+
+  /**
+   * Replace this session's shell backend in place. The frontend, transcript,
+   * draft, session identity, settings and NMSh history stay; shell-specific
+   * services (classification, completion, shell history import) are rebound.
+   */
+  private async switchShell(target: ShellId, command: string): Promise<void> {
+    const adapter = shellAdapter(target);
+    const blocker = this.switchBlocker();
+    const refuse = (message: string) => { this.output.addFrontendInteraction(command, message, ERROR); this.render(); };
+    if (target === this.shellId) { this.output.addFrontendInteraction(command, `This session already runs ${adapter.label}.`, INFO); this.render(); return; }
+    const unavailable = adapter.unavailableReason(process.env);
+    if (unavailable) return refuse(unavailable);
+    if (blocker) return refuse(blocker);
+    if (this.shellSwitching) return refuse('A shell switch is already in progress.');
+    this.shellSwitching = true;
+    const from = shellAdapter(this.shellId).label;
+    try {
+      await this.session.switchShell(target, this.shellCwd);
+    } catch (error) {
+      refuse(`Did not switch to ${adapter.label}: ${error instanceof Error ? error.message : String(error)}`);
+      return;
+    } finally { this.shellSwitching = false; }
+    this.shellId = target;
+    // The new shell's first prompt is readiness, not a command completion.
+    this.presetShellReady = true;
+    this.bindShellServices(target, true);
+    this.output.addFrontendInteraction(command, `Switched this session from ${from} to ${adapter.label} in ${this.shellCwd}. `
+      + `${from} aliases, functions, variables and jobs stayed with ${from}; NMSh history, transcript and settings carry over.`
+      + (target === this.promptConfiguration.shellBackend ? '' : ` New sessions still start ${shellAdapter(this.promptConfiguration.shellBackend).label} (/shell, D to change).`), INFO);
+    this.render();
+  }
+
+  /** Rebind everything that depends on the shell backend; NMSh-owned state is untouched. */
+  private bindShellServices(target: ShellId, reload: boolean): void {
+    const adapter = shellAdapter(target);
+    if (reload) {
+      this.semanticService.kill();
+      this.semanticService = target === 'zsh' ? new SemanticService(this.shellCwd) : new PathClassifier(adapter);
+    }
+    this.completionService.dispose();
+    this.completionService = target === 'zsh' ? new CompletionService() : new CompletionService(defaultCompletionSources(adapter.completionSource()));
+    this.commandUsageVersion = -1;
+    this.commandSources.clear();
+    this.shellSuggestions = [];
+    this.historyService.shellHistory = target === 'zsh' ? undefined
+      : {id: target, file: adapter.historyFile(process.env, homedir()), parse: content => adapter.parseHistory(content)};
+    if (reload) void this.loadHistory();
+  }
+
+  /** Apply one small settings change and persist it over a fresh read (other windows' edits survive). */
+  private updateConfiguration(change: (configuration: PromptConfiguration) => void): void {
+    const next = structuredClone(this.promptConfiguration);
+    change(next);
+    try { savePromptConfiguration(next, undefined, this.promptConfiguration); } catch { /* applies to this window */ }
+    this.promptConfiguration = next;
+  }
+
+  private runAgentsCommand(command: string, action: 'show' | 'on' | 'off' | 'reset'): void {
+    if (action === 'on' || action === 'off') {
+      this.updateConfiguration(configuration => { configuration.agentActivity = action === 'on'; });
+      this.output.addFrontendInteraction(command, action === 'on' ? 'Agent activity recording is On (local only).' : 'Agent activity recording is Off; existing data is kept until /agents reset.', INFO);
+      return;
+    }
+    if (action === 'reset') {
+      try { this.agentActivity.reset(); this.output.addFrontendInteraction(command, 'Deleted all local agent activity data.', INFO); }
+      catch (error) { this.output.addFrontendInteraction(command, `Could not delete agent activity data: ${error instanceof Error ? error.message : String(error)}`, ERROR); }
+      return;
+    }
+    const data = this.agentActivity.load();
+    this.output.addFrontendBlock(command, renderAgentStats(data, {now: Date.now(), columns: Math.max(20, this.dimensions().columns - 2),
+      enabled: this.promptConfiguration.agentActivity, loadState: this.agentActivity.state}));
+  }
+
+  private async runNoticesCommand(command: string, action: 'show' | 'on' | 'off' | 'clear'): Promise<void> {
+    if (action === 'on' || action === 'off') {
+      this.updateConfiguration(configuration => { configuration.sessionNotices = action === 'on'; });
+      this.output.addFrontendInteraction(command, `Session notices are ${action === 'on' ? 'On' : 'Off'}.`, INFO);
+    } else if (action === 'clear') {
+      await this.clearNotices();
+      this.output.addFrontendInteraction(command, 'Cleared session notices.', INFO);
+    } else {
+      const state = this.promptConfiguration.sessionNotices ? 'On' : 'Off';
+      const mode = this.sessionMode === 'service' ? '' : ' They need the live-session service; this window runs its shell in-process.';
+      this.output.addFrontendInteraction(command, `Session notices are ${state}: other sessions' finished, failed, attention and ended states show above the composer.${mode}`, INFO);
+    }
+    this.syncNotices();
   }
 
   private planComposer(columns: number, rows: number, fullInput: ReturnType<TerminalApp['layoutEditorInput']>, suggestions: number,
@@ -4469,6 +4903,11 @@ export class TerminalApp {
     }
 
     const wrapped = this.output.wrapped(columns);
+    if (this.findState) {
+      const before = this.findState.active;
+      refreshFind(this.findState, wrapped, this.findGeneration(wrapped, columns));
+      if (this.findState.active !== before) this.revealFindMatch(wrapped.length, plan.viewportRows);
+    }
     const viewStart = this.historyViewport.resolve(wrapped.length, plan.viewportRows);
     // Flow's viewport scrolls by its capacity; the region shows only what is on screen.
     const outputHeight = plan.transcript.height;
@@ -4476,7 +4915,13 @@ export class TerminalApp {
     const interaction = {hoveredLineIndex: this.hoveredLineIndex, focusedLineIndex: this.focusedLineIndex,
       focusedCommandIndex: this.focusedCommandIndex, focusedActivityId: this.focusedActivityId,
       now: presentationNow().getTime()};
-    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map(row => {
+    const activeMatch = this.findState ? this.findState.matches[this.findState.active] : undefined;
+    const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
+      if (activeMatch && activeMatch.row === viewStart + offset) {
+        // The active match: its row as plain text with the match marked. Presentation only.
+        const mark = `${background(UI_COLORS.selection)}${PRIMARY}`;
+        return `${SECONDARY}${row.plain.slice(0, activeMatch.start)}${RESET}${mark}${row.plain.slice(activeMatch.start, activeMatch.end)}${RESET}${SECONDARY}${row.plain.slice(activeMatch.end)}${RESET}`;
+      }
       const ansi = presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction);
       const focused = this.focusedCommandIndex !== undefined && row.lineIndex === this.output.recent(this.focusedCommandIndex + 1)?.startId;
       const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) ? blockAffordance(row, columns) : undefined;
@@ -4563,6 +5008,8 @@ export class TerminalApp {
         case 'input': return inputRows;
         case 'separator': return [separator];
         case 'status': return [this.statusStripRow(columns)];
+        case 'notices': return this.noticeRows(columns);
+        case 'find': return [this.findBarRow(columns)];
       }
     };
     const frameRows = new Array<string>(plan.rows).fill('');
@@ -4579,13 +5026,55 @@ export class TerminalApp {
       // Flow can scroll the input row off screen.
       cursorVisible: !plan.panelActive && plan.inputHeight > 0,
     };
+    this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
     this.presentationFrame = {frame, plan};
     this.paintPresentation(Date.now());
     this.syncPresentationClock();
   }
 
+  /** /about: build identity and the logo, as an image where the host supports one, text otherwise. */
+  private aboutPanel?: {protocol: ImageProtocol; png?: Buffer};
+
+  private openAbout(): void {
+    const protocol = selectImageProtocol({capabilities: this.host.capabilities, env: process.env});
+    let png: Buffer | undefined;
+    if (protocol !== 'none') try { png = readFileSync(join(installRoot(), 'assets', 'brand', 'nmsh-logo.png')); } catch { /* text logo */ }
+    this.aboutPanel = {protocol: png ? protocol : 'none', ...(png ? {png} : {})};
+  }
+
+  private aboutLogoSize(columns: number): ImageSize {
+    const size = this.aboutPanel?.png && pngSize(this.aboutPanel.png);
+    return size ? fitCells(size.width, size.height, Math.max(8, columns - 6), 6) : {columns: 0, rows: 0};
+  }
+
+  private aboutRows(columns: number): string[] {
+    const panel = this.aboutPanel!;
+    const rows = [`${PRIMARY}  About NMSh${RESET}`, ''];
+    if (panel.protocol !== 'none') rows.push(...Array<string>(this.aboutLogoSize(columns).rows).fill(''));
+    else rows.push(`  ${ACCENT}\u001b[1mN${SECONDARY}❯${ACCENT}MSh${RESET}`, `  ${PRIMARY}not${ACCENT}My${PRIMARY}Shell${RESET}`);
+    const images = panel.protocol === 'kitty' ? 'Kitty graphics protocol' : panel.protocol === 'iterm2' ? 'iTerm2 inline images'
+      : 'not available in this terminal; NMSh works fully without them';
+    rows.push('', `  ${SUBTLE}${formatBuildIdentity(this.buildIdentity)}${RESET}`,
+      `  ${SUBTLE}Keep your terminal. Keep your shell. Upgrade the interaction layer.${RESET}`,
+      `  ${SUBTLE}Inline images: ${images}${RESET}`, '', `  ${SUBTLE}Any key closes${RESET}`);
+    return rows;
+  }
+
+  /** The logo overlay sits in the blank rows reserved by aboutRows inside the panel region. */
+  private aboutOverlay(plan: ScreenPlan, columns: number): ImageOverlay | undefined {
+    const panel = this.aboutPanel;
+    const region = plan.regions.find(item => item.kind === 'panel');
+    if (!panel?.png || panel.protocol === 'none' || !region) return undefined;
+    const size = this.aboutLogoSize(columns);
+    // framePanel's frame line leads the panel (it moves below the panel under Dock Top), then title and spacer.
+    const row = region.top + (plan.composerPosition === 'top' ? 0 : 1) + 2;
+    if (row + size.rows > region.top + region.height) return undefined;
+    return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2, size);
+  }
+
   /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
   private renderTaskPresentation(): void {
+    if (this.idle) return;
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     const cached = this.presentationFrame;
     const region = cached?.plan.regions.find(item => item.kind === 'panel');
@@ -4613,6 +5102,7 @@ export class TerminalApp {
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.stripTimer?.(); this.stripTimer = undefined;
+    this.noticeTimer?.(); this.noticeTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.welcomeBlinkTimer?.(); this.welcomeBlinkTimer = undefined;
@@ -4622,6 +5112,8 @@ export class TerminalApp {
 
   /** Decorative frames reuse the base projection; they never walk transcript history. */
   private paintPresentation(now: number): void {
+    // Idle visuals are the sole owner of the screen while active.
+    if (this.idle) return;
     const cached = this.presentationFrame;
     if (!cached) return;
     const {frame, plan} = cached;
@@ -4653,6 +5145,7 @@ export class TerminalApp {
   }
 
   private renderPresentation(now: number): void {
+    if (this.idle) return;
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
     this.effects.expire(now);
@@ -4666,8 +5159,9 @@ export class TerminalApp {
   }
 
   private syncPresentationClock(): void {
-    if (!this.presentationStarted || this.stopped) return;
+    if (!this.presentationStarted || this.stopped || this.idle) return;
     this.syncStatusStrip();
+    this.syncNotices();
     const settings = this.promptConfiguration.presentation;
     const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder'
       || (region.kind === 'prompt' && region.height > 0)) && dividerAnimated(settings) && colorLevel() !== 'none';
