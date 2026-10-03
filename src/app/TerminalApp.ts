@@ -426,6 +426,8 @@ export class TerminalApp {
       this.presetStartup = new PresetStartup(preset);
     }
     setIconStyle(this.promptConfiguration.glyphStyle);
+    // The backend this frontend manages, known before the first welcome is drawn.
+    this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
     this.startWelcome(this.initialCwd);
     this.applySuggestionProvider();
     this.output.setTranscriptAppearance(this.promptConfiguration.transcript);
@@ -437,7 +439,6 @@ export class TerminalApp {
     const dimensions = this.dimensions();
     this.session = connection?.client
       ?? new InProcessSessionClient({cwd: this.initialCwd, columns: dimensions.columns, rows: Math.max(2, dimensions.rows - 4)});
-    this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
     this.semanticService = this.shellId === 'zsh' ? new SemanticService(this.initialCwd) : new PathClassifier(shellAdapter(this.shellId));
     if (this.shellId !== 'zsh') this.bindShellServices(this.shellId, false);
     this.done = new Promise(resolve => {
@@ -2071,14 +2072,18 @@ export class TerminalApp {
     });
   }
 
-  private async startFreshPresentation(): Promise<void> {
+  /**
+   * Archive the current presentation (it stays available in /resume) and
+   * start a fresh one with a new welcome. Used by /clear and /shell.
+   */
+  private async startFreshPresentation(command = '/clear'): Promise<boolean> {
     if (this.running) {
-      this.output.addFrontendInteraction('/clear', 'Wait for the foreground command to finish before clearing the transcript.', INFO);
-      return;
+      this.output.addFrontendInteraction(command, 'Wait for the foreground command to finish before clearing the transcript.', INFO);
+      return false;
     }
     try { await this.archiveCurrentPresentation(); } catch {
-      this.output.addFrontendInteraction('/clear', 'Could not archive this transcript; the current view was kept.', ERROR);
-      return;
+      this.output.addFrontendInteraction(command, 'Could not archive this transcript; the current view was kept.', ERROR);
+      return false;
     }
     this.output.clearPresentation();
     this.presentationStartCwd = this.shellCwd;
@@ -2086,8 +2091,9 @@ export class TerminalApp {
     this.historyViewport.latest();
     try { await this.journal?.start(); this.journalActive = Boolean(this.journal); } catch {
       this.journalActive = false;
-      this.output.addFrontendInteraction('/clear', 'A fresh view started, but its journal could not be persisted yet.', ERROR);
+      this.output.addFrontendInteraction(command, 'A fresh view started, but its journal could not be persisted yet.', ERROR);
     }
+    return true;
   }
 
   /** Session id the launcher should attach after this frontend detaches. */
@@ -2335,6 +2341,7 @@ export class TerminalApp {
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
     this.endStartupWatch();
+    this.switchedShellStarting = false;
     const initialPrompt = !this.presetShellReady;
     this.presetShellReady = true;
     this.context.exitStatus = exitCode;
@@ -3986,12 +3993,12 @@ export class TerminalApp {
   private startWelcome(cwd: string): void {
     const generation = ++this.welcomeGeneration;
     const provider = this.promptConfiguration.welcome;
-    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd));
+    const vespyr = () => this.output.setWelcome(createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId));
     if (provider === 'none') return;
     if (provider === 'vespyr') { vespyr(); return; }
     void captureWelcome(provider, cwd).then(result => {
       if (generation !== this.welcomeGeneration || this.stopped) return;
-      if (result.ok) this.output.setWelcome({...createWelcomeSnapshot(this.buildIdentity, cwd), provider, captured: result.lines});
+      if (result.ok) this.output.setWelcome({...createWelcomeSnapshot(this.buildIdentity, cwd, this.shellId), provider, captured: result.lines});
       else {
         vespyr();
         this.output.addHistoryLine(`${SUBTLE}${welcomeProvider(provider).label} welcome ${result.reason}; showing Vespyr.${RESET}`);
@@ -4112,14 +4119,14 @@ export class TerminalApp {
       return [`${ACCENT}${GLYPHS.prompt}${RESET} git st${SECONDARY}atus${RESET}   ${SUBTLE}→ / End accept · Alt+→ next word · Ctrl+N/P alternatives · Esc dismiss${RESET}`];
     }
     if (selected.id === 'none') return [`${SUBTLE}No welcome; new sessions start at the first command.${RESET}`];
-    if (selected.id === 'vespyr') return renderWelcome(createWelcomeSnapshot(this.buildIdentity, this.shellCwd), width).map(row => row.ansi);
+    if (selected.id === 'vespyr') return renderWelcome(createWelcomeSnapshot(this.buildIdentity, this.shellCwd, this.shellId), width).map(row => row.ansi);
     if (state.statuses[selected.id]?.state !== 'installed') return [];
     const cached = this.welcomePreviews.get(selected.id);
     if (cached) return cached;
     this.welcomePreviews.set(selected.id, [`${SUBTLE}Running ${selected.label}…${RESET}`]);
     void captureWelcome(selected.id as Exclude<PromptConfiguration['welcome'], 'vespyr' | 'none'>, this.shellCwd).then(result => {
       this.welcomePreviews.set(selected.id, result.ok
-        ? renderWelcome({...createWelcomeSnapshot(this.buildIdentity, this.shellCwd), captured: result.lines}, width).map(row => row.ansi)
+        ? renderWelcome({...createWelcomeSnapshot(this.buildIdentity, this.shellCwd, this.shellId), captured: result.lines}, width).map(row => row.ansi)
         : [`${SUBTLE}${selected.label} failed: ${result.reason}${RESET}`]);
       if (this.providerPanelState === state) this.render();
     });
@@ -4935,7 +4942,7 @@ export class TerminalApp {
     if (!this.session.features.has('shell-switch')) return OLDER_SERVICE_SWITCH;
     if (this.running) return `"${this.running.command.slice(0, 60)}" is still running; switching would end it. Finish or interrupt it first.`;
     if (this.passthrough) return 'A full-screen program owns the terminal; switching would end it.';
-    if (this.startupPending) return 'The shell is still starting; switch once it is ready.';
+    if (this.startupPending || this.switchedShellStarting) return 'The shell is still starting; switch once it is ready.';
     return undefined;
   }
 
@@ -4964,11 +4971,15 @@ export class TerminalApp {
     } finally { this.shellSwitching = false; }
     this.shellId = target;
     this.shellJobs = 0;
+    this.switchedShellStarting = true;
     // The new shell's first prompt is readiness, not a command completion.
     this.presetShellReady = true;
     this.bindShellServices(target, true);
-    this.output.addFrontendInteraction(command, `Switched this session from ${from} to ${adapter.label} in ${this.shellCwd}. `
-      + `${from} aliases, functions, variables and jobs stayed with ${from}; NMSh history, transcript and settings carry over.`
+    // The old presentation ends with the transition and is archived (see /resume); the new backend gets a fresh welcome.
+    this.output.addFrontendInteraction(command, `Switched this session from ${from} to ${adapter.label}.`, INFO);
+    const fresh = await this.startFreshPresentation(command);
+    this.output.addFrontendInteraction(command, `${fresh ? `Same session, now ${adapter.label}, in ${this.shellCwd}; the ${from} view is in /resume. ` : ''}`
+      + `${from} aliases, functions, variables and jobs stayed with ${from}; NMSh history and settings carry over.`
       + (target === this.promptConfiguration.shellBackend ? '' : ` New sessions still start ${shellAdapter(this.promptConfiguration.shellBackend).label} (/shell, D to change).`), INFO);
     this.render();
   }
@@ -5452,7 +5463,7 @@ export class TerminalApp {
     }
     const busy = this.running ? `"${this.running.command.slice(0, 60)}" is still running`
       : this.passthrough || this.externalPassthrough ? 'a full-screen program owns the terminal'
-      : this.startupPending ? 'the shell is still starting'
+      : this.startupPending || this.switchedShellStarting ? 'the shell is still starting'
       : this.shellJobs ? `${this.shellJobs} background or stopped job${this.shellJobs === 1 ? '' : 's'} would end with the session (jobs, fg, kill %N)` : undefined;
     const decision: ShellHandoffDecision = chooseShellHandoff(busy ? `${busy}; finish or interrupt it, then run ${command} again.` : false, this.shellCwd, this.initialCwd);
     if (decision.kind === 'busy') {
@@ -5466,6 +5477,8 @@ export class TerminalApp {
     this.stop(0);
   }
 
+  /** A /shell switch started a new backend that has not reached its first prompt. */
+  private switchedShellStarting = false;
   /** Background/stopped jobs in the managed shell, from its latest name snapshot. */
   private shellJobs = 0;
   private requestedHandoff?: {shell: ShellId; executable: string; label: string; cwd?: string};

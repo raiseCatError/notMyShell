@@ -70,7 +70,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
   if (!value || typeof value !== 'object') return false;
   const transcript = value as Partial<OutputTranscript>;
   return (transcript.welcome === undefined || (typeof transcript.welcome.cwd === 'string'
-    && transcript.welcome.shell === 'zsh'
+    && (transcript.welcome.shell === 'zsh' || transcript.welcome.shell === 'fish' || transcript.welcome.shell === 'bash')
     && transcript.welcome.identity !== null
     && typeof transcript.welcome.identity === 'object'
     && typeof transcript.welcome.identity.version === 'string'

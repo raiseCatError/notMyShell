@@ -1,7 +1,11 @@
 import {statSync} from 'node:fs';
 
 export const NMSH_ACTIVE_ENV = 'NMSH_ACTIVE';
-export const NESTED_NMSH_MESSAGE = 'NMSh is already running in this shell. Use /exit (or /zsh, /fish, /bash) to leave NMSh for an ordinary shell.';
+export const NESTED_NMSH_MESSAGE = [
+  'NMSh is already active in this managed shell.',
+  'If you started a nested shell, run `exit` to return to NMSh.',
+  'From the NMSh composer, /zsh, /fish, /bash or /exit leave NMSh for an ordinary shell.',
+].join('\n');
 
 export function isManagedNmshEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[NMSH_ACTIVE_ENV] === '1';

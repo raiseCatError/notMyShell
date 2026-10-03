@@ -94,21 +94,31 @@ export function renderShellPanel(state: ShellPanelState, columns: number): strin
       '', renderControls([['←→', 'choose'], ['Enter', 'confirm'], ['Esc', 'cancel']]));
     return rows.map(row => truncateAnsi(row, columns));
   }
+  const statusWidth = Math.max(0, ...state.shells.map(item => shellStatus(item).length));
   state.shells.forEach((item, index) => {
     const selected = index === state.selected;
-    const tags = [item.adapter.id === state.current ? 'this session' : '', item.adapter.id === state.defaultShell ? 'default' : ''].filter(Boolean).join(' · ');
-    const status = item.executable ? `${item.version ?? item.executable}` : 'not installed here';
-    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${item.adapter.label.padEnd(6)}${reset} ${subtle}${status}${tags ? `  [${tags}]` : ''}${reset}`);
+    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${item.adapter.label.padEnd(6)}${reset} ${subtle}${shellStatus(item).padEnd(statusWidth)}${reset}`
+      + `${shellBadges(item.adapter.id, state) ? `  ${primary}${shellBadges(item.adapter.id, state)}${reset}` : ''}`);
     if (selected && !item.executable && item.reason) rows.push(`    ${subtle}${item.reason}${state.installFor?.(item.adapter.id).kind === 'recipe' ? ' · I installs it (previewed first)' : ''}${reset}`);
     if (selected && item.executable && item.adapter.id !== 'zsh') {
       const caps = item.adapter.capabilities;
       rows.push(`    ${subtle}completion ${caps.completion}${caps.completionDescriptions ? ' with descriptions' : ', names only'} · history: ${caps.privateHistory}${reset}`);
     }
   });
-  rows.push('', `  ${subtle}Switching starts the selected shell in the current directory. Shell-local state (aliases, functions, variables, jobs)${reset}`,
-    `  ${subtle}belongs to the old shell and does not carry over. NMSh history, transcript and settings do.${reset}`);
+  rows.push('', `  ${subtle}[current] runs under this session · [default] starts new sessions · ${GLYPHS.selection} is the selected row${reset}`,
+    '', `  ${subtle}Switching keeps this session and its directory, archives this view to /resume and starts a fresh one. Shell-local${reset}`,
+    `  ${subtle}state (aliases, functions, variables, jobs) belongs to the old shell and does not carry over. NMSh history and settings do.${reset}`);
   if (state.blocked) rows.push('', `  ${secondary}${state.blocked}${reset}`);
   if (state.message) rows.push('', `  ${secondary}${state.message}${reset}`);
   rows.push('', renderControls([['↑↓', 'select'], ['Enter', 'switch this session'], ['D', 'set default for new sessions'], ['I', 'install missing'], ['Esc', 'close']]));
   return rows.map(row => truncateAnsi(row, columns));
+}
+
+function shellStatus(item: ShellPanelState['shells'][number]): string {
+  return item.executable ? `${item.version ?? item.executable}` : 'not installed here';
+}
+
+/** Plain-text badges, so current and default read without color. */
+export function shellBadges(id: ShellId, state: Pick<ShellPanelState, 'current' | 'defaultShell'>): string {
+  return [id === state.current ? '[current]' : '', id === state.defaultShell ? '[default]' : ''].filter(Boolean).join(' ');
 }

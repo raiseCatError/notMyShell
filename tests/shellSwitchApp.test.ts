@@ -58,7 +58,8 @@ test('app hot swap: zsh → fish → bash → zsh keeps draft, transcript and cw
         await until(() => !alive(pids.at(-1)!), 5000);
         pids.push(shellPid());
         assert.equal(app['editor'].text, 'git status --short', 'the unsent draft survives every switch');
-        assert.match(transcript(app), new RegExp(`Switched this session from \\w+ to ${shellAdapter(target).label} in ${cwd.replace(/[/.]/gu, '\\$&')}`, 'u'));
+        assert.match(transcript(app), new RegExp(`Same session, now ${shellAdapter(target).label}, in ${cwd.replace(/[/.]/gu, '\\$&')}`, 'u'));
+        assert.equal(app['output']['welcome']?.shell, target, 'the fresh presentation welcomes the new backend');
         assert.match(transcript(app), /aliases, functions, variables and jobs stayed with/u, 'shell-local state is never claimed to carry over');
         assert.ok(app['semanticService'] instanceof (target === 'zsh' ? SemanticService : PathClassifier));
         assert.equal(app['historyService'].shellHistory?.id, target === 'zsh' ? undefined : target);

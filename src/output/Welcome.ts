@@ -6,6 +6,7 @@ import type {WelcomeProviderId} from '../prompt/configuration.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import type {WrappedRow} from './viewport.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 
 const RESET = '\u001B[0m';
 const BODY = {red: 172, green: 150, blue: 230};
@@ -20,15 +21,16 @@ const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/gu;
 export interface WelcomeSnapshot {
   identity: BuildIdentity;
   cwd: string;
-  shell: 'zsh';
+  /** The backend NMSh manages for this presentation (never $SHELL). */
+  shell: ShellId;
   /** External welcome captured once at session start; absent means Vespyr. */
   provider?: Exclude<WelcomeProviderId, 'vespyr' | 'none'>;
   /** SGR-only rows the external provider printed. */
   captured?: string[];
 }
 
-export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string): WelcomeSnapshot {
-  return {identity: {...identity}, cwd, shell: 'zsh'};
+export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shell: ShellId = 'zsh'): WelcomeSnapshot {
+  return {identity: {...identity}, cwd, shell};
 }
 
 function safe(value: string): string {
