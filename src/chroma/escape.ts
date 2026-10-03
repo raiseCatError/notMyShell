@@ -30,9 +30,31 @@ export function rgbTo256(color: Rgb): number {
   return distance(gray) < distance(cube) ? 232 + grayStep : 16 + 36 * r + 6 * g + b;
 }
 
+/** Conventional ANSI palette. Host palettes can differ; keep fallback predictable. */
+const ANSI16 = [
+  [0, 0, 0], [128, 0, 0], [0, 128, 0], [128, 128, 0],
+  [0, 0, 128], [128, 0, 128], [0, 128, 128], [192, 192, 192],
+  [128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0],
+  [0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
+];
+
+export function rgbTo16(color: Rgb): number {
+  let nearest = 0;
+  let distance = Infinity;
+  ANSI16.forEach(([r, g, b], index) => {
+    const next = (color.red - r!) ** 2 + (color.green - g!) ** 2 + (color.blue - b!) ** 2;
+    if (next < distance) { distance = next; nearest = index; }
+  });
+  return nearest;
+}
+
 /** SGR sequence for a foreground (38) or background (48) color at a capability level; empty when uncolored. */
 export function colorEscape(layer: 38 | 48, color: Rgb, level: ColorLevel = colorLevel()): string {
   if (level === 'none') return '';
+  if (level === 'ansi16') {
+    const index = rgbTo16(color);
+    return `\u001B[${(layer === 38 ? 30 : 40) + (index < 8 ? index : 60 + index - 8)}m`;
+  }
   if (level === 'ansi256') return `\u001B[${layer};5;${rgbTo256(color)}m`;
   return `\u001B[${layer};2;${color.red};${color.green};${color.blue}m`;
 }

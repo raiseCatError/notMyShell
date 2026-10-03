@@ -21,18 +21,25 @@ export interface StarshipConfigProposal {
   diff: string[];
 }
 
-function changedLines(before: string, after: string): string[] {
-  const oldLines = before.split('\n');
-  const newLines = after.split('\n');
-  let start = 0;
-  while (start < oldLines.length && start < newLines.length && oldLines[start] === newLines[start]) start++;
-  let oldEnd = oldLines.length;
-  let newEnd = newLines.length;
-  while (oldEnd > start && newEnd > start && oldLines[oldEnd - 1] === newLines[newEnd - 1]) { oldEnd--; newEnd--; }
-  const removed = oldLines.slice(start, oldEnd).map(line => `- ${line}`);
-  const added = newLines.slice(start, newEnd).map(line => `+ ${line}`);
-  if (removed.length + added.length > 40) throw new Error('Starship proposed a broad config rewrite; edit it manually instead.');
-  return [...removed, ...added];
+const prepared = new WeakSet<StarshipConfigProposal>();
+
+function validateModule(module: StarshipModule): void {
+  if (!STARSHIP_MODULES.includes(module)) throw new Error('Unsupported Starship module.');
+}
+
+/** Refuse native CLI rewrites outside the selected supported field. */
+function unsupportedContent(text: string, module: StarshipModule): string {
+  // A line scanner cannot safely interpret multiline TOML strings.
+  if (text.includes('"""') || text.includes("'''")) throw new Error('Multiline Starship config requires manual editing.');
+  let target = false;
+  return text.split(/\r?\n/u).filter(line => {
+    const section = /^\s*\[([^\]]+)\]\s*(?:#.*)?$/u.exec(line);
+    if (section) {
+      target = section[1] === module;
+      if (target) return false;
+    }
+    return !(target && /^\s*disabled\s*=\s*(true|false)\s*(?:#.*)?$/u.test(line)) && line.trim() !== '';
+  }).join('\n');
 }
 
 /** Narrow adapter around Starship's own CLI, never a generic TOML editor. */
@@ -56,12 +63,18 @@ export class StarshipConfigAdapter {
   }
 
   private async cli(args: string[], path: string): Promise<string> {
-    const {stdout} = await this.run(this.status.binary!, args, {timeout: 5000, maxBuffer: 1024 * 1024,
-      env: {...process.env, STARSHIP_CONFIG: path}});
-    return stdout;
+    try {
+      const {stdout} = await this.run(this.status.binary!, args, {timeout: 5000, maxBuffer: 1024 * 1024,
+        env: {...process.env, STARSHIP_CONFIG: path}});
+      return stdout;
+    } catch {
+      // execFile errors can contain stderr, including unrelated user config.
+      throw new Error('Starship configuration command failed or timed out.');
+    }
   }
 
   async disabled(module: StarshipModule): Promise<boolean> {
+    validateModule(module);
     const output = await this.cli(['print-config', `${module}.disabled`], this.status.configPath);
     const match = /^disabled\s*=\s*(true|false)\s*$/mu.exec(output);
     if (!match) throw new Error(`Could not read Starship ${module} status.`);
@@ -69,6 +82,8 @@ export class StarshipConfigAdapter {
   }
 
   async propose(module: StarshipModule, disabled: boolean): Promise<StarshipConfigProposal> {
+    validateModule(module);
+    if (typeof disabled !== 'boolean') throw new Error('Starship disabled value must be boolean.');
     const source = await this.readOriginal();
     const original = source.text;
     const temporaryDirectory = await mkdtemp(join(tmpdir(), 'nmsh-starship-config-'));
@@ -78,12 +93,17 @@ export class StarshipConfigAdapter {
       try { await handle.writeFile(original, 'utf8'); } finally { await handle.close(); }
       await this.cli(['config', `${module}.disabled`, String(disabled)], staged);
       const proposed = await readFile(staged, 'utf8');
+      if (unsupportedContent(original, module) !== unsupportedContent(proposed, module)) {
+        throw new Error('Starship proposed changes outside the supported field; edit it manually.');
+      }
       const effective = await this.cli(['print-config', `${module}.disabled`], staged);
       if (!new RegExp(`^disabled\\s*=\\s*${disabled}\\s*$`, 'mu').test(effective)) {
         throw new Error('Starship did not accept the proposed module value.');
       }
-      return {path: this.status.configPath, module, disabled, original, existed: source.exists, proposed,
-        diff: changedLines(original, proposed)};
+      const proposal: StarshipConfigProposal = {path: this.status.configPath, module, disabled, original, existed: source.exists, proposed,
+        diff: [`+ ${module}.disabled = ${disabled}`]};
+      prepared.add(proposal);
+      return Object.freeze(proposal);
     } finally {
       await rm(temporaryDirectory, {recursive: true, force: true});
     }
@@ -91,6 +111,7 @@ export class StarshipConfigAdapter {
 
   /** Recheck user edits, back up existing config, then atomically install the reviewed bytes. */
   async apply(proposal: StarshipConfigProposal): Promise<string | undefined> {
+    if (!prepared.has(proposal)) throw new Error('Review a prepared Starship proposal first.');
     if (proposal.path !== this.status.configPath) throw new Error('Starship config path changed.');
     const current = await this.readOriginal();
     if (current.exists !== proposal.existed || current.text !== proposal.original) {

@@ -1,6 +1,6 @@
 import stringWidth from 'string-width';
 
-const ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/gu;
+const ANSI_PATTERN = /\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\))/gu;
 
 export function stripAnsi(value: string): string {
   return value.replace(ANSI_PATTERN, '');
@@ -32,7 +32,7 @@ export function truncateAnsi(value: string, maxWidth: number): string {
   let index = 0;
   while (index < value.length) {
     if (value[index] === '\u001B') {
-      const match = /^\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007]*(?:\u0007|\u001B\\))/u.exec(value.slice(index));
+      const match = /^\u001B(?:\[[0-?]*[ -/]*[@-~]|\][^\u0007\u001B]*(?:\u0007|\u001B\\))/u.exec(value.slice(index));
       if (match) {
         output += match[0];
         index += match[0].length;
@@ -48,7 +48,7 @@ export function truncateAnsi(value: string, maxWidth: number): string {
     width += characterWidth;
     index += character.length;
   }
-  return `${output}…\u001B[0m`;
+  return `${output}${output.includes('\u001B]8;') ? '\u001B]8;;\u001B\\' : ''}…\u001B[0m`;
 }
 
 export function repeatToWidth(character: string, width: number): string {
