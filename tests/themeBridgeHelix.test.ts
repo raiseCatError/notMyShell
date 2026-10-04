@@ -84,7 +84,8 @@ test('Helix: Independent writes nothing; Follow tracks the active theme; Choose 
     assert.equal(readFileSync(artifactPath('helix', box.env), 'utf8'), chosen, 'pinned: unchanged by the main theme');
     const report = reportTargets(ctx(pinned, box.env)).find(item => item.target === 'helix')!;
     assert.equal(report.status, 'Pinned theme');
-    assert.match(report.notes.join(' '), /Managed theme generated; select it with :theme nmsh-bridge/u);
+    assert.equal(report.readiness, 'Needs activation');
+    assert.match(report.notes.join(' '), /select it with :theme nmsh-bridge/iu);
     assert.match(report.notes.join(' '), /Running Helix instances are not recolored/u, 'never claims live updates');
   } finally { box.done(); }
 });
@@ -119,7 +120,7 @@ test('Helix activation: exact confirmed theme assignment before the first table;
     const after = readFileSync(configPath, 'utf8');
     assert.equal((parseToml(after) as {theme: string}).theme, 'nmsh-bridge', 'a valid top-level assignment');
     assert.deepEqual({...(parseToml(after) as {editor: object}).editor}, {'line-number': 'relative'}, 'user settings untouched');
-    assert.match(reportTargets(ctx(config({mode: 'follow'}), box.env)).find(item => item.target === 'helix')!.notes.join(' '), /Active through NMSh-managed config/u);
+    assert.equal(reportTargets(ctx(config({mode: 'follow'}), box.env)).find(item => item.target === 'helix')!.readiness, 'Active');
     const removal = planHookRemoval('helix', box.home, box.env);
     assert.ok('plan' in removal);
     assert.ok(applyHookRemoval('helix', removal.plan, box.env).ok);

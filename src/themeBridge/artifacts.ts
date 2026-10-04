@@ -16,7 +16,7 @@ import type {BridgeMode, BridgeTargetId} from './model.js';
  */
 
 export const ADAPTER_VERSION = 1;
-export type ManagedTarget = Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix'> | 'vivid';
+export type ManagedTarget = Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix' | 'bat'> | 'vivid';
 export type HookTarget = Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim' | 'helix'>;
 
 export interface ConfigHook {
@@ -38,6 +38,10 @@ export interface LedgerEntry {
   adapterVersion: number;
   generatedAt: string;
   hook?: ConfigHook;
+  /** bat: the user approved rebuilding bat's theme cache for this artifact (after which updates rebuild it automatically). */
+  cacheApproved?: boolean;
+  /** bat: the artifact hash bat's cache was last built and verified for. */
+  cacheBuiltFor?: string;
 }
 
 export interface Ledger {version: 1; entries: Partial<Record<ManagedTarget, LedgerEntry>>}
@@ -56,6 +60,8 @@ export function artifactPath(target: ManagedTarget, env: NodeJS.ProcessEnv = pro
     case 'vivid': return join(root, 'vivid', 'nmsh-bridge.yml');
     // Helix loads themes only from its own themes directory; the fixed NMSh name keeps it apart from user themes.
     case 'helix': return join(helixConfigDirectory(env), 'themes', 'nmsh-bridge.toml');
+    // bat loads custom themes only from its own themes directory.
+    case 'bat': return join(batConfigDirectory(env), 'themes', 'nmsh-bridge.tmTheme');
   }
 }
 
@@ -66,10 +72,17 @@ export function helixConfigDirectory(env: NodeJS.ProcessEnv = process.env): stri
   return join(xdg, 'helix');
 }
 
+/** bat's config directory as bat resolves it: BAT_CONFIG_DIR, else $XDG_CONFIG_HOME/bat, else ~/.config/bat. */
+export function batConfigDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  if (env.BAT_CONFIG_DIR && env.BAT_CONFIG_DIR.startsWith('/')) return env.BAT_CONFIG_DIR;
+  const xdg = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(env.HOME || homedir(), '.config');
+  return join(xdg, 'bat');
+}
+
 export const runtimeDirectory = (target: 'neovim' | 'vim', env: NodeJS.ProcessEnv = process.env) => dirname(dirname(artifactPath(target, env)));
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'helix', 'vivid'];
+const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'helix', 'bat', 'vivid'];
 
 /** A malformed or stale ledger yields no ownership (so nothing can be deleted on its say-so). */
 export function loadLedger(env: NodeJS.ProcessEnv = process.env): Ledger {
@@ -87,7 +100,9 @@ export function loadLedger(env: NodeJS.ProcessEnv = process.env): Ledger {
       ? {configPath: entry.hook.configPath, lines: entry.hook.lines as string[], insertedAt: String(entry.hook.insertedAt ?? '')} : undefined;
     entries[target] = {target, artifactPath: entry.artifactPath, mode: entry.mode === 'choose' ? 'choose' : 'follow', themeRef: String(entry.themeRef ?? ''),
       format: String(entry.format ?? ''), formatVersion: Number(entry.formatVersion) || 1, sha256: entry.sha256, adapterVersion: Number(entry.adapterVersion) || 1,
-      generatedAt: String(entry.generatedAt ?? ''), ...(hook ? {hook} : {})};
+      generatedAt: String(entry.generatedAt ?? ''), ...(hook ? {hook} : {}),
+      ...(entry.cacheApproved === true ? {cacheApproved: true} : {}),
+      ...(typeof entry.cacheBuiltFor === 'string' && /^[0-9a-f]{64}$/u.test(entry.cacheBuiltFor) ? {cacheBuiltFor: entry.cacheBuiltFor} : {})};
   }
   return {version: 1, entries};
 }
@@ -145,7 +160,8 @@ export function writeArtifact(target: ManagedTarget, content: string, validate: 
     }
   }
   ledger.entries[target] = {...record, target, artifactPath: path, sha256: hash, adapterVersion: ADAPTER_VERSION, generatedAt: now.toISOString(),
-    ...(previous?.hook ? {hook: previous.hook} : {})};
+    ...(previous?.hook ? {hook: previous.hook} : {}), ...(previous?.cacheApproved ? {cacheApproved: true} : {}),
+    ...(previous?.cacheBuiltFor ? {cacheBuiltFor: previous.cacheBuiltFor} : {})};
   saveLedger(ledger, env);
   return {ok: true, path, changed};
 }

@@ -148,7 +148,7 @@ test('environment sink: exact quoting, strict validation, allowlist only', () =>
     assert.ok(validateEnvironmentFile(shell, content), shell);
     assert.equal(validateEnvironmentFile(shell, `${content}rm -rf ~\n`), false, 'appended commands fail validation');
     assert.equal(validateEnvironmentFile(shell, content.replace('nmsh_bridge_clear GROFF_NO_SGR', 'nmsh_bridge_clear PATH')), false, 'non-allowlisted names fail');
-    assert.ok(content.split('\n').filter(line => line.startsWith('  ')).length === BRIDGE_ENV_VARIABLES.length);
+    assert.ok(content.split('\n').filter(line => line.startsWith('  ')).length === BRIDGE_ENV_VARIABLES.length + 2, 'every variable plus the ls/gls listing lines');
   }
   assert.throws(() => renderEnvironmentFile('zsh', {PATH: '/evil'} as never), /Refusing/u);
   assert.throws(() => renderEnvironmentFile('zsh', {LS_COLORS: 'a\nb'}), /Refusing/u);
@@ -359,15 +359,21 @@ test('applyThemeBridge: isolated per target; independent targets get nothing; fa
   } finally { box.done(); }
 });
 
-test('reports: factual statuses; bat and delta are honest about unsupported custom themes', () => {
-  const config = configWith({fzf: {mode: 'follow'}, bat: {mode: 'follow'}});
-  const reports = reportTargets(context(config, {PATH: ''}, installed('fzf', 'bat', 'delta')));
+test('reports: factual statuses; bat needs a reviewed setup; delta is detected only', () => {
+  const box = sandbox();
+  const config = configWith({fzf: {mode: 'follow'}, bat: {mode: 'follow'}, delta: {mode: 'follow'}});
+  const reports = reportTargets(context(config, box.env, installed('fzf', 'bat', 'delta')));
+  box.done();
   const by = (target: BridgeTargetId) => reports.find(report => report.target === target)!;
   assert.equal(by('fzf').status, 'Following NMSh');
-  assert.equal(by('bat').status, 'Unsupported capability');
-  assert.deepEqual(by('bat').modes, ['independent']);
-  assert.match(by('bat').notes.join(' '), /theme cache/u);
-  assert.match(by('delta').notes.join(' '), /gitconfig/u);
+  assert.equal(by('bat').status, 'Needs setup');
+  assert.equal(by('bat').readiness, 'Needs setup');
+  assert.match(by('bat').notes.join(' '), /reviewed cache build/u);
+  assert.equal(by('delta').status, 'Not managed');
+  assert.equal(by('delta').mode, 'independent', 'a stored mode never makes delta appear managed');
+  assert.deepEqual(by('delta').modes, ['independent']);
+  assert.equal(by('delta').editable, false);
+  assert.match(by('delta').notes.join(' '), /git config/u);
   assert.equal(by('tmux').status, 'Not installed');
   assert.equal(by('pager').status, 'Not installed');
   const colorless = reportTargets({...context(config, {PATH: '', NO_COLOR: '1'}, installed('fzf'))}).find(report => report.target === 'fzf')!;

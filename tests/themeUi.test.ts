@@ -9,7 +9,7 @@ import {applyUiTheme} from '../src/appearance/uiTheme.js';
 import {createThemeStudio, renderThemeStudio, studioKey, STUDIO_TABS, type StudioContext} from '../src/appearance/ThemeStudio.js';
 import {builtinTheme} from '../src/appearance/themeRefs.js';
 import type {ThemeAsset} from '../src/appearance/themeLibrary.js';
-import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey, type BridgePanelContext} from '../src/themeBridge/ThemeBridgePanel.js';
+import {createThemeBridgePanel, panelItems, renderThemeBridgePanel, themeBridgeKey, type BridgePanelContext} from '../src/themeBridge/ThemeBridgePanel.js';
 import {BRIDGE_TARGETS} from '../src/themeBridge/model.js';
 import type {TargetReport} from '../src/themeBridge/runtime.js';
 import {createSetup, renderSetup, sectionIndex, setupKey} from '../src/setup/SetupCat.js';
@@ -66,7 +66,7 @@ test('/theme actions: set active, edit (same editor for Imported and Custom), re
   assert.deepEqual(studioKey(state, {kind: 'enter'}, 'truecolor', '/', ctx), {kind: 'delete', id: 't-bbbbbbbbbbbb', confirmIndependent: true});
   const active = context({activeRef: 'asset:t-aaaaaaaaaaaa'});
   const custom = createThemeStudio(active, 'custom');
-  custom.selected.custom = 1;
+  custom.selected.custom = 2;
   studioKey(custom, {kind: 'delete'}, 'truecolor', '/', active);
   assert.equal(custom.confirmDelete, undefined);
   assert.match(custom.message ?? '', /active theme/u);
@@ -104,30 +104,65 @@ test('/theme and /theme-bridge fit short and narrow terminals', () => {
   }
 });
 
-function bridgeContext(enabled = false): BridgePanelContext {
-  const reports: TargetReport[] = BRIDGE_TARGETS.map(target => ({target, label: target, mode: 'independent', modes: target === 'bat' || target === 'delta' ? ['independent'] : ['independent', 'follow', 'choose'],
-    status: 'Detected', notes: target === 'bat' ? ['bat loads custom themes only from its own theme cache'] : []}));
-  return {enabled, reports, themes: [{ref: 'builtin:lavender', label: 'Lavender Native', category: 'builtin'}, {ref: 'builtin:nord', label: 'Nord', category: 'builtin'}],
+function bridgeContext(enabled = false, policy: 'manual' | 'follow' | 'choose' = 'manual'): BridgePanelContext {
+  const reports: TargetReport[] = BRIDGE_TARGETS.map(target => ({target, label: target, capability: target === 'delta' ? 'detected' : ['fzf', 'pager', 'lsColors'].includes(target) ? 'direct' : 'managed',
+    mode: 'independent', modes: target === 'delta' ? ['independent'] : ['independent', 'follow', 'choose'], editable: target !== 'delta' && policy === 'manual', inherited: enabled && policy !== 'manual' && target !== 'delta',
+    status: target === 'delta' ? 'Not managed' : 'Detected', notes: target === 'delta' ? ['delta is shown for status only'] : []}));
+  return {enabled, policy, reports, themes: [{ref: 'builtin:lavender', label: 'Lavender Native', category: 'builtin'}, {ref: 'builtin:nord', label: 'Nord', category: 'builtin'}],
     pinned: () => undefined, activeRef: 'builtin:lavender', managed: () => undefined};
 }
 
-test('/theme-bridge panel: master switch, per-target modes, Choose starts visibly on the active theme, unsupported targets explain why', () => {
+const itemIndex = (state: ReturnType<typeof createThemeBridgePanel>, context: BridgePanelContext, match: (item: ReturnType<typeof panelItems>[number]) => boolean) => panelItems(state, context).findIndex(match);
+
+test('/theme-bridge: one panel; switch, Apply themes policy, inline expansion, Esc collapses first, read-only rows, delta not editable', () => {
   const state = createThemeBridgePanel();
-  const text = plain(renderThemeBridgePanel(state, bridgeContext(), 110, 40));
+  const off = bridgeContext();
+  const text = plain(renderThemeBridgePanel(state, off, 120, 60));
   assert.match(text, /Theme Bridge\s+‹ Off ›/u);
-  assert.match(text, /fzf\s+Independent\s+—\s+Detected/u);
-  assert.deepEqual(themeBridgeKey(state, {kind: 'enter'}, bridgeContext()), {kind: 'setEnabled', enabled: true});
-  themeBridgeKey(state, {kind: 'down'}, bridgeContext());
-  themeBridgeKey(state, {kind: 'enter'}, bridgeContext());
-  assert.equal(state.detail?.target, 'fzf');
-  assert.deepEqual(themeBridgeKey(state, {kind: 'right'}, bridgeContext()), {kind: 'setMode', target: 'fzf', mode: 'follow'});
-  const choose = {...bridgeContext(true), reports: bridgeContext(true).reports.map(report => report.target === 'fzf' ? {...report, mode: 'follow' as const} : report)};
-  assert.deepEqual(themeBridgeKey(state, {kind: 'right'}, choose), {kind: 'setMode', target: 'fzf', mode: 'choose', theme: 'builtin:lavender'});
-  themeBridgeKey(state, {kind: 'escape'}, bridgeContext());
-  state.selected = BRIDGE_TARGETS.indexOf('bat') + 1;
-  themeBridgeKey(state, {kind: 'enter'}, bridgeContext());
-  assert.equal(themeBridgeKey(state, {kind: 'right'}, bridgeContext()), undefined);
-  assert.match(state.message ?? '', /theme cache/u);
+  assert.match(text, /Direct and environment[\s\S]*fzf[\s\S]*Managed themes[\s\S]*tmux[\s\S]*Detected only[\s\S]*delta/u);
+  assert.deepEqual(themeBridgeKey(state, {kind: 'enter'}, off), {kind: 'setEnabled', enabled: true});
+  const on = bridgeContext(true);
+  state.selected = itemIndex(state, on, item => item.kind === 'policy');
+  assert.deepEqual(themeBridgeKey(state, {kind: 'right'}, on), {kind: 'setPolicy', policy: 'follow'});
+  // Inline expansion keeps the whole list visible.
+  state.selected = itemIndex(state, on, item => item.kind === 'target' && item.target === 'fzf');
+  themeBridgeKey(state, {kind: 'enter'}, on);
+  assert.equal(state.expanded, 'fzf');
+  const expanded = plain(renderThemeBridgePanel(state, on, 120, 60));
+  assert.match(expanded, /▾ fzf[\s\S]*Mode[\s\S]*pager[\s\S]*helix[\s\S]*delta/u, 'details inline; other targets still listed');
+  state.selected = itemIndex(state, on, item => item.kind === 'detail' && item.row === 'mode');
+  assert.deepEqual(themeBridgeKey(state, {kind: 'right'}, on), {kind: 'setMode', target: 'fzf', mode: 'follow'});
+  const following = {...on, reports: on.reports.map(report => report.target === 'fzf' ? {...report, mode: 'follow' as const} : report)};
+  assert.deepEqual(themeBridgeKey(state, {kind: 'right'}, following), {kind: 'setMode', target: 'fzf', mode: 'choose', theme: 'builtin:lavender'});
+  assert.equal(themeBridgeKey(state, {kind: 'escape'}, on), undefined, 'Esc collapses first');
+  assert.equal(state.expanded, undefined);
+  assert.deepEqual(themeBridgeKey(state, {kind: 'escape'}, on), {kind: 'close'}, 'then closes');
+  // Global Follow: rows are view-only, with no editable affordance.
+  const follow = bridgeContext(true, 'follow');
+  const view = createThemeBridgePanel();
+  view.selected = itemIndex(view, follow, item => item.kind === 'target' && item.target === 'tmux');
+  themeBridgeKey(view, {kind: 'enter'}, follow);
+  assert.ok(!panelItems(view, follow).some(item => item.kind === 'detail' && (item.row === 'mode' || item.row === 'theme')), 'no mode/theme editors under a global policy');
+  view.selected = itemIndex(view, follow, item => item.kind === 'target' && item.target === 'tmux');
+  themeBridgeKey(view, {kind: 'right'}, follow);
+  assert.match(view.message ?? '', /Switch Apply themes to Manual/u);
+  assert.match(plain(renderThemeBridgePanel(view, follow, 120, 60)), /Inherited/u);
+  // delta: shown, never expandable or editable.
+  const delta = createThemeBridgePanel();
+  delta.selected = itemIndex(delta, on, item => item.kind === 'target' && item.target === 'delta');
+  themeBridgeKey(delta, {kind: 'enter'}, on);
+  assert.equal(delta.expanded, undefined);
+  assert.match(delta.message ?? '', /status only/u);
+});
+
+test('/theme-bridge review all: combined review defaults to No', () => {
+  const state = createThemeBridgePanel();
+  state.review = {items: [{target: 'tmux', label: 'tmux', state: 'needs-include', detail: 'Needs one reviewed include', action: 'include'}], previews: {tmux: ['+ source-file -q x']}, yes: false};
+  assert.match(plain(renderThemeBridgePanel(state, bridgeContext(true), 120, 40)), /Apply 1 reviewed change\?\s+‹ No ›/u);
+  assert.equal(themeBridgeKey(state, {kind: 'enter'}, bridgeContext(true)), undefined, 'Enter on the default No changes nothing');
+  state.review = {items: [{target: 'tmux', label: 'tmux', state: 'needs-include', detail: '', action: 'include'}], previews: {}, yes: false};
+  themeBridgeKey(state, {kind: 'right'}, bridgeContext(true));
+  assert.deepEqual(themeBridgeKey(state, {kind: 'enter'}, bridgeContext(true)), {kind: 'applyAll'});
 });
 
 test('Setup Appearance: one Theme Bridge question (default No) reveals only detected tools; Theme Studio row reads Open ›', () => {
@@ -176,8 +211,10 @@ for (const panelPosition of ['bottom', 'top'] as const) {
       await app['runSlash']('/theme-bridge', parseSlashCommand('/theme-bridge')!);
       const panel = app['themeBridgePanel']!;
       assert.ok(panel);
-      panel.selected = BRIDGE_TARGETS.indexOf('pager') + 1;
+      const context = app['themeBridgePanelContext']();
+      panel.selected = panelItems(panel, context).findIndex(item => item.kind === 'target' && item.target === 'pager');
       await app['handleThemeBridgeKey']({kind: 'enter'}, panel);
+      panel.selected = panelItems(panel, app['themeBridgePanelContext']()).findIndex(item => item.kind === 'detail' && item.row === 'mode');
       await app['handleThemeBridgeKey']({kind: 'right'}, panel);
       const saved = loadPromptConfiguration();
       assert.equal(saved.themeBridge.enabled, true);

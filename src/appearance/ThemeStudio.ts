@@ -291,6 +291,10 @@ export interface StudioContext {
   accent: CatppuccinAccent;
   /** Theme Bridge targets pinned to each reference, for delete warnings and labels. */
   pinnedTo: (ref: ThemeRef) => BridgeTargetId[];
+  /** The persisted global Chroma, described (for the local preview switch). */
+  chroma?: string;
+  /** The active theme's display name (for Duplicate current). */
+  activeName?: string;
 }
 
 export interface ThemeStudioState {
@@ -307,6 +311,12 @@ export interface ThemeStudioState {
   importPath: string;
   importPreview?: ImportPreview & {path: string};
   message?: string;
+  /**
+   * Local preview only: render the preview through the user's current Chroma.
+   * Off by default so the real theme colors are visible; never persisted and
+   * never changes the global Chroma setting.
+   */
+  previewChroma: boolean;
 }
 
 export type StudioAction =
@@ -317,19 +327,20 @@ export type StudioAction =
   | {kind: 'rename'; id: string; name: string}
   | {kind: 'duplicate'; id: string}
   | {kind: 'duplicateBuiltin'; ref: ThemeRef}
+  | {kind: 'duplicateCurrent'}
   | {kind: 'delete'; id: string; confirmIndependent: boolean}
   | {kind: 'export'; id: string};
 
 const BUILTIN_PALETTES = THEME_PALETTE_IDS.filter((id): id is Exclude<NativePaletteId, 'custom'> => id !== 'custom');
 
 export function createThemeStudio(context: StudioContext, tab: StudioTab = 'builtin'): ThemeStudioState {
-  const state: ThemeStudioState = {tab, focus: 'list', selected: {builtin: 0, imported: 0, custom: 0}, importFormat: 0, importField: 'path', importPath: ''};
+  const state: ThemeStudioState = {tab, focus: 'list', selected: {builtin: 0, imported: 0, custom: 0}, importFormat: 0, importField: 'path', importPath: '', previewChroma: false};
   // Open on the active theme where it lives.
   const active = context.activeRef;
   const asset = active?.startsWith('asset:') ? findTheme(context.themes, active.slice(6)) : undefined;
   if (asset) {
     state.tab = categoryOf(asset);
-    state.selected[state.tab] = libraryItems(context, state.tab).findIndex(item => item.id === asset.id) + (state.tab === 'custom' ? 1 : 0);
+    state.selected[state.tab] = libraryItems(context, state.tab).findIndex(item => item.id === asset.id) + (state.tab === 'custom' ? CUSTOM_ACTIONS : 0);
   } else if (active?.startsWith('builtin:')) {
     const palette = active.slice(8).split('@')[0];
     state.selected.builtin = Math.max(0, BUILTIN_PALETTES.indexOf(palette as Exclude<NativePaletteId, 'custom'>));
@@ -345,14 +356,14 @@ function libraryItems(context: StudioContext, tab: 'imported' | 'custom'): Theme
 function rowCount(state: ThemeStudioState, context: StudioContext): number {
   if (state.tab === 'builtin') return BUILTIN_PALETTES.length;
   if (state.tab === 'imported') return libraryItems(context, 'imported').length;
-  if (state.tab === 'custom') return libraryItems(context, 'custom').length + 1;
+  if (state.tab === 'custom') return libraryItems(context, 'custom').length + CUSTOM_ACTIONS;
   return 0;
 }
 
 /** The asset under the selection on the Imported/Custom tabs (Custom row 0 is "New custom theme"). */
 export function selectedAsset(state: ThemeStudioState, context: StudioContext): ThemeAsset | undefined {
   if (state.tab === 'imported') return libraryItems(context, 'imported')[state.selected.imported];
-  if (state.tab === 'custom') return state.selected.custom === 0 ? undefined : libraryItems(context, 'custom')[state.selected.custom - 1];
+  if (state.tab === 'custom') return state.selected.custom < CUSTOM_ACTIONS ? undefined : libraryItems(context, 'custom')[state.selected.custom - CUSTOM_ACTIONS];
   return undefined;
 }
 
@@ -377,7 +388,19 @@ function switchTab(state: ThemeStudioState, delta: number): void {
   state.message = undefined;
 }
 
+/** Custom tab: two action rows (New, Duplicate current) before the themes. */
+const CUSTOM_ACTIONS = 2;
+
+/** C toggles the local preview Chroma wherever no text is being typed. */
+function typing(state: ThemeStudioState): boolean {
+  return Boolean(state.rename || state.editor?.picker || state.editor?.editingName !== undefined || (state.tab === 'import' && state.importField === 'path' && state.focus === 'list' && !state.importPreview && !state.editor));
+}
+
 export function studioKey(state: ThemeStudioState, key: Key, level: ColorLevel, cwd: string, context: StudioContext): StudioAction | undefined {
+  if (key.kind === 'text' && key.value.toLowerCase() === 'c' && !typing(state) && !state.confirmDelete) {
+    state.previewChroma = !state.previewChroma;
+    return undefined;
+  }
   if (state.editor) {
     const result = editorKey(state.editor, key, level);
     if (result?.kind === 'cancel') { state.editor = undefined; return undefined; }
@@ -435,6 +458,10 @@ export function studioKey(state: ThemeStudioState, key: Key, level: ColorLevel, 
       state.editor = createThemeEditor(undefined, palette);
       state.editor.draft = {...builtinTheme(palette, context.accent), name: `My ${builtinTheme(palette, context.accent).name}`.slice(0, 48)};
     }
+    return undefined;
+  }
+  if (tab === 'custom' && state.selected.custom === 1) {
+    if (key.kind === 'enter') return {kind: 'duplicateCurrent'};
     return undefined;
   }
   if (tab === 'custom' && state.selected.custom === 0) {
@@ -514,7 +541,8 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
   const subtle = foreground(UI_COLORS.subtle);
   const accent = foreground(UI_COLORS.accent);
   const finish = (rows: string[]) => framePanel(rows.map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, height));
-  if (state.editor) return finish(renderThemeEditor(state.editor, columns, height - 1, level, preview));
+  const chromaLine = `  ${subtle}Preview Chroma  ${state.previewChroma ? `${accent}On${RESET}${subtle}` : 'Off'}  ·  Global Chroma  ${context.chroma ?? 'Off'}  ·  C toggles the preview only${RESET}`;
+  if (state.editor) return finish(renderThemeEditor(state.editor, columns, height - 1, level, preview.length ? [chromaLine, ...preview] : preview));
   const head = [renderTabStrip(STUDIO_TABS, TAB_IDS.indexOf(state.tab), columns, state.focus === 'tabs'), ''];
   const body: string[] = [];
   const controls: Array<[string, string]> = [];
@@ -543,14 +571,15 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
   } else if (state.tab === 'imported' || state.tab === 'custom') {
     const items = libraryItems(context, state.tab);
     const rows: Array<{label: string; detail: string; ref?: ThemeRef; colors?: string[]}> = state.tab === 'custom'
-      ? [{label: '＋ New custom theme', detail: 'from the active built-in theme'}] : [];
+      ? [{label: '＋ New custom theme', detail: 'from the active built-in theme'},
+        {label: `⧉ Duplicate current theme → Custom${context.activeName ? ` (${context.activeName})` : ''}`, detail: 'copies the active theme'}] : [];
     rows.push(...items.map(asset => ({label: asset.theme.name, detail: provenanceLabel(asset), ref: assetRef(asset.id), colors: Object.values(asset.theme.prompt).slice(0, 6)})));
     if (!rows.length) body.push(`  ${subtle}No imported themes yet. Open the Import tab to bring in a theme file.${RESET}`);
     const selected = state.selected[state.tab];
     const {start, items: shown} = window(rows, selected);
     shown.forEach((row, offset) => {
       const index = start + offset;
-      body.push(`${mark(index === selected)} ${index === selected ? primary : secondary}${padCells(truncateText(row.label, 26), 26)}${RESET}${row.colors ? swatches(row.colors, level) : ''}${row.ref ? `${active(row.ref)}${pinned(row.ref)}` : ''}`);
+      body.push(`${mark(index === selected)} ${index === selected ? primary : secondary}${padCells(truncateText(row.label, row.ref ? 26 : 60), row.ref ? 26 : 60)}${RESET}${row.colors ? swatches(row.colors, level) : ''}${row.ref ? `${active(row.ref)}${pinned(row.ref)}` : ''}`);
     });
     const asset = selectedAsset(state, context);
     if (asset) body.push('', `  ${subtle}${provenanceLabel(asset)}${RESET}`);
@@ -584,7 +613,9 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
       : `  ${primary}Delete ${name}? This removes it from NMSh; exported files are kept.${RESET}`, `  ${subtle}Enter delete · Esc keep${RESET}`);
   }
   if (state.message) body.push('', `  ${secondary}${state.message}${RESET}`);
-  if (preview.length && !state.rename && !state.confirmDelete) body.push('', ...preview);
+  if (preview.length && !state.rename && !state.confirmDelete) {
+    body.push('', chromaLine, ...preview);
+  }
   const help = state.focus === 'tabs' ? renderControls([['←→', 'switch'], ['↓', 'select'], ['Esc', 'close']])
     : renderControls([...controls, ['←→', 'tabs'], ...(state.tab === 'import' ? [] : [['Esc', 'close'] as [string, string]])]);
   return finish([...head, ...body, '', help]);

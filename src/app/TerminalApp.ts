@@ -30,14 +30,15 @@ import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCa
 import {makeRng} from '../idle/screenEffects.js';
 import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
 import {createThemeStudio, previewTheme, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type StudioContext, type StudioTab, type ThemeStudioState} from '../appearance/ThemeStudio.js';
-import {addTheme, deleteTheme, duplicateBuiltin, duplicateTheme, renameTheme, saveTheme, setActiveTheme, type ActionResult} from '../appearance/themeLibraryActions.js';
+import {addTheme, deleteTheme, duplicateBuiltin, duplicateCurrentToCustom, duplicateRefToCustom, duplicateTheme, renameTheme, saveTheme, setActiveTheme, type ActionResult} from '../appearance/themeLibraryActions.js';
 import {findTheme} from '../appearance/themeLibrary.js';
-import {activeThemeRef, selectableThemes} from '../appearance/themeRefs.js';
+import {activeThemeRef, assetRef, selectableThemes, themeRefLabel} from '../appearance/themeRefs.js';
+import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
-import {applyThemeBridge, bridgeStateExists, detectTargets, fzfBridgeArgs, reloadTmux, reportTargets, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
+import {applyThemeBridge, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
-import {applyHook, applyHookRemoval, artifactPath, hookSpec, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, type HookSpec} from '../themeBridge/artifacts.js';
-import {BRIDGE_MODE_LABELS, BRIDGE_TARGET_LABELS} from '../themeBridge/model.js';
+import {applyHook, applyHookRemoval, artifactPath, hookSpec, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, type HookSpec, type HookTarget, type ManagedTarget} from '../themeBridge/artifacts.js';
+import {BRIDGE_MODE_LABELS, BRIDGE_POLICY_LABELS, BRIDGE_TARGET_LABELS, effectiveMode as bridgeMode} from '../themeBridge/model.js';
 import type {FileEditPlan} from '../ask/fileEdit.js';
 import {colorEscape} from '../chroma/escape.js';
 import {parseHexColor} from '../chroma/color.js';
@@ -2011,6 +2012,12 @@ export class TerminalApp {
     }
     else if (slash.kind === 'copy') await this.copyRecent(slash.index);
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
+    else if (slash.kind === 'motion') {
+      // The same Motion screen and state as /appearance → Motion.
+      this.panelOrigin = undefined;
+      await this.startAppearance();
+      if (this.appearanceHub) { this.appearanceHub.view = 'motion'; this.appearanceHub.selected = 0; this.appearanceHub.previewStart = Date.now(); }
+    }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'screensaver') {
@@ -3683,7 +3690,9 @@ export class TerminalApp {
   private studioContext(): StudioContext {
     const config = this.promptConfiguration;
     const ref = activeThemeRef(config);
-    return {themes: config.themes, accent: config.nmsh.accent, ...(ref ? {activeRef: ref} : {}), pinnedTo: target => targetsPinnedTo(config.themeBridge, target)};
+    const chroma = config.presentation.preset === 'off' ? 'Off' : `${TREATMENT_PRESET_LABELS[config.presentation.preset]} · ${config.presentation.motion}`;
+    return {themes: config.themes, accent: config.nmsh.accent, ...(ref ? {activeRef: ref} : {}), pinnedTo: target => targetsPinnedTo(config.themeBridge, target),
+      chroma, activeName: themeLabel(config.nmsh.palette)};
   }
 
   private openThemeStudio(tab?: StudioTab): void {
@@ -3696,9 +3705,11 @@ export class TerminalApp {
    * failure), UI text tiers and roles, and a syntax sample. Built-in,
    * Imported and Custom themes all preview through this one path.
    */
-  private themePreviewRows(theme: CustomTheme, palette: NativePaletteId | undefined, columns: number): string[] {
+  private themePreviewRows(theme: CustomTheme, palette: NativePaletteId | undefined, columns: number, previewChroma = false): string[] {
     const base = this.promptConfiguration;
-    const draft: PromptConfiguration = {...base, provider: 'nmsh', customTheme: theme, nmsh: {...base.nmsh, palette: palette ?? 'custom'}};
+    // Preview Chroma Off (the default) shows the exact theme colors; On uses the saved Chroma. Nothing is persisted either way.
+    const draft: PromptConfiguration = {...base, provider: 'nmsh', customTheme: theme, nmsh: {...base.nmsh, palette: palette ?? 'custom'},
+      presentation: previewChroma ? base.presentation : {...base.presentation, preset: 'off'}};
     const width = Math.max(1, columns - 16);
     const level = colorLevel();
     const label = (text: string) => `  ${SECONDARY}${text.padEnd(12)}${RESET}`;
@@ -3721,7 +3732,7 @@ export class TerminalApp {
     const context = this.studioContext();
     const shown = previewTheme(state, context);
     const rows = this.dimensions().rows;
-    const preview = !shown || state.editor?.picker || rows < 24 ? [] : this.themePreviewRows(shown.theme, shown.palette, columns);
+    const preview = !shown || state.editor?.picker || rows < 24 ? [] : this.themePreviewRows(shown.theme, shown.palette, columns, state.previewChroma);
     return renderThemeStudio(state, context, columns, rows, colorLevel(), preview);
   }
 
@@ -3743,7 +3754,8 @@ export class TerminalApp {
           : action.kind === 'rename' ? renameTheme(config, action.id, action.name)
             : action.kind === 'duplicate' ? duplicateTheme(config, action.id)
               : action.kind === 'duplicateBuiltin' ? duplicateBuiltin(config, action.ref)
-                : deleteTheme(config, action.id, action.confirmIndependent);
+                : action.kind === 'duplicateCurrent' ? duplicateCurrentToCustom(config)
+                  : deleteTheme(config, action.id, action.confirmIndependent);
     if (!result.ok) { state.message = result.error; return; }
     if (!this.applySettingsConfiguration(result.config)) return;
     state.message = result.message;
@@ -3754,7 +3766,7 @@ export class TerminalApp {
         const tab = asset.origin ? 'imported' : 'custom';
         state.tab = tab;
         state.focus = 'list';
-        state.selected[tab] = result.config.themes.filter(item => Boolean(item.origin) === Boolean(asset.origin)).findIndex(item => item.id === asset.id) + (tab === 'custom' ? 1 : 0);
+        state.selected[tab] = result.config.themes.filter(item => Boolean(item.origin) === Boolean(asset.origin)).findIndex(item => item.id === asset.id) + (tab === 'custom' ? 2 : 0);
       }
     }
     if (action.kind === 'activate') this.startSweep('prompt', 'vivid');
@@ -3802,8 +3814,12 @@ export class TerminalApp {
     () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended);
   private themeBridgePanel?: ThemeBridgePanelState;
   private bridgeReports: TargetReport[] = [];
-  /** A plan shown for confirmation, kept with the spec it came from; confirming applies exactly this plan. */
-  private bridgePlan?: {target: Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix'>; plan?: FileEditPlan; spec?: HookSpec; removal: boolean};
+  /** A plan shown for confirmation, kept with what it came from; confirming applies exactly this plan. */
+  private bridgePlan?: {target: BridgeTargetId; plan?: FileEditPlan; spec?: HookSpec; removal: boolean};
+  /** bat setup awaiting confirmation: the source theme reference (possibly a fresh Custom duplicate). */
+  private bridgeBatPlan?: {ref: string};
+  /** Apply all: the reviewed include plans by target. */
+  private bridgeReviewPlans = new Map<BridgeTargetId, {plan: FileEditPlan; spec: HookSpec}>();
 
   private async openThemeBridge(): Promise<void> {
     this.themeBridgePanel = createThemeBridgePanel();
@@ -3820,84 +3836,161 @@ export class TerminalApp {
     const config = this.promptConfiguration;
     const ledger = loadLedger();
     const active = activeThemeRef(config);
-    return {enabled: config.themeBridge.enabled, reports: this.bridgeReports, themes: selectableThemes(config), pinned: target => config.themeBridge.targets[target].theme, ...(active ? {activeRef: active} : {}),
-      managed: target => target === 'tmux' || target === 'neovim' || target === 'vim' || target === 'helix'
+    const bridge = config.themeBridge;
+    return {enabled: bridge.enabled, policy: bridge.policy, ...(bridge.theme ? {globalTheme: bridge.theme, globalThemeLabel: themeRefLabel(bridge.theme, config)} : {}),
+      reports: this.bridgeReports, themes: selectableThemes(config), pinned: target => bridge.targets[target].theme,
+      ...(active ? {activeRef: active, activeLabel: themeRefLabel(active, config)} : {}),
+      managed: target => target === 'tmux' || target === 'neovim' || target === 'vim' || target === 'helix' || target === 'bat'
         ? {...(ledger.entries[target] && ownership(target, ledger) === 'owned' ? {artifact: artifactPath(target)} : {}), ...(ledger.entries[target]?.hook ? {include: ledger.entries[target]!.hook!.configPath} : {})}
         : undefined};
+  }
+
+  /** Save a Theme Bridge settings change and apply it at once (not debounced) so the panel status is factual. */
+  private async saveBridge(change: (bridge: PromptConfiguration['themeBridge']) => void): Promise<boolean> {
+    const config = structuredClone(this.promptConfiguration);
+    change(config.themeBridge);
+    if (!this.applySettingsConfiguration(config)) return false;
+    if (this.bridgeTimer) { clearTimeout(this.bridgeTimer); this.bridgeTimer = undefined; }
+    this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
+    return true;
   }
 
   private async handleThemeBridgeKey(key: Key, state: ThemeBridgePanelState): Promise<void> {
     const action = themeBridgePanelKey(state, key, this.themeBridgePanelContext());
     if (!action) { this.render(); return; }
-    if (action.kind === 'close') { this.themeBridgePanel = undefined; this.bridgePlan = undefined; this.returnFromPanel(); this.render(); return; }
+    if (action.kind === 'close') { this.themeBridgePanel = undefined; this.bridgePlan = undefined; this.bridgeBatPlan = undefined; this.returnFromPanel(); this.render(); return; }
     const home = process.env.HOME || homedir();
-    if (action.kind === 'setMode') {
-      const config = structuredClone(this.promptConfiguration);
-      config.themeBridge.targets[action.target] = {mode: action.mode, ...(action.theme ?? config.themeBridge.targets[action.target].theme ? {theme: action.theme ?? config.themeBridge.targets[action.target].theme} : {})};
-      // Choosing a mode for a tool is the opt-in; Independent leaves the switch as it is.
-      if (action.mode !== 'independent') config.themeBridge.enabled = true;
-      if (this.applySettingsConfiguration(config)) {
-        // Apply now (not debounced) so the panel's status is factual when it redraws.
-        if (this.bridgeTimer) { clearTimeout(this.bridgeTimer); this.bridgeTimer = undefined; }
-        this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
-        const problem = this.bridgeProblems.find(outcome => outcome.target === action.target);
-        state.message = problem?.message ?? `${BRIDGE_TARGET_LABELS[action.target]} · ${BRIDGE_MODE_LABELS[action.mode]}${action.target === 'pager' || action.target === 'lsColors' ? ' · NMSh shells apply it at their next prompt' : ''}`;
+    const problem = (target: BridgeTargetId) => this.bridgeProblems.find(outcome => outcome.target === target)?.message;
+    if (action.kind === 'setEnabled') {
+      if (await this.saveBridge(bridge => { bridge.enabled = action.enabled; })) {
+        state.message = action.enabled ? 'Theme Bridge is On.' : 'Theme Bridge is Off; every tool is Independent and NMSh-set values are restored at the next prompt.';
       }
-    } else if (action.kind === 'setEnabled') {
-      const config = structuredClone(this.promptConfiguration);
-      config.themeBridge.enabled = action.enabled;
-      if (this.applySettingsConfiguration(config)) {
-        if (this.bridgeTimer) { clearTimeout(this.bridgeTimer); this.bridgeTimer = undefined; }
-        this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
-        state.message = action.enabled ? 'Theme Bridge is On; each tool uses its own mode.' : 'Theme Bridge is Off; every tool is Independent and NMSh-set values are restored at the next prompt.';
+    } else if (action.kind === 'setPolicy') {
+      // The per-target Manual settings are never rewritten by a global policy.
+      if (await this.saveBridge(bridge => { bridge.policy = action.policy; if (action.theme) bridge.theme = action.theme; })) {
+        state.message = `Apply themes · ${BRIDGE_POLICY_LABELS[action.policy]}${action.policy === 'manual' ? ' · each tool\'s own setting is back' : ''}`;
+      }
+    } else if (action.kind === 'setGlobalTheme') {
+      if (await this.saveBridge(bridge => { bridge.theme = action.theme; })) state.message = `Every supported tool uses ${themeRefLabel(action.theme, this.promptConfiguration)}.`;
+    } else if (action.kind === 'setMode') {
+      if (await this.saveBridge(bridge => {
+        const theme = action.theme ?? bridge.targets[action.target].theme;
+        bridge.targets[action.target] = {mode: action.mode, ...(theme ? {theme} : {})};
+        // Choosing a mode for a tool is the opt-in; Independent leaves the switch as it is.
+        if (action.mode !== 'independent') bridge.enabled = true;
+      })) {
+        state.message = problem(action.target) ?? `${BRIDGE_TARGET_LABELS[action.target]} · ${BRIDGE_MODE_LABELS[action.mode]}${action.target === 'pager' || action.target === 'lsColors' ? ' · NMSh shells apply it at their next prompt' : ''}`;
       }
     } else if (action.kind === 'reloadTmux') {
       state.message = (await reloadTmux()).message;
-    } else if (action.kind === 'planHook' || action.kind === 'planRemoval') {
-      const target = action.target as Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix'>;
-      if (action.kind === 'planHook') {
-        if (this.promptConfiguration.themeBridge.targets[target].mode === 'independent') { state.message = 'Choose Follow NMSh or Choose theme first; an Independent target gets no include.'; this.render(); return; }
-        const spec = hookSpec(target);
-        if ('error' in spec) { state.message = spec.error; this.render(); return; }
+    } else if (action.kind === 'planHook') {
+      const target = action.target as HookTarget;
+      const spec = hookSpec(target);
+      if ('error' in spec) state.message = spec.error;
+      else {
         const planned = planHook(spec, home);
         if ('error' in planned) state.message = planned.error;
-        else if ('noop' in planned) {
-          state.message = 'The include is already in place.';
-        } else {
+        else if ('noop' in planned) state.message = 'The include is already in place.';
+        else {
           this.bridgePlan = {target, plan: planned.plan, spec, removal: false};
           state.confirm = {kind: 'hook', target, path: spec.configPath, preview: planned.plan.preview};
         }
+      }
+    } else if (action.kind === 'planRemoval') {
+      const target = action.target as HookTarget | 'bat';
+      const hook = loadLedger().entries[target]?.hook;
+      if (!hook || target === 'bat') {
+        this.bridgePlan = {target, removal: true};
+        state.confirm = {kind: 'removeSetup', target, path: artifactPath(target), preview: [`- ${artifactPath(target)} (NMSh-managed file; no config include is recorded)`]};
       } else {
         const planned = planHookRemoval(target, home);
-        if ('error' in planned && !loadLedger().entries[target]?.hook) {
-          // No include recorded: removal is just Independent plus the owned file.
-          this.bridgePlan = {target, removal: true};
-          state.confirm = {kind: 'removeHook', target, path: artifactPath(target), preview: ['- (NMSh-managed file only; no config include is recorded)']};
-        } else if ('error' in planned) state.message = planned.error;
+        if ('error' in planned) state.message = planned.error;
         else {
-          const hook = loadLedger().entries[target]!.hook!;
           this.bridgePlan = {target, ...('plan' in planned ? {plan: planned.plan} : {}), removal: true};
-          state.confirm = {kind: 'removeHook', target, path: hook.configPath, preview: 'plan' in planned ? planned.plan.preview : ['  (the include is already gone from the file)']};
+          state.confirm = {kind: 'removeSetup', target, path: hook.configPath, preview: ['plan' in planned ? planned.plan.preview : ['  (the include is already gone from the file)'], [`- ${artifactPath(target)}`]].flat()};
         }
       }
     } else if (action.kind === 'confirmHook' || action.kind === 'confirmRemoval') {
       const pending = this.bridgePlan;
       this.bridgePlan = undefined;
-      if (!pending || pending.target !== action.target) { state.message = 'Nothing was changed.'; this.render(); return; }
-      if (!pending.removal && pending.plan && pending.spec) {
-        const result = applyHook(pending.target, pending.plan, pending.spec);
-        state.message = result.ok ? `Added the include to ${pending.spec.configPath}. New ${BRIDGE_TARGET_LABELS[pending.target]} instances load NMSh colors${pending.target === 'tmux' ? '; Reload applies them to the running server' : ''}.` : result.error;
+      if (!pending || pending.target !== action.target) state.message = 'Nothing was changed.';
+      else if (!pending.removal && pending.plan && pending.spec) {
+        const result = applyHook(pending.target as HookTarget, pending.plan, pending.spec);
+        state.message = result.ok ? `Added the include to ${pending.spec.configPath}. New ${BRIDGE_TARGET_LABELS[pending.target]} instances load NMSh colors; later theme changes update automatically${pending.target === 'tmux' ? ' (Reload applies them to the running server)' : ''}.` : result.error;
       } else if (pending.removal) {
-        const removed = applyHookRemoval(pending.target, pending.plan);
+        // Remove managed setup: NMSh's file and include only. The tool's mode is not changed behind the user's back.
+        const removed = pending.target === 'bat' ? {ok: true as const} : applyHookRemoval(pending.target as HookTarget, pending.plan);
         if (!removed.ok) state.message = removed.error;
         else {
-          const config = structuredClone(this.promptConfiguration);
-          config.themeBridge.targets[pending.target] = {mode: 'independent', ...(config.themeBridge.targets[pending.target].theme ? {theme: config.themeBridge.targets[pending.target].theme} : {})};
-          this.applySettingsConfiguration(config);
-          const artifact = removeArtifact(pending.target);
-          state.message = artifact.ok ? `${BRIDGE_TARGET_LABELS[pending.target]} is Independent; NMSh's include and managed file are removed.` : artifact.error;
+          const artifact = removeArtifact(pending.target as ManagedTarget);
+          state.message = artifact.ok ? `${BRIDGE_TARGET_LABELS[pending.target]}: NMSh's managed setup is removed${bridgeMode(this.promptConfiguration.themeBridge, pending.target) !== 'independent' ? '; it reports Needs setup until set up again' : ''}.` : artifact.error;
+          if (artifact.ok && pending.target !== 'bat') {
+            // A target that is still active would regenerate its file at once; only Independent targets stay clean.
+            if (bridgeMode(this.promptConfiguration.themeBridge, pending.target) !== 'independent') this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
+          }
         }
       }
+    } else if (action.kind === 'planBat') {
+      const reports = this.bridgeReports.find(report => report.target === 'bat');
+      let ref = targetPalette(this.promptConfiguration.themeBridge, 'bat', this.promptConfiguration).ref ?? activeThemeRef(this.promptConfiguration);
+      if (action.source === 'duplicate' && ref) {
+        // An ordinary Custom copy of the source theme, editable in Theme Studio; bat then pins it (Manual).
+        const copy = duplicateRefToCustom(this.promptConfiguration, ref);
+        if (!copy.ok) { state.message = copy.error; this.render(); return; }
+        const newRef = assetRef(copy.id!);
+        const config = copy.config;
+        config.themeBridge = {...config.themeBridge, policy: config.themeBridge.policy, targets: {...config.themeBridge.targets, bat: {mode: 'choose', theme: newRef}}};
+        if (!this.applySettingsConfiguration(config)) { this.render(); return; }
+        ref = newRef;
+        state.message = `Created ${themeRefLabel(newRef, this.promptConfiguration)} (Custom). Edit it in /theme; bat ${this.promptConfiguration.themeBridge.policy === 'manual' ? 'is pinned to it' : 'uses it when Apply themes is Manual'}.`;
+      }
+      if (!ref) { state.message = 'No theme to create the bat theme from.'; this.render(); return; }
+      this.bridgeBatPlan = {ref};
+      void reports;
+      state.confirm = {kind: 'batCache', target: 'bat', path: artifactPath('bat'), preview: [`+ ${artifactPath('bat')} (from ${themeRefLabel(ref, this.promptConfiguration)})`, '+ bat cache --build', '  bat --list-themes must then include nmsh-bridge; only then is BAT_THEME set in NMSh shells']};
+    } else if (action.kind === 'confirmBat') {
+      const pending = this.bridgeBatPlan;
+      this.bridgeBatPlan = undefined;
+      const resolved = pending ? resolveSemanticPalette(pending.ref, this.promptConfiguration) : undefined;
+      if (!resolved?.ok) state.message = 'Nothing was changed.';
+      else {
+        const result = await setupBat(resolved.palette, bridgeMode(this.promptConfiguration.themeBridge, 'bat'), pending!.ref);
+        state.message = result.message;
+        this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
+      }
+    } else if (action.kind === 'reviewAll') {
+      const items = integrationHealth(await this.themeBridgeContext());
+      const previews: Record<string, string[]> = {};
+      this.bridgeReviewPlans.clear();
+      for (const item of items) {
+        if (item.action !== 'include') continue;
+        const spec = hookSpec(item.target as HookTarget);
+        if ('error' in spec) { item.action = undefined; item.state = 'conflict'; item.detail = spec.error; continue; }
+        const planned = planHook(spec, home);
+        if ('plan' in planned) { this.bridgeReviewPlans.set(item.target, {plan: planned.plan, spec}); previews[item.target] = [`${spec.configPath}`, ...planned.plan.preview.filter(line => line.startsWith('+'))]; }
+        else { item.action = undefined; item.detail = 'error' in planned ? planned.error : 'Already in place'; item.state = 'error' in planned ? 'conflict' : 'ready'; }
+      }
+      for (const item of items) if (item.action === 'cache') previews[item.target] = [`+ ${artifactPath('bat')}`, '+ bat cache --build (then verified with bat --list-themes)'];
+      state.review = {items, previews, yes: false};
+    } else if (action.kind === 'applyAll') {
+      const results: string[] = [];
+      const context = await this.themeBridgeContext();
+      for (const item of integrationHealth(context)) {
+        if (item.action === 'generate') { const outcomes = await applyThemeBridge(context); results.push(`${item.label}: ${outcomes.find(outcome => outcome.target === item.target)?.message ?? 'generated'}`); }
+        else if (item.action === 'include') {
+          const reviewed = this.bridgeReviewPlans.get(item.target);
+          if (!reviewed) { results.push(`${item.label}: skipped (not in the reviewed plan)`); continue; }
+          const result = applyHook(item.target as HookTarget, reviewed.plan, reviewed.spec);
+          results.push(`${item.label}: ${result.ok ? 'include added' : result.error}`);
+        } else if (item.action === 'cache') {
+          const palette = targetPalette(this.promptConfiguration.themeBridge, 'bat', this.promptConfiguration);
+          const result = palette.palette ? await setupBat(palette.palette, bridgeMode(this.promptConfiguration.themeBridge, 'bat'), palette.ref ?? '') : {ok: false, message: 'no theme'};
+          results.push(`${item.label}: ${result.ok ? 'ready' : result.message}`);
+        }
+      }
+      this.bridgeReviewPlans.clear();
+      this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
+      state.message = results.length ? results.join(' · ') : 'Nothing needed changing.';
     }
     await this.refreshBridgeReports();
     this.render();
@@ -4063,7 +4156,12 @@ export class TerminalApp {
    * shown; nothing ever changes the real terminal cursor.
    */
   private setupPreview(state: SetupState, columns: number): string[] {
-    const draft = state.draft;
+    const section0 = SETUP_SECTIONS[state.section]?.id;
+    // Prompt/Appearance previews show the base theme unless the local preview switch asks for the draft's Chroma.
+    const rawPreview = (section0 === 'appearance' || section0 === 'prompt') && !state.previewChroma;
+    const draft = rawPreview ? {...state.draft, presentation: {...state.draft.presentation, preset: 'off' as const}} : state.draft;
+    const chromaNote = section0 === 'appearance' || section0 === 'prompt'
+      ? [`  ${SUBTLE}Preview Chroma  ${state.previewChroma ? 'On' : 'Off'}  ·  Chroma setting  ${state.draft.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[state.draft.presentation.preset]}  ·  P toggles the preview only${RESET}`] : [];
     const section = SETUP_SECTIONS[state.section]?.id;
     const width = Math.max(10, columns - 4);
     const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
@@ -4204,7 +4302,7 @@ export class TerminalApp {
     if (animate && !this.screensaverAnimation) {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
     } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
-    return rows.map(row => truncateAnsi(row, columns - 2));
+    return [...chromaNote, ...rows].map(row => truncateAnsi(row, columns - 2));
   }
 
   /**

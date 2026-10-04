@@ -10,6 +10,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
+  {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
   {name: '/cursor', insertion: '/cursor', description: 'Text caret shape and blink while NMSh owns the composer'},
   {name: '/activity', insertion: '/activity', description: 'Live activity colors for the running-command line'},
@@ -73,6 +74,7 @@ export type ParsedSlashCommand =
   | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
   | {kind: 'copy'; index: number}
   | {kind: 'appearance'}
+  | {kind: 'motion'}
   | {kind: 'prompt'}
   | {kind: 'chroma'}
   | {kind: 'theme'}
@@ -124,6 +126,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
   if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
+  if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};

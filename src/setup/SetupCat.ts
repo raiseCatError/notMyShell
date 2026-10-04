@@ -262,6 +262,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: nativeOnly(configRow('promptStyle'))},
     {row: nativeOnly(SEPARATOR_ROW)},
     {row: configRow('promptSymbol')},
+    // The one canonical Chroma setting (also in Appearance, /prompt, /appearance and /chroma).
+    {row: configRow('treatmentPreset'), note: () => 'The same Chroma setting as Appearance and /chroma; P toggles the preview only'},
     routeRow('setupPromptModules', 'Prompt modules & custom glyphs', 'Which modules show and in what order, and your own separator or prompt glyph, in /prompt', 'prompt', 'Prompt'),
   ], dynamicRows: draft => promptStyleRows(draft)},
   {id: 'appearance', title: 'Appearance', intro: [
@@ -457,6 +459,12 @@ export interface SetupState {
    * Esc returns here, and nothing is saved until Apply.
    */
   cursorPanel?: CursorPanelState;
+  /**
+   * Local preview only (P on Prompt/Appearance): show the preview through the
+   * draft's Chroma. Off by default so the base theme colors are visible; it
+   * never changes the draft or the saved Chroma.
+   */
+  previewChroma?: boolean;
   /** The cursor preview restarts when the selected row or the draft's cursor settings change. */
   previewKey?: string;
   previewStart?: number;
@@ -588,6 +596,11 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
   if (key.kind === 'escape' || key.kind === 'interrupt') {
     if (changes()) { state.confirmDiscard = true; return undefined; }
     return {kind: 'cancel'};
+  }
+  const sectionId = SETUP_SECTIONS[state.section]?.id;
+  if (key.kind === 'text' && key.value.toLowerCase() === 'p' && (sectionId === 'appearance' || sectionId === 'prompt')) {
+    state.previewChroma = !state.previewChroma;
+    return undefined;
   }
   const last = SETUP_SECTIONS.length - 1;
   const rows = currentRows(state);

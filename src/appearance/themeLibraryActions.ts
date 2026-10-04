@@ -1,11 +1,11 @@
 import type {PromptConfiguration} from '../prompt/configuration.js';
 import {normalizePromptConfiguration} from '../prompt/configuration.js';
-import {BRIDGE_TARGET_LABELS, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
+import {BRIDGE_TARGET_LABELS, globallyPinnedTo, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
 import type {CustomTheme} from './customTheme.js';
 import {
   addThemeAsset, duplicateThemeAsset, findTheme, removeThemeAsset, renameThemeAsset, updateThemeAsset, type ThemeOrigin,
 } from './themeLibrary.js';
-import {assetRef, builtinTheme, parseThemeRef, type ThemeRef} from './themeRefs.js';
+import {activeThemeRef, assetRef, builtinTheme, parseThemeRef, themeForRef, type ThemeRef} from './themeRefs.js';
 
 /**
  * Library operations over the whole configuration: the one place assets,
@@ -59,6 +59,26 @@ export function duplicateTheme(config: PromptConfiguration, id: string): ActionR
 }
 
 /** A built-in, immutable theme copied into the library as an editable Custom theme. */
+/**
+ * The current theme (Built-in, Imported or Custom) copied into a new Custom
+ * theme named "<name> - Custom". Imported provenance is dropped, so the copy is
+ * genuinely Custom. The active theme does not change unless `activate`.
+ */
+export function duplicateCurrentToCustom(config: PromptConfiguration, activate = false): ActionResult {
+  const ref = activeThemeRef(config);
+  const resolved = themeForRef(ref, config);
+  if (!resolved.ok) return {ok: false, error: 'The current theme cannot be resolved.'};
+  const name = `${resolved.theme.name.slice(0, 39)} - Custom`;
+  return addTheme(config, {...resolved.theme, name, basedOn: resolved.theme.name}, undefined, activate);
+}
+
+/** Any theme reference copied to a new Custom theme (bat setup and Studio reuse this). */
+export function duplicateRefToCustom(config: PromptConfiguration, ref: ThemeRef): ActionResult {
+  const resolved = themeForRef(ref, config);
+  if (!resolved.ok) return {ok: false, error: 'That theme cannot be resolved.'};
+  return addTheme(config, {...resolved.theme, name: `${resolved.theme.name.slice(0, 39)} - Custom`, basedOn: resolved.theme.name});
+}
+
 export function duplicateBuiltin(config: PromptConfiguration, ref: ThemeRef): ActionResult {
   const parsed = parseThemeRef(ref);
   if (parsed?.kind !== 'builtin') return {ok: false, error: 'Not a built-in theme.'};
@@ -71,10 +91,13 @@ export interface DeleteCheck {
   active: boolean;
   /** Theme Bridge targets pinned to this theme (Choose theme). */
   pinned: BridgeTargetId[];
+  /** Theme Bridge's global Choose theme is this theme. */
+  global: boolean;
 }
 
 export function deleteCheck(config: PromptConfiguration, id: string): DeleteCheck {
-  return {active: config.nmsh.palette === 'custom' && config.nmsh.themeId === id, pinned: targetsPinnedTo(config.themeBridge, assetRef(id))};
+  return {active: config.nmsh.palette === 'custom' && config.nmsh.themeId === id, pinned: targetsPinnedTo(config.themeBridge, assetRef(id)),
+    global: globallyPinnedTo(config.themeBridge, assetRef(id))};
 }
 
 /**
@@ -87,13 +110,17 @@ export function deleteTheme(config: PromptConfiguration, id: string, confirmInde
   if (!asset) return {ok: false, error: 'That theme no longer exists.'};
   const check = deleteCheck(config, id);
   if (check.active) return {ok: false, error: `${asset.theme.name} is the active theme. Choose another theme first.`};
-  if (check.pinned.length && !confirmIndependent) {
-    return {ok: false, error: `Theme Bridge ${check.pinned.map(target => BRIDGE_TARGET_LABELS[target]).join(', ')} ${check.pinned.length === 1 ? 'is' : 'are'} pinned to ${asset.theme.name}.`};
+  if ((check.pinned.length || check.global) && !confirmIndependent) {
+    const who = [...(check.global ? ['Theme Bridge (Choose theme for every tool)'] : []), ...check.pinned.map(target => `Theme Bridge ${BRIDGE_TARGET_LABELS[target]}`)];
+    return {ok: false, error: `${who.join(', ')} ${who.length === 1 ? 'is' : 'are'} pinned to ${asset.theme.name}.`};
   }
   const targets = structuredClone(config.themeBridge.targets);
   // Explicitly confirmed: affected targets become Independent (never another theme). The old reference is dropped.
   for (const target of check.pinned) targets[target] = {mode: 'independent'};
-  const next: PromptConfiguration = {...config, themes: removeThemeAsset(config.themes, id), themeBridge: {...config.themeBridge, targets},
+  // A deleted global pin goes back to Manual (never to another theme); the Manual state is untouched.
+  const {theme: _global, ...bridge} = config.themeBridge;
+  const themeBridge = check.global ? {...bridge, policy: config.themeBridge.policy === 'choose' ? 'manual' as const : config.themeBridge.policy, targets} : {...config.themeBridge, targets};
+  const next: PromptConfiguration = {...config, themes: removeThemeAsset(config.themes, id), themeBridge,
     nmsh: config.nmsh.themeId === id ? (({themeId: _removed, ...rest}) => rest)(config.nmsh) as PromptConfiguration['nmsh'] : config.nmsh};
   const suffix = check.pinned.length ? ` · ${check.pinned.map(target => BRIDGE_TARGET_LABELS[target]).join(', ')} now Independent` : '';
   return finish(next, `Deleted ${asset.theme.name}${suffix}`);

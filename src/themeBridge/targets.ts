@@ -465,3 +465,115 @@ export function validateHelixTheme(content: string, parse: (text: string) => unk
           : false);
   });
 }
+
+// ---- macOS / BSD ls ----------------------------------------------------------------
+
+const BSD_LETTERS = 'abcdefgh';
+
+/** The closest of the theme's eight base ANSI colors (BSD ls can only name terminal ANSI colors). */
+function nearestAnsi(palette: SemanticPalette, hex: string): number {
+  const target = parseHexColor(hex)!;
+  let best = 0;
+  let distance = Infinity;
+  palette.ansi.slice(0, 8).forEach((candidate, index) => {
+    const color = parseHexColor(candidate)!;
+    const d = (color.red - target.red) ** 2 + (color.green - target.green) ** 2 + (color.blue - target.blue) ** 2;
+    if (d < distance) { distance = d; best = index; }
+  });
+  return best;
+}
+
+/**
+ * BSD/macOS `LSCOLORS`: twelve fg/bg pairs (directory, symlink, socket, pipe,
+ * executable, block, character, setuid, setgid, sticky other-writable dir,
+ * other-writable dir, dataless). Colors are ANSI names, so the terminal's own
+ * palette draws them; NMSh picks the closest role for each.
+ */
+export function bsdLsColors(palette: SemanticPalette): string {
+  const fg = (hex: string, bold = false) => { const letter = BSD_LETTERS[nearestAnsi(palette, hex)]!; return bold ? letter.toUpperCase() : letter; };
+  const pairs = [
+    `${fg(palette.ansi[4]!, true)}x`, `${fg(palette.ansi[6]!)}x`, `${fg(palette.ansi[5]!)}x`, `${fg(palette.warning)}x`, `${fg(palette.success, true)}x`,
+    `${fg(palette.warning, true)}x`, `${fg(palette.warning)}x`, 'ab', 'ag', 'ac', 'ad', `${fg(palette.text.subtle)}x`,
+  ];
+  return pairs.join('');
+}
+
+export function validBsdLsColors(value: string): boolean {
+  return /^(?:[a-hA-Hx][a-hA-Hx]){11,12}$/u.test(value);
+}
+
+// ---- bat (.tmTheme) ---------------------------------------------------------------------
+
+export const BAT_THEME_NAME = 'nmsh-bridge';
+
+const xml = (value: string) => value.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;').replace(/"/gu, '&quot;');
+
+/**
+ * A Sublime/TextMate `.tmTheme` (plist XML) that bat/Syntect loads from its
+ * themes directory. Data only: global colors plus scope rules for comments,
+ * strings, numbers/constants, functions, types, keywords, operators, tags,
+ * variables, builtins, invalid, markup and diff.
+ */
+export function batTheme(p: SemanticPalette): string {
+  const rule = (name: string, scope: string, foreground: string, fontStyle?: string, background?: string) =>
+    `    <dict><key>name</key><string>${xml(name)}</string><key>scope</key><string>${xml(scope)}</string><key>settings</key><dict><key>foreground</key><string>${foreground}</string>${fontStyle ? `<key>fontStyle</key><string>${fontStyle}</string>` : ''}${background ? `<key>background</key><string>${background}</string>` : ''}</dict></dict>`;
+  const s = p.syntax;
+  const globals = [
+    ['foreground', p.text.primary], ...(p.background ? [['background', p.background]] : []), ['caret', p.cursor], ['selection', p.selection],
+    ['lineHighlight', p.surface], ['gutterForeground', p.text.subtle], ['invisibles', p.separator],
+  ] as Array<[string, string]>;
+  const rules = [
+    rule('Comment', 'comment, punctuation.definition.comment', s.comment, 'italic'),
+    rule('String', 'string, punctuation.definition.string', s.string),
+    rule('Escape', 'constant.character.escape, string.regexp', s.special),
+    rule('Number', 'constant.numeric', s.number),
+    rule('Constant', 'constant, constant.language, support.constant', s.constant),
+    rule('Variable', 'variable', p.text.primary),
+    rule('Builtin variable', 'variable.language, support.variable', s.special),
+    rule('Parameter', 'variable.parameter', p.text.secondary),
+    rule('Keyword', 'keyword, keyword.control, storage, storage.type, storage.modifier', s.keyword),
+    rule('Operator', 'keyword.operator, punctuation.separator, punctuation.accessor', s.operator),
+    rule('Function', 'entity.name.function, meta.function-call, support.function', s.function),
+    rule('Builtin function', 'support.function.builtin, variable.function.builtin', s.special),
+    rule('Type', 'entity.name.type, entity.name.class, support.type, support.class, entity.other.inherited-class', s.type),
+    rule('Import', 'keyword.control.import, meta.preprocessor, keyword.other.preprocessor', s.preproc),
+    rule('Tag', 'entity.name.tag', p.accent),
+    rule('Attribute', 'entity.other.attribute-name', s.preproc),
+    rule('Invalid', 'invalid, invalid.illegal', p.failure, 'bold'),
+    rule('Deprecated', 'invalid.deprecated', p.warning),
+    rule('Heading', 'markup.heading, entity.name.section', p.accent, 'bold'),
+    rule('Bold', 'markup.bold', p.text.primary, 'bold'),
+    rule('Italic', 'markup.italic', p.text.primary, 'italic'),
+    rule('Link', 'markup.underline.link, string.other.link', p.info, 'underline'),
+    rule('Quote', 'markup.quote', p.text.subtle),
+    rule('Raw', 'markup.raw, markup.inline.raw', s.string),
+    rule('Inserted', 'markup.inserted, meta.diff.header.to-file', p.success),
+    rule('Deleted', 'markup.deleted, meta.diff.header.from-file', p.failure),
+    rule('Changed', 'markup.changed', p.warning),
+    rule('Diff range', 'meta.diff.range, meta.diff.header', p.info),
+  ];
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    `<!-- Generated by NMSh Theme Bridge from ${xml(JSON.stringify(p.name)).replace(/--/gu, '- -')}. NMSh replaces this file; it is theme data only. -->`,
+    '<plist version="1.0">',
+    '<dict>',
+    `  <key>name</key><string>${BAT_THEME_NAME}</string>`,
+    '  <key>settings</key>',
+    '  <array>',
+    `    <dict><key>settings</key><dict>${globals.map(([key, value]) => `<key>${key}</key><string>${value}</string>`).join('')}</dict></dict>`,
+    ...rules,
+    '  </array>',
+    '</dict>',
+    '</plist>',
+    '',
+  ].join('\n');
+}
+
+/** The generated theme parses as a plist with only string values (names, scopes, hex colors, font styles). */
+export function validateBatTheme(content: string, parse: (text: string) => unknown): boolean {
+  if (/<!DOCTYPE|<!ENTITY|<\?xml-stylesheet/iu.test(content)) return false;
+  try { parse(content); } catch { return false; }
+  const strings = [...content.matchAll(/<string>([^<]*)<\/string>/gu)].map(match => match[1]!);
+  return strings.length > 10 && content.includes(`<string>${BAT_THEME_NAME}</string>`)
+    && strings.every(value => /^#[0-9a-f]{6}$/u.test(value) || /^[A-Za-z0-9 .,_-]{1,200}$/u.test(value));
+}
