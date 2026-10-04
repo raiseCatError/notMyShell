@@ -161,6 +161,7 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
+import {appearanceHubKey, createAppearanceHub, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
 import {decayCells, diffModules, EVENT_TONES, morphCells, progress, sweepCells as transitionSweep, toneColor, Transitions} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
@@ -451,7 +452,7 @@ export class TerminalApp {
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
   private contextGeneration = 0;
-  private appearanceState?: AppearanceState;
+  private appearanceHub?: AppearanceHubState;
   private keyboardState?: KeyboardState;
   /**
    * Where the currently-open top-level panel (prompt/transcript/appearance/
@@ -1288,21 +1289,20 @@ export class TerminalApp {
       }
       return;
     }
-    if (this.appearanceState) {
-      if (key.kind === 'escape' || key.kind === 'interrupt') {
-        this.appearanceState = undefined;
-        this.output.addHistoryLine(`${STOPPED}✻ Appearance configuration cancelled${RESET}`);
-        this.returnFromPanel();
-        this.render();
-        return;
+    if (this.appearanceHub) {
+      const action = appearanceHubKey(this.appearanceHub, key, this.promptConfiguration);
+      if (action?.kind === 'close') { this.appearanceHub = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'motion') this.updateConfiguration(configuration => { configuration.motion = action.motion; });
+      else if (action?.kind === 'saveHost') void this.saveAppearance();
+      else if (action?.kind === 'open') {
+        // The canonical editors; /appearance never duplicates them.
+        this.appearanceHub = undefined;
+        if (action.destination === 'prompt') void this.startPromptSettings(false);
+        else if (action.destination === 'cursor') this.openCursorPanel();
+        else if (action.destination === 'chroma') this.startChromaSettings();
+        else this.focusConfigRow('uiChrome');
       }
-      if (key.kind === 'enter') {
-        void this.saveAppearance();
-        return;
-      }
-      if (handleAppearanceKey(key, this.appearanceState)) {
-        this.render();
-      }
+      this.render();
       return;
     }
     if (this.keyboardState) {
@@ -2093,14 +2093,14 @@ export class TerminalApp {
   }
 
   private async saveAppearance(): Promise<void> {
-    if (!this.appearanceState) return;
-    const state = this.appearanceState;
-    this.appearanceState = undefined;
-
+    const hub = this.appearanceHub;
+    const state = hub?.host;
+    if (!hub || !state || !this.host.integration) return;
+    hub.hostDirty = false;
     this.output.addHistoryLine(`${INFO}✻ Saving appearance settings...${RESET}`);
     this.render();
 
-    const result = await this.host.integration!.saveAppearance({
+    const result = await this.host.integration.saveAppearance({
       opacity: state.opacity,
       blurMode: BLUR_MODES[state.blurModeIndex],
       blurStrength: state.blurStrength
@@ -2110,7 +2110,7 @@ export class TerminalApp {
       this.output.addHistoryLine(`${SUCCESS}✻ Saved to ${result.fragmentPath}${RESET}`);
       this.output.addHistoryLine(`${INFO}✻ Host config updated: ${result.hostPath}${RESET}`);
       if (state.opacity < 1) {
-        this.output.addHistoryLine(`${INFO}✻ ${this.host.integration!.appearanceRestart}${RESET}`);
+        this.output.addHistoryLine(`${INFO}✻ ${this.host.integration.appearanceRestart}${RESET}`);
       }
     } else {
       this.output.addHistoryLine(`${ERROR}✻ Failed to save appearance${RESET}`);
@@ -2149,20 +2149,14 @@ export class TerminalApp {
     this.render();
   }
 
+  /** /appearance: the visual hub. NMSh rows always work; host window rows edit opacity/blur only where the host supports it. */
   private async startAppearance(): Promise<void> {
-    if (!this.host.capabilities.appearanceIntegration || !this.host.integration) {
-      this.output.addFrontendInteraction('/appearance', `Host: ${this.host.name}\n${this.host.appearanceGuidance ?? 'Window opacity and blur are controlled by the host.'}`, INFO);
-      this.returnFromPanel();
-      this.render();
-      return;
+    let host: AppearanceState | undefined;
+    if (this.host.capabilities.appearanceIntegration && this.host.integration) {
+      const settings = await this.host.integration.readAppearance();
+      host = {opacity: settings.opacity, blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)), blurStrength: settings.blurStrength, selectedIndex: 0};
     }
-    const settings = await this.host.integration.readAppearance();
-    this.appearanceState = {
-      opacity: settings.opacity,
-      blurModeIndex: Math.max(0, BLUR_MODES.indexOf(settings.blurMode)),
-      blurStrength: settings.blurStrength,
-      selectedIndex: 0
-    };
+    this.appearanceHub = createAppearanceHub(this.host.name, host, this.host.appearanceGuidance);
     this.render();
   }
 
@@ -3000,7 +2994,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3125,7 +3119,10 @@ export class TerminalApp {
       }
       return framePanel(rows, columns);
     }
-    if (this.appearanceState) return framePanel(renderAppearancePanel(this.appearanceState, columns), columns);
+    if (this.appearanceHub) {
+      const theme = NATIVE_PROMPT_THEMES[this.promptConfiguration.nmsh.palette]?.label ?? this.promptConfiguration.nmsh.palette;
+      return framePanel(renderAppearanceHub(this.appearanceHub, this.promptConfiguration, columns, theme, this.cursorBackend().backend.label), columns);
+    }
     if (this.keyboardState) return framePanel(renderKeyboardPanel(this.keyboardState, columns, this.host.name), columns);
     return framePanel(this.renderedPromptPanel(columns), columns);
   }
