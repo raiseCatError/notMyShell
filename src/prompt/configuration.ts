@@ -260,6 +260,41 @@ export const CURSOR_SHAPES = ['host', 'block', 'bar', 'underline'] as const;
 export type CursorShape = typeof CURSOR_SHAPES[number];
 export const CURSOR_BLINKS = ['host', 'on', 'off'] as const;
 export type CursorBlink = typeof CURSOR_BLINKS[number];
+/**
+ * One registry for NMSh's UI motion, each a short, finite presentation of a
+ * real event; none delays input or execution, none runs when Off, under
+ * Reduced Motion, with Decorative Effects Off, or without color.
+ */
+export const CONTEXT_TRANSITIONS = ['off', 'subtle', 'expressive'] as const;
+export const COMMAND_LAUNCHES = ['off', 'sweep', 'pulse'] as const;
+export const COMPLETION_HIGHLIGHTS = ['off', 'subtle', 'vivid'] as const;
+export const COMPLETION_EFFECTS = ['off', 'seal'] as const;
+export const EVENT_FEEDBACK = ['off', 'subtle', 'expressive'] as const;
+export interface MotionSettings {
+  /** Prompt modules transform in place when their facts change (cwd, branch, Git state, tools). */
+  contextTransitions: typeof CONTEXT_TRANSITIONS[number];
+  /** The handoff when Enter submits a shell command. */
+  commandLaunch: typeof COMMAND_LAUNCHES[number];
+  /** What completion just inserted. */
+  completionHighlight: typeof COMPLETION_HIGHLIGHTS[number];
+  /** Block Seal: a finished block settles. */
+  completionEffect: typeof COMPLETION_EFFECTS[number];
+  /** Semantic Echo: a short response to meaningful events (long success, failure, attention, task done). */
+  eventFeedback: typeof EVENT_FEEDBACK[number];
+}
+/** Fresh installs: restrained motion. */
+export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle'};
+/** Existing configs without a motion group: nothing new moves until the person turns it on. */
+export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off'};
+
+export function normalizeMotion(value: unknown): MotionSettings {
+  if (!isRecord(value)) return {...MIGRATED_MOTION};
+  const pickOne = <T extends string>(list: readonly T[], item: unknown, fallback: T): T => list.includes(item as T) ? item as T : fallback;
+  return {contextTransitions: pickOne(CONTEXT_TRANSITIONS, value.contextTransitions, 'off'), commandLaunch: pickOne(COMMAND_LAUNCHES, value.commandLaunch, 'off'),
+    completionHighlight: pickOne(COMPLETION_HIGHLIGHTS, value.completionHighlight, 'off'), completionEffect: pickOne(COMPLETION_EFFECTS, value.completionEffect, 'off'),
+    eventFeedback: pickOne(EVENT_FEEDBACK, value.eventFeedback, 'off')};
+}
+
 export const PROMPT_TEXT_COLORS = ['neutral', 'theme'] as const;
 export type PromptTextColors = typeof PROMPT_TEXT_COLORS[number];
 
@@ -400,6 +435,8 @@ export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
 
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
+  /** General NMSh UI motion (cursor motion lives in `cursor`, Chroma in `presentation`). */
+  motion: MotionSettings;
   provider: PromptProviderId;
   onboardingComplete: boolean;
   /** Optional discovery is separate; legacy completed onboarding stays completed. */
@@ -520,6 +557,7 @@ export interface PromptConfiguration {
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
+  motion: {...DEFAULT_MOTION},
   provider: 'nmsh',
   onboardingComplete: false,
   toolsSetupComplete: false,
@@ -632,7 +670,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+  const tooling = {motion: normalizeMotion(value.motion), cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
     sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',

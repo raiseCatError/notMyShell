@@ -79,7 +79,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -161,6 +161,8 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
+import {decayCells, diffModules, EVENT_TONES, morphCells, progress, sweepCells as transitionSweep, toneColor, Transitions} from '../motion/transitions.js';
+import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
 import {includeLine, nativeCursorIntegrated, nativeHostLabel, setupPlan, writeManagedFiles} from '../cursor/native.js';
 import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelState} from '../cursor/CursorPanel.js';
@@ -1567,7 +1569,7 @@ export class TerminalApp {
     }
     else if (key.kind === 'left' && this.composerIdle()) { void this.openSessionsView(); return; }
     else if (key.kind === 'left') this.editor.moveLeft();
-    else if (key.kind === 'right') this.editor.moveRight();
+    else if (key.kind === 'right') this.acceptingGhost(() => this.editor.moveRight());
     else if (key.kind === 'selectLeft') this.editor.selectLeft();
     else if (key.kind === 'selectRight') this.editor.selectRight();
     else if (key.kind === 'wordLeft') this.editor.wordLeft();
@@ -1591,10 +1593,10 @@ export class TerminalApp {
     }
     else if (key.kind === 'lineHome') this.editor.lineHome();
     else if (key.kind === 'selectLineHome') this.editor.selectLineHome();
-    else if (key.kind === 'lineEnd') this.editor.lineEnd();
+    else if (key.kind === 'lineEnd') this.acceptingGhost(() => this.editor.lineEnd());
     else if (key.kind === 'selectLineEnd') this.editor.selectLineEnd();
     else if (key.kind === 'bufferHome') this.editor.moveBufferHome();
-    else if (key.kind === 'bufferEnd') this.editor.moveBufferEnd();
+    else if (key.kind === 'bufferEnd') this.acceptingGhost(() => this.editor.moveBufferEnd());
     else if (key.kind === 'selectBufferHome') this.editor.selectBufferHome();
     else if (key.kind === 'selectBufferEnd') this.editor.selectBufferEnd();
     else if (key.kind === 'backspace') this.editor.backspace();
@@ -1828,9 +1830,26 @@ export class TerminalApp {
     }
   };
 
+  /** An accepted ghost suggestion became real text: it materializes like a completion. */
+  private acceptingGhost(move: () => void): void {
+    const before = graphemes(this.editor.text).length;
+    const text = this.editor.text;
+    move();
+    const after = graphemes(this.editor.text).length;
+    if (after > before && this.editor.text.startsWith(text)) this.transitions.materialize(before, after, this.editor.text, Date.now());
+  }
+
   private applySuggestion(suggestion: {insertion: string; insertionCursor?: number}): void {
+    const before = graphemes(this.editor.text);
     this.editor.clear();
     this.editor.insert(suggestion.insertion);
+    // Completion Materialization: only the newly inserted graphemes (common prefix and suffix kept).
+    const after = graphemes(this.editor.text);
+    let start = 0;
+    while (start < before.length && start < after.length && before[start] === after[start]) start += 1;
+    let tail = 0;
+    while (tail < before.length - start && tail < after.length - start && before[before.length - 1 - tail] === after[after.length - 1 - tail]) tail += 1;
+    this.transitions.materialize(start, after.length - tail, this.editor.text, Date.now());
     if (suggestion.insertionCursor !== undefined) {
       const trailing = graphemes(suggestion.insertion.slice(suggestion.insertionCursor)).length;
       for (let i = 0; i < trailing; i++) this.editor.moveLeft();
@@ -2048,6 +2067,8 @@ export class TerminalApp {
     this.formatCommandAnsi(command, startId);
     const startedAt = Date.now();
     this.running = {command, startedAt, interrupted: false, cleared: false, startId, cwd: this.shellCwd, awaitingExec: true};
+    // Command Transfer: the command already went to the shell; the sweep only presents the handoff.
+    if (!this.replaying && !this.askState) this.transitions.launch(startedAt);
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the submitted command.', ERROR);
     });
@@ -2518,6 +2539,14 @@ export class TerminalApp {
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
     }
     this.running = undefined;
+    if (!this.replaying && !command.cleared && completedRecord) {
+      const interrupted = command.interrupted || exitCode === 130;
+      const now = Date.now();
+      this.transitions.seal(completedRecord.startId, interrupted ? 'interrupted' : exitCode === 0 ? 'success' : 'failure', now);
+      // Semantic Echo only for meaningful outcomes: failures, and successes after a long wait.
+      if (!interrupted && exitCode !== 0) this.transitions.echo('failure', now);
+      else if (!interrupted && elapsed >= 10_000) this.transitions.echo('longSuccess', now);
+    }
     if (!this.replaying && !command.interrupted && !command.cleared) void this.suggestCorrection(command.command, exitCode, completedRecord?.output ?? '').catch(() => {});
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the completed command.', ERROR);
@@ -2542,6 +2571,8 @@ export class TerminalApp {
       resolvePathAbbreviations(cwd, homedir()),
     ]);
     if (generation !== this.contextGeneration || this.stopped) return;
+    // Semantic Echo when Git conflicts become visible (not on every redraw while they remain).
+    if ((context.git?.conflicts ?? 0) > 0 && !(this.context.git?.conflicts ?? 0)) this.transitions.echo('conflict', Date.now());
     this.context = {...context, pathAbbreviations, exitStatus: this.context.exitStatus ?? 0};
     await this.refreshProviderPrompt();
     this.render();
@@ -5289,11 +5320,13 @@ export class TerminalApp {
         this.understanding.downloadFailure = undefined;
         await this.refreshUnderstandingDiscovery(true);
         panel.message = 'Downloaded and verified (sha256). It loads on first use and unloads when idle.';
+        this.transitions.echo('setupDone', Date.now());
       } catch (error) {
         clock();
         panel.progress = undefined;
         // Verification failure is remembered: the model is not used and nothing retries until you choose to.
         this.understanding.downloadFailure = error instanceof Error ? error.message : String(error);
+        this.transitions.echo('setupFailed', Date.now());
         panel.message = `The recommended model was not installed: ${this.understanding.downloadFailure}. The incomplete file was removed; nothing was changed. `
           + 'Ask and Smart Folding keep working without it, and you can still choose a compatible model already on this machine.';
       }
@@ -5350,18 +5383,41 @@ export class TerminalApp {
   private askState?: AskState;
   /** External agent harness sessions (managed via supported protocols, or observed processes). */
   private readonly agents = new AgentSessions();
-  private readonly agentsSubscription = this.agents.onChange(() => { if (!this.stopped) this.render(); });
+  private readonly agentsSubscription = this.agents.onChange((_session, event) => {
+    if (this.stopped) return;
+    // An agent asking for approval is an attention event (once per request).
+    if (event?.kind === 'approval') this.transitions.echo('attention', Date.now());
+    this.render();
+  });
   /** Long-lived tasks Ask started (dev servers): owned by NMSh, stopped when it exits. */
   private readonly managedTasks = new ManagedTasks();
   /** Portable cursor effects over NMSh's own input (presentation only; Off schedules nothing). */
   private readonly cursorPresenter = new CursorPresenter(() => this.promptConfiguration.cursor, () => { if (!this.stopped) this.paintPresentation(Date.now()); });
   private caretCause: 'typing' | 'jump' = 'jump';
+  /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
+  private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
+    () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
+  private transitionClock?: () => void;
+  /** The semantic prompt modules last shown, for context morph (ids, roles and text only). */
+  private lastModules?: Array<{id: string; text: string; role?: string}>;
+  /** Each visible transcript row's owning block, for Block Seal placement. */
+  private visibleBlocks: Array<number | undefined> = [];
   private cursorHost?: HostCursorFacts;
   private cursorBackend(): BackendChoice {
     this.cursorHost ??= hostCursorFacts(process.env, host => nativeCursorIntegrated(host));
     return chooseBackend(this.promptConfiguration.cursor, this.cursorHost);
   }
-  private readonly tasksSubscription = this.managedTasks.onChange(() => { if (!this.stopped) { this.syncTaskClock(); this.render(); } });
+  private readonly taskStates = new Map<string, string>();
+  private readonly tasksSubscription = this.managedTasks.onChange(() => {
+    if (this.stopped) return;
+    // Semantic Echo once per task ending: done, or failed (a task the person stopped ends quietly).
+    for (const task of this.managedTasks.tasks) {
+      const previous = this.taskStates.get(task.id);
+      if (previous !== task.status && previous && previous !== 'stopping' && (task.status === 'completed' || task.status === 'failed')) this.transitions.echo(task.status === 'failed' ? 'taskFailed' : 'taskDone', Date.now());
+      this.taskStates.set(task.id, task.status);
+    }
+    this.syncTaskClock(); this.render();
+  });
   private taskClock?: () => void;
   private agentPanel?: AgentPanelState;
   private agentView?: AgentViewState;
@@ -5610,6 +5666,7 @@ export class TerminalApp {
       clearProviderDetection();
       this.commandSources.delete(action.name);
       const verb = action.expect === 'installed' ? 'Installed' : action.expect === 'upgraded' ? 'Upgraded' : 'Uninstalled';
+      this.transitions.echo(ok ? 'installDone' : 'installFailed', Date.now());
       const next: AskOption[] = ok && action.expect !== 'absent' && after?.kind === 'formula' ? [{key: `cmd:${action.name}`, label: 'Basic command overview', refine: `what is ${action.name}`},
         {key: `syntax:${action.name}`, label: 'Show syntax', refine: `how do i use ${action.name}`}] : [];
       finish(ok ? `${verb} ${action.name}${after?.installed.length ? ` ${after.installed.at(-1)}` : ''}.` : `${action.argv.join(' ')} ${outcome.status === 'succeeded' ? 'finished, but Homebrew does not report the expected result' : 'did not succeed'}. Nothing else was changed.`, next);
@@ -6199,6 +6256,7 @@ export class TerminalApp {
     if (this.findState) this.findState.results.forEach((result, index) => {
       for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
     });
+    this.visibleBlocks = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.blockStartId);
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
       if (isRowSelected(this.selection, viewStart + offset)) return `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
       const marked = findSpans.get(viewStart + offset);
@@ -6372,6 +6430,72 @@ export class TerminalApp {
     this.paintPresentation(Date.now());
   }
 
+  /**
+   * The short transitions, in one composition order after Chroma and before the cursor:
+   * prompt morph, launch, materialization, Block Seal, Semantic Echo. Background tints only.
+   */
+  private paintTransitions(rows: string[], plan: ScreenPlan, columns: number, now: number): void {
+    // Context morph: a semantic diff of the prompt's modules (never raw ANSI); one epoch per change.
+    if (this.promptConfiguration.motion.contextTransitions !== 'off' && this.effectivePromptProvider === 'nmsh') {
+      const modules = renderedModules(this.promptContext(), this.promptConfiguration).map(module => ({id: module.id, text: module.text, role: module.role}));
+      if (this.lastModules) { const changes = diffModules(this.lastModules, modules); if (changes.length) this.transitions.morph(changes, now); }
+      this.lastModules = modules;
+    }
+    this.transitions.editorChanged(this.editor.text);
+    const live = plan.panelActive || this.passthrough || this.externalPassthrough ? [] : this.transitions.live(now);
+    const paints = new Map<number, Map<number, CellPaint>>();
+    const add = (row: number, cells: Map<number, CellPaint>) => {
+      if (row < 0 || row >= rows.length || !cells.size) return;
+      const line = paints.get(row) ?? new Map<number, CellPaint>();
+      for (const [column, paint] of cells) line.set(column, {...line.get(column), ...paint});
+      paints.set(row, line);
+    };
+    const regions = (...kinds: string[]) => plan.regions.filter(region => kinds.includes(region.kind) && region.height > 0);
+    for (const transition of live) {
+      const t = progress(transition, now);
+      if (transition.kind === 'launch') {
+        for (const region of regions('input', 'separator', 'composerBorder')) for (let index = 0; index < region.height; index += 1) {
+          add(region.top + index, transition.style === 'sweep' ? transitionSweep(columns, t, UI_COLORS.accent, region.kind === 'input' ? 0.5 : 0.8) : decayCells(0, columns, t, UI_COLORS.accent, 0.35));
+        }
+      } else if (transition.kind === 'materialize') {
+        const input = regions('input')[0];
+        if (!input) continue;
+        const prefix = this.inputFirstLinePrefix(columns);
+        const at = (index: number) => layoutInput(this.editor.displayText, index, columns, Number.POSITIVE_INFINITY, prefix);
+        const from = at(transition.from);
+        const to = at(transition.to);
+        const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
+        const offset = caret.caretRow - at(this.editor.displayCursorIndex).caretRow;
+        if (from.caretRow === to.caretRow) add(input.top + from.caretRow + offset, decayCells(from.caretColumn, to.caretColumn, t, UI_COLORS.accent, transition.vivid ? 0.7 : 0.45));
+      } else if (transition.kind === 'seal') {
+        const transcript = plan.regions.find(region => region.kind === 'transcript');
+        const index = this.visibleBlocks.lastIndexOf(transition.blockStartId);
+        if (transcript && index >= 0) add(transcript.top + index, transitionSweep(columns, t, toneColor(transition.tone), transition.tone === 'failure' ? 0.75 : 0.55, transition.tone === 'failure' ? 6 : 12));
+      } else if (transition.kind === 'echo') {
+        const tone = toneColor(EVENT_TONES[transition.event]);
+        for (const region of regions('separator', 'composerBorder')) add(region.top, decayCells(0, columns, t, tone, transition.expressive ? 0.6 : 0.4));
+        if (transition.expressive) for (const region of regions('input')) add(region.top, transitionSweep(columns, t, tone, 0.35));
+      } else if (transition.kind === 'morph') {
+        const prompt = regions('prompt')[0] ?? regions('input')[0];
+        if (!prompt) continue;
+        const plain = stripAnsi(rows[prompt.top] ?? '');
+        for (const change of transition.changes) {
+          if (change.change === 'disappeared' || !change.text) continue;
+          // The final geometry, located by the module's own text; a module the width rules removed is simply skipped.
+          const start = plain.indexOf(change.text);
+          if (start < 0) continue;
+          const column = displayWidth(plain.slice(0, start));
+          add(prompt.top, morphCells(column, column + displayWidth(change.text), t, UI_COLORS.accent, transition.expressive, change.change));
+        }
+      }
+    }
+    if (paints.size) for (const [row, cells] of paints) rows[row] = overlayRow(rows[row] ?? '', cells, columns);
+    // A clock only while a transition is live (~30 fps for their short lifetime); none otherwise.
+    const busy = this.transitions.busy;
+    if (busy && !this.transitionClock) this.transitionClock = presentationClock.subscribe(() => { if (!this.stopped) this.paintPresentation(Date.now()); }, 33, 16);
+    else if (!busy && this.transitionClock) { this.transitionClock(); this.transitionClock = undefined; }
+  }
+
   private decorativeMotionAllowed(): boolean {
     return !isReducedMotion() && !this.promptConfiguration.presentation.reducedMotion && !this.promptConfiguration.presentation.effectsOff;
   }
@@ -6420,8 +6544,9 @@ export class TerminalApp {
     const active = this.effects.active;
     const region = active && effectRegion(plan, active.placement);
     if (active && !region) this.effects.cancel();
-    // Cursor effects: an overlay on the input rows only, never over panels, passthrough or idle visuals.
     const columns = frame.columns ?? 80;
+    this.paintTransitions(rows, plan, columns, now);
+    // Cursor effects: an overlay on the input rows only, never over panels, passthrough or idle visuals.
     const input = plan.regions.find(item => item.kind === 'input');
     const caretShown = frame.cursorVisible !== false && Boolean(input) && !plan.panelActive;
     const cursor = this.cursorPresenter.apply(rows, caretShown ? {row: frame.cursorRow - 1, column: frame.cursorColumn - 1} : undefined,
@@ -6633,6 +6758,7 @@ export class TerminalApp {
     this.agentsSubscription();
     this.agents.dispose();
     this.cursorPresenter.dispose();
+    this.transitions.cancel(); this.transitionClock?.(); this.transitionClock = undefined;
     this.cursorPanelClock?.(); this.cursorPanelClock = undefined;
     this.tasksSubscription();
     this.taskClock?.(); this.taskClock = undefined;
