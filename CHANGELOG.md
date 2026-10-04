@@ -6,28 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-- **Shell backends:** a real ShellAdapter with zsh (unchanged behavior), Fish and Bash 4.4+ backends; `/shell` lists installed shells and switches the current session in place; Settings → Default shell for new sessions. See [docs/architecture/shell-adapter.md](docs/architecture/shell-adapter.md).
-- **Session notices:** up to three factual lines above the composer when other sessions finish, fail, ask for attention or end; cleared everywhere when the session is focused (`/notices`).
-- **Session viewer:** `/resume` rows lead with a factual state, proven agent identity, durations and ages.
-- **Agent activity:** local-only Claude Code / Codex CLI durations, counts and a heatmap (`/agents`, Off switch, reset); never prompts or output.
-- **History and completion:** context-ranked Native `/history` with `agent:`/`source:` filters; a multi-source completion layer with provenance and an opt-in declarative spec source.
-- **Transcript find and filter:** `/find` bar and presentation-only `/filter` for one output block.
-- **Editor bridge:** `/open path:line:col`, `/open` reference picker and `/open-diff`, delegated to Zed, VS Code or `$VISUAL`/`$EDITOR` (Open with setting).
-- **Portability and maintenance:** `nmsh config export|import`, `nmsh uninstall`, `nmsh doctor`, provenance-aware tool uninstall in `/tools`.
-- **Diagnostics:** read-only shell framework / plugin-manager detection, platform and WSL reporting in `/status`.
-- **Images:** capability-driven Kitty graphics / iTerm2 inline images for `/about`, with a text fallback.
-- **Linux:** freedesktop notifications via `notify-send` when available.
+## [0.16.0] - 2026-10-04
 
-- **Integrated development stacks (formerly planned as v0.8–v0.13):** structured completion with a bundled catalog and `/history` filters, Atuin/zoxide/fzf/Television providers, command inspector, block actions, correction suggestions, completion notifications, the `/tools` browser and curated catalog, supported Starship configuration, optional mise awareness, session presets, OSC 8 links, host capability profiles, Chroma treatments and effects, and the Linux baseline. See [ROADMAP.md](ROADMAP.md).
-- **Ask and Local Understanding:** deterministic Ask over NMSh's own capabilities and an optional local model (`/llm`); Auto by default for fresh installs, never downloads without an explicit Yes.
-- **Appearance and Setup:** `/appearance` hub; Clean and Rich motion rendering with per-rendering intensity and speed; cursor shape, motion, effects and colors with a capability matrix (Portable, Ghostty, Kitty) and a replayable preview; Setup Cat reaches every setting; Config and Status are grouped under named headings.
-- **Paste and notices:** deterministic paste classification with a bounded, scrollable Review; session notices are short-lived events with sticky attention.
-- **Doctor, watch:** `/doctor` local read-only checks and `/watch` scheduled commands.
+Sessions, Agents & Portability: a cumulative release of the work formerly planned as v0.8–v0.15, together with v0.16.
 
-### Notes
-- The maintainer's earlier physical QA of the integrated v0.16 build passed; changes made afterwards (listed in [docs/testing/v016-physical-qa.md](docs/testing/v016-physical-qa.md)) still need a physical look. Linux and WSL 2 are supported by automated validation only (#18).
-- The package version remains 0.7.0 until release preparation.
+### Sessions & agents
+- Persistent live shells, detach/reattach, session presets and a clearer `/resume` and `/sessions` viewer with factual state, age and duration.
+- Short-lived cross-session notices, sticky attention, and familiar session names and accents.
+- `/agents` local activity counts, durations and heatmaps; `/ai` managed and observed agent sessions. Activity tracking can be disabled or reset and does not store prompts or output.
+
+### Shells & portability
+- A shared ShellAdapter for zsh, Fish and Bash 4.4+; `/shell` switches the current session and Settings chooses the default for new sessions.
+- Linux/WSL groundwork, platform diagnostics, Linux notifications through `notify-send`, host capability profiles and conservative presentation fallbacks. Physical Linux/WSL and additional-host validation remains follow-up work.
+- Settings export/import, launcher uninstall with data retained by default, and provenance-aware tool removal.
+
+### Ask, completion & developer tooling
+- Ask explains NMSh capabilities locally, with optional Qwen Local Understanding through `/llm`; model downloads require explicit confirmation.
+- Structured completion with live shell knowledge, a bundled Fig + Carapace static catalog, provenance, custom declarative specs and richer completion descriptions.
+- Context-ranked history with agent/source filters; optional Atuin, zoxide, fzf and Television providers; command inspection and conservative correction suggestions.
+- Curated `/tools`, supported Starship configuration, consent-based mise project/task awareness, project workflows and `/watch` scheduled commands.
+
+### Appearance & interaction
+- `/appearance`, richer prompt customization, Chroma treatments and bounded effects; Clean and Rich motion with independent intensity and speed.
+- Portable cursor effects and capability-gated Ghostty/Kitty integration with previews and clear fallback behavior.
+- Expanded Setup Cat, grouped Config and Status, idle visual galleries and completion UI polish.
+
+### Transcript, safety & fixes
+- `/find`, presentation-only `/filter`, transcript selection, block actions, OSC 8 links, `/open` references and `/open-diff` editor integration.
+- Capability-gated images with a text fallback; deterministic paste classification, preview and scrollable review; `/doctor` read-only diagnostics and failure explanations.
+- Hardened session recovery, shell helper isolation, terminal modes, completion cancellation and configuration preservation; fixes to divider colors, slash-command history and presentation lifecycles.
 
 ## [0.7.0] - 2026-10-01
 

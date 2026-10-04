@@ -18,6 +18,8 @@
 
 **notMyShell (NMSh)** is a terminal frontend for a real persistent zsh session. It adds a persistent bottom input editor, semantic syntax highlighting, autocomplete, scrollable history, and richer command feedback while preserving normal shell state, aliases, functions, environment, and PTY behavior.
 
+Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0).
+
 Working on NMSh? See [AGENTS.md](AGENTS.md).
 
 ## Visual demo

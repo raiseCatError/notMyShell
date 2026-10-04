@@ -4,14 +4,13 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
-| **Next release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/milestone/14): the cumulative release candidate in [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) (`feature/v016-platform-portability-agents` → `dev`), feature-frozen and unreleased. Release readiness: [#308](https://github.com/raiseCatError/notMyShell/issues/308) |
-| **After v0.16** | [v0.17.0 — Host Compatibility & Tool Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
+| **Next development milestone** | [v0.17.0 — Host Compatibility & Tool Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The released package is still 0.7.0; v0.16 is not released.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The released package is 0.16.0; v0.17 is the next development milestone.
 
 ## Released — v0.2.0 Structured Execution
 
@@ -114,9 +113,9 @@ The final release candidate also included the passive-hover selection fix.
 | [#172](https://github.com/raiseCatError/notMyShell/issues/172) | Semantic motion engine; shimmer migrated onto it |
 | [#173](https://github.com/raiseCatError/notMyShell/issues/173) | Deterministic presentation mode |
 
-## Next release — v0.16 (unreleased)
+## Released — v0.16.0 Sessions, Agents & Portability
 
-The milestones planned as v0.8–v0.13 were developed as a stack of review branches and are integrated, together with the v0.14–v0.16 work, in one cumulative release candidate. Their issues are closed; the milestones are closed. The maintainer's earlier physical QA of the integrated build passed; only behavior changed afterwards needs a fresh look ([checklist](docs/testing/v016-physical-qa.md)). Feature work is frozen; remaining release steps are in [#308](https://github.com/raiseCatError/notMyShell/issues/308). Package version stays 0.7.0 until release preparation is authorized.
+The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumulative release. PR #303 is merged; final CI and the maintainer physical sanity pass passed. User-facing changes are in [CHANGELOG.md](CHANGELOG.md). Linux/WSL and other-host physical follow-ups remain in v0.17.
 
 | Area | Implemented scope |
 |---|---|
@@ -130,7 +129,7 @@ The milestones planned as v0.8–v0.13 were developed as a stack of review branc
 | Ask & Local Understanding | Deterministic Ask, optional local model (Auto by default, never downloads without a Yes), `/llm` |
 | Appearance | `/appearance` hub; Clean and Rich motion rendering with per-rendering tuning; cursor effects with a capability matrix; Setup Cat as the complete customization entry point; grouped Config and Status |
 
-## After v0.16 — v0.17 Host Compatibility & Tool Discovery
+## Next development — v0.17 Host Compatibility & Tool Discovery
 
 [Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15): physical validation and discovery follow-ups, none of which block v0.16.
 
@@ -157,7 +156,7 @@ zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh p
 
 ## Longer term — shells and platforms
 
-In v0.16 (unreleased) zsh, Fish and Bash 4.4+ are implemented backends behind a real [ShellAdapter](docs/architecture/shell-adapter.md). Nushell and PowerShell remain later. Linux and WSL 2 are supported by automated validation, with physical validation tracked in #18; native Windows (ConPTY) is a no-go per the [Windows feasibility research](docs/architecture/v013-windows-feasibility.md). See also [Linux foundations](docs/architecture/v013-linux-foundations.md).
+In v0.16.0 zsh, Fish and Bash 4.4+ are implemented backends behind a real [ShellAdapter](docs/architecture/shell-adapter.md). Nushell and PowerShell remain later. Linux and WSL 2 are supported by automated validation, with physical validation tracked in #18; native Windows (ConPTY) is a no-go per the [Windows feasibility research](docs/architecture/v013-windows-feasibility.md). See also [Linux foundations](docs/architecture/v013-linux-foundations.md).
 
 ## Design Principles
 
