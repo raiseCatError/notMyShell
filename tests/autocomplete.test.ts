@@ -4,8 +4,9 @@ import {parseSlashCommand, slashSuggestions, suggestionWindow} from '../src/comm
 import {calculateScreenLayout} from '../src/app/layout.js';
 
 test('slash autocomplete exposes copy variants and help', () => {
-  assert.deepEqual(slashSuggestions('/co').map(item => item.name), ['/copy', '/copy N', '/config']);
-  assert.deepEqual(slashSuggestions('/h').map(item => item.name), ['/help', '/history']);
+  assert.deepEqual(slashSuggestions('/co').map(item => item.name), ['/copy', '/copy N', '/config', '/composer', '/configure']);
+  assert.deepEqual(slashSuggestions('/h').map(item => item.name), ['/help', '/history', '/history-provider']);
+  assert.deepEqual(parseSlashCommand('/history-provider'), {kind: 'providers', family: 'history'}, '/history stays history search');
   assert.deepEqual(slashSuggestions('/z').map(item => item.name), ['/zsh']);
   assert.deepEqual(parseSlashCommand('/clear'), {kind: 'clear'});
   assert.deepEqual(parseSlashCommand('/resume'), {kind: 'resume'});

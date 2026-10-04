@@ -41,8 +41,9 @@ const ARGUMENT_COMMANDS = new Set(['/copy N']);
 export function paletteItems(): PaletteItem[] {
   const items: PaletteItem[] = [{id: 'inspector:toggle', label: 'Toggle command inspector', detail: 'Local token knowledge at the composer cursor', category: 'Command', action: {kind: 'toggleInspector'}}];
   for (const command of slashCommands) {
-    if (ARGUMENT_COMMANDS.has(command.name)) continue;
-    items.push({id: `slash:${command.name}`, label: command.name, detail: command.description, category: 'Command',
+    // Aliases resolve to the same surface as their canonical command: one palette entry each.
+    if (ARGUMENT_COMMANDS.has(command.name) || command.alias) continue;
+    items.push({id: `slash:${command.name}`, label: command.title ? `${command.title} · ${command.name}` : command.name, detail: command.description, category: 'Command',
       action: {kind: 'slash', command: command.insertion.trim()}});
   }
   for (const entry of SETTINGS_ENTRIES) {

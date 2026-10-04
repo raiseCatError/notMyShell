@@ -57,11 +57,12 @@ Oh My Zsh `.zsh-theme` files are executable shell code; they are never imported 
 
 ## Theme Bridge (`/theme-bridge`)
 
-A master switch (Setup: “Extend colors to tools?”, default No) and one setting per target:
+A master switch (Setup: “Extend colors to tools?”, default No) and **Apply themes**:
 
-- **Independent** – NMSh injects and changes nothing for that target.
-- **Follow NMSh** – the active Native theme; future supported launches/environments follow theme changes.
-- **Choose theme** – a pinned stable reference to any Built-in, Imported or Custom theme; the main theme never changes it.
+- **Manual** – each target has its own setting: **Independent** (NMSh injects and changes nothing), **Follow NMSh** (the active Native theme) or **Choose theme** (a pinned stable reference to any Built-in, Imported or Custom theme).
+- **Follow NMSh** / **Choose theme** – one policy for every target. Per-target rows become view-only; the Manual choices are preserved and return when Manual is chosen again.
+
+The panel is one persistent surface with inline rows grouped by capability (direct, managed files, detected only); Esc collapses an expanded row before it closes the panel. "Set Independent" stops applying a target; "Remove managed setup" removes NMSh's generated files and the include it added (ledger-checked).
 
 All targets consume the one resolved semantic palette; each target only maps semantic roles onto its documented roles. Chroma is a live presentation treatment and never reaches generated files. NO_COLOR (non-empty) or no color capability injects nothing.
 
@@ -69,12 +70,13 @@ All targets consume the one resolved semantic palette; each target only maps sem
 | --- | --- | --- |
 | fzf | `--color` for fzf launched by NMSh only (version-gated color names, 256/16-color fallback); precedence: Theme Bridge colors first, the launching surface's explicit options last (they win). NMSh-owned launches never read `FZF_DEFAULT_OPTS`. | nothing |
 | less / man | `LESS_TERMCAP_md/mb/me/us/ue/so/se` and `GROFF_NO_SGR` through the shell environment sink. `LESS`, `PAGER` and `MANPAGER` are never set. BSD/macOS mandoc already emits the overstrike these recolor; GNU groff needs `GROFF_NO_SGR`. NMSh sets `PAGER=cat` for its own transcript, so plain `man` output inside NMSh is paged only when your `MANPAGER` selects less. | env file |
-| LS_COLORS | `vivid generate <NMSh theme file>` when vivid is installed (local, bounded, output validated), otherwise a deliberately small mapping (file kinds plus a few broad extension groups). Replaces LS_COLORS in NMSh shells while active; Independent restores the previous value. | env file, vivid theme file |
-| tmux | NMSh-generated fragment of style/colour options only (status, window status, pane borders, messages, modes, menus, popups, clock, display-panes, copy-mode); no keys, layout, plugins, commands or behavior; `set -gq` so older tmux skips unknown options. Optional typed reload `tmux source-file <fragment>` on request. New servers need one include line (below). Theme plugins or explicit styles in your tmux.conf are reported as conflicts, not fought. | fragment; include after confirmation |
+| File listing colors | GNU `ls`/`gls`: `LS_COLORS` from `vivid generate <NMSh theme file>` when vivid is installed (local, bounded, output validated), otherwise a small mapping, plus a session-only `--color=auto` wrapper for NMSh shells. BSD/macOS `ls`: `CLICOLOR=1` and an `LSCOLORS` mapping. Independent restores the previous values. | env file, vivid theme file |
+| tmux | the colors part of the one NMSh-managed tmux file (shared with `/tmux` Config Studio settings): NMSh-generated of style/colour options only (status, window status, pane borders, messages, modes, menus, popups, clock, display-panes, copy-mode); no keys, layout, plugins, commands or behavior; `set -gq` so older tmux skips unknown options. Optional typed reload `tmux source-file <fragment>` on request. New servers need one include line (below). Theme plugins or explicit styles in your tmux.conf are reported as conflicts, not fought. | fragment; include after confirmation |
 | Neovim | generated Lua colorscheme `nmsh-bridge` (classic groups, floats, separators, diff, diagnostics with underline/sign/virtual text, common Tree-sitter captures linked onto base groups); data only. | colorscheme; include after confirmation |
 | Vim | separate Vim colorscheme with classic groups only, truecolor plus 256-color `cterm` fallback, `background` from the theme. | colorscheme; include after confirmation |
 | Helix | native TOML theme `nmsh-bridge` in Helix's themes directory (`$XDG_CONFIG_HOME/helix/themes`, else `~/.config/helix/themes`): a named `[palette]` from the semantic palette, then syntax, markup, diff, diagnostic and editor UI scopes mapped onto it. Generation and activation are separate: activation is one confirmed `theme = "nmsh-bridge"` assignment inserted before the first table of `config.toml`; a config that already selects a theme is never changed (`:theme nmsh-bridge` works by hand). A same-named file NMSh did not write is never overwritten. Helix has no safe CLI theme switch and running instances are not recolored. | theme file; assignment after confirmation |
-| bat, delta | detected only. bat applies custom themes only from its own theme cache (`bat cache --build`); delta takes syntax themes from that cache and diff styles from git config. NMSh does not modify either, and does not fake fidelity with an unrelated built-in theme. | nothing |
+| bat | a generated `.tmTheme` in bat's themes directory, then a reviewed `bat cache --build` (typed argv), verified with `bat --list-themes`; `BAT_THEME` is set through the environment sink only after verification. | theme file; cache build after confirmation |
+| delta | shown, not editable: delta takes syntax themes from bat's cache and diff styles from git config, which NMSh never changes. | nothing |
 
 Already-running editors and shells outside NMSh are not recolored live; Follow NMSh applies to new instances (and NMSh shells at their next prompt).
 
@@ -108,4 +110,4 @@ Every include tolerates a missing file, so an Independent target with an include
 
 ## Not in this slice
 
-Terminal title / OSC 0/2 ownership; terminal emulator or editor base-theme takeover (Ghostty/Kitty palettes, Zed/VS Code); bat/delta custom themes; arbitrary Oh My Zsh theme import; an Oh My Posh runtime provider; the #305 module ecosystem.
+Terminal title / OSC 0/2 ownership; terminal emulator or editor base-theme takeover (Ghostty/Kitty palettes, Zed/VS Code); delta custom styles; arbitrary Oh My Zsh theme import; an Oh My Posh runtime provider; the #305 module ecosystem.

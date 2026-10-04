@@ -16,7 +16,7 @@ import type {BridgeMode, BridgeTargetId} from './model.js';
  */
 
 export const ADAPTER_VERSION = 1;
-export type ManagedTarget = Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix' | 'bat'> | 'vivid';
+export type ManagedTarget = Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix' | 'bat'> | 'vivid' | 'tmuxConfig';
 export type HookTarget = Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim' | 'helix'>;
 
 export interface ConfigHook {
@@ -55,6 +55,8 @@ export function artifactPath(target: ManagedTarget, env: NodeJS.ProcessEnv = pro
   const root = bridgeDirectory(env);
   switch (target) {
     case 'tmux': return join(root, 'tmux', 'nmsh-bridge.tmux.conf');
+    // The one file tmux.conf includes: Tool Configuration settings, then the Theme Bridge colors.
+    case 'tmuxConfig': return join(root, 'tmux', 'nmsh.tmux.conf');
     case 'neovim': return join(root, 'nvim', 'colors', 'nmsh-bridge.lua');
     case 'vim': return join(root, 'vim', 'colors', 'nmsh-bridge.vim');
     case 'vivid': return join(root, 'vivid', 'nmsh-bridge.yml');
@@ -82,7 +84,7 @@ export function batConfigDirectory(env: NodeJS.ProcessEnv = process.env): string
 export const runtimeDirectory = (target: 'neovim' | 'vim', env: NodeJS.ProcessEnv = process.env) => dirname(dirname(artifactPath(target, env)));
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'helix', 'bat', 'vivid'];
+const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'helix', 'bat', 'vivid', 'tmuxConfig'];
 
 /** A malformed or stale ledger yields no ownership (so nothing can be deleted on its say-so). */
 export function loadLedger(env: NodeJS.ProcessEnv = process.env): Ledger {
@@ -215,7 +217,7 @@ export function hookSpec(target: HookTarget, env: NodeJS.ProcessEnv = process.en
   }
   const xdg = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(home, '.config');
   if (target === 'tmux') {
-    const fragment = artifactPath('tmux', env);
+    const fragment = artifactPath('tmuxConfig', env);
     if (!hookSafePath(fragment)) return {error: `The managed file path ${fragment} cannot be quoted safely for tmux.`};
     const existing = firstExisting([join(home, '.tmux.conf'), join(xdg, 'tmux', 'tmux.conf')]);
     return {configPath: existing ?? join(home, '.tmux.conf'), lines: [HOOK_COMMENT.tmux, `source-file -q '${fragment}'`], createIfMissing: !existing};
@@ -260,21 +262,30 @@ export function planHook(spec: HookSpec, home: string): {plan: FileEditPlan} | {
   return {error: 'reason' in result ? result.reason : 'Cannot edit that file.'};
 }
 
+/** The ledger entry that records a target's include: tmux's lives with the one managed tmux file. */
+export const hookOwner = (target: HookTarget): ManagedTarget => target === 'tmux' ? 'tmuxConfig' : target;
+
+/** The recorded include for a target, if any. */
+export function recordedHook(target: HookTarget, env: NodeJS.ProcessEnv = process.env): ConfigHook | undefined {
+  return loadLedger(env).entries[hookOwner(target)]?.hook;
+}
+
 /** Applies a confirmed hook plan and records the exact lines in the ledger. */
 export function applyHook(target: HookTarget, plan: FileEditPlan, spec: HookSpec, env: NodeJS.ProcessEnv = process.env, now = new Date()): {ok: true} | {ok: false; error: string} {
   const ledger = loadLedger(env);
-  const entry = ledger.entries[target];
+  const owner = hookOwner(target);
+  const entry = ledger.entries[owner];
   if (!entry) return {ok: false, error: 'Generate the managed file first.'};
   const result = applyPlan(plan);
   if (!result.ok) return {ok: false, error: result.reason};
-  ledger.entries[target] = {...entry, hook: {configPath: spec.configPath, lines: [...spec.lines], insertedAt: now.toISOString()}};
+  ledger.entries[owner] = {...entry, hook: {configPath: spec.configPath, lines: [...spec.lines], insertedAt: now.toISOString()}};
   saveLedger(ledger, env);
   return {ok: true};
 }
 
 /** The plan to remove exactly the recorded hook lines; anything else in the file is untouched. */
 export function planHookRemoval(target: HookTarget, home: string, env: NodeJS.ProcessEnv = process.env): {plan: FileEditPlan} | {gone: true} | {error: string} {
-  const hook = loadLedger(env).entries[target]?.hook;
+  const hook = recordedHook(target, env);
   if (!hook) return {error: 'NMSh has no recorded include for this target.'};
   const facts = inspectFile(hook.configPath, homeRoots(home));
   if (facts.content === undefined) return {error: `${hook.configPath} ${facts.refusal ?? 'cannot be read'}; nothing was changed.`};
@@ -292,7 +303,7 @@ export function applyHookRemoval(target: HookTarget, plan: FileEditPlan | undefi
     if (!result.ok) return {ok: false, error: result.reason};
   }
   const ledger = loadLedger(env);
-  const entry = ledger.entries[target];
+  const entry = ledger.entries[hookOwner(target)];
   if (entry) { delete entry.hook; saveLedger(ledger, env); }
   return {ok: true};
 }

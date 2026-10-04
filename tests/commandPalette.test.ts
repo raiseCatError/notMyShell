@@ -17,7 +17,9 @@ test('one registry lists slash commands, settings pages, config rows and explici
   const items = paletteItems();
   const ids = new Set(items.map(item => item.id));
   assert.equal(ids.size, items.length, 'ids are unique');
-  for (const command of slashCommands.filter(command => command.name !== '/copy N')) assert.ok(ids.has(`slash:${command.name}`), command.name);
+  // Aliases (/composer, /pickers, /status-strip) resolve to their canonical command's one entry.
+  for (const command of slashCommands.filter(command => command.name !== '/copy N' && !command.alias)) assert.ok(ids.has(`slash:${command.name}`), command.name);
+  for (const command of slashCommands.filter(command => command.alias)) assert.ok(!ids.has(`slash:${command.name}`) && ids.has(`slash:${command.alias}`), command.name);
   for (const entry of SETTINGS_ENTRIES) assert.ok(ids.has(`open:${entry.id}`), entry.id);
   for (const row of SETTINGS_ROWS) assert.ok(ids.has(`config:${row.id}`), row.id);
   for (const item of items) {

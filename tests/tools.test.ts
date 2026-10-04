@@ -20,7 +20,7 @@ test('offline catalog, truthful filters and curated argv recipes do not execute 
   state.query = ''; state.tab = 'installed';
   assert.deepEqual(visibleTools(state).map(tool => tool.id), ['fzf']);
   state.tab = 'configure';
-  assert.deepEqual(visibleTools(state).map(tool => tool.id), ['starship']);
+  assert.deepEqual(visibleTools(state).map(tool => tool.id), ['starship', 'tmux'], 'Configure lists only tools with a registered adapter');
   assert.equal(toolInstall(TOOLS[0]!, false), undefined);
   assert.deepEqual(toolInstall(TOOLS[0]!, true)?.args, ['install', 'ripgrep']);
   assert.deepEqual(parseSlashCommand('/tools'), {kind: 'tools'});

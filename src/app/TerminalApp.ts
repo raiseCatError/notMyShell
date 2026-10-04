@@ -36,8 +36,17 @@ import {activeThemeRef, assetRef, selectableThemes, themeRefLabel} from '../appe
 import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
 import {applyThemeBridge, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
-import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
-import {applyHook, applyHookRemoval, artifactPath, hookSpec, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, type HookSpec, type HookTarget, type ManagedTarget} from '../themeBridge/artifacts.js';
+import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
+import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
+import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
+import {createTmuxPanel, describeTmuxChange, pendingChanges, renderTmuxPanel, tmuxPanelKey, type TmuxPanelState} from '../tools/config/TmuxPanel.js';
+import {applyTmuxChange, loadTmuxModel, parseTmuxConfig, readUserTmuxConfig, saveTmuxModel} from '../tools/config/tmux.js';
+import {writeTmuxManaged} from '../tools/config/tmuxManaged.js';
+import {createDotfilesPanel, dotfilesKey, renderDotfilesPanel, type DotfilesAction, type DotfilesState} from '../dotfiles/DotfilesPanel.js';
+import {expandSource, isRemoteSource, scanDotfiles} from '../dotfiles/scan.js';
+import {applyPlan as applyDotfilesPlan, buildPlan, reviewLines} from '../dotfiles/plan.js';
+import {applyHook, applyHookRemoval, artifactPath, hookSpec, loadLedger, ownership, planHook, planHookRemoval, recordedHook, removeArtifact, type HookSpec, type HookTarget, type ManagedTarget} from '../themeBridge/artifacts.js';
 import {BRIDGE_MODE_LABELS, BRIDGE_POLICY_LABELS, BRIDGE_TARGET_LABELS, effectiveMode as bridgeMode} from '../themeBridge/model.js';
 import type {FileEditPlan} from '../ask/fileEdit.js';
 import {colorEscape} from '../chroma/escape.js';
@@ -95,7 +104,7 @@ import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
-import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, type ProviderStatus} from '../providers/providers.js';
+import {clearProviderDetection, detectProvider, installUnavailableReason, providerInstall, resolveCommand, resolveProvider, runExternal, type ProviderStatus} from '../providers/providers.js';
 import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, providerPanelSelection, renderProviderPanel,
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
@@ -206,7 +215,7 @@ import {liveLine} from '../status/liveLine.js';
 import {browseOutcome} from '../ask/fileAssist.js';
 import {gitWorktrees} from '../ask/git.js';
 import type {AskAction, AskContext, AskOutcome} from '../ask/types.js';
-import {askProviderFacts, PROVIDER_FAMILIES, selectProvider} from '../providers/families.js';
+import {askProviderFacts, PROVIDER_FAMILIES, providerFamily, selectProvider, type SwitchableFamily} from '../providers/families.js';
 import {LocalUnderstanding, understandingStatusRows, understandingWelcomeText} from '../understanding/LocalUnderstanding.js';
 import {stateLabel, createUnderstandingPanel, renderUnderstandingPanel, understandingKey, type UnderstandingFacts, type UnderstandingPanelState} from '../understanding/UnderstandingPanel.js';
 import {downloadPinned, loadRecommendedModel} from '../understanding/recommended.js';
@@ -1061,6 +1070,32 @@ export class TerminalApp {
       void this.handleThemeBridgeKey(key, this.themeBridgePanel);
       return;
     }
+    if (this.rowPanel) {
+      const action = rowPanelKey(this.rowPanel, key, this.promptConfiguration);
+      if (action?.kind === 'close') { this.rowPanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'change') { this.applySettingsConfiguration(action.configuration); this.syncStatusStrip(); }
+      this.render();
+      return;
+    }
+    if (this.configureList) {
+      const tools = registryFacts();
+      const action = configureListKey(this.configureList, key, tools);
+      if (action?.kind === 'close') { this.configureList = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'open') { this.configureList = undefined; void this.openConfigure(action.id, '/configure'); }
+      else if (action?.kind === 'bridge') { this.configureList = undefined; void this.openThemeBridge(); }
+      this.render();
+      return;
+    }
+    if (this.tmuxPanel) {
+      void this.handleTmuxKey(key, this.tmuxPanel);
+      return;
+    }
+    if (this.dotfiles) {
+      const action = dotfilesKey(this.dotfiles, key);
+      if (action) void this.handleDotfilesAction(action, this.dotfiles).then(() => this.render());
+      this.render();
+      return;
+    }
     if (this.screensaverPanel) {
       this.handleScreensaverKey(key, this.screensaverPanel);
       return;
@@ -1257,10 +1292,12 @@ export class TerminalApp {
       return;
     }
     if (this.providersOverview) {
-      const action = providersOverviewKey(this.providersOverview, key);
+      const action = providersOverviewKey(this.providersOverview, key, {configuration: this.promptConfiguration, statuses: this.providerStatuses});
       if (action?.kind === 'close') { this.providersOverview = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'detect') void this.refreshProvidersOverview(true);
       else if (action?.kind === 'open') this.openProviderFamily(action.row);
+      else if (action?.kind === 'select') this.selectProviderInline(action.family, action.id);
+      else if (action?.kind === 'install') void this.installProviderInline(action.family, action.id);
       this.render();
       return;
     }
@@ -1611,6 +1648,8 @@ export class TerminalApp {
     // completion menu: Down enters it, Up from its first row (or before
     // entering it) leaves it for command history.
     const searchSurface = this.historySearchActive || this.directorySearchActive;
+    // A bottom composer lists picker results above the query, best match nearest it: Up moves away from the input.
+    if (searchSurface && this.pickerFromBottom() && (key.kind === 'up' || key.kind === 'down')) key = {...key, kind: key.kind === 'up' ? 'down' : 'up'} as Key;
     const inSlashMenu = this.slashMenuFor === this.editor.text;
     if (key.kind === 'up' && suggestions.length > 0 && (searchSurface || (inSlashMenu && this.selectedSuggestion > 0))) {
       this.selectedSuggestion = (this.selectedSuggestion - 1 + suggestions.length) % suggestions.length;
@@ -1875,7 +1914,7 @@ export class TerminalApp {
       const native = () => { /* Keep the existing native menu on fallback. */ };
       const result = await openPicker(this.promptConfiguration.picker, candidates.map((candidate, index) => ({
         id: String(index), label: candidate.display, description: candidate.description, value: candidate.insertion,
-      })), native, this.pickerHandoff, process.env, await this.fzfThemeArgs());
+      })), native, this.pickerHandoff, process.env, await this.fzfThemeArgs(), this.fzfLayout());
       if (!this.stopped && !this.running && this.editor.text === original && this.completionCursor === cursor && this.context.cwd === cwd
         && result?.kind === 'selected') {
         const selected = candidates[Number(result.candidate.id)];
@@ -1908,7 +1947,7 @@ export class TerminalApp {
         id: entry.id, label: entry.command, value: entry.command, description: entry.cwd,
       }));
       if (this.stopped || this.running || this.editor.text !== original) return;
-      const result = await openPicker(this.promptConfiguration.picker, candidates, native, this.pickerHandoff, process.env, await this.fzfThemeArgs());
+      const result = await openPicker(this.promptConfiguration.picker, candidates, native, this.pickerHandoff, process.env, await this.fzfThemeArgs(), this.fzfLayout());
       if (this.stopped) return;
       if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
       if (result?.kind === 'fallback') this.output.addFrontendInteraction('/history', result.reason, INFO);
@@ -1927,7 +1966,7 @@ export class TerminalApp {
       if (this.stopped || this.running || this.editor.text !== original) return;
       const result = await openPicker(this.promptConfiguration.picker, directories.map(item => ({
         id: item.path, label: item.path, description: item.project, value: directoryCommand(item.path),
-      })), native, this.pickerHandoff, process.env, await this.fzfThemeArgs());
+      })), native, this.pickerHandoff, process.env, await this.fzfThemeArgs(), this.fzfLayout());
       if (this.stopped) return;
       if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
       if (result?.kind === 'fallback') this.output.addFrontendInteraction('/dirs', result.reason, INFO);
@@ -2032,6 +2071,16 @@ export class TerminalApp {
     else if (slash.kind === 'activity') { this.panelOrigin = undefined; this.focusConfigRow('activityColors'); }
     else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.openThemeStudio(); }
     else if (slash.kind === 'themeBridge') { this.panelOrigin = undefined; await this.openThemeBridge(); }
+    // Short routes into the canonical surfaces: no second editor and no second state anywhere.
+    else if (slash.kind === 'chrome') { this.panelOrigin = undefined; this.focusConfigRow('uiChrome'); }
+    else if (slash.kind === 'glyphs') {
+      this.panelOrigin = undefined;
+      this.settingsPanelState = {section: 'appearance', selectedIndex: this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1, glyphStyle: this.promptConfiguration.glyphStyle, onboarding: false};
+    }
+    else if (slash.kind === 'statusStrip') { this.panelOrigin = undefined; this.openStatusStrip(); }
+    else if (slash.kind === 'configure') { this.panelOrigin = undefined; await this.openConfigure(slash.tool, command); }
+    else if (slash.kind === 'integrations') { this.panelOrigin = undefined; await this.openIntegrations(); }
+    else if (slash.kind === 'dotfiles') { this.panelOrigin = undefined; this.dotfiles = createDotfilesPanel(slash.source ?? '~/dotfiles'); if (slash.source) await this.handleDotfilesAction({kind: 'scan', source: slash.source}, this.dotfiles); this.render(); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
     else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
@@ -2074,7 +2123,7 @@ export class TerminalApp {
     }
     else if (slash.kind === 'palette') this.openPalette();
     else if (slash.kind === 'ask') this.openAsk(slash.request);
-    else if (slash.kind === 'providers') this.openProvidersOverview();
+    else if (slash.kind === 'providers') this.openProvidersOverview(slash.family);
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else if (slash.kind === 'doctor') void this.openDoctor();
     else if (slash.kind === 'watch') this.handleWatch(command, slash.op, slash.arguments);
@@ -3254,7 +3303,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview);
   }
 
@@ -3263,6 +3312,7 @@ export class TerminalApp {
     if (this.setupState) return SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
     if (this.themeBridgePanel) return {columns: 56, rows: 14};
+    if (this.tmuxPanel || this.configureList || this.rowPanel || this.dotfiles) return {columns: 50, rows: 12};
     if (this.screensaverPanel) return SCREENSAVER_MIN_SIZE;
     if (this.chromeEditor || this.stopsEditor) return CHROME_EDITOR_MIN_SIZE;
     return undefined;
@@ -3284,6 +3334,10 @@ export class TerminalApp {
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
+    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
+    if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
+    if (this.tmuxPanel) return renderTmuxPanel(this.tmuxPanel, columns, this.dimensions().rows);
+    if (this.dotfiles) return renderDotfilesPanel(this.dotfiles, columns, this.dimensions().rows);
     if (this.screensaverPanel) return this.renderScreensaverRows(this.screensaverPanel, columns);
     if (this.stopsEditor) return this.renderStopsEditor(this.stopsEditor, columns);
     if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
@@ -3331,7 +3385,7 @@ export class TerminalApp {
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
     if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
-    if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
+    if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns, this.dimensions().rows - 3), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
     if (this.resumeBrowser?.liveOnly) return framePanel(this.sessionsViewRows(this.resumeBrowser, columns), columns);
     if (this.resumeBrowser) {
@@ -3650,12 +3704,13 @@ export class TerminalApp {
       const project = detectMiseProject(this.shellCwd);
       this.misePanel = {project, selected: 0, result: this.miseService.cached(project)};
     }
-    else if (action === 'configure' && state.detail?.configuration) await this.startToolConfiguration(state.detail.configuration);
+    else if (action === 'configure' && state.detail?.configuration) { this.toolsPanel = undefined; await this.openConfigure(state.detail.configuration, '/tools'); }
     else if (action === 'provider') {
       const family = state.detail?.providerFamily;
       if (family === 'welcome' || family === 'history' || family === 'picker' || family === 'navigation') {
+        // The one provider surface, focused on this family.
         this.toolsPanel = undefined;
-        this.startProviderPanel(family);
+        this.openProvidersOverview(family);
       }
     } else if (action === 'refresh') await refreshTools(state, () => this.render());
     else if (action === 'checkUpdates') await this.checkToolUpdates(state);
@@ -3841,7 +3896,7 @@ export class TerminalApp {
       reports: this.bridgeReports, themes: selectableThemes(config), pinned: target => bridge.targets[target].theme,
       ...(active ? {activeRef: active, activeLabel: themeRefLabel(active, config)} : {}),
       managed: target => target === 'tmux' || target === 'neovim' || target === 'vim' || target === 'helix' || target === 'bat'
-        ? {...(ledger.entries[target] && ownership(target, ledger) === 'owned' ? {artifact: artifactPath(target)} : {}), ...(ledger.entries[target]?.hook ? {include: ledger.entries[target]!.hook!.configPath} : {})}
+        ? {...(ledger.entries[target] && ownership(target, ledger) === 'owned' ? {artifact: artifactPath(target)} : {}), ...(target !== 'bat' && recordedHook(target as HookTarget) ? {include: recordedHook(target as HookTarget)!.configPath} : {})}
         : undefined};
   }
 
@@ -3858,6 +3913,10 @@ export class TerminalApp {
   private async handleThemeBridgeKey(key: Key, state: ThemeBridgePanelState): Promise<void> {
     const action = themeBridgePanelKey(state, key, this.themeBridgePanelContext());
     if (!action) { this.render(); return; }
+    await this.handleThemeBridgeAction(action, state);
+  }
+
+  private async handleThemeBridgeAction(action: BridgePanelAction, state: ThemeBridgePanelState): Promise<void> {
     if (action.kind === 'close') { this.themeBridgePanel = undefined; this.bridgePlan = undefined; this.bridgeBatPlan = undefined; this.returnFromPanel(); this.render(); return; }
     const home = process.env.HOME || homedir();
     const problem = (target: BridgeTargetId) => this.bridgeProblems.find(outcome => outcome.target === target)?.message;
@@ -3898,12 +3957,12 @@ export class TerminalApp {
       }
     } else if (action.kind === 'planRemoval') {
       const target = action.target as HookTarget | 'bat';
-      const hook = loadLedger().entries[target]?.hook;
-      if (!hook || target === 'bat') {
+      const hook = target === 'bat' ? undefined : recordedHook(target as HookTarget);
+      if (!hook) {
         this.bridgePlan = {target, removal: true};
         state.confirm = {kind: 'removeSetup', target, path: artifactPath(target), preview: [`- ${artifactPath(target)} (NMSh-managed file; no config include is recorded)`]};
       } else {
-        const planned = planHookRemoval(target, home);
+        const planned = planHookRemoval(target as HookTarget, home);
         if ('error' in planned) state.message = planned.error;
         else {
           this.bridgePlan = {target, ...('plan' in planned ? {plan: planned.plan} : {}), removal: true};
@@ -3993,6 +4052,160 @@ export class TerminalApp {
       state.message = results.length ? results.join(' · ') : 'Nothing needed changing.';
     }
     await this.refreshBridgeReports();
+    this.render();
+  }
+
+  /**
+   * Picker orientation follows the composer: Bottom puts the query at the
+   * bottom with results above (best match nearest the input), Top puts the
+   * query at the top with results below. Flow keeps results below its input,
+   * so it reads like Top; fullscreen external pickers use the bottom layout for Flow.
+   */
+  private pickerFromBottom(): boolean {
+    return this.promptConfiguration.composerPosition === 'bottom';
+  }
+
+  private orientPicker(rows: string[]): string[] {
+    return (this.historySearchActive || this.directorySearchActive) && this.pickerFromBottom() ? [...rows].reverse() : rows;
+  }
+
+  /** fzf layout for NMSh-owned launches: query at the bottom (fzf's default) unless the composer docks at the top. */
+  private fzfLayout(): 'default' | 'reverse' {
+    return this.promptConfiguration.composerPosition === 'top' ? 'reverse' : 'default';
+  }
+
+  // ---- Status strip, /configure, /tmux, /integrations -------------------------------
+
+  private rowPanel?: RowPanelState;
+  private configureList?: ConfigureListState;
+  private tmuxPanel?: TmuxPanelState;
+  /** The include plan shown in the tmux review, applied exactly if confirmed. */
+  private tmuxIncludePlan?: {plan: FileEditPlan; spec: HookSpec};
+
+  /** /strip and /status-strip: the canonical Status strip rows, with a live strip preview. */
+  private openStatusStrip(): void {
+    this.rowPanel = createRowPanel('Status strip', 'compact NMSh status row, top right · same settings as Config', ['statusStrip', 'stripClock', 'stripBattery', 'stripCpu', 'stripRam', 'stripRamDisplay', 'stripUptime']);
+  }
+
+  /** /configure [tool] and /tmux: the registered adapter's editor, or a factual answer. */
+  private async openConfigure(tool: string | undefined, command: string): Promise<void> {
+    if (!tool) { this.configureList = {selected: 0}; this.render(); return; }
+    const entry = toolConfigEntry(tool);
+    if (!entry) { this.output.addFrontendInteraction(command, `NMSh has no managed configuration adapter for ${tool}. /configure lists the tools it can configure.`, INFO); this.render(); return; }
+    if (entry.id === 'starship') { void this.startToolConfiguration('starship'); return; }
+    if (entry.id === 'tmux') {
+      const user = readUserTmuxConfig();
+      this.bridgeFacts ??= await detectTargets();
+      const report = reportTargets(await this.themeBridgeContext()).find(item => item.target === 'tmux');
+      this.tmuxPanel = createTmuxPanel(loadTmuxModel(), user ? {path: user.path, parsed: parseTmuxConfig(user.text)} : undefined,
+        report ? `${BRIDGE_MODE_LABELS[report.mode]}${report.themeLabel && report.mode !== 'independent' ? ` · ${report.themeLabel}` : ''}` : 'Independent', Boolean(this.bridgeFacts.tmux?.installed));
+      this.render();
+      return;
+    }
+    if (entry.ownership === 'theme-bridge') { await this.openThemeBridge(); return; }
+    this.output.addFrontendInteraction(command, `${entry.label}: ${entry.summary}.`, INFO);
+    this.render();
+  }
+
+  /** /integrations: the shared Theme Bridge planner, opened straight on Review all. */
+  private async openIntegrations(): Promise<void> {
+    await this.openThemeBridge();
+    if (this.themeBridgePanel) await this.handleThemeBridgeAction({kind: 'reviewAll'}, this.themeBridgePanel);
+  }
+
+  private dotfiles?: DotfilesState;
+  private dotfilesInclude?: {plan: FileEditPlan; spec: HookSpec};
+
+  /** /dotfiles actions: scanning reads data only; cloning needs the confirmed step; applying goes through the adapters. */
+  private async handleDotfilesAction(action: DotfilesAction, state: DotfilesState): Promise<void> {
+    if (action.kind === 'close') { this.dotfiles = undefined; this.dotfilesInclude = undefined; this.returnFromPanel(); return; }
+    if (action.kind === 'scan') {
+      if (isRemoteSource(action.source)) {
+        const slug = action.source.replace(/^.*[/:]/u, '').replace(/\.git$/u, '').replace(/[^A-Za-z0-9._-]/gu, '-').slice(0, 60) || 'repository';
+        state.clone = {url: action.source, target: join(nmshConfigDirectory(), 'dotfiles-inspect', `${slug}-${Date.now()}`), yes: false};
+        state.step = 'clone';
+        return;
+      }
+      const root = expandSource(action.source, this.shellCwd);
+      const scan = scanDotfiles(root);
+      if ('error' in scan) { state.message = scan.error; state.step = 'source'; return; }
+      state.scan = scan;
+      state.items = buildPlan(scan);
+      state.selected = 0;
+      state.step = 'items';
+      return;
+    }
+    if (action.kind === 'clone' && state.clone) {
+      const git = resolveCommand('git', process.env.PATH ?? '');
+      if (!git) { state.message = 'git is not installed.'; state.step = 'source'; return; }
+      state.message = 'Cloning…';
+      this.render();
+      const env = {...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1'};
+      const result = await runExternal(git, ['clone', '--depth', '1', '--no-recurse-submodules', '-c', 'core.hooksPath=/dev/null', '-c', 'protocol.file.allow=never', '--', state.clone.url, state.clone.target],
+        {timeoutMs: 120_000, maxBytes: 64 * 1024, env});
+      if (!result.ok) { state.message = 'The clone failed; nothing else was done.'; state.step = 'source'; state.clone = undefined; return; }
+      const target = state.clone.target;
+      state.clone = undefined;
+      await this.handleDotfilesAction({kind: 'scan', source: target}, state);
+      return;
+    }
+    if (action.kind === 'review') {
+      this.dotfilesInclude = undefined;
+      const include: string[] = [];
+      if (state.items.some(item => item.mode === 'import' && item.fields?.some(field => field.use)) && !recordedHook('tmux')) {
+        const spec = hookSpec('tmux');
+        if (!('error' in spec)) {
+          const planned = planHook(spec, process.env.HOME || homedir());
+          if ('plan' in planned) { this.dotfilesInclude = {plan: planned.plan, spec}; include.push(spec.configPath, ...planned.plan.preview.filter(line => line.startsWith('+'))); }
+        }
+      }
+      state.review = {lines: reviewLines(state.items, include), yes: false};
+      state.step = 'review';
+      return;
+    }
+    if (action.kind === 'apply') {
+      const results = applyDotfilesPlan(state.items);
+      if (this.dotfilesInclude) {
+        const included = applyHook('tmux', this.dotfilesInclude.plan, this.dotfilesInclude.spec);
+        results.push(`tmux.conf: ${included.ok ? 'one include added' : included.error}`);
+        this.dotfilesInclude = undefined;
+      }
+      state.results = results.length ? results : ['Nothing was selected, so nothing changed.'];
+      state.step = 'result';
+    }
+  }
+
+  private async handleTmuxKey(key: Key, state: TmuxPanelState): Promise<void> {
+    const action = tmuxPanelKey(state, key);
+    if (action?.kind === 'close') { this.tmuxPanel = undefined; this.tmuxIncludePlan = undefined; this.returnFromPanel(); }
+    else if (action?.kind === 'openPrompt') { this.tmuxPanel = undefined; void this.startPromptSettings(false); }
+    else if (action?.kind === 'openBridge') { this.tmuxPanel = undefined; await this.openThemeBridge(); }
+    else if (action?.kind === 'reload') state.message = (await reloadTmux()).message;
+    else if (action?.kind === 'review') {
+      const include: string[] = [];
+      this.tmuxIncludePlan = undefined;
+      if (!recordedHook('tmux')) {
+        const spec = hookSpec('tmux');
+        if ('error' in spec) include.push(`  ${spec.error}`);
+        else {
+          const planned = planHook(spec, process.env.HOME || homedir());
+          if ('plan' in planned) { this.tmuxIncludePlan = {plan: planned.plan, spec}; include.push(spec.configPath, ...planned.plan.preview); }
+        }
+      }
+      state.review = {lines: pendingChanges(state).map(describeTmuxChange), include, yes: false};
+    } else if (action?.kind === 'apply') {
+      try {
+        saveTmuxModel(state.draft);
+        const written = writeTmuxManaged(state.draft);
+        if (!written.ok) state.message = written.error;
+        else {
+          const included = this.tmuxIncludePlan ? applyHook('tmux', this.tmuxIncludePlan.plan, this.tmuxIncludePlan.spec) : {ok: true as const};
+          this.tmuxIncludePlan = undefined;
+          state.saved = structuredClone(state.draft);
+          state.message = included.ok ? 'Saved to NMSh\'s managed tmux file. New tmux servers load it; R reloads a running server now.' : included.error;
+        }
+      } catch (error) { state.message = `Nothing was applied: ${error instanceof Error ? error.message : String(error)}`; }
+    }
     this.render();
   }
 
@@ -6235,9 +6448,9 @@ export class TerminalApp {
     if (this.output.applyAdvisoryFold(record.startId, applyFoldHint(input, hint))) this.render();
   }
 
-  private openProvidersOverview(): void {
+  private openProvidersOverview(focus?: SwitchableFamily): void {
     this.panelOrigin = undefined;
-    this.providersOverview = createProvidersOverview();
+    this.providersOverview = createProvidersOverview(focus);
     void this.refreshProvidersOverview(false);
   }
 
@@ -6259,6 +6472,47 @@ export class TerminalApp {
     try { installedByNmsh = new Set(new InstallProvenance().list().map(record => record.toolId)); } catch { /* no provenance yet */ }
     return {configuration: this.promptConfiguration, statuses: this.providerStatuses, installedByNmsh,
       understanding: this.understandingSummary(), shell: {current: shellAdapter(this.shellId).label, defaultShell: shellAdapter(this.promptConfiguration.shellBackend).label}};
+  }
+
+  /**
+   * Inline selection from /providers: the same configuration and the same
+   * side effects as the family panels, applied at once so the overview is
+   * immediately factual (the family row shows the new provider as Active).
+   */
+  private selectProviderInline(family: SwitchableFamily, id: string): void {
+    const next = selectProvider(this.promptConfiguration, family, id);
+    const state = this.providersOverview;
+    if (!next || !state) return;
+    if (!this.applySettingsConfiguration(next)) return;
+    if (family === 'suggestions') this.applySuggestionProvider();
+    if (family === 'history') void this.loadHistory();
+    if (family === 'navigation') { this.directoryQueryAbort?.abort(); this.directoryQuery = undefined; this.directoryResults = []; }
+    if (family === 'prompt') void this.refreshProviderPrompt().then(() => this.render());
+    const label = providerFamily(family)!.providers.find(provider => provider.id === id)!.label;
+    state.message = `${providerFamily(family)!.title} · ${label}`;
+  }
+
+  private async installProviderInline(family: SwitchableFamily, id: string): Promise<void> {
+    const state = this.providersOverview;
+    const descriptor = providerFamily(family)?.providers.find(provider => provider.id === id);
+    const install = descriptor ? providerInstall(descriptor) : undefined;
+    if (!state || !descriptor || !install) return;
+    state.installing = {family, id, line: `Installing ${descriptor.label} · ${install.label}…`};
+    this.render();
+    const task = new TaskProgress(`Installing ${descriptor.label}`, () => { if (this.providersOverview === state) this.render(); }, Date.now(), descriptor.label);
+    const outcome = await task.run(install.command, [...install.args]);
+    if (this.stopped) return;
+    clearProviderDetection();
+    const status = await detectProvider(descriptor);
+    this.providerStatuses.set(descriptor.id, status);
+    state.installing = undefined;
+    if (outcome.status === 'succeeded' && status.state === 'installed') {
+      recordInstall(descriptor.executable ?? descriptor.id, install);
+      this.selectProviderInline(family, id);
+      this.milestoneEffect();
+    } else state.message = outcome.status === 'succeeded' ? `${install.label} finished, but ${descriptor.label} was not found on PATH; nothing was selected.`
+      : `${descriptor.label} was not installed. ${task.state.error ?? ''}`.trim();
+    this.render();
   }
 
   /** Each family opens its existing panel: switching, previewed installs and configuration live there. */
@@ -6453,7 +6707,7 @@ export class TerminalApp {
     this.pickerOpening = true;
     try {
       const files = listProjectFiles(root).slice(0, 20_000);
-      const result = await openPicker(this.promptConfiguration.picker, files.map(path => ({id: path, label: path, value: path})), fallback, this.pickerHandoff, process.env, await this.fzfThemeArgs());
+      const result = await openPicker(this.promptConfiguration.picker, files.map(path => ({id: path, label: path, value: path})), fallback, this.pickerHandoff, process.env, await this.fzfThemeArgs(), this.fzfLayout());
       if (this.askState !== state || this.stopped) return;
       if (result?.kind === 'selected') await this.runInAsk(state, {kind: 'openFile', path: resolvePath(root, result.candidate.value)});
       else if (result?.kind === 'fallback') fallback();
@@ -6792,6 +7046,24 @@ export class TerminalApp {
   private async executeAskAction(action: AskAction): Promise<void> {
     switch (action.kind) {
       case 'slash': await this.runSlash(action.label, action.slash); return;
+      case 'tmux': {
+        // Ask's own Yes (which starts on No) confirmed exactly these typed changes.
+        let model = loadTmuxModel();
+        for (const change of action.changes) { const next = applyTmuxChange(model, change); if (!('error' in next)) model = next; }
+        saveTmuxModel(model);
+        const written = writeTmuxManaged(model);
+        this.output.addFrontendInteraction('/ask', written.ok ? `tmux: ${action.label}. Saved in NMSh's managed tmux file${recordedHook('tmux') ? '; /tmux → R reloads a running server' : '; your tmux.conf does not load it yet: /tmux → Review & apply adds the one include after you review it'}.` : written.error, written.ok ? SUCCESS : ERROR);
+        return;
+      }
+      case 'themeBridge': {
+        await this.saveBridge(bridge => {
+          if (action.enabled !== undefined) bridge.enabled = action.enabled;
+          if (action.policy) bridge.policy = action.policy;
+          for (const [target, setting] of Object.entries(action.targets ?? {})) bridge.targets[target as BridgeTargetId] = {mode: setting.mode, ...(setting.theme ? {theme: setting.theme} : {})};
+        });
+        this.output.addFrontendInteraction('/ask', `Theme Bridge · ${action.label}. Tools that need a one-time include or cache build show it in /integrations.`, SUCCESS);
+        return;
+      }
       case 'switchShell': await this.switchShell(action.shell, `/shell ${action.shell}`); return;
       case 'installShell': {
         this.openShellPanel(action.shell);
@@ -7251,7 +7523,7 @@ export class TerminalApp {
         case 'panel': return plan.panelPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'inspector': return this.inspectorRows(columns);
-        case 'suggestions': return [...suggestionView.items.map((suggestion, visibleIndex) => {
+        case 'suggestions': return this.orientPicker([...suggestionView.items.map((suggestion, visibleIndex) => {
           const selected = suggestionView.start + visibleIndex === effectiveSelection;
           if ('correction' in suggestion) return renderCorrection(suggestion, columns);
           if ('source' in suggestion && 'replacement' in suggestion) {
@@ -7261,7 +7533,7 @@ export class TerminalApp {
             `${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${suggestion.name.padEnd(10)}${RESET}${SECONDARY} ${suggestion.description}${RESET}`,
             columns,
           );
-        }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])];
+        }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': {
           if (!this.running) return [];

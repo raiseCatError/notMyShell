@@ -3,10 +3,19 @@ import {authoredMarkdown, type AuthoredMarkdown} from './markdown.js';
 
 /** The /help page. Every input is NMSh source (command table, fixed guidance); nothing comes from the shell. */
 export function helpMarkdown(): AuthoredMarkdown {
-  const commands = slashCommands.map(item => `| \`${item.name}\` | ${item.description} |`).join('\n');
+  // Substantial surfaces by area, then everything else; aliases sit beside their command, not in a second row.
+  const aliasesOf = (name: string) => slashCommands.filter(item => item.alias === name).map(item => `\`${item.name}\``);
+  const row = (item: typeof slashCommands[number]) => `| \`${item.name}\`${aliasesOf(item.name).length ? ` (also ${aliasesOf(item.name).join(', ')})` : ''} | ${item.description} |`;
+  const groups = (['Appearance', 'Composer & transcript', 'Providers', 'Tools & integration'] as const).map(group =>
+    `### ${group}\n\n| Command | What it does |\n| --- | --- |\n${slashCommands.filter(item => item.group === group && !item.alias).map(row).join('\n')}`).join('\n\n');
+  const commands = slashCommands.filter(item => !item.group && !item.alias).map(row).join('\n');
   return authoredMarkdown(`# NMSh help
 
 ## Commands
+
+${groups}
+
+### More commands
 
 | Command | What it does |
 | --- | --- |

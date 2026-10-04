@@ -13,9 +13,11 @@ import {
 } from './model.js';
 import {bridgeEnvPath, writeEnvironmentFiles, type BridgeEnvironment, type ListingWrapper} from './environment.js';
 import {
-  artifactPath, batConfigDirectory, helixConfigDirectory, hookSpec, ledgerPath, loadLedger, ownership, removeArtifact, saveLedger, sha256, writeArtifact,
+  artifactPath, batConfigDirectory, helixConfigDirectory, hookSpec, recordedHook, ledgerPath, loadLedger, ownership, removeArtifact, saveLedger, sha256, writeArtifact,
   type HookTarget, type ManagedTarget,
 } from './artifacts.js';
+import {loadTmuxModel} from '../tools/config/tmux.js';
+import {modelIsEmpty, tmuxManagedNeeded, writeTmuxManaged} from '../tools/config/tmuxManaged.js';
 import {
   BAT_THEME_NAME, batTheme, bsdLsColors, fzfColorArgs, helixTheme, lsColorsFallback, neovimColorscheme, pagerEnvironment, parseFzfVersion, tmuxFragment,
   validateBatTheme, validateHelixTheme, validateNeovimColorscheme, validateTmuxFragment, validateVimColorscheme, validLsColors, vimColorscheme, vividTheme,
@@ -182,7 +184,7 @@ export function batReady(env: NodeJS.ProcessEnv = process.env): boolean {
 }
 
 function hookPresent(target: HookTarget, env: NodeJS.ProcessEnv, home: string): 'none' | 'current' | 'stale' | 'missing' {
-  const hook = loadLedger(env).entries[target]?.hook;
+  const hook = recordedHook(target, env);
   if (!hook) return 'none';
   const text = readSmall(hook.configPath);
   if (text === undefined || !text.includes(`${hook.lines.join('\n')}\n`)) return 'missing';
@@ -195,7 +197,8 @@ function hookPresent(target: HookTarget, env: NodeJS.ProcessEnv, home: string): 
 /** Readiness of a managed target: what (if anything) still needs a reviewed step. */
 export function managedReadiness(target: Extract<BridgeTargetId, ManagedTarget>, env: NodeJS.ProcessEnv = process.env, home = env.HOME || homedir()): string {
   const ledger = loadLedger(env);
-  const owned = ownership(target, ledger, env);
+  // tmux.conf includes the one managed tmux file, so that file decides tmux's setup state.
+  const owned = ownership(target === 'tmux' ? 'tmuxConfig' : target, ledger, env);
   if (owned === 'modified' || owned === 'unknown') return 'Conflict';
   if (owned !== 'owned') return 'Needs setup';
   if (target === 'bat') return batReady(env) ? 'Ready' : 'Needs cache build';
@@ -226,7 +229,7 @@ export function reportTargets({source, facts, level, env = process.env}: BridgeC
       readiness = managedReadiness(managed, env, home);
       if (readiness === 'Conflict') { status = 'Conflict'; notes.push(`${artifactPath(managed, env)} exists and is not NMSh's unchanged file; NMSh will not overwrite it.`); }
       else if (setting.mode !== 'independent' && readiness === 'Needs setup' && target === 'bat') { status = 'Needs setup'; notes.push('bat needs a generated custom theme and a reviewed cache build before BAT_THEME is set.'); }
-      if (setting.mode === 'independent' && (readiness === 'Active' || readiness === 'Needs include' || readiness === 'Needs activation')) readiness = loadLedger(env).entries[managed]?.hook ? 'Include kept (inactive)' : undefined;
+      if (setting.mode === 'independent' && (readiness === 'Active' || readiness === 'Needs include' || readiness === 'Needs activation')) readiness = managed !== 'bat' && recordedHook(managed as HookTarget, env) ? 'Include kept (inactive)' : undefined;
       if (target === 'helix' && setting.mode !== 'independent') {
         notes.push('Coverage: syntax, markup, diff, diagnostics and editor UI. Running Helix instances are not recolored; new ones use the file.');
         if (readiness === 'Needs activation') notes.push('Select it with :theme nmsh-bridge, or review the config change.');
@@ -354,6 +357,16 @@ export async function applyThemeBridge(context: BridgeContext): Promise<ApplyOut
       outcomes.push({target: managed.target, ok: false, message: error instanceof Error ? error.message : String(error)});
     }
   }
+  // The one tmux file tmux.conf includes: Tool Configuration settings plus the Theme Bridge colors.
+  try {
+    const model = loadTmuxModel(env);
+    if (tmuxManagedNeeded(model, effectiveSetting(context.source.themeBridge, 'tmux').mode !== 'independent', env)) {
+      const written = writeTmuxManaged(model, env);
+      if (!written.ok) outcomes.push({target: 'tmux', ok: false, message: written.error});
+    }
+  } catch (error) {
+    outcomes.push({target: 'tmux', ok: false, message: error instanceof Error ? error.message : String(error)});
+  }
   let lsColors: string | undefined;
   const ls = targetPalette(context.source.themeBridge, 'lsColors', context.source);
   if (ls.palette) lsColors = await vividColors(ls.palette, level, env, effectiveSetting(context.source.themeBridge, 'lsColors').mode, ls.ref ?? '');
@@ -405,7 +418,7 @@ export async function buildBatCache(env: NodeJS.ProcessEnv = process.env, approv
  * The one typed tmux reload: `tmux source-file <NMSh fragment>` against the
  * user's running server, on explicit request only. No shell, no other command.
  */
-export async function reloadTmux(env: NodeJS.ProcessEnv = process.env, path = artifactPath('tmux', env)): Promise<{ok: boolean; message: string}> {
+export async function reloadTmux(env: NodeJS.ProcessEnv = process.env, path = artifactPath('tmuxConfig', env)): Promise<{ok: boolean; message: string}> {
   const binary = resolveCommand('tmux', env.PATH ?? '');
   if (!binary) return {ok: false, message: 'tmux is not installed.'};
   if (!existsSync(path)) return {ok: false, message: 'There is no NMSh-managed tmux file to load yet.'};
@@ -441,7 +454,9 @@ export function integrationHealth(context: BridgeContext): HealthItem[] {
     const item = (state: HealthState, action?: HealthItem['action'], detail = HEALTH_LABELS[state]): HealthItem => ({target, label, state, detail, ...(action ? {action} : {})});
     if (!context.facts[target]?.installed) return item('not-installed');
     if (BRIDGE_CAPABILITY[target] === 'detected') return item('not-managed');
-    if (effectiveSetting(context.source.themeBridge, target).mode === 'independent') return item('independent');
+    // tmux settings from /tmux need the same one include even while Theme Bridge leaves tmux Independent.
+    const tmuxConfigured = target === 'tmux' && !modelIsEmpty(loadTmuxModel(env));
+    if (effectiveSetting(context.source.themeBridge, target).mode === 'independent' && !tmuxConfigured) return item('independent');
     if (BRIDGE_CAPABILITY[target] === 'direct') return item('ready', undefined, 'Ready · applied to NMSh shells and launches');
     const managed = target as Extract<BridgeTargetId, ManagedTarget>;
     const readiness = managedReadiness(managed, env, home);

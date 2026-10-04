@@ -34,13 +34,18 @@ export function pickerSelection(output: string, candidates: readonly PickerCandi
   return {kind: 'selected', candidate};
 }
 
+/** NMSh-owned fzf arguments; `layout` follows the composer side. */
+export function fzfPickerArgs(layout: 'default' | 'reverse'): string[] {
+  return ['--no-multi', '--no-sort', '--delimiter=\t', '--with-nth=2..', `--layout=${layout}`, '--no-mouse', '--pointer=>', '--marker=*'];
+}
+
 /** Native surfaces delegate their existing editor UI through the same boundary. */
 export async function openPicker(provider: PickerProviderId, candidates: readonly PickerCandidate[], native: () => void,
-  handoff: PickerHandoff, env: NodeJS.ProcessEnv = process.env, themeArgs: readonly string[] = []): Promise<PickerResult | undefined> {
+  handoff: PickerHandoff, env: NodeJS.ProcessEnv = process.env, themeArgs: readonly string[] = [], layout: 'default' | 'reverse' = 'default'): Promise<PickerResult | undefined> {
   if (provider === 'native') { native(); return; }
   const binary = resolveCommand(provider === 'fzf' ? 'fzf' : 'tv', env.PATH ?? '', []);
   if (!binary) { native(); return {kind: 'fallback', reason: `${provider} is not installed; using Native`}; }
-  const result = await handoff(signal => runPicker(binary, provider, candidates, signal, env, 300_000, themeArgs));
+  const result = await handoff(signal => runPicker(binary, provider, candidates, signal, env, 300_000, themeArgs, layout));
   if (result.kind === 'fallback') native();
   return result;
 }
@@ -48,7 +53,7 @@ export async function openPicker(provider: PickerProviderId, candidates: readonl
 /** Interactive, bounded, host-TTY process; only call while the host has handed off ownership. */
 export async function runPicker(binary: string, provider: Exclude<PickerProviderId, 'native'>,
   candidates: readonly PickerCandidate[], signal: AbortSignal, env: NodeJS.ProcessEnv = process.env,
-  timeoutMs = 300_000, themeArgs: readonly string[] = []): Promise<PickerResult> {
+  timeoutMs = 300_000, themeArgs: readonly string[] = [], layout: 'default' | 'reverse' = 'default'): Promise<PickerResult> {
   if (signal.aborted) return {kind: 'cancelled'};
   const input = pickerInput(candidates);
   if (candidates.length > 100_000 || Buffer.byteLength(input) > 16 * 1024 * 1024)
@@ -58,7 +63,8 @@ export async function runPicker(binary: string, provider: Exclude<PickerProvider
     const environment = {...env};
     for (const key of Object.keys(environment)) if (/^(?:FZF_|TV_)/u.test(key)) delete environment[key];
     let args: string[];
-    if (provider === 'fzf') args = ['--no-multi', '--no-sort', '--delimiter=\t', '--with-nth=2..', '--layout=reverse', '--no-mouse', '--pointer=>', '--marker=*'];
+    // The query follows NMSh's composer: bottom (fzf's own default) or top (reverse). Never the user's standalone fzf config.
+    if (provider === 'fzf') args = fzfPickerArgs(layout);
     else {
       // No user cable, hooks, preview command or persisted history is loaded.
       await writeFile(join(directory, 'config.toml'), 'history_size = 0\n', {mode: 0o600});

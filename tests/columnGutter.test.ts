@@ -47,7 +47,7 @@ test('/providers: the longest family name keeps a gutter before its provider', (
     assertGutter(rows, 'Directory navigation');
     assertGutter(rows, 'Local understanding');
     // Family rows share one data column regardless of the selection marker.
-    const family = rows.filter(row => / \[active\]/u.test(row) && !row.includes('is in use') && !row.startsWith('      '));
+    const family = rows.filter(row => /● Active|fallback →/u.test(row) && !row.startsWith('      '));
     const dataColumn = (row: string) => { const match = /\S {2,}(?=\S)/u.exec(row)!; return displayWidth(row.slice(0, match.index + match[0].length)); };
     assert.ok(family.length > 3);
     assert.equal(new Set(family.map(dataColumn)).size, 1, family.join('\n'));

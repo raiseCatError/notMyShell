@@ -51,7 +51,7 @@ const MATRIX: Array<[string, string]> = [
   ['change cursor blink', '/cursor'], ['change syntax highlighting', '/syntax'], ['change transcript layout', '/layout'],
   ['open the screensaver', '/screensaver'], ['show agent activity', '/agents'], ['what version am i running', '/version'], ['check for updates', '/update'],
   ['change keyboard shortcuts', '/keyboard'], ['open session presets', '/presets'], ['change live activity colors', '/activity'],
-  ['change the welcome screen', '/providers'], ['configure the status strip', 'answer:/settings'], ['change nerd font icons', 'answer:/settings'],
+  ['change the welcome screen', '/providers'], ['configure the status strip', '/strip'], ['change nerd font icons', '/glyphs'],
   ['use nushell', 'unsupported'], ['open a new tab', 'unsupported'],
 ];
 

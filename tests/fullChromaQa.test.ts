@@ -108,6 +108,9 @@ test('C/H: Setup Cat Appearance says when previews include Chroma, and its Chrom
     state.draft = normalizePromptConfiguration({presentation: {preset: 'off'}});
     assert.doesNotMatch(plain(app['setupPreview'](state, 100)), /previews include Chroma/u);
     state.draft = normalizePromptConfiguration({presentation: {preset: 'aurora', motion: 'comet'}});
+    // The base theme is shown by default; P turns the local preview Chroma on (the setting itself is unchanged).
+    assert.match(plain(app['setupPreview'](state, 100)), /Preview Chroma  Off/u);
+    state.previewChroma = true;
     assert.ok(plain(app['setupPreview'](state, 100)).includes(CHROMA_PREVIEW_NOTE));
     const chromaRow = (rows: string[]) => rows.find(item => stripAnsi(item).trimStart().startsWith('Chroma'))!;
     const realNow = Date.now;

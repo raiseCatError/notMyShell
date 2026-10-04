@@ -21,6 +21,8 @@ import {
 } from '../src/themeBridge/artifacts.js';
 import {applyThemeBridge, bridgeColorLevel, bridgeEnvironment, fzfBridgeArgs, reloadTmux, reportTargets, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
 import {themeBridgeKey} from '../src/themeBridge/runtime.js';
+import {writeTmuxManaged} from '../src/tools/config/tmuxManaged.js';
+import {DEFAULT_TMUX_MODEL} from '../src/tools/config/tmux.js';
 
 const installed = (...targets: BridgeTargetId[]): Record<BridgeTargetId, TargetFacts> =>
   Object.fromEntries(BRIDGE_TARGETS.map(target => [target, {installed: targets.includes(target), ...(target === 'fzf' ? {version: '0.74.4 (brew)'} : {})}])) as Record<BridgeTargetId, TargetFacts>;
@@ -246,10 +248,12 @@ test('exact includes: shown plan, exact lines appended, exact removal, duplicate
     writeFileSync(conf, 'set -g mouse on\nbind r source-file ~/.tmux.conf\n');
     const palette = paletteFromTheme(builtinTheme('nord'), 'builtin:nord');
     assert.ok(writeArtifact('tmux', tmuxFragment(palette), validateTmuxFragment, {mode: 'follow', themeRef: 'builtin:nord', format: 'tmux-fragment', formatVersion: 1}, box.env).ok);
+    // tmux.conf includes the one managed tmux file (settings + Theme Bridge colors).
+    assert.ok(writeTmuxManaged(DEFAULT_TMUX_MODEL(), box.env).ok);
     const spec = hookSpec('tmux', box.env, box.home);
     assert.ok(!('error' in spec));
     assert.equal(spec.configPath, conf, 'the existing user config is the target');
-    assert.deepEqual(spec.lines, ['# NMSh Theme Bridge: loads NMSh-managed colors (remove with /theme-bridge)', `source-file -q '${artifactPath('tmux', box.env)}'`]);
+    assert.deepEqual(spec.lines, ['# NMSh Theme Bridge: loads NMSh-managed colors (remove with /theme-bridge)', `source-file -q '${artifactPath('tmuxConfig', box.env)}'`]);
     const planned = planHook(spec, box.home);
     assert.ok('plan' in planned);
     assert.ok(planned.plan.preview.some(line => line.startsWith('+ source-file -q')), 'the exact line is previewed');
@@ -263,7 +267,7 @@ test('exact includes: shown plan, exact lines appended, exact removal, duplicate
     assert.ok('plan' in removal);
     assert.ok(applyHookRemoval('tmux', removal.plan, box.env).ok);
     assert.equal(readFileSync(conf, 'utf8'), 'set -g mouse on\nbind r source-file ~/.tmux.conf\n\n', 'only the NMSh lines are removed');
-    assert.equal(loadLedger(box.env).entries.tmux?.hook, undefined);
+    assert.equal(loadLedger(box.env).entries.tmuxConfig?.hook, undefined);
     // Duplicated includes are never guessed at.
     assert.ok(applyHook('tmux', (planHook(spec, box.home) as {plan: never}).plan, spec, box.env).ok);
     writeFileSync(conf, `${readFileSync(conf, 'utf8')}${spec.lines.join('\n')}\n`);

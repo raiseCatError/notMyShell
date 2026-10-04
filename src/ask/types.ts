@@ -1,3 +1,5 @@
+import type {TmuxChange} from '../tools/config/tmux.js';
+import type {BridgePolicy, BridgeTargetId} from '../themeBridge/model.js';
 import type {ParsedSlashCommand} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {GitFacts} from './git.js';
@@ -64,6 +66,10 @@ export type AskAction =
   | {kind: 'applyEdit'; plan: FileEditPlan}
   /** A curated tool install (the /tools recipe, shown exactly before the Yes); never a guessed package. */
   | {kind: 'installTool'; tool: string; label: string}
+  /** Typed tmux changes through the tmux Tool Configuration adapter (NMSh's managed tmux file only). */
+  | {kind: 'tmux'; changes: TmuxChange[]; label: string}
+  /** Theme Bridge settings: switch, policy and per-target Manual pins (stable theme references only). */
+  | {kind: 'themeBridge'; enabled?: boolean; policy?: BridgePolicy; targets?: Partial<Record<BridgeTargetId, {mode: 'independent' | 'follow' | 'choose'; theme?: string}>>; label: string}
   | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend' | 'composerDividers'; value: string; label: string};
 
 /**

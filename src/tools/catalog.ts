@@ -34,7 +34,8 @@ export interface Tool extends ProviderDescriptor {
   providerFamily?: ProviderFamily;
   /** Provider integration is distinct from the recommendation tier. */
   integration?: 'welcome' | 'picker' | 'navigation' | 'history' | 'completion' | 'prompt';
-  configuration?: 'starship';
+  /** A registered Tool Configuration adapter (src/tools/config/registry.ts); only these get Configure. */
+  configuration?: 'starship' | 'tmux';
   language?: string;
 }
 
@@ -87,7 +88,7 @@ export const TOOLS: readonly Tool[] = [
   tool('stow', 'GNU Stow', 'Shell / Workflow', 'Explicitly managed dotfile symlinks.', 'https://www.gnu.org/software/stow/'),
   tool('tealdeer', 'TLDR (tealdeer)', 'Shell / Workflow', 'Practical local command examples (command tldr, package tealdeer). Optional; Ask uses its local cache and never updates it.', 'https://github.com/tealdeer-rs/tealdeer',
     {executable: 'tldr', package: 'tealdeer', recommended: true}),
-  tool('tmux', 'tmux', 'Shell / Workflow', 'Independent terminal multiplexer.', 'https://github.com/tmux/tmux', {versionArgs: ['-V']}),
+  tool('tmux', 'tmux', 'Shell / Workflow', 'Independent terminal multiplexer.', 'https://github.com/tmux/tmux', {versionArgs: ['-V'], configuration: 'tmux'}),
   tool('docker', 'Docker CLI', 'Containers / Infrastructure', 'Container client; daemon availability is not inferred.', 'https://docs.docker.com/', {package: 'docker', ...ENVIRONMENT, relevantTo: ['containers']}),
   tool('kubectl', 'kubectl', 'Containers / Infrastructure', 'Kubernetes client; credentials/cluster are not inspected.', 'https://kubernetes.io/docs/reference/kubectl/', {versionArgs: undefined, package: 'kubernetes-cli', ...ENVIRONMENT, relevantTo: ['kubernetes']}),
   tool('mise', 'mise', 'Project / Language Tooling', 'Optional project tooling; metadata evaluation needs consent.', 'https://mise.jdx.dev/', {versionArgs: undefined, ...ENHANCED}),

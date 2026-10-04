@@ -1,11 +1,38 @@
 import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
+export type CommandGroup = 'Appearance' | 'Composer & transcript' | 'Providers' | 'Tools & integration';
+
 export interface SlashCommand {
   name: string;
   insertion: string;
   description: string;
+  /** /help section for substantial surfaces; ungrouped commands are listed under "More commands". */
+  group?: CommandGroup;
+  /** Human palette label ("Open Motion"); the command name is shown beside it. */
+  title?: string;
+  /** Another spelling of a canonical command: parsed to the same action, not listed twice. */
+  alias?: string;
 }
 
-export const slashCommands: readonly SlashCommand[] = [
+/** Group, palette title and alias metadata for the substantial surfaces, in one place. */
+const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
+  '/appearance': {group: 'Appearance', title: 'Open Appearance'}, '/theme': {group: 'Appearance', title: 'Open Theme Studio'},
+  '/theme-bridge': {group: 'Appearance', title: 'Open Theme Bridge'}, '/chroma': {group: 'Appearance', title: 'Open Chroma'},
+  '/chrome': {group: 'Appearance', title: 'Open UI Chrome'}, '/cursor': {group: 'Appearance', title: 'Open Cursor & effects'},
+  '/motion': {group: 'Appearance', title: 'Open Motion'}, '/glyphs': {group: 'Appearance', title: 'Configure Glyph Style'},
+  '/strip': {group: 'Appearance', title: 'Configure Status Strip'}, '/status-strip': {alias: '/strip'},
+  '/screensaver': {group: 'Appearance', title: 'Open Idle visuals'}, '/activity': {group: 'Appearance', title: 'Open Live activity colors'},
+  '/prompt': {group: 'Composer & transcript', title: 'Open Prompt'}, '/layout': {group: 'Composer & transcript', title: 'Configure Composer Layout'},
+  '/composer': {alias: '/layout'}, '/syntax': {group: 'Composer & transcript', title: 'Open Syntax highlighting'},
+  '/transcript': {group: 'Composer & transcript', title: 'Open Transcript appearance'}, '/keyboard': {group: 'Composer & transcript', title: 'Open Keyboard'},
+  '/providers': {group: 'Providers', title: 'Open Providers'}, '/picker': {group: 'Providers', title: 'Configure Picker Provider'}, '/pickers': {alias: '/picker'},
+  '/suggestions': {group: 'Providers', title: 'Configure Suggestions Provider'}, '/navigation': {group: 'Providers', title: 'Configure Directory Navigation'},
+  '/welcome': {group: 'Providers', title: 'Configure Welcome'}, '/history-provider': {group: 'Providers', title: 'Configure History Provider'},
+  '/tools': {group: 'Tools & integration', title: 'Open Tools'}, '/configure': {group: 'Tools & integration', title: 'Open Tool Configuration'},
+  '/tmux': {group: 'Tools & integration', title: 'Configure tmux'}, '/integrations': {group: 'Tools & integration', title: 'Check Integrations'},
+  '/dotfiles': {group: 'Tools & integration', title: 'Import Dotfiles'},
+};
+
+const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
@@ -32,6 +59,15 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
   {name: '/syntax', insertion: '/syntax', description: 'Configure syntax highlighting'},
   {name: '/layout', insertion: '/layout', description: 'Preview and choose composer position and transcript presentation'},
+  {name: '/composer', insertion: '/composer', description: 'Composer position and transcript presentation (same as /layout)'},
+  {name: '/chrome', insertion: '/chrome', description: 'UI chrome: NMSh frames, rules, tabs, selection and accents (not Chroma)'},
+  {name: '/glyphs', insertion: '/glyphs', description: 'Glyph style: compare Nerd Font and Safe / ASCII symbols and icons'},
+  {name: '/strip', insertion: '/strip', description: 'Status strip: clock, battery, CPU, RAM and uptime, with a live preview'},
+  {name: '/status-strip', insertion: '/status-strip', description: 'Same as /strip'},
+  {name: '/configure', insertion: '/configure ', description: 'Tool Configuration: supported settings for tmux, Starship and other registered tools'},
+  {name: '/tmux', insertion: '/tmux', description: 'Configure tmux: settings, keys, Status Studio, new panes start NMSh, theme'},
+  {name: '/integrations', insertion: '/integrations', description: 'Integrations health: review and update every managed integration'},
+  {name: '/dotfiles', insertion: '/dotfiles ', description: 'Import supported settings from a dotfiles repository (reviewed, nothing executed)'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/shell', insertion: '/shell', description: 'Managed backend switcher: NMSh stays open; install missing shells; D sets the default'},
@@ -54,6 +90,11 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
+  {name: '/picker', insertion: '/picker', description: 'Picker provider (NMSh Native, fzf, Television) in /providers'},
+  {name: '/pickers', insertion: '/pickers', description: 'Same as /picker'},
+  {name: '/suggestions', insertion: '/suggestions', description: 'Ghost-text suggestions provider in /providers'},
+  {name: '/navigation', insertion: '/navigation', description: 'Directory navigation provider (NMSh Native, zoxide) in /providers'},
+  {name: '/welcome', insertion: '/welcome', description: 'Welcome provider (Vespyr, fastfetch, …) in /providers'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
   {name: '/sessions', insertion: '/sessions', description: 'Live NMSh sessions right now: switch to a detached one, kill one (nmsh --sessions outside)'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
@@ -68,7 +109,11 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
   {name: '/dirs', insertion: '/dirs ', description: 'Find a directory; insert a visible cd command'},
   {name: '/history', insertion: '/history ', description: 'Search history'},
+  {name: '/history-provider', insertion: '/history-provider', description: 'History provider (NMSh Native, Atuin) in /providers; /history is history search'},
 ];
+
+export const slashCommands: readonly SlashCommand[] = RAW_COMMANDS.map(command => ({...command, ...META[command.name]}));
+
 
 export type ParsedSlashCommand =
   | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
@@ -88,6 +133,12 @@ export type ParsedSlashCommand =
   | {kind: 'transcript'}
   | {kind: 'syntax'}
   | {kind: 'layout'}
+  | {kind: 'chrome'}
+  | {kind: 'glyphs'}
+  | {kind: 'statusStrip'}
+  | {kind: 'configure'; tool?: string}
+  | {kind: 'integrations'}
+  | {kind: 'dotfiles'; source?: string}
   | {kind: 'keyboard'}
   /** Leave NMSh for an ordinary shell; no shell means the configured default (/exit). */
   | {kind: 'handoff'; shell?: 'zsh' | 'fish' | 'bash'}
@@ -110,7 +161,7 @@ export type ParsedSlashCommand =
   | {kind: 'ask'; request: string}
   /** Agent sessions: /ai opens the list; /ai <harness or profile> starts one in the background. */
   | {kind: 'ai'; target?: string}
-  | {kind: 'providers'}
+  | {kind: 'providers'; family?: 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'}
   | {kind: 'llm'}
   | {kind: 'doctor'}
   | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
@@ -144,7 +195,17 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
   if (/^\/transcript\s*$/u.test(input)) return {kind: 'transcript'};
   if (/^\/syntax\s*$/u.test(input)) return {kind: 'syntax'};
-  if (/^\/layout\s*$/u.test(input)) return {kind: 'layout'};
+  // Aliases normalize to one action kind: /composer is /layout, /glyph(s) one panel, /strip and /status-strip one panel.
+  if (/^\/(?:layout|composer)\s*$/u.test(input)) return {kind: 'layout'};
+  if (/^\/chrome\s*$/u.test(input)) return {kind: 'chrome'};
+  if (/^\/glyphs?\s*$/u.test(input)) return {kind: 'glyphs'};
+  if (/^\/(?:strip|status-strip)\s*$/u.test(input)) return {kind: 'statusStrip'};
+  if (/^\/tmux\s*$/u.test(input)) return {kind: 'configure', tool: 'tmux'};
+  const configure = /^\/configure(?:\s+([A-Za-z0-9_.+-]{1,40}))?\s*$/u.exec(input);
+  if (configure) return configure[1] ? {kind: 'configure', tool: configure[1].toLowerCase()} : {kind: 'configure'};
+  if (/^\/integrations\s*$/u.test(input)) return {kind: 'integrations'};
+  const dotfiles = /^\/dotfiles(?:\s+(.{1,1024}))?\s*$/u.exec(input);
+  if (dotfiles) return dotfiles[1]?.trim() ? {kind: 'dotfiles', source: dotfiles[1].trim()} : {kind: 'dotfiles'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
   const handoff = /^\/(zsh|fish|bash|exit)\s*$/u.exec(input);
   if (handoff) return handoff[1] === 'exit' ? {kind: 'handoff'} : {kind: 'handoff', shell: handoff[1] as 'zsh' | 'fish' | 'bash'};
@@ -178,6 +239,10 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const ask = /^\/ask(?:\s+([\s\S]*))?$/u.exec(input);
   if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
   if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};
+  // Family shortcuts are aliases of one action: /providers focused on that family.
+  const family = /^\/providers\s+(prompt|welcome|suggestions|history|picker|pickers|navigation)\s*$/u.exec(input)?.[1]
+    ?? {'/picker': 'picker', '/pickers': 'picker', '/suggestions': 'suggestions', '/navigation': 'navigation', '/welcome': 'welcome', '/history-provider': 'history'}[input.trim()];
+  if (family) return {kind: 'providers', family: (family === 'pickers' ? 'picker' : family) as 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
