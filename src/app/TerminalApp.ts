@@ -25,7 +25,10 @@ import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
 import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
 import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
-  SCREENSAVER_MIN_SIZE, screensaverKey, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+  SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
+import {effectLoops, randomSequence} from '../idle/screenEffects.js';
+import {SCREEN_MODE_EFFECT} from '../idle/scenes.js';
 import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
@@ -383,7 +386,12 @@ export class TerminalApp {
   private toolsPanel?: ToolsPanel;
   /** Idle visuals: one inactivity timer while armed, one frame subscription while showing; neither exists otherwise. */
   private idleTimer?: NodeJS.Timeout;
-  private idle?: {mode: IdleMode; startedAt: number; frame: number; interval: number; preview: boolean; paused: boolean; still: boolean};
+  private idle?: {mode: IdleMode; startedAt: number; frame: number; interval: number; preview: boolean; paused: boolean; still: boolean; capture?: ScreenCapture; random?: boolean; offset: number};
+  /** Snapshot of the screen taken when the screensaver gallery opened: the gallery preview's material. */
+  private saverCapture?: ScreenCapture;
+  private saverGalleryCapture?: ScreenCapture;
+  private saverGalleryMode?: IdleMode;
+  private randomSaver = randomSequence(0x5eed);
   private idleSubscription?: () => void;
   private readonly idleGrid = new CellGrid();
   private lastActivity = Date.now();
@@ -1964,7 +1972,7 @@ export class TerminalApp {
       if (slash.start) {
         if (slash.mode) this.applySettingsConfiguration({...this.promptConfiguration, idleVisuals: {...this.promptConfiguration.idleVisuals, mode: slash.mode}});
         this.startIdle(true);
-      } else this.screensaverPanel = createScreensaverPanel(Date.now());
+      } else this.openScreensaverGallery();
     }
     // The cursor has one configuration: /cursor opens its existing Settings rows.
     else if (slash.kind === 'cursor') this.openCursorPanel();
@@ -3463,7 +3471,7 @@ export class TerminalApp {
   private openDestinationPanel(destination: SettingsDestination): void {
     if (destination === 'tools') this.startTools();
     else if (destination === 'setup') this.startSetup();
-    else if (destination === 'screensaver') this.screensaverPanel = createScreensaverPanel(Date.now());
+    else if (destination === 'screensaver') this.openScreensaverGallery();
     else if (destination === 'chromeColors') {
       const config = this.promptConfiguration;
       this.chromeEditor = createChromeEditor(config.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...config.uiChrome, source: 'theme'}, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
@@ -3659,14 +3667,17 @@ export class TerminalApp {
    */
   private idleEligible(): boolean {
     return !this.stopped && this.presentationStarted && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && !this.running && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
-      && !this.pickerOpening;
+      && (!this.running || this.promptConfiguration.idleVisuals.runWhileBusy) && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
+      && !this.pickerOpening && !this.updateInProgress && !this.agents.sessions.some(session => session.attention);
   }
 
   private onIdleTimeout(): void {
     const minutes = this.promptConfiguration.idleVisuals.timeout;
     if (!minutes) return;
     if (Date.now() - this.lastActivity < minutes * 60_000 - 50) { this.armIdle(); return; }
+    // Reduced Motion: screen savers never start by themselves (a manual preview still works).
+    const screenMode = SCREEN_MODE_EFFECT[this.promptConfiguration.idleVisuals.mode] !== undefined || this.promptConfiguration.idleVisuals.mode === 'random';
+    if (screenMode && idleMotion(this.promptConfiguration).still) { this.lastActivity = Date.now(); this.armIdle(); return; }
     if (this.idleEligible()) this.startIdle(false);
     else { this.lastActivity = Date.now(); this.armIdle(); }
   }
@@ -3680,20 +3691,44 @@ export class TerminalApp {
     }
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended || this.idle) return;
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    const configured = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
+    // The screen as the user sees it right now (or, from the gallery, as it was before the gallery opened).
+    const wantsCapture = configured === 'random' || SCREEN_MODE_EFFECT[configured] !== undefined;
+    const captureDimensions = this.dimensions();
+    const captured = wantsCapture
+      ? (this.screensaverPanel && this.saverCapture ? this.saverCapture : this.captureScreen(captureDimensions.columns, captureDimensions.rows)) : undefined;
     // Exclusive ownership: every other presentation owner stops before the first idle frame.
     // The gallery (if any) stays open underneath and resumes its own preview on dismissal.
     this.suspendPresentationOwners();
-    const mode = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
-    this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still};
+    const random = configured === 'random';
+    const mode: IdleMode = random ? this.pickRandomSaver() : configured;
+    this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still,
+      ...(captured ? {capture: {...captured, instances: {}}} : {}), random, offset: 0};
     this.renderer.invalidate();
     this.paintIdle();
     if (!motion.still) this.idleSubscription = presentationClock.subscribe(now => this.tickIdle(now), this.idle.interval);
+  }
+
+  private captureScreen(columns: number, rows: number): ScreenCapture {
+    return captureFromRows(this.renderer.snapshot(), columns, rows, isDeterministicPresentation() ? IDLE_SEED : (Date.now() ^ (process.pid << 8)) >>> 0);
+  }
+
+  private pickRandomSaver(previous?: IdleMode): IdleMode {
+    const effect = this.randomSaver(previous ? SCREEN_MODE_EFFECT[previous] : undefined);
+    return (Object.entries(SCREEN_MODE_EFFECT).find(([, id]) => id === effect)?.[0] ?? 'blackHole') as IdleMode;
   }
 
   private tickIdle(now: number): void {
     const idle = this.idle;
     if (!idle || idle.paused) return;
     idle.frame += 1;
+    // Random switches only when the current effect finished a full loop, never mid-effect.
+    const effect = SCREEN_MODE_EFFECT[idle.mode];
+    if (idle.random && idle.capture && effect && effectLoops(idle.capture, effect) >= 1) {
+      idle.mode = this.pickRandomSaver(idle.mode);
+      idle.capture = {...idle.capture, instances: {}};
+      idle.offset = isDeterministicPresentation() ? idle.frame * IDLE_FRAME_MS[idle.mode] : Date.now() - idle.startedAt;
+    }
     const started = performance.now();
     this.paintIdle(now);
     // Adaptive cadence: a frame that costs too much slows the scene instead of the shell.
@@ -3710,8 +3745,8 @@ export class TerminalApp {
     if (!idle) return;
     const {columns, rows} = this.dimensions();
     const time = idle.still ? 20_000 : sceneTime(now - idle.startedAt, idle.frame, idle.mode);
-    const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time,
-      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+    const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time: Math.max(0, time - idle.offset),
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(idle.capture ? {capture: idle.capture} : {})});
     try { this.renderer.render({rows: frame, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
     catch (error) { this.onTerminate(); throw error; }
   }
@@ -4053,6 +4088,13 @@ export class TerminalApp {
   /** Recommended-tool install state for Setup Cat's tools preview, detected once off the render path. */
   private readonly toolStatuses = new Map<string, ProviderStatus>();
 
+  private openScreensaverGallery(): void {
+    const {columns, rows} = this.dimensions();
+    this.saverCapture = this.captureScreen(columns, rows);
+    this.saverGalleryCapture = undefined;
+    this.screensaverPanel = createScreensaverPanel(Date.now());
+  }
+
   private renderScreensaverRows(state: ScreensaverPanelState, columns: number): string[] {
     const {rows} = this.dimensions();
     const settings = this.promptConfiguration.idleVisuals;
@@ -4060,9 +4102,18 @@ export class TerminalApp {
     const size = previewSize(columns, rows);
     const mode = effectiveMode(settings.mode, motion);
     const elapsed = Date.now() - state.startedAt;
-    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode, width: size.width, height: size.height,
+    // Screen savers preview over the real screen snapshot taken when the gallery opened (cropped to the preview box).
+    const previewMode: IdleMode = mode === 'random' ? 'blackHole' : mode;
+    let capture: ScreenCapture | undefined;
+    if (SCREEN_MODE_EFFECT[previewMode] && this.saverCapture) {
+      if (!this.saverGalleryCapture || this.saverGalleryCapture.width !== Math.min(size.width, this.saverCapture.width) || this.saverGalleryCapture.height !== Math.min(size.height, this.saverCapture.height) || this.saverGalleryMode !== previewMode) {
+        this.saverGalleryCapture = cropCapture(this.saverCapture, size.width, size.height); this.saverGalleryMode = previewMode;
+      }
+      capture = this.saverGalleryCapture;
+    }
+    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode: previewMode, width: capture?.width ?? size.width, height: capture?.height ?? size.height,
       time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode),
-      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(capture ? {capture} : {})});
     // A real animated preview while the gallery is open; one timer, removed with the panel.
     if (!motion.still && !motion.disabled && !this.screensaverAnimation) {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.screensaverPanel) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));

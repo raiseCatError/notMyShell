@@ -437,8 +437,9 @@ export type IdleTimeout = typeof IDLE_TIMEOUTS[number];
 export const IDLE_COLOR_SOURCES = ['appearance', 'theme', 'custom'] as const;
 export type IdleColorSource = typeof IDLE_COLOR_SOURCES[number];
 export const IDLE_COLOR_LABELS: Record<IdleColorSource, string> = {appearance: 'Follow Chroma / Theme', theme: 'Theme only', custom: 'Custom'};
-export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource; customStops: string[]}
-export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []};
+/** runWhileBusy lets the saver start during a foreground command; it never overrides passthrough or a fullscreen program. */
+export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource; customStops: string[]; runWhileBusy: boolean}
+export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: [], runWhileBusy: false};
 
 export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
   const v = isRecord(value) ? value : {};
@@ -446,7 +447,7 @@ export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
   const colorSource = IDLE_COLOR_SOURCES.includes(v.colorSource as IdleColorSource) ? v.colorSource as IdleColorSource : 'appearance';
   return {timeout: IDLE_TIMEOUTS.includes(v.timeout as IdleTimeout) ? v.timeout as IdleTimeout : 0,
     mode: IDLE_MODES.includes(v.mode as IdleMode) ? v.mode as IdleMode : 'aurora',
-    colorSource: colorSource === 'custom' && !customStops.length ? 'appearance' : colorSource, customStops};
+    colorSource: colorSource === 'custom' && !customStops.length ? 'appearance' : colorSource, customStops, runWhileBusy: v.runWhileBusy === true};
 }
 
 /**
