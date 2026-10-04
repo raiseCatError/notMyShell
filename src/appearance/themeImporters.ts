@@ -496,4 +496,3 @@ function windowsTerminalPalette(json: Record<string, unknown>): TerminalPalette 
 
 export const IMPORT_FORMAT_CHOICES: readonly ImportFormatChoice[] = ['auto', 'nmsh', 'base16', 'base24', 'windows-terminal', 'oh-my-posh', 'kitty', 'ghostty', 'iterm2', 'wezterm'];
 export const importFormatLabel = (format: ImportFormatChoice): string => format === 'auto' ? 'Detect automatically' : THEME_SOURCE_LABELS[format];
-
