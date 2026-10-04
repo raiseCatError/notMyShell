@@ -6,6 +6,8 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {BLUR_MODES, handleAppearanceKey, type AppearanceState} from './AppearancePanel.js';
 import {cursorLabel} from '../cursor/CursorPanel.js';
+import {renderMotionPreview, type MotionPreview} from '../motion/MotionPreview.js';
+import type {MotionGate} from '../motion/transitions.js';
 
 /**
  * /appearance: the visual hub. NMSh rows summarize and open the canonical
@@ -25,6 +27,8 @@ export interface AppearanceHubState {
   hostGuidance?: string;
   /** Host values were changed and not saved yet. */
   hostDirty: boolean;
+  /** When the Motion preview last started (row selected, value changed, R); one run, never a loop. */
+  previewStart?: number;
 }
 
 export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'};
@@ -52,15 +56,17 @@ function hostRowCount(state: AppearanceHubState): number {
   return BLUR_MODES[state.host.blurModeIndex] === 'Numeric' ? 3 : 2;
 }
 
-export function appearanceHubKey(state: AppearanceHubState, key: Key, configuration: PromptConfiguration): HubAction | undefined {
+export function appearanceHubKey(state: AppearanceHubState, key: Key, configuration: PromptConfiguration, now = Date.now()): HubAction | undefined {
   if (state.view === 'motion') {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.view = 'hub'; state.selected = NMSH_ROWS.length - 1; return undefined; }
-    if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + MOTION_ROWS.length) % MOTION_ROWS.length; return undefined; }
+    if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + MOTION_ROWS.length) % MOTION_ROWS.length; state.previewStart = now; return undefined; }
+    if (key.kind === 'text' && key.value.toLowerCase() === 'r') { state.previewStart = now; return undefined; }
     if (key.kind === 'left' || key.kind === 'right' || key.kind === 'enter') {
       const row = MOTION_ROWS[state.selected]!;
       const current = configuration.motion[row.key] as string;
       const index = row.values.indexOf(current);
       const next = row.values[(index + (key.kind === 'left' ? -1 : 1) + row.values.length) % row.values.length]!;
+      state.previewStart = now;
       return {kind: 'motion', motion: {...configuration.motion, [row.key]: next}};
     }
     return undefined;
@@ -71,7 +77,7 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
   if (state.selected < NMSH_ROWS.length) {
     if (key.kind !== 'enter' && key.kind !== 'right') return undefined;
     const row = NMSH_ROWS[state.selected]!;
-    if (row.id === 'motion') { state.view = 'motion'; state.selected = 0; return undefined; }
+    if (row.id === 'motion') { state.view = 'motion'; state.selected = 0; state.previewStart = now; return undefined; }
     return {kind: 'open', destination: row.id};
   }
   // Host rows: the existing opacity/blur editor, with Enter saving through the host integration.
@@ -85,7 +91,15 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
   return undefined;
 }
 
-export function renderAppearanceHub(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, themeLabel: string, cursorBackend: string): string[] {
+/** The Motion screen's preview for the selected row, or undefined outside it. */
+export function hubMotionPreview(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, gate: MotionGate, now: number): MotionPreview | undefined {
+  if (state.view !== 'motion') return undefined;
+  const row = MOTION_ROWS[state.selected];
+  return row ? renderMotionPreview(row.key, configuration.motion, gate, columns, state.previewStart ?? now - 10_000, now) : undefined;
+}
+
+export function renderAppearanceHub(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, themeLabel: string, cursorBackend: string,
+  preview?: {gate: MotionGate; now: number}): string[] {
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
@@ -99,7 +113,10 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
       const value = MOTION_LABELS[configuration.motion[row.key] as string] ?? configuration.motion[row.key];
       rows.push(`${mark(selected)} ${selected ? primary : secondary}${padCells(row.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
     });
-    rows.push('', `  ${subtle}${MOTION_ROWS[state.selected]?.note ?? ''}${reset}`, '', renderControls([['↑↓', 'select'], ['←→', 'change'], ['Esc', 'back']]));
+    rows.push('', `  ${subtle}${MOTION_ROWS[state.selected]?.note ?? ''}${reset}`);
+    const shown = preview ? hubMotionPreview(state, configuration, columns, preview.gate, preview.now) : undefined;
+    if (shown) rows.push('', `  ${subtle}Preview${reset}`, ...shown.rows);
+    rows.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']]));
     return rows.map(row => truncateAnsi(row, columns));
   }
   const cursor = configuration.cursor;

@@ -170,8 +170,8 @@ import {nmshConfigDirectory} from '../configuration/paths.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
 import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
-import {appearanceHubKey, createAppearanceHub, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
-import {decayCells, diffModules, EVENT_TONES, morphCells, progress, sweepCells as transitionSweep, toneColor, Transitions} from '../motion/transitions.js';
+import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
+import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
 import {includeLine, nativeCursorIntegrated, nativeHostLabel, setupPlan, writeManagedFiles} from '../cursor/native.js';
@@ -3186,7 +3186,16 @@ export class TerminalApp {
     }
     if (this.appearanceHub) {
       const theme = NATIVE_PROMPT_THEMES[this.promptConfiguration.nmsh.palette]?.label ?? this.promptConfiguration.nmsh.palette;
-      return framePanel(renderAppearanceHub(this.appearanceHub, this.promptConfiguration, columns, theme, this.cursorBackend().backend.label), columns);
+      const now = Date.now();
+      const gate = this.motionPreviewGate();
+      // A frame clock only while the one-shot preview is animating; none once it settles.
+      const busy = hubMotionPreview(this.appearanceHub, this.promptConfiguration, columns, gate, now)?.busy ?? false;
+      if (busy && !this.motionPreviewClock) this.motionPreviewClock = presentationClock.subscribe(() => {
+        if (!this.stopped && this.appearanceHub) { this.render(); return; }
+        this.motionPreviewClock?.(); this.motionPreviewClock = undefined;
+      }, 33, 16);
+      else if (!busy && this.motionPreviewClock) { this.motionPreviewClock(); this.motionPreviewClock = undefined; }
+      return framePanel(renderAppearanceHub(this.appearanceHub, this.promptConfiguration, columns, theme, this.cursorBackend().backend.label, {gate, now}), columns);
     }
     if (this.keyboardState) return framePanel(renderKeyboardPanel(this.keyboardState, columns, this.host.name), columns);
     return framePanel(this.renderedPromptPanel(columns), columns);
@@ -5564,6 +5573,12 @@ export class TerminalApp {
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
   private transitionClock?: () => void;
+  private motionPreviewClock?: () => void;
+  /** The /appearance → Motion preview gate: Effects Off and Reduced Motion stay distinct so the preview can say which applies. */
+  private motionPreviewGate(): MotionGate {
+    const presentation = this.promptConfiguration.presentation;
+    return {reducedMotion: presentation.reducedMotion || isReducedMotion(), effectsOff: presentation.effectsOff, color: colorLevel() !== 'none'};
+  }
   /** The semantic prompt modules last shown, for context morph (ids, roles and text only). */
   private lastModules?: Array<{id: string; text: string; role?: string}>;
   /** Each visible transcript row's owning block, for Block Seal placement. */
@@ -6641,7 +6656,7 @@ export class TerminalApp {
       const t = progress(transition, now);
       if (transition.kind === 'launch') {
         for (const region of regions('input', 'separator', 'composerBorder')) for (let index = 0; index < region.height; index += 1) {
-          add(region.top + index, transition.style === 'sweep' ? transitionSweep(columns, t, UI_COLORS.accent, region.kind === 'input' ? 0.5 : 0.8) : decayCells(0, columns, t, UI_COLORS.accent, 0.35));
+          add(region.top + index, transitionPaint.launch(transition.style, columns, t, region.kind !== 'input'));
         }
       } else if (transition.kind === 'materialize') {
         const input = regions('input')[0];
@@ -6652,15 +6667,14 @@ export class TerminalApp {
         const to = at(transition.to);
         const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
         const offset = caret.caretRow - at(this.editor.displayCursorIndex).caretRow;
-        if (from.caretRow === to.caretRow) add(input.top + from.caretRow + offset, decayCells(from.caretColumn, to.caretColumn, t, UI_COLORS.accent, transition.vivid ? 0.7 : 0.45));
+        if (from.caretRow === to.caretRow) add(input.top + from.caretRow + offset, transitionPaint.materialize(from.caretColumn, to.caretColumn, t, transition.vivid));
       } else if (transition.kind === 'seal') {
         const transcript = plan.regions.find(region => region.kind === 'transcript');
         const index = this.visibleBlocks.lastIndexOf(transition.blockStartId);
-        if (transcript && index >= 0) add(transcript.top + index, transitionSweep(columns, t, toneColor(transition.tone), transition.tone === 'failure' ? 0.75 : 0.55, transition.tone === 'failure' ? 6 : 12));
+        if (transcript && index >= 0) add(transcript.top + index, transitionPaint.seal(transition.tone, columns, t));
       } else if (transition.kind === 'echo') {
-        const tone = toneColor(EVENT_TONES[transition.event]);
-        for (const region of regions('separator', 'composerBorder')) add(region.top, decayCells(0, columns, t, tone, transition.expressive ? 0.6 : 0.4));
-        if (transition.expressive) for (const region of regions('input')) add(region.top, transitionSweep(columns, t, tone, 0.35));
+        for (const region of regions('separator', 'composerBorder')) add(region.top, transitionPaint.echoRule(transition.event, columns, t, transition.expressive));
+        if (transition.expressive) for (const region of regions('input')) add(region.top, transitionPaint.echoInput(transition.event, columns, t));
       } else if (transition.kind === 'morph') {
         const prompt = regions('prompt')[0] ?? regions('input')[0];
         if (!prompt) continue;
@@ -6671,7 +6685,7 @@ export class TerminalApp {
           const start = plain.indexOf(change.text);
           if (start < 0) continue;
           const column = displayWidth(plain.slice(0, start));
-          add(prompt.top, morphCells(column, column + displayWidth(change.text), t, UI_COLORS.accent, transition.expressive, change.change));
+          add(prompt.top, transitionPaint.morph(column, column + displayWidth(change.text), t, transition.expressive, change.change));
         }
       }
     }
@@ -6944,7 +6958,7 @@ export class TerminalApp {
     this.agentsSubscription();
     this.agents.dispose();
     this.cursorPresenter.dispose();
-    this.transitions.cancel(); this.transitionClock?.(); this.transitionClock = undefined;
+    this.transitions.cancel(); this.transitionClock?.(); this.transitionClock = undefined; this.motionPreviewClock?.(); this.motionPreviewClock = undefined;
     this.cursorPanelClock?.(); this.cursorPanelClock = undefined;
     this.tasksSubscription();
     this.watchSubscription();

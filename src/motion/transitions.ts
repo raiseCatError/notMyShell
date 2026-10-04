@@ -170,3 +170,23 @@ export function diffModules(previous: ReadonlyArray<{id: string; text: string; r
   for (const [id, item] of before) if (!after.has(id)) changes.push({id: item.id, text: item.text, change: 'disappeared', ...(item.role ? {role: item.role} : {})});
   return changes;
 }
+
+/**
+ * The real per-effect paints, shared by the live frame and the /appearance →
+ * Motion preview so the two can never drift. Each returns the cells for one
+ * logical target row at progress t.
+ */
+export const transitionPaint = {
+  /** Command launch over a composer row; `rule` rows (separator, border) take a stronger band. */
+  launch: (style: 'sweep' | 'pulse', columns: number, t: number, rule: boolean) =>
+    style === 'sweep' ? sweepCells(columns, t, UI_COLORS.accent, rule ? 0.8 : 0.5) : decayCells(0, columns, t, UI_COLORS.accent, 0.35),
+  /** Completion highlight over the inserted columns [from, to). */
+  materialize: (from: number, to: number, t: number, vivid: boolean) => decayCells(from, to, t, UI_COLORS.accent, vivid ? 0.7 : 0.45),
+  /** Block Seal over a finished block's header row. */
+  seal: (tone: Tone, columns: number, t: number) => sweepCells(columns, t, toneColor(tone), tone === 'failure' ? 0.75 : 0.55, tone === 'failure' ? 6 : 12),
+  /** Semantic Echo on a rule row; expressive echoes also sweep the input row. */
+  echoRule: (event: SemanticEvent, columns: number, t: number, expressive: boolean) => decayCells(0, columns, t, toneColor(EVENT_TONES[event]), expressive ? 0.6 : 0.4),
+  echoInput: (event: SemanticEvent, columns: number, t: number) => sweepCells(columns, t, toneColor(EVENT_TONES[event]), 0.35),
+  /** Prompt morph over one module's final columns. */
+  morph: (from: number, to: number, t: number, expressive: boolean, change: ModuleChange['change']) => morphCells(from, to, t, UI_COLORS.accent, expressive, change),
+};
