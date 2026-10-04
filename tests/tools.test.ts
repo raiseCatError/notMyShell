@@ -299,3 +299,27 @@ test('bulk install: one failing tool is reported per tool and does not undo the 
   assert.ok(state.errors.jq, 'failure is recorded per tool');
   assert.deepEqual([...state.selection!].sort(), ['jq', ...(state.errors.rg ? ['rg'] : [])].sort(), 'failed tools stay selected for retry');
 });
+
+import {integrationActivation} from '../src/tools/Activation.js';
+
+test('integration activation: runtime evidence from the shell snapshot, separate from installed/selected, shared by all shells', () => {
+  const names = (...list: string[]) => new Set(list);
+  assert.equal(integrationActivation('zoxide', 'zsh', names('__zoxide_z'), true)?.state, 'active');
+  assert.equal(integrationActivation('zoxide', 'bash', names('__zoxide_hook'), true)?.state, 'active');
+  assert.equal(integrationActivation('zoxide', 'fish', names('__zoxide_z'), true)?.state, 'active');
+  assert.equal(integrationActivation('atuin', 'bash', names('__atuin_history'), true)?.state, 'active');
+  assert.equal(integrationActivation('atuin', 'zsh', names('ls'), true)?.state, 'not-detected');
+  assert.equal(integrationActivation('fzf', 'zsh', names('fzf-history-widget'), true)?.state, 'active');
+  assert.equal(integrationActivation('zoxide', 'zsh', names('ls'), false)?.state, 'unknown', 'truncated snapshot cannot prove absence');
+  assert.equal(integrationActivation('zoxide', 'zsh', undefined, false)?.state, 'unknown');
+  assert.equal(integrationActivation('fzf', 'fish', names('x'), true)?.state, 'unknown', 'Fish lists autoloadable names, so no claim');
+  assert.equal(integrationActivation('rg', 'zsh', names('x'), true), undefined, 'tools without an activation concept have no claim');
+  const state = createToolsPanel(new Set(['zoxide']));
+  state.statuses.zoxide = {state: 'installed'};
+  state.activation = id => integrationActivation(id, 'zsh', names('__zoxide_z'), true);
+  state.detail = TOOLS.find(tool => tool.id === 'zoxide')!;
+  const plain = renderTools(state, 120, 40).map(stripAnsi).join('\n');
+  assert.match(plain, /NMSh\s+Integration selected in NMSh/u);
+  assert.match(plain, /Shell\s+Active in this shell/u);
+  assert.match(plain, /rc files are never read/u);
+});

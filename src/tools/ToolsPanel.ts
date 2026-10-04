@@ -15,6 +15,7 @@ import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
 import {InstallProvenance, planToolUninstall, type UninstallPlan} from './InstallProvenance.js';
 import {elevationNote, planPackageInstall, planUnavailableReason, systemPackageEnvironment, type PackageEnvironment, type PackagePlan} from '../packages/managers.js';
+import {ACTIVATION_LABELS, type ActivationFacts} from './Activation.js';
 import {CONTEXT_LABELS, detectToolContexts, relevantTools, type ToolContext} from './relevance.js';
 
 export type ToolsTab = 'discover' | 'installed' | 'configure' | 'errors';
@@ -40,6 +41,8 @@ export interface ToolsPanel {
   contexts?: readonly ToolContext[];
   /** Install records; injectable for tests. */
   provenance?: InstallProvenance;
+  /** Runtime activation facts from the running shell; supplied by the app. */
+  activation?: (toolId: string) => ActivationFacts | undefined;
   /** Package managers and privilege facts; injectable for tests. */
   packages?: PackageEnvironment;
   /** Tools ticked for one combined install (Space on the list). */
@@ -415,8 +418,10 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     if (tool.language) rows.push(`  ${SUBTLE}${'Language'.padEnd(10)}${RESET}${foregroundOf(languageIdentity(tool.language))}${tool.language}${RESET}`);
     const version = state.statuses[tool.id]?.version;
     if (version) rows.push(field('Version', stripAnsi(version).replace(/[\u0000-\u001f\u007f-\u009f]/gu, '')));
-    if (state.configured.has(tool.id)) rows.push(field('NMSh', 'Configured in NMSh'));
-    rows.push('', `  ${SUBTLE}Shell hook state is not inferred; existing hooks stay authoritative.${RESET}`);
+    if (state.configured.has(tool.id)) rows.push(field('NMSh', 'Integration selected in NMSh'));
+    const activation = state.statuses[tool.id]?.state === 'installed' ? state.activation?.(tool.id) : undefined;
+    if (activation) rows.push(field('Shell', `${ACTIVATION_LABELS[activation.state]} · ${activation.detail}`));
+    rows.push('', `  ${SUBTLE}${activation ? 'Shell state comes from the running session; rc files are never read.' : 'Shell hook state is not inferred; existing hooks stay authoritative.'}${RESET}`);
     footer = [
       ...(state.statuses[tool.id]?.state === 'missing' ? [['I', 'install…'] as [string, string]] : []),
       ...(state.statuses[tool.id]?.state === 'installed' ? [['X', 'uninstall…'] as [string, string]] : []),

@@ -15,6 +15,7 @@ import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId
 import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
+import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState} from '../setup/SetupCat.js';
@@ -537,6 +538,7 @@ export class TerminalApp {
           this.semanticService.applyShellKnowledge(marker.knowledge);
           this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
+          this.rememberShellNames(marker.knowledge);
         }
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
@@ -649,6 +651,7 @@ export class TerminalApp {
       this.shellJobs = knowledgeJobCount(attached.knowledge) ?? 0;
       this.semanticService.applyShellKnowledge(attached.knowledge);
       this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
+      this.rememberShellNames(attached.knowledge);
     }
     if (!journal) return;
     this.continuedJournal = journal;
@@ -3447,10 +3450,18 @@ export class TerminalApp {
     }
   }
 
+  private shellNames?: ReadonlySet<string>;
+  private shellNamesComplete = false;
+  private rememberShellNames(knowledge: string): void {
+    this.shellNames = new Set(parseShellKnowledge(knowledge).keys());
+    this.shellNamesComplete = /^complete$/mu.test(knowledge);
+  }
+
   private startTools(onboarding = false): void {
     const config = this.promptConfiguration;
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
     state.updates = this.toolUpdates;
+    state.activation = toolId => integrationActivation(toolId, this.shellId, this.shellNames, this.shellNamesComplete);
     void refreshTools(state, () => { if (!this.stopped && this.toolsPanel === state) this.render(); });
   }
 
