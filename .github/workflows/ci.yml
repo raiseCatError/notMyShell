@@ -95,7 +95,7 @@ jobs:
     name: Linux portability subset (Fedora)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    container: fedora:42
+    container: fedora:42  # clipboard process-lifetime tests need a real init to reap children; they run on Ubuntu and macOS
     steps:
       - name: Install system prerequisites
         run: dnf install -y git zsh fish gcc-c++ make python3 which lsof procps-ng
@@ -118,7 +118,7 @@ jobs:
         run: npm run typecheck
 
       - name: Platform, package-manager, updater and shell-backend tests
-        run: node --import=tsx --test --test-timeout=120000 tests/linuxPlatform.test.ts tests/clipboard.test.ts tests/tools.test.ts tests/update.test.ts tests/hostProfiles.test.ts tests/portabilityUninstall.test.ts
+        run: node --import=tsx --test --test-timeout=120000 tests/linuxPlatform.test.ts tests/tools.test.ts tests/update.test.ts tests/hostProfiles.test.ts tests/portabilityUninstall.test.ts
         env:
           NMSH_DISABLE_UPDATES: '1'
           COLORTERM: truecolor
