@@ -38,13 +38,24 @@ Then submit a Pull Request from `feature/example` to `dev`.
 
 ## Canonical verification
 
-Before submitting a pull request, ensure that your changes pass the canonical verification suite:
+During implementation, run focused affected tests. Use `npm run verify:fast` for
+ordinary iteration (build, an explicit core test subset, and diff checks); it is
+not the final gate. Before pushing a meaningful checkpoint, run `npm run verify`
+(build, the full canonical suite, and diff checks). Build already checks the
+source TypeScript; `npm run typecheck` remains available for direct use.
+
+For release-sensitive changes run `npm run verify:release`, which adds benchmark
+script typechecking and bounded timing smoke. These commands reuse local
+node_modules; use `npm ci` for clean CI/release environments. Batch coherent
+changes and avoid pushing tiny or known-broken edits to use Actions as a test
+runner. GitHub CI provides independent platform verification, not a replacement
+for local checks. See [development verification](docs/development-verification.md)
+for sharding, platform gates and exact-release evidence requirements.
 
 ```bash
-npm run build
-npm run typecheck
-npm test
-git diff --check
+npm run verify:fast
+npm run verify
+npm run verify:release
 ```
 
 *Note: When writing tests involving `TerminalApp`, you must carefully tear down child processes and temp ZDOTDIRs using `app['stop'](0)` and `app['session'].kill()` to prevent zombie processes.*
