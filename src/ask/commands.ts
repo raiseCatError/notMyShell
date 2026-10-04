@@ -145,9 +145,12 @@ export function answerCommandQuestion(question: CommandQuestion, context: AskCon
     lines.push('', `Subcommands include ${facts.subcommands.slice(0, 8).map(item => item.names[0]).join(', ')}${facts.subcommands.length > 8 ? ', …' : ''}.`);
   }
   // Practical examples (optional TLDR) when asked for, or when local syntax facts are sparse.
-  if (question.intent === 'examples' || (question.intent === 'syntax' && !facts.options.length)) {
+  // Plain definitions ('explain') stay short and never carry examples.
+  if (question.intent === 'examples' || question.intent === 'syntax') {
     const examples = env.examples?.(facts.path) ?? [];
-    if (examples.length) lines.push('', 'Examples from TLDR', ...examples.slice(0, 6).flatMap(example => [`  ${example.description}`, `    ${example.command}`]));
+    const shown = question.intent === 'examples' ? 6 : facts.options.length ? 3 : 5;
+    if (examples.length) lines.push('', 'Examples from TLDR', ...examples.slice(0, shown).flatMap(example => [`  ${example.description}`, `    ${example.command}`]));
+    else if (!env.examples) lines.push('', 'Local TLDR examples are unavailable because tealdeer is not installed.');
     else if (question.intent === 'examples') lines.push('', `No local TLDR examples for ${path}.`);
   }
   if (PROVIDER_TOOLS.has(name) && concept.concepts[0]) lines.push('', `In NMSh: ${concept.concepts[0].description}`);
@@ -160,7 +163,7 @@ export function answerCommandQuestion(question: CommandQuestion, context: AskCon
     else lines.push('NMSh has no curated install recipe for it.');
   }
   if (question.intent === 'explain' && syntax) next.push({key: `syntax:${path}`, label: 'Show syntax and useful options', refine: `how do i use ${path}`});
-  if (question.intent === 'examples' && !env.examples && env.install?.('tldr')) next.push({key: 'install:tldr', label: 'Install tealdeer for TLDR examples', outcome: installProposal('tldr', env.install('tldr')!)});
+  if ((question.intent === 'examples' || question.intent === 'syntax') && !env.examples && env.install?.('tldr')) next.push({key: 'install:tldr', label: 'Install TLDR (tealdeer)', outcome: installProposal('tldr', env.install('tldr')!)});
   if (question.intent === 'syntax' && facts.options.length > 6) next.push({key: `options:${path}`, label: `All ${facts.options.length} options`, refine: `what flags does ${path} have`});
   return {kind: 'answer', capability: 'help.command', text: lines.join('\n'), ...(syntax && question.intent !== 'explain' ? {block: commandBlock(facts.path, 'reference')} : {}),
     ...(next.length ? {next: next.slice(0, 4)} : {}), referents: {command: facts.path}};

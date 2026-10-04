@@ -5,6 +5,7 @@ import {detectTerminalHost} from '../host/terminalHost.js';
 import {defaultRuntimeDir} from '../session/runtimeDir.js';
 import {detectShellEnvironment, OWNERSHIP_NOTE, shellEnvironmentRows} from '../shell/ShellEnvironment.js';
 import {loadPromptConfiguration} from '../prompt/configuration.js';
+import {shellAdapter} from '../shell/adapters/registry.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
 
 /**
@@ -17,6 +18,9 @@ export function doctorReport(env: NodeJS.ProcessEnv = process.env, extra: Array<
   const platform = detectPlatform();
   const host = detectTerminalHost(env);
   const config = loadPromptConfiguration();
+  // The default backend for new sessions (doctor has no live session); never $SHELL.
+  const resolved = shellAdapter(config.shellBackend).resolveExecutable(process.env);
+  const activeShell = {id: config.shellBackend, ...(resolved ? {path: resolved} : {})};
   const rows: Array<[string, string]> = [
     ['NMSh', formatBuildIdentity(readBuildIdentity())],
     ['Node', process.version],
@@ -31,7 +35,7 @@ export function doctorReport(env: NodeJS.ProcessEnv = process.env, extra: Array<
     ['Picker provider', config.picker],
     ['Session notices', config.sessionNotices ? 'On' : 'Off'],
     ['Agent activity', config.agentActivity ? 'On (local only)' : 'Off'],
-    ...shellEnvironmentRows(detectShellEnvironment()),
+    ...shellEnvironmentRows(detectShellEnvironment(), activeShell),
     ['Config file', tilde(promptConfigurationPath(env))],
     ['Runtime directory', tilde(defaultRuntimeDir(env))],
   ];

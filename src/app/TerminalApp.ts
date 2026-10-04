@@ -30,9 +30,10 @@ import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCa
 import {makeRng} from '../idle/screenEffects.js';
 import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
 import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
-import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
+import {commandWord, createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
-import {toolInstall, TOOLS} from '../tools/catalog.js';
+import {knownToolForExecutable, suggestibleToolFor, toolInstall, TOOLS, type Tool} from '../tools/catalog.js';
+import {planPackageInstall} from '../packages/managers.js';
 import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
 import type {CommandSource} from '../shell/SemanticService.js';
 import {GLYPHS, setIconStyle, getCurrentGlyphMode, setPromptSymbol} from '../ui/glyphs.js';
@@ -450,7 +451,7 @@ export class TerminalApp {
   private cachedEnvironment?: ShellEnvironmentReport;
   private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
-  private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: toolInstall};
+  private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
   private misePanel?: MisePanel;
   private readonly miseService = new MiseProjectService();
   private toolConfigurationLoading = false;
@@ -2723,6 +2724,9 @@ export class TerminalApp {
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
+      // The raw shell error stays; a curated command NMSh knows gets a factual follow-up (identity only, no lookup or install).
+      const known = failure === 'command-not-found' ? this.knownMissingNote(command.command) : undefined;
+      if (known) this.output.addHistoryLine(`${INFO}${known}${RESET}`);
     }
     this.running = undefined;
     if (!this.replaying && !command.cleared && completedRecord) {
@@ -4303,6 +4307,15 @@ export class TerminalApp {
    * zsh cannot resolve (no alias, function, builtin or executable), offer an install instead. Returns
    * true when the offer is shown; the command text stays in the composer meanwhile.
    */
+  /** One line for an exact curated command that is not installed; undefined for unknown commands (nothing is invented). */
+  private knownMissingNote(command: string): string | undefined {
+    const word = commandWord(command);
+    const tool = word ? knownToolForExecutable(word) : undefined;
+    if (!word || !tool || resolveCommand(word) !== undefined) return undefined;
+    const provided = tool.package && tool.package !== word ? ` · provided by ${tool.package}` : '';
+    return `${tool.label} is not installed${provided} · install it from /tools`;
+  }
+
   private async offerInstallFor(command: string): Promise<boolean> {
     const tool = installCandidate(command, this.promptConfiguration);
     if (!tool || !tool.executable) return false;
@@ -4433,7 +4446,7 @@ export class TerminalApp {
         {label: 'Completion sources', value: this.completionService.sourceIds.join(' + ')},
         {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
       ]),
-      statusSection('Shell Environment', shellEnvironmentRows(this.shellEnvironment).map(([label, value]) => ({label, value}))),
+      statusSection('Shell Environment', shellEnvironmentRows(this.shellEnvironment, {id: this.shellId, ...(shellAdapter(this.shellId).resolveExecutable(process.env) ? {path: shellAdapter(this.shellId).resolveExecutable(process.env)!} : {})}).map(([label, value]) => ({label, value}))),
       statusSection('Services & Activity', [
         {label: 'Session notices', value: config.sessionNotices ? (this.sessionMode === 'service' ? 'On' : 'On (needs the live-session service)') : 'Off'},
         {label: 'Agent activity', value: config.agentActivity ? 'On · local only' : 'Off'},
@@ -6261,8 +6274,8 @@ export class TerminalApp {
       return path ? {kind: 'executable', path} : undefined;
     }, ...(resolveCommand('tldr') ? {examples: (path: readonly string[]) => tldrExamples(resolveCommand('tldr'), path)} : {}), install: name => {
       // Only a curated /tools entry for this exact executable name; never a guessed package.
-      const tool = TOOLS.find(item => (item.executable ?? item.id) === name && !item.legacy);
-      const recipe = tool ? toolInstall(tool) : undefined;
+      const tool = suggestibleToolFor(name);
+      const recipe = tool ? (planPackageInstall(tool) ?? toolInstall(tool)) : undefined;
       return tool && recipe ? {tool: tool.id, label: recipe.label} : undefined;
     }};
   }

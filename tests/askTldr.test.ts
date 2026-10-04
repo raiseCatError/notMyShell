@@ -35,7 +35,7 @@ test('examples requests use TLDR when present and fall back cleanly when not', (
   assert.match((withTldr as {text: string}).text, /Examples from TLDR\n {2}Create an archive from files\n {4}tar cf <target\.tar> <file1 file2>/u);
   const without = resolveRequest('show examples of tar', context, {}, env());
   assert.match((without as {text: string}).text, /^tar: /u, 'built-in knowledge still answers');
-  assert.match((without as {text: string}).text, /No local TLDR examples for tar\./u);
-  assert.ok((without as {next?: Array<{label: string}>}).next?.some(option => option.label === 'Install tealdeer for TLDR examples'), 'install offered only through the curated recipe');
+  assert.match((without as {text: string}).text, /Local TLDR examples are unavailable because tealdeer is not installed\./u);
+  assert.ok((without as {next?: Array<{label: string}>}).next?.some(option => option.label === 'Install TLDR (tealdeer)'), 'install offered only through the curated recipe');
   assert.ok(TOOLS.some(tool => tool.id === 'tealdeer' && tool.executable === 'tldr' && tool.package === 'tealdeer'), 'tealdeer is a curated /tools entry');
 });

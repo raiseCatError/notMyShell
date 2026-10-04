@@ -1,5 +1,6 @@
-import {CellGrid, mixPacked, NO_COLOR_VALUE} from './CellGrid.js';
+import {CellGrid, luminance, mixPacked, NO_COLOR_VALUE} from './CellGrid.js';
 import type {ScreenCapture} from './screenCapture.js';
+import {CAT_ASCII, CAT_ASCII_BLINK, CAT_CELL_HEIGHT, CAT_CELL_WIDTH, catCells, type CatPose} from './catSprite.js';
 
 /**
  * The shared screen-saver engine: a seeded RNG, a fixed-timestep driver and a
@@ -42,18 +43,35 @@ export function glyphsOf(capture: ScreenCapture, textColor: number): Glyph[] {
     const i = cells[k]!;
     const x = i % capture.width, y = Math.floor(i / capture.width);
     const fg = capture.fg[i]!;
-    out.push({ch: capture.glyphs[i]!, fg: fg === NO_COLOR_VALUE ? textColor : fg, ox: x, oy: y, x, y, vx: 0, vy: 0, state: 0, t: 0, a: 0, r: 0, w: 0});
+    out.push({ch: capture.glyphs[i]!, fg: visibleFg(fg, capture.bg[i]!, textColor), ox: x, oy: y, x, y, vx: 0, vy: 0, state: 0, t: 0, a: 0, r: 0, w: 0});
   }
   return out;
 }
 
-/** Cells that are not in the animated set stay exactly where they were captured. */
-function drawStatic(grid: CellGrid, capture: ScreenCapture, skip: ReadonlySet<number>, textColor: number): void {
+/**
+ * A glyph that leaves its cell is drawn without its background, so its color
+ * must stand on its own: dark-on-light chrome (a badge, a selection) would
+ * otherwise become dark text on the host's dark background.
+ */
+export function visibleFg(fg: number, bg: number, textColor: number): number {
+  if (fg === NO_COLOR_VALUE) return bg !== NO_COLOR_VALUE && luminance(bg) > 0.35 ? bg : textColor;
+  if (luminance(fg) >= 0.3) return fg;
+  return bg !== NO_COLOR_VALUE && luminance(bg) >= 0.3 ? bg : textColor;
+}
+
+/**
+ * Cells that are not in the animated set are drawn exactly as captured:
+ * glyph, foreground and authored background (host-default colors stay
+ * host-default, so transparency and the prompt chrome survive). A cell whose
+ * glyph is animated keeps its authored background and loses only the glyph.
+ */
+function drawStatic(grid: CellGrid, capture: ScreenCapture, skip: ReadonlySet<number>, _textColor: number): void {
   for (let i = 0; i < capture.glyphs.length; i += 1) {
-    const g = capture.glyphs[i]!;
-    if (g === ' ' || skip.has(i)) continue;
-    const fg = capture.fg[i]!;
-    grid.set(i % capture.width, Math.floor(i / capture.width), g, fg === NO_COLOR_VALUE ? textColor : fg);
+    const g = capture.glyphs[i]!, bg = capture.bg[i]!;
+    if (g === ' ' && bg === NO_COLOR_VALUE) continue;
+    const x = i % capture.width, y = Math.floor(i / capture.width);
+    if (skip.has(i)) grid.set(x, y, ' ', NO_COLOR_VALUE, bg);
+    else grid.set(x, y, g, capture.fg[i]!, bg);
   }
 }
 
@@ -335,83 +353,115 @@ export class Fireworks extends Sim {
 
 // -------------------------------------------------------------- Circletastic
 
-export type CircPhase = 'hold' | 'gather' | 'spin' | 'unstable' | 'scatter' | 'settle';
-export interface RingSpec { cx: number; cy: number; r: number; dir: 1 | -1; slots: number }
-const CIRC = {gather: 2.4, spin: 6.5, unstable: 1.2, scatter: 3.2, settle: 1.6, hold: 0.8, maxClusters: 3, spacing: 0.95, ringGap: 1.7};
+export type CircPhase = 'hold' | 'gather' | 'stabilize' | 'rotate' | 'accelerate' | 'destabilize' | 'explode' | 'scatter' | 'settle';
+export interface RingSpec { cx: number; cy: number; r: number; dir: 1 | -1; slots: number; cluster: number }
+export interface Cluster { cx: number; cy: number; R: number; dir: 1 | -1; rings: RingSpec[] }
+const CIRC = {gather: 2.2, stabilize: 1.2, rotate: 1.8, accelerate: 5, destabilize: 1.3, scatter: 3.2, settle: 1.6, hold: 0.8,
+  spacing: 0.95, ringGap: 1.7, minClusters: 2, maxClusters: 5, omegaStart: 0.45, omegaMax: 9};
 
 /** Capacity of one ring at physical radius r (rows units): glyphs are spaced by arc length. */
 export const ringCapacity = (r: number) => Math.max(0, Math.floor((2 * Math.PI * r) / CIRC.spacing));
+const innerLimit = (R: number) => Math.max(1.8, R * 0.35);
+const ringRadii = (R: number) => { const out: number[] = []; for (let r = R; r >= innerLimit(R); r -= CIRC.ringGap) out.push(r); return out; };
+export const clusterCapacity = (R: number) => ringRadii(R).reduce((sum, r) => sum + ringCapacity(r), 0);
 
 /**
- * Lay out rings for `count` glyphs in a width×height cell area. Physical
- * units are rows (x cells count half), so the ring looks circular. One
- * dominant cluster with concentric rings when needed and an always-empty
- * center; a few separate clusters only when one cannot fit.
+ * A small bounded set (2–5) of compact text circles, each with a clear empty
+ * center and negative space around it. Physical units are rows (x cells count
+ * half) so rings look circular. Placement is seeded and collision-aware;
+ * when a viewport is too small for several, fewer (down to one) are used.
+ * Glyphs beyond the circles' total capacity simply do not participate.
  */
-export function layoutRings(count: number, width: number, height: number, rng: () => number): RingSpec[] {
-  const W = width / ASPECT, H = height;
-  const maxR = Math.max(2.5, Math.min(W, H) / 2 - 1.5);
-  const minInner = Math.max(1.8, maxR * 0.3);
-  const cluster = (R: number, cx: number, cy: number, need: number, dir: 1 | -1): {rings: RingSpec[]; held: number} => {
-    const rings: RingSpec[] = []; let held = 0;
-    for (let r = R, k = 0; r >= minInnerFor(R) && held < need; r -= CIRC.ringGap, k += 1) {
-      const slots = Math.min(ringCapacity(r), need - held);
-      if (slots < 3) continue;
-      rings.push({cx, cy, r, dir: (k % 2 === 0 ? dir : -dir) as 1 | -1, slots}); held += slots;
+export function layoutCircles(count: number, width: number, height: number, rng: () => number): Cluster[] {
+  const W = width / ASPECT, H = height, margin = 1.5;
+  const Rmax = Math.max(2.6, Math.min(W, H) * 0.26);
+  const place = (k: number, scale: number): Cluster[] | undefined => {
+    const need = Math.ceil(count / k);
+    let base = 2.6; while (base < Rmax && clusterCapacity(base) < need) base += 0.4;
+    const placed: Cluster[] = [];
+    for (let n = 0; n < k; n += 1) {
+      const R = clamp(base * scale * (0.85 + rng() * 0.3), 2.6, Rmax);
+      if (R * 2 + margin * 2 > Math.min(W, H) + 0.01 && k > 1) return undefined;
+      let spot: {cx: number; cy: number} | undefined;
+      for (let attempt = 0; attempt < 200 && !spot; attempt += 1) {
+        const cx = margin + R + rng() * Math.max(0, W - 2 * (margin + R)), cy = margin + R + rng() * Math.max(0, H - 2 * (margin + R));
+        if (placed.every(other => Math.hypot(cx - other.cx, cy - other.cy) >= R + other.R + 2.5)) spot = {cx, cy};
+      }
+      if (!spot) return undefined;
+      placed.push({...spot, R, dir: rng() < 0.5 ? 1 : -1, rings: []});
     }
-    return {rings, held};
+    return placed;
   };
-  const minInnerFor = (R: number) => Math.max(1.8, R * 0.3);
-  void minInner;
-  // Smallest dominant ring that holds everything in a single circle, if it fits.
-  const singleR = count / ((2 * Math.PI) / CIRC.spacing);
-  const dir: 1 | -1 = rng() < 0.5 ? 1 : -1;
-  if (singleR <= maxR) {
-    const R = clamp(Math.max(singleR, 2.5), 2.5, maxR);
-    return cluster(R, W / 2, height / 2, count, dir).rings;
+  let clusters: Cluster[] | undefined;
+  for (let k = clamp(Math.ceil(count / 70), CIRC.minClusters, CIRC.maxClusters); k >= 2 && !clusters; k -= 1) {
+    // Prefer the full radius; shrink the circles a little before giving up on having several.
+    for (const scale of [1, 0.85, 0.72]) { clusters = place(k, scale); if (clusters) break; }
   }
-  const one = cluster(maxR, W / 2, height / 2, count, dir);
-  if (one.held >= count) return one.rings;
-  // Too much text for one cluster: a small number of well-spaced circles, bounded.
-  const n = Math.min(CIRC.maxClusters, Math.ceil(count / Math.max(1, one.held)) + 1);
-  const spots = (n <= 2 ? [[0.28, 0.5], [0.72, 0.5]] : [[0.2, 0.5], [0.5, 0.5], [0.8, 0.5]]).slice(0, n);
-  const R = Math.max(2.5, Math.min(n <= 2 ? W * 0.2 : W * 0.14, H / 2 - 1.5));
-  const all: RingSpec[] = [];
-  let remaining = count;
-  spots.forEach(([fx, fy], i) => {
-    const c = cluster(R, W * fx!, height * fy!, remaining, i % 2 === 0 ? dir : (-dir as 1 | -1));
-    all.push(...c.rings); remaining -= c.held;
+  clusters ??= [{cx: W / 2, cy: H / 2, R: Math.max(2.4, Math.min(Rmax, Math.min(W, H) / 2 - margin)), dir: 1, rings: []}];
+  // Share the glyphs between clusters by capacity; inside a cluster, between rings by capacity.
+  const totalCapacity = clusters.reduce((sum, c) => sum + clusterCapacity(c.R), 0);
+  let remaining = Math.min(count, totalCapacity);
+  clusters.forEach((cluster, index) => {
+    const cap = clusterCapacity(cluster.R);
+    const quota = index === clusters!.length - 1 ? Math.min(cap, remaining) : Math.min(cap, Math.round(Math.min(count, totalCapacity) * cap / totalCapacity));
+    let left = quota; const radii = ringRadii(cluster.R);
+    radii.forEach((r, k) => {
+      const share = k === radii.length - 1 ? left : Math.min(left, Math.round(quota * ringCapacity(r) / cap));
+      const slots = Math.min(share, ringCapacity(r));
+      if (slots >= 3) { cluster.rings.push({cx: cluster.cx, cy: cluster.cy, r, dir: (k % 2 === 0 ? cluster.dir : -cluster.dir) as 1 | -1, slots, cluster: index}); left -= slots; }
+    });
+    remaining -= quota - left;
   });
-  return all;
+  return clusters.filter(c => c.rings.length);
 }
 
 export class Circletastic extends Sim {
   readonly glyphs: Glyph[];
   phase: CircPhase = 'hold';
   phaseT = 0;
+  clusters: Cluster[] = [];
   rings: RingSpec[] = [];
   /** Per-ring angle and angular speed (rad/s). */
   angle: number[] = [];
   omega: number[] = [];
-  private assigned: Array<{ring: number; slot: number}> = [];
+  /** Slot assignment for participating glyphs; others stay where they were captured. */
+  assigned: Array<{ring: number; slot: number} | undefined> = [];
+  private delay: number[] = [];
+  private duration: number[] = [];
   private alpha = 1.4;
+  private explodeAt: number[] = [];
+  private exploded: boolean[] = [];
+  explosion: 'simultaneous' | 'staggered' = 'simultaneous';
   cycles = 0;
+  /** Phase names in the order they were entered (for tests and diagnostics). */
+  readonly history: CircPhase[] = ['hold'];
   constructor(capture: ScreenCapture, textColor: number) {
     super(capture, 0xc12c);
     this.glyphs = glyphsOf(capture, textColor);
-    // Reading order keeps neighbours together, so words travel as loose groups.
     this.plan();
   }
+  /** ASSIGN: every participating glyph gets a ring and slot before anything moves. */
   private plan() {
-    this.rings = layoutRings(this.glyphs.length, this.capture.width, this.capture.height, this.rng);
+    this.clusters = layoutCircles(this.glyphs.length, this.capture.width, this.capture.height, this.rng);
+    this.rings = this.clusters.flatMap(c => c.rings);
     this.angle = this.rings.map(() => this.rand(0, Math.PI * 2));
-    this.omega = this.rings.map(() => 0.25);
-    this.assigned = [];
+    this.omega = this.rings.map(() => CIRC.omegaStart);
+    this.assigned = []; this.delay = []; this.duration = [];
+    // Nearest glyphs to each ring take its slots: shorter, less tangled trips.
+    const order = this.glyphs.map((_, i) => i);
     let g = 0;
-    this.rings.forEach((ring, ri) => { for (let s = 0; s < ring.slots && g < this.glyphs.length; s += 1, g += 1) this.assigned[g] = {ring: ri, slot: s}; });
-    for (const glyph of this.glyphs) { glyph.vx = glyph.vy = 0; }
-    this.glyphs.forEach(glyph => { glyph.a = glyph.x; glyph.r = glyph.y; glyph.t = 0; });
-    this.alpha = this.rand(1.1, 1.7);
+    this.rings.forEach((ring, ri) => {
+      for (let s = 0; s < ring.slots && g < order.length; s += 1, g += 1) this.assigned[order[g]!] = {ring: ri, slot: s};
+    });
+    this.glyphs.forEach((glyph, i) => {
+      glyph.a = glyph.x; glyph.r = glyph.y; glyph.t = 0; glyph.vx = glyph.vy = 0;
+      glyph.state = this.assigned[i] ? 0 : 3;
+      this.delay[i] = this.rand(0, 0.8); this.duration[i] = this.rand(1.4, CIRC.gather);
+    });
+    this.alpha = this.rand(1.2, 1.8);
+    this.explosion = this.rng() < 0.5 ? 'simultaneous' : 'staggered';
+    this.exploded = this.clusters.map(() => false);
+    this.explodeAt = this.clusters.map((_, i) => this.explosion === 'simultaneous' ? 0 : i * this.rand(0.35, 0.6));
   }
   slotPosition(i: number): {x: number; y: number} | undefined {
     const a = this.assigned[i];
@@ -420,106 +470,133 @@ export class Circletastic extends Sim {
     const th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
     return {x: (ring.cx + Math.cos(th) * ring.r) * ASPECT, y: ring.cy + Math.sin(th) * ring.r};
   }
-  private go(phase: CircPhase) { this.phase = phase; this.phaseT = 0; }
+  /** Every participating glyph is on its slot (within a fraction of a cell). */
+  fullyFormed(): boolean {
+    return this.glyphs.every((g, i) => { const p = this.slotPosition(i); return !p || (g.state === 1 && Math.abs(g.x - p.x) < 0.5 && Math.abs(g.y - p.y) < 0.5); });
+  }
+  private go(phase: CircPhase) { this.phase = phase; this.phaseT = 0; this.history.push(phase); }
+  private spin(dt: number, accelerate: boolean, strain: number) {
+    this.rings.forEach((ring, ri) => {
+      if (accelerate && !this.exploded[ring.cluster]) this.omega[ri] = Math.min(CIRC.omegaMax * (1 + ri * 0.08), this.omega[ri]! + this.alpha * (1 + ri * 0.3) * dt);
+      this.angle[ri]! += this.omega[ri]! * ring.dir * dt;
+    });
+    this.glyphs.forEach((g, i) => {
+      const a = this.assigned[i]; if (!a || g.state !== 1) return;
+      const p = this.slotPosition(i)!;
+      // Strain: radial wobble and the odd glyph slipping outward, never before the ring fully formed.
+      const slip = strain > 0 && (i * 2654435761 >>> 0) % 97 < 3 ? strain * 1.4 : 0;
+      const wob = strain * 0.5 * Math.sin(this.t / 55 + i);
+      const ring = this.rings[a.ring]!, th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
+      g.x = p.x + Math.cos(th) * (wob + slip) * ASPECT; g.y = p.y + Math.sin(th) * (wob + slip);
+    });
+  }
   update(dt: number): void {
     this.phaseT += dt;
     const w = this.capture.width, h = this.capture.height;
     switch (this.phase) {
       case 'hold': if (this.phaseT >= CIRC.hold) { this.glyphs.forEach(g => { g.a = g.x; g.r = g.y; g.t = 0; }); this.go('gather'); } break;
-      case 'gather': {
-        const u = ease(this.phaseT / CIRC.gather);
+      case 'gather':
         this.glyphs.forEach((g, i) => {
-          const target = this.slotPosition(i);
-          if (!target) return; // glyphs beyond ring capacity stay put
+          const target = this.slotPosition(i); if (!target || g.state === 1) return;
+          g.t += dt;
+          const u = ease((g.t - this.delay[i]!) / this.duration[i]!);
           const swirl = Math.sin(u * Math.PI) * 3;
-          g.x = g.a + (target.x - g.a) * u + swirl * (g.oy < h / 2 ? 1 : -1);
-          g.y = g.r + (target.y - g.r) * u;
+          g.x = g.a + (target.x - g.a) * u + swirl * (g.oy < h / 2 ? 1 : -1); g.y = g.r + (target.y - g.r) * u;
+          if (g.t >= this.delay[i]! + this.duration[i]!) { g.x = target.x; g.y = target.y; g.state = 1; }
         });
-        if (this.phaseT >= CIRC.gather) this.go('spin');
+        // FULLY FORMED is global: nothing else starts until every participant is on its ring.
+        if (this.glyphs.every((g, i) => !this.assigned[i] || g.state === 1)) this.go('stabilize');
         break;
-      }
-      case 'spin': case 'unstable': {
-        // Angular acceleration: visible slow start, then faster and faster.
-        this.rings.forEach((ring, ri) => {
-          this.omega[ri]! += this.alpha * (1 + ri * 0.35) * dt * (this.phase === 'unstable' ? 1.6 : 1);
-          this.angle[ri]! += this.omega[ri]! * ring.dir * dt;
-        });
-        this.glyphs.forEach((g, i) => {
-          const p = this.slotPosition(i); if (!p) return;
-          const jitter = this.phase === 'unstable' ? 0.55 : 0;
-          g.x = p.x + (jitter ? (this.rng() - 0.5) * jitter * 2 * ASPECT : 0); g.y = p.y + (jitter ? (this.rng() - 0.5) * jitter * 2 : 0);
-        });
-        if (this.phase === 'spin' && this.phaseT >= CIRC.spin) this.go('unstable');
-        if (this.phase === 'unstable' && this.phaseT >= CIRC.unstable) this.explode();
+      case 'stabilize': if (this.phaseT >= CIRC.stabilize) this.go('rotate'); break;
+      case 'rotate': this.spin(dt, false, 0); if (this.phaseT >= CIRC.rotate) this.go('accelerate'); break;
+      case 'accelerate': this.spin(dt, true, 0); if (this.phaseT >= CIRC.accelerate) this.go('destabilize'); break;
+      case 'destabilize': this.spin(dt, true, clamp(this.phaseT / CIRC.destabilize, 0, 1)); if (this.phaseT >= CIRC.destabilize) this.go('explode'); break;
+      case 'explode':
+        this.spin(dt, true, 1);
+        this.clusters.forEach((_, ci) => { if (!this.exploded[ci] && this.phaseT >= this.explodeAt[ci]!) this.explodeCluster(ci); });
+        if (this.exploded.every(Boolean)) this.go('scatter');
+        this.integrate(dt, w, h);
         break;
-      }
-      case 'scatter': {
-        for (const g of this.glyphs) {
-          g.vx *= 1 - 0.55 * dt; g.vy *= 1 - 0.55 * dt;
-          g.x += g.vx * dt; g.y += g.vy * dt;
-          if (g.x < 1) { g.x = 1; g.vx = Math.abs(g.vx) * 0.5; } else if (g.x > w - 2) { g.x = w - 2; g.vx = -Math.abs(g.vx) * 0.5; }
-          if (g.y < 1) { g.y = 1; g.vy = Math.abs(g.vy) * 0.5; } else if (g.y > h - 2) { g.y = h - 2; g.vy = -Math.abs(g.vy) * 0.5; }
-        }
-        if (this.phaseT >= CIRC.scatter) this.go('settle');
-        break;
-      }
+      case 'scatter': this.integrate(dt, w, h); if (this.phaseT >= CIRC.scatter) this.go('settle'); break;
       case 'settle':
-        for (const g of this.glyphs) { g.vx *= 0.8; g.vy *= 0.8; g.x += g.vx * dt; g.y += g.vy * dt; g.x = clamp(g.x, 1, w - 2); g.y = clamp(g.y, 1, h - 2); }
-        if (this.phaseT >= CIRC.settle) { this.cycles += 1; this.loops = this.cycles; this.plan(); this.go('hold'); this.phaseT = CIRC.hold; }
+        for (const g of this.glyphs) if (g.state === 2) { g.vx *= 0.8; g.vy *= 0.8; }
+        this.integrate(dt, w, h);
+        if (this.phaseT >= CIRC.settle) { this.cycles += 1; this.loops = this.cycles; this.plan(); this.go('hold'); }
         break;
     }
   }
-  /** The structure fails: each glyph keeps the velocity its ring was giving it, plus an outward kick. */
-  explode() {
+  private integrate(dt: number, w: number, h: number) {
+    for (const g of this.glyphs) {
+      if (g.state !== 2) continue;
+      g.vx *= 1 - 0.55 * dt; g.vy *= 1 - 0.55 * dt;
+      g.x += g.vx * dt; g.y += g.vy * dt;
+      if (g.x < 1) { g.x = 1; g.vx = Math.abs(g.vx) * 0.5; } else if (g.x > w - 2) { g.x = w - 2; g.vx = -Math.abs(g.vx) * 0.5; }
+      if (g.y < 1) { g.y = 1; g.vy = Math.abs(g.vy) * 0.5; } else if (g.y > h - 2) { g.y = h - 2; g.vy = -Math.abs(g.vy) * 0.5; }
+    }
+  }
+  /** The ring fails: each glyph keeps the velocity its ring was giving it, plus a radial kick and a little randomness. */
+  private explodeCluster(ci: number) {
+    this.exploded[ci] = true;
     this.glyphs.forEach((g, i) => {
       const a = this.assigned[i];
-      if (!a) { g.vx = this.rand(-4, 4); g.vy = this.rand(-2, 2); return; }
+      if (!a || this.rings[a.ring]!.cluster !== ci) return;
       const ring = this.rings[a.ring]!;
       const th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
       const speed = this.omega[a.ring]! * ring.r * ring.dir;           // rows/s along the tangent
-      const tx = -Math.sin(th) * speed * ASPECT, ty = Math.cos(th) * speed;
       const out = this.rand(3, 9);
-      g.vx = tx * 0.6 + Math.cos(th) * out * ASPECT; g.vy = ty * 0.6 + Math.sin(th) * out;
+      g.vx = (-Math.sin(th) * speed * 0.6 + Math.cos(th) * out) * ASPECT + this.rand(-1.5, 1.5);
+      g.vy = Math.cos(th) * speed * 0.6 + Math.sin(th) * out + this.rand(-0.8, 0.8);
+      g.state = 2;
     });
-    this.go('scatter');
   }
   paint(grid: CellGrid, ctx: EffectContext): void {
     const skip = new Set<number>();
-    const moving = this.phase !== 'hold' || this.cycles > 0;
-    if (moving) this.glyphs.forEach(g => skip.add(Math.floor(g.oy) * this.capture.width + Math.floor(g.ox)));
+    this.glyphs.forEach((g, i) => { if (this.assigned[i]) skip.add(Math.floor(g.oy) * this.capture.width + Math.floor(g.ox)); });
     drawStatic(grid, this.capture, skip, ctx.palette.text);
-    const hot = clamp((this.omega[0] ?? 0) / 9, 0, 1);
-    for (const g of this.glyphs) {
-      if (!moving) continue;
-      const lit = this.phase === 'spin' || this.phase === 'unstable' ? hot : 0;
-      grid.plot(g.x, g.y, g.ch, mixPacked(g.fg, ctx.palette.stops[0] ?? ctx.palette.accent, lit * 0.6));
-    }
+    const hot = clamp((this.omega[0] ?? 0) / CIRC.omegaMax, 0, 1);
+    const lit = this.phase === 'accelerate' || this.phase === 'destabilize' || this.phase === 'explode' ? hot : 0;
+    this.glyphs.forEach((g, i) => {
+      if (!this.assigned[i]) return;
+      grid.set(g.x, g.y, g.ch, mixPacked(g.fg, ctx.palette.stops[0] ?? ctx.palette.accent, lit * 0.6));
+    });
   }
 }
 
 // ------------------------------------------------------------- raiseCatError
 
-export interface Platform { y: number; x0: number; x1: number }
-export const CAT_FRAMES = {
-  idle: ['/\\_/\\ ', '(o.o)~'], blink: ['/\\_/\\ ', '(-.-)~'], walkA: ['/\\_/\\ ', '(o.o)/'], walkB: ['/\\_/\\ ', '(o.o)\\'],
-  sit: ['/\\_/\\ ', '(o.o)_'], jump: ['/\\_/\\ ', '(O.O)^'], land: ['      ', '(=.=)_'], paw: ['/\\_/\\ ', '(o.o)>'],
-} as const;
-const CAT_W = 6;
-export const JOKES = [
-  '`{w}` looks suspiciously productive', 'Expected cat, found `{w}`', '`{w}` appears emotionally unavailable', 'Unknown identifier: `{w}`',
-  'This line has exceeded its recommended seriousness', '`{w}` is 3 characters away from becoming a cat', 'Path is not sufficiently lavender',
-  'Command may result in responsibilities', 'Text exists here', 'Unexpected semicolon energy', 'This function has been inspected by a cat',
-  '`{w}` has been judged', 'Too many words, not enough naps',
-] as const;
+export interface Platform { y: number; x0: number; x1: number; floor?: boolean }
+const CAT_W = CAT_CELL_WIDTH, CAT_H = CAT_CELL_HEIGHT;
+const HOP_RISE = 1.4;
+
+/** Short, clearly fictional jokes; none claims a real fault, breach, loss or corruption. */
+export const JOKES: readonly string[] = [
+  'Too many words, not enough naps', 'Expected cat, found project', 'Purrmission denied', 'Catastrophic purrsing failure', 'Unexpected meow in expression',
+  'Lint found 3 loose whiskers', 'Variable refuses to be pet', 'Function has not been fed recently', 'This line is not sufficiently loaf-shaped',
+  'Build blocked by nap dependency', 'Keyboard currently occupied by cat', 'Cat hair found in type system', 'Project requires more treats',
+  'Syntax hiss-lighting conflict', 'Tail recursion has become literal', 'Command may knock items off desk', 'File is sitting in the box but not the repository',
+  'Import contains unauthorized zoomies', 'Compiler requested belly rubs', 'Object is climbing the curtains', 'Semicolon escaped the scratching post',
+  'Too much seriousness detected', 'Error raised successfully', 'Pointer chased laser into invalid memory', 'This token is acting suspiciously dog-like',
+  'Thread tangled in yarn scheduler', 'Path is suspiciously walkable', 'Command contains traces of responsibility', 'Variable has exceeded daily zoomie allowance',
+  'Missing dependency: treats', 'Runtime entered loaf mode', 'Whisker alignment check failed', 'Paw-sized race condition detected', 'Catastrophe successfully reproduced',
+  'Process interrupted by mandatory nap', 'Excessive keyboard warmth detected', 'Stack contains forbidden tuna', 'Cache invalidated by tail movement',
+  'Box exists and therefore must be occupied', 'This module has not been sniffed', 'Warning: suspiciously empty cardboard box',
+  '`{w}` looks suspiciously productive', 'Expected cat, found `{w}`', '`{w}` appears emotionally unavailable', '`{w}` has been judged', 'Unknown identifier: `{w}`',
+];
+export const KEYBOARD_JOKES: readonly string[] = ['Input method: paws', 'Unexpected paw event', 'Keyboard privileges revoked', 'Typing accuracy degraded by loaf',
+  'Eight paws detected. Expected zero.', 'Composer under temporary cat management', 'Keyboard appears sufficiently warm'];
+export const MEOWS: readonly string[] = ['meow', 'meow!', 'mrow', 'mrow?', 'mrrp', 'mrrrp!', 'prrr', 'purr...', 'purrrrr', 'nya', 'mrrow!', 'mrowe!', 'mreow', 'brrrp', 'chirp!', 'ekekekek'];
 export const CHARACTER_JOKE = 'Unexpected character';
 export const DIVIDER_JOKE = 'Structural integrity questionable';
+export const KEYSMASH = 'asdfjkl;qwertyuiopzxcvbnm,./[]0123456789';
 export interface Diagnostic { row: number; x0: number; x1: number; text: string; level: 'error' | 'warn'; born: number; labelRow?: number; labelX?: number }
 export const DIAGNOSTIC_CAP = 14;
+export const WOBBLE_CAP = 64;
+export const KEYBOARD_MAX = 14;
 
-/** Horizontal stretches of occupied cells (single gaps tolerated) wide enough for the cat, from geometry only. */
+/** Horizontal stretches of occupied cells (single gaps tolerated) the cat can stand on, from geometry only. The screen's bottom edge is always one more floor. */
 export function extractPlatforms(capture: ScreenCapture, minWidth = 6): Platform[] {
   const out: Platform[] = [];
-  for (let y = 1; y < capture.height; y += 1) {
+  for (let y = CAT_H; y < capture.height; y += 1) {
     let start = -1, gap = 0;
     for (let x = 0; x <= capture.width; x += 1) {
       const occupied = x < capture.width && capture.glyphs[y * capture.width + x] !== ' ';
@@ -534,43 +611,102 @@ export function extractPlatforms(capture: ScreenCapture, minWidth = 6): Platform
       }
     }
   }
+  if (capture.height > CAT_H) out.push({y: capture.height, x0: 0, x1: capture.width - 1, floor: true});
   return out;
 }
 
-export type CatState = 'walk' | 'idle' | 'blink' | 'sit' | 'jump' | 'land' | 'paw';
+/** Hops between platforms: up to 9 rows up, 16 down, and a bounded horizontal gap. Pure geometry. */
+export function platformGraph(platforms: readonly Platform[]): number[][] {
+  return platforms.map((a, i) => platforms.flatMap((b, j) => {
+    if (i === j) return [];
+    const up = a.y - b.y, gap = Math.max(0, Math.max(a.x0, b.x0) - Math.min(a.x1, b.x1));
+    // A rising hop needs room above the target for the whole sprite; drops are always possible.
+    const fits = up < 0 || (b.y - 1) - HOP_RISE - (CAT_H - 1) >= 0;
+    return (up <= 9 && up >= -16 && gap <= 18 && !(b.floor && a.floor) && fits) ? [j] : [];
+  }));
+}
+
+/** Fewest-hop route (excluding the start) over the graph, or undefined when unreachable or longer than `limit`. */
+export function routeBetween(graph: readonly number[][], from: number, to: number, limit = 8): number[] | undefined {
+  if (from === to) return [];
+  const previous = new Map<number, number>([[from, -1]]); const queue = [from];
+  while (queue.length) {
+    const node = queue.shift()!;
+    for (const next of graph[node] ?? []) {
+      if (previous.has(next)) continue;
+      previous.set(next, node); queue.push(next);
+      if (next === to) {
+        const route: number[] = []; for (let n: number = to; n !== from; n = previous.get(n)!) route.unshift(n);
+        return route.length <= limit ? route : undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+export type CatState = 'walk' | 'idle' | 'sit' | 'jump' | 'land' | 'paw';
 
 export class RaiseCatError extends Sim {
   platforms: Platform[];
-  cat = {x: 2, feet: 1, vx: 0, vy: 0, state: 'idle' as CatState, t: 0, dir: 1 as 1 | -1, platform: -1};
+  graph: number[][];
+  cat = {x: 2, feet: 1, vx: 0, vy: 0, state: 'idle' as CatState, t: 0, dir: 1 as 1 | -1, platform: -1, walkTo: undefined as number | undefined, pose: 'idle' as CatPose};
   diagnostics: Diagnostic[] = [];
-  private wobble = new Map<number, {dx: number; dy: number; until: number}>();
+  wobble = new Map<number, {dx: number; dy: number; until: number}>();
+  /** A short-lived cat sound near the cat; never an error. */
+  speech?: {text: string; until: number};
+  /** Fake keyboard garbage over the composer row: pure overlay text, owned entirely by this effect. */
+  typing?: {row: number; x: number; text: string; until: number; next: number};
+  route: number[] = [];
+  goal = -1;
+  readonly visits = new Map<string, number>();
+  readonly sounds: string[] = [];
+  readonly keyboard: string[] = [];
+  readonly composerRow: number;
   private think = 0.6;
   private cycleStart = 0;
   private resetting = 0;
+  private lastSpeech = -1e9;
+  private lastTyping = -1e9;
+  private dwell = 0;
+  /** The platform just left; it cannot catch the cat again until the cat is clearly away from it. */
+  private origin = -1;
+  private originFeet = 0;
   readonly log: string[] = [];
   constructor(capture: ScreenCapture, private readonly textColor: number) {
     super(capture, 0xca7e);
     this.platforms = extractPlatforms(capture);
-    this.place(this.platforms.length ? Math.floor(this.rng() * this.platforms.length) : -1);
+    this.graph = platformGraph(this.platforms);
+    let last = -1;
+    for (let i = 0; i < capture.glyphs.length; i += 1) if (capture.glyphs[i] !== ' ') last = Math.floor(i / capture.width);
+    this.composerRow = Math.max(0, last);
+    // Start somewhere it can also leave again.
+    const mobile = this.platforms.map((_, i) => i).filter(i => this.graph[i]!.length > 0 && !this.platforms[i]!.floor);
+    this.place(mobile.length ? this.pick(mobile) : Math.max(0, this.platforms.length - 1));
   }
   private place(index: number) {
     const p = this.platforms[index];
-    if (!p) { this.cat.platform = -1; this.cat.feet = this.capture.height - 1; this.cat.x = this.capture.width / 2; return; }
-    this.cat.platform = index; this.cat.feet = p.y - 1; this.cat.x = clamp(p.x0 + this.rand(0, Math.max(0, p.x1 - p.x0 - CAT_W)), 0, this.capture.width - CAT_W - 1);
+    if (!p) { this.cat.platform = -1; this.cat.feet = this.capture.height - 1; this.cat.x = 0; return; }
+    this.cat.platform = index; this.cat.feet = p.y - 1;
+    this.cat.x = clamp(p.x0 + this.rand(0, Math.max(0, p.x1 - p.x0 - CAT_W)), 0, Math.max(0, this.capture.width - CAT_W));
+    this.visit(p);
   }
+  private region(p: Platform): string { return `${Math.min(2, Math.floor((p.y / (this.capture.height + 1)) * 3))}:${Math.min(2, Math.floor((((p.x0 + p.x1) / 2) / this.capture.width) * 3))}`; }
+  private visit(p: Platform) { const key = this.region(p); this.visits.set(key, (this.visits.get(key) ?? 0) + 1); }
+  /** Regions (thirds of the screen) the cat has been to. */
+  regionsVisited(): number { return this.visits.size; }
   private wordAt(row: number, x: number): {x0: number; x1: number; text: string} | undefined {
     const w = this.capture.width; let i = clamp(Math.round(x), 0, w - 1);
     const at = (c: number) => this.capture.glyphs[row * w + c] ?? ' ';
-    for (let d = 0; d < 6 && at(i) === ' '; d += 1) i = clamp(i + (d % 2 === 0 ? d + 1 : -(d + 1)), 0, w - 1);
+    for (let d = 0; d < 8 && at(i) === ' '; d += 1) i = clamp(i + (d % 2 === 0 ? d + 1 : -(d + 1)), 0, w - 1);
     if (at(i) === ' ') return undefined;
     let a = i, b = i; while (a > 0 && at(a - 1) !== ' ') a -= 1; while (b < w - 1 && at(b + 1) !== ' ') b += 1;
     let text = ''; for (let c = a; c <= b; c += 1) text += at(c);
     return {x0: a, x1: b, text: text.replace(/[^\p{L}\p{N}_./~-]/gu, '').slice(0, 14) || 'text'};
   }
-  private raise(row: number, x: number, joke?: string) {
+  private raise(row: number, x: number, joke?: string, pool: readonly string[] = JOKES) {
     const word = this.wordAt(row, x);
     if (!word || this.diagnostics.some(d => d.row === row && d.x0 === word.x0)) return;
-    const text = joke ?? this.pick(JOKES).replace('{w}', word.text);
+    const text = joke ?? this.pick(pool).replace('{w}', word.text);
     this.diagnostics.push({row, x0: word.x0, x1: word.x1, text, level: this.rng() < 0.7 ? 'error' : 'warn', born: this.t});
     if (this.diagnostics.length > DIAGNOSTIC_CAP) this.diagnostics.shift();
     this.log.push(text);
@@ -578,96 +714,214 @@ export class RaiseCatError extends Sim {
   }
   /** A label goes on a blank stretch near its range (never over text), or is skipped when the screen is full there. */
   private placeLabel(d: Diagnostic) {
-    const need = Math.min(d.text.length + 2, this.capture.width - 2);
+    const need = Math.min(d.text.length + 4, this.capture.width - 2);
     for (const dy of [-1, 1, -2, 2, -3, 3]) {
       const row = d.row + dy; if (row < 0 || row >= this.capture.height) continue;
       const x = clamp(d.x0, 0, this.capture.width - need);
       let free = true;
-      for (let c = x; c < x + need && free; c += 1) if (this.capture.glyphs[row * this.capture.width + c] !== ' ' || this.diagnostics.some(o => o !== d && o.labelRow === row && o.labelX !== undefined && c >= o.labelX && c < o.labelX + o.text.length + 2)) free = false;
+      for (let c = x; c < x + need && free; c += 1) if (this.capture.glyphs[row * this.capture.width + c] !== ' ' || this.diagnostics.some(o => o !== d && o.labelRow === row && o.labelX !== undefined && c >= o.labelX && c < o.labelX + o.text.length + 4)) free = false;
       if (free) { d.labelRow = row; d.labelX = x; return; }
     }
   }
+  private wobbleCell(i: number, dx: number, dy: number, ms: number) { if (this.wobble.size < WOBBLE_CAP) this.wobble.set(i, {dx, dy, until: this.t + ms}); }
+  /** The cat bumps a word: its glyphs shift 1–3 cells and spring back. */
   private bump(row: number, x: number) {
-    for (let dx = -3; dx <= 3; dx += 1) {
-      const c = Math.round(x) + dx; if (c < 0 || c >= this.capture.width) continue;
-      const i = row * this.capture.width + c;
-      if (this.capture.glyphs[i] !== ' ' && this.wobble.size < 24) this.wobble.set(i, {dx: dx === 0 ? 0 : Math.sign(dx) * 1, dy: dx % 2 === 0 ? -1 : 0, until: this.t + 700});
-    }
+    const word = this.wordAt(row, x); if (!word) return;
+    const shift = (this.rng() < 0.5 ? -1 : 1) * (1 + Math.floor(this.rng() * 3));
+    for (let c = word.x0; c <= word.x1; c += 1) { const i = row * this.capture.width + c; if (this.capture.glyphs[i] !== ' ') this.wobbleCell(i, Math.sign(shift) * Math.min(Math.abs(shift), 1 + (c - word.x0) % 3), c % 2 === 0 ? -1 : 0, 700); }
+  }
+  private isDivider(row: number): boolean {
+    let n = 0, lines = 0; const w = this.capture.width;
+    for (let c = 0; c < w; c += 1) { const g = this.capture.glyphs[row * w + c]!; if (g !== ' ') { n += 1; if ('─━═-_—│┄┈'.includes(g)) lines += 1; } }
+    return n >= 10 && lines / n >= 0.6;
+  }
+  /** Landing on a line makes it dip a row and rebound; a divider bends along its length. */
+  private landOn(platform: Platform, x: number) {
+    if (platform.floor) return;
+    const w = this.capture.width;
+    const divider = this.isDivider(platform.y);
+    const from = divider ? platform.x0 : Math.max(platform.x0, Math.round(x) - 4), to = divider ? Math.min(platform.x1, platform.x0 + 47) : Math.min(platform.x1, Math.round(x) + CAT_W + 4);
+    for (let c = from; c <= to; c += 1) { const i = platform.y * w + c; if (this.capture.glyphs[i] !== ' ') this.wobbleCell(i, 0, divider ? (c % 4 < 2 ? 1 : -1) : 1, divider ? 900 : 450); }
+    if (divider && this.rng() < 0.6) this.raise(platform.y, x + CAT_W / 2, DIVIDER_JOKE);
+  }
+  private maybeMeow(probability: number) {
+    if (this.t - this.lastSpeech < 4000 || this.rng() >= probability) return;
+    const text = this.pick(MEOWS); this.lastSpeech = this.t; this.speech = {text, until: this.t + 1800}; this.sounds.push(text);
+  }
+  private floorIndex() { return this.platforms.findIndex(p => p.floor); }
+  /** Weighted target: usually somewhere plausible nearby, sometimes a far part of the screen, favouring regions not visited yet. */
+  pickGoal(): number {
+    const here = this.platforms[this.cat.platform];
+    const candidates: Array<{i: number; w: number}> = [];
+    this.platforms.forEach((p, i) => {
+      if (i === this.cat.platform) return;
+      if (!routeBetween(this.graph, this.cat.platform, i)) return;
+      const near = here ? Math.abs(p.y - here.y) <= 8 && Math.abs((p.x0 + p.x1) / 2 - this.cat.x) <= 25 : true;
+      // The composer row is a favourite spot: that is where a cat sits on a keyboard.
+      candidates.push({i, w: (near ? 3 : 1) * (p.floor || p.y >= this.composerRow ? 2.5 : 1) / (1 + (this.visits.get(this.region(p)) ?? 0))});
+    });
+    if (!candidates.length) return -1;
+    let roll = this.rng() * candidates.reduce((s, c) => s + c.w, 0);
+    for (const c of candidates) { roll -= c.w; if (roll <= 0) return c.i; }
+    return candidates[0]!.i;
   }
   update(dt: number): void {
     const cat = this.cat; cat.t += dt; this.think -= dt;
     for (const [i, w] of this.wobble) if (this.t > w.until) this.wobble.delete(i);
+    if (this.speech && this.t > this.speech.until) this.speech = undefined;
+    if (this.typing) {
+      if (this.t >= this.typing.until) { this.typing = undefined; this.maybeMeow(1); this.lastSpeech = this.t; }
+      else if (this.t >= this.typing.next) { this.typing.text = this.keysmash(); this.typing.next = this.t + 250; }
+    }
     if (this.resetting > 0) {
       this.resetting -= dt;
-      if (this.resetting <= 0) { this.diagnostics = []; this.cycleStart = this.t; this.loops += 1; }
+      if (this.resetting <= 0) { this.diagnostics = []; this.wobble.clear(); this.typing = undefined; this.speech = undefined; this.cycleStart = this.t; this.loops += 1; this.visits.clear(); }
       return;
     }
     // Cycle: errors accumulate, hold briefly when overwhelmed, then one tasteful reset.
-    if (this.diagnostics.length >= DIAGNOSTIC_CAP - 2 || this.t - this.cycleStart > 60_000) { this.resetting = 3; return; }
+    if (this.diagnostics.length >= DIAGNOSTIC_CAP - 2 || this.t - this.cycleStart > 90_000) { this.resetting = 3; return; }
     const p = this.platforms[cat.platform];
-    if (cat.state === 'jump') {
-      cat.vy += 38 * dt; cat.x += cat.vx * dt; cat.feet += cat.vy * dt;
-      cat.x = clamp(cat.x, 0, this.capture.width - CAT_W - 1);
-      if (cat.feet < 1) { cat.feet = 1; cat.vy = Math.max(cat.vy, 0); } // never above the top row
-      if (cat.vy > 0) {
-        const hit = this.platforms.findIndex(q => Math.abs(cat.feet - (q.y - 1)) < 0.9 && cat.x + 2 >= q.x0 && cat.x + 2 <= q.x1 && cat.feet <= q.y - 1 + 0.9);
-        if (hit >= 0) {
-          cat.platform = hit; cat.feet = this.platforms[hit]!.y - 1; cat.vx = cat.vy = 0; cat.state = 'land'; cat.t = 0;
-          const row = this.platforms[hit]!.y;
-          this.bump(row, cat.x + 2);
-          if (this.rng() < 0.8) this.raise(row, cat.x + 2);
-        } else if (cat.feet >= this.capture.height - 1) { cat.feet = this.capture.height - 1; cat.vx = cat.vy = 0; cat.platform = -1; cat.state = 'land'; cat.t = 0; }
-      }
-      return;
-    }
+    if (cat.state === 'jump') { this.flying(dt); return; }
     if (cat.platform < 0 && this.platforms.length) { const near = this.nearestPlatform(); if (near >= 0) this.place(near); }
     if (cat.state === 'walk' && p) {
-      cat.x += cat.dir * 5 * dt;
-      const left = Math.max(0, p.x0 - 1), right = Math.min(this.capture.width - CAT_W - 1, p.x1 + 2 - CAT_W);
-      if (cat.x < left || cat.x > right) { cat.x = clamp(cat.x, left, Math.max(left, right)); cat.dir = (cat.dir * -1) as 1 | -1; cat.state = 'idle'; cat.t = 0; }
+      const [left, right] = this.bounds(p);
+      cat.x += cat.dir * 6 * dt;
+      if (cat.walkTo !== undefined) {
+        const target = clamp(cat.walkTo, left, right);
+        if ((cat.dir === 1 && cat.x >= target) || (cat.dir === -1 && cat.x <= target)) { cat.x = target; cat.walkTo = undefined; cat.state = 'idle'; cat.t = 0; this.think = 0; }
+      } else if (cat.x < left || cat.x > right) { cat.x = clamp(cat.x, left, right); cat.dir = (cat.dir * -1) as 1 | -1; cat.state = 'idle'; cat.t = 0; }
     }
-    if ((cat.state === 'land' || cat.state === 'paw' || cat.state === 'blink' || cat.state === 'sit') && cat.t > (cat.state === 'sit' ? 1.4 : 0.5)) { cat.state = 'idle'; cat.t = 0; }
-    if (this.think > 0) return;
-    this.think = this.rand(0.7, 2);
+    if ((cat.state === 'land' || cat.state === 'paw' || cat.state === 'sit') && cat.t > (cat.state === 'sit' ? 1.4 : 0.55)) { cat.state = 'idle'; cat.t = 0; }
+    if (this.think > 0 || cat.state === 'walk' || !p) return;
+    this.think = this.rand(0.6, 1.8);
+    this.decide(p);
+  }
+  /** Where the cat's left edge may be while it stands on a platform: it can overhang the ends a little, never leave the screen. */
+  private bounds(p: Platform): [number, number] {
+    const left = Math.max(0, p.x0 - 3);
+    return [left, Math.max(left, Math.min(this.capture.width - CAT_W, p.x1 - CAT_W + 4))];
+  }
+  private keysmash(): string {
+    const length = 6 + Math.floor(this.rng() * (KEYBOARD_MAX - 5));
+    let text = ''; for (let i = 0; i < length; i += 1) text += KEYSMASH[Math.floor(this.rng() * KEYSMASH.length)]!;
+    return text;
+  }
+  private decide(p: Platform) {
+    const cat = this.cat; const centre = cat.x + CAT_W / 2;
+    if (this.goal === cat.platform) { this.goal = -1; this.route = []; }
+    if (!this.route.length && this.goal >= 0) this.route = routeBetween(this.graph, cat.platform, this.goal) ?? [];
+    if (!this.route.length) this.goal = -1;
+    // Following a route: walk to the takeoff point, then hop.
+    if (this.route.length) {
+      const next = this.platforms[this.route[0]!]!;
+      const [lo, hi] = this.bounds(p);
+      const takeoff = clamp((next.x0 + next.x1) / 2 - CAT_W / 2, lo, hi);
+      if (Math.abs(cat.x - takeoff) > 1.2) { cat.walkTo = takeoff; cat.dir = takeoff > cat.x ? 1 : -1; cat.state = 'walk'; cat.t = 0; return; }
+      this.hop(this.route[0]!);
+      return;
+    }
+    // Arrived (or no goal): small local business, then sometimes pick somewhere far.
     const roll = this.rng();
-    if (!p) return;
-    const row = p.y;
-    if (roll < 0.34) { cat.state = 'walk'; cat.dir = this.rng() < 0.5 ? 1 : -1; cat.t = 0; }
-    else if (roll < 0.46) { cat.state = 'blink'; cat.t = 0; }
-    else if (roll < 0.66) { cat.state = 'sit'; cat.t = 0; if (this.rng() < 0.75) this.raise(row, cat.x + CAT_W / 2); }
-    else if (roll < 0.78) { cat.state = 'paw'; cat.t = 0; this.bump(row, cat.x + CAT_W); this.raise(row, cat.x + CAT_W, CHARACTER_JOKE); }
-    else this.tryJump();
+    const onComposer = p.floor || p.y >= this.composerRow;
+    if (onComposer && this.t - this.lastTyping > 12_000 && !this.typing && roll < 0.5) { this.startTyping(); return; }
+    this.dwell += 1;
+    if (this.dwell >= 3 && this.rng() < 0.55) {
+      const goal = this.pickGoal();
+      const route = goal >= 0 ? routeBetween(this.graph, cat.platform, goal) : undefined;
+      if (route?.length) { this.goal = goal; this.route = route; this.dwell = 0; this.maybeMeow(0.15); return; }
+    }
+    if (roll < 0.28) { cat.state = 'walk'; cat.dir = this.rng() < 0.5 ? 1 : -1; cat.t = 0; cat.walkTo = undefined; }
+    else if (roll < 0.48) { cat.state = 'sit'; cat.t = 0; if (!p.floor && this.rng() < 0.8) this.raise(p.y, centre); this.maybeMeow(0.3); }
+    else if (roll < 0.66) { cat.state = 'paw'; cat.t = 0; if (!p.floor) { this.bump(p.y, cat.dir === 1 ? cat.x + CAT_W + 1 : cat.x - 2); this.raise(p.y, cat.dir === 1 ? cat.x + CAT_W + 1 : cat.x - 2, CHARACTER_JOKE); } this.maybeMeow(0.3); }
+    else if (roll < 0.74) this.maybeMeow(1);
+    else { const goal = this.pickGoal(); const route = goal >= 0 ? routeBetween(this.graph, cat.platform, goal) : undefined; if (route?.length) { this.goal = goal; this.route = route; } else { cat.state = 'walk'; cat.dir = (cat.dir * -1) as 1 | -1; cat.walkTo = undefined; } }
+  }
+  private startTyping() {
+    const cat = this.cat; cat.state = 'sit'; cat.t = -0.8; // sits a little longer on the keyboard
+    this.lastTyping = this.t;
+    const w = this.capture.width; let last = -1;
+    for (let c = 0; c < w; c += 1) if (this.capture.glyphs[this.composerRow * w + c] !== ' ') last = c;
+    const text = this.keysmash();
+    const x = clamp(last + 2, 0, Math.max(0, w - text.length - 1));
+    this.typing = {row: this.composerRow, x, text, until: this.t + 2300, next: this.t + 250};
+    this.keyboard.push(text);
+    if (this.rng() < 0.35) this.raise(this.composerRow, Math.max(0, last - 2), this.pick(KEYBOARD_JOKES));
   }
   private nearestPlatform(): number {
     let best = -1, bestD = 1e9;
-    this.platforms.forEach((q, i) => { const d = Math.abs(q.y - this.cat.feet) + Math.abs(q.x0 - this.cat.x) * 0.1; if (d < bestD) { bestD = d; best = i; } });
+    this.platforms.forEach((q, i) => { const d = Math.abs(q.y - 1 - this.cat.feet) + Math.abs(q.x0 - this.cat.x) * 0.1; if (d < bestD) { bestD = d; best = i; } });
     return best;
   }
-  /** A bounded set of nearby platforms the arc can reach; none means keep walking. */
-  jumpTargets(): number[] {
-    const cat = this.cat;
-    return this.platforms.map((q, i) => ({q, i})).filter(({q, i}) => i !== cat.platform && Math.abs(q.y - 1 - cat.feet) <= 7 && Math.abs(q.y - 1 - cat.feet) >= 1
-      && q.x1 >= cat.x - 16 && q.x0 <= cat.x + CAT_W + 16).map(({i}) => i);
+  /** Platforms one hop away from where the cat stands. */
+  jumpTargets(): number[] { return this.graph[this.cat.platform] ?? []; }
+  private hop(index: number) {
+    const cat = this.cat; const q = this.platforms[index]!;
+    const targetFeet = q.y - 1, dy = cat.feet - targetFeet;       // dy > 0: the target is higher
+    const g = 38;
+    const landX = clamp(q.x0 + (q.x1 - q.x0 - CAT_W) / 2 + this.rand(-2, 2), Math.max(0, q.x0 - 4), Math.max(0, Math.min(this.capture.width - CAT_W, q.x1 - CAT_W + 4)));
+    if (dy < 0) {
+      // A drop: step off the edge and fall; no upward arc.
+      const tDown = Math.sqrt(Math.max(0.0001, 2 * -dy / g));
+      cat.vy = -2; cat.vx = (landX - cat.x) / (tDown + 0.1);
+    } else {
+      const rise = dy + HOP_RISE;
+      // The arc must keep the whole sprite inside the screen; otherwise this hop is not taken.
+      if (targetFeet - HOP_RISE - (CAT_H - 1) < 0 || cat.feet - rise - (CAT_H - 1) < 0) { this.route = []; this.goal = -1; cat.state = 'walk'; cat.dir = (cat.dir * -1) as 1 | -1; cat.walkTo = undefined; return; }
+      const vy0 = -Math.sqrt(2 * g * rise);
+      const tUp = -vy0 / g, tDown = Math.sqrt(Math.max(0.0001, 2 * Math.max(0.2, targetFeet - (cat.feet - rise)) / g));
+      cat.vy = vy0; cat.vx = (landX - cat.x) / (tUp + tDown);
+    }
+    this.origin = cat.platform; this.originFeet = cat.feet;
+    cat.state = 'jump'; cat.t = 0; cat.platform = -1; cat.walkTo = undefined;
   }
-  private tryJump() {
-    const cat = this.cat; const targets = this.jumpTargets();
-    if (!targets.length) { cat.state = 'walk'; cat.dir = (cat.dir * -1) as 1 | -1; return; }
-    const q = this.platforms[this.pick(targets)]!;
-    const landX = clamp(q.x0 + (q.x1 - q.x0 - CAT_W) / 2 + this.rand(-2, 2), q.x0, Math.max(q.x0, q.x1 - CAT_W + 1));
-    const rise = Math.max(0, cat.feet - (q.y - 1)) + 2.2;      // apex above the higher of the two floors
-    const g = 38, vy0 = -Math.sqrt(2 * g * rise);
-    const fall = (q.y - 1) - (cat.feet + (-(vy0 * vy0) / (2 * -g)) * -1);
-    const tUp = -vy0 / g, tDown = Math.sqrt(Math.max(0.0001, 2 * Math.max(0.2, (q.y - 1) - (cat.feet - rise)) / g));
-    void fall;
-    cat.vy = vy0; cat.vx = (landX - cat.x) / (tUp + tDown); cat.state = 'jump'; cat.t = 0; cat.platform = -1;
+  private flying(dt: number) {
+    const cat = this.cat;
+    cat.vy += 38 * dt; cat.x += cat.vx * dt; cat.feet += cat.vy * dt;
+    cat.x = clamp(cat.x, 0, Math.max(0, this.capture.width - CAT_W));
+    if (cat.feet < CAT_H - 1) { cat.feet = CAT_H - 1; cat.vy = Math.max(cat.vy, 0); } // never above the top row
+    if (cat.vy <= 0) return;
+    const centre = cat.x + CAT_W / 2;
+    const hit = this.platforms.findIndex((q, i) => !(i === this.origin && Math.abs(cat.feet - this.originFeet) < 1.5) && Math.abs(cat.feet - (q.y - 1)) < 0.9 && centre >= q.x0 - 3 && centre <= q.x1 + 3 && cat.feet <= q.y - 1 + 0.9);
+    if (hit < 0) return;
+    const q = this.platforms[hit]!;
+    cat.platform = hit; cat.feet = q.y - 1; cat.vx = cat.vy = 0; cat.state = 'land'; cat.t = 0;
+    this.visit(q);
+    if (this.route[0] === hit) this.route.shift();
+    // Landed on a line along the way (intermediate text catches the fall): keep the goal, plan again from here.
+    else if (this.route.length || this.goal >= 0) this.route = this.goal >= 0 && this.goal !== hit ? routeBetween(this.graph, hit, this.goal) ?? [] : [];
+    if (this.goal === hit) { this.goal = -1; this.route = []; }
+    this.landOn(q, cat.x);
+    if (!q.floor) { this.bump(q.y, centre); if (this.rng() < 0.7) this.raise(q.y, centre); }
+    this.maybeMeow(0.35);
+    this.think = 0.4;
+  }
+  frame(): CatPose {
+    const c = this.cat;
+    if (c.state === 'jump') return 'jump';
+    if (c.state === 'land') return 'crouch';
+    if (c.state === 'walk') return Math.floor(c.t * 5) % 2 === 0 ? 'walkA' : 'walkB';
+    if (c.state === 'paw') return 'paw';
+    if (c.state === 'sit') return 'sit';
+    const phase = this.t % 4800;
+    if (phase < 160) return 'blink';
+    if (phase > 2200 && phase < 2700) return 'tail';
+    return 'idle';
   }
   paint(grid: CellGrid, ctx: EffectContext): void {
     const w = this.capture.width;
-    // Captured text, with wobbling cells nudged (presentation only).
+    // Captured text, with wobbling cells nudged (presentation only; the capture itself is never written).
     const moved = new Map<number, {x: number; y: number}>();
-    for (const [i, wb] of this.wobble) moved.set(i, {x: (i % w) + wb.dx, y: Math.floor(i / w) + wb.dy});
+    for (const [i, wb] of this.wobble) {
+      const remaining = clamp((wb.until - this.t) / 700, 0, 1);
+      const scale = remaining > 0.5 ? 1 : remaining * 2;
+      moved.set(i, {x: (i % w) + Math.round(wb.dx * scale), y: Math.floor(i / w) + Math.round(wb.dy * scale)});
+    }
     drawStatic(grid, this.capture, new Set(moved.keys()), ctx.palette.text);
-    for (const [i, pos] of moved) { const fg = this.capture.fg[i]!; grid.set(pos.x, pos.y, this.capture.glyphs[i]!, fg === NO_COLOR_VALUE ? ctx.palette.text : fg); }
+    for (const [i, pos] of moved) {
+      const fg = this.capture.fg[i]!, bg = this.capture.bg[i]!;
+      grid.set(i % w, Math.floor(i / w), ' ', NO_COLOR_VALUE, bg);
+      grid.set(pos.x, pos.y, this.capture.glyphs[i]!, fg);
+    }
     const newest = this.diagnostics.length - 1;
     this.diagnostics.forEach((d, i) => {
       const age = clamp((this.diagnostics.length - 1 - i) / 8, 0, 0.7);
@@ -676,7 +930,7 @@ export class RaiseCatError extends Sim {
       // Highlight the range: tint in color, underline-style marks always (readable without color).
       for (let x = d.x0; x <= d.x1; x += 1) {
         const index = d.row * w + x; const glyph = this.capture.glyphs[index]!;
-        if (ctx.color) grid.set(x, d.row, glyph, mixPacked(ctx.palette.text, 0xffffff, 0.2), mixPacked(0x101014, base, 0.45 - age * 0.25));
+        if (ctx.color) grid.set(x, d.row, glyph, visibleFg(this.capture.fg[index]!, NO_COLOR_VALUE, ctx.palette.text), mixPacked(0x101014, base, 0.45 - age * 0.25));
         if (d.row + 1 < this.capture.height && this.capture.glyphs[(d.row + 1) * w + x] === ' ' && d.labelRow !== d.row + 1) grid.set(x, d.row + 1, ctx.nerd ? '~' : '^', colour);
       }
       const icon = d.level === 'error' ? (ctx.nerd ? '✕' : 'x') : (ctx.nerd ? '⚠' : '!');
@@ -685,16 +939,12 @@ export class RaiseCatError extends Sim {
         for (let k = 0; k < label.length; k += 1) grid.set(d.labelX + k, d.labelRow, label[k]!, i === newest ? mixPacked(colour, 0xffffff, 0.35) : colour);
       } else if (d.x0 > 0) grid.set(d.x0 - 1, d.row, icon, colour);
     });
-    // The cat is drawn last so it is never hidden by diagnostics.
-    const f = this.frame(); const x = Math.round(this.cat.x), y = Math.round(this.cat.feet) - 1;
-    f.forEach((line, dy) => { for (let k = 0; k < line.length; k += 1) if (line[k] !== ' ') grid.set(x + k, y + dy, line[k]!, ctx.palette.accent); });
-  }
-  frame(): readonly string[] {
-    const c = this.cat;
-    if (c.state === 'jump') return CAT_FRAMES.jump;
-    if (c.state === 'walk') return Math.floor(c.t * 4) % 2 === 0 ? CAT_FRAMES.walkA : CAT_FRAMES.walkB;
-    if (c.state === 'idle' && Math.floor(this.t / 1600) % 4 === 3 && this.t % 1600 < 200) return CAT_FRAMES.blink;
-    return CAT_FRAMES[c.state === 'idle' ? 'idle' : c.state] ?? CAT_FRAMES.idle;
+    if (this.typing) for (let k = 0; k < this.typing.text.length; k += 1) grid.set(this.typing.x + k, this.typing.row, this.typing.text[k]!, ctx.palette.warn);
+    const cat = this.cat; const x = Math.round(cat.x), top = Math.round(cat.feet) - (CAT_H - 1);
+    if (this.speech) { const label = this.speech.text; for (let k = 0; k < label.length; k += 1) grid.set(x + 3 + k, top - 1, label[k]!, ctx.palette.accent); }
+    const facingRight = cat.dir === 1, pose = this.frame();
+    if (ctx.color) for (const cell of catCells(pose, facingRight)) grid.set(x + cell.dx, top + cell.dy, cell.glyph, cell.fg, cell.bg);
+    else (pose === 'blink' ? CAT_ASCII_BLINK : CAT_ASCII).forEach((line, dy) => { for (let k = 0; k < line.length; k += 1) grid.set(x + 3 + k, top + 1 + dy, line[k]!, NO_COLOR_VALUE); });
   }
 }
 

@@ -29,9 +29,21 @@ export function parseTldrPage(markdown: string, root: string, limit = 8): TldrEx
 }
 
 /** Examples for a command path from an installed tldr client (bounded; no ANSI: raw output only). */
-export function tldrExamples(tldr: string | undefined, path: readonly string[]): TldrExample[] {
+export type TldrRunner = (command: string, args: string[]) => {status: number | null; stdout?: string};
+
+/**
+ * Cache-only: `--no-auto-update` stops a configured auto-update from fetching
+ * pages, so asking for help never touches the network or refreshes the cache.
+ * A client too old to know the flag fails, which means "no examples" (fail
+ * closed). An uncached page also yields none. Nothing here updates, downloads
+ * or runs an example.
+ */
+export const TLDR_ARGS = ['--no-auto-update', '--raw'] as const;
+
+export function tldrExamples(tldr: string | undefined, path: readonly string[], run: TldrRunner = (command, args) =>
+  spawnSync(command, args, {encoding: 'utf8', timeout: 2000, maxBuffer: 256 * 1024, env: {...process.env, NO_COLOR: '1'}})): TldrExample[] {
   if (!tldr || !path.length || !path.every(word => /^[\w.+-]{1,64}$/u.test(word))) return [];
-  const result = spawnSync(tldr, ['--raw', ...path], {encoding: 'utf8', timeout: 2000, maxBuffer: 256 * 1024, env: {...process.env, NO_COLOR: '1'}});
+  const result = run(tldr, [...TLDR_ARGS, ...path]);
   if (result.status !== 0 || !result.stdout) return [];
   return parseTldrPage(result.stdout, path[0]!);
 }

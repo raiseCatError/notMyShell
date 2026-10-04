@@ -167,7 +167,7 @@ In v0.16.0 zsh, Fish and Bash 4.4+ are implemented backends behind a real [Shell
 
 ## Design Principles
 
-- NMSh is a frontend over a persistent real zsh session.
+- NMSh is a frontend over a persistent real shell session (zsh, Fish or Bash through ShellAdapter).
 - The terminal host renders cells and interprets ANSI; NMSh is not a terminal emulator.
 - Raw PTY output remains recoverable and is not semantically recolored.
 - Fullscreen applications retain the passthrough path.

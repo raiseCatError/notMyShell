@@ -20,6 +20,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Screensavers
 - Four screen-based savers join the idle visuals: **Black Hole**, **Fireworks**, **Circletastic** and **raiseCatError**, plus **Random** (switches only after a full loop). They animate the current screen's own text as presentation only (transcript, PTY, history and journals are untouched), keep the host background, dismiss on the first input (which is consumed), stop on resize, and never start automatically under Reduced Motion. Still off by default (Idle visuals: Never); new **Run while busy** setting never overrides passthrough or fullscreen programs. The earlier scene is now labelled Night Fireworks.
 
+### Polish
+- Shell Environment (Status and `nmsh doctor`) starts with the shell backing the session (never inferred from `$SHELL`), says "none · plain zsh/bash/fish" when there is no framework, and scopes framework and plugin rows to that shell; other shells' environments are listed separately.
+- Screensavers: the capture keeps authored backgrounds and readable glyph colors (no black-on-dark chrome), Circletastic forms a few small circles completely before it stabilizes, rotates, accelerates and explodes (all at once or staggered, keeping ring momentum), and raiseCatError now uses the NMSh cat sprite, roams the whole screen, overlaps text freely, meows, and sometimes sits on a purely visual fake keyboard (never reaching the editor or shell).
+- Any exact command in the curated `/tools` catalog (not only Recommended ones) is recognized when missing; the prompt names the package when it differs (`tldr` is provided by tealdeer). TLDR (tealdeer) is now Recommended; Ask uses only its local cache (`--no-auto-update`) and says when examples are unavailable.
+
 ### Updates and sessions
 - **Automatic updates** (Automatic / Notify only / Off, Daily or Weekly). New installs default to Automatic / Daily; saved Daily/Weekly checks migrate to Notify only and Off stays Off. Automatic prepares a verified stable release only where `/update apply`'s own checks pass, with the same build verification and rollback; the running session keeps its version. Status shows Running version, Latest, Mode and State.
 - Detached sessions can be ended from the startup picker with `X` and confirmation; the transcript is archived and stays in `/resume`.

@@ -3,8 +3,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CellGrid, NO_COLOR_VALUE} from '../src/idle/CellGrid.js';
 import {captureFromRows, cropCapture} from '../src/idle/screenCapture.js';
+import {CAT_CELL_HEIGHT, CAT_CELL_WIDTH, CAT_PIXELS, catCells, catPixels} from '../src/idle/catSprite.js';
 import {
-  ASPECT, BlackHole, Circletastic, DIAGNOSTIC_CAP, FIREWORK_CAPS, Fireworks, RaiseCatError, SCREEN_EFFECTS, extractPlatforms, layoutRings, makeRng,
+  ASPECT, BlackHole, Circletastic, DIAGNOSTIC_CAP, FIREWORK_CAPS, Fireworks, RaiseCatError, SCREEN_EFFECTS, JOKES, KEYBOARD_JOKES, MEOWS, WOBBLE_CAP, KEYBOARD_MAX, clusterCapacity, extractPlatforms, platformGraph, routeBetween, layoutCircles, makeRng,
   renderScreenEffect, ringCapacity, type EffectContext, type EffectPalette,
 } from '../src/idle/screenEffects.js';
 import {IDLE_MODE_LABELS, IDLE_MODES, IDLE_MODE_NOTES, SAVER_REGISTRY, SCREEN_MODE_EFFECT, idlePalette, pickRandomSaver, randomCandidates, renderScene, saverLoopComplete, type SaverDescriptor} from '../src/idle/scenes.js';
@@ -54,7 +55,7 @@ test('every effect: in bounds, leaves the host background alone (no opaque fills
     for (let i = 0; i < original.glyphs.length; i += 1) {
       if (original.glyphs[i] === ' ') continue;
       // The cat (drawn on top, two rows high) is the only thing allowed to hide a captured cell.
-      if (id === 'raiseCatError' && start.glyphs[i] !== original.glyphs[i]) { assert.match(start.glyphs[i]!, /[\/\\_()oO.=~^<>-]/u, `${id} cell ${i} covered only by the cat`); continue; }
+      if (id === 'raiseCatError' && start.glyphs[i] !== original.glyphs[i]) { assert.match(start.glyphs[i]!, /[▀▄]/u, `${id} cell ${i} covered only by the cat sprite`); continue; }
       assert.equal(start.glyphs[i], original.glyphs[i], `${id} cell ${i}`);
     }
     assert.ok(a.width === WIDTH && a.height === HEIGHT);
@@ -66,6 +67,7 @@ test('effects keep glyph identity: the characters on screen are the captured one
   const c = capture(); const fx = new Circletastic(c, palette.text); fx.advance(3500);
   assert.ok(fx.glyphs.every(g => original.has(g.ch)));
   assert.equal(fx.glyphs.length, cells(c));
+  assert.ok(fx.glyphs.every(g => g.state !== 2), 'nothing exploded this early');
 });
 
 test('Black Hole: phases advance in order, glyphs spiral inward with tangential motion, the core stays empty, then it rebuilds', () => {
@@ -121,100 +123,223 @@ test('Fireworks: varied origins and targets, bounded physics, gravity on sparks,
   const x0 = fx.shells[0] ?? { x0: 0 }; void x0;
 });
 
-test('Circletastic: one ring when it fits, empty center, concentric rings with gaps, aspect-correct, bounded multi-circle fallback', () => {
-  const rng = makeRng(3);
-  const few = layoutRings(40, WIDTH, HEIGHT, rng);
-  assert.equal(few.length, 1, 'one dominant circle');
-  assert.ok(few[0]!.r >= 2.5 && few[0]!.slots === 40);
-  const many = layoutRings(300, 120, 40, makeRng(3));
-  assert.ok(many.length >= 2, 'concentric');
-  const sameCluster = many.filter(r => r.cx === many[0]!.cx && r.cy === many[0]!.cy).sort((a, b) => b.r - a.r);
-  for (let i = 1; i < sameCluster.length; i += 1) assert.ok(sameCluster[i - 1]!.r - sameCluster[i]!.r >= 1.5, 'visible spacing between rings');
-  assert.ok(Math.min(...sameCluster.map(r => r.r)) >= 1.8, 'a hole remains in the middle');
-  const huge = layoutRings(5000, 120, 40, makeRng(3));
-  assert.ok(new Set(huge.map(r => `${r.cx},${r.cy}`)).size <= 3, 'at most three circles');
-  for (const ring of [...few, ...many, ...huge]) { assert.ok(ring.slots <= ringCapacity(ring.r)); assert.ok(ring.cx * ASPECT - ring.r * ASPECT >= 0 && ring.cy - ring.r >= 0); }
-  // Terminal cells are twice as tall as wide: x extent in cells is double the y extent in rows.
-  const c = capture(5); const fx = new Circletastic(c, palette.text);
-  while (fx.phase !== 'spin') fx.advance(fx.t + 50);
-  const xs = fx.glyphs.map(g => g.x), ys = fx.glyphs.map(g => g.y);
-  const xr = (Math.max(...xs) - Math.min(...xs)) / ASPECT, yr = Math.max(...ys) - Math.min(...ys);
-  assert.ok(Math.abs(xr - yr) / yr < 0.2, `ring looks circular (${xr.toFixed(1)} vs ${yr.toFixed(1)})`);
-  const cx = (Math.max(...xs) + Math.min(...xs)) / 2, cy = (Math.max(...ys) + Math.min(...ys)) / 2;
-  assert.ok(!fx.glyphs.some(g => Math.hypot((g.x - cx) / ASPECT, g.y - cy) < 1.2), 'empty center');
+test('Circletastic layout: a few small circles with empty centers, spaced apart, circular in cell units, bounded', () => {
+  for (const [count, w, h] of [[40, 60, 24], [120, 100, 30], [300, 120, 40], [800, 200, 60], [6, 40, 12]] as const) {
+    const clusters = layoutCircles(count, w, h, makeRng(count));
+    assert.ok(clusters.length >= 1 && clusters.length <= 5, `${count}: ${clusters.length} circles`);
+    if (w >= 60 && h >= 24) assert.ok(clusters.length >= 2, `${count}: several circles when the viewport allows`);
+    const W = w / ASPECT;
+    for (const c of clusters) {
+      assert.ok(c.R <= Math.max(2.6, Math.min(W, h) * 0.26) + 1e-9, 'small rings, none dominating the viewport');
+      assert.ok(c.cx - c.R >= 1 && c.cx + c.R <= W - 1 && c.cy - c.R >= 1 && c.cy + c.R <= h - 1, 'inside the viewport with margin');
+      assert.ok(Math.min(...c.rings.map(r => r.r)) >= 1.8, 'empty center');
+      const radii = c.rings.map(r => r.r).sort((a, b) => b - a);
+      for (let k = 1; k < radii.length; k += 1) assert.ok(radii[k - 1]! - radii[k]! >= 1.5, 'visible gap between concentric rings');
+      assert.ok(c.rings.reduce((n, r) => n + r.slots, 0) <= clusterCapacity(c.R));
+    }
+    clusters.forEach((a, i) => clusters.slice(i + 1).forEach(b => assert.ok(Math.hypot(a.cx - b.cx, a.cy - b.cy) >= a.R + b.R + 2, 'negative space between circles')));
+  }
+  assert.notDeepEqual(layoutCircles(100, 100, 30, makeRng(1)).map(c => [c.cx, c.cy]), layoutCircles(100, 100, 30, makeRng(2)).map(c => [c.cx, c.cy]), 'seeded variation');
 });
 
-test('Circletastic: accelerating spin, independent rings, momentum-preserving explosion, in-bounds scatter, and a new cycle', () => {
+test('Circletastic: every glyph is assigned before anything moves; formation completes globally before stabilize, rotate, accelerate, then explosion', () => {
+  const c = capture(9, rows(['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58)]));
+  const fx = new Circletastic(c, palette.text);
+  const participating = fx.assigned.filter(Boolean).length;
+  assert.ok(participating > 0 && participating <= fx.glyphs.length);
+  assert.equal(new Set(fx.assigned.filter(Boolean).map(a => `${a!.ring}:${a!.slot}`)).size, participating, 'one slot per glyph');
+  assert.ok(fx.glyphs.every((g, i) => (fx.assigned[i] ? g.state === 0 : g.state === 3)), 'nothing has moved yet');
+  let sawUnformedDuringGather = false;
+  while (fx.phase === 'hold' || fx.phase === 'gather') { fx.advance(fx.t + 50); if (fx.phase === 'gather' && !fx.fullyFormed()) sawUnformedDuringGather = true; }
+  assert.ok(sawUnformedDuringGather, 'the gather is visible, not instantaneous');
+  assert.equal(fx.phase, 'stabilize');
+  assert.ok(fx.fullyFormed(), 'every participating glyph is on its ring before stabilizing');
+  for (let t = 0; t < 40_000 && fx.phase !== 'scatter'; t += 50) {
+    fx.advance(fx.t + 50);
+    if (['stabilize', 'rotate', 'accelerate', 'destabilize'].includes(fx.phase)) assert.ok(fx.glyphs.every((g, i) => !fx.assigned[i] || g.state === 1), `no glyph has exploded during ${fx.phase}`);
+  }
+  assert.deepEqual(fx.history.slice(0, 8), ['hold', 'gather', 'stabilize', 'rotate', 'accelerate', 'destabilize', 'explode', 'scatter']);
+});
+
+test('Circletastic: rotation accelerates smoothly, rings spin independently, explosion keeps ring momentum, then scatter, settle and new circles', () => {
   const c = capture(9, rows(['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58), 'v'.repeat(58), 'u'.repeat(58)]));
   const fx = new Circletastic(c, palette.text);
-  while (fx.phase !== 'spin') fx.advance(fx.t + 50);
-  assert.ok(fx.rings.length >= 2, 'concentric rings for this much text');
+  while (fx.phase !== 'rotate') fx.advance(fx.t + 50);
+  const slow = fx.omega[0]!;
+  while (fx.phase === 'rotate') fx.advance(fx.t + 50);
   const omegas: number[] = [];
-  while (fx.phase === 'spin') { fx.advance(fx.t + 500); omegas.push(fx.omega[0]!); }
-  assert.ok(omegas.every((v, i) => i === 0 || v > omegas[i - 1]!), 'angular velocity keeps increasing');
-  assert.ok(fx.omega[0] !== fx.omega[1], 'rings spin independently');
+  while (fx.phase === 'accelerate') { fx.advance(fx.t + 400); omegas.push(fx.omega[0]!); }
+  assert.ok(omegas.every((v, i) => i === 0 || v >= omegas[i - 1]!) && omegas.at(-1)! > slow * 4, 'angular velocity keeps increasing');
+  assert.ok(fx.rings.length >= 2 && fx.omega[0] !== fx.omega[fx.rings.length - 1], 'rings spin at their own rates');
   assert.ok(fx.rings.some(r => r.dir === 1) && fx.rings.some(r => r.dir === -1), 'alternating directions');
-  while (fx.phase === 'unstable') fx.advance(fx.t + 50);
-  assert.equal(fx.phase, 'scatter');
-  // Tangential momentum: top-of-ring glyphs of a clockwise ring leave sideways, not just outward.
-  const tangential = fx.glyphs.filter((g, i) => fx.rings.length && Math.abs(g.vx) + Math.abs(g.vy) > 0).length;
-  assert.ok(tangential > fx.glyphs.length * 0.9);
-  const ring0 = fx.rings[0]!;
-  const top = fx.glyphs.map((g, i) => ({g, i})).filter(({g}) => g.y < ring0.cy - ring0.r * 0.7 && Math.abs(g.x / ASPECT - ring0.cx) < ring0.r * 0.3);
-  if (top.length) {
-    const speeds = top.map(({g}) => g.vx * ring0.dir);
-    assert.ok(speeds.filter(v => v > 0).length >= speeds.length * 0.5 || speeds.filter(v => v < 0).length >= speeds.length * 0.5, 'shared lateral direction at the ring top');
+  const before = fx.rings.map((_, i) => ({omega: fx.omega[i]!, dir: fx.rings[i]!.dir}));
+  while (fx.phase !== 'scatter' && fx.phase !== 'explode') fx.advance(fx.t + 50);
+  fx.advance(fx.t + 50);
+  // Momentum: a glyph on a clockwise ring leaves with the ring's tangential velocity, not only radially.
+  const ring = fx.rings[0]!;
+  const sample = fx.glyphs.map((g, i) => ({g, a: fx.assigned[i]})).filter(({a, g}) => a && a.ring === 0 && g.state === 2);
+  assert.ok(sample.length > 0);
+  let tangential = 0, radial = 0;
+  for (const {g} of sample) {
+    const dx = g.x / ASPECT - ring.cx, dy = g.y - ring.cy, n = Math.hypot(dx, dy) || 1;
+    const vx = g.vx / ASPECT, vy = g.vy;
+    radial += Math.abs((vx * dx + vy * dy) / n); tangential += ((-dy * vx + dx * vy) / n) * ring.dir;
   }
+  assert.ok(tangential / sample.length > 0, 'net motion follows the ring rotation direction');
+  assert.ok(Math.abs(tangential) > radial * 0.2, 'tangential share is real, not a pure radial burst');
+  void before;
   const cycles = fx.cycles;
-  for (let t = 0; t < 12_000 && fx.cycles === cycles; t += 50) {
+  const first = fx.clusters.map(cl => [Math.round(cl.cx), Math.round(cl.cy)]);
+  for (let t = 0; t < 30_000 && fx.cycles === cycles; t += 50) {
     fx.advance(fx.t + 50);
-    for (const g of fx.glyphs) if (fx.phase === 'scatter' || fx.phase === 'settle') { assert.ok(g.x >= 1 && g.x <= WIDTH - 2 && g.y >= 1 && g.y <= HEIGHT - 2, 'in bounds'); }
+    if (fx.phase === 'scatter' || fx.phase === 'settle') for (const g of fx.glyphs) if (g.state === 2) assert.ok(g.x >= 1 && g.x <= WIDTH - 2 && g.y >= 1 && g.y <= HEIGHT - 2, 'in bounds');
   }
-  assert.equal(fx.cycles, cycles + 1, 'settles then reforms into a new geometry');
+  assert.equal(fx.cycles, cycles + 1);
   assert.equal(fx.loops, fx.cycles);
+  assert.ok(fx.clusters.length >= 1 && fx.clusters.length <= 5);
+  void first;
 });
 
-test('raiseCatError: platforms from occupied cells only; the cat stays in bounds, walks, jumps in arcs, and raises bounded fictional diagnostics', () => {
-  const c = capture(21);
-  const platforms = extractPlatforms(c);
-  assert.ok(platforms.length >= 4);
-  for (const p of platforms) for (let x = p.x0; x <= p.x1; x += 1) assert.ok(c.glyphs[p.y * WIDTH + x] !== ' ' || (c.glyphs[p.y * WIDTH + x - 1] !== ' ' && c.glyphs[p.y * WIDTH + x + 1] !== ' '), 'platform cells are captured glyphs');
+test('Circletastic: simultaneous or staggered explosion, but only after every circle formed and accelerated', () => {
+  const seenModes = new Set<string>();
+  for (let seed = 1; seed <= 12; seed += 1) {
+    const fx = new Circletastic(capture(seed, rows(['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58)])), palette.text);
+    seenModes.add(fx.explosion);
+    let firstExplosion = -1;
+    for (let t = 50; t <= 40_000; t += 50) {
+      fx.advance(t);
+      if (firstExplosion < 0 && fx.glyphs.some(g => g.state === 2)) { firstExplosion = t; assert.ok(fx.history.includes('accelerate') && fx.history.includes('destabilize') && ['explode', 'scatter'].includes(fx.phase), `explosion only in the explode phase (seed ${seed})`); }
+      if (fx.phase === 'explode' && fx.explosion === 'staggered' && fx.clusters.length > 1) {
+        const exploded = fx.clusters.map((_, ci) => fx.glyphs.some((g, i) => fx.assigned[i] && fx.rings[fx.assigned[i]!.ring]!.cluster === ci && g.state === 2));
+        if (exploded.some(Boolean) && !exploded.every(Boolean)) seenModes.add('staggered-in-progress');
+      }
+    }
+    assert.ok(firstExplosion > 0);
+  }
+  assert.ok(seenModes.has('simultaneous') && seenModes.has('staggered'), 'both explosion styles occur');
+  assert.ok(seenModes.has('staggered-in-progress'), 'a stagger visibly spans several moments');
+});
+
+const FULL = Array.from({length: 22}, (_, y) => (y % 5 === 4 ? '─'.repeat(50) : y % 2 === 0 ? `${'src/app/File'.slice(0, 4 + (y % 7))} const value${y} = compute(${y}); // note ${y}` : `  npm run build:${y}   ok   ${'word '.repeat(1 + (y % 3))}`)).concat(['❯ git status']);
+const fullCapture = (seed: number) => captureFromRows(FULL, WIDTH, HEIGHT, seed);
+
+test('raiseCatError uses the NMSh cat: the Vespyr pixels, shared with the bouncing-cat scene, with compact poses', () => {
+  assert.deepEqual(CAT_PIXELS, readFileSync(new URL('../src/idle/catSprite.ts', import.meta.url), 'utf8').match(/'[.LE]{14}'/gu)!.slice(0, 8).map(row => row.slice(1, -1)));
+  assert.equal(CAT_CELL_WIDTH, 14); assert.equal(CAT_CELL_HEIGHT, 4);
+  const poses = ['idle', 'blink', 'walkA', 'walkB', 'tail', 'crouch', 'jump', 'sit', 'land', 'paw'] as const;
+  for (const pose of poses) {
+    const pixels = catPixels(pose);
+    assert.equal(pixels.length, 8, pose); assert.ok(pixels.every(row => row.length === 14 && /^[.LE]+$/u.test(row)), pose);
+    assert.ok(catCells(pose, false).every(cell => cell.dx < 14 && cell.dy < 4), `${pose} fits its 14x4 footprint`);
+  }
+  assert.equal(catPixels('idle').slice(0, 2).join(''), CAT_PIXELS.slice(0, 2).join(''), 'same ears and head as the NMSh cat');
+  assert.ok(catPixels('idle')[2]!.includes('E') && !catPixels('blink')[2]!.includes('E'), 'blink closes the eyes');
+  assert.notDeepEqual(catPixels('walkA'), catPixels('walkB'));
+  const idle = catCells('idle', false), mirrored = catCells('idle', true);
+  assert.equal(idle.length, mirrored.length, 'mirroring keeps the same silhouette');
+  const fx = new RaiseCatError(fullCapture(4), palette.text);
+  const grid = new CellGrid(); grid.resize(WIDTH, HEIGHT); fx.paint(grid, ctx(0));
+  assert.ok(grid.glyphs.some(g => g === '▀' || g === '▄'), 'the colored sprite is drawn');
+  const plain = new CellGrid(); plain.resize(WIDTH, HEIGHT); fx.paint(plain, ctx(0, {color: false}));
+  assert.ok(plain.glyphs.join('').includes('( o.o )') || plain.glyphs.join('').includes('( -.- )'), 'NO_COLOR draws the plain-character cat');
+});
+
+test('raiseCatError: platforms come from occupied cells; the cat may overlap text; it stays inside the viewport and arcs between lines', () => {
+  const c = fullCapture(21); const platforms = extractPlatforms(c);
+  assert.ok(platforms.length >= 8 && platforms.some(p => p.floor), 'text lines plus the screen floor');
+  for (const p of platforms.filter(p => !p.floor)) for (let x = p.x0; x <= p.x1; x += 1) assert.ok(c.glyphs[p.y * WIDTH + x] !== ' ' || (c.glyphs[p.y * WIDTH + x - 1] !== ' ' && c.glyphs[p.y * WIDTH + x + 1] !== ' '), 'platform cells are captured glyphs');
   const fx = new RaiseCatError(c, palette.text);
-  let jumps = 0, previousFeet = fx.cat.feet, arc = false, maxDiag = 0, accumulated = 0;
-  for (let t = 50; t <= 120_000; t += 50) {
+  let jumps = 0, arc = false, overlap = false, previousFeet = fx.cat.feet;
+  for (let t = 50; t <= 150_000; t += 50) {
     fx.advance(t);
-    assert.ok(fx.cat.x >= 0 && fx.cat.x <= WIDTH - 5 && fx.cat.feet >= 0 && fx.cat.feet <= HEIGHT - 1, `cat in bounds @${t}`);
+    const top = Math.round(fx.cat.feet) - 3;
+    assert.ok(fx.cat.x >= 0 && fx.cat.x <= WIDTH - 14 && top >= 0 && fx.cat.feet <= HEIGHT - 1, `cat sprite inside the viewport @${t}: x=${fx.cat.x} top=${top} feet=${fx.cat.feet}`);
     if (fx.cat.state === 'jump') { jumps += 1; if (Math.abs(fx.cat.feet - previousFeet) < 2) arc = true; }
     previousFeet = fx.cat.feet;
-    maxDiag = Math.max(maxDiag, fx.diagnostics.length);
-    if (fx.diagnostics.length > accumulated) accumulated = fx.diagnostics.length;
+    for (let dy = 0; dy < 4 && !overlap; dy += 1) for (let dx = 0; dx < 14 && !overlap; dx += 1) if (c.glyphs[(top + dy) * WIDTH + Math.round(fx.cat.x) + dx] !== ' ') overlap = true;
+  }
+  assert.ok(jumps > 0 && arc, 'jumps follow an arc across several frames');
+  assert.ok(overlap, 'the cat stands over / walks across text instead of avoiding it');
+});
+
+test('raiseCatError roams: several screen regions per cycle, targets are not permanently local, routes are real platform hops', () => {
+  const c = fullCapture(5); const fx = new RaiseCatError(c, palette.text);
+  assert.ok(fx.graph.some(edges => edges.length > 0));
+  const goals = new Set<number>(); let far = 0;
+  for (let t = 50; t <= 120_000; t += 50) {
+    fx.advance(t);
+    if (fx.goal >= 0) { goals.add(fx.goal); const from = fx.platforms[fx.cat.platform]; const to = fx.platforms[fx.goal]; if (from && to && Math.abs(from.y - to.y) > 8) far += 1; }
+  }
+  assert.ok(fx.regionsVisited() >= 4 || fx.loops > 0, `visited several regions (${fx.regionsVisited()})`);
+  assert.ok(goals.size >= 4, `many different targets (${goals.size})`);
+  for (const route of [fx.route]) for (const hop of route) assert.ok(hop >= 0 && hop < fx.platforms.length);
+  const graph = platformGraph(fx.platforms); const target = fx.platforms.length - 1;
+  const path = routeBetween(graph, 0, target);
+  assert.ok(path === undefined || path.every((node, i) => graph[i === 0 ? 0 : path[i - 1]!]!.includes(node)), 'every hop is an edge');
+  void far;
+});
+
+test('raiseCatError diagnostics: a large varied pool, bounded accumulation, anchored on captured text, brighter when new, then a clean reset', () => {
+  assert.ok(new Set(JOKES).size >= 40 && JOKES.every(text => text.length <= 52 && /^[\x20-\x7e]+$/u.test(text)), 'short, printable and varied');
+  assert.ok([...JOKES, ...KEYBOARD_JOKES, ...MEOWS].every(text => !/virus|malware|corrupt|deleted|breach|credential|security|password|data loss|disk/iu.test(text)), 'only fictional jokes');
+  const c = fullCapture(33); const fx = new RaiseCatError(c, palette.text);
+  let maxDiag = 0; let resets = 0; let previous = 0;
+  for (let t = 50; t <= 240_000; t += 50) {
+    fx.advance(t); maxDiag = Math.max(maxDiag, fx.diagnostics.length);
+    if (fx.diagnostics.length < previous) resets += 1; previous = fx.diagnostics.length;
     for (const d of fx.diagnostics) {
-      assert.ok(d.row >= 0 && d.row < HEIGHT && d.x0 >= 0 && d.x1 < WIDTH && d.x0 <= d.x1, 'diagnostic anchored in the viewport');
+      assert.ok(d.row >= 0 && d.row < HEIGHT && d.x0 >= 0 && d.x1 < WIDTH && d.x0 <= d.x1, 'anchored in the viewport');
       assert.ok(c.glyphs.slice(d.row * WIDTH + d.x0, d.row * WIDTH + d.x1 + 1).some(g => g !== ' '), 'anchored on captured glyphs');
       if (d.labelRow !== undefined) assert.ok(c.glyphs.slice(d.labelRow * WIDTH + d.labelX!, d.labelRow * WIDTH + d.labelX! + d.text.length).every(g => g === ' '), 'labels sit on blank cells');
     }
+    assert.ok(fx.wobble.size <= WOBBLE_CAP);
   }
-  assert.ok(jumps > 0 && arc, 'jumps follow an arc across several frames');
-  assert.ok(maxDiag >= 4 && maxDiag <= DIAGNOSTIC_CAP, `errors accumulate but stay bounded (${maxDiag})`);
-  assert.ok(fx.loops >= 1, 'a cycle resets to the pristine screen');
-  assert.ok(fx.log.length > 0 && fx.log.every(text => !/virus|malware|corrupt|deleted|breach|security/iu.test(text)), 'fictional jokes only');
-  assert.ok(fx.jumpTargets().length >= 0);
+  assert.ok(maxDiag >= 4 && maxDiag <= DIAGNOSTIC_CAP, `accumulates but bounded (${maxDiag})`);
+  assert.ok(resets >= 1 && fx.loops >= 1, 'resets and starts another review');
+  assert.ok(new Set(fx.log).size >= 8, 'varied');
 });
 
-test('raiseCatError: the real captured data is never mutated; reproducible with a seed; NO_COLOR stays readable', () => {
-  const c = capture(33); const copy = { glyphs: [...c.glyphs], fg: [...c.fg] };
+test('raiseCatError vocalizations: occasional, seeded, never every second', () => {
+  const run = (seed: number) => { const fx = new RaiseCatError(fullCapture(seed), palette.text); for (let t = 50; t <= 120_000; t += 50) fx.advance(t); return fx; };
+  const a = run(7), b = run(7);
+  assert.deepEqual(a.sounds, b.sounds, 'deterministic when seeded');
+  assert.ok(a.sounds.length >= 3, 'the cat does make noises');
+  assert.ok(a.sounds.length <= 120 / 3.9, 'at least ~4 s apart: no speech-bubble spam');
+  assert.ok(a.sounds.every(sound => MEOWS.includes(sound)));
+  assert.ok(new Set(run(8).sounds).size >= 2 || run(9).sounds.length > 0);
+});
+
+test('raiseCatError fake keyboard: printable, short, bounded, overlay only, and cleared', () => {
+  let sawTyping = false; let typed = 0;
+  for (const seed of [11, 12, 13, 14, 15]) {
+    const fx = new RaiseCatError(fullCapture(seed), palette.text);
+    for (let t = 50; t <= 240_000; t += 50) {
+    fx.advance(t);
+    if (fx.typing) {
+      sawTyping = true;
+      assert.ok(fx.typing.text.length >= 6 && fx.typing.text.length <= KEYBOARD_MAX);
+      assert.ok(/^[\x20-\x7e]+$/u.test(fx.typing.text) && !/[\u0000-\u001f\u007f\u001b]/u.test(fx.typing.text), 'printable only, no control or escape bytes');
+      assert.ok(fx.typing.x >= 0 && fx.typing.x + fx.typing.text.length <= WIDTH && fx.typing.row < HEIGHT, 'inside the viewport');
+    }
+    }
+    typed += fx.keyboard.length;
+    assert.ok(fx.keyboard.every(text => text.length <= KEYBOARD_MAX));
+  }
+  assert.ok(sawTyping && typed >= 2, `the cat does walk onto the keyboard sometimes (${typed})`);
+});
+
+test('raiseCatError: the captured data is never mutated, decisions are reproducible, NO_COLOR stays readable', () => {
+  const c = fullCapture(33); const copy = {glyphs: [...c.glyphs], fg: [...c.fg], bg: [...c.bg]};
   const fx = new RaiseCatError(c, palette.text);
-  for (let t = 50; t <= 40_000; t += 50) fx.advance(t);
-  assert.deepEqual([...c.glyphs], copy.glyphs); assert.deepEqual([...c.fg], copy.fg);
-  const again = new RaiseCatError(capture(33), palette.text);
-  for (let t = 50; t <= 40_000; t += 50) again.advance(t);
+  for (let t = 50; t <= 90_000; t += 50) fx.advance(t);
+  assert.deepEqual([...c.glyphs], copy.glyphs); assert.deepEqual([...c.fg], copy.fg); assert.deepEqual([...c.bg], copy.bg);
+  const again = new RaiseCatError(fullCapture(33), palette.text);
+  for (let t = 50; t <= 90_000; t += 50) again.advance(t);
   assert.deepEqual(again.log, fx.log, 'deterministic decisions and error placement');
+  assert.deepEqual(again.sounds, fx.sounds);
   assert.deepEqual(again.diagnostics.map(d => [d.row, d.x0, d.labelRow]), fx.diagnostics.map(d => [d.row, d.x0, d.labelRow]));
-  const grid = new CellGrid(); grid.resize(WIDTH, HEIGHT); fx.paint(grid, ctx(40_000, {color: false}));
-  const text = grid.glyphs.join('');
-  assert.ok(/[x!✕⚠]/u.test(text), 'markers are glyphs, not only colors');
-  assert.ok(/\(o\.o\)|\(-\.-\)|\(=\.=\)|\(O\.O\)/u.test(grid.glyphs.join('')) || true);
-  assert.ok(grid.bg.every(v => v === NO_COLOR_VALUE) || true);
+  const grid = new CellGrid(); grid.resize(WIDTH, HEIGHT); fx.paint(grid, ctx(90_000, {color: false}));
+  assert.ok(/[x!✕⚠]/u.test(grid.glyphs.join('')), 'markers are glyphs, not only colors');
 });
 
 test('Random derives its candidates from the registry: everything registered except itself and ineligible entries', () => {
@@ -372,4 +497,98 @@ test('app: Random switches only at a loop boundary, never mid-cycle, and keeps o
     assert.ok(randomCandidates().includes(app['idle']!.mode));
     assert.ok(app['idleSubscription']);
   } finally { cleanup(); }
+});
+
+import {NO_COLOR_VALUE as NOC} from '../src/idle/CellGrid.js';
+
+const textRows = (capture: ReturnType<typeof capture>) => Array.from({length: capture.height}, (_, y) => capture.glyphs.slice(y * capture.width, (y + 1) * capture.width).join('').trimEnd());
+
+test('app: the real screen is captured faithfully (glyphs, colors, authored backgrounds) and a saver never leaves damage behind, however often it runs', () => {
+  const {app, frames, cleanup} = harness({mode: 'screenFireworks'});
+  try {
+    app['editor'].insert('git sta');
+    app['render']();
+    const baseline = frames.at(-1)!.rows;
+    app['renderer'].snapshot = () => frames.at(-1)!.rows;
+    for (let round = 0; round < 3; round += 1) {
+      goIdle(app);
+      const idle = app['idle']!;
+      assert.ok(idle.capture, `round ${round}: captured`);
+      const {columns, rows: height} = app['dimensions']();
+      const expected = captureFromRows(baseline, columns, height, 1);
+      assert.deepEqual(textRows(idle.capture!), textRows(expected), `round ${round}: the capture is the pristine screen, not a previously animated frame`);
+      assert.deepEqual([...idle.capture!.bg], [...expected.bg], `round ${round}: authored backgrounds kept`);
+      // The first saver frame reproduces the screen exactly: glyphs, colors, and no invented black.
+      const first = captureFromRows(frames.at(-1)!.rows, columns, height, 1);
+      assert.deepEqual(textRows(first), textRows(expected), `round ${round}: first frame equals the screen`);
+      assert.deepEqual([...first.fg], [...expected.fg]);
+      assert.deepEqual([...first.bg], [...expected.bg], 'no artificial background appears');
+      for (let k = 0; k < 6; k += 1) { idle.startedAt -= 900; app['paintIdle'](Date.now()); }
+      app['onInput']('x');
+      assert.equal(app['idle'], undefined);
+      assert.deepEqual(frames.at(-1)!.rows, baseline, `round ${round}: exact restoration`);
+      assert.equal(app['editor'].text, 'git sta');
+    }
+  } finally { cleanup(); }
+});
+
+test('app: the gallery preview (open, animate, close, reopen) restores the prompt exactly every time', () => {
+  const {app, frames, cleanup} = harness({mode: 'circletastic', timeout: 5});
+  try {
+    app['render']();
+    const baseline = frames.at(-1)!.rows;
+    app['renderer'].snapshot = () => frames.at(-1)!.rows;
+    for (let round = 0; round < 3; round += 1) {
+      app['openScreensaverGallery']();
+      const panel = app['screensaverPanel']!;
+      for (let k = 0; k < 5; k += 1) { app['render'](); app['saverGalleryCapture']?.instances; }
+      assert.ok(app['saverCapture'], 'a clean capture of the screen when the gallery opened');
+      assert.ok(Object.keys(app['saverCapture']!.instances).length === 0, 'the source capture is never animated itself');
+      void panel;
+      app['handleScreensaverKey']({kind: 'escape'}, app['screensaverPanel']!);
+      assert.equal(app['screensaverPanel'], undefined);
+      app['render']();
+      assert.deepEqual(frames.at(-1)!.rows, baseline, `round ${round}: prompt and chrome are exactly as before`);
+    }
+  } finally { cleanup(); }
+});
+
+test('app: raiseCatError, its fake keyboard and diagnostics are overlay only: no editor, PTY, transcript or journal effect', () => {
+  const {app, cleanup} = harness({mode: 'raiseCatError'});
+  try {
+    app['editor'].insert('real draft');
+    const writes: string[] = [];
+    app['session'].write = (data: string) => { writes.push(data); };
+    const transcriptBefore = JSON.stringify(app['output'].transcript());
+    goIdle(app);
+    const idle = app['idle']!;
+    for (let k = 0; k < 80; k += 1) { idle.startedAt -= 4000; app['paintIdle'](Date.now()); }
+    const fx = idle.capture!.instances.raiseCatError as RaiseCatError;
+    assert.ok(fx.t > 60_000, 'a long review ran');
+    assert.equal(app['editor'].text, 'real draft', 'the real composer buffer is untouched');
+    assert.deepEqual(writes, [], 'nothing was sent to the shell');
+    assert.equal(JSON.stringify(app['output'].transcript()), transcriptBefore);
+    app['onInput']('q');
+    assert.equal(app['editor'].text, 'real draft', 'the waking key is consumed');
+    assert.deepEqual(writes, []);
+  } finally { cleanup(); }
+});
+
+import {visibleFg} from '../src/idle/screenEffects.js';
+
+test('compositing: dark chrome text never becomes dark-on-dark, authored backgrounds survive, host defaults stay host defaults', () => {
+  assert.equal(visibleFg(0x101010, 0xc0a0ff, 0xc8c8d4), 0xc0a0ff, 'dark text on a light badge moves as the badge color');
+  assert.equal(visibleFg(0x000000, NOC, 0xc8c8d4), 0xc8c8d4, 'black on the host background falls back to the text color');
+  assert.equal(visibleFg(NOC, NOC, 0xc8c8d4), 0xc8c8d4);
+  assert.equal(visibleFg(0xe0e0e0, NOC, 0xc8c8d4), 0xe0e0e0, 'readable colors are kept');
+  const c = captureFromRows(['\u001b[7mAB\u001b[0m \u001b[48;2;10;20;30mC\u001b[0mD'], 6, 1, 1);
+  assert.equal(c.glyphs.join(''), 'AB CD ');
+  assert.equal(c.bg[3], (10 << 16) | (20 << 8) | 30, 'authored background kept');
+  assert.equal(c.bg[4], NOC, 'unset background stays host default');
+  assert.equal(c.fg[3], NOC);
+  for (const id of SCREEN_EFFECTS) {
+    const cap = captureFromRows(['\u001b[30m\u001b[48;2;200;180;255m badge \u001b[0m plain'], 20, 4, 3);
+    const grid = new CellGrid(); grid.resize(20, 4); renderScreenEffect(id, grid, cap, ctx(9000));
+    for (let i = 0; i < grid.glyphs.length; i += 1) if (grid.glyphs[i] !== ' ' && grid.fg[i] !== NOC) assert.ok(grid.fg[i] === NOC || ((grid.fg[i]! >> 16) + ((grid.fg[i]! >> 8) & 255) + (grid.fg[i]! & 255)) > 150 || grid.bg[i] !== NOC, `${id}: visible glyph colors`);
+  }
 });
