@@ -393,11 +393,18 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
   const confirming = pending?.kind === 'proposal' && needsConfirmation(pending);
   if (choices.length) {
     bottom.push('');
+    // Long lists (a folder, search results) scroll around the selection; typing filters.
+    const limit = Math.max(4, Math.min(14, options.height === undefined ? 14 : Math.floor((options.height - 10) / 2)));
+    const start = choices.length <= limit ? 0 : Math.max(0, Math.min(choices.length - limit, state.selected - Math.floor(limit / 2)));
+    const end = Math.min(choices.length, start + limit);
+    if (start > 0) bottom.push(`    ${subtle}↑ ${start} more${reset}`);
     choices.forEach((option, index) => {
+      if (index < start || index >= end) return;
       const selected = index === state.selected;
       const number = option.key === 'none' ? ' ' : String(index + 1);
-      bottom.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${subtle}${number}${reset}  ${selected ? primary : secondary}${option.label}${reset}${option.detail ? `  ${subtle}${option.detail}${reset}` : ''}`);
+      bottom.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${subtle}${number.padStart(String(choices.length).length)}${reset}  ${selected ? primary : secondary}${option.label}${reset}${option.detail ? `  ${subtle}${option.detail}${reset}` : ''}`);
     });
+    if (end < choices.length) bottom.push(`    ${subtle}↓ ${choices.length - end} more · type to filter${reset}`);
   } else if (confirming) {
     const yes = pending.safety === 'read' ? 'Run' : pending.safety === 'install' ? 'Install' : 'Yes';
     bottom.push('', `  ${state.confirm === 'yes' ? `${accent}[ Y ${yes} ]${reset}` : `${subtle}  Y ${yes}  ${reset}`}   ${state.confirm === 'no' ? `${accent}[ N Don't ]${reset}` : `${subtle}  N Don't  ${reset}`}`);

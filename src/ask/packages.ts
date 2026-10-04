@@ -34,7 +34,7 @@ export function packageIntent(text: string): PackageIntent | undefined {
   const name = (match: RegExpExecArray | null) => match?.slice(1).find(Boolean);
   const valid = (value: string | undefined) => value && !STOP.has(value) && PACKAGE_NAME.test(value) ? value : undefined;
   const brewish = /\b(?:brew|homebrew|formulae?|casks?|packages?)\b/u.test(text);
-  if (/\boutdated\b/u.test(text) || (brewish && /\b(?:updates?|upgrades?)\b/u.test(text) && /\b(?:what|which|any|show|list|check)\b/u.test(text) && !/\bupgrade [a-z0-9]/u.test(text))) return {kind: 'outdated'};
+  if (/\boutdated\b/u.test(text) || (brewish && /\b(?:updates?|updating|upgrades?|upgrading|need(?:s|ing)? (?:an? )?(?:update|upgrade))\b/u.test(text) && /\b(?:what|which|any|show|list|check)\b/u.test(text) && !/\bupgrade [a-z0-9]/u.test(text))) return {kind: 'outdated'};
   if (/\bwhat did (?:brew|homebrew) install\b|\bbrew (?:list|leaves)\b/u.test(text) || (brewish && /\b(?:show|list|what)\b.*\binstalled\b/u.test(text) && !/\bis \S+ installed\b/u.test(text))) return {kind: 'list'};
   const uses = valid(name(new RegExp(`\\bwhat (?:depends|relies) on ${NAME}`, 'u').exec(text)));
   if (uses) return {kind: 'uses', name: uses};

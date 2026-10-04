@@ -61,7 +61,7 @@ export type AskAction =
   | {kind: 'applyEdit'; plan: FileEditPlan}
   /** A curated tool install (the /tools recipe, shown exactly before the Yes); never a guessed package. */
   | {kind: 'installTool'; tool: string; label: string}
-  | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend'; value: string; label: string};
+  | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend' | 'composerDividers'; value: string; label: string};
 
 /**
  * How much an action changes, which decides what Ask may do with it:

@@ -5654,6 +5654,8 @@ export class TerminalApp {
       case 'setting': {
         if (action.setting === 'shellBackend') {
           if (isShellId(action.value)) this.updateConfiguration(configuration => { configuration.shellBackend = action.value as ShellId; });
+        } else if (action.setting === 'composerDividers') {
+          this.updateConfiguration(configuration => { configuration.composerDividers = action.value === 'on'; });
         } else if (action.setting === 'localUnderstanding') {
           const mode = action.value as PromptConfiguration['localUnderstanding']['mode'];
           if (['off', 'auto', 'always'].includes(mode)) this.updateConfiguration(configuration => { configuration.localUnderstanding = {...configuration.localUnderstanding, mode}; });

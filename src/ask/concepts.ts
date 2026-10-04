@@ -37,7 +37,7 @@ export interface Concept {
   /** Within an ambiguous phrase, this concept is meant when the request has one of these intents ("open the palette"). */
   prefers?: ConceptIntent[];
   /** A typed on/off setting Ask may propose. */
-  toggle?: {setting: 'suggestions'; on: string; off: string};
+  toggle?: {setting: 'suggestions' | 'composerDividers'; on: string; off: string};
   /** Capability matches this concept beats when both match (it names something more specific). */
   overrides?: CapabilityId[];
   /** Coverage: the public slash commands, Settings categories, provider families and planned areas this concept stands for. */
@@ -79,6 +79,10 @@ export const CONCEPTS: readonly Concept[] = [
     aliases: ['folding', 'output folding', 'fold output', 'fold', 'collapse output', 'collapsed output', 'collapsing', 'collapsing output', 'smart fold', 'smart folding',
       'hide noisy output', 'folded output', 'folds'],
     description: 'Output folding collapses long command output behind a one-line disclosure (Ctrl+O expands). Smart folds long, repetitive successes and never hides errors; Always folds every long block.'},
+  {id: 'composerDividers', label: 'Composer dividers', support: 'actionable', open: '/settings', prefers: ['on', 'off'], toggle: {setting: 'composerDividers', on: 'on', off: 'off'},
+    where: 'Settings → Layout → Composer dividers (On/Off)',
+    aliases: ['composer dividers', 'composer divider', 'input dividers', 'input divider', 'input lines', 'lines around the input', 'divider lines', 'input box lines', 'composer lines', 'input separators'],
+    description: 'Composer dividers are the two thin rules above and below the input. Off removes them and gives their rows back to output.'},
   {id: 'layout', label: 'Layout', support: 'actionable', open: '/layout', covers: ['/layout', 'settings:Layout', 'planned:Layout'],
     aliases: ['layout', 'transcript layout', 'transcript presentation', 'chat mode', 'chat layout', 'composer position', 'composer at the top', 'flow mode', 'classic mode'],
     description: 'Layout chooses where the composer sits (bottom, top, or Flow after the newest output) and whether the transcript is Normal or Chat (commands on the right).'},
@@ -213,7 +217,7 @@ export type ConceptIntent = 'explain' | 'on' | 'off' | 'open' | 'change';
 /** What the person wants to do, from the verb; "change" when no verb says otherwise. */
 export function conceptIntent(text: string): ConceptIntent {
   if (/^(?:what|wat|whats)\b(?! (?:version|shell|branch|provider))|\bexplain\b|\bdifference\b|\btell me about\b|\bhow does\b|\bwhat (?:is|are|does|do)\b|\bmean(?:s|ing)?\b/u.test(text)) return 'explain';
-  if (/\b(?:turn|switch|set)\b.*\boff\b|\b(?:disable|stop|hide|no more|get rid of|without)\b/u.test(text)) return 'off';
+  if (/\b(?:turn|switch|set)\b.*\boff\b|\b(?:disable|stop|hide|no more|get rid of|without|remove|drop)\b/u.test(text)) return 'off';
   if (/\b(?:turn|switch|set)\b.*\bon\b|\benable\b/u.test(text)) return 'on';
   if (/^(?:open|show|see|view|browse|list|check|inspect|display|go to|jump|launch|start)\b|\b(?:open|show me|check for|check|see)\b/u.test(text)
     && !/\b(?:change|configure|customi[sz]e|tweak|edit|adjust|settings?|where)\b/u.test(text)) return 'open';
@@ -299,6 +303,6 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask', 'understanding']},
   {id: 'files', title: 'Files, config & editor', why: 'Jump to folders, open what output mentions, and let Ask find and open config files or add/update a setting with a verified, previewed edit (it never removes settings).', concepts: ['navigation', 'editor']},
   {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'homebrew', 'agents']},
-  {id: 'layout', title: 'Layout & folding', why: 'Decide where the composer sits and how much output stays in view.', concepts: ['layout', 'folding', 'statusStrip', 'idle']},
+  {id: 'layout', title: 'Layout & folding', why: 'Decide where the composer sits and how much output stays in view.', concepts: ['layout', 'composerDividers', 'folding', 'statusStrip', 'idle']},
   {id: 'keyboard', title: 'Keyboard', why: 'Terminal key integration for Shift+Enter, Option as Meta and enhanced keys.', concepts: ['keyboard']},
 ];

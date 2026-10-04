@@ -212,6 +212,8 @@ export function resolveFiles(text: string, raw: string, context: AskContext): As
     return openProposal(path, context);
   }
 
+  // "show them": the files this conversation listed, again.
+  if (listed.length && /^(?:show|list|see|display)(?: me)? (?:them|those|these|the files|those files|these files)(?: again)?$/u.test(text)) return listOutcome(`${listed.length} file${listed.length === 1 ? '' : 's'}`, listed.slice(0, 60), context, listed.length);
   // "what is it" / "what is that file": the file this conversation is about.
   if (referents?.file && /^(?:what(?: is| does)?|describe|tell me about)\s+(?:it|that|this|that file|this file|it do)$/u.test(text)) return describeFile(referents.file, context);
   // "show me where foo is in it", "find foo in it", "search it for foo".
@@ -221,6 +223,7 @@ export function resolveFiles(text: string, raw: string, context: AskContext): As
     if (inside && inside[1] && !/^(?:me|it|where)$/u.test(inside[1])) return searchIn(referents.file, inside[1], context);
   }
 
+  if (/\b(?:(?:can|could) (?:you|nmsh|ask) do|nmsh|features?|capabilit)/u.test(text)) return undefined;
   if (NOT_FILES.test(text) && !/\b(?:named|called|matching)\b/u.test(text)) return undefined;
 
   // Bare "open", "open a file", "open something": the picker.

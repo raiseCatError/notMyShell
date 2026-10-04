@@ -22,7 +22,32 @@ const status = (item: RecentCommand) => item.exitCode === 0 ? 'It exited success
 /** The command's words up to the first option or argument-looking word. */
 const pathWords = (command: string) => command.trim().split(/\s+/u).filter(word => /^[\w.+-]+$/u.test(word)).slice(0, 3);
 
+/** "what's broken", "where did npm fail", "what command produced this error": the newest failing command from recorded facts. */
+const FAILED = /\bwhat(?:'s| is) (?:broken|wrong|failing)\b|\bwhat (?:failed|broke)\b|\bwhy did (?:it|that|this) fail\b|\bwhere (?:did )?([\w.+-]+) fail(?:ed|s)?\b|\b([\w.+-]+) failed\b|\bwhat (?:command )?(?:produced|caused|gave|made|printed) (?:this|that|the) (?:error|failure)\b|\bwhich command failed\b/u;
+
+function failedOutcome(text: string, context: AskContext): AskOutcome | undefined {
+  const match = FAILED.exec(text);
+  if (!match) return undefined;
+  const recent = context.recent ?? [];
+  const program = (match[1] ?? match[2])?.toLowerCase();
+  const named = program && !/^(?:it|that|this|what|which|command|something|anything)$/u.test(program) ? program : undefined;
+  const failed = recent.find(item => item.exitCode !== 0 && (!named || item.command.trim().split(/\s+/u)[0]?.toLowerCase() === named || item.command.toLowerCase().includes(`${named} `)));
+  const conflicts = context.git?.conflicted.length ?? 0;
+  if (!failed) {
+    const extra = conflicts ? ` Git reports ${conflicts} conflicted file${conflicts === 1 ? '' : 's'}.` : '';
+    return {kind: 'answer', capability: 'help.command', text: named ? `No recent ${named} command failed in this session.${extra}` : `Nothing failed recently: the last ${recent.length || 'few'} command${recent.length === 1 ? '' : 's'} exited successfully.${extra}`};
+  }
+  const where = `in ${home(failed.cwd, context)}${failed.branch ? ` on ${failed.branch}` : ''}`;
+  return {kind: 'answer', capability: 'help.command',
+    text: `${failed.command}\n${where} · ${status(failed).replace(/^It /u, '')}${duration(failed.durationMs)}${failed.lines ? ` · ${failed.lines} output line${failed.lines === 1 ? '' : 's'}` : ''}.\nIts output is in the transcript; Ask doesn't read command output.${conflicts ? `\nGit also reports ${conflicts} conflicted file${conflicts === 1 ? '' : 's'}.` : ''}`,
+    block: {argv: [failed.command], literal: failed.command, provenance: 'context', risk: 'informational'},
+    next: [{key: 'failed:find', label: 'Find "error" in the transcript', refine: 'find error in the transcript'}, {key: 'failed:explain', label: 'Explain the command', refine: `what does ${pathWords(failed.command).slice(0, 2).join(' ')} do`}],
+    referents: {command: pathWords(failed.command)}};
+}
+
 export function resolveActivity(text: string, context: AskContext, commands?: CommandEnvironment): AskOutcome | undefined {
+  const failure = failedOutcome(text, context);
+  if (failure) return failure;
   const recent = context.recent ?? [];
   if (RECENT.test(text)) {
     if (!recent.length) return {kind: 'answer', capability: 'help.command', text: 'No commands have finished in this session yet.'};

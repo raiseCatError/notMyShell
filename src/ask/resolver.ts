@@ -198,6 +198,9 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
       if (answer) return answer;
     }
   }
+  // "remove the input dividers" is a typed NMSh setting, not a deletion: a toggle concept wins over the safety refusal.
+  const toggled = matchConcepts(text).concepts.find(concept => concept.toggle);
+  if (toggled && (conceptIntent(text) === 'off' || conceptIntent(text) === 'on')) { const product = resolveConcepts(text, context, raw, scored); if (product) return product; }
   if (UNSAFE.test(text) && !scored.some(item => item.score >= CONFIDENCE.high && item.capability.safety === 'answer')) return unsafe(text, context);
   const product = resolveConcepts(text, context, raw, scored);
   if (product) return product;
@@ -249,7 +252,7 @@ const firstLine = (text: string) => text.split('\n')[0]!;
 function unclear(context: AskContext, text: string, state: ResolveState = {}): AskOutcome {
   const categories: AskOption[] = [];
   if (context.repoRoot) categories.push({key: 'cat:git', label: 'Git changes in this repository', refine: 'show git diff'});
-  categories.push({key: 'cat:files', label: `Files in ${context.repoRoot ? basename(context.repoRoot) : 'this folder'}`, refine: 'open '});
+  categories.push({key: 'cat:files', label: `Files in ${context.repoRoot ? basename(context.repoRoot) : 'this folder'}`, refine: 'list files'});
   if (context.sessions.length > 1 || context.transcripts.length) categories.push({key: 'cat:sessions', label: 'Sessions and transcripts', refine: 'show my sessions'});
   categories.push({key: 'cat:shell', label: 'Shell or provider settings', refine: 'what providers are installed'});
   return {kind: 'unclear', text: `${text} Based on what you're working on, I can help with:`, categories: categories.filter(option => !state.rejected?.has(option.key))};

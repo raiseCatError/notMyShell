@@ -10,7 +10,7 @@ import type {AskContext, AskOption, AskOutcome} from './types.js';
 
 const byId = new Map(CONCEPTS.map(concept => [concept.id, concept]));
 export const GUIDE_REQUEST = /^(?:\/?guide(?: me)?(?: through (?:nmsh|this))?|show me what (?:nmsh|you) can do|what can nmsh do|nmsh guide|tour|give me a tour)$/u;
-export const HELP_REQUEST = /^(?:help|what can you do|what can ask do|how do i use ask|ask help)$/u;
+export const HELP_REQUEST = /^(?:help|what can you do|what can ask do|how do i use ask|ask help|(?:show me |tell me |list )?(?:everything|all (?:the )?(?:things|stuff)|what) (?:nmsh|ask|you) can do|what (?:can|does) nmsh do|what are your (?:capabilities|features))$/u;
 
 function openOption(concept: Concept): AskOption | undefined {
   const target = concept.configure ?? concept.open;
