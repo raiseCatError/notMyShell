@@ -113,15 +113,16 @@ test('provider config round-trips and switching keeps inactive provider settings
   assert.equal(describePromptConfiguration(config), 'Powerlevel10k · two-line divider');
 });
 
-test('/prompt offers three providers and an honest Powerlevel10k step', () => {
+test('/prompt offers four providers (None is composer only) and an honest Powerlevel10k step', () => {
   const state: PromptPanelState = {onboarding: false, step: 'provider', selectedIndex: 0,
     draft: structuredClone(DEFAULT_PROMPT_CONFIGURATION), saved: structuredClone(DEFAULT_PROMPT_CONFIGURATION)};
-  assert.deepEqual(PROVIDER_ORDER, ['nmsh', 'starship', 'powerlevel10k']);
+  assert.deepEqual(PROVIDER_ORDER, ['nmsh', 'starship', 'powerlevel10k', 'none']);
   let rows = renderPromptPanel(state, 140, []).map(stripAnsi);
   assert.ok(rows.some(row => row.includes('NMSh Native · built-in themes, geometry, and modules  ●  ✓ saved')));
   assert.ok(rows.some(row => row.includes('Powerlevel10k · use your ~/.p10k.zsh left prompt')));
+  assert.ok(rows.some(row => row.includes('None · composer only: no prompt row, modules or marker')));
   handlePromptPanelKey({kind: 'up'} as Key, state);
-  assert.equal(state.selectedIndex, 2);
+  assert.equal(state.selectedIndex, 3, 'wraps to None, the last provider');
 
   const installed = {...state, step: 'powerlevel10k' as const, selectedIndex: 0,
     p10kStatus: {installed: true, themePath: '/t/powerlevel10k.zsh-theme', configPath: '/h/.p10k.zsh', configExists: true}};

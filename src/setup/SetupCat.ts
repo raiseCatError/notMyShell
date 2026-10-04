@@ -46,6 +46,8 @@ export const NATIVE_PROMPT_RECOMMENDATION = 'NMSh Native is recommended for the 
 export const NATIVE_ONLY_NOTE = 'Native prompt style settings apply only to NMSh Native.';
 export {CHROMA_PREVIEW_NOTE, CHROMA_SCOPE_NOTE} from '../appearance/chromaNotes.js';
 import {CHROMA_SCOPE_NOTE} from '../appearance/chromaNotes.js';
+import {librarySummary} from '../appearance/themeLibrary.js';
+import {BRIDGE_TARGET_LABELS, type BridgeTargetId} from '../themeBridge/model.js';
 export const NATIVE_FIRST_SHORT = 'NMSh works fully with its Native providers. External tools are optional alternatives or enhancements. You can change providers anytime.';
 
 /** What happens with optional tools after Apply. Installs are always separate, explicit confirmations. */
@@ -68,6 +70,8 @@ export interface SetupContext {
   preview?: readonly string[];
   /** The title as painted by the app (a one-pass light sweep); plain when absent. */
   title?: string;
+  /** Theme Bridge targets found on this system (local PATH facts), so Setup shows only relevant ones. */
+  bridgeTargets?: readonly BridgeTargetId[];
 }
 
 export interface SetupRow {
@@ -84,7 +88,7 @@ export interface SetupSection {
   intro: readonly string[];
   rows: readonly SetupRow[];
   /** Rows that depend on the draft (the Native prompt style's own fields), appended after `rows`. */
-  dynamicRows?: (draft: PromptConfiguration) => readonly SetupRow[];
+  dynamicRows?: (draft: PromptConfiguration, context?: SetupContext) => readonly SetupRow[];
   /** Muted informational lines after the rows. */
   facts?: (draft: PromptConfiguration, context: SetupContext) => string[];
 }
@@ -154,7 +158,7 @@ const SEPARATOR_ROW: SettingsRow = {id: 'setupSeparator', parent: 'promptStyle',
 /** Rows that only affect the Native prompt disappear while an external prompt provider is selected. */
 const nativeOnly = (row: SettingsRow): SettingsRow => ({...row, when: config => config.provider === 'nmsh' && (row.when?.(config) ?? true)});
 
-const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider', 'Prompt provider', 'Native prompt, or your existing Starship / Powerlevel10k', 'Prompt',
+const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider', 'Prompt provider', 'Native prompt, your existing Starship / Powerlevel10k, or None (composer only)', 'Prompt',
   PROMPT_PROVIDERS, config => config.provider, (config, provider) => ({...config, provider}));
 
 /**
@@ -162,6 +166,26 @@ const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider',
  * lost), then opens the real editor. The row says so; it is a route, never a
  * second configuration path.
  */
+/** Setup's single Theme Bridge question; Yes only reveals the detected tools, each still Independent. */
+const THEME_BRIDGE_ROW: SettingsRow = {id: 'setupThemeBridge', label: 'Extend NMSh colors to terminal tools?', description: 'Theme Bridge: opt-in colors for fzf, less/man, LS_COLORS, tmux, Neovim and Vim',
+  category: 'Appearance', control: 'enum', options: ['No', 'Yes'], index: c => c.themeBridge.enabled ? 1 : 0,
+  select: (c, index) => ({...c, themeBridge: {...c.themeBridge, enabled: index === 1}})};
+
+const SETUP_BRIDGE_TARGETS: readonly BridgeTargetId[] = ['fzf', 'pager', 'lsColors', 'tmux', 'neovim', 'vim'];
+
+function bridgeTargetRows(draft: PromptConfiguration, context: SetupContext | undefined): SetupRow[] {
+  if (!draft.themeBridge.enabled) return [];
+  const found = new Set(context?.bridgeTargets ?? []);
+  return SETUP_BRIDGE_TARGETS.filter(target => found.has(target)).map(target => ({
+    row: {id: `setupBridge:${target}`, parent: 'setupThemeBridge', label: `  ${BRIDGE_TARGET_LABELS[target]}`, description: 'Independent, or follow the active NMSh theme', category: 'Appearance',
+      control: 'enum', options: ['Independent', 'Follow NMSh'], index: c => c.themeBridge.targets[target].mode === 'independent' ? 0 : c.themeBridge.targets[target].mode === 'follow' ? 1 : 1,
+      select: (c, index) => ({...c, themeBridge: {...c.themeBridge, targets: {...c.themeBridge.targets, [target]: {...c.themeBridge.targets[target], mode: index === 1 ? (c.themeBridge.targets[target].mode === 'choose' ? 'choose' : 'follow') : 'independent'}}}})},
+    note: () => target === 'tmux' || target === 'neovim' || target === 'vim'
+      ? 'NMSh generates its own color file; adding it to your config is a separate, reviewed step in /theme-bridge'
+      : target === 'fzf' ? 'Only fzf launched by NMSh; FZF_DEFAULT_OPTS and your rc files are untouched' : 'Applied in NMSh shells at the next prompt; no rc file is edited',
+  } satisfies SetupRow));
+}
+
 function routeRow(id: string, label: string, description: string, destination: SettingsDestination, category: string): SetupRow {
   return {row: {id, label, description, category, control: 'action', actionLabel: 'Open ›', destination},
     note: () => 'Enter applies this Setup first, then opens it; it keeps the choices you made here'};
@@ -234,7 +258,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   ], facts: draft => [`Renderer in use: ${chooseBackend(draft.cursor, currentCursorHost()).reason}`]},
   {id: 'prompt', title: 'Prompt', intro: [NATIVE_PROMPT_RECOMMENDATION, 'Deep prompt customization lives in /prompt.'], rows: [
     {...PROMPT_PROVIDER_ROW, note: (draft, context) => draft.provider === 'nmsh' ? 'Built in · no installation required'
-      : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · ${NATIVE_ONLY_NOTE}`},
+      : draft.provider === 'none' ? 'None · composer only · themes still style NMSh UI, syntax and Theme Bridge' : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · ${NATIVE_ONLY_NOTE}`},
     {row: nativeOnly(configRow('promptStyle'))},
     {row: nativeOnly(SEPARATOR_ROW)},
     {row: configRow('promptSymbol')},
@@ -267,9 +291,14 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('shimmer')},
     {row: configRow('autoEffects')},
     routeRow('setupChromeColors', 'Edit UI chrome colors', 'Accent, text, separator, selection and status roles with the color picker', 'chromeColors', 'Appearance'),
-    routeRow('setupThemeStudio', 'Theme Studio (custom themes)', 'Clone, edit, import and export your own theme', 'themeStudio', 'Appearance'),
+    {...routeRow('setupThemeStudio', 'Theme Studio', 'Create, edit, import, export and manage Native themes; selection is above', 'themeStudio', 'Appearance'),
+      row: {id: 'setupThemeStudio', label: 'Theme Studio', description: 'Create, edit, import, export and manage Native themes; selection is above', category: 'Appearance',
+        control: 'action', actionLabel: 'Open ›', destination: 'themeStudio', value: draft => librarySummary(draft.themes) ?? ''}},
+    {row: THEME_BRIDGE_ROW, note: draft => draft.themeBridge.enabled
+      ? 'Only tools found on this system are listed; each starts Independent. Choose theme and includes for tmux/Neovim/Vim are in /theme-bridge'
+      : 'No: every tool keeps its own colors; NMSh injects and changes nothing'},
     routeRow('setupHostWindow', 'Terminal window (opacity, blur)', 'Host window opacity and blur where your terminal supports it', 'appearance', 'Appearance'),
-  ]},
+  ], dynamicRows: (draft, context) => bridgeTargetRows(draft, context)},
   // General NMSh motion: the same rows /appearance → Motion edits, with the same real previews.
   {id: 'motion', title: 'Motion', intro: ['Short, finite presentations of real events. Each can be Off; Reduced Motion, Decorative Effects Off and NO_COLOR stop all of them.',
     'The preview below runs the selected one on sample content, once; it never touches your session.'], rows: [{row: configRow('motion_rendering')}, ...MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)})), {row: configRow('motion_intensity')}, {row: configRow('motion_speed')}]},
@@ -388,14 +417,14 @@ function localUnderstandingNote(draft: PromptConfiguration): string {
 export const SETUP_EQUIVALENTS: Readonly<Record<string, string>> = {
   provider: 'setupPromptProvider', welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', navigation: 'setupNavigation', picker: 'setupPicker',
   cursorSpeed: 'cursorAdvanced', cursorIntensity: 'cursorAdvanced', cursorTrail: 'cursorAdvanced', cursorParticles: 'cursorAdvanced',
-  tools: 'setupToolChoice', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
+  tools: 'setupToolChoice', themeStudio: 'setupThemeStudio', themeBridge: 'setupThemeBridge', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
 };
 
 /** Where each Settings entry point (a full panel) is reached from Setup: a section, or the route row that opens it. */
 export const SETUP_ENTRY_COVERAGE: Readonly<Record<string, string>> = {
   appearance: 'setupHostWindow', glyph: 'glyphStyle', prompt: 'setupPromptModules', transcript: 'transcriptPresentation', syntax: 'syntaxHighlighting', keyboard: 'setupKeyboard',
   welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', picker: 'setupPicker', navigation: 'setupNavigation', layout: 'composerPosition', toolConfig: 'setupToolConfig', tools: 'setupBrowseTools', screensaver: 'idleTimeout', setup: 'setupToolChoice',
-  cursor: 'cursorAdvanced', themeStudio: 'setupThemeStudio', chromeColors: 'setupChromeColors', idleColors: 'setupIdleColors', activityColors: 'setupActivityColors', resetInstallSuggestions: 'resetInstallSuggestions',
+  cursor: 'cursorAdvanced', themeStudio: 'setupThemeStudio', themeBridge: 'setupThemeBridge', chromeColors: 'setupChromeColors', idleColors: 'setupIdleColors', activityColors: 'setupActivityColors', resetInstallSuggestions: 'resetInstallSuggestions',
 };
 
 function completionFacts(facts: CompletionFacts | undefined): string[] {
@@ -500,12 +529,12 @@ export type SetupResult =
   | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; then?: SettingsDestination};
 
 /** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
-function sectionRows(section: SetupSection, draft: PromptConfiguration): readonly SetupRow[] {
-  return [...section.rows, ...(section.dynamicRows?.(draft) ?? [])];
+function sectionRows(section: SetupSection, draft: PromptConfiguration, context?: SetupContext): readonly SetupRow[] {
+  return [...section.rows, ...(section.dynamicRows?.(draft, context) ?? [])];
 }
 
 function currentRows(state: SetupState): readonly SetupRow[] {
-  const rows = sectionRows(SETUP_SECTIONS[state.section]!, state.draft).filter(item => setupRowApplies(item.row, state.draft));
+  const rows = sectionRows(SETUP_SECTIONS[state.section]!, state.draft, state.context).filter(item => setupRowApplies(item.row, state.draft));
   return state.section === sectionIndex('tools') ? [...rows, TOOL_CHOICE_ROW, BROWSE_ROW] : rows;
 }
 

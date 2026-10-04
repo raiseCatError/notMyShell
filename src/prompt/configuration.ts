@@ -28,7 +28,9 @@ import {
 import {normalizeStyleProfiles, type StyleProfiles} from './styles.js';
 import {normalizeCustomGlyph, normalizePromptSymbol, type PromptSymbolId} from './glyphChoices.js';
 import {normalizeCatppuccinAccent, type CatppuccinAccent} from '../appearance/themeFamilies.js';
-import {normalizeCustomTheme, type CustomTheme} from '../appearance/customTheme.js';
+import {type CustomTheme} from '../appearance/customTheme.js';
+import {findTheme, normalizeThemeLibrary, type ThemeAsset} from '../appearance/themeLibrary.js';
+import {DEFAULT_THEME_BRIDGE, normalizeThemeBridge, type ThemeBridgeSettings} from '../themeBridge/model.js';
 import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 import {DEFAULT_UI_CHROME, normalizeUiChrome, type UiChromeSettings} from '../appearance/uiChrome.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
@@ -80,7 +82,8 @@ export function applyShellModuleVisibility(configuration: Pick<PromptConfigurati
 }
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
-export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
+/** `none` is composer only: no prompt row, modules, right prompt or marker; everything else in NMSh stays on. */
+export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'none';
 export type NativeEndStyle = PowerlineEdgeStyle;
 export type NativeStartStyle = PowerlineEdgeStyle;
 export type NativeConnectorStyle = PowerlineConnectorStyle;
@@ -166,9 +169,16 @@ export type DividerColorMode = typeof DIVIDER_COLOR_MODES[number];
 export const DIVIDER_COLOR_LABELS: Record<DividerColorMode, string> = {chroma: 'Follow Chroma', history: 'Follow history', ui: 'Follow UI theme', muted: 'Muted grayscale'};
 
 /** How historical command headers are presented; stored snapshots are never changed. */
+/** How much of a stored prompt snapshot past commands show; Off is `historicalPrompt: false`. */
+export const HISTORICAL_PROMPT_LEVELS = ['full', 'compact', 'minimal'] as const;
+export type HistoricalPromptLevel = typeof HISTORICAL_PROMPT_LEVELS[number];
+export const HISTORICAL_PROMPT_LEVEL_LABELS: Record<HistoricalPromptLevel | 'off', string> = {full: 'Full', compact: 'Compact', minimal: 'Minimal', off: 'Off'};
+
 export interface TranscriptAppearance {
   divider: boolean;
   historicalPrompt: boolean;
+  /** Presentation only, used while `historicalPrompt` is on; the stored snapshot stays complete. Missing means Full. */
+  historicalPromptLevel: HistoricalPromptLevel;
   historyColors: HistoryColorMode;
   /** Used when `historyColors` is `theme`. */
   historyTheme: NativePaletteId;
@@ -179,6 +189,7 @@ export interface TranscriptAppearance {
 export const DEFAULT_TRANSCRIPT_APPEARANCE: TranscriptAppearance = {
   divider: true,
   historicalPrompt: true,
+  historicalPromptLevel: 'full',
   historyColors: 'followPrompt',
   historyTheme: 'lavender',
   dividerDensity: 'normal',
@@ -190,6 +201,7 @@ export function normalizeTranscriptAppearance(value: unknown): TranscriptAppeara
   return {
     divider: typeof value.divider === 'boolean' ? value.divider : true,
     historicalPrompt: typeof value.historicalPrompt === 'boolean' ? value.historicalPrompt : true,
+    historicalPromptLevel: HISTORICAL_PROMPT_LEVELS.includes(value.historicalPromptLevel as HistoricalPromptLevel) ? value.historicalPromptLevel as HistoricalPromptLevel : 'full',
     historyColors: value.historyColors === 'theme' || value.historyColors === 'grayscale' ? value.historyColors : 'followPrompt',
     historyTheme: normalizePaletteId(value.historyTheme),
     dividerDensity: value.dividerDensity === 'compact' ? 'compact' : 'normal',
@@ -518,8 +530,20 @@ export interface PromptConfiguration {
   promptSymbol: PromptSymbolId;
   /** Used when `promptSymbol` is `custom`; kept when another symbol is chosen. */
   promptSymbolCustom?: string;
-  /** The user's custom Native theme (NMSh Theme JSON); used when the palette is `custom`, kept otherwise. */
+  /**
+   * The Native theme library: canonical user-owned themes (Custom and
+   * Imported) with stable ids. `nmsh.themeId` names the one the `custom`
+   * palette uses.
+   */
+  themes: ThemeAsset[];
+  /**
+   * Mirror of the library asset named by `nmsh.themeId`, rewritten on every
+   * normalization (never edited directly). Renderers and older NMSh versions
+   * read it; only a configuration without `themes` migrates from it.
+   */
   customTheme?: CustomTheme;
+  /** Opt-in Theme Bridge: one independent mode per external tool target; all Independent by default. */
+  themeBridge: ThemeBridgeSettings;
   cursor: CursorSettings;
   statusStrip: StatusStripSettings;
   idleVisuals: IdleVisualSettings;
@@ -548,6 +572,8 @@ export interface PromptConfiguration {
     connector: NativeConnectorStyle;
     endStyle: NativeEndStyle;
     palette: NativePaletteId;
+    /** The library asset (`themes[].id`) a `custom` palette uses; kept while a built-in is active. */
+    themeId?: string;
     icons: NativeIconMode;
     /** Visual style over the same semantic segments; missing in older configs means Powerline. */
     style: PromptStyle;
@@ -640,6 +666,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
+  themes: [],
+  themeBridge: DEFAULT_THEME_BRIDGE(),
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
     mirrorRight: true, vibrance: 'standard', textColors: 'theme', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
@@ -724,7 +752,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
-  const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
+  const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k' || promptValue.provider === 'none'
     ? promptValue.provider
     : 'nmsh';
   const p10kValue = isRecord(promptValue.powerlevel10k) ? promptValue.powerlevel10k : {};
@@ -737,16 +765,18 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const connector = normalizeConnectorStyle(nativeValue.connector);
   const icons: NativeIconMode = nativeValue.icons === 'off' || nativeValue.icons === false ? 'off' : 'nerd';
   const style = normalizePromptStyle(nativeValue.style);
-  const customTheme = normalizeCustomTheme(value.customTheme);
-  // A custom palette without a valid custom theme falls back instead of rendering nothing.
+  // The library is canonical; a pre-library customTheme migrates into it once.
+  const library = normalizeThemeLibrary(value.themes, value.customTheme, nativeValue.themeId);
+  const customTheme = findTheme(library.themes, library.themeId)?.theme;
+  // A custom palette without a valid library theme falls back instead of rendering nothing.
   const storedPalette = normalizePaletteId(nativeValue.palette);
   const palette = storedPalette === 'custom' && !customTheme ? 'lavender' : storedPalette;
-  Object.assign(tooling, customTheme ? {customTheme} : {});
+  const themed = {...tooling, themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const notifications = normalizeNotificationSettings(value.notifications);
   const nmsh = {gapEnabled: typeof nativeValue.gapEnabled === 'boolean' ? nativeValue.gapEnabled : true,
-    startStyle, connector, endStyle, palette, icons, style,
+    startStyle, connector, endStyle, palette, ...(library.themeId ? {themeId: library.themeId} : {}), icons, style,
     connectorFade: normalizeConnectorFade(nativeValue.connectorFade),
     connectorFadeColors: normalizeConnectorFadeColors(nativeValue.connectorFadeColors),
     gitEnabled: typeof nativeValue.gitEnabled === 'boolean' ? nativeValue.gitEnabled : true,
@@ -781,7 +811,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...tooling};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -825,7 +855,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
     glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...tooling};
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {

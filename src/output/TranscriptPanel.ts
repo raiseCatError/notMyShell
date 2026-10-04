@@ -1,6 +1,9 @@
 import {DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {
   DIVIDER_COLOR_LABELS,
+  HISTORICAL_PROMPT_LEVEL_LABELS,
+  HISTORICAL_PROMPT_LEVELS,
+  type HistoricalPromptLevel,
   DIVIDER_COLOR_MODES,
   NATIVE_PALETTE_IDS,
   type HistoryColorMode,
@@ -60,6 +63,13 @@ function cycle<T>(values: readonly T[], current: T, delta: number): T {
   return values[(index + delta + values.length) % values.length]!;
 }
 
+const PROMPT_LEVELS = [...HISTORICAL_PROMPT_LEVELS, 'off'] as const;
+
+/** Full / Compact / Minimal while on, Off otherwise: one presentation choice over the two stored fields. */
+export function historicalPromptLevel(appearance: TranscriptAppearance): HistoricalPromptLevel | 'off' {
+  return appearance.historicalPrompt ? appearance.historicalPromptLevel ?? 'full' : 'off';
+}
+
 export function transcriptDraftChanged(state: TranscriptPanelState): boolean {
   return JSON.stringify(state.draft) !== JSON.stringify(state.saved) || state.folding?.draft !== state.folding?.saved;
 }
@@ -75,7 +85,12 @@ export function handleTranscriptPanelKey(key: Key, state: TranscriptPanelState):
       case 'divider': draft.divider = !draft.divider; break;
       case 'density': draft.dividerDensity = draft.dividerDensity === 'compact' ? 'normal' : 'compact'; break;
       case 'dividerColors': draft.dividerColors = cycle(DIVIDER_COLOR_MODES, draft.dividerColors, delta); break;
-      case 'prompt': draft.historicalPrompt = !draft.historicalPrompt; break;
+      case 'prompt': {
+        const level = cycle(PROMPT_LEVELS, historicalPromptLevel(draft), delta);
+        draft.historicalPrompt = level !== 'off';
+        if (level !== 'off') draft.historicalPromptLevel = level;
+        break;
+      }
       case 'colors': draft.historyColors = cycle(COLOR_MODES, draft.historyColors, delta); break;
       case 'theme': draft.historyTheme = cycle(NATIVE_PALETTE_IDS, draft.historyTheme, delta); break;
       case 'folding': state.folding!.draft = cycle(OUTPUT_FOLDING_MODES, state.folding!.draft, delta); break;
@@ -104,7 +119,7 @@ export function renderTranscriptPanel(state: TranscriptPanelState, columns: numb
     divider: `Divider            ${value(onOff(draft.divider), onOff(saved.divider))}`,
     density: `Divider density    ${value(draft.dividerDensity === 'compact' ? 'Compact' : 'Normal', saved.dividerDensity === 'compact' ? 'Compact' : 'Normal')}`,
     dividerColors: `Divider colors     ${value(DIVIDER_COLOR_LABELS[draft.dividerColors], DIVIDER_COLOR_LABELS[saved.dividerColors])}`,
-    prompt: `Historical prompt  ${value(onOff(draft.historicalPrompt), onOff(saved.historicalPrompt))}`,
+    prompt: `Historical prompt  ${value(HISTORICAL_PROMPT_LEVEL_LABELS[historicalPromptLevel(draft)], HISTORICAL_PROMPT_LEVEL_LABELS[historicalPromptLevel(saved)])}`,
     colors: `History colors     ${value(colorModeLabel(draft.historyColors), colorModeLabel(saved.historyColors))}`,
     theme: `History theme      ${value(NATIVE_PROMPT_THEMES[draft.historyTheme].label, NATIVE_PROMPT_THEMES[saved.historyTheme].label)}`,
     folding: state.folding ? `Output folding     ${value(foldingLabel(state.folding.draft), foldingLabel(state.folding.saved))}` : '',

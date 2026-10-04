@@ -29,7 +29,19 @@ import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePa
 import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
 import {makeRng} from '../idle/screenEffects.js';
 import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
-import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
+import {createThemeStudio, previewTheme, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type StudioContext, type StudioTab, type ThemeStudioState} from '../appearance/ThemeStudio.js';
+import {addTheme, deleteTheme, duplicateBuiltin, duplicateTheme, renameTheme, saveTheme, setActiveTheme, type ActionResult} from '../appearance/themeLibraryActions.js';
+import {findTheme} from '../appearance/themeLibrary.js';
+import {activeThemeRef, selectableThemes} from '../appearance/themeRefs.js';
+import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
+import {applyThemeBridge, bridgeStateExists, detectTargets, fzfBridgeArgs, reloadTmux, reportTargets, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
+import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
+import {applyHook, applyHookRemoval, artifactPath, hookSpec, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, type HookSpec} from '../themeBridge/artifacts.js';
+import {BRIDGE_MODE_LABELS, BRIDGE_TARGET_LABELS} from '../themeBridge/model.js';
+import type {FileEditPlan} from '../ask/fileEdit.js';
+import {colorEscape} from '../chroma/escape.js';
+import {parseHexColor} from '../chroma/color.js';
+import type {CustomTheme} from '../appearance/customTheme.js';
 import {commandWord, createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
 import {knownToolForExecutable, suggestibleToolFor, toolInstall, TOOLS, type Tool} from '../tools/catalog.js';
@@ -77,6 +89,8 @@ import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import type {HistoryEntry} from '../shell/HistoryIndex.js';
 import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {CommandEditor} from '../input/CommandEditor.js';
+import {authoredLink, closeAuthoredLinks} from '../output/Hyperlinks.js';
+import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
@@ -85,11 +99,11 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
-import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
+import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, savePromptConfiguration, type NativePaletteId, type PromptConfiguration, type PromptProviderId} from '../prompt/configuration.js';
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
@@ -362,6 +376,8 @@ export class TerminalApp {
     }
     // Off: no model use from this window, and the shared service is told to unload.
     if (turnedOff) this.understanding?.modeChanged();
+    // Theme Bridge follows the same funnel: a theme, library or bridge change regenerates what Follow/Choose targets use.
+    if (themeBridgeKey(previous) !== themeBridgeKey(next)) this.scheduleThemeBridge();
   }
   /** Optional local understanding; creates nothing until a feature is eligible to use it. */
   private readonly understanding = new LocalUnderstanding(() => this.configuration.localUnderstanding);
@@ -550,10 +566,12 @@ export class TerminalApp {
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
           this.rememberShellNames(marker.knowledge);
         }
+        // Host OSC 7 / OSC 133: a projection of this authoritative marker, never the other way round.
+        this.hostSemantics.prompt(marker.cwd, marker.exitCode);
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
-    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) this.onShellExec(command, stamp.at, stamp.historyAllowed); });
+    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
@@ -562,6 +580,7 @@ export class TerminalApp {
     });
     this.session.on('exit', event => {
       this.shellEnded = true;
+      this.hostSemantics.end();
       if (event.lost) {
         // Recorded in the journal before it closes; nothing claims the shell survived.
         this.lostServiceConnection = true;
@@ -755,7 +774,7 @@ export class TerminalApp {
     }
     this.commandModes.reset();
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
-      {cwd: this.shellCwd, project: this.context.project, branch: this.context.branch, prompt: this.currentPromptSnapshot(command)});
+      this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed};
     this.scheduleJournal();
@@ -844,6 +863,8 @@ export class TerminalApp {
       }
     });
     this.presentationStarted = true;
+    // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
+    this.scheduleThemeBridge(500);
     this.scheduleWelcomeBlink();
     void this.loadHistory();
     this.render();
@@ -1033,6 +1054,10 @@ export class TerminalApp {
     }
     if (this.themeStudio) {
       this.handleThemeStudioKey(key, this.themeStudio);
+      return;
+    }
+    if (this.themeBridgePanel) {
+      void this.handleThemeBridgeKey(key, this.themeBridgePanel);
       return;
     }
     if (this.screensaverPanel) {
@@ -1403,6 +1428,8 @@ export class TerminalApp {
         // The canonical editors; /appearance never duplicates them.
         this.appearanceHub = undefined;
         if (action.destination === 'prompt') void this.startPromptSettings(false);
+        else if (action.destination === 'theme') this.openThemeStudio();
+        else if (action.destination === 'themeBridge') void this.openThemeBridge();
         else if (action.destination === 'cursor') this.openCursorPanel();
         else if (action.destination === 'chroma') this.startChromaSettings();
         else this.focusConfigRow('uiChrome');
@@ -1847,7 +1874,7 @@ export class TerminalApp {
       const native = () => { /* Keep the existing native menu on fallback. */ };
       const result = await openPicker(this.promptConfiguration.picker, candidates.map((candidate, index) => ({
         id: String(index), label: candidate.display, description: candidate.description, value: candidate.insertion,
-      })), native, this.pickerHandoff);
+      })), native, this.pickerHandoff, process.env, await this.fzfThemeArgs());
       if (!this.stopped && !this.running && this.editor.text === original && this.completionCursor === cursor && this.context.cwd === cwd
         && result?.kind === 'selected') {
         const selected = candidates[Number(result.candidate.id)];
@@ -1880,7 +1907,7 @@ export class TerminalApp {
         id: entry.id, label: entry.command, value: entry.command, description: entry.cwd,
       }));
       if (this.stopped || this.running || this.editor.text !== original) return;
-      const result = await openPicker(this.promptConfiguration.picker, candidates, native, this.pickerHandoff);
+      const result = await openPicker(this.promptConfiguration.picker, candidates, native, this.pickerHandoff, process.env, await this.fzfThemeArgs());
       if (this.stopped) return;
       if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
       if (result?.kind === 'fallback') this.output.addFrontendInteraction('/history', result.reason, INFO);
@@ -1899,7 +1926,7 @@ export class TerminalApp {
       if (this.stopped || this.running || this.editor.text !== original) return;
       const result = await openPicker(this.promptConfiguration.picker, directories.map(item => ({
         id: item.path, label: item.path, description: item.project, value: directoryCommand(item.path),
-      })), native, this.pickerHandoff);
+      })), native, this.pickerHandoff, process.env, await this.fzfThemeArgs());
       if (this.stopped) return;
       if (result?.kind === 'selected') this.applySuggestion({insertion: result.candidate.value});
       if (result?.kind === 'fallback') this.output.addFrontendInteraction('/dirs', result.reason, INFO);
@@ -1996,7 +2023,8 @@ export class TerminalApp {
     // The cursor has one configuration: /cursor opens its existing Settings rows.
     else if (slash.kind === 'cursor') this.openCursorPanel();
     else if (slash.kind === 'activity') { this.panelOrigin = undefined; this.focusConfigRow('activityColors'); }
-    else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
+    else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.openThemeStudio(); }
+    else if (slash.kind === 'themeBridge') { this.panelOrigin = undefined; await this.openThemeBridge(); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
     else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
@@ -2186,8 +2214,7 @@ export class TerminalApp {
         this.session.resize(dimensions.columns, dimensions.rows);
       }
       this.render();
-    }, {cwd: this.shellCwd, project: contextAtSubmission.project, branch: contextAtSubmission.branch,
-      prompt: this.currentPromptSnapshot(command)});
+    }, this.historicalContext(this.shellCwd, contextAtSubmission, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.output.setActiveActivities([]);
     this.formatCommandAnsi(command, startId);
@@ -2630,9 +2657,10 @@ export class TerminalApp {
   }
 
   private showHelp(command: string): void {
-    const helpText = renderMarkdownText(helpMarkdown(), {columns: Math.max(20, this.dimensions().columns - 6),
-      hyperlinks: false}); // the transcript cell model has no OSC 8 support
-    this.output.addFrontendInteraction(command, helpText, INFO);
+    // Authored links are stored as authored cells and painted only where the host supports OSC 8; elsewhere the URL is shown inline.
+    const linked = this.host.capabilities.hyperlinks;
+    const helpText = renderMarkdownText(helpMarkdown(), {columns: Math.max(20, this.dimensions().columns - 6), hyperlinks: linked});
+    this.output.addFrontendInteraction(command, helpText, INFO, linked);
   }
 
   private onInputRejected(data: string, submission: boolean): void {
@@ -2801,7 +2829,14 @@ export class TerminalApp {
     return {...this.context, commandWords: words, shell, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
   }
 
-  private currentPromptSnapshot(command?: string): PromptSnapshot {
+  /** Prompt None submissions genuinely have no prompt snapshot; history never substitutes Native for them. */
+  private historicalContext(cwd: string, context: {project?: string; branch?: string}, command: string): HistoricalContextSnapshot {
+    const prompt = this.currentPromptSnapshot(command);
+    return {cwd, project: context.project, branch: context.branch, ...(prompt ? {prompt} : this.effectivePromptProvider === 'none' ? {promptless: true as const} : {})};
+  }
+
+  private currentPromptSnapshot(command?: string): PromptSnapshot | undefined {
+    if (this.effectivePromptProvider === 'none') return undefined;
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return {provider: this.effectivePromptProvider, layout: this.promptConfiguration.composerLayout,
         segments: structuredClone(this.externalPrompt.segments), cwd: this.context.cwd,
@@ -2835,8 +2870,8 @@ export class TerminalApp {
   }
 
   private async refreshProviderPrompt(): Promise<void> {
-    if (this.promptConfiguration.provider === 'nmsh') {
-      this.effectivePromptProvider = 'nmsh';
+    if (this.promptConfiguration.provider === 'nmsh' || this.promptConfiguration.provider === 'none') {
+      this.effectivePromptProvider = this.promptConfiguration.provider;
       this.externalPrompt = undefined;
       this.externalPromptError = undefined;
       return;
@@ -2961,6 +2996,10 @@ export class TerminalApp {
         state.step = 'powerlevel10k';
         state.selectedIndex = 0;
         if (state.p10kStatus.installed) await this.refreshPanelPreview(state);
+      } else if (state.draft.provider === 'none') {
+        // Composer only: no layout or appearance applies to an absent prompt.
+        await this.savePromptSettings();
+        return;
       } else {
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
@@ -3169,6 +3208,7 @@ export class TerminalApp {
     const context = state.step === 'modules' || state.step === 'appearance' || state.step === 'layout'
       ? moduleShowcaseContext() : this.promptContext();
     let providerRow: string;
+    if (previewConfig.provider === 'none') return [boundary, 'command', boundary, `${SUBTLE}None · composer only${RESET}`];
     if (previewConfig.provider !== 'nmsh') {
       const preview = this.panelExternalPrompt?.provider === previewConfig.provider ? this.panelExternalPrompt.result : undefined;
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
@@ -3207,7 +3247,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview);
   }
 
@@ -3215,6 +3255,7 @@ export class TerminalApp {
   private panelMinimum(): MinimumSize | undefined {
     if (this.setupState) return SETUP_MIN_SIZE;
     if (this.themeStudio) return STUDIO_MIN_SIZE;
+    if (this.themeBridgePanel) return {columns: 56, rows: 14};
     if (this.screensaverPanel) return SCREENSAVER_MIN_SIZE;
     if (this.chromeEditor || this.stopsEditor) return CHROME_EDITOR_MIN_SIZE;
     return undefined;
@@ -3235,6 +3276,7 @@ export class TerminalApp {
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
+    if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
     if (this.screensaverPanel) return this.renderScreensaverRows(this.screensaverPanel, columns);
     if (this.stopsEditor) return this.renderStopsEditor(this.stopsEditor, columns);
     if (this.chromeEditor) return renderChromeEditor(this.chromeEditor, columns, this.dimensions().rows, colorLevel());
@@ -3336,7 +3378,7 @@ export class TerminalApp {
       return framePanel(rows, columns);
     }
     if (this.appearanceHub) {
-      const theme = NATIVE_PROMPT_THEMES[this.promptConfiguration.nmsh.palette]?.label ?? this.promptConfiguration.nmsh.palette;
+      const theme = themeLabel(this.promptConfiguration.nmsh.palette);
       const now = Date.now();
       const gate = this.motionPreviewGate();
       // A frame clock only while the one-shot preview is animating; none once it settles.
@@ -3506,7 +3548,8 @@ export class TerminalApp {
     else if (destination === 'syntax') this.startSyntaxSettings();
     else if (destination === 'layout') this.startLayoutSettings();
     else if (destination === 'cursor') this.openCursorPanel();
-    else if (destination === 'themeStudio') this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette);
+    else if (destination === 'themeStudio') this.openThemeStudio();
+    else if (destination === 'themeBridge') void this.openThemeBridge();
     else if (destination === 'welcome' || destination === 'suggestions' || destination === 'history' || destination === 'picker' || destination === 'navigation') this.startProviderPanel(destination);
     else void this.startKeyboard();
   }
@@ -3637,29 +3680,234 @@ export class TerminalApp {
     }
   }
 
-  private renderThemeStudioRows(state: ThemeStudioState, columns: number): string[] {
-    const draft: PromptConfiguration = {...this.promptConfiguration, customTheme: state.draft, nmsh: {...this.promptConfiguration.nmsh, palette: 'custom'}};
+  private studioContext(): StudioContext {
+    const config = this.promptConfiguration;
+    const ref = activeThemeRef(config);
+    return {themes: config.themes, accent: config.nmsh.accent, ...(ref ? {activeRef: ref} : {}), pinnedTo: target => targetsPinnedTo(config.themeBridge, target)};
+  }
+
+  private openThemeStudio(tab?: StudioTab): void {
+    this.themeStudio = createThemeStudio(this.studioContext(), tab);
+  }
+
+  /**
+   * The shared theme preview: the real Native renderer over synthetic context
+   * (project, path, Git, Node/Go/Python/Docker, Kubernetes, success and
+   * failure), UI text tiers and roles, and a syntax sample. Built-in,
+   * Imported and Custom themes all preview through this one path.
+   */
+  private themePreviewRows(theme: CustomTheme, palette: NativePaletteId | undefined, columns: number): string[] {
+    const base = this.promptConfiguration;
+    const draft: PromptConfiguration = {...base, provider: 'nmsh', customTheme: theme, nmsh: {...base.nmsh, palette: palette ?? 'custom'}};
     const width = Math.max(1, columns - 16);
-    const preview = state.picker || state.importPath !== undefined ? [] : this.withDraftTheme(draft, () => [
-      `  ${SECONDARY}${'Preview'.padEnd(12)}${RESET}${buildThemePreviewLine(draft, 'custom', width)}${RESET}`]);
-    return renderThemeStudio(state, columns, this.dimensions().rows, colorLevel(), preview);
+    const level = colorLevel();
+    const label = (text: string) => `  ${SECONDARY}${text.padEnd(12)}${RESET}`;
+    const fg = (hex: string) => level === 'none' ? '' : colorEscape(38, parseHexColor(hex)!, level);
+    const bg = (hex: string) => level === 'none' ? '' : colorEscape(48, parseHexColor(hex)!, level);
+    const ui = theme.ui;
+    return this.withDraftTheme(draft, () => {
+      const showcase = {...draft, modules: draft.modules.map(module => ({...module, visible: true}))};
+      return [
+        `${label('Prompt')}${buildThemePreviewLine(draft, draft.nmsh.palette, width)}${RESET}`,
+        `${label('Context')}${buildContextLine(moduleShowcaseContext(), width, showcase, 'composer', 0)}${RESET}`,
+        truncateAnsi(`${label('Interface')}${fg(ui.primary)}Primary ${fg(ui.secondary)}Secondary ${fg(ui.subtle)}Muted ${fg(ui.accent)}● Accent ${fg(ui.separator)}│ ${RESET}${bg(ui.selection)}${fg(ui.primary)} Selected ${RESET}`, columns),
+        truncateAnsi(`${label('Status')}${fg(ui.success)}${GLYPHS.success} done ${fg(ui.warning)}! warning ${fg(ui.failure)}${GLYPHS.failure} failed ${fg(ui.info)}i info${RESET}`, columns),
+        `${label('Syntax')}${renderSyntaxPreviewLine('git commit -m "fix" && npm test', draft.syntax, draft.nmsh.palette)}${RESET}`,
+      ];
+    });
+  }
+
+  private renderThemeStudioRows(state: ThemeStudioState, columns: number): string[] {
+    const context = this.studioContext();
+    const shown = previewTheme(state, context);
+    const rows = this.dimensions().rows;
+    const preview = !shown || state.editor?.picker || rows < 24 ? [] : this.themePreviewRows(shown.theme, shown.palette, columns);
+    return renderThemeStudio(state, context, columns, rows, colorLevel(), preview);
   }
 
   private handleThemeStudioKey(key: Key, state: ThemeStudioState): void {
-    const result = studioKey(state, key, colorLevel(), this.shellCwd);
-    if (!result) return;
-    if (result.kind === 'cancel') { this.themeStudio = undefined; this.returnFromPanel(); return; }
-    if (result.kind === 'export') {
-      try { state.message = `Exported to ${writeThemeExport(state.draft)}`; }
+    const action = studioKey(state, key, colorLevel(), this.shellCwd, this.studioContext());
+    if (!action) return;
+    if (action.kind === 'close') { this.themeStudio = undefined; this.returnFromPanel(); return; }
+    const config = this.promptConfiguration;
+    if (action.kind === 'export') {
+      const asset = findTheme(config.themes, action.id);
+      if (!asset) { state.message = 'That theme no longer exists.'; return; }
+      try { state.message = `Exported to ${writeThemeExport(asset.theme)}`; }
       catch (error) { state.message = `Export failed: ${error instanceof Error ? error.message : String(error)}`; }
       return;
     }
-    const next = {...this.promptConfiguration, customTheme: result.theme, nmsh: {...this.promptConfiguration.nmsh, palette: 'custom' as const}};
-    if (this.applySettingsConfiguration(next)) {
-      this.themeStudio = undefined;
-      this.output.addFrontendInteraction('/theme', `Custom theme ${result.theme.name} is active. Your terminal and editor colors are unchanged.`, SUCCESS);
-      this.startSweep('prompt', 'vivid');
+    const result: ActionResult = action.kind === 'activate' ? setActiveTheme(config, action.ref)
+      : action.kind === 'saveTheme' ? (action.id ? saveTheme(config, action.id, action.theme) : addTheme(config, action.theme))
+        : action.kind === 'importTheme' ? addTheme(config, action.theme, action.origin)
+          : action.kind === 'rename' ? renameTheme(config, action.id, action.name)
+            : action.kind === 'duplicate' ? duplicateTheme(config, action.id)
+              : action.kind === 'duplicateBuiltin' ? duplicateBuiltin(config, action.ref)
+                : deleteTheme(config, action.id, action.confirmIndependent);
+    if (!result.ok) { state.message = result.error; return; }
+    if (!this.applySettingsConfiguration(result.config)) return;
+    state.message = result.message;
+    // New and imported themes land on their tab, selected, ready to use or edit.
+    if (result.id && (action.kind === 'importTheme' || action.kind === 'saveTheme' || action.kind.startsWith('duplicate'))) {
+      const asset = findTheme(result.config.themes, result.id);
+      if (asset) {
+        const tab = asset.origin ? 'imported' : 'custom';
+        state.tab = tab;
+        state.focus = 'list';
+        state.selected[tab] = result.config.themes.filter(item => Boolean(item.origin) === Boolean(asset.origin)).findIndex(item => item.id === asset.id) + (tab === 'custom' ? 1 : 0);
+      }
     }
+    if (action.kind === 'activate') this.startSweep('prompt', 'vivid');
+  }
+
+  // ---- Theme Bridge -----------------------------------------------------------
+
+  private bridgeFacts?: Record<BridgeTargetId, TargetFacts>;
+  private bridgeTimer?: NodeJS.Timeout;
+  private bridgeRun?: Promise<ApplyOutcome[]>;
+  /** The last Theme Bridge application problems, shown by /theme-bridge. */
+  private bridgeProblems: ApplyOutcome[] = [];
+
+  private async themeBridgeContext(): Promise<BridgeContext> {
+    this.bridgeFacts ??= await detectTargets();
+    const config = this.promptConfiguration;
+    return {source: config, facts: this.bridgeFacts, level: colorLevel()};
+  }
+
+  /**
+   * Debounced application of the current Theme Bridge state. With every
+   * target Independent and nothing generated before, nothing is written at all.
+   */
+  private scheduleThemeBridge(delay = 150): void {
+    if (this.bridgeTimer) clearTimeout(this.bridgeTimer);
+    this.bridgeTimer = setTimeout(() => {
+      this.bridgeTimer = undefined;
+      if (this.stopped) return;
+      const config = this.promptConfiguration;
+      if (!anyBridgeTargetActive(config.themeBridge) && !bridgeStateExists()) return;
+      this.bridgeRun = this.themeBridgeContext().then(applyThemeBridge).then(outcomes => {
+        this.bridgeProblems = outcomes.filter(outcome => !outcome.ok);
+        if (this.themeBridgePanel) this.render();
+        return outcomes;
+      }).catch(error => {
+        this.bridgeProblems = [{target: 'pager', ok: false, message: error instanceof Error ? error.message : String(error)}];
+        return this.bridgeProblems;
+      });
+    }, delay);
+    this.bridgeTimer.unref?.();
+  }
+
+  /** OSC 7 / OSC 133 for capable hosts, held while a fullscreen program owns the terminal. */
+  private readonly hostSemantics = new HostSemantics(semanticSupport(), data => { process.stdout.write(data); },
+    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended);
+  private themeBridgePanel?: ThemeBridgePanelState;
+  private bridgeReports: TargetReport[] = [];
+  /** A plan shown for confirmation, kept with the spec it came from; confirming applies exactly this plan. */
+  private bridgePlan?: {target: Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim'>; plan?: FileEditPlan; spec?: HookSpec; removal: boolean};
+
+  private async openThemeBridge(): Promise<void> {
+    this.themeBridgePanel = createThemeBridgePanel();
+    await this.refreshBridgeReports();
+    this.render();
+  }
+
+  private async refreshBridgeReports(): Promise<void> {
+    this.bridgeFacts ??= await detectTargets();
+    this.bridgeReports = reportTargets(await this.themeBridgeContext());
+  }
+
+  private themeBridgePanelContext(): BridgePanelContext {
+    const config = this.promptConfiguration;
+    const ledger = loadLedger();
+    const active = activeThemeRef(config);
+    return {enabled: config.themeBridge.enabled, reports: this.bridgeReports, themes: selectableThemes(config), pinned: target => config.themeBridge.targets[target].theme, ...(active ? {activeRef: active} : {}),
+      managed: target => target === 'tmux' || target === 'neovim' || target === 'vim'
+        ? {...(ledger.entries[target] && ownership(target, ledger) === 'owned' ? {artifact: artifactPath(target)} : {}), ...(ledger.entries[target]?.hook ? {include: ledger.entries[target]!.hook!.configPath} : {})}
+        : undefined};
+  }
+
+  private async handleThemeBridgeKey(key: Key, state: ThemeBridgePanelState): Promise<void> {
+    const action = themeBridgePanelKey(state, key, this.themeBridgePanelContext());
+    if (!action) { this.render(); return; }
+    if (action.kind === 'close') { this.themeBridgePanel = undefined; this.bridgePlan = undefined; this.returnFromPanel(); this.render(); return; }
+    const home = process.env.HOME || homedir();
+    if (action.kind === 'setMode') {
+      const config = structuredClone(this.promptConfiguration);
+      config.themeBridge.targets[action.target] = {mode: action.mode, ...(action.theme ?? config.themeBridge.targets[action.target].theme ? {theme: action.theme ?? config.themeBridge.targets[action.target].theme} : {})};
+      // Choosing a mode for a tool is the opt-in; Independent leaves the switch as it is.
+      if (action.mode !== 'independent') config.themeBridge.enabled = true;
+      if (this.applySettingsConfiguration(config)) {
+        // Apply now (not debounced) so the panel's status is factual when it redraws.
+        if (this.bridgeTimer) { clearTimeout(this.bridgeTimer); this.bridgeTimer = undefined; }
+        this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
+        const problem = this.bridgeProblems.find(outcome => outcome.target === action.target);
+        state.message = problem?.message ?? `${BRIDGE_TARGET_LABELS[action.target]} · ${BRIDGE_MODE_LABELS[action.mode]}${action.target === 'pager' || action.target === 'lsColors' ? ' · NMSh shells apply it at their next prompt' : ''}`;
+      }
+    } else if (action.kind === 'setEnabled') {
+      const config = structuredClone(this.promptConfiguration);
+      config.themeBridge.enabled = action.enabled;
+      if (this.applySettingsConfiguration(config)) {
+        if (this.bridgeTimer) { clearTimeout(this.bridgeTimer); this.bridgeTimer = undefined; }
+        this.bridgeProblems = (await applyThemeBridge(await this.themeBridgeContext())).filter(outcome => !outcome.ok);
+        state.message = action.enabled ? 'Theme Bridge is On; each tool uses its own mode.' : 'Theme Bridge is Off; every tool is Independent and NMSh-set values are restored at the next prompt.';
+      }
+    } else if (action.kind === 'reloadTmux') {
+      state.message = (await reloadTmux()).message;
+    } else if (action.kind === 'planHook' || action.kind === 'planRemoval') {
+      const target = action.target as Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim'>;
+      if (action.kind === 'planHook') {
+        if (this.promptConfiguration.themeBridge.targets[target].mode === 'independent') { state.message = 'Choose Follow NMSh or Choose theme first; an Independent target gets no include.'; this.render(); return; }
+        const spec = hookSpec(target);
+        if ('error' in spec) { state.message = spec.error; this.render(); return; }
+        const planned = planHook(spec, home);
+        if ('error' in planned) state.message = planned.error;
+        else if ('noop' in planned) {
+          state.message = 'The include is already in place.';
+        } else {
+          this.bridgePlan = {target, plan: planned.plan, spec, removal: false};
+          state.confirm = {kind: 'hook', target, path: spec.configPath, preview: planned.plan.preview};
+        }
+      } else {
+        const planned = planHookRemoval(target, home);
+        if ('error' in planned && !loadLedger().entries[target]?.hook) {
+          // No include recorded: removal is just Independent plus the owned file.
+          this.bridgePlan = {target, removal: true};
+          state.confirm = {kind: 'removeHook', target, path: artifactPath(target), preview: ['- (NMSh-managed file only; no config include is recorded)']};
+        } else if ('error' in planned) state.message = planned.error;
+        else {
+          const hook = loadLedger().entries[target]!.hook!;
+          this.bridgePlan = {target, ...('plan' in planned ? {plan: planned.plan} : {}), removal: true};
+          state.confirm = {kind: 'removeHook', target, path: hook.configPath, preview: 'plan' in planned ? planned.plan.preview : ['  (the include is already gone from the file)']};
+        }
+      }
+    } else if (action.kind === 'confirmHook' || action.kind === 'confirmRemoval') {
+      const pending = this.bridgePlan;
+      this.bridgePlan = undefined;
+      if (!pending || pending.target !== action.target) { state.message = 'Nothing was changed.'; this.render(); return; }
+      if (!pending.removal && pending.plan && pending.spec) {
+        const result = applyHook(pending.target, pending.plan, pending.spec);
+        state.message = result.ok ? `Added the include to ${pending.spec.configPath}. New ${BRIDGE_TARGET_LABELS[pending.target]} instances load NMSh colors${pending.target === 'tmux' ? '; Reload applies them to the running server' : ''}.` : result.error;
+      } else if (pending.removal) {
+        const removed = applyHookRemoval(pending.target, pending.plan);
+        if (!removed.ok) state.message = removed.error;
+        else {
+          const config = structuredClone(this.promptConfiguration);
+          config.themeBridge.targets[pending.target] = {mode: 'independent', ...(config.themeBridge.targets[pending.target].theme ? {theme: config.themeBridge.targets[pending.target].theme} : {})};
+          this.applySettingsConfiguration(config);
+          const artifact = removeArtifact(pending.target);
+          state.message = artifact.ok ? `${BRIDGE_TARGET_LABELS[pending.target]} is Independent; NMSh's include and managed file are removed.` : artifact.error;
+        }
+      }
+    }
+    await this.refreshBridgeReports();
+    this.render();
+  }
+
+  /** fzf `--color` for an NMSh-owned launch; empty unless fzf is the picker and its bridge mode is active. */
+  private async fzfThemeArgs(): Promise<string[]> {
+    const config = this.promptConfiguration;
+    if (config.picker !== 'fzf' || config.themeBridge.targets.fzf.mode === 'independent') return [];
+    return fzfBridgeArgs(await this.themeBridgeContext());
   }
 
   // ---- Idle visuals ---------------------------------------------------------------
@@ -3870,6 +4118,11 @@ export class TerminalApp {
           rows.push(`${label('Prompt')}${buildContextLine(themePreviewContext(), width - 12, draft, 'composer', Date.now())}${RESET}`);
           rows.push(`${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git status${RESET}`);
           animate ||= treatmentAnimated(draft.presentation);
+          break;
+        }
+        if (draft.provider === 'none') {
+          rows.push(`${label('Prompt')}${SUBTLE}None · composer only${RESET}`, `${label('Composer')}${PRIMARY}git status${RESET}`);
+          rows.push(`  ${SUBTLE}${providerExplanation('prompt', draft.provider)}${RESET}`);
           break;
         }
         // An external provider's own prompt, never the Native one standing in for it.
@@ -4249,6 +4502,9 @@ export class TerminalApp {
       if (tool.executable) statuses[tool.executable] ??= status;
     }
     state.context = {...state.context, statuses};
+    // Theme Bridge targets present on this system (PATH facts; cached for the session).
+    this.bridgeFacts ??= await detectTargets();
+    state.context = {...state.context, bridgeTargets: (Object.entries(this.bridgeFacts) as Array<[BridgeTargetId, TargetFacts]>).filter(([, facts]) => facts.installed).map(([target]) => target)};
     await facts;
     if (!this.stopped && this.setupState === state) this.render();
   }
@@ -4722,10 +4978,10 @@ export class TerminalApp {
   /** A representative history header: the live provider's identity over preview-only modules. */
   private transcriptPreviewSample(): HistoricalContextSnapshot {
     const context = themePreviewContext();
-    const prompt = this.effectivePromptProvider !== 'nmsh' && this.externalPrompt
+    const prompt = this.effectivePromptProvider === 'none' ? undefined : this.effectivePromptProvider !== 'nmsh' && this.externalPrompt
       ? this.currentPromptSnapshot()
       : nativePromptSnapshot(context, this.promptConfiguration);
-    return {cwd: context.cwd, project: context.project, branch: context.branch, prompt};
+    return {cwd: context.cwd, project: context.project, branch: context.branch, ...(prompt ? {prompt} : {promptless: true as const})};
   }
 
   private saveTranscriptSettings(): void {
@@ -4906,11 +5162,13 @@ export class TerminalApp {
 
 
   private hasVisibleProviderPrompt(): boolean {
+    if (this.effectivePromptProvider === 'none') return false;
     if (this.effectivePromptProvider !== 'nmsh') return Boolean(this.externalPrompt?.text.trim());
     return hasVisibleContextModule(this.promptConfiguration, this.promptContext(), isOnCommandRelevant);
   }
 
   private currentPromptLine(width: number, time = Date.now()): string {
+    if (this.effectivePromptProvider === 'none') return '';
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       return this.externalPromptRow(this.externalPrompt, width, this.promptConfiguration.placement, time);
     }
@@ -5222,7 +5480,9 @@ export class TerminalApp {
       const live = task.status === 'starting' || task.status === 'running' || task.status === 'waiting' || task.status === 'stopping';
       const url = task.urls[0];
       if (!live) return truncateAnsi(`${task.status === 'failed' ? ERROR : SUCCESS}${task.status === 'failed' ? GLYPHS.failure : GLYPHS.success}${RESET} ${SECONDARY}${task.label} ${task.status === 'failed' ? `failed · exit ${task.exitCode ?? '?'}` : 'stopped'}${RESET}`, columns);
-      return truncateAnsi(liveLine(task.label, [task.status === 'running' ? undefined : task.status, url].filter(Boolean).join(' · ') || undefined, task.startedAt, now, {still}), columns);
+      // The dev-server URL is an NMSh-authored link (safe http(s) target only) where the host supports OSC 8.
+      const shownUrl = url ? authoredLink(url, url, this.host.capabilities.hyperlinks && !this.passthrough) : undefined;
+      return closeAuthoredLinks(truncateAnsi(liveLine(task.label, [task.status === 'running' ? undefined : task.status, shownUrl].filter(Boolean).join(' · ') || undefined, task.startedAt, now, {still}), columns));
     });
   }
 
@@ -6095,7 +6355,7 @@ export class TerminalApp {
     this.pickerOpening = true;
     try {
       const files = listProjectFiles(root).slice(0, 20_000);
-      const result = await openPicker(this.promptConfiguration.picker, files.map(path => ({id: path, label: path, value: path})), fallback, this.pickerHandoff);
+      const result = await openPicker(this.promptConfiguration.picker, files.map(path => ({id: path, label: path, value: path})), fallback, this.pickerHandoff, process.env, await this.fzfThemeArgs());
       if (this.askState !== state || this.stopped) return;
       if (result?.kind === 'selected') await this.runInAsk(state, {kind: 'openFile', path: resolvePath(root, result.candidate.value)});
       else if (result?.kind === 'fallback') fallback();
@@ -6672,6 +6932,8 @@ export class TerminalApp {
     } finally { this.shellSwitching = false; }
     this.shellId = target;
     this.shellJobs = 0;
+    // The old shell's zone ends here; the new shell's first prompt opens the next one.
+    this.hostSemantics.end();
     this.switchedShellStarting = true;
     // The new shell's first prompt is readiness, not a command completion.
     this.presetShellReady = true;
@@ -6771,6 +7033,7 @@ export class TerminalApp {
 
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
+    this.hostSemantics.flush();
     if (this.idle) { this.paintIdle(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
@@ -7185,6 +7448,8 @@ export class TerminalApp {
   }
 
   private inputFirstLinePrefix(columns: number): string | undefined {
+    // Prompt None: the composer is only the input, with no marker in either layout.
+    if (this.effectivePromptProvider === 'none') return '';
     if (this.promptConfiguration.composerLayout !== 'oneLine') return undefined;
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       const maxWidth = Math.max(0, columns - 1);

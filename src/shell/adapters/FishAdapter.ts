@@ -7,6 +7,7 @@ import {completionWord} from '../ConfiguredCompletion.js';
 import type {CommandEntry} from '../../suggestions/types.js';
 import {fishQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
+import {bridgeBootstrap} from '../../themeBridge/environment.js';
 
 /**
  * Fish backend.
@@ -27,7 +28,8 @@ const FISH_BUILTINS = new Set(['and', 'begin', 'bg', 'bind', 'block', 'break', '
   'math', 'not', 'or', 'path', 'printf', 'pwd', 'random', 'read', 'realpath', 'return', 'set', 'set_color', 'source', 'status', 'string', 'switch', 'test',
   'time', 'true', 'type', 'ulimit', 'wait', 'while', 'abbr', 'argparse']);
 
-function bootstrap({token, knowledgePath}: LaunchContext, originalTerm: string | undefined): string {
+function bootstrap({token, knowledgePath, bridgeEnvPath}: LaunchContext, originalTerm: string | undefined): string {
+  const sync = bridgeEnvPath ? '\n    nmsh_bridge_sync' : '';
   const marker = (body: string) => `printf '\\e]777;nmsh;${token};${body}\\a'`;
   return `# NMSh managed fish session bootstrap (private, per session)
 ${originalTerm ? `set -gx TERM ${fishQuote(originalTerm)}` : ''}
@@ -37,10 +39,11 @@ set -g fish_autosuggestion_enabled 0
 function fish_prompt
   if not set -q __nmsh_ready
     set -g __nmsh_ready 1
-    __nmsh_knowledge
+    __nmsh_knowledge${sync}
     ${marker("0;%s")} "$PWD"
   end
 end
+${bridgeEnvPath ? bridgeBootstrap('fish', bridgeEnvPath) : ''}
 function fish_right_prompt; end
 function fish_mode_prompt; end
 function fish_title; end
@@ -75,7 +78,7 @@ function __nmsh_preexec --on-event fish_preexec
 end
 function __nmsh_postexec --on-event fish_postexec
   set -l nmsh_status $status
-  __nmsh_knowledge
+  __nmsh_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   ${marker('%d;%s')} $nmsh_status "$PWD"
 end
 `;

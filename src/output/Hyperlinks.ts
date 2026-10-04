@@ -118,3 +118,20 @@ export class HyperlinkPresenter {
     return line;
   }
 }
+
+const OSC8_CLOSE = '\u001B]8;;\u001B\\';
+
+/**
+ * An NMSh-authored link for live UI rows (task URLs, docs): the text wrapped
+ * in OSC 8 only when the host supports links and the target is safe; plain
+ * text otherwise. Callers that truncate append `closeAuthoredLinks` so a cut
+ * never leaves a link open.
+ */
+export function authoredLink(text: string, target: string, enabled: boolean): string {
+  const safe = enabled ? safeHyperlinkTarget(target) : undefined;
+  return safe ? `\u001B]8;;${safe}\u001B\\${text}${OSC8_CLOSE}` : text;
+}
+
+export function closeAuthoredLinks(row: string): string {
+  return row.includes('\u001B]8;;') ? `${row}${OSC8_CLOSE}` : row;
+}

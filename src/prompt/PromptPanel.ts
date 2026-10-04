@@ -93,6 +93,7 @@ export const PROMPT_PROVIDERS: readonly ProviderDescriptor<PromptProviderId>[] =
   {id: 'nmsh', family: 'prompt', label: 'NMSh Native', kind: 'native', description: 'built-in themes, geometry, and modules'},
   {id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', executable: 'starship', description: 'use its themes/configuration'},
   {id: 'powerlevel10k', family: 'prompt', label: 'Powerlevel10k', kind: 'external', description: 'use your ~/.p10k.zsh left prompt'},
+  {id: 'none', family: 'prompt', label: 'None', kind: 'none', description: 'composer only: no prompt row, modules or marker'},
 ];
 export const PROVIDER_ORDER: readonly PromptProviderId[] = PROMPT_PROVIDERS.map(provider => provider.id);
 
@@ -414,6 +415,7 @@ export function layoutLabel(configuration: PromptConfiguration): string {
 
 /** One-line summary of an effective configuration. */
 export function describePromptConfiguration(configuration: PromptConfiguration): string {
+  if (configuration.provider === 'none') return 'None · composer only';
   if (configuration.provider !== 'nmsh') return `${providerLabel(configuration.provider)} · ${layoutLabel(configuration)}`;
   const nmsh = configuration.nmsh;
   // Powerline geometry describes only Powerline; other styles name their own look.

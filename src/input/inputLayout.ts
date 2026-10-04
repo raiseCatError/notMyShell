@@ -36,7 +36,9 @@ export function layoutInput(
   const safeCursor = Math.max(0, Math.min(glyphs.length, cursorIndex));
   const width = Math.max(1, columns);
   const INPUT_PREFIX = firstLinePrefix ?? `${GLYPHS.prompt} `;
-  const rows: InputRow[] = [{prefix: width >= 2 ? INPUT_PREFIX : GLYPHS.prompt, text: '', charStart: 0, charEnd: 0}];
+  // An explicitly empty prefix (Prompt None) means no marker and no continuation indent.
+  const bare = firstLinePrefix === '';
+  const rows: InputRow[] = [{prefix: bare ? '' : width >= 2 ? INPUT_PREFIX : GLYPHS.prompt, text: '', charStart: 0, charEnd: 0}];
   let rowIndex = 0;
   let contentWidth = 0;
   let caretRow = 0;
@@ -51,7 +53,7 @@ export function layoutInput(
 
   const addRow = (nextCharStart: number): void => {
     rows[rowIndex].charEnd = nextCharStart;
-    rows.push({prefix: width >= 4 ? CONTINUATION_PREFIX : '', text: '', charStart: nextCharStart, charEnd: nextCharStart});
+    rows.push({prefix: !bare && width >= 4 ? CONTINUATION_PREFIX : '', text: '', charStart: nextCharStart, charEnd: nextCharStart});
     rowIndex += 1;
     contentWidth = 0;
   };

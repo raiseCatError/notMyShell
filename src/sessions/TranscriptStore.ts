@@ -92,7 +92,8 @@ function isTranscript(value: unknown): value is OutputTranscript {
       && (record.historicalContext === undefined
         || (typeof record.historicalContext.cwd === 'string'
           && (record.historicalContext.project === undefined || typeof record.historicalContext.project === 'string')
-          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')))
+          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')
+          && (record.historicalContext.promptless === undefined || record.historicalContext.promptless === true)))
       && (record.historicalContext?.prompt === undefined || (typeof record.historicalContext.prompt === 'object'
         && record.historicalContext.prompt !== null
         && ['nmsh', 'starship', 'powerlevel10k'].includes(record.historicalContext.prompt.provider)

@@ -438,6 +438,23 @@ function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[]
   return segments.map(segment => ({...segment, foreground: LEGACY_FOREGROUND, background: LEGACY_BACKGROUNDS[segment.role!], preMuted: true}));
 }
 
+/**
+ * Compact and Minimal historical prompts: a quiet view of the stored facts
+ * (project or short cwd, branch, marker). Presentation only; the snapshot and
+ * /copy are unchanged, and nothing is invented that was not recorded.
+ */
+function condensedPrompt(context: HistoricalContextSnapshot, level: 'compact' | 'minimal', width: number): string {
+  const marker = `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}\u001B[0m`;
+  if (level === 'minimal') return truncateAnsi(marker, width);
+  const clean = (text: string) => text.replace(CONTROL_CHARACTERS, '�');
+  const cwd = clean(context.cwd);
+  const home = homedir().replace(/\/$/u, '');
+  const place = context.project ? clean(context.project) : cwd === home ? '~' : cwd.split('/').filter(Boolean).pop() ?? cwd;
+  const subtle = foreground(UI_COLORS.secondary);
+  const branch = context.branch ? ` ${foreground(UI_COLORS.subtle)}${GLYPHS.branch} ${clean(context.branch)}` : '';
+  return truncateAnsi(`${subtle}${place}${branch}\u001B[0m ${marker}`, width);
+}
+
 /** The prompt part of a historical header, colored per the transcript appearance. */
 /** Divider cells kept between a historical left prompt and its right context. */
 const RIGHT_CONTEXT_MIN_DIVIDER = 2;
@@ -524,13 +541,17 @@ function historicalDivider(text: string, context: HistoricalContextSnapshot, app
 export function renderHistoricalContext(context: HistoricalContextSnapshot, width: number,
   appearance: TranscriptAppearance = DEFAULT_TRANSCRIPT_APPEARANCE,
   treatment: TreatmentSettings = DEFAULT_TREATMENT_SETTINGS): WrappedRow | undefined {
-  if (!appearance.divider && !appearance.historicalPrompt) return undefined;
+  // Prompt None submissions had no prompt: they render like the Off presentation, never a substituted one.
+  const promptShown = appearance.historicalPrompt && !context.promptless;
+  if (!appearance.divider && !promptShown) return undefined;
   const divider = DIVIDER_STYLES[appearance.dividerDensity];
-  if (!appearance.historicalPrompt) {
+  if (!promptShown) {
     const line = repeatToWidth(divider.glyph, width);
     return {ansi: `${historicalDivider(line, context, appearance, treatment, divider.color)}\u001B[0m`, plain: line, isHistoricalHeader: true};
   }
-  const parts = historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance);
+  const level = appearance.historicalPromptLevel ?? 'full';
+  const parts = level === 'full' ? historicalPrompt(context, Math.max(0, width - (appearance.divider ? 1 : 0)), appearance)
+    : condensedPrompt(context, level, Math.max(0, width - (appearance.divider ? 1 : 0)));
   const prompt = typeof parts === 'string' ? parts : parts.left;
   const right = typeof parts === 'string' || !parts.right ? '' : parts.right;
   const rightWidth = right ? displayWidth(right) + 1 : 0;

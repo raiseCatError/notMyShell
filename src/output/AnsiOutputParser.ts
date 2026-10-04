@@ -6,6 +6,22 @@ export interface StyledCell {
   style: string;
   /** Original program-emitted OSC 8, never generated presentation. */
   hyperlink?: string;
+  /**
+   * The link was authored by NMSh itself (help, docs, task URLs, NMSh-written
+   * files) through addAuthoredLine and passed the authored-target check.
+   * Raw PTY links never carry this mark.
+   */
+  authored?: true;
+}
+
+/** Targets NMSh may author: http(s) without credentials, and local file URLs. */
+export function authoredTargetAllowed(target: string): boolean {
+  if (!target || target.length > 4096 || /[\u0000-\u0020\u007f-\u009f]/u.test(target)) return false;
+  try {
+    const url = new URL(target);
+    if (url.protocol === 'file:') return !url.hostname;
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname) && !url.username && !url.password;
+  } catch { return false; }
 }
 
 const revisions = new WeakMap<StyledLine, number>();
@@ -27,6 +43,8 @@ export class AnsiOutputParser {
   private style = '';
   private pending = '';
   private hyperlink?: string;
+  /** While writing an NMSh-authored line: OSC 8 becomes an authored link only for allowed targets. */
+  private authoring = false;
   private discardingOsc = false;
 
   constructor(private readonly onClear?: () => void) {}
@@ -96,6 +114,12 @@ export class AnsiOutputParser {
         this.put(value, width);
       }
     }
+  }
+
+  /** An NMSh-authored line: its OSC 8 links are marked authored when the target is allowed, dropped otherwise. */
+  addAuthoredLine(text: string, style = ''): void {
+    this.authoring = true;
+    try { this.addLine(text, style); } finally { this.authoring = false; }
   }
 
   addLine(text: string, style = ''): void {
@@ -230,7 +254,7 @@ export class AnsiOutputParser {
         if (separator !== -1) {
           const target = payload.slice(separator + 1);
           // Preserve safe original payloads; reject controls and bound retained data.
-          this.hyperlink = target && validOsc8Payload(payload)
+          this.hyperlink = target && validOsc8Payload(payload) && (!this.authoring || authoredTargetAllowed(target))
             ? payload : undefined;
         } else this.hyperlink = undefined;
       }
@@ -268,7 +292,7 @@ export class AnsiOutputParser {
 
   private put(text: string, width: number): void {
     for (let position = 0; position < width; position += 1) this.current[this.column + position] = undefined;
-    this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink} : {})};
+    this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
     this.touch();
     for (let position = 1; position < width; position += 1) this.current[this.column + position] = null;
     this.column += width;

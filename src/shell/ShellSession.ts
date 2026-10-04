@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
 import {MAX_SHELL_KNOWLEDGE_BYTES} from './ShellKnowledge.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {bridgeEnvPath} from '../themeBridge/environment.js';
 import {PENDING_INPUT_LIMIT, sanitizeStartupOutput, STARTUP_RAW_LIMIT, utf8Tail} from './startupOutput.js';
 import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
 
@@ -59,7 +60,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     this.zdotdir = stateDir;
     let launch;
     try {
-      launch = this.adapter.launch({home, env, token, stateDir, knowledgePath: join(stateDir, '.nmsh-knowledge')});
+      launch = this.adapter.launch({home, env, token, stateDir, knowledgePath: join(stateDir, '.nmsh-knowledge'), bridgeEnvPath: bridgeEnvPath(this.adapter.id, env)});
     } catch (error) {
       this.cleanup();
       throw error;

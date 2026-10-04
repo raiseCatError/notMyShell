@@ -8,6 +8,7 @@ import {completionWord} from '../ConfiguredCompletion.js';
 import type {CommandEntry} from '../../suggestions/types.js';
 import {posixQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
+import {bridgeBootstrap} from '../../themeBridge/environment.js';
 
 /**
  * Bash backend.
@@ -56,7 +57,8 @@ function resolveBash(env: NodeJS.ProcessEnv): string | undefined {
   return findShellExecutables('bash', env, ['/bin/bash', '/usr/bin/bash']).find(candidate => recentEnough(bashVersionOf(candidate)));
 }
 
-function bootstrap({home, token, knowledgePath}: LaunchContext): string {
+function bootstrap(context: LaunchContext): string {
+  const {home, token, knowledgePath} = context;
   const marker = (body: string) => `builtin printf '\\e]777;nmsh;${token};${body}\\a'`;
   return `# NMSh managed bash session bootstrap (private, per session)
 # --rcfile replaces the standard startup files, so load them as Bash would.
@@ -99,6 +101,7 @@ fi
 __nmsh_set_status() { return "$1"; }
 __nmsh_history_last=
 
+${context.bridgeEnvPath ? bridgeBootstrap('bash', context.bridgeEnvPath) : ''}
 __nmsh_precmd() {
   local nmsh_status=$? nmsh_command
   for nmsh_command in "\${__nmsh_user_prompt_command[@]}"; do
@@ -114,7 +117,7 @@ __nmsh_precmd() {
   PS1='' PS2=''
   __nmsh_tty -echo
   __nmsh_history_last=$(HISTTIMEFORMAT= builtin history 1)
-  __nmsh_knowledge
+  __nmsh_knowledge${context.bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   ${marker('%d;%s')} "$nmsh_status" "$PWD"
 }
 

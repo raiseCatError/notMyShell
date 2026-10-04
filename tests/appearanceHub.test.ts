@@ -10,7 +10,9 @@ const text = (rows: string[]) => stripAnsi(rows.join('\n'));
 test('/appearance always offers the NMSh rows, with or without host integration', () => {
   const zed = createAppearanceHub('Zed', undefined, 'Opacity and blur are controlled by Zed.');
   const rendered = text(renderAppearanceHub(zed, config(), 100, 'Lavender Native', 'Portable'));
-  for (const label of ['Prompt & theme', 'Cursor & effects', 'UI chrome', 'Chroma', 'Motion']) assert.match(rendered, new RegExp(label, 'u'));
+  for (const label of ['Theme Studio', 'Prompt', 'Cursor & effects', 'UI chrome', 'Chroma', 'Motion', 'Theme Bridge']) assert.match(rendered, new RegExp(label, 'u'));
+  assert.doesNotMatch(rendered, /Prompt & theme/u, 'themes are not presented as prompt-only');
+  assert.match(rendered, /Theme Bridge\s+Off · every tool Independent/u);
   assert.match(rendered, /Host\s+Zed/u);
   assert.match(rendered, /controlled by Zed/u);
   assert.doesNotMatch(rendered, /Opacity\s+█/u);
@@ -20,7 +22,7 @@ test('host with appearance integration keeps opacity/blur editing; Enter saves o
   const hub = createAppearanceHub('Ghostty-like host', {opacity: 0.9, blurModeIndex: 0, blurStrength: 20, selectedIndex: 0});
   const rendered = text(renderAppearanceHub(hub, config(), 100, 'Lavender Native', 'Portable'));
   assert.match(rendered, /Opacity\s+█+░*\s+90%/u);
-  hub.selected = 5; // first host row
+  hub.selected = 7; // first host row
   assert.equal(appearanceHubKey(hub, {kind: 'enter'}, config()), undefined, 'nothing to save yet');
   appearanceHubKey(hub, {kind: 'right'}, config());
   assert.equal(hub.host!.opacity, 0.95);
@@ -29,12 +31,16 @@ test('host with appearance integration keeps opacity/blur editing; Enter saves o
 
 test('NMSh rows open the canonical editors; Motion opens the general motion screen', () => {
   const hub = createAppearanceHub('Zed');
-  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'prompt'});
+  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'theme'});
   hub.selected = 1;
+  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'prompt'});
+  hub.selected = 2;
   assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'cursor'});
-  hub.selected = 3;
-  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'chroma'});
   hub.selected = 4;
+  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'chroma'});
+  hub.selected = 6;
+  assert.deepEqual(appearanceHubKey(hub, {kind: 'enter'}, config()), {kind: 'open', destination: 'themeBridge'});
+  hub.selected = 5;
   assert.equal(appearanceHubKey(hub, {kind: 'enter'}, config()), undefined);
   assert.equal(hub.view, 'motion');
   const motion = text(renderAppearanceHub(hub, config(), 100, 'Lavender Native', 'Portable'));
@@ -47,4 +53,5 @@ test('NMSh rows open the canonical editors; Motion opens the general motion scre
   assert.equal(change?.kind === 'motion' && change.motion.contextTransitions, 'expressive');
   appearanceHubKey(hub, {kind: 'escape'}, config());
   assert.equal(hub.view, 'hub');
+  assert.equal(hub.selected, 5, 'back on the Motion row');
 });

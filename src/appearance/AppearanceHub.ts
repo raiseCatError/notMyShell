@@ -9,6 +9,9 @@ import {BLUR_MODES, handleAppearanceKey, type AppearanceState} from './Appearanc
 import {cursorLabel} from '../cursor/CursorPanel.js';
 import {renderMotionPreview, type MotionPreview} from '../motion/MotionPreview.js';
 import type {MotionGate} from '../motion/transitions.js';
+import {librarySummary} from './themeLibrary.js';
+import {providerLabel} from '../prompt/PromptPanel.js';
+import {BRIDGE_TARGETS, BRIDGE_TARGET_LABELS, effectiveMode} from '../themeBridge/model.js';
 
 /**
  * /appearance: the visual hub. NMSh rows summarize and open the canonical
@@ -17,7 +20,7 @@ import type {MotionGate} from '../motion/transitions.js';
  * opacity/blur editing where the host supports it, and say who controls them
  * where it does not, so the hub is useful in every terminal.
  */
-export type HubDestination = 'prompt' | 'cursor' | 'chrome' | 'chroma';
+export type HubDestination = 'theme' | 'prompt' | 'cursor' | 'chrome' | 'chroma' | 'themeBridge';
 
 export interface AppearanceHubState {
   view: 'hub' | 'motion' | 'motionAdvanced';
@@ -34,8 +37,10 @@ export interface AppearanceHubState {
 
 export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestination} | {kind: 'motion'; motion: MotionSettings} | {kind: 'saveHost'};
 
+/** Compact launcher: each row opens its canonical editor (/theme, /prompt, /cursor, UI chrome, /chroma, Motion, /theme-bridge). */
 const NMSH_ROWS: Array<{id: HubDestination | 'motion'; label: string}> = [
-  {id: 'prompt', label: 'Prompt & theme'}, {id: 'cursor', label: 'Cursor & effects'}, {id: 'chrome', label: 'UI chrome'}, {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'},
+  {id: 'theme', label: 'Theme Studio'}, {id: 'prompt', label: 'Prompt'}, {id: 'cursor', label: 'Cursor & effects'}, {id: 'chrome', label: 'UI chrome'},
+  {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'}, {id: 'themeBridge', label: 'Theme Bridge'},
 ];
 
 export function createAppearanceHub(hostName: string, host?: AppearanceState, hostGuidance?: string): AppearanceHubState {
@@ -56,7 +61,7 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
     const count = items.length + (advanced ? 0 : 1);
     if (key.kind === 'escape' || key.kind === 'interrupt') {
       if (advanced) { state.view = 'motion'; state.selected = MOTION_ITEMS.length; state.previewStart = now; return undefined; }
-      state.view = 'hub'; state.selected = NMSH_ROWS.length - 1; return undefined;
+      state.view = 'hub'; state.selected = NMSH_ROWS.findIndex(row => row.id === 'motion'); return undefined;
     }
     if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + count) % count; state.previewStart = now; return undefined; }
     if (key.kind === 'text' && key.value.toLowerCase() === 'r') { state.previewStart = now; return undefined; }
@@ -137,7 +142,10 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   const motion = configuration.motion;
   const anyMotion = MOTION_ROWS.some(row => motion[row.key] !== 'off');
   const summaries: Record<string, string> = {
-    prompt: `${themeLabel} · ${configuration.nmsh.textColors === 'neutral' ? 'Neutral text' : 'Theme text'}`,
+    theme: [themeLabel, librarySummary(configuration.themes)].filter(Boolean).join(' · '),
+    prompt: configuration.provider === 'none' ? 'None · composer only' : `${providerLabel(configuration.provider)} · ${configuration.nmsh.textColors === 'neutral' ? 'Neutral text' : 'Theme text'}`,
+    themeBridge: (() => { const active = BRIDGE_TARGETS.filter(target => effectiveMode(configuration.themeBridge, target) !== 'independent');
+      return active.length ? active.map(target => BRIDGE_TARGET_LABELS[target]).join(', ') : 'Off · every tool Independent'; })(),
     cursor: `${cursorLabel(cursor.shape)} · ${cursor.motion === 'off' ? 'no motion' : cursorLabel(cursor.motion)}${cursor.effect !== 'none' ? ` · ${cursorLabel(cursor.effect)}` : ''} · ${cursorBackend}`,
     chrome: configuration.uiChrome.source === 'theme' ? 'Follow theme' : 'Custom',
     chroma: configuration.presentation.preset === 'off' ? 'Off' : `${configuration.presentation.preset} · ${configuration.presentation.motion}`,

@@ -18,6 +18,8 @@ export interface HistoricalContextSnapshot {
   project?: string;
   branch?: string;
   prompt?: PromptSnapshot;
+  /** Submitted under Prompt None: there was no prompt, so history renders none (never a substituted Native one). */
+  promptless?: true;
 }
 
 export interface SecondaryActivity {
@@ -290,7 +292,11 @@ export class OutputBuffer {
     this.parser.addLine(text, style);
   }
 
-  addFrontendInteraction(command: string, result: string, resultStyle = ''): void {
+  /**
+   * `authoredLinks`: the result was rendered by NMSh (for example /help) and
+   * may carry NMSh-authored OSC 8 links; they are kept as authored cells.
+   */
+  addFrontendInteraction(command: string, result: string, resultStyle = '', authoredLinks = false): void {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
@@ -298,7 +304,8 @@ export class OutputBuffer {
     this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
     this.lineTypes.set(this.parser.completedCount(), 'metadata');
-    this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
+    if (authoredLinks) this.parser.addAuthoredLine(`  ${GLYPHS.info} ${result}`, resultStyle);
+    else this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
   }
 
   /**
@@ -342,14 +349,15 @@ export class OutputBuffer {
   }
 
   /** A multi-row NMSh-owned result (for example /agents); presentation rows, never shell output. */
-  addFrontendBlock(command: string, rows: readonly string[]): void {
+  addFrontendBlock(command: string, rows: readonly string[], authoredLinks = false): void {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) this.visualGaps.add(this.parser.completedCount());
     this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
     for (const row of rows) {
       this.lineTypes.set(this.parser.completedCount(), 'metadata');
-      this.parser.addLine(`  ${row}`, '');
+      if (authoredLinks) this.parser.addAuthoredLine(`  ${row}`, '');
+      else this.parser.addLine(`  ${row}`, '');
     }
   }
 

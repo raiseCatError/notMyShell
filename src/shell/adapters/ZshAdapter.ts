@@ -8,6 +8,7 @@ import {resolveZsh} from '../zshExecutable.js';
 import {parseZshHistoryInChunks} from '../HistoryService.js';
 import {ShellCompletionSource} from '../CompletionService.js';
 import type {LaunchContext, ShellAdapter, ShellLaunch} from './ShellAdapter.js';
+import {bridgeBootstrap} from '../../themeBridge/environment.js';
 
 const ZSH_BUILTINS = new Set(['alias', 'autoload', 'bg', 'bindkey', 'builtin', 'cd', 'command', 'echo', 'emulate', 'eval', 'exec', 'exit', 'export', 'fc', 'fg',
   'functions', 'hash', 'history', 'jobs', 'kill', 'let', 'local', 'print', 'printf', 'pushd', 'popd', 'pwd', 'read', 'return', 'set', 'setopt', 'shift', 'source',
@@ -32,7 +33,7 @@ export const zshAdapter: ShellAdapter = {
   unavailableReason(env) {
     try { resolveZsh(env); return undefined; } catch (error) { return error instanceof Error ? error.message : 'zsh was not found'; }
   },
-  launch({home, env, token, stateDir, knowledgePath}: LaunchContext): ShellLaunch {
+  launch({home, env, token, stateDir, knowledgePath, bridgeEnvPath}: LaunchContext): ShellLaunch {
     // Proxy .zshenv
     writeFileSync(join(stateDir, '.zshenv'), `
 if [[ -n ${shellQuote(home)} && -f ${shellQuote(join(home, '.zshenv'))} ]]; then
@@ -78,9 +79,10 @@ function nmsh_tty_echo {
   stty \$1 2>/dev/null
 }
 
+${bridgeEnvPath ? bridgeBootstrap('zsh', bridgeEnvPath) : ''}
 function nmsh_precmd {
   local nmsh_status=$?
-  nmsh_capture_knowledge
+  nmsh_capture_knowledge${bridgeEnvPath ? '\n  nmsh_bridge_sync' : ''}
   # Reblank every cycle: a plugin's own precmd (starship, a prompt theme, ...)
   # may run before us in precmd_functions and repaint PROMPT/RPROMPT. NMSh
   # owns prompt rendering, so it always has the last word here.

@@ -15,7 +15,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/activity', insertion: '/activity', description: 'Live activity colors for the running-command line'},
   {name: '/screensaver', insertion: '/screensaver', description: 'Idle visuals: live gallery, timeout and colors'},
   {name: '/screensaver start', insertion: '/screensaver start', description: 'Start the selected idle visual now; any key or mouse stops it'},
-  {name: '/theme', insertion: '/theme', description: 'Theme Studio: clone, edit, import and export a custom Native theme'},
+  {name: '/theme', insertion: '/theme', description: 'Theme Studio: built-in, imported and custom Native themes; create, edit, import, export, select'},
+  {name: '/theme-bridge', insertion: '/theme-bridge', description: 'Theme Bridge: extend NMSh themes to fzf, less/man, LS_COLORS, tmux, Neovim and Vim (opt-in per tool)'},
   {name: '/chroma', insertion: '/chroma', description: 'Chroma palettes, motion and custom gradients for the Native prompt'},
   {name: '/settings', insertion: '/settings', description: 'Open NMSh settings (Config view)'},
   {name: '/setup', insertion: '/setup', description: 'Setup Cat: guided, rerunnable setup; keeps your current choices'},
@@ -75,6 +76,7 @@ export type ParsedSlashCommand =
   | {kind: 'prompt'}
   | {kind: 'chroma'}
   | {kind: 'theme'}
+  | {kind: 'themeBridge'}
   | {kind: 'cursor'}
   | {kind: 'activity'}
   | {kind: 'screensaver'; start: boolean; mode?: IdleMode}
@@ -125,6 +127,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
+  if (/^\/theme-bridge\s*$/u.test(input)) return {kind: 'themeBridge'};
   if (/^\/cursor\s*$/u.test(input)) return {kind: 'cursor'};
   if (/^\/activity\s*$/u.test(input)) return {kind: 'activity'};
   const screensaver = /^\/screensaver(?:\s+(start)(?:\s+(\w+))?)?\s*$/u.exec(input);

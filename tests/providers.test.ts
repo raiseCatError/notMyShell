@@ -91,7 +91,7 @@ test('shared panel shows status badges, preview, and asks before installing', ()
 });
 
 test('prompt providers run on the shared descriptor with unchanged labels and rows', () => {
-  assert.deepEqual(PROMPT_PROVIDERS.map(provider => providerLabel(provider.id)), ['NMSh Native', 'Starship', 'Powerlevel10k']);
+  assert.deepEqual(PROMPT_PROVIDERS.map(provider => providerLabel(provider.id)), ['NMSh Native', 'Starship', 'Powerlevel10k', 'None']);
   assert.equal(providerRowText(PROMPT_PROVIDERS[1]!, {draft: 'starship', saved: 'nmsh', status: 'none'}),
     'Starship · use its themes/configuration  ●');
 });

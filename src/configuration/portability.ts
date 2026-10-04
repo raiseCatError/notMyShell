@@ -19,7 +19,8 @@ export const PORTABLE_CATEGORIES = {
   prompt: ['provider', 'promptSymbol', 'promptSymbolCustom', 'modules', 'separator', 'gap', 'spacing', 'placement',
     'nmsh.gapEnabled', 'nmsh.startStyle', 'nmsh.connector', 'nmsh.endStyle', 'nmsh.icons', 'nmsh.style', 'nmsh.connectorFade',
     'nmsh.connectorFadeColors', 'nmsh.gitEnabled', 'nmsh.gitColors', 'nmsh.gitGeometry', 'nmsh.gitConnectorFade', 'nmsh.mirrorRight', 'nmsh.styleProfiles'],
-  theme: ['nmsh.palette', 'nmsh.vibrance', 'nmsh.accent', 'customTheme'],
+  theme: ['nmsh.palette', 'nmsh.vibrance', 'nmsh.accent', 'nmsh.themeId', 'themes', 'customTheme'],
+  themeBridge: ['themeBridge'],
   chroma: ['presentation'],
   chrome: ['uiChrome', 'glyphStyle', 'cursor'],
   syntax: ['syntax'],
@@ -75,6 +76,15 @@ function setPath(target: Record<string, unknown>, path: string, value: unknown):
   current[keys.at(-1)!] = structuredClone(value);
 }
 
+function portableThemes(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map(asset => {
+    const copy = structuredClone(asset) as {origin?: {sourcePath?: string}};
+    if (copy.origin) delete copy.origin.sourcePath;
+    return copy;
+  });
+}
+
 export function parseCategories(text: string | undefined): PortableCategory[] {
   if (!text || text === 'all') return [...CATEGORY_IDS];
   const requested = text.split(',').map(item => item.trim()).filter(Boolean);
@@ -92,7 +102,8 @@ export function exportSettings(configuration: PromptConfiguration, categories: r
     const values: Record<string, unknown> = {};
     for (const path of PORTABLE_CATEGORIES[category]) {
       const value = getPath(normalized, path);
-      if (value !== undefined) values[path] = structuredClone(value);
+      // Imported themes keep their source path on this machine only; a transfer never carries it.
+      if (value !== undefined) values[path] = path === 'themes' ? portableThemes(value) : structuredClone(value);
     }
     document.categories[category] = values;
   }

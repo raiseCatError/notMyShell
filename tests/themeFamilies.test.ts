@@ -12,7 +12,7 @@ import {
 } from '../src/appearance/customTheme.js';
 import {cloneFromPalette, familyOf, selectFamily, variantOptions} from '../src/appearance/themeSelection.js';
 import {applyUiTheme, defaultUiColors, uiColorsFor, uiThemeInput} from '../src/appearance/uiTheme.js';
-import {createThemeStudio, readThemeImport, renderThemeStudio, studioKey, STUDIO_ROWS, themeDefaults, writeThemeExport} from '../src/appearance/ThemeStudio.js';
+import {createThemeEditor, createThemeStudio, editorKey, readThemeImport, renderThemeStudio, studioKey, STUDIO_ROWS, themeDefaults, writeThemeExport} from '../src/appearance/ThemeStudio.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION, NATIVE_PALETTE_IDS, normalizePromptConfiguration, THEME_PALETTE_IDS, THIRD_PARTY_PALETTE_IDS,
 } from '../src/prompt/configuration.js';
@@ -194,36 +194,37 @@ test('custom themes compose with Chroma and render through the real prompt rende
 test('Theme Studio: edits through the picker, imports with preview, exports NMSh Theme JSON', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'nmsh-studio-'));
   try {
-    const state = createThemeStudio(undefined, 'nord');
-    assert.equal(state.draft.prompt.project, '#88c0d0');
-    const role = STUDIO_ROWS.findIndex(row => row.kind === 'role' && row.role === 'project');
-    state.selected = role;
-    studioKey(state, {kind: 'enter'}, 'truecolor', directory);
-    assert.ok(state.picker);
-    studioKey(state, {kind: 'text', value: '#'}, 'truecolor', directory);
-    for (const character of 'ff8800') studioKey(state, {kind: 'text', value: character}, 'truecolor', directory);
-    studioKey(state, {kind: 'enter'}, 'truecolor', directory);
-    assert.equal(state.picker, undefined);
-    assert.equal(state.draft.prompt.project, '#ff8800');
-    const exported = writeThemeExport(state.draft, join(directory, 'themes'));
+    const editor = createThemeEditor(undefined, 'nord');
+    assert.equal(editor.draft.prompt.project, '#88c0d0');
+    editor.selected = STUDIO_ROWS.findIndex(row => row.kind === 'role' && row.role === 'project');
+    editorKey(editor, {kind: 'enter'}, 'truecolor');
+    assert.ok(editor.picker);
+    editorKey(editor, {kind: 'text', value: '#'}, 'truecolor');
+    for (const character of 'ff8800') editorKey(editor, {kind: 'text', value: character}, 'truecolor');
+    editorKey(editor, {kind: 'enter'}, 'truecolor');
+    assert.equal(editor.picker, undefined);
+    assert.equal(editor.draft.prompt.project, '#ff8800');
+    const exported = writeThemeExport(editor.draft, join(directory, 'themes'));
     assert.match(exported, /my-nord\.nmsh-theme\.json$/u);
     const preview = readThemeImport(exported, directory);
     assert.ok(!('errors' in preview) && preview.theme.prompt.project === '#ff8800');
     await writeFile(join(directory, 'bad.json'), '{"schema":"nmsh-theme","version":1,"name":"x","prompt":{},"ui":{}}');
     const bad = readThemeImport('bad.json', directory);
     assert.ok('errors' in bad && bad.errors.some(error => /prompt\.project/u.test(error)));
-    state.selected = STUDIO_ROWS.findIndex(row => row.kind === 'import');
-    studioKey(state, {kind: 'enter'}, 'truecolor', directory);
-    for (const character of exported) studioKey(state, {kind: 'text', value: character}, 'truecolor', directory);
-    studioKey(state, {kind: 'enter'}, 'truecolor', directory);
-    assert.ok(state.importPreview, 'import shows a preview before use');
-    assert.match(plain(renderThemeStudio(state, 90, 30, 'truecolor', [])), /Import preview · My Nord/u);
-    studioKey(state, {kind: 'enter'}, 'truecolor', directory);
-    state.selected = STUDIO_ROWS.findIndex(row => row.kind === 'save');
-    const saved = studioKey(state, {kind: 'enter'}, 'truecolor', directory);
-    assert.equal(saved?.kind, 'save');
+    // The Import tab parses and previews first; Enter returns the save action, Esc stores nothing.
+    const context = {themes: [], accent: 'mauve' as const, pinnedTo: () => []};
+    const studio = createThemeStudio(context, 'import');
+    for (const character of exported) studioKey(studio, {kind: 'text', value: character}, 'truecolor', directory, context);
+    studioKey(studio, {kind: 'enter'}, 'truecolor', directory, context);
+    assert.ok(studio.importPreview, 'import shows a preview before use');
+    assert.match(plain(renderThemeStudio(studio, context, 90, 30, 'truecolor', [])), /Import preview · My Nord/u);
+    const action = studioKey(studio, {kind: 'enter'}, 'truecolor', directory, context);
+    assert.equal(action?.kind, 'importTheme');
+    assert.equal(action?.kind === 'importTheme' && action.origin.kind, 'nmsh');
+    editor.selected = STUDIO_ROWS.findIndex(row => row.kind === 'save');
+    assert.equal(editorKey(editor, {kind: 'enter'}, 'truecolor')?.kind, 'save');
     assert.equal(JSON.parse(await readFile(exported, 'utf8')).schema, 'nmsh-theme');
-    for (const width of [56, 90]) assert.ok(renderThemeStudio(createThemeStudio(undefined, 'nord'), width, 20, 'truecolor', []).every(row => displayWidth(row) <= width));
+    for (const width of [56, 90]) assert.ok(renderThemeStudio(createThemeStudio(context), context, width, 20, 'truecolor', []).every(row => displayWidth(row) <= width));
   } finally { await rm(directory, {recursive: true, force: true}); }
 });
 

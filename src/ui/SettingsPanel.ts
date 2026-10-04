@@ -3,6 +3,7 @@ import {shellAdapter} from '../shell/adapters/registry.js';
 import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
+import {historicalPromptLevel} from '../output/TranscriptPanel.js';
 import {PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
@@ -13,7 +14,9 @@ import {availabilityOf, availableValues, currentCursorHost, unavailableReason, t
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
-import {defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
+import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
+import {librarySummary} from '../appearance/themeLibrary.js';
+import {BRIDGE_TARGETS, effectiveMode} from '../themeBridge/model.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
 import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
@@ -84,7 +87,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio';
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio' | 'themeBridge';
 
 interface SettingsRowBase {
   id: string;
@@ -184,17 +187,23 @@ const THEME_ROWS: readonly SettingsRow[] = [
     }},
   {id: 'uiChromeColors', parent: 'uiChromePreset', when: c => c.uiChrome.source === 'custom' && c.uiChrome.preset === 'custom', label: 'Edit colors',
     description: 'Accent, text, separator, selection and status roles with the color picker', category: 'Appearance', control: 'action', actionLabel: 'Edit ›', destination: 'chromeColors'},
-  {id: 'themeFamily', label: 'Theme family', description: 'NMSh themes, bundled families or your Custom theme; colors NMSh-owned UI only', category: 'Appearance',
-    control: 'enum', options: FAMILY_LABELS, index: c => FAMILY_IDS.indexOf(familyOf(c.nmsh.palette)),
-    select: (c, index) => familyOf(c.nmsh.palette) === FAMILY_IDS[index] ? c : selectFamily(c, FAMILY_IDS[index]!)},
-  {id: 'themeVariant', parent: 'themeFamily', when: c => variantOptions(familyOf(c.nmsh.palette)).length > 1, label: 'Variant',
-    description: 'Flavor, style or variant within the theme family', category: 'Appearance', control: 'enum',
-    options: [], optionsFor: c => variantOptions(familyOf(c.nmsh.palette)).map(option => option.label),
-    index: c => Math.max(0, variantOptions(familyOf(c.nmsh.palette)).findIndex(option => option.id === c.nmsh.palette)),
+  {id: 'themeFamily', label: 'Theme', description: 'Built-in NMSh themes and families, or your Imported and Custom themes (manage them in /theme); colors NMSh-owned UI only', category: 'Appearance',
+    control: 'enum', options: FAMILY_LABELS, optionsFor: c => selectionFamilies(c).map(selectionFamilyLabel),
+    index: c => Math.max(0, selectionFamilies(c).indexOf(currentSelectionFamily(c))),
+    select: (c, index) => { const families = selectionFamilies(c); return selectSelectionFamily(c, families[((index % families.length) + families.length) % families.length]!); }},
+  {id: 'themeVariant', parent: 'themeFamily', when: c => selectionVariants(c, currentSelectionFamily(c)).length > 1, label: 'Variant',
+    description: 'Flavor, style or variant within the family, or which Imported/Custom theme', category: 'Appearance', control: 'enum',
+    options: [], optionsFor: c => selectionVariants(c, currentSelectionFamily(c)).map(option => option.label),
+    index: c => Math.max(0, selectionVariants(c, currentSelectionFamily(c)).findIndex(option => option.current(c))),
     select: (c, index) => {
-      const options = variantOptions(familyOf(c.nmsh.palette));
-      return {...c, nmsh: {...c.nmsh, palette: options[((index % options.length) + options.length) % options.length]!.id}};
+      const options = selectionVariants(c, currentSelectionFamily(c));
+      return options[((index % options.length) + options.length) % options.length]!.apply(c);
     }},
+  {id: 'themeStudio', parent: 'themeFamily', label: 'Theme Studio', description: 'Create, edit, import, export and manage Native themes', category: 'Appearance',
+    control: 'action', actionLabel: 'Open ›', value: c => librarySummary(c.themes) ?? "", destination: 'themeStudio'},
+  {id: 'themeBridge', label: 'Theme Bridge', description: 'Extend NMSh themes to fzf, less/man, LS_COLORS, tmux, Neovim and Vim; every tool starts Independent', category: 'Appearance',
+    control: 'action', actionLabel: "Open ›", value: c => { const active = BRIDGE_TARGETS.filter(target => effectiveMode(c.themeBridge, target) !== 'independent').length;
+      return active ? `${active} tool${active === 1 ? '' : 's'}` : 'Off'; }, destination: 'themeBridge'},
   enumRow({id: 'pastePreview', label: 'Paste preview', description: 'Smart: multiline, chained, mutating or risky pastes are shown before they enter the composer (never changed; nothing runs until Enter). Always: every paste. Off: insert at once', category: 'Editor',
     values: ['smart', 'always', 'off'] as const, labels: ['Smart', 'Always', 'Off'],
     get: c => c.pastePreview, set: (c, pastePreview) => ({...c, pastePreview})}),
@@ -323,9 +332,10 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'dividerColors', level: 'advanced', parent: 'divider', when: config => config.transcript.divider, label: 'Divider colors', description: 'Past-command dividers: Follow Chroma (static in history), the History colors, the UI theme, or a muted grayscale', category: 'Transcript',
     values: DIVIDER_COLOR_MODES, labels: DIVIDER_COLOR_MODES.map(mode => DIVIDER_COLOR_LABELS[mode]),
     get: config => config.transcript.dividerColors, set: (config, dividerColors) => withTranscript(config, {dividerColors})}),
-  {id: 'historicalPrompt', label: 'Prompt snapshots', description: 'Show the prompt each past command ran under', category: 'Transcript',
-    control: 'boolean', get: config => config.transcript.historicalPrompt,
-    set: (config, historicalPrompt) => withTranscript(config, {historicalPrompt})},
+  enumRow({id: 'historicalPrompt', label: 'Prompt snapshots', description: 'How past commands show the prompt they ran under: Full, Compact (place, branch, marker), Minimal (marker) or Off. Stored snapshots stay complete', category: 'Transcript',
+    values: ['full', 'compact', 'minimal', 'off'] as const, labels: ['Full', 'Compact', 'Minimal', 'Off'],
+    get: config => historicalPromptLevel(config.transcript),
+    set: (config, level) => withTranscript(config, level === 'off' ? {historicalPrompt: false} : {historicalPrompt: true, historicalPromptLevel: level})}),
   enumRow({id: 'historyColors', level: 'advanced', parent: 'historicalPrompt', when: config => config.transcript.historicalPrompt, label: 'History colors', description: 'How past prompt snapshots are colored', category: 'Transcript',
     values: COLOR_MODES, labels: ['Follow prompt', 'Choose theme', 'Grayscale'],
     get: config => config.transcript.historyColors, set: (config, historyColors) => withTranscript(config, {historyColors})}),

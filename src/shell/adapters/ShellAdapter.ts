@@ -33,6 +33,8 @@ export interface LaunchContext {
   stateDir: string;
   /** Where the shell writes its bounded name snapshot each cycle. */
   knowledgePath: string;
+  /** NMSh Theme Bridge environment file for this shell syntax, applied from the prompt hook when present. */
+  bridgeEnvPath?: string;
 }
 
 export interface ShellLaunch {
