@@ -107,6 +107,9 @@ export function runProposal(block: CommandBlock, shell: ShellId = 'zsh'): AskOut
   if (block.run.kind === 'applyEdit') {
     return {kind: 'proposal', capability: 'file.open', safety: 'mutate', confidence: 0.95, text: `Apply this edit to ${block.run.plan.path}?`, action: block.run};
   }
+  if (block.run.kind === 'format') {
+    return {kind: 'proposal', capability: 'file.open', safety: 'mutate', confidence: 0.95, text: 'Run this formatter? It rewrites the file.', command: renderCommand(block, shell), action: block.run};
+  }
   return {kind: 'proposal', capability: 'git.status', safety: block.risk === 'read' ? 'read' : 'mutate', confidence: 0.95,
     text: block.risk === 'read' ? 'Run this read-only command?' : 'Run this command? It changes your repository.', command: renderCommand(block, shell), action: block.run};
 }

@@ -31,6 +31,8 @@ export interface FileEditPlan {
   preview: string[];
   /** First changed line (1-based). */
   line: number;
+  /** Re-checked after a Run writes it (repairs). */
+  validate?: 'json' | 'jsonc' | 'python';
   reason: string;
 }
 

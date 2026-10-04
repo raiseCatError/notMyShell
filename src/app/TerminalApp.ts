@@ -142,7 +142,8 @@ import {commandReference} from '../shell/CommandReference.js';
 import {gitNextSteps, gitRunAllowed, gitSummary, renderCommand} from '../ask/gitAssist.js';
 import {readGitFacts} from '../ask/git.js';
 import {configTargets, systemConfigEnvironment} from '../ask/configTargets.js';
-import {systemFileAssistEnvironment} from '../ask/configAssist.js';
+import {systemFileAssistEnvironment, validateAfterWrite} from '../ask/configAssist.js';
+import {formatterAllowed} from '../ask/repair.js';
 import {applyPlan, sha256} from '../ask/fileEdit.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import type {AskOption} from '../ask/types.js';
@@ -5197,7 +5198,7 @@ export class TerminalApp {
       return;
     }
     // Actions with a factual result stay inside the conversation; navigation to another surface leaves Ask.
-    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile') {
+    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile' || event.action.kind === 'format') {
       await this.runInAsk(state, event.action);
       this.render();
       return;
@@ -5253,7 +5254,9 @@ export class TerminalApp {
       state.referents = {...state.referents, file: action.plan.path, block: undefined};
       const open: AskOption = {key: 'edit:open', label: 'Open the file', outcome: {kind: 'proposal', capability: 'file.open', safety: 'navigate', confidence: 0.95,
         text: `Opening ${action.plan.path}.`, action: {kind: 'openFile', path: action.plan.path}}};
-      finish(verified ? `Updated ${action.plan.path}: ${action.plan.reason}.` : `Wrote ${action.plan.path}, but reading it back did not match the preview; check the file.`, [open]);
+      let check: string | undefined;
+      try { check = validateAfterWrite(action.plan, readFileSync(action.plan.resolvedPath, 'utf8'), resolveCommand('python3')); } catch { /* unreadable */ }
+      finish(verified ? `Updated ${action.plan.path}: ${action.plan.reason}.${check ? ` ${check}` : ''}` : `Wrote ${action.plan.path}, but reading it back did not match the preview; check the file.`, [open]);
       return;
     }
     if (action.kind === 'installTool') {
@@ -5277,9 +5280,10 @@ export class TerminalApp {
       finish(`Installed ${tool.label} at ${found}.`, next);
       return;
     }
-    if (action.kind !== 'git' && action.kind !== 'read') return;
-    const argv = action.kind === 'git' ? action.argv : readArgv(action.command);
+    if (action.kind !== 'git' && action.kind !== 'read' && action.kind !== 'format') return;
+    const argv = action.kind === 'read' ? readArgv(action.command) : action.argv;
     if (action.kind === 'git' && gitRunAllowed(action.argv) !== action.risk) { finish('Ask can\'t run that command, so nothing was run.'); return; }
+    if (action.kind === 'format' && !formatterAllowed(action.argv)) { finish('Ask can\'t run that formatter command, so nothing was run.'); return; }
     const command = renderCommand({argv}, this.shellId);
     const previous = this.output.recentShell(1)?.startId;
     const draft = this.editor.text;
@@ -5344,7 +5348,7 @@ export class TerminalApp {
     const context = await this.askContext(text);
     state.repoRoot = context.repoRoot;
     const deterministic = resolveRequest(text, context, {rejected: state.rejected}, this.askCommands(),
-      systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath));
+      systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath, name => resolveCommand(name), this.askCommands().install));
     if (!this.understanding.eligible('ask')) return deterministic;
     // Auto: built-in understanding first; the model is asked only when it is unsure. Always: the model is asked first.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');

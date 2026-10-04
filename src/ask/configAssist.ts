@@ -2,6 +2,8 @@ import {basename, extname, isAbsolute, join, resolve} from 'node:path';
 import {displayConfigPath, type ConfigFormat, type ConfigTarget} from './configTargets.js';
 import {flattenJson, inspectFile, parseJsonc, planAppend, planCreate, planJsonSet, planKeyValueSet, planReplace, renderEditCommand, type FileEditPlan, type FileFacts, type PlanResult} from './fileEdit.js';
 import type {AskContext, AskOutcome, AskReferents, CommandBlock} from './types.js';
+import {chooseFormatter, jsonChecker, pythonChecker, repairJson, repairPythonBracket, repairPythonIndent} from './repair.js';
+import {installProposal} from './commands.js';
 
 /**
  * Config files and verified edits for Ask, all deterministic:
@@ -15,6 +17,10 @@ export interface FileAssistEnvironment {
   /** Roots NMSh may write in: home and the project. */
   roots: readonly string[];
   runtimes: {python3?: string; node: string};
+  /** Where an executable is, when installed (formatters); never runs it. */
+  which?(name: string): string | undefined;
+  /** A curated install for an exact executable name (the /tools catalog). */
+  install?(name: string): {tool: string; label: string} | undefined;
 }
 
 type Target = ConfigTarget & {exists: boolean};
@@ -201,6 +207,8 @@ function setRequest(raw: string): {key: string; value: string} | undefined {
  */
 export function resolveFileRequest(raw: string, text: string, context: AskContext, env?: FileAssistEnvironment): AskOutcome | undefined {
   if (!env) return undefined;
+  const repaired = resolveRepair(raw, text, context, env);
+  if (repaired) return repaired;
   const mentionsConfig = /\b(?:config(?:uration)?|settings|rc file|dotfile|zshrc|bashrc|config\.fish|gitconfig)\b/u.test(text);
   const refs = context.referents;
   // Removal is deliberately not part of this feature.
@@ -274,8 +282,70 @@ export function resolveFileRequest(raw: string, text: string, context: AskContex
     next: [{key: `open:${path}`, label: 'Open it', outcome: openOutcome(path, target?.label ?? basename(path), context, target)}], referents: remember(target, path)}));
 }
 
-export function systemFileAssistEnvironment(home: string, projectRoot: string | undefined, python3: string | undefined, node: string): FileAssistEnvironment {
+export function systemFileAssistEnvironment(home: string, projectRoot: string | undefined, python3: string | undefined, node: string,
+  which?: (name: string) => string | undefined, install?: FileAssistEnvironment['install']): FileAssistEnvironment {
   const roots = [home, ...(projectRoot ? [projectRoot] : [])];
-  return {inspect: path => inspectFile(path, roots), roots, runtimes: {...(python3 ? {python3} : {}), node}};
+  return {inspect: path => inspectFile(path, roots), roots, runtimes: {...(python3 ? {python3} : {}), node}, ...(which ? {which} : {}), ...(install ? {install} : {})};
 }
 
+
+/* ---------- verified repairs and formatters ---------- */
+
+function fileFromRequest(raw: string, context: AskContext, env: FileAssistEnvironment): string | undefined {
+  return explicitPath(raw, context, env) ?? context.referents?.file;
+}
+
+/**
+ * "fix the JSON in x.json", "this Python indentation is broken", "fix the
+ * missing ) in parser.py", "format foo.py". Only JSON/JSONC and Python have
+ * verified repairs; other languages get their formatter or an honest answer.
+ */
+function resolveRepair(raw: string, text: string, context: AskContext, env: FileAssistEnvironment): AskOutcome | undefined {
+  const formatting = /^(?:please )?(?:format|reformat|prettify|tidy)\b/u.test(text);
+  const repairing = /\b(?:fix|repair|correct|close|balance)\b/u.test(text) && /\b(?:json|syntax|brackets?|braces?|parens?|parenthes[ie]s|indent(?:ation|ed)?|missing [)\]}])/u.test(text)
+    || /\bindentation (?:is )?(?:broken|wrong|off)\b/u.test(text);
+  if (!formatting && !repairing) return undefined;
+  const path = fileFromRequest(raw, context, env);
+  if (!path) return {kind: 'choose', reason: 'missing', capability: 'file.open', question: `Which file? Name it, e.g. "${formatting ? 'format' : 'fix the indentation in'} src/app.py".`, options: []};
+  const facts = env.inspect(path);
+  if (facts.content === undefined || facts.refusal) {
+    return {kind: 'answer', capability: 'file.open', text: `${display(path, context)} ${facts.refusal ?? 'cannot be read'}.`};
+  }
+  const extension = extname(path).toLowerCase();
+  if (formatting) {
+    if (/\b(?:these|those|this) lines\b|\blines? \d+/u.test(text)) {
+      return {kind: 'answer', capability: 'file.open', text: 'Formatters here format whole files, not a range. Say "format the file" to format all of it, or "fix the indentation" for a verified small repair.', referents: {file: path}};
+    }
+    const formatter = chooseFormatter(path, context.repoRoot ?? context.cwd, name => env.which?.(name));
+    if (!formatter) return {kind: 'answer', capability: 'file.open', text: `I don't have a configured formatter for ${basename(path)} here (Prettier and clang-format are used only with a project config).`, referents: {file: path}};
+    if ('missing' in formatter) {
+      const recipe = formatter.missing.map(name => ({name, install: env.install?.(name)})).find(item => item.install);
+      return {kind: 'answer', capability: 'file.open', text: `${formatter.missing.join(' or ')} ${formatter.missing.length > 1 ? 'are' : 'is'} not installed, so I can't format ${basename(path)}.`,
+        ...(recipe ? {next: [{key: `install:${recipe.name}`, label: `Install ${recipe.name}`, outcome: installProposal(recipe.name, recipe.install!)}]} : {}), referents: {file: path}};
+    }
+    const block: CommandBlock = {argv: formatter.argv, provenance: 'context', risk: 'mutate', note: formatter.note, run: {kind: 'format', argv: formatter.argv}};
+    return {kind: 'answer', capability: 'file.open', text: `${formatter.name} rewrites ${display(path, context)} in place.`, block, referents: {file: path, block}};
+  }
+  const jsonc = extension === '.jsonc' || ((context.configs ?? []).find(target => target.path === path)?.format === 'jsonc') || /tsconfig|jsconfig|settings\.json|keymap\.json/u.test(basename(path));
+  const decorate = (result: ReturnType<typeof repairJson>, validate: 'json' | 'jsonc' | 'python'): AskOutcome => {
+    if (result.kind === 'plan') result.plan.validate = validate;
+    return resultOutcome(result, facts, context, env, undefined);
+  };
+  if (extension === '.json' || extension === '.jsonc' || jsonc) return decorate(repairJson(facts, Boolean(jsonc)), jsonc ? 'jsonc' : 'json');
+  if (extension === '.py') {
+    const checker = pythonChecker(env.runtimes.python3);
+    const diagnostic = checker?.(facts.content);
+    const wantsIndent = /\bindent/u.test(text) || (diagnostic && !diagnostic.ok && /indent/u.test(diagnostic.message));
+    if (diagnostic?.ok && !wantsIndent) return {kind: 'answer', capability: 'file.open', text: `${basename(path)} compiles without syntax errors.`, referents: {file: path}};
+    return decorate(wantsIndent ? repairPythonIndent(facts, checker) : repairPythonBracket(facts, checker), 'python');
+  }
+  return {kind: 'answer', capability: 'file.open', text: `I can make verified syntax repairs in JSON and Python files. For ${basename(path)}, try "format ${basename(path)}" if it has a formatter, or open it.`, referents: {file: path}};
+}
+
+/** Re-check a repaired file after a Run wrote it. */
+export function validateAfterWrite(plan: FileEditPlan, content: string, python3?: string): string | undefined {
+  if (!plan.validate) return undefined;
+  const result = plan.validate === 'python' ? pythonChecker(python3)?.(content) : jsonChecker(plan.validate === 'jsonc')(content);
+  if (!result) return undefined;
+  return result.ok ? 'It now parses cleanly.' : `It still reports: ${result.message}${result.line ? ` (line ${result.line})` : ''}. Nothing else was changed.`;
+}

@@ -39,6 +39,8 @@ export type AskAction =
   | {kind: 'attachSession'; id: string}
   /** A Git command NMSh built from facts (never request or model text); the allowlist and risk are checked again before it runs. */
   | {kind: 'git'; argv: string[]; risk: 'read' | 'mutate'}
+  /** Run an installed formatter with its allowlisted argv on one file (visible submission). */
+  | {kind: 'format'; argv: string[]}
   /** Apply a verified file edit plan (NMSh writes it; no shell). */
   | {kind: 'applyEdit'; plan: FileEditPlan}
   /** A curated tool install (the /tools recipe, shown exactly before the Yes); never a guessed package. */
