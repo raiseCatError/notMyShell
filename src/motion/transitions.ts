@@ -45,13 +45,14 @@ export function lookFor(motion: MotionSettings): MotionLook & {speed: number} {
 export type Transition =
   | {kind: 'launch'; style: 'sweep' | 'pulse'; start: number; duration: number; look: MotionLook}
   | {kind: 'materialize'; from: number; to: number; text: string; vivid: boolean; start: number; duration: number; look: MotionLook}
+  | {kind: 'travel'; from: number; to: number; row: number; start: number; duration: number; look: MotionLook}
   | {kind: 'seal'; blockStartId: number; tone: Tone; start: number; duration: number; look: MotionLook}
   | {kind: 'echo'; event: SemanticEvent; expressive: boolean; start: number; duration: number; look: MotionLook}
   | {kind: 'morph'; changes: ModuleChange[]; expressive: boolean; start: number; duration: number; look: MotionLook};
 
 export interface ModuleChange {id: string; text: string; change: 'changed' | 'appeared' | 'disappeared'; role?: string}
 
-export const DURATIONS = {launch: 170, materializeSubtle: 150, materializeVivid: 260, seal: 240, echoSubtle: 380, echoExpressive: 620, morphSubtle: 150, morphExpressive: 260} as const;
+export const DURATIONS = {launch: 170, materializeSubtle: 150, materializeVivid: 260, seal: 240, echoSubtle: 380, echoExpressive: 620, morphSubtle: 150, morphExpressive: 260, travelBase: 170, travelPerCell: 4, travelMax: 230, travelMinCells: 3} as const;
 
 /** Whether decorative motion may run at all right now (Reduced Motion, Effects Off, NO_COLOR win). */
 export interface MotionGate {reducedMotion: boolean; effectsOff: boolean; color: boolean}
@@ -82,6 +83,16 @@ export class Transitions {
     const level = this.settings().completionHighlight;
     if (level === 'off' || to <= from || !this.allowed()) return;
     this.replace('materialize', {kind: 'materialize', from, to, text, vivid: level === 'vivid', start: now, ...this.tuned(level === 'vivid' ? DURATIONS.materializeVivid : DURATIONS.materializeSubtle)});
+  }
+
+  /**
+   * The caret jumped from column `from` to `to` on `row` (presentation only; the caret already moved).
+   * One trail at a time: a newer jump retargets, never queues. One-cell moves are not animated.
+   */
+  travel(from: number, to: number, row: number, now: number): void {
+    if (this.settings().cursorTravel !== 'on' || Math.abs(to - from) < DURATIONS.travelMinCells || !this.allowed()) return;
+    const duration = Math.min(DURATIONS.travelMax, DURATIONS.travelBase + Math.abs(to - from) * DURATIONS.travelPerCell);
+    this.replace('travel', {kind: 'travel', from, to, row, start: now, ...this.tuned(duration)});
   }
 
   /** The editor changed some other way: a stale materialization range must not linger. */
@@ -140,6 +151,25 @@ export function sweepCells(width: number, t: number, color: RgbColor, strength: 
   for (let column = Math.max(0, Math.floor(center - band)); column < Math.min(width, Math.ceil(center + band)); column += 1) {
     const falloff = 1 - Math.abs(column - center) / band;
     if (falloff > 0) cells.set(column, {tint: {color, amount: clamp01(falloff * strength)}});
+  }
+  return cells;
+}
+
+/**
+ * A soft trail between two caret columns: strongest next to the destination, fading with distance and time.
+ * The destination cell itself is left to the real caret. Gentler and slower than the completion highlight.
+ */
+export function travelCells(from: number, to: number, t: number, color: RgbColor, strength: number, rich = false): Map<number, CellPaint> {
+  const cells = new Map<number, CellPaint>();
+  const span = Math.abs(to - from);
+  const lo = Math.min(from, to), hi = Math.max(from, to);
+  const fade = (1 - clamp01(t)) ** 1.3;
+  for (let column = lo; column <= hi; column += 1) {
+    if (column === to) continue;
+    const near = 1 - Math.abs(column - to) / Math.max(1, span);
+    const level = strength * fade * near ** 1.4;
+    if (level <= 0.02) continue;
+    cells.set(column, rich ? {fill: mixRgb(RICH_BASE, color, clamp01(level))} : {tint: {color, amount: clamp01(level)}});
   }
   return cells;
 }
@@ -251,6 +281,8 @@ export const transitionPaint = {
   /** Completion highlight over the inserted columns [from, to). */
   materialize: (from: number, to: number, t: number, vivid: boolean, look: MotionLook = CLEAN_LOOK) =>
     rich(look) ? richDecayCells(from, to, t, UI_COLORS.accent, gain(look, vivid ? 0.7 : 0.45)) : decayCells(from, to, t, UI_COLORS.accent, gain(look, vivid ? 0.75 : 0.5), true),
+  /** The caret-travel trail on the input row between the old and new caret columns. */
+  travel: (from: number, to: number, t: number, look: MotionLook = CLEAN_LOOK) => travelCells(from, to, t, UI_COLORS.accent, gain(look, 0.42), rich(look)),
   /** Block Seal over a finished block's header row. */
   seal: (tone: Tone, columns: number, t: number, look: MotionLook = CLEAN_LOOK) => rich(look)
     ? richSweepCells(columns, t, toneColor(tone), gain(look, tone === 'failure' ? 0.75 : 0.55), tone === 'failure' ? 6 : 12)

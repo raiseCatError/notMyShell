@@ -3,6 +3,7 @@ import {fromOklch, toOklch} from '../chroma/color.js';
 import type {Rgb} from '../chroma/escape.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import {UI_COLORS} from '../ui/palette.js';
+import {CAT_PIXELS} from './catSprite.js';
 import type {ScreenCapture} from './screenCapture.js';
 import {effectLoops, renderScreenEffect, type ScreenEffectId} from './screenEffects.js';
 
@@ -429,17 +430,8 @@ function fireworks(grid: CellGrid, options: SceneOptions): void {
 
 // ---- Bouncing Vespyr --------------------------------------------------------------
 
-/** The approved Vespyr pixels (see output/Welcome.ts): L body, E eye, two pixel rows per cell. */
-const CAT = [
-  '.L...L........',
-  '.LLLLL........',
-  '.LELEL.......L',
-  '.LELEL......L.',
-  '.LLLLLLLLLLL..',
-  '..LLLLLLLLLL..',
-  '..LLLLLLLLLL..',
-  '..L.L....L.L..',
-];
+/** The approved Vespyr pixels live in catSprite.ts (shared with raiseCatError). */
+const CAT = CAT_PIXELS;
 const CAT_WIDTH = 14;
 const CAT_HEIGHT = 4;
 const BODY = pack({red: 172, green: 150, blue: 230});

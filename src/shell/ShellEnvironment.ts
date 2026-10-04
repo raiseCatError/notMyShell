@@ -26,6 +26,8 @@ export type PluginRelation = 'nmsh-owns-surface' | 'compatible';
 
 export interface DetectedPlugin {
   id: string;
+  /** The shell this plugin belongs to; plugins for other shells never describe the active one. */
+  shell: ShellFamily;
   label: string;
   evidence: string;
   relation: PluginRelation;
@@ -72,7 +74,9 @@ export function detectShellEnvironment(probe: EnvironmentProbe = systemProbe()):
   const xdgData = env.XDG_DATA_HOME && isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : join(home, '.local', 'share');
   const zshrcPath = join(zdot, '.zshrc');
   const zshrc = activeText(probe.read(zshrcPath));
-  const bashrc = activeText(probe.read(join(home, '.bashrc')));
+  // Bash reads one of several startup files; each is read as bounded text only, never sourced.
+  const bashFiles = ['.bashrc', '.bash_profile', '.bash_login', '.profile'].map(name => ({name, text: activeText(probe.read(join(home, name)))}));
+  const bashEvidence = (pattern: RegExp, what: string) => { const hit = bashFiles.find(file => pattern.test(file.text)); return hit ? `~/${hit.name} ${what}` : undefined; };
   const zimrc = activeText(probe.read(join(zdot, '.zimrc')));
   const antidotePlugins = activeText(probe.read(join(zdot, '.zsh_plugins.txt')));
   const sheldon = activeText(probe.read(join(xdgConfig, 'sheldon', 'plugins.toml')));
@@ -95,20 +99,20 @@ export function detectShellEnvironment(probe: EnvironmentProbe = systemProbe()):
   add('zplug', 'zplug', 'plugin-manager', 'zsh', /\bzplug\b/u.test(zshrc) ? `${rc} calls zplug` : undefined);
   add('fisher', 'Fisher', 'plugin-manager', 'fish', probe.exists(join(xdgConfig, 'fish', 'functions', 'fisher.fish')) ? 'fisher.fish is in your fish functions' : undefined);
   add('oh-my-fish', 'Oh My Fish', 'framework', 'fish', probe.exists(join(xdgData, 'omf')) ? `${tilde(join(xdgData, 'omf'), home)} exists` : undefined);
-  add('oh-my-bash', 'Oh My Bash', 'framework', 'bash', /oh-my-bash\.sh/u.test(bashrc) ? '~/.bashrc sources oh-my-bash.sh' : undefined);
-  add('bash-it', 'Bash-it', 'framework', 'bash', /bash_it\.sh/u.test(bashrc) ? '~/.bashrc sources bash_it.sh' : undefined);
+  add('oh-my-bash', 'Oh My Bash', 'framework', 'bash', bashEvidence(/oh-my-bash\.sh/u, 'sources oh-my-bash.sh'));
+  add('bash-it', 'Bash-it', 'framework', 'bash', bashEvidence(/bash_it\.sh/u, 'sources bash_it.sh'));
 
   // Oh My Zsh lists plugins as bare names inside plugins=( ... ).
   const omzPlugins = new Set((/^\s*plugins=\(([^)]*)\)/mu.exec(zshrc)?.[1] ?? '').split(/\s+/u).filter(Boolean));
   const sources = [zshrc, zimrc, antidotePlugins, sheldon].join('\n');
   const plugins: DetectedPlugin[] = [];
-  const plugin = (id: string, label: string, relation: PluginRelation, note: string, extra = '') => {
+  const plugin = (id: string, label: string, relation: PluginRelation, note: string, extra = '', shell: ShellFamily = 'zsh') => {
     const pattern = new RegExp(`(?:^|[/\\s"'(])${id.replace(/\./gu, '\\.')}(?:$|[/\\s"').]|\\.plugin)`, 'mu');
     let evidence: string | undefined;
     if (omzPlugins.has(id)) evidence = 'listed in Oh My Zsh plugins=(...)';
     else if (pattern.test(sources)) evidence = 'referenced in your zsh plugin configuration';
     else if (extra && pattern.test(extra)) evidence = 'referenced in your fish plugins';
-    if (evidence) plugins.push({id, label, evidence, relation, note});
+    if (evidence) plugins.push({id, shell, label, evidence, relation, note});
   };
   plugin('zsh-autosuggestions', 'zsh-autosuggestions', 'nmsh-owns-surface',
     'Draws ghost text through ZLE. NMSh owns its editor and runs zsh without ZLE, so inside NMSh the NMSh suggestions are shown instead; the plugin keeps working in /zsh and ordinary zsh.');
@@ -121,20 +125,37 @@ export function detectShellEnvironment(probe: EnvironmentProbe = systemProbe()):
   plugin('zsh-completions', 'zsh-completions', 'compatible',
     'Adds completion definitions to fpath. NMSh\'s configured completion reads your configured definitions, so these feed the NMSh menu.');
   plugin('z.lua', 'z.lua', 'compatible', 'A directory jumper with its own hooks; NMSh leaves hooks unchanged.');
-  plugin('autopair', 'autopair (fish)', 'nmsh-owns-surface', 'Edits the fish command line. NMSh owns the composer, so it has no effect inside NMSh.', fishPlugins);
+  plugin('autopair', 'autopair (fish)', 'nmsh-owns-surface', 'Edits the fish command line. NMSh owns the composer, so it has no effect inside NMSh.', fishPlugins, 'fish');
   return {environments, plugins};
 }
 
 export const OWNERSHIP_NOTE = 'NMSh provides its editor, completion menu, prompt, transcript and sessions without requiring a plugin manager. '
   + 'Existing shell frameworks and plugin managers keep providing compatible shell-level functionality (aliases, functions, completion definitions, hooks).';
 
-/** Status rows: label → value. Factual and short. */
-export function shellEnvironmentRows(report: ShellEnvironmentReport): Array<[string, string]> {
-  const rows: Array<[string, string]> = [];
-  const frameworks = report.environments.filter(item => item.kind === 'framework');
-  const managers = report.environments.filter(item => item.kind === 'plugin-manager');
-  rows.push(['Shell framework', frameworks.length ? frameworks.map(item => `${item.label} (${item.evidence})`).join('; ') : 'none detected']);
+export interface ActiveShell {
+  id: ShellFamily;
+  /** Resolved executable of the shell backing this session, when known. */
+  path?: string;
+}
+
+const SHELL_NAMES: Record<ShellFamily, string> = {zsh: 'Zsh', fish: 'Fish', bash: 'Bash'};
+
+/**
+ * Status rows: label → value. The first row is the shell actually backing the
+ * session (never inferred from $SHELL); framework and plugin rows describe
+ * that shell only, and environments found for the other shells are listed
+ * separately so they cannot look like they manage this session.
+ */
+export function shellEnvironmentRows(report: ShellEnvironmentReport, active: ActiveShell): Array<[string, string]> {
+  const rows: Array<[string, string]> = [['Shell', active.path ? `${active.id} · ${active.path}` : active.id]];
+  const mine = report.environments.filter(item => item.shell === active.id);
+  const frameworks = mine.filter(item => item.kind === 'framework');
+  const managers = mine.filter(item => item.kind === 'plugin-manager');
+  rows.push(['Shell framework', frameworks.length ? frameworks.map(item => `${item.label} (${item.evidence})`).join('; ') : `none · plain ${active.id}`]);
   rows.push(['Plugin manager', managers.length ? managers.map(item => `${item.label} (${item.evidence})`).join('; ') : 'none detected']);
-  for (const plugin of report.plugins) rows.push([plugin.label, `detected · ${plugin.relation === 'compatible' ? 'compatible' : 'NMSh owns this surface'}`]);
+  for (const plugin of report.plugins.filter(item => item.shell === active.id)) rows.push([plugin.label, `detected · ${plugin.relation === 'compatible' ? 'compatible' : 'NMSh owns this surface'}`]);
+  const others = (['zsh', 'fish', 'bash'] as const).filter(id => id !== active.id)
+    .map(id => ({id, found: report.environments.filter(item => item.shell === id)})).filter(entry => entry.found.length);
+  if (others.length) rows.push(['Other shell environments', others.map(entry => `${SHELL_NAMES[entry.id]}: ${entry.found.map(item => item.label).join(', ')}`).join(' · ')]);
   return rows;
 }

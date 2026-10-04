@@ -121,11 +121,11 @@ test('footer follows Claude-style phrasing for the focused control', () => {
   assert.ok(!footer(config()).includes('Tab'));
 });
 
-test('Settings view lists panel entry points and truthful planned areas', () => {
+test('Settings view lists panel entry points and carries no stale roadmap copy', () => {
   const rows = plain(renderSettingsPanel(config({view: 'settings'}), 90));
   assert.ok(rows.some(row => /› Appearance\s+Terminal opacity and blur/u.test(row)));
-  assert.ok(rows.some(row => row.includes('Planned for v0.4')));
-  assert.ok(rows.some(row => row.includes('Layout · Blocks')));
+  assert.ok(!rows.some(row => /Planned for|v0\.4/u.test(row)), 'features that shipped are not listed as planned');
+  assert.ok(!rows.some(row => row.includes('Layout · Blocks')));
 });
 
 test('Left/Right change an enum inline and persist it; Enter changes too', () => withApp(async (app, path) => {

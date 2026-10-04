@@ -210,7 +210,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     NATIVE_FIRST_MESSAGE,
     NATIVE_FIRST_DETAIL,
     'Your current choices are already selected. Nothing changes until you apply on the last step.',
-  ], rows: []},
+  ], rows: [
+    {row: configRow('panelPosition'), note: draft => draft.panelPosition === 'top' ? 'Panels like this one sit at the top of the screen' : 'Panels like this one sit at the bottom of the screen'},
+  ]},
   {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
     {row: configRow('glyphStyle'), note: draft => draft.glyphStyle === 'nerd' ? 'Needs a Nerd Font in your terminal' : 'Works with any terminal font'},
   ]},

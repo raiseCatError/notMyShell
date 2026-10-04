@@ -98,3 +98,17 @@ test('R does nothing while searching, so it can be typed', () => withApp(app => 
   app['handleKey']({kind: 'text', value: 'r'});
   assert.equal(app['settingsPanelState']!.searchQuery, 'r');
 }));
+
+
+import {normalizePromptConfiguration as normalizeConfig} from '../src/prompt/configuration.js';
+test('panel position: Bottom by default, persisted, malformed values fall back, independent of the composer position', () => {
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.panelPosition, 'bottom');
+  assert.equal(normalizeConfig({}).panelPosition, 'bottom');
+  assert.equal(normalizeConfig({panelPosition: 'top'}).panelPosition, 'top');
+  for (const bad of ['left', 'flow', 3, null, true]) assert.equal(normalizeConfig({panelPosition: bad}).panelPosition, 'bottom');
+  assert.equal(normalizeConfig({composerPosition: 'top'}).panelPosition, 'bottom', 'a Top composer does not imply Top panels');
+  assert.equal(normalizeConfig({panelPosition: 'top'}).composerPosition, 'bottom', 'nor the other way round');
+  const row = SETTINGS_ROWS.find(item => item.id === 'panelPosition')!;
+  assert.equal(row.category, 'General');
+  assert.equal(row.control === 'enum' && row.options.join(), 'Bottom,Top');
+});

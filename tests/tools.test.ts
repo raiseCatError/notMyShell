@@ -10,7 +10,7 @@ import {setIconStyle} from '../src/ui/glyphs.js';
 
 test('offline catalog, truthful filters and curated argv recipes do not execute discovery', () => {
   assert.equal(new Set(TOOLS.map(tool => tool.id)).size, TOOLS.length);
-  assert.deepEqual(TOOLS.filter(tool => tool.recommended).map(tool => tool.id).sort(), ['fastfetch', 'fd', 'fzf', 'jq', 'rg', 'zoxide']);
+  assert.deepEqual(TOOLS.filter(tool => tool.recommended).map(tool => tool.id).sort(), ['fastfetch', 'fd', 'fzf', 'jq', 'rg', 'tealdeer', 'zoxide']);
   const state = createToolsPanel(new Set(['fzf']));
   state.statuses.fzf = {state: 'installed', version: 'stub 1'};
   state.statuses.fd = {state: 'missing'};

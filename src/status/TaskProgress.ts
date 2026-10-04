@@ -4,7 +4,8 @@ import {spawn, type ChildProcessByStdio} from 'node:child_process';
 import {environmentFor, resolveCommand, STANDARD_TOOL_DIRECTORIES} from '../providers/providers.js';
 import type {Readable} from 'node:stream';
 import {formatDuration} from './commandTiming.js';
-import {shimmerText} from './shimmer.js';
+import {interpolateRgb, shimmerIntensity, shimmerText} from './shimmer.js';
+import {colorLevel} from '../presentation/capabilities.js';
 import {presentationAnimationElapsed} from '../presentation/environment.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -144,11 +145,42 @@ export function taskProgressBar(state: TaskSnapshot, now = Date.now(), width = 2
   return track.repeat(position) + head + track.repeat(width - position - 1);
 }
 
+/**
+ * The bar as a living row, from the same travelling-wave primitive as the label
+ * shimmer. Presentation only: a determinate bar keeps its factual fill and the
+ * wave moves inside the filled cells (unfilled cells never light up); an
+ * indeterminate bar has a travelling segment and never invents a percentage.
+ * Colors are the theme's working/secondary roles, so imported themes work. With
+ * Reduced Motion, no color or a finished task the plain static bar is used.
+ */
+export function animatedProgressBar(state: TaskSnapshot, now = Date.now(), width = 24): string {
+  const plain = taskProgressBar(state, now, width);
+  if (state.status !== 'running' || state.reducedMotion || isReducedMotion() || colorLevel() === 'none') return `${foreground(UI_COLORS.secondary)}${plain}${RESET}`;
+  const elapsed = presentationAnimationElapsed(now - state.startedAt);
+  const safe = getCurrentGlyphMode() === 'safe';
+  const track = foreground(UI_COLORS.secondary);
+  const tone = (level: number) => foreground(interpolateRgb(UI_COLORS.workingBase, UI_COLORS.workingPeak, level));
+  const cells = [...plain];
+  if (state.total && state.completed !== undefined) {
+    const count = Math.round(width * state.completed / state.total);
+    return cells.map((glyph, index) => (index < count
+      ? `${tone(shimmerIntensity(elapsed, index, width, false))}${glyph}` : `${track}${glyph}`)).join('') + RESET;
+  }
+  // Indeterminate: a soft segment sweeping left to right and looping smoothly.
+  const trail = safe ? ['#', '+', '-'] : ['█', '▓', '▒'];
+  const head = (elapsed / 90) % (width + 8) - 4;
+  const trackGlyph = safe ? '-' : '─';
+  return Array.from({length: width}, (_, index) => {
+    const distance = Math.abs(index - head);
+    return distance < trail.length ? `${tone(1 - distance / trail.length)}${trail[Math.floor(distance)]}` : `${track}${trackGlyph}`;
+  }).join('') + RESET;
+}
+
 export function renderTaskProgress(state: TaskSnapshot, now = Date.now()): string[] {
   const duration = taskElapsed(state, now);
   if (state.status === 'running') {
     return [`${shimmerText(`${getCurrentGlyphMode() === 'safe' ? '*' : '◈'} ${state.label}…`, state.reducedMotion ? 0 : presentationAnimationElapsed(now - state.startedAt), !state.reducedMotion && !isReducedMotion())}${RESET}  ${duration}`,
-      `${foreground(UI_COLORS.secondary)}  ${taskProgressBar(state, now)}${RESET}`];
+      `  ${animatedProgressBar(state, now)}`];
   }
   const success = state.status === 'succeeded';
   const icon = success ? GLYPHS.success : GLYPHS.failure;

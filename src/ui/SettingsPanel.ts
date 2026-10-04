@@ -3,7 +3,7 @@ import {shellAdapter} from '../shell/adapters/registry.js';
 import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
-import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -310,6 +310,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
     get: config => config.glyphStyle, set: (config, glyphStyle) => ({...config, glyphStyle, glyphChoiceComplete: true})}),
+  enumRow({id: 'panelPosition', label: 'NMSh panel position', description: 'Where full-width NMSh panels (Setup, Settings, Tools, ...) sit: Bottom (default) or Top. Independent of the composer position', category: 'General',
+    values: PANEL_POSITIONS, labels: ['Bottom', 'Top'],
+    get: config => config.panelPosition, set: (config, panelPosition) => ({...config, panelPosition})}),
   {id: 'provider', label: 'Prompt provider', description: 'Provider, theme, layout, and modules', category: 'Prompt',
     control: 'child', destination: 'prompt', value: config => providerLabel(config.provider)},
   {id: 'divider', label: 'History divider', description: 'Rule drawn above each past command', category: 'Transcript',
@@ -555,7 +558,6 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
 /** Text cue (not color) that a value differs from its default. */
 const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');
 
-export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;
 
 /**
  * Config reads as a short list of named groups, scrolled continuously. A row's group comes from its
@@ -566,7 +568,7 @@ export const CONFIG_GROUPS = ['General', 'Appearance', 'Prompt & Composer', 'Edi
 export type ConfigGroup = typeof CONFIG_GROUPS[number];
 
 export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
-  glyphStyle: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
+  glyphStyle: 'General', panelPosition: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
   promptVibrance: 'Appearance',
   showShell: 'Prompt & Composer', composerPosition: 'Prompt & Composer', composerDividers: 'Prompt & Composer', divider: 'Prompt & Composer', historicalPrompt: 'Prompt & Composer',
   transcriptPresentation: 'Editor', openWith: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
@@ -600,12 +602,12 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
-  'glyphStyle', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
+  'glyphStyle', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
   'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
   'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
   'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',
-  'motion_rendering', 'motion_contextTransitions', 'motion_commandLaunch', 'motion_completionHighlight', 'motion_completionEffect', 'motion_eventFeedback', 'motion_intensity', 'motion_speed',
+  'motion_rendering', 'motion_contextTransitions', 'motion_commandLaunch', 'motion_completionHighlight', 'motion_completionEffect', 'motion_cursorTravel', 'motion_eventFeedback', 'motion_intensity', 'motion_speed',
   'reducedMotion', 'effectsOff',
   'sessionNotices', 'agentActivity', 'notifications',
   'shellBackend', 'welcome', 'suggestions', 'history', 'picker', 'navigation', 'tools', 'toolUpdateChecks', 'installSuggestions',
@@ -905,9 +907,6 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   } else if (view === 'settings') {
     body.push(...renderRows(rows, tabsFocused ? undefined : selectedIndex, columns, '',
       row => `${SUBTLE}${row.description}`, Math.max(1, available)));
-    if (available >= rows.length + 3) {
-      body.push('', `${MARGIN}${SECONDARY}Planned for v0.4${RESET}`, `${MARGIN}${SUBTLE}${PLANNED_AREAS.join(' · ')}${RESET}`);
-    }
   } else {
     const query = state.searchQuery?.trim() ?? '';
     body.push(...renderSearchField(state, columns));

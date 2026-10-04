@@ -34,6 +34,7 @@ const DESCRIPTIONS: Record<string, string> = {
   'commandLaunch:pulse': 'The command brightens once and fades as it is handed off.',
   'completionHighlight:subtle': 'Only the inserted completion is underlined and tinted, briefly.',
   'completionHighlight:vivid': 'Only the inserted completion is underlined and tinted brightly, a little longer.',
+  'cursorTravel:on': 'A soft trail follows the caret across a multi-cell jump; the caret itself is already at its destination.',
   'completionEffect:seal': 'A finished block\'s header takes one sweep of its outcome color.',
   'eventFeedback:subtle': 'Meaningful events tint the composer rule once.',
   'eventFeedback:expressive': 'Meaningful events tint the rule and sweep the input once.',
@@ -80,6 +81,14 @@ function fixture(row: keyof MotionSettings, width: number): Fixture & {trigger: 
       paint: (transitions, now) => {
         const transition = at(transitions, now).find(item => item.kind === 'materialize');
         return transition?.kind === 'materialize' ? [transitionPaint.materialize(transition.from, transition.to, progress(transition, now), transition.vivid, transition.look)] : [];
+      }};
+  }
+  if (row === 'cursorTravel') {
+    const line = `${prompt} git commit -m wip`;
+    return {lines: [line, `  ${safe ? '' : '⌥ '}Option+Left jumps back a word`], trigger: (transitions, start) => transitions.travel(displayWidth(line), displayWidth(`${prompt} git commit -m `), 0, start),
+      paint: (transitions, now) => {
+        const transition = at(transitions, now).find(item => item.kind === 'travel');
+        return transition?.kind === 'travel' ? [transitionPaint.travel(transition.from, transition.to, progress(transition, now), transition.look)] : [];
       }};
   }
   if (row === 'completionEffect') {

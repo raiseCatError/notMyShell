@@ -5,7 +5,7 @@ import {ASK_EXCLUDED, conceptDestination, CONCEPTS, matchConcepts} from '../src/
 import type {AskContext, AskOutcome} from '../src/ask/types.js';
 import {slashCommands} from '../src/commands/slashCommands.js';
 import {PROVIDER_FAMILIES} from '../src/providers/families.js';
-import {PLANNED_AREAS, SETTINGS_ENTRIES, SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
+import {SETTINGS_ENTRIES, SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
 
 // Local understanding is irrelevant here: resolveRequest is the deterministic resolver and never calls a model.
 const context: AskContext = {cwd: '/r', home: '/h', repoRoot: '/r', branch: 'main', dirty: true, worktrees: [], shell: 'zsh', defaultShell: 'zsh',
@@ -21,11 +21,10 @@ test('coverage audit: every public command, Settings area, provider family and p
     ...new Set(slashCommands.map(command => command.name.split(' ')[0]!)),
     ...new Set([...SETTINGS_ROWS, ...SETTINGS_ENTRIES].map(row => `settings:${row.category}`)),
     ...PROVIDER_FAMILIES.map(family => `family:${family.family}`),
-    ...PLANNED_AREAS.map(area => `planned:${area}`),
   ];
   const missing = surfaces.filter(surface => !covered.has(surface) && !(surface in ASK_EXCLUDED));
   assert.deepEqual(missing, [], 'classify each new surface in src/ask/concepts.ts (covers) or ASK_EXCLUDED');
-  for (const surface of covered) if (!surface.startsWith('planned:')) assert.ok(surfaces.includes(surface), `${surface} is claimed but does not exist`);
+  for (const surface of covered) assert.ok(surfaces.includes(surface), `${surface} is claimed but does not exist`);
 });
 
 test('catalog integrity: destinations are real NMSh commands; no hallucinated surfaces', () => {
@@ -34,7 +33,7 @@ test('catalog integrity: destinations are real NMSh commands; no hallucinated su
     assert.ok(concept.aliases.length && concept.description, concept.id);
   }
   const completion = CONCEPTS.find(concept => concept.id === 'completion')!;
-  assert.equal(completion.support, 'no-ui', 'Completion is planned in Settings, not a real surface');
+  assert.equal(completion.support, 'no-ui', 'Completion has no settings surface of its own');
   assert.equal(completion.open, undefined);
   assert.ok(!slashCommands.some(command => command.name === '/completion'));
 });

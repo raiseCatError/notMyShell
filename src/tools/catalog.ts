@@ -18,6 +18,15 @@ export interface Tool extends ProviderDescriptor {
   tier?: ToolTier;
   /** Facts for future contextual discovery; never evaluated by running a tool. */
   relevantTo?: readonly string[];
+  /**
+   * Whether typing this exact executable while it is missing identifies the tool.
+   * Default true: being curated means NMSh knows what the command is; the
+   * recommendation tier says nothing about identity. Runtimes and
+   * infrastructure clients opt out explicitly with false.
+   */
+  commandNotFound?: boolean;
+  /** Extra exact command names for this tool; the canonical `executable` stays explicit. Package names are never aliases. */
+  commandAliases?: readonly string[];
   /** Runtime or infrastructure client detected as part of the environment. */
   discoveryKind?: ToolDiscoveryKind;
   package: string;
@@ -36,7 +45,7 @@ function tool(id: string, label: string, category: Tool['category'], description
     executable: id, versionArgs: ['--version'], ...options, ...(tier ? {tier, recommended: tier === 'recommended'} : {})};
 }
 const ENHANCED = {tier: 'enhanced'} as const;
-const ENVIRONMENT = {discoveryKind: 'environment'} as const;
+const ENVIRONMENT = {discoveryKind: 'environment', commandNotFound: false} as const;
 
 /** Curated offline metadata. No third-party submissions, update checks or marketplace. */
 export const TOOLS: readonly Tool[] = [
@@ -76,8 +85,8 @@ export const TOOLS: readonly Tool[] = [
   tool('macchina', 'Macchina', 'Shell / Workflow', 'Optional startup welcome capture.', 'https://github.com/Macchina-CLI/macchina',
     {providerFamily: 'welcome', integration: 'welcome', lifecycle: 'maintenance'}),
   tool('stow', 'GNU Stow', 'Shell / Workflow', 'Explicitly managed dotfile symlinks.', 'https://www.gnu.org/software/stow/'),
-  tool('tealdeer', 'tealdeer (TLDR pages)', 'Shell / Workflow', 'Optional TLDR pages client; Ask uses its local cache for practical command examples.', 'https://github.com/tealdeer-rs/tealdeer',
-    {executable: 'tldr', package: 'tealdeer'}),
+  tool('tealdeer', 'TLDR (tealdeer)', 'Shell / Workflow', 'Practical local command examples (command tldr, package tealdeer). Optional; Ask uses its local cache and never updates it.', 'https://github.com/tealdeer-rs/tealdeer',
+    {executable: 'tldr', package: 'tealdeer', recommended: true}),
   tool('tmux', 'tmux', 'Shell / Workflow', 'Independent terminal multiplexer.', 'https://github.com/tmux/tmux', {versionArgs: ['-V']}),
   tool('docker', 'Docker CLI', 'Containers / Infrastructure', 'Container client; daemon availability is not inferred.', 'https://docs.docker.com/', {package: 'docker', ...ENVIRONMENT, relevantTo: ['containers']}),
   tool('kubectl', 'kubectl', 'Containers / Infrastructure', 'Kubernetes client; credentials/cluster are not inspected.', 'https://kubernetes.io/docs/reference/kubectl/', {versionArgs: undefined, package: 'kubernetes-cli', ...ENVIRONMENT, relevantTo: ['kubernetes']}),
@@ -107,12 +116,21 @@ export function toolsInTier(tier: ToolTier): Tool[] {
 }
 
 /**
- * The curated tool a missing command word maps to, by exact executable name
- * only. Language runtimes, infrastructure clients and legacy tools are never
- * suggested; nothing is fuzzy-matched.
+ * Identity only: which curated tool an exact command name belongs to. No
+ * install, execution, network or package guessing. Tools that opted out with
+ * `commandNotFound: false` are not identified by it.
  */
-export function suggestibleToolFor(word: string): Tool | undefined {
+export function knownToolForExecutable(word: string, tools: readonly Tool[] = TOOLS): Tool | undefined {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.+-]*$/u.test(word)) return undefined;
-  return TOOLS.find(tool => tool.executable === word && !tool.legacy && tool.discoveryKind !== 'environment'
-    && tool.lifecycle !== 'maintenance' && !tool.integration && (tool.tier !== undefined || tool.id === 'yq'));
+  return tools.find(tool => tool.commandNotFound !== false && ((tool.executable ?? tool.id) === word || tool.commandAliases?.includes(word)));
+}
+
+/**
+ * Policy on top of identity: tools NMSh would offer to install for a missing
+ * command. Archived (legacy) and maintenance-only tools are known but never
+ * offered. Tier, provider integration and relevance play no part.
+ */
+export function suggestibleToolFor(word: string, tools: readonly Tool[] = TOOLS): Tool | undefined {
+  const tool = knownToolForExecutable(word, tools);
+  return tool && !tool.legacy && tool.lifecycle !== 'maintenance' ? tool : undefined;
 }

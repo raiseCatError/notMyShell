@@ -42,6 +42,8 @@ export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fa
 export type ContextPlacement = 'header' | 'composer';
 export type ComposerLayout = 'oneLine' | 'twoLine';
 /** Bottom and Top dock the composer; Flow places it right after the newest output, inside the document. */
+export type PanelPosition = 'bottom' | 'top';
+export const PANEL_POSITIONS: readonly PanelPosition[] = ['bottom', 'top'];
 export type ComposerPosition = 'bottom' | 'top' | 'flow';
 export type TranscriptPresentation = 'normal' | 'chat';
 /** Implemented layout choices, shared by Config rows and the /layout showcase. */
@@ -270,6 +272,7 @@ export const COMMAND_LAUNCHES = ['off', 'sweep', 'pulse'] as const;
 export const COMPLETION_HIGHLIGHTS = ['off', 'subtle', 'vivid'] as const;
 export const COMPLETION_EFFECTS = ['off', 'seal'] as const;
 export const EVENT_FEEDBACK = ['off', 'subtle', 'expressive'] as const;
+export const CURSOR_TRAVELS = ['off', 'on'] as const;
 export interface MotionSettings {
   /** Prompt modules transform in place when their facts change (cwd, branch, Git state, tools). */
   contextTransitions: typeof CONTEXT_TRANSITIONS[number];
@@ -281,6 +284,8 @@ export interface MotionSettings {
   completionEffect: typeof COMPLETION_EFFECTS[number];
   /** Semantic Echo: a short response to meaningful events (long success, failure, attention, task done). */
   eventFeedback: typeof EVENT_FEEDBACK[number];
+  /** A soft trail between the old and new caret position on multi-cell jumps. Presentation only; the caret moves at once. */
+  cursorTravel: typeof CURSOR_TRAVELS[number];
   /**
    * How the same events are drawn. Clean keeps the host's background (foreground tint, dim, underline);
    * Rich draws the stronger filled bands. One event system feeds either renderer.
@@ -297,10 +302,10 @@ export const MOTION_SPEEDS = ['slow', 'normal', 'fast'] as const;
 export interface MotionTuning {intensity: typeof MOTION_INTENSITIES[number]; speed: typeof MOTION_SPEEDS[number]}
 export const DEFAULT_MOTION_TUNING = (): Record<MotionRendering, MotionTuning> => ({clean: {intensity: 'medium', speed: 'normal'}, rich: {intensity: 'medium', speed: 'normal'}});
 /** Fresh installs: restrained motion, Clean rendering. */
-export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle',
+export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle', cursorTravel: 'on',
   rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
 /** Existing configs without a motion group: nothing new moves until the person turns it on. */
-export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off',
+export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off', cursorTravel: 'off',
   rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
 
 export function normalizeMotion(value: unknown): MotionSettings {
@@ -308,7 +313,7 @@ export function normalizeMotion(value: unknown): MotionSettings {
   const pickOne = <T extends string>(list: readonly T[], item: unknown, fallback: T): T => list.includes(item as T) ? item as T : fallback;
   return {contextTransitions: pickOne(CONTEXT_TRANSITIONS, value.contextTransitions, 'off'), commandLaunch: pickOne(COMMAND_LAUNCHES, value.commandLaunch, 'off'),
     completionHighlight: pickOne(COMPLETION_HIGHLIGHTS, value.completionHighlight, 'off'), completionEffect: pickOne(COMPLETION_EFFECTS, value.completionEffect, 'off'),
-    eventFeedback: pickOne(EVENT_FEEDBACK, value.eventFeedback, 'off'),
+    eventFeedback: pickOne(EVENT_FEEDBACK, value.eventFeedback, 'off'), cursorTravel: pickOne(CURSOR_TRAVELS, value.cursorTravel, 'off'),
     // Saved configs without a rendering are on today's behavior, which is Clean.
     rendering: pickOne(MOTION_RENDERINGS, value.rendering, 'clean'), tuning: normalizeMotionTuning(value.tuning)};
 }
@@ -583,6 +588,8 @@ export interface PromptConfiguration {
   composerLayout: ComposerLayout;
   /** Dock Bottom (default) or Dock Top; independent of transcript presentation. */
   composerPosition: ComposerPosition;
+  /** Where full-width NMSh panels (Setup, Settings, Tools, ...) sit; independent of the composer position. */
+  panelPosition: PanelPosition;
   /** Normal or Chat rows; presentation only and independent of composer position. */
   transcriptPresentation: TranscriptPresentation;
   /** The decorative horizontal rules around the live composer; Off reclaims their rows. Transcript dividers are separate. */
@@ -643,6 +650,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   placement: 'header',
   composerLayout: 'twoLine',
   composerPosition: 'bottom',
+  panelPosition: 'bottom',
   composerDividers: true,
   transcriptPresentation: 'normal',
   modules: [
@@ -756,6 +764,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   const placement: ContextPlacement = value.placement === 'composer' ? 'composer' : 'header';
   const composerLayout: ComposerLayout = value.composerLayout === 'oneLine' ? 'oneLine' : 'twoLine';
+  const panelPosition: PanelPosition = value.panelPosition === 'top' ? 'top' : 'bottom';
   const composerPosition: ComposerPosition = value.composerPosition === 'top' || value.composerPosition === 'flow' ? value.composerPosition : 'bottom';
   const transcriptPresentation: TranscriptPresentation = value.transcriptPresentation === 'chat' ? 'chat' : 'normal';
   const spacing = typeof value.spacing === 'number' && Number.isFinite(value.spacing)
@@ -772,7 +781,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...tooling};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...tooling};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -816,7 +825,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
     glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...tooling};
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...tooling};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {

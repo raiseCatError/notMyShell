@@ -96,7 +96,10 @@ export function renderInstallPrompt(state: InstallPromptState, columns: number):
   const accent = foreground(UI_COLORS.accent);
   const reset = '\u001B[0m';
   const word = commandWord(state.command) ?? state.tool.executable ?? state.tool.id;
-  const rows = [`  ${primary}\`${word}\` is not installed.${reset}`, ''];
+  const rows = [`  ${primary}\`${word}\` is not installed.${reset}`];
+  // The command and the package can differ (tldr is provided by tealdeer): say which one gets installed.
+  if (state.tool.package && state.tool.package !== word) rows.push(`  ${subtle}It is provided by ${state.tool.package}.${reset}`);
+  rows.push('');
   if (state.task?.state.status === 'running') {
     rows.push(...renderTaskProgress(state.task.state), '', renderControls([['Please wait', 'installation in progress']]));
   } else if (state.result) {

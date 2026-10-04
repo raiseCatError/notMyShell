@@ -229,3 +229,38 @@ test('app: /setup never writes on open or cancel; Apply persists through the nor
   app['handleKey']({kind: 'enter'});
   assert.equal(await readFile(path, 'utf8'), afterApply);
 }, {glyphStyle: 'safe', onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true, futureField: 'kept'}));
+
+test('app: Setup owns a clean screen, previews the drafted panel position, never touches the transcript, and leaves cleanly', () => withApp(async (app, path) => {
+  const frames: Array<{rows: string[]}> = [];
+  delete (app as unknown as Record<string, unknown>)['render']; // withApp stubs render; use the real one here
+  app['renderer'].render = (frame: {rows: string[]}) => { frames.push(frame); };
+  app['fetchSuggestions'] = async () => {};
+  app['presentationStarted'] = true; app['startupPending'] = false;
+  app['output'].addFrontendInteraction('echo', 'WELCOME-BACKDROP-MARKER', '');
+  app['render']();
+  assert.ok(frames.at(-1)!.rows.some(row => row.includes('WELCOME-BACKDROP-MARKER')), 'the ordinary screen shows it');
+  const transcriptBefore = JSON.stringify(app['output'].transcript());
+  const before = await readFile(path, 'utf8');
+  await app['runSlash']('/setup', {kind: 'setup'});
+  app['render']();
+  const rows = frames.at(-1)!.rows;
+  assert.ok(rows.some(row => row.includes('Setup')), 'Setup Cat is drawn');
+  assert.ok(!rows.some(row => row.includes('WELCOME-BACKDROP-MARKER')), 'the transcript/welcome is not drawn behind Setup');
+  const bottomTitle = rows.findIndex(row => row.includes('Setup'));
+  // The Start step edits the one stored field; the draft decides where the panel sits right away.
+  const state = app['setupState']!;
+  state.row = rowIndex(state, 'panelPosition');
+  app['handleKey']({kind: 'right'});
+  assert.equal(state.draft.panelPosition, 'top');
+  app['render']();
+  const topTitle = frames.at(-1)!.rows.findIndex(row => row.includes('Setup'));
+  assert.ok(topTitle < bottomTitle, 'Top moves the panel to the top of the screen');
+  assert.equal(app['promptConfiguration'].panelPosition, 'bottom', 'nothing is applied until Apply');
+  for (let i = 0; i < 3 && app['setupState']; i += 1) app['handleKey']({kind: i === 0 ? 'escape' : 'text', value: 'y'} as never);
+  assert.equal(app['setupState'], undefined);
+  app['render']();
+  assert.ok(frames.at(-1)!.rows.some(row => row.includes('WELCOME-BACKDROP-MARKER')), 'leaving restores the normal screen');
+  assert.equal(JSON.stringify(app['output'].transcript()), transcriptBefore, 'transcript untouched');
+  assert.equal(await readFile(path, 'utf8'), before);
+  assert.ok(!SETUP_SECTIONS.some(section => JSON.stringify(section.intro).includes('Planned for')), 'no stale roadmap copy');
+}, {onboardingComplete: true}));
