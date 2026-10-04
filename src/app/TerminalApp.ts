@@ -144,6 +144,10 @@ import {readGitFacts} from '../ask/git.js';
 import {configTargets, systemConfigEnvironment} from '../ask/configTargets.js';
 import {systemFileAssistEnvironment, validateAfterWrite} from '../ask/configAssist.js';
 import {formatterAllowed} from '../ask/repair.js';
+import {packageIntent, packageQueries, type BrewFacts, type PackageIntent} from '../ask/packages.js';
+import {brewMutationAllowed, homebrewAdapter} from '../packages/homebrew.js';
+import {toolOwner} from '../tools/ToolUpdates.js';
+import {normalizeRequest} from '../ask/resolver.js';
 import {applyPlan, sha256} from '../ask/fileEdit.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import type {AskOption} from '../ask/types.js';
@@ -5198,7 +5202,7 @@ export class TerminalApp {
       return;
     }
     // Actions with a factual result stay inside the conversation; navigation to another surface leaves Ask.
-    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile' || event.action.kind === 'format') {
+    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile' || event.action.kind === 'format' || event.action.kind === 'brew') {
       await this.runInAsk(state, event.action);
       this.render();
       return;
@@ -5206,6 +5210,25 @@ export class TerminalApp {
     this.closeAsk();
     await this.executeAskAction(event.action);
     this.render();
+  }
+
+  /** The Homebrew facts one package request needs; nothing else is queried. */
+  private async gatherBrew(intent: PackageIntent): Promise<BrewFacts> {
+    const adapter = homebrewAdapter();
+    if (!adapter.executable()) return {available: false};
+    const wanted = packageQueries(intent);
+    const names = [...new Set([...wanted.info, ...wanted.uses, ...wanted.prefix])];
+    const [installed, outdated, info, search, uses, prefix] = await Promise.all([
+      wanted.installed ? adapter.installed() : undefined,
+      wanted.outdated ? adapter.outdated() : undefined,
+      Promise.all(wanted.info.map(async name => [name, await adapter.info(name)] as const)),
+      Promise.all(wanted.search.map(async term => [term, await adapter.search(term)] as const)),
+      Promise.all(wanted.uses.map(async name => [name, await adapter.uses(name)] as const)),
+      Promise.all(wanted.prefix.map(async name => [name, await adapter.prefix(name)] as const)),
+    ]);
+    const identity = Object.fromEntries(names.map(name => { const path = resolveCommand(name); return [name, {...(path ? {path} : {}), owner: toolOwner(path)}]; }));
+    return {available: true, ...(installed ? {installed} : {}), ...(outdated ? {outdated} : {}), info: Object.fromEntries(info), search: Object.fromEntries(search),
+      uses: Object.fromEntries(uses), prefix: Object.fromEntries(prefix), identity};
   }
 
   /** Current facts the guide shows next to features ("now: …"): only settings NMSh already holds. */
@@ -5257,6 +5280,27 @@ export class TerminalApp {
       let check: string | undefined;
       try { check = validateAfterWrite(action.plan, readFileSync(action.plan.resolvedPath, 'utf8'), resolveCommand('python3')); } catch { /* unreadable */ }
       finish(verified ? `Updated ${action.plan.path}: ${action.plan.reason}.${check ? ` ${check}` : ''}` : `Wrote ${action.plan.path}, but reading it back did not match the preview; check the file.`, [open]);
+      return;
+    }
+    if (action.kind === 'brew') {
+      const adapter = homebrewAdapter();
+      const brewPath = adapter.executable();
+      if (!brewPath || !brewMutationAllowed(action.argv)) { finish('Ask can\'t run that Homebrew command, so nothing was run.'); return; }
+      state.working = `Running ${action.argv.join(' ')}…`;
+      this.render();
+      const task = new TaskProgress(action.argv.join(' '), () => this.render(), Date.now(), action.name);
+      const outcome = await task.run(brewPath, action.argv.slice(1));
+      if (this.askState !== state) return;
+      // Verify with Homebrew itself rather than trusting the exit status.
+      const after = (await adapter.info(action.name)).find(item => item.name === action.name);
+      const ok = action.expect === 'absent' ? !after?.installed.length : action.expect === 'installed' ? Boolean(after?.installed.length) : Boolean(after?.installed.length && !after.outdated);
+      if (ok && action.expect === 'installed') { const tool = TOOLS.find(item => item.package === action.name || item.id === action.name); if (tool) recordInstall(tool.id, {label: action.argv.join(' '), command: 'brew', args: action.argv.slice(1)}); }
+      clearProviderDetection();
+      this.commandSources.delete(action.name);
+      const verb = action.expect === 'installed' ? 'Installed' : action.expect === 'upgraded' ? 'Upgraded' : 'Uninstalled';
+      const next: AskOption[] = ok && action.expect !== 'absent' && after?.kind === 'formula' ? [{key: `cmd:${action.name}`, label: 'Basic command overview', refine: `what is ${action.name}`},
+        {key: `syntax:${action.name}`, label: 'Show syntax', refine: `how do i use ${action.name}`}] : [];
+      finish(ok ? `${verb} ${action.name}${after?.installed.length ? ` ${after.installed.at(-1)}` : ''}.` : `${action.argv.join(' ')} ${outcome.status === 'succeeded' ? 'finished, but Homebrew does not report the expected result' : 'did not succeed'}. Nothing else was changed.`, next);
       return;
     }
     if (action.kind === 'installTool') {
@@ -5411,6 +5455,9 @@ export class TerminalApp {
     // The project file list is read (names only, bounded) only for requests about opening things.
     const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
     const conversation = this.askState?.referents;
+    // Homebrew facts only for package requests (bounded, local, auto-update off).
+    const packageRequest = packageIntent(normalizeRequest(text));
+    const brewFacts = packageRequest ? await this.gatherBrew(packageRequest) : undefined;
     // Config targets (existence checks only) for requests about config files or edits.
     const configs = /\b(?:config(?:uration)?|settings|rc|dotfile|zshrc|bashrc|add|put|insert|append|set|replace|paste|it|that|this)\b/iu.test(text) || conversation?.config || conversation?.file
       ? configTargets(systemConfigEnvironment(this.shellId, root ?? this.shellCwd)).map(target => ({...target, exists: Boolean(target.path && existsSync(target.path))})) : undefined;
@@ -5423,7 +5470,7 @@ export class TerminalApp {
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
       providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {}),
-      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent, nmsh: this.askNmshFacts(), ...(configs ? {configs} : {})};
+      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent, nmsh: this.askNmshFacts(), ...(configs ? {configs} : {}), ...(brewFacts ? {brew: brewFacts} : {})};
   }
 
   /** Every Ask action is an existing NMSh handler; read-only commands are NMSh-built argv submitted visibly. */

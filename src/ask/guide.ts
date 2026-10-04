@@ -56,7 +56,7 @@ export function askHelpOutcome(): AskOutcome {
     'Ask can help with:',
     '  NMSh settings and features    Commands and syntax',
     '  Git in this repository        Files and your editor',
-    '  Sessions and transcripts      Providers and tools',
+    '  Sessions and transcripts      Providers, tools and Homebrew packages',
     '  What you just ran             Config files: open, add or update settings (shown first, never removed)',
     '',
     'Try: "what did I just do?" · "how do I push this branch?" · "what is zoxide?" · "change my ghost text" · "show untracked files" · "what does git clean -n do?"',

@@ -4,6 +4,7 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
 import {resolveGit} from './gitAssist.js';
 import {resolveActivity} from './activity.js';
+import {resolvePackage} from './packages.js';
 import {resolveFileRequest, type FileAssistEnvironment} from './configAssist.js';
 import {askHelpOutcome, GUIDE_REQUEST, guideOutcome, HELP_REQUEST} from './guide.js';
 import {answerCommandQuestion, parseCommandQuestion, type CommandEnvironment} from './commands.js';
@@ -143,6 +144,9 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   // Explaining an NMSh command wins over acting on it.
   const explain = /\b(?:what|how) (?:does|do|is)\b/u.test(text) && /\/[a-z][\w-]*/u.exec(text);
   if (explain) return build('help.command', text, context, raw);
+  // Homebrew from its own facts; install/upgrade/uninstall are typed proposals behind the final Yes.
+  const packages = resolvePackage(text, context);
+  if (packages) return packages;
   // Config files and verified edits (resolve → inspect → plan → preview → confirm); removal is answered, never planned.
   const file = resolveFileRequest(raw, text, context, files);
   if (file) return file;

@@ -3,6 +3,7 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {GitFacts} from './git.js';
 import type {ConfigTarget} from './configTargets.js';
 import type {FileEditPlan} from './fileEdit.js';
+import type {BrewFacts} from './packages.js';
 
 /**
  * Ask: plain-English requests resolved to NMSh's own typed capabilities.
@@ -39,6 +40,8 @@ export type AskAction =
   | {kind: 'attachSession'; id: string}
   /** A Git command NMSh built from facts (never request or model text); the allowlist and risk are checked again before it runs. */
   | {kind: 'git'; argv: string[]; risk: 'read' | 'mutate'}
+  /** A Homebrew install/upgrade/uninstall of a validated name; verified with Homebrew afterwards. */
+  | {kind: 'brew'; argv: string[]; name: string; expect: 'installed' | 'upgraded' | 'absent'}
   /** Run an installed formatter with its allowlisted argv on one file (visible submission). */
   | {kind: 'format'; argv: string[]}
   /** Apply a verified file edit plan (NMSh writes it; no shell). */
@@ -176,6 +179,8 @@ export interface AskContext {
   git?: GitFacts;
   /** A few current NMSh facts by concept id (e.g. shell: "Fish (default zsh)", chroma: "Aurora"), for the guide. */
   nmsh?: Record<string, string>;
+  /** Homebrew facts gathered for a package request. */
+  brew?: BrewFacts;
   /** Config targets that apply here (from configTargets.ts), with whether each exists. */
   configs?: Array<ConfigTarget & {exists: boolean}>;
   /** Recent completed shell commands, newest first: factual metadata, never their output. */

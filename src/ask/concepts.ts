@@ -189,6 +189,9 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'copy', label: 'Copy output', support: 'actionable', open: '/copy', covers: ['/copy'],
     aliases: ['copy output', 'copy the output', 'copy last output', 'copy latest output'],
     description: '/copy copies the latest command output as plain text; /copy N copies an earlier one.'},
+  {id: 'homebrew', label: 'Homebrew packages', support: 'actionable', open: '/tools', covers: [],
+    aliases: ['homebrew', 'brew packages', 'brew', 'formulae', 'casks', 'package manager'],
+    description: 'Ask can inspect Homebrew: installed packages, versions, search, info, dependencies and what is outdated, and install, upgrade or uninstall after showing the exact brew command and your Yes. Ownership is only claimed from Homebrew\'s own evidence.'},
   {id: 'otherShells', label: 'Other shells (Nushell, PowerShell)', support: 'unsupported',
     aliases: ['nushell', 'nu shell', 'powershell', 'pwsh', 'elvish', 'xonsh'],
     description: 'NMSh runs zsh, Fish and Bash. Nushell, PowerShell and other shells are not supported yet.'},
@@ -292,7 +295,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   {id: 'sessions', title: 'Sessions', why: 'Sessions keep running when a window closes; reattach, switch or get notified.', concepts: ['sessions', 'presets', 'notices', 'commandNotifications', 'panes']},
   {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask', 'understanding']},
   {id: 'files', title: 'Files, config & editor', why: 'Jump to folders, open what output mentions, and let Ask find and open config files or add/update a setting with a verified, previewed edit (it never removes settings).', concepts: ['navigation', 'editor']},
-  {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'agents']},
+  {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'homebrew', 'agents']},
   {id: 'layout', title: 'Layout & folding', why: 'Decide where the composer sits and how much output stays in view.', concepts: ['layout', 'folding', 'statusStrip', 'idle']},
   {id: 'keyboard', title: 'Keyboard', why: 'Terminal key integration for Shift+Enter, Option as Meta and enhanced keys.', concepts: ['keyboard']},
 ];
