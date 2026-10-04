@@ -160,6 +160,10 @@ import {completePath, listProjectFiles} from '../ask/files.js';
 import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
+import {CursorPresenter} from '../cursor/CursorPresenter.js';
+import {chooseBackend, hostCursorFacts, nativeBackendFor, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
+import {includeLine, nativeCursorIntegrated, nativeHostLabel, setupPlan, writeManagedFiles} from '../cursor/native.js';
+import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelState} from '../cursor/CursorPanel.js';
 import {liveLine} from '../status/liveLine.js';
 import {browseOutcome} from '../ask/fileAssist.js';
 import {gitWorktrees} from '../ask/git.js';
@@ -907,6 +911,8 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    // Adjacent typing barely animates the caret; every other movement travels (cursor effects only).
+    this.caretCause = key.kind === 'text' || key.kind === 'backspace' || key.kind === 'delete' || key.kind === 'paste' ? 'typing' : 'jump';
     if (this.effects.active && (key.kind === 'escape' || (key.kind === 'interrupt' && !this.running))) {
       this.effects.cancel(); this.render(); return;
     }
@@ -1126,6 +1132,7 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
     if (this.understandingPanel) {
       const action = understandingKey(this.understandingPanel, key, this.understandingFacts());
       if (action) void this.handleUnderstandingAction(action);
@@ -1854,7 +1861,7 @@ export class TerminalApp {
       } else this.screensaverPanel = createScreensaverPanel(Date.now());
     }
     // The cursor has one configuration: /cursor opens its existing Settings rows.
-    else if (slash.kind === 'cursor') { this.panelOrigin = undefined; this.focusConfigRow('cursorShape'); }
+    else if (slash.kind === 'cursor') this.openCursorPanel();
     else if (slash.kind === 'activity') { this.panelOrigin = undefined; this.focusConfigRow('activityColors'); }
     else if (slash.kind === 'theme') { this.panelOrigin = undefined; this.themeStudio = createThemeStudio(this.promptConfiguration.customTheme, this.promptConfiguration.nmsh.palette); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
@@ -2962,7 +2969,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3029,6 +3036,10 @@ export class TerminalApp {
     if (this.askState) {
       const activity = this.askActivityLine();
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
+    }
+    if (this.cursorPanel) {
+      const still = !this.decorativeMotionAllowed() || colorLevel() === 'none';
+      return framePanel(renderCursorPanel(this.cursorPanel, columns, Date.now(), chooseBackend(this.cursorPanel.draft, this.cursorHost ?? hostCursorFacts(process.env, host => nativeCursorIntegrated(host))), still), columns);
     }
     if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
     if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
@@ -5072,6 +5083,60 @@ export class TerminalApp {
   }
 
   private providersOverview?: ProvidersOverviewState;
+  private cursorPanel?: CursorPanelState;
+  private cursorPanelClock?: () => void;
+
+  /** /cursor: the canonical cursor & effects surface; its preview animates only while it is open (and motion is allowed). */
+  private openCursorPanel(): void {
+    this.panelOrigin = undefined;
+    this.cursorPanel = createCursorPanel(this.promptConfiguration.cursor);
+    this.cursorPanelClock?.();
+    this.cursorPanelClock = this.decorativeMotionAllowed() && colorLevel() !== 'none'
+      ? presentationClock.subscribe(() => { if (this.cursorPanel && !this.stopped) this.render(); }, 33, 16) : undefined;
+  }
+
+  private closeCursorPanel(): void {
+    this.cursorPanel = undefined;
+    this.cursorPanelClock?.(); this.cursorPanelClock = undefined;
+    this.returnFromPanel();
+  }
+
+  private handleCursorPanelKey(key: Key, state: CursorPanelState): void {
+    const action = cursorPanelKey(state, key);
+    if (!action) return;
+    if (action.kind === 'close') { this.closeCursorPanel(); return; }
+    if (action.kind === 'apply') {
+      this.updateConfiguration(configuration => { configuration.cursor = action.settings; });
+      this.renderer.setCursorStyle(cursorStyleSequence(action.settings.shape, action.settings.blink));
+      // Native integration already set up: refresh NMSh's own managed files (never the host's main config).
+      const host = this.cursorHost?.host;
+      if (host && host !== 'other' && this.cursorHost?.integrated) { try { writeManagedFiles(host, action.settings); } catch { state.message = 'Could not update the managed cursor files.'; } }
+      return;
+    }
+    const facts = this.cursorHost ?? hostCursorFacts(process.env, host => nativeCursorIntegrated(host));
+    const host = facts.host === 'other' ? undefined : facts.host;
+    if (action.kind === 'native') {
+      if (!host || !nativeBackendFor(facts)) { state.message = 'This terminal has no native cursor effects NMSh can use; Portable works here.'; return; }
+      if (facts.integrated) { state.message = `${nativeHostLabel(host)} native is already set up; changes here update NMSh's managed files.`; return; }
+      const setup = setupPlan(host);
+      const blocked = setup.plan.kind === 'refuse' ? setup.plan.reason : undefined;
+      state.native = {host, configPath: setup.configPath, ...(setup.plan.kind === 'plan' || setup.plan.kind === 'noop' ? {line: includeLine(host)} : {}), related: setup.related,
+        ...(blocked ? {blocked} : {}), choice: 'no'};
+      return;
+    }
+    if (action.kind === 'nativeConfirm' && state.native) {
+      const native = state.native;
+      state.native = undefined;
+      const setup = setupPlan(native.host);
+      try { writeManagedFiles(native.host, state.draft); } catch { state.message = 'Could not write NMSh\'s managed cursor files; nothing else was changed.'; return; }
+      if (setup.plan.kind === 'plan') {
+        const applied = applyPlan(setup.plan.plan);
+        if (!applied.ok) { state.message = applied.reason; return; }
+      }
+      this.cursorHost = hostCursorFacts(process.env, value => nativeCursorIntegrated(value));
+      state.message = this.cursorHost.integrated ? `Set up. Reload ${nativeHostLabel(native.host)}'s config to see native effects; Renderer Auto now uses them.` : 'Setup did not verify; Portable stays in use.';
+    }
+  }
   private understandingPanel?: UnderstandingPanelState;
 
   /** The welcome's factual local-understanding text at presentation start; it never claims a model it has not seen loaded. */
@@ -5288,6 +5353,14 @@ export class TerminalApp {
   private readonly agentsSubscription = this.agents.onChange(() => { if (!this.stopped) this.render(); });
   /** Long-lived tasks Ask started (dev servers): owned by NMSh, stopped when it exits. */
   private readonly managedTasks = new ManagedTasks();
+  /** Portable cursor effects over NMSh's own input (presentation only; Off schedules nothing). */
+  private readonly cursorPresenter = new CursorPresenter(() => this.promptConfiguration.cursor, () => { if (!this.stopped) this.paintPresentation(Date.now()); });
+  private caretCause: 'typing' | 'jump' = 'jump';
+  private cursorHost?: HostCursorFacts;
+  private cursorBackend(): BackendChoice {
+    this.cursorHost ??= hostCursorFacts(process.env, host => nativeCursorIntegrated(host));
+    return chooseBackend(this.promptConfiguration.cursor, this.cursorHost);
+  }
   private readonly tasksSubscription = this.managedTasks.onChange(() => { if (!this.stopped) { this.syncTaskClock(); this.render(); } });
   private taskClock?: () => void;
   private agentPanel?: AgentPanelState;
@@ -6347,9 +6420,17 @@ export class TerminalApp {
     const active = this.effects.active;
     const region = active && effectRegion(plan, active.placement);
     if (active && !region) this.effects.cancel();
+    // Cursor effects: an overlay on the input rows only, never over panels, passthrough or idle visuals.
+    const columns = frame.columns ?? 80;
+    const input = plan.regions.find(item => item.kind === 'input');
+    const caretShown = frame.cursorVisible !== false && Boolean(input) && !plan.panelActive;
+    const cursor = this.cursorPresenter.apply(rows, caretShown ? {row: frame.cursorRow - 1, column: frame.cursorColumn - 1} : undefined,
+      {top: Math.max(0, (input?.top ?? 0) - 1), bottom: (input?.top ?? 0) + (input?.height ?? 1) - 1, columns}, this.caretCause,
+      !this.passthrough && !this.externalPassthrough && this.decorativeMotionAllowed() && colorLevel() !== 'none', now, this.cursorBackend());
+    const painted = cursor.rows;
     try {
-      this.renderer.render({...frame, rows: active && region
-        ? applyEffect(rows, active, region, frame.columns ?? 80, now, getCurrentGlyphMode() === 'safe', colorLevel()) : rows});
+      this.renderer.render({...frame, ...(cursor.hideCaret ? {cursorVisible: false} : {}), rows: active && region
+        ? applyEffect(painted, active, region, columns, now, getCurrentGlyphMode() === 'safe', colorLevel()) : painted});
     } catch (error) { this.onTerminate(); throw error; }
   }
 
@@ -6551,6 +6632,8 @@ export class TerminalApp {
     this.agentDiscoveryTimer?.();
     this.agentsSubscription();
     this.agents.dispose();
+    this.cursorPresenter.dispose();
+    this.cursorPanelClock?.(); this.cursorPanelClock = undefined;
     this.tasksSubscription();
     this.taskClock?.(); this.taskClock = undefined;
     this.askClock?.(); this.askClock = undefined;

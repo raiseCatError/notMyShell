@@ -260,13 +260,85 @@ export const CURSOR_SHAPES = ['host', 'block', 'bar', 'underline'] as const;
 export type CursorShape = typeof CURSOR_SHAPES[number];
 export const CURSOR_BLINKS = ['host', 'on', 'off'] as const;
 export type CursorBlink = typeof CURSOR_BLINKS[number];
-export interface CursorSettings {shape: CursorShape; blink: CursorBlink}
-export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host'};
+export const PROMPT_TEXT_COLORS = ['neutral', 'theme'] as const;
+export type PromptTextColors = typeof PROMPT_TEXT_COLORS[number];
+
+export const CURSOR_RENDERERS = ['auto', 'portable', 'native'] as const;
+export type CursorRenderer = typeof CURSOR_RENDERERS[number];
+/** How the visual caret travels; the logical caret always moves at once. */
+export const CURSOR_MOTIONS = ['off', 'smooth', 'smear', 'tail'] as const;
+export type CursorMotion = typeof CURSOR_MOTIONS[number];
+/** What the movement emits (separate from Motion: Fire is not a movement algorithm). */
+export const CURSOR_EFFECTS = ['none', 'fire', 'sparks', 'lightning', 'railgun', 'ripple', 'wireframe'] as const;
+export type CursorEffect = typeof CURSOR_EFFECTS[number];
+/** A low-cadence effect while the caret rests (opt-in; Off schedules nothing). */
+export const CURSOR_IDLE_EFFECTS = ['off', 'glow', 'embers', 'flame', 'sparks'] as const;
+export type CursorIdleEffect = typeof CURSOR_IDLE_EFFECTS[number];
+export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom'] as const;
+export type CursorColorSource = typeof CURSOR_COLOR_SOURCES[number];
+export const CURSOR_TRAIL_COLORS = ['cursor', 'custom', 'gradient'] as const;
+export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient'] as const;
+export const CURSOR_LEVELS = ['low', 'medium', 'high'] as const;
+export type CursorLevel = typeof CURSOR_LEVELS[number];
+export const CURSOR_EASINGS = ['out-cubic', 'out-expo', 'linear', 'spring'] as const;
+
+/** Physics and pacing for people who want to tune (the default view never shows these). */
+export interface CursorAdvanced {
+  shortMoveMs: number; longMoveMs: number; easing: typeof CURSOR_EASINGS[number];
+  stiffness: number; tailStiffness: number; damping: number; trailExponent: number; maxTrail: number;
+  /** Cells: moves at or under this are "short" (adjacent typing). */
+  moveThreshold: number;
+  /** ms of rest before the idle effect starts. */
+  dwellMs: number;
+  particleDensity: number; particleLifetimeMs: number; spread: number; particleSpeed: number; drag: number; gravity: number;
+  /** Frames per second while moving; idle effects use at most 15. */
+  fps: number;
+}
+
+export interface CursorSettings {
+  shape: CursorShape; blink: CursorBlink;
+  renderer: CursorRenderer; motion: CursorMotion; effect: CursorEffect; idleEffect: CursorIdleEffect;
+  color: {source: CursorColorSource; custom?: string};
+  trail: {source: typeof CURSOR_TRAIL_COLORS[number]; colors: string[]};
+  particles: {source: typeof CURSOR_PARTICLE_COLORS[number]; colors: string[]};
+  speed: CursorLevel; intensity: CursorLevel; trailLength: CursorLevel; particleAmount: CursorLevel;
+  advanced: CursorAdvanced;
+}
+export const DEFAULT_CURSOR_ADVANCED: CursorAdvanced = {shortMoveMs: 40, longMoveMs: 150, easing: 'out-cubic', stiffness: 0.6, tailStiffness: 0.35, damping: 0.85,
+  trailExponent: 1.6, maxTrail: 24, moveThreshold: 1, dwellMs: 600, particleDensity: 1, particleLifetimeMs: 520, spread: 0.6, particleSpeed: 1, drag: 0.9, gravity: 1, fps: 60};
+/** Factory defaults: no motion, no effect, no idle effect. Existing users see no surprise animation. */
+export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host', renderer: 'auto', motion: 'off', effect: 'none', idleEffect: 'off',
+  color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []},
+  speed: 'medium', intensity: 'medium', trailLength: 'medium', particleAmount: 'medium', advanced: DEFAULT_CURSOR_ADVANCED};
+
+const HEX = /^#[0-9a-f]{6}$/iu;
+const pick = <T extends string>(list: readonly T[], value: unknown, fallback: T): T => list.includes(value as T) ? value as T : fallback;
+const clampNumber = (value: unknown, min: number, max: number, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 
 export function normalizeCursor(value: unknown): CursorSettings {
   const v = isRecord(value) ? value : {};
-  return {shape: CURSOR_SHAPES.includes(v.shape as CursorShape) ? v.shape as CursorShape : 'host',
-    blink: CURSOR_BLINKS.includes(v.blink as CursorBlink) ? v.blink as CursorBlink : 'host'};
+  const color = isRecord(v.color) ? v.color : {};
+  const trail = isRecord(v.trail) ? v.trail : {};
+  const particles = isRecord(v.particles) ? v.particles : {};
+  const advanced = isRecord(v.advanced) ? v.advanced : {};
+  const colors = (list: unknown) => Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string' && HEX.test(item)).slice(0, 6) : [];
+  const a = DEFAULT_CURSOR_ADVANCED;
+  return {shape: pick(CURSOR_SHAPES, v.shape, 'host'), blink: pick(CURSOR_BLINKS, v.blink, 'host'),
+    renderer: pick(CURSOR_RENDERERS, v.renderer, 'auto'), motion: pick(CURSOR_MOTIONS, v.motion, 'off'), effect: pick(CURSOR_EFFECTS, v.effect, 'none'),
+    idleEffect: pick(CURSOR_IDLE_EFFECTS, v.idleEffect, 'off'),
+    color: {source: pick(CURSOR_COLOR_SOURCES, color.source, 'host'), ...(typeof color.custom === 'string' && HEX.test(color.custom) ? {custom: color.custom} : {})},
+    trail: {source: pick(CURSOR_TRAIL_COLORS, trail.source, 'cursor'), colors: colors(trail.colors)},
+    particles: {source: pick(CURSOR_PARTICLE_COLORS, particles.source, 'trail'), colors: colors(particles.colors)},
+    speed: pick(CURSOR_LEVELS, v.speed, 'medium'), intensity: pick(CURSOR_LEVELS, v.intensity, 'medium'), trailLength: pick(CURSOR_LEVELS, v.trailLength, 'medium'),
+    particleAmount: pick(CURSOR_LEVELS, v.particleAmount, 'medium'),
+    advanced: {shortMoveMs: clampNumber(advanced.shortMoveMs, 0, 200, a.shortMoveMs), longMoveMs: clampNumber(advanced.longMoveMs, 40, 600, a.longMoveMs),
+      easing: pick(CURSOR_EASINGS, advanced.easing, a.easing), stiffness: clampNumber(advanced.stiffness, 0.05, 1, a.stiffness),
+      tailStiffness: clampNumber(advanced.tailStiffness, 0.05, 1, a.tailStiffness), damping: clampNumber(advanced.damping, 0.1, 1, a.damping),
+      trailExponent: clampNumber(advanced.trailExponent, 0.5, 4, a.trailExponent), maxTrail: clampNumber(advanced.maxTrail, 2, 80, a.maxTrail),
+      moveThreshold: clampNumber(advanced.moveThreshold, 0, 8, a.moveThreshold), dwellMs: clampNumber(advanced.dwellMs, 0, 5000, a.dwellMs),
+      particleDensity: clampNumber(advanced.particleDensity, 0, 4, a.particleDensity), particleLifetimeMs: clampNumber(advanced.particleLifetimeMs, 100, 2000, a.particleLifetimeMs),
+      spread: clampNumber(advanced.spread, 0, 2, a.spread), particleSpeed: clampNumber(advanced.particleSpeed, 0.1, 4, a.particleSpeed),
+      drag: clampNumber(advanced.drag, 0.5, 1, a.drag), gravity: clampNumber(advanced.gravity, -2, 2, a.gravity), fps: clampNumber(advanced.fps, 12, 120, a.fps)}};
 }
 
 /** Optional NMSh-owned status strip; Off by default, Minimal (clock + real battery) when enabled. */
@@ -410,6 +482,12 @@ export interface PromptConfiguration {
     mirrorRight: boolean;
     /** Theme color strength; missing in older configs means Standard (unchanged colors). */
     vibrance: Vibrance;
+    /**
+     * Prompt text colors: Theme uses the theme's own text treatment; Neutral keeps every
+     * fill, connector and accent but draws ordinary text in stable neutral tones. Applies
+     * to every Native theme. Missing in older configs means Theme (saved looks unchanged).
+     */
+    textColors: PromptTextColors;
     /** Catppuccin accent; ignored by other families. */
     accent: CatppuccinAccent;
     /**
@@ -478,7 +556,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   uiChrome: {...DEFAULT_UI_CHROME},
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
-    mirrorRight: true, vibrance: 'standard', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
+    mirrorRight: true, vibrance: 'standard', textColors: 'theme', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -591,6 +669,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade),
     mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true,
     vibrance: normalizeVibrance(nativeValue.vibrance),
+    textColors: (nativeValue.textColors === 'neutral' ? 'neutral' : 'theme') as PromptTextColors,
     accent: normalizeCatppuccinAccent(nativeValue.accent),
     styleProfiles: normalizeStyleProfiles(undefined)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()

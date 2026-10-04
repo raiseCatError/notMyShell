@@ -46,6 +46,20 @@ export interface PowerlineBlock {
   geometry?: PowerlineShape;
   /** Gap fade for boundaries touching this block: a shape, `off`, or the prompt's when unset. */
   fade?: PowerlineShape | 'off';
+  /** Text colors Neutral: text-only styles draw the label in the neutral text tone; caps and fills keep the theme. */
+  neutralText?: boolean;
+}
+
+/** Prompt Text colors Neutral: stable light neutral text, or a dark neutral where light text would fail contrast. Chosen once per fill. */
+export const NEUTRAL_PROMPT_LIGHT: RgbColor = {red: 236, green: 236, blue: 240};
+export const NEUTRAL_PROMPT_DARK: RgbColor = {red: 24, green: 24, blue: 28};
+export function neutralPromptText(background: RgbColor): RgbColor {
+  const luminance = (color: RgbColor) => {
+    const channel = (value: number) => { const v = value / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * channel(color.red) + 0.7152 * channel(color.green) + 0.0722 * channel(color.blue);
+  };
+  const contrast = (a: RgbColor, b: RgbColor) => { const [x, y] = [luminance(a), luminance(b)].sort((p, q) => q - p); return (x! + 0.05) / (y! + 0.05); };
+  return contrast(NEUTRAL_PROMPT_LIGHT, background) >= 4.5 || contrast(NEUTRAL_PROMPT_LIGHT, background) >= contrast(NEUTRAL_PROMPT_DARK, background) ? NEUTRAL_PROMPT_LIGHT : NEUTRAL_PROMPT_DARK;
 }
 
 /** The shape a connector fade actually uses, or undefined for solid connectors. */
@@ -641,6 +655,8 @@ function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | '
   const nerd = getCurrentGlyphMode() === 'nerd';
   const label = (block: PowerlineBlock) => block.compact ? (nerd ? '●' : '*') : block.text;
   const tone = (block: PowerlineBlock) => textTone(block.background);
+  // Neutral text: the label is neutral, the caps and separators keep the theme color.
+  const labelTone = (block: PowerlineBlock) => block.neutralText ? NEUTRAL_PROMPT_LIGHT : tone(block);
   const spans: Span[] = [];
   if (style === 'minimal') {
     const profile = profiles.minimal;
@@ -648,7 +664,7 @@ function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | '
     modules.forEach((block, index) => {
       if (index > 0) spans.push({text: separator, color: SUBTLE_SEPARATOR, kind: separator.trim() ? 'glyph' : 'space',
         eligible: Boolean(modules[index - 1]!.treatment && block.treatment)});
-      spans.push({text: label(block), color: tone(block), kind: 'text', eligible: Boolean(block.treatment),
+      spans.push({text: label(block), color: labelTone(block), kind: 'text', eligible: Boolean(block.treatment) && !block.neutralText,
         bold: profile.emphasis === 'all' || (profile.emphasis === 'first' && index === 0)});
     });
   } else if (style === 'outline') {
@@ -662,7 +678,7 @@ function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | '
         const eligible = Boolean(block.treatment);
         if (index === 0) spans.push({text: open, color, kind: 'glyph', eligible});
         else spans.push({text: divider, color: SUBTLE_SEPARATOR, kind: 'glyph', eligible: eligible && Boolean(modules[index - 1]!.treatment)});
-        spans.push({text: `${pad}${label(block)}${pad}`, color, kind: 'text', eligible});
+        spans.push({text: `${pad}${label(block)}${pad}`, color: labelTone(block), kind: 'text', eligible: eligible && !block.neutralText});
         if (index === modules.length - 1) spans.push({text: close, color, kind: 'glyph', eligible});
       });
     } else {
@@ -671,7 +687,7 @@ function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | '
         const eligible = Boolean(block.treatment);
         if (index > 0 && profile.gap > 0) spans.push({text: ' '.repeat(profile.gap), color, kind: 'space', eligible: false});
         spans.push({text: open, color, kind: 'glyph', eligible});
-        spans.push({text: `${pad}${label(block)}${pad}`, color, kind: 'text', eligible});
+        spans.push({text: `${pad}${label(block)}${pad}`, color: labelTone(block), kind: 'text', eligible: eligible && !block.neutralText});
         spans.push({text: close, color, kind: 'glyph', eligible});
       });
     }
@@ -683,7 +699,7 @@ function paintTextStyle(modules: readonly PowerlineBlock[], style: 'minimal' | '
     modules.forEach((block, index) => {
       if (index > 0) spans.push({text: separator, color: SUBTLE_SEPARATOR, kind: 'glyph', eligible: false});
       if (index !== anchor) {
-        spans.push({text: label(block), color: tone(block), kind: 'text', eligible: Boolean(block.treatment)});
+        spans.push({text: label(block), color: labelTone(block), kind: 'text', eligible: Boolean(block.treatment) && !block.neutralText});
         return;
       }
       const pill = filled[index]!;

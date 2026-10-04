@@ -6,6 +6,7 @@ import {isReducedMotion} from '../presentation/environment.js';
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
+import {neutralPromptText} from './powerline.js';
 import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
@@ -451,14 +452,19 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     const explicit = custom && Boolean(segment.module.foreground || segment.module.background);
     const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'prompt', presentation.semantic ?? 'preserve')
       && (!explicit || presentation.customColors === true);
+    const fill = custom ? colorFromHex(segment.module.background, colors.background) : colors.background;
+    // Text colors Neutral: the fill, connectors and accent stay the theme's; ordinary text is a stable neutral chosen from the fill.
+    // An explicit per-module text color is the person's own choice and is kept.
+    const neutral = configuration.nmsh.textColors === 'neutral' && !(custom && segment.module.foreground);
     return {
       ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
       ...(chroma ? {treatment: presentation} : {}),
       id: segment.module.id,
       role: segment.role,
       text: segment.text,
-      foreground: custom ? colorFromHex(segment.module.foreground, colors.foreground) : colors.foreground,
-      background: custom ? colorFromHex(segment.module.background, colors.background) : colors.background,
+      foreground: neutral ? neutralPromptText(fill) : custom ? colorFromHex(segment.module.foreground, colors.foreground) : colors.foreground,
+      background: fill,
+      ...(neutral ? {neutralText: true} : {}),
       ...(segment.compact ? {compact: true} : {}),
       ...(isGitStateRole(segment.role) ? richGit : {}),
       ...(modulePlacement(segment.module) === 'right' ? {placement: 'right' as const} : {}),

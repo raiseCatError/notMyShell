@@ -221,6 +221,9 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
 export function appearanceRows(configuration: PromptConfiguration): AppearanceRow[] {
   return [
     ...themeRows(configuration),
+    {id: 'textColors', label: 'Text colors', value: c => c.nmsh.textColors === 'neutral' ? 'Neutral' : 'Theme',
+      change: c => { c.nmsh.textColors = c.nmsh.textColors === 'neutral' ? 'theme' : 'neutral'; },
+      note: c => c.nmsh.textColors === 'neutral' ? 'Neutral: the theme\'s fills, connectors and accent stay; text is a steady neutral' : 'Theme: the theme\'s own text colors'},
     {id: 'style', label: 'Style', value: c => PROMPT_STYLE_LABELS[c.nmsh.style], change: (c, d) => { c.nmsh.style = cycle(PROMPT_STYLES, c.nmsh.style, d); },
       note: c => PROMPT_STYLE_NOTES[c.nmsh.style]},
     {id: 'vibrance', label: 'Vibrance', value: c => VIBRANCE_LABELS[c.nmsh.vibrance], change: (c, d) => { c.nmsh.vibrance = cycle(VIBRANCE_LEVELS, c.nmsh.vibrance, d); }},

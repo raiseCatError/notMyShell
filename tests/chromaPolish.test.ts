@@ -210,18 +210,20 @@ test('Theme Studio: Reset to base resets the draft only; cancel after reset and 
   assert.equal(role.draft.prompt.cwd, saved.prompt.cwd, 'other roles untouched');
 });
 
-test('/cursor opens the existing cursor rows; no second cursor configuration', () => {
+test('/cursor opens the cursor & effects surface over the one cursor configuration', () => {
   assert.deepEqual(parseSlashCommand('/cursor'), {kind: 'cursor'});
   const {app, cleanup} = harness({});
   try {
     app['render'] = () => {};
     const before = JSON.stringify(app['configuration']);
     void app['runSlash']('/cursor', {kind: 'cursor'});
-    const state = app['settingsPanelState']!;
-    assert.equal(state.view, 'config');
+    assert.ok(app['cursorPanel'], '/cursor is its own surface');
     assert.equal(JSON.stringify(app['configuration']), before, 'opening changes nothing');
     app['handleKey']({kind: 'right'});
-    assert.equal(app['configuration'].cursor.shape, 'block', 'the same Settings row edits the same setting');
+    assert.equal(app['configuration'].cursor.shape, 'block', 'Shape edits the same stored setting');
+    app['handleKey']({kind: 'escape'});
+    assert.equal(app['cursorPanel'], undefined);
+    assert.equal(app['cursorPanelClock'], undefined, 'no preview clock after closing');
   } finally { cleanup(); }
 });
 

@@ -86,8 +86,10 @@ test('cursor: DECSCUSR sequences, Host default sends nothing, blink only with a 
   assert.equal(cursorStyleSequence('underline', 'off'), '\u001B[4 q');
   assert.equal(cursorStyleSequence('bar', 'on'), '\u001B[5 q');
   assert.equal(cursorStyleSequence('bar', 'off'), '\u001B[6 q');
-  assert.deepEqual(normalizePromptConfiguration({}).cursor, {shape: 'host', blink: 'host'});
-  assert.deepEqual(normalizePromptConfiguration({cursor: {shape: 'beam', blink: 2}}).cursor, {shape: 'host', blink: 'host'});
+  const defaults = normalizePromptConfiguration({}).cursor;
+  assert.deepEqual([defaults.shape, defaults.blink, defaults.motion, defaults.effect], ['host', 'host', 'off', 'none']);
+  const invalid = normalizePromptConfiguration({cursor: {shape: 'beam', blink: 2}}).cursor;
+  assert.deepEqual([invalid.shape, invalid.blink], ['host', 'host']);
 });
 
 test('cursor lifecycle: applied while NMSh owns the composer, host state on passthrough, exit and resume', () => {
