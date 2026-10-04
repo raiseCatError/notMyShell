@@ -48,7 +48,7 @@ import {
   SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {appendFileSync, existsSync, readFileSync} from 'node:fs';
+import {appendFileSync, existsSync, readFileSync, realpathSync, rmSync, statSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -166,12 +166,12 @@ import {gitWorktrees} from '../ask/git.js';
 import type {AskAction, AskContext, AskOutcome} from '../ask/types.js';
 import {askProviderFacts, PROVIDER_FAMILIES, selectProvider} from '../providers/families.js';
 import {LocalUnderstanding, understandingStatusRows, understandingWelcomeText} from '../understanding/LocalUnderstanding.js';
-import {createUnderstandingPanel, renderUnderstandingPanel, understandingKey, type UnderstandingFacts, type UnderstandingPanelState} from '../understanding/UnderstandingPanel.js';
+import {stateLabel, createUnderstandingPanel, renderUnderstandingPanel, understandingKey, type UnderstandingFacts, type UnderstandingPanelState} from '../understanding/UnderstandingPanel.js';
 import {downloadPinned, loadRecommendedModel} from '../understanding/recommended.js';
 import {modelChoice, nmshModelDirectory} from '../understanding/discovery.js';
 import {foldExcerpt} from '../understanding/tasks.js';
 import {applyFoldHint, hintEligible} from '../output/FoldPolicy.js';
-import {CAPABILITIES, resolveWithInterpretation} from '../ask/resolver.js';
+import {CAPABILITIES, modelInventory, resolveModelIntent, resolveWithInterpretation} from '../ask/resolver.js';
 import {createProvidersOverview, providersOverviewKey, renderProvidersOverview, type ProvidersOverviewState} from '../providers/ProvidersOverview.js';
 import {InstallProvenance} from '../tools/InstallProvenance.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
@@ -1900,6 +1900,7 @@ export class TerminalApp {
     else if (slash.kind === 'palette') this.openPalette();
     else if (slash.kind === 'ask') this.openAsk(slash.request);
     else if (slash.kind === 'providers') this.openProvidersOverview();
+    else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
   }
 
@@ -3025,7 +3026,10 @@ export class TerminalApp {
       if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - 4, Date.now()), columns);
     }
     if (this.agentPanel) return framePanel(renderAgentPanel(this.agentPanel, this.agentPanelRows(), columns, Date.now(), this.dimensions().rows - 4), columns);
-    if (this.askState) return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId}), columns);
+    if (this.askState) {
+      const activity = this.askActivityLine();
+      return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
+    }
     if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
     if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
@@ -3903,6 +3907,10 @@ export class TerminalApp {
       this.startSweep('prompt', 'vivid');
     } else this.output.addFrontendInteraction('/setup', 'Setup Cat: no changes; your settings are unchanged.', INFO);
     this.panelOrigin = undefined;
+    // Auto or Always with a use enabled: continue straight into model setup (the same /llm controller), detecting first.
+    const understanding = next.localUnderstanding;
+    if (understanding.mode !== 'off' && (understanding.ask || understanding.folding)
+      && JSON.stringify(previous.localUnderstanding) !== JSON.stringify(understanding)) { this.openUnderstandingPanel(true); return; }
     if (result.tools === 'recommended' || result.tools === 'enhanced' || result.tools === 'individual') {
       this.startTools();
       if (this.toolsPanel) this.toolsPanel.tier = result.tools === 'individual' ? undefined : result.tools;
@@ -5087,9 +5095,9 @@ export class TerminalApp {
     return {active, detail};
   }
 
-  private openUnderstandingPanel(): void {
+  private openUnderstandingPanel(onboarding = false): void {
     this.panelOrigin = undefined;
-    this.understandingPanel = createUnderstandingPanel();
+    this.understandingPanel = createUnderstandingPanel(onboarding);
     void this.refreshUnderstandingDiscovery(false).then(() => this.render());
   }
 
@@ -5099,7 +5107,33 @@ export class TerminalApp {
     return {settings: this.promptConfiguration.localUnderstanding, ...(this.understanding.discovery ? {discovery: this.understanding.discovery} : {}),
       ...(this.understanding.status ? {status: this.understanding.status} : {}), ...(recommended ? {recommended} : {}),
       ...(this.understanding.downloadFailure ? {downloadFailure: this.understanding.downloadFailure} : {}),
-      ...(brew && (process.platform === 'darwin' || process.platform === 'linux') ? {runtimeRecipe: 'brew install llama.cpp'} : {})};
+      ...(brew && (process.platform === 'darwin' || process.platform === 'linux') ? {runtimeRecipe: 'brew install llama.cpp'} : {}),
+      activity: {requests: this.understanding.requests, ...(this.understanding.lastRoute ? {lastRoute: this.understanding.lastRoute} : {}),
+        ...(this.understanding.lastInference ? {lastInference: this.understanding.lastInference} : {})},
+      ...(this.ownedModelFacts() ? {ownedModel: this.ownedModelFacts()!} : {}),
+      ...(brew && (() => { try { return new InstallProvenance().find('llama-server'); } catch { return undefined; } })() ? {runtimeOwned: {label: 'brew install llama.cpp'}} : {}),
+      now: Date.now()};
+  }
+
+  /**
+   * The model file NMSh itself downloaded: inside NMSh's own model folder (real
+   * path checked, no symlink escape) and a regular .gguf file. Nothing else is
+   * ever offered for removal.
+   */
+  private ownedModelFacts(): {path: string; bytes?: number; inUse: boolean} | undefined {
+    const directory = nmshModelDirectory();
+    const configured = this.promptConfiguration.localUnderstanding.model;
+    const candidates = [configured?.owned ? configured.path : undefined,
+      ...(this.understanding.discovery?.models.filter(model => model.owned).map(model => model.path) ?? [])].filter((path): path is string => Boolean(path));
+    for (const path of candidates) {
+      try {
+        const real = realpathSync(path);
+        const root = realpathSync(directory);
+        if (!real.startsWith(`${root}/`) || !/\.gguf$/iu.test(real) || !statSync(real).isFile()) continue;
+        return {path: real, bytes: statSync(real).size, inUse: Boolean(configured?.path && (configured.path === path || configured.path === real))};
+      } catch { /* gone */ }
+    }
+    return undefined;
   }
 
   /** Approved steps run here, then are verified and activated; nothing runs without the panel's Yes. */
@@ -5116,6 +5150,42 @@ export class TerminalApp {
       return;
     }
     if (action.kind === 'scope') { update(settings => ({...settings, [action.scope]: !settings[action.scope]})); return; }
+    if (action.kind === 'stop') {
+      panel.message = await this.understanding.stopModel() ? 'Unloading the model; it loads again on next use.' : 'No model service is running.';
+      await this.refreshUnderstandingDiscovery(false);
+      this.render();
+      return;
+    }
+    if (action.kind === 'remove') {
+      // Re-checked right before deleting: only the exact NMSh-owned file.
+      const owned = this.ownedModelFacts();
+      if (!owned) { panel.message = 'There is no NMSh-downloaded model to remove.'; return; }
+      if (owned.inUse) {
+        await this.understanding.stopModel();
+        update(settings => { const {model: _model, ...rest} = settings; return rest; });
+      }
+      try { rmSync(owned.path); panel.message = `Removed ${owned.path}.`; } catch (error) { panel.message = `Couldn't remove it: ${error instanceof Error ? error.message : String(error)}`; }
+      await this.refreshUnderstandingDiscovery(true);
+      this.render();
+      return;
+    }
+    if (action.kind === 'uninstallRuntime') {
+      const record = (() => { try { return new InstallProvenance().find('llama-server'); } catch { return undefined; } })();
+      const brew = resolveCommand('brew');
+      if (!record || !brew) { panel.message = 'NMSh has no record of installing llama.cpp, so it won\'t uninstall it.'; return; }
+      panel.working = 'Running brew uninstall llama.cpp…';
+      this.render();
+      await this.understanding.stopModel();
+      const task = new TaskProgress('Uninstalling llama.cpp', () => this.render(), Date.now(), 'llama.cpp');
+      const outcome = await task.run(brew, ['uninstall', 'llama.cpp']);
+      panel.working = undefined;
+      if (outcome.status === 'succeeded') { try { new InstallProvenance().forget('llama-server'); } catch { /* record stays */ } }
+      clearProviderDetection();
+      await this.refreshUnderstandingDiscovery(true);
+      panel.message = outcome.status === 'succeeded' ? 'llama.cpp was uninstalled.' : `llama.cpp was not uninstalled. ${task.state.error ?? ''}`.trim();
+      this.render();
+      return;
+    }
     if (action.kind === 'use') {
       update(settings => ({...settings, model: modelChoice(action.model), mode: settings.mode === 'off' ? 'auto' : settings.mode}));
       panel.message = `Using ${action.model.label}${action.model.owned ? '' : ' (found on this machine; NMSh will not delete it)'}.`
@@ -5140,18 +5210,23 @@ export class TerminalApp {
     if (action.kind === 'download') {
       const artifact = loadRecommendedModel()?.artifact;
       if (!artifact) { panel.message = 'No verified download is pinned in this build.'; return; }
-      panel.working = 'Downloading… 0 MB';
+      const label = `${loadRecommendedModel()?.model ?? 'Qwen3 0.6B'}`;
+      panel.progress = {label, stage: 'Downloading', received: 0, total: artifact.bytes, since: Date.now()};
+      const clock = presentationClock.subscribe(() => { if (!this.stopped) this.render(); }, 100);
       this.render();
       try {
-        const path = await downloadPinned(artifact, nmshModelDirectory(), received => { panel.working = `Downloading… ${Math.round(received / 1e6)} of ${Math.round(artifact.bytes / 1e6)} MB`; this.render(); });
-        panel.working = undefined;
+        const path = await downloadPinned(artifact, nmshModelDirectory(), received => { if (panel.progress) panel.progress.received = received; },
+          fetch, undefined, stage => { if (panel.progress) panel.progress.stage = stage === 'verify' ? 'Verifying SHA-256' : 'Installing'; this.render(); });
+        clock();
+        panel.progress = undefined;
         update(settings => ({...settings, mode: settings.mode === 'off' ? 'auto' : settings.mode,
           model: {label: `Qwen3 0.6B ${artifact.quantization}`, runtime: 'llama.cpp', path, owned: true}}));
         this.understanding.downloadFailure = undefined;
         await this.refreshUnderstandingDiscovery(true);
         panel.message = 'Downloaded and verified (sha256). It loads on first use and unloads when idle.';
       } catch (error) {
-        panel.working = undefined;
+        clock();
+        panel.progress = undefined;
         // Verification failure is remembered: the model is not used and nothing retries until you choose to.
         this.understanding.downloadFailure = error instanceof Error ? error.message : String(error);
         panel.message = `The recommended model was not installed: ${this.understanding.downloadFailure}. The incomplete file was removed; nothing was changed. `
@@ -5221,6 +5296,28 @@ export class TerminalApp {
   private shelf = {visible: false, focused: false, selected: 0, shownAt: 0};
   private agentDiscoveryTimer?: () => void;
   private askGeneration = 0;
+  /** What Ask is doing right now (factual stage), for its transient live line; never recorded. */
+  private askStage?: {label: string; since: number; started: number};
+  private askClock?: () => void;
+
+  private setAskStage(label: string | undefined): void {
+    if (!label) { this.askStage = undefined; this.askClock?.(); this.askClock = undefined; return; }
+    const started = this.askStage?.started ?? Date.now();
+    this.askStage = {label, since: Date.now(), started};
+    // A clock only while Ask works; it stops with the stage.
+    this.askClock ??= presentationClock.subscribe(() => { if (!this.stopped && this.askState?.busy) this.render(); }, 100);
+  }
+
+  /** The live line under Ask's input: shown only after ~300 ms, so instant answers never flash. */
+  private askActivityLine(): string | undefined {
+    const stage = this.askStage;
+    if (!stage || !this.askState?.busy) return undefined;
+    const now = Date.now();
+    if (now - stage.started < 300) return undefined;
+    const still = this.promptConfiguration.presentation.reducedMotion || this.promptConfiguration.presentation.effectsOff || isReducedMotion();
+    const model = this.understanding.activeSince ? this.promptConfiguration.localUnderstanding.model?.label : undefined;
+    return liveLine(model ? `Local understanding · ${model}` : stage.label, undefined, model ? this.understanding.activeSince! : stage.started, now, {still});
+  }
 
   /** `/ask` and `/ask <request>` open the same Ask; with a request it is submitted at once. */
   private openAsk(request: string): void {
@@ -5265,9 +5362,10 @@ export class TerminalApp {
     if (event.kind === 'resolve') {
       const generation = this.askGeneration;
       let outcome: AskOutcome;
+      this.setAskStage('Resolving locally');
       try { outcome = await this.resolveAsk(event.text, state); } catch {
         outcome = {kind: 'unclear', text: 'Something went wrong while looking that up.', categories: []};
-      }
+      } finally { this.setAskStage(undefined); }
       if (this.askState !== state || generation !== this.askGeneration || this.stopped) return;
       const next = receiveOutcome(state, outcome);
       if (next) await this.handleAskEvent(next);
@@ -5534,22 +5632,35 @@ export class TerminalApp {
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
     state.repoRoot = context.repoRoot;
-    const deterministic = resolveRequest(text, context, {rejected: state.rejected}, this.askCommands(),
-      systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath, name => resolveCommand(name), this.askCommands().install));
-    if (!this.understanding.eligible('ask')) return deterministic;
-    // Auto: built-in understanding first; the model is asked only when it is unsure. Always: the model is asked first.
+    const commands = this.askCommands();
+    const files = systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath, name => resolveCommand(name), commands.install);
+    const deterministic = resolveRequest(text, context, {rejected: state.rejected}, commands, files);
+    const deterministicRoute = () => { this.understanding.lastRoute = {route: 'deterministic', at: Date.now()}; return deterministic; };
+    if (!this.understanding.eligible('ask')) return deterministicRoute();
+    // Auto: deterministic first; the model only when it is unsure. Always: the model first, still feeding deterministic builders.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
-    if (!this.understanding.prefersModel && !unsure) return deterministic;
-    const ids = new Set(CAPABILITIES.map(capability => capability.id));
+    if (!this.understanding.prefersModel && !unsure) return deterministicRoute();
+    const inventory = modelInventory();
+    const ids = new Set(inventory.map(item => item.id));
     const facts: Record<string, string | string[]> = {shell: context.shell, defaultShell: context.defaultShell,
       ...(context.repoRoot ? {repository: basename(context.repoRoot)} : {}), ...(context.branch ? {branch: context.branch} : {}),
+      ...(context.project?.kind === 'node' ? {scripts: Object.keys(context.project.scripts).slice(0, 12)} : {}),
+      ...(context.tasks?.length ? {backgroundTasks: context.tasks.map(task => `${task.label} ${task.status}`)} : {}),
       ...(context.worktrees.length > 1 ? {worktrees: context.worktrees.map(item => basename(item.path))} : {}),
       ...(context.recentFiles.length ? {recentFiles: context.recentFiles.slice(0, 5).map(path => basename(path))} : {}),
       ...(context.transcripts.length ? {transcripts: context.transcripts.slice(0, 5).map(item => `${item.createdAt.slice(0, 16)} ${basename(item.finalCwd)}`)} : {})};
-    const interpretation = await this.understanding.interpretAsk({text, capabilities: CAPABILITIES.map(item => ({id: item.id, title: item.title})), facts}, ids);
+    const request = {text, capabilities: inventory, facts};
+    const interpret = (interpretation: Awaited<ReturnType<LocalUnderstanding['interpretAsk']>>) => interpretation
+      ? resolveModelIntent(interpretation, context, {rejected: state.rejected}, commands, files) ?? resolveWithInterpretation(text, interpretation as never, context, {rejected: state.rejected})
+      : undefined;
+    // Non-thinking first: fast and enough for ordinary wording.
+    let modelled = interpret(await this.understanding.interpretAsk(request, ids, 'fast'));
+    // A bounded thinking retry only when the request is still genuinely ambiguous to both.
+    if (!modelled && unsure && this.askState === state) modelled = interpret(await this.understanding.interpretAsk(request, ids, 'thinking'));
     // A missing, failed or unsure model keeps the deterministic outcome: model failure is not the user's ambiguity.
-    const modelled = interpretation ? resolveWithInterpretation(text, interpretation as never, context, {rejected: state.rejected}) : undefined;
-    return modelled ?? deterministic;
+    if (!modelled) return deterministicRoute();
+    this.understanding.lastRoute = {route: 'model', at: Date.now()};
+    return modelled;
   }
 
   /** Bounded facts from existing services: no environment, file contents or output beyond these. */
@@ -5596,21 +5707,31 @@ export class TerminalApp {
         ...(record.durationMs !== undefined ? {durationMs: record.durationMs} : {}), lines: Math.max(0, (record.endId ?? record.outputStartId) - record.outputStartId)});
     }
     // The project file list is read (names only, bounded) only for requests about opening things.
+    if (this.askStage) this.setAskStage('Checking repository files');
     const files = /\b(?:open|edit|view|show|list|ls|find|where|locate|file|files|folder|repo|config|json|this|that|it|one|typescript|python|tests?)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
     const conversation = this.askState?.referents;
     // Homebrew facts only for package requests (bounded, local, auto-update off).
     const packageRequest = packageIntent(normalizeRequest(text));
+    if (packageRequest && this.askStage) this.setAskStage('Checking Homebrew');
     const brewFacts = packageRequest ? await this.gatherBrew(packageRequest) : undefined;
     // Config targets (existence checks only) for requests about config files or edits.
     const configs = /\b(?:config(?:uration)?|settings|rc|dotfile|zshrc|bashrc|add|put|insert|append|set|replace|paste|it|that|this)\b/iu.test(text) || conversation?.config || conversation?.file
       ? configTargets(systemConfigEnvironment(this.shellId, root ?? this.shellCwd)).map(target => ({...target, exists: Boolean(target.path && existsSync(target.path))})) : undefined;
     // Git facts (local status and remote names; no network) only when the request or the conversation is about Git or its files.
     const referents = this.askState?.referents;
+    if (this.askStage && root) this.setAskStage('Checking Git state');
     const git = root && (/\b(?:git|branch|upstream|remotes?|untracked|staged?|unstaged|commit|push|pull|fetch|conflicts?|conflicted|clean|working tree|changes|changed)\b/iu.test(text) || referents?.files)
       ? await readGitFacts(root) : undefined;
+    if (this.askStage) this.setAskStage('Reading project files');
     const projectFacts = readProjectFacts(root ?? this.shellCwd);
     const tasks = this.managedTasks.tasks.map(task => ({id: task.id, label: task.label, status: task.status, urls: [...task.urls], startedAt: task.startedAt, lines: task.output.length, command: task.argv.join(' ')}));
-    return {cwd: this.shellCwd, home: homedir(), platform: process.platform, picker: this.promptConfiguration.picker, ...(projectFacts ? {project: projectFacts} : {}), tasks, ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
+    const understanding = this.promptConfiguration.localUnderstanding;
+    const llm = {mode: understanding.mode, requests: this.understanding.requests,
+      ...(understanding.model ? {model: {label: understanding.model.label, runtime: understanding.model.runtime, owned: Boolean(understanding.model.owned)}} : {}),
+      ...(understanding.model ? {state: stateLabel(this.understanding.status, understanding)} : {}),
+      ...(this.understanding.lastRoute ? {lastRoute: this.understanding.lastRoute.route} : {}),
+      ...(this.understanding.lastInference ? {lastInference: this.understanding.lastInference.label} : {})};
+    return {cwd: this.shellCwd, home: homedir(), platform: process.platform, picker: this.promptConfiguration.picker, llm, ...(projectFacts ? {project: projectFacts} : {}), tasks, ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
       ...(this.context.git ? {dirty: Boolean(this.context.git.staged || this.context.git.modified || this.context.git.untracked)} : {}),
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
@@ -6432,6 +6553,7 @@ export class TerminalApp {
     this.agents.dispose();
     this.tasksSubscription();
     this.taskClock?.(); this.taskClock = undefined;
+    this.askClock?.(); this.askClock = undefined;
     this.managedTasks.dispose();
     this.cancelPresentation();
     this.promptPanelState?.task?.dispose();

@@ -63,7 +63,7 @@ export function formatBytes(bytes: number): string {
  * deletes the partial file and fails; nothing unverified is ever used.
  */
 export async function downloadPinned(artifact: PinnedArtifact, directory: string, onProgress: (received: number) => void,
-  fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
+  fetcher: typeof fetch = fetch, signal?: AbortSignal, onStage?: (stage: 'verify' | 'install') => void): Promise<string> {
   mkdirSync(directory, {recursive: true, mode: 0o700});
   if (!officialArtifact(artifact)) throw new Error('not the official pinned Qwen artifact; NMSh downloads nothing else');
   const target = join(directory, artifact.file.replace(/[^\w.-]+/gu, '_'));
@@ -83,8 +83,10 @@ export async function downloadPinned(artifact: PinnedArtifact, directory: string
     }
     await new Promise<void>((resolve, reject) => output.end((error?: Error | null) => error ? reject(error) : resolve()));
     if (received !== artifact.bytes) throw new Error(`size mismatch: ${received} of ${artifact.bytes} bytes`);
+    onStage?.('verify');
     const digest = hash.digest('hex');
     if (digest !== artifact.sha256) throw new Error('sha256 does not match the pinned artifact');
+    onStage?.('install');
     renameSync(temporary, target);
     return target;
   } catch (error) {

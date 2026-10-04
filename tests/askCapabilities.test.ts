@@ -206,3 +206,22 @@ test('safety requests fail closed and stay explainable', () => {
   }
   assert.ok(ask('force push main').kind === 'answer');
 });
+
+test('local model questions answer from /llm facts; actions open /llm; model intents resolve through deterministic phrases', async () => {
+  const {modelInventory, resolveModelIntent} = await import('../src/ask/resolver.js');
+  const llm = {mode: 'auto' as const, model: {label: 'Qwen3 0.6B Q8_0', runtime: 'llama.cpp', owned: true}, state: 'Ready', lastRoute: 'deterministic' as const, lastInference: 'Ask intent · non-thinking', requests: 3};
+  const status = ask('what model are you using', {llm});
+  assert.match(status.kind === 'answer' ? status.text : '', /Qwen3 0\.6B Q8_0 \(llama\.cpp, NMSh managed\) · Ready[\s\S]*resolved deterministically/u);
+  for (const phrase of ['remove the model you downloaded', 'stop the local model', 'find better local models on my machine', 'show local model status']) {
+    const outcome = ask(phrase, {llm});
+    assert.ok(outcome.kind === 'answer' || (outcome.kind === 'proposal' && outcome.action.kind === 'slash'), phrase);
+  }
+  const ids = modelInventory().map(item => item.id);
+  assert.ok(ids.includes('files.list') && ids.includes('network.ping') && ids.includes('git.status'));
+  const ping = resolveModelIntent({capability: 'network.ping', confidence: 0.9, arguments: {target: 'github'}}, context(), {}, commands);
+  assert.deepEqual(ping?.kind === 'proposal' && ping.action, {kind: 'recipe', argv: ['ping', '-c', '4', 'github.com'], risk: 'network'});
+  assert.equal(resolveModelIntent({capability: 'network.ping', confidence: 0.9, arguments: {target: 'x; rm -rf ~'}}, context(), {}, commands), undefined, 'model arguments are validated');
+  assert.equal(resolveModelIntent({capability: 'files.list', confidence: 0.3, arguments: {}}, context(), {}, commands), undefined, 'low confidence is ignored');
+  const files = resolveModelIntent({capability: 'files.list', confidence: 0.9, arguments: {}}, context(), {}, commands);
+  assert.equal(files?.kind === 'choose' && files.capability, 'file.browse');
+});

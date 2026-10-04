@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {stripAnsi} from '../src/util/text.js';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtempSync, readdirSync, readFileSync, rmSync} from 'node:fs';
@@ -319,5 +320,74 @@ test('the download is offered only when nothing suitable is already here; a fail
   const none = {runtimes: [], models: []};
   assert.ok(understandingRows({settings, recommended, discovery: none}).some(row => row.kind === 'download'));
   const text = renderUnderstandingPanel(createUnderstandingPanel(), {settings, recommended, discovery: none, downloadFailure: 'sha256 does not match the pinned artifact'}, 200).join('\n');
-  assert.match(text, /Retry download of Qwen3 0\.6B Q8_0 \(639 MB\).*last attempt failed: sha256 does not match/su);
+  assert.match(stripAnsi(text), /Retry download\s+Qwen3 0\.6B Q8_0 · 639 MB.*last attempt failed: sha256 does not match/su);
+});
+
+test('Qwen3 modes: non-thinking prefill, thinking without grammar, reasoning stripped, per-mode sampling', async () => {
+  const {isQwen3, qwen3Prompt, stripThinking, parseJsonText, QWEN3_SAMPLING} = await import('../src/understanding/runtimes.js');
+  assert.ok(isQwen3({label: 'Qwen3 0.6B Q8_0'}) && isQwen3({label: 'x', path: '/m/Qwen3-1.7B-Q4_K_M.gguf'}));
+  assert.ok(!isQwen3({label: 'Qwen2.5 1.5B'}) && !isQwen3({label: 'Qwen3-VL 2B'}) && !isQwen3({label: 'Llama 3.2 1B'}));
+  assert.equal(qwen3Prompt('hi', 'fast'), '<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n');
+  assert.equal(qwen3Prompt('hi', 'thinking'), '<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n');
+  assert.equal(stripThinking('<think>the user {wants} files</think>\n{"a":1}'), '{"a":1}');
+  assert.deepEqual(parseJsonText('<think>maybe {x}</think>{"capability":"files.list","confidence":0.9}'), {capability: 'files.list', confidence: 0.9});
+  assert.throws(() => parseJsonText('<think>cut off {"capability": "x"'), /no JSON/u, 'an unfinished reasoning block never leaks JSON-looking text');
+  assert.deepEqual(QWEN3_SAMPLING.thinking, {temperature: 0.6, top_p: 0.95, top_k: 20});
+  assert.deepEqual(QWEN3_SAMPLING.fast, {temperature: 0.7, top_p: 0.8, top_k: 20});
+});
+
+test('llama-server request per mode: fast is grammar-constrained, thinking is bounded and validated afterwards', async () => {
+  const {LlamaServerRuntime} = await import('../src/understanding/runtimes.js');
+  const bodies: Array<Record<string, unknown>> = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init: {body: string}) => { bodies.push(JSON.parse(init.body)); return new Response(JSON.stringify({content: '<think>x</think>{"ok":true}'})); }) as never;
+  try {
+    const runtime = new LlamaServerRuntime('/bin/llama-server', '/m.gguf', 'Qwen3');
+    assert.deepEqual(await runtime.infer('p', {type: 'object'}, 160, AbortSignal.timeout(1000), {qwen3: true, reasoning: 'fast'}), {ok: true});
+    await runtime.infer('p', {type: 'object'}, 640, AbortSignal.timeout(1000), {qwen3: true, reasoning: 'thinking'});
+    await runtime.infer('p', {type: 'object'}, 160, AbortSignal.timeout(1000));
+  } finally { globalThis.fetch = original; }
+  assert.equal(bodies[0]!.temperature, 0.7);
+  assert.ok(bodies[0]!.json_schema && String(bodies[0]!.prompt).endsWith('<think>\n\n</think>\n\n'));
+  assert.equal(bodies[1]!.temperature, 0.6);
+  assert.equal(bodies[1]!.json_schema, undefined, 'a grammar would forbid the think block');
+  assert.equal(bodies[1]!.n_predict, 640);
+  assert.equal(bodies[2]!.temperature, 0, 'non-Qwen models keep deterministic decoding');
+});
+
+test('model selection compares facts: equivalent and stronger reuse, weaker keeps the recommendation, unknown shows both', async () => {
+  const {compareWithRecommended, recommendModel} = await import('../src/understanding/discovery.js');
+  const model = (label: string, extra: Record<string, unknown> = {}) => ({label, runtime: 'llama.cpp' as const, path: `/m/${label}.gguf`, suitability: 'compatible' as const, reason: '', owned: false, ...extra});
+  assert.equal(compareWithRecommended(model('Qwen3 0.6B Q4_K_M')), 'equivalent');
+  assert.equal(compareWithRecommended(model('Qwen3 1.7B Q4_K_M')), 'stronger');
+  assert.equal(compareWithRecommended(model('Qwen3 0.6B Q2_K')), 'weaker');
+  assert.equal(compareWithRecommended(model('Llama 3.2 1B Q4_K_M', {family: 'llama'})), 'unknown');
+  const runtimes = [{kind: 'llama.cpp' as const, label: 'llama.cpp', running: false}];
+  assert.equal(recommendModel({runtimes, models: [model('Qwen3 1.7B Q4_K_M')]}).prefer, 'existing');
+  assert.equal(recommendModel({runtimes, models: [model('Qwen3 0.6B Q2_K')]}).prefer, 'download');
+  assert.equal(recommendModel({runtimes, models: [model('Llama 3.2 1B Q4_K_M', {family: 'llama'})]}).prefer, 'either');
+  assert.equal(recommendModel({runtimes, models: [model('Qwen3 8B', {suitability: 'large', parametersB: 8})]}).prefer, 'either', 'a large model is never chosen silently');
+  assert.equal(recommendModel({runtimes, models: []}).prefer, 'download');
+});
+
+test('/llm offers removal only for the NMSh-owned model and uninstall only with provenance', async () => {
+  const {understandingRows, renderUnderstandingPanel, createUnderstandingPanel} = await import('../src/understanding/UnderstandingPanel.js');
+  const settings: LocalUnderstandingSettings = {mode: 'auto', ask: true, folding: true, model: {label: 'Qwen3 0.6B Q8_0', runtime: 'llama.cpp', path: '/d/q.gguf', owned: true}};
+  const discovery = {runtimes: [{kind: 'llama.cpp' as const, label: 'llama.cpp', running: false}], models: []};
+  const kinds = (facts: Parameters<typeof understandingRows>[0]) => understandingRows(facts).map(row => row.kind);
+  assert.ok(!kinds({settings, discovery}).includes('remove'));
+  assert.ok(kinds({settings, discovery, ownedModel: {path: '/d/q.gguf', bytes: 639e6, inUse: true}}).includes('remove'));
+  assert.ok(!kinds({settings, discovery}).includes('uninstallRuntime'));
+  assert.ok(kinds({settings, discovery, runtimeOwned: {label: 'brew install llama.cpp'}}).includes('uninstallRuntime'));
+  const text = stripAnsi(renderUnderstandingPanel(createUnderstandingPanel(), {settings, discovery, now: 10_000,
+    activity: {requests: 14, lastRoute: {route: 'model', at: 0}, lastInference: {label: 'Ask intent · non-thinking', at: 2000, ok: true}}}, 120).join('\n'));
+  assert.match(text, /Local Intelligence/u);
+  assert.match(text, /Mode\s+‹ Auto ›/u);
+  assert.match(text, /Last Ask route\s+Qwen3 0\.6B Q8_0/u);
+  assert.match(text, /Last inference\s+Ask intent · non-thinking · 8s ago/u);
+  assert.match(text, /Requests\s+14/u);
+  assert.doesNotMatch(text, /\[x\]|\[ \]|\[Auto\]/u, 'no retro controls');
+  const progress = createUnderstandingPanel();
+  progress.progress = {label: 'Qwen3 0.6B', stage: 'Downloading', received: 84e6, total: 639e6, since: 0};
+  assert.match(stripAnsi(renderUnderstandingPanel(progress, {settings, discovery, now: 3000}, 120).join('\n')), /Qwen3 0\.6B · Downloading · 84 \/ 639 MB · 13%/u);
 });

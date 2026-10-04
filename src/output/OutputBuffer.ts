@@ -311,7 +311,7 @@ export class OutputBuffer {
   addAskInteraction(request: string, turns: readonly RecordedAskTurn[]): void {
     const body = turns.length ? turns : [{role: 'ask' as const, text: 'Closed without an answer.'}];
     if (this.active) {
-      this.addFrontendInteraction(`/ask ${request}`, body.map(turn => `${turn.role === 'you' ? 'You' : 'Ask'}: ${turn.text}`).join('\n'), '');
+      this.addFrontendInteraction(`/ask ${request}`, body.map(turn => turn.text.split('\n').map((line, index) => `${index === 0 ? (turn.role === 'you' ? 'You   ' : 'Ask   ') : '      '}${line}`).join('\n')).join('\n'), '');
       return;
     }
     this.parser.ensureLineBoundary();
@@ -321,14 +321,16 @@ export class OutputBuffer {
     this.parser.addLine(`${GLYPHS.prompt} /ask ${request}`, foreground(UI_COLORS.command));
     const outputStartId = this.parser.completedCount();
     const plain: string[] = [];
-    for (const turn of body) {
+    // Compact exchanges: a role column, then the turn's own lines; a blank row separates exchanges.
+    body.forEach((turn, turnIndex) => {
+      if (turn.role === 'you' && turnIndex > 0) { plain.push(''); this.lineTypes.set(this.parser.completedCount(), 'metadata'); this.parser.addLine('', ''); }
       turn.text.split('\n').forEach((line, index) => {
-        const row = `  ${index === 0 ? (turn.role === 'you' ? 'You  ' : 'Ask  ') : '     '}${line}`;
+        const row = `  ${index === 0 ? (turn.role === 'you' ? 'You   ' : 'Ask   ') : '      '}${line}`;
         plain.push(row);
         this.lineTypes.set(this.parser.completedCount(), 'metadata');
         this.parser.addLine(row, turn.role === 'you' ? foreground(UI_COLORS.primary) : foreground(UI_COLORS.secondary));
       });
-    }
+    });
     const endId = this.parser.completedCount();
     this.completed.unshift({command: `/ask ${request}`, output: plain.join('\n'), lifecycleText: '', exitCode: 0, startId, outputStartId, endId,
       expanded: !shouldFoldAsk(this.outputFolding, body), frontend: 'ask', ask: {version: 1, turns: body.map(turn => ({role: turn.role, text: turn.text}))}});

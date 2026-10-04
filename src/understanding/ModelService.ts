@@ -2,7 +2,7 @@ import {existsSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
 import {join} from 'node:path';
 import type {LocalModelChoice, LocalUnderstandingMode} from '../prompt/configuration.js';
-import type {ModelRuntime} from './runtimes.js';
+import {isQwen3, type ModelRuntime, type Reasoning} from './runtimes.js';
 import {foldPrompt, FOLD_SCHEMA, intentPrompt, INTENT_SCHEMA, type FoldRequest, type IntentRequest} from './tasks.js';
 
 /**
@@ -22,14 +22,16 @@ export type ModelState = 'unloaded' | 'loading' | 'ready' | 'busy' | 'error';
 
 export type ClientMessage =
   | {type: 'hello'; protocol: number}
-  | {type: 'infer'; id: number; priority: Priority; task: 'intent'; input: IntentRequest; mode: LocalUnderstandingMode; model: LocalModelChoice}
-  | {type: 'infer'; id: number; priority: Priority; task: 'fold'; input: FoldRequest; mode: LocalUnderstandingMode; model: LocalModelChoice}
+  | {type: 'infer'; id: number; priority: Priority; task: 'intent'; input: IntentRequest; mode: LocalUnderstandingMode; model: LocalModelChoice; reasoning?: Reasoning}
+  | {type: 'infer'; id: number; priority: Priority; task: 'fold'; input: FoldRequest; mode: LocalUnderstandingMode; model: LocalModelChoice; reasoning?: Reasoning}
   | {type: 'status'; id: number}
-  | {type: 'configure'; mode: LocalUnderstandingMode; model?: LocalModelChoice};
+  | {type: 'configure'; mode: LocalUnderstandingMode; model?: LocalModelChoice}
+  /** Unload the model now (it loads again on next use); queued work still finishes first. */
+  | {type: 'unload'};
 
 export type ServiceMessage =
   | {type: 'welcome'; protocol: number; features: readonly string[]; build?: string}
-  | {type: 'result'; id: number; ok: true; output: unknown}
+  | {type: 'result'; id: number; ok: true; output: unknown; reasoning?: Reasoning}
   | {type: 'result'; id: number; ok: false; error: string}
   | {type: 'status'; id: number; state: ModelState; model?: string; runtime?: string; clients: number; queued: number; error?: string};
 
@@ -47,10 +49,12 @@ export interface ModelServiceOptions {
   now?: () => number;
 }
 
-interface Job {client: Client; id: number; priority: Priority; task: 'intent' | 'fold'; input: unknown; model: LocalModelChoice; enqueued: number}
+interface Job {client: Client; id: number; priority: Priority; task: 'intent' | 'fold'; input: unknown; model: LocalModelChoice; enqueued: number; reasoning: Reasoning}
 interface Client {send: (message: ServiceMessage) => void}
 
 const TOKEN_BUDGET = {intent: 160, fold: 40} as const;
+/** A bounded thinking pass: room for brief reasoning plus the JSON answer, never open-ended. */
+const THINKING_BUDGET = 640;
 
 export class ModelService {
   private readonly clients = new Set<Client>();
@@ -101,6 +105,7 @@ export class ModelService {
         clients: this.clients.size, queued: this.queue.length, ...(this.error ? {error: this.error} : {})});
       return;
     }
+    if (message.type === 'unload') { void (async () => { while (this.working) await new Promise(resolve => setTimeout(resolve, 50)); await this.unload(); })(); return; }
     if (message.type === 'configure') {
       this.mode = message.mode;
       if (message.mode === 'off') void this.shutdownWhenIdle();
@@ -113,7 +118,9 @@ export class ModelService {
       const background = this.queue.filter(job => job.priority === 'background');
       if (background.length >= 3) this.drop(background[0]!, 'superseded');
     }
-    this.queue.push({client, id: message.id, priority: message.priority, task: message.task, input: message.input, model: message.model, enqueued: this.now()});
+    this.queue.push({client, id: message.id, priority: message.priority, task: message.task, input: message.input, model: message.model, enqueued: this.now(),
+      // Smart Folding is always non-thinking; only an Ask retry may ask for a bounded thinking pass.
+      reasoning: message.task === 'intent' && message.reasoning === 'thinking' ? 'thinking' : 'fast'});
     this.queue.sort((a, b) => PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority] || a.enqueued - b.enqueued);
     void this.pump();
   }
@@ -137,9 +144,12 @@ export class ModelService {
           this.state = 'busy';
           const signal = AbortSignal.timeout(this.requestTimeoutMs);
           const prompt = job.task === 'intent' ? intentPrompt(job.input as IntentRequest) : foldPrompt(job.input as FoldRequest);
-          const output = await runtime.infer(prompt, job.task === 'intent' ? INTENT_SCHEMA : FOLD_SCHEMA, TOKEN_BUDGET[job.task], signal);
+          // Only llama.cpp gets the explicit Qwen3 template; other runtimes apply their own and stay non-thinking.
+          if (job.reasoning === 'thinking' && job.model.runtime !== 'llama.cpp') job.reasoning = 'fast';
+          const output = await runtime.infer(prompt, job.task === 'intent' ? INTENT_SCHEMA : FOLD_SCHEMA, job.reasoning === 'thinking' ? THINKING_BUDGET : TOKEN_BUDGET[job.task], signal,
+            {reasoning: job.reasoning, qwen3: isQwen3(job.model)});
           this.state = 'ready';
-          job.client.send({type: 'result', id: job.id, ok: true, output});
+          job.client.send({type: 'result', id: job.id, ok: true, output, reasoning: job.reasoning});
         } catch (error) {
           this.state = this.runtime?.loaded ? 'ready' : 'error';
           this.error = error instanceof Error ? error.message : String(error);

@@ -1,3 +1,4 @@
+import type {Reasoning} from './runtimes.js';
 import type {LocalUnderstandingSettings} from '../prompt/configuration.js';
 import {discoverLocal, systemDiscoveryAdapters, type DiscoveryAdapters, type FoundModel, type FoundRuntime} from './discovery.js';
 import {ModelClient, type ModelStatus} from './ModelClient.js';
@@ -21,6 +22,12 @@ export class LocalUnderstanding {
   downloadFailure?: string;
   /** Diagnostics: how many inference requests this window sent. */
   requests = 0;
+  /** How the newest Ask was routed: deterministic only, or with the model's interpretation. */
+  lastRoute?: {route: 'deterministic' | 'model'; at: number};
+  /** The newest inference: what it was for and which Qwen3 mode ran ("Ask intent · non-thinking"). */
+  lastInference?: {label: string; at: number; ok: boolean};
+  /** An inference request is in flight right now (its start time), for the live "Local understanding" line. */
+  activeSince?: number;
 
   constructor(private readonly settings: () => LocalUnderstandingSettings,
     private readonly makeClient: () => ModelClient = () => new ModelClient(),
@@ -39,20 +46,36 @@ export class LocalUnderstanding {
     return this.client;
   }
 
-  async interpretAsk(request: IntentRequest, capabilityIds: ReadonlySet<string>): Promise<IntentInterpretation | undefined> {
+  /** One Ask interpretation: non-thinking by default; `thinking` only as a bounded retry for genuinely ambiguous text. */
+  async interpretAsk(request: IntentRequest, capabilityIds: ReadonlySet<string>, reasoning: Reasoning = 'fast'): Promise<IntentInterpretation | undefined> {
     if (!this.eligible('ask')) return undefined;
     const settings = this.settings();
     this.requests += 1;
-    const output = await this.connection().infer('intent', request, {priority: 'interactive', mode: settings.mode, model: settings.model!, timeoutMs: 10_000});
-    return validateInterpretation(output, capabilityIds);
+    this.activeSince = Date.now();
+    try {
+      const client = this.connection();
+      const output = await client.infer('intent', request, {priority: 'interactive', mode: settings.mode, model: settings.model!, timeoutMs: reasoning === 'thinking' ? 25_000 : 10_000, reasoning});
+      const interpretation = validateInterpretation(output, capabilityIds);
+      const used = output === undefined ? reasoning : client.lastReasoning;
+      this.lastInference = {label: `Ask intent · ${used === 'thinking' ? 'thinking retry' : 'non-thinking'}`, at: Date.now(), ok: Boolean(interpretation)};
+      return interpretation;
+    } finally { this.activeSince = undefined; }
+  }
+
+  /** Unload the shared model now; it loads again on next use. */
+  async stopModel(): Promise<boolean> {
+    if (!this.client) return false;
+    return this.client.unload();
   }
 
   async foldHint(request: FoldRequest): Promise<FoldHint | undefined> {
     if (!this.eligible('folding')) return undefined;
     const settings = this.settings();
     this.requests += 1;
-    const output = await this.connection().infer('fold', request, {priority: 'background', mode: settings.mode, model: settings.model!, timeoutMs: 4_000});
-    return validateFoldHint(output);
+    const output = await this.connection().infer('fold', request, {priority: 'background', mode: settings.mode, model: settings.model!, timeoutMs: 4_000, reasoning: 'fast'});
+    const hint = validateFoldHint(output);
+    this.lastInference = {label: 'Smart Folding · non-thinking', at: Date.now(), ok: Boolean(hint)};
+    return hint;
   }
 
   /** Status of an already-running shared service; never starts one. */

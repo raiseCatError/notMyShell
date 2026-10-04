@@ -231,7 +231,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'ask', title: 'Ask & local understanding', intro: ['/ask: ask NMSh what it can do in plain English. Ask works without a language model,',
     'and so does NMSh\'s normal Smart Folding. A local model is optional; No local model is the default.'], rows: [
     {row: configRow('askRecord'), note: draft => draft.askRecord ? 'Keep Ask conversations in transcripts' : 'Ask conversations are not saved; approved commands still are'},
-    {row: configRow('localUnderstanding'), note: draft => draft.localUnderstanding.mode === 'off' ? 'No local model: nothing is downloaded, loaded or run' : 'Choose the uses below; /providers sets up the model (previewed, nothing downloads without your Yes)'},
+    {row: configRow('localUnderstanding'), note: draft => draft.localUnderstanding.mode === 'off' ? 'No local model: nothing is downloaded, loaded or run' : 'Choose the uses below; after Apply, Setup continues into model setup (/llm): it detects first, and nothing downloads without your Yes'},
     {row: configRow('localUnderstandingAsk'), note: () => 'Improve Ask understanding'},
     {row: configRow('localUnderstandingFolding'), note: () => 'Improve Smart Folding'},
   ]},

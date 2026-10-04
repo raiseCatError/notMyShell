@@ -6,6 +6,7 @@ import {resolveGit} from './gitAssist.js';
 import {browseOutcome, resolveFiles} from './fileAssist.js';
 import {resolveRecipe} from './recipes.js';
 import {resolveProject} from './project.js';
+import {resolveLocalModel} from './localModel.js';
 import {resolveActivity} from './activity.js';
 import {resolvePackage} from './packages.js';
 import {resolveFileRequest, type FileAssistEnvironment} from './configAssist.js';
@@ -163,6 +164,9 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   // One guide: /guide, "guide me through nmsh", and /ask help all come from the concept catalog.
   if (GUIDE_REQUEST.test(text)) return guideOutcome(context);
   if (HELP_REQUEST.test(text)) return askHelpOutcome();
+  // The optional local model: status and where its actions live (/llm).
+  const llm = resolveLocalModel(text, context);
+  if (llm) return llm;
   // Recent activity from recorded facts ("what did I just do").
   const activity = resolveActivity(text, context, commands);
   if (activity) return activity;
@@ -636,6 +640,59 @@ export interface ValidatedInterpretation {
 }
 
 export const MODEL_CONFIDENCE = 0.6;
+
+/**
+ * Typed intents the optional model may choose besides capability ids: each
+ * maps to a canonical request NMSh's deterministic resolver already handles,
+ * with only bounded arguments (a file name, host, port, branch, script) slotted
+ * in and then validated by that resolver. The model never supplies a command.
+ */
+type IntentArgs = ValidatedInterpretation['arguments'];
+const WORD = /^[\w./@:-]{1,80}$/u;
+const arg = (value: string | undefined) => value && WORD.test(value) ? value : undefined;
+export const MODEL_INTENTS: ReadonlyArray<{id: string; title: string; phrase: (args: IntentArgs) => string | undefined}> = [
+  {id: 'files.list', title: 'List the files in this folder or repository', phrase: () => 'list files'},
+  {id: 'files.find', title: 'Find files by name (target: name)', phrase: args => arg(args.target) ? `find files named ${arg(args.target)}` : undefined},
+  {id: 'files.pick', title: 'Pick a file to open', phrase: () => 'open'},
+  {id: 'git.changes', title: 'Show what changed (the diff)', phrase: () => 'show me the diff'},
+  {id: 'git.push', title: 'Push the current branch', phrase: () => 'push this branch'},
+  {id: 'git.pull', title: 'Pull the current branch', phrase: () => 'pull this branch'},
+  {id: 'git.newBranch', title: 'Create a branch (target: name)', phrase: args => arg(args.target) ? `make a new branch called ${arg(args.target)}` : undefined},
+  {id: 'git.lastCommit', title: 'Show the last commit', phrase: () => 'what did my last commit do'},
+  {id: 'project.dev', title: 'Start the dev server / run the app', phrase: () => 'run the dev server'},
+  {id: 'project.test', title: 'Run the tests', phrase: () => 'run the tests'},
+  {id: 'project.scripts', title: 'List project scripts', phrase: () => 'what scripts does this project have'},
+  {id: 'task.stop', title: 'Stop the background task NMSh started', phrase: () => 'stop the dev server'},
+  {id: 'network.ping', title: 'Check a host is reachable (target: host)', phrase: args => arg(args.target) ? `ping ${arg(args.target)}` : undefined},
+  {id: 'system.disk', title: 'Disk usage', phrase: () => 'show my disk usage'},
+  {id: 'system.memory', title: 'Memory use', phrase: () => 'how much memory am i using'},
+  {id: 'process.port', title: 'What is using a port (target: port number)', phrase: args => /^\d{1,5}$/u.test(args.target ?? '') ? `what is using port ${args.target}` : undefined},
+  {id: 'process.list', title: 'Running processes (target: optional name)', phrase: args => arg(args.target) ? `show running ${arg(args.target)} processes` : 'show running processes'},
+  {id: 'search.text', title: 'Search file contents (query: text)', phrase: args => arg(args.query) ? `grep for ${arg(args.query)}` : undefined},
+  {id: 'activity.failed', title: 'What failed recently', phrase: () => 'what\'s broken'},
+  {id: 'activity.recent', title: 'What I did recently', phrase: () => 'what have i been doing'},
+  {id: 'llm.status', title: 'Local model status', phrase: () => 'show local model status'},
+];
+
+/** The capability inventory handed to the model: capabilities plus the typed intents above (ids and titles only). */
+export function modelInventory(): Array<{id: string; title: string}> {
+  return [...CAPABILITIES.filter(item => item.patterns.length).map(item => ({id: item.id, title: item.title})), ...MODEL_INTENTS.map(item => ({id: item.id, title: item.title}))];
+}
+
+/**
+ * A typed intent from the model, resolved by the deterministic resolver
+ * through its canonical phrase. Undefined when the phrase can't be built from
+ * the arguments or the resolver isn't sure either.
+ */
+export function resolveModelIntent(interpretation: {capability: string | null; confidence: number; arguments: IntentArgs}, context: AskContext, state: ResolveState,
+  commands?: CommandEnvironment, files?: FileAssistEnvironment): AskOutcome | undefined {
+  if (!interpretation.capability || interpretation.confidence < MODEL_CONFIDENCE) return undefined;
+  const intent = MODEL_INTENTS.find(item => item.id === interpretation.capability);
+  const phrase = intent?.phrase(interpretation.arguments);
+  if (!phrase) return undefined;
+  const outcome = resolveRequest(phrase, context, state, commands, files);
+  return outcome.kind === 'unclear' ? undefined : outcome;
+}
 
 /**
  * Turn a model interpretation into an outcome without trusting it with

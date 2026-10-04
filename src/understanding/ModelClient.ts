@@ -1,3 +1,4 @@
+import type {Reasoning} from './runtimes.js';
 import {spawn} from 'node:child_process';
 import {connect, type Socket} from 'node:net';
 import {extname} from 'node:path';
@@ -81,12 +82,23 @@ export class ModelClient {
     });
   }
 
-  async infer(task: 'intent', input: IntentRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number}): Promise<unknown>;
-  async infer(task: 'fold', input: FoldRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number}): Promise<unknown>;
-  async infer(task: 'intent' | 'fold', input: IntentRequest | FoldRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number}): Promise<unknown> {
+  async infer(task: 'intent', input: IntentRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown>;
+  async infer(task: 'fold', input: FoldRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown>;
+  async infer(task: 'intent' | 'fold', input: IntentRequest | FoldRequest, options: {priority: Priority; mode: LocalUnderstandingMode; model: LocalModelChoice; timeoutMs: number; reasoning?: Reasoning}): Promise<unknown> {
     if (!(await this.ensure()) || (this.protocol !== undefined && this.protocol !== MODEL_PROTOCOL)) return undefined;
-    const reply = await this.request({type: 'infer', task, input, priority: options.priority, mode: options.mode, model: options.model} as never, options.timeoutMs);
-    return reply?.type === 'result' && reply.ok ? reply.output : undefined;
+    const reply = await this.request({type: 'infer', task, input, priority: options.priority, mode: options.mode, model: options.model, ...(options.reasoning ? {reasoning: options.reasoning} : {})} as never, options.timeoutMs);
+    if (reply?.type === 'result' && reply.ok) { this.lastReasoning = reply.reasoning ?? 'fast'; return reply.output; }
+    return undefined;
+  }
+
+  /** The mode the service actually used for the newest successful result (diagnostics only). */
+  lastReasoning: Reasoning = 'fast';
+
+  /** Ask the running service to unload its model now; never starts a service. */
+  async unload(): Promise<boolean> {
+    if (!this.socket && !(await this.open())) return false;
+    this.send?.({type: 'unload'});
+    return true;
   }
 
   /** Status of a service that is already running; never starts one. */

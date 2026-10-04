@@ -206,6 +206,8 @@ export interface AskContext {
   project?: import('./project.js').ProjectFacts;
   /** Background tasks NMSh started (never other processes). */
   tasks?: import('./project.js').TaskSummary[];
+  /** Local model facts for "what model are you using" (the same facts /llm shows). */
+  llm?: import('./localModel.js').LocalModelFacts;
   /** The platform recipes are built for (process.platform). */
   platform?: string;
   /** The configured picker provider (native, fzf, television). */

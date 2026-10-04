@@ -12,8 +12,39 @@ export interface ModelRuntime {
   readonly label: string;
   readonly loaded: boolean;
   load(signal?: AbortSignal): Promise<void>;
-  infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal): Promise<unknown>;
+  infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal, options?: InferOptions): Promise<unknown>;
   unload(): Promise<void>;
+}
+
+/**
+ * Qwen3 runs in one of its two officially supported modes. Fast (non-thinking)
+ * is the default for every task; a thinking pass is only ever a bounded Ask
+ * retry. Reasoning text is discarded here; only the validated JSON leaves.
+ */
+export type Reasoning = 'fast' | 'thinking';
+export interface InferOptions {reasoning?: Reasoning; qwen3?: boolean}
+
+/** Qwen's published sampling per mode (Qwen3 model card): thinking 0.6/0.95/20, non-thinking 0.7/0.8/20; never greedy for thinking. */
+export const QWEN3_SAMPLING = {thinking: {temperature: 0.6, top_p: 0.95, top_k: 20}, fast: {temperature: 0.7, top_p: 0.8, top_k: 20}} as const;
+
+export function isQwen3(model: {label: string; name?: string; path?: string}): boolean {
+  // Qwen3 text models (not Qwen3-VL or Qwen3-Coder, whose templates differ).
+  const text = `${model.label} ${model.name ?? ''} ${model.path ?? ''}`.toLowerCase().replace(/qwen[\s_.-]*3[\s_.-]*(?:vl|coder)\S*/gu, '');
+  return /qwen[\s_.-]*3(?!\d)/u.test(text);
+}
+
+/**
+ * Qwen3's chat template by hand (ChatML), for llama-server's raw /completion:
+ * non-thinking prefills the empty think block exactly as the official
+ * template does when enable_thinking is false; thinking leaves it open.
+ */
+export function qwen3Prompt(prompt: string, reasoning: Reasoning): string {
+  return `<|im_start|>user\n${prompt}<|im_end|>\n<|im_start|>assistant\n${reasoning === 'fast' ? '<think>\n\n</think>\n\n' : ''}`;
+}
+
+/** Remove any reasoning block (closed, or cut off by the token budget) before JSON is looked for. */
+export function stripThinking(text: string): string {
+  return text.replace(/<think>[\s\S]*?<\/think>/gu, '').replace(/<think>[\s\S]*$/u, '').trim();
 }
 
 export const CONTEXT_TOKENS = 2048;
@@ -24,8 +55,9 @@ async function postJson(url: string, body: unknown, signal: AbortSignal): Promis
   return await response.json() as Record<string, unknown>;
 }
 
-function parseJsonText(text: unknown): unknown {
-  if (typeof text !== 'string') throw new Error('no text');
+export function parseJsonText(raw: unknown): unknown {
+  if (typeof raw !== 'string') throw new Error('no text');
+  const text = stripThinking(raw);
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end < start) throw new Error('no JSON object');
@@ -69,9 +101,15 @@ export class LlamaServerRuntime implements ModelRuntime {
     throw new Error('llama-server did not become ready');
   }
 
-  async infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal): Promise<unknown> {
-    const reply = await postJson(`http://127.0.0.1:${this.port}/completion`,
-      {prompt, n_predict: maxTokens, temperature: 0, json_schema: schema, cache_prompt: false}, signal);
+  async infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal, options: InferOptions = {}): Promise<unknown> {
+    // Non-Qwen models keep deterministic decoding. Qwen3 uses its own template and per-mode sampling; the
+    // fast mode stays grammar-constrained, while a thinking pass can't be (the grammar would forbid the
+    // think block), so its JSON is extracted after the block and validated as strictly as ever.
+    const reasoning = options.reasoning ?? 'fast';
+    const body = options.qwen3
+      ? {prompt: qwen3Prompt(prompt, reasoning), n_predict: maxTokens, ...QWEN3_SAMPLING[reasoning], ...(reasoning === 'fast' ? {json_schema: schema} : {}), cache_prompt: false}
+      : {prompt, n_predict: maxTokens, temperature: 0, json_schema: schema, cache_prompt: false};
+    const reply = await postJson(`http://127.0.0.1:${this.port}/completion`, body, signal);
     return parseJsonText(reply.content);
   }
 
@@ -91,9 +129,12 @@ export class OllamaRuntime implements ModelRuntime {
     await postJson(`${this.base}/api/generate`, {model: this.model, prompt: '', keep_alive: '5m'}, signal ?? AbortSignal.timeout(60_000));
     this.warm = true;
   }
-  async infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal): Promise<unknown> {
-    const reply = await postJson(`${this.base}/api/generate`, {model: this.model, prompt, stream: false, format: schema,
-      options: {temperature: 0, num_predict: maxTokens, num_ctx: CONTEXT_TOKENS}, keep_alive: '5m'}, signal);
+  async infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal, options: InferOptions = {}): Promise<unknown> {
+    // Qwen3's documented soft switch selects non-thinking through Ollama's own template; schema output stays enforced.
+    const text = options.qwen3 ? `${prompt} /no_think` : prompt;
+    const sampling = options.qwen3 ? QWEN3_SAMPLING.fast : {temperature: 0};
+    const reply = await postJson(`${this.base}/api/generate`, {model: this.model, prompt: text, stream: false, format: schema,
+      options: {...sampling, num_predict: maxTokens, num_ctx: CONTEXT_TOKENS}, keep_alive: '5m'}, signal);
     return parseJsonText(reply.response);
   }
   async unload(): Promise<void> {
@@ -107,8 +148,10 @@ export class LmStudioRuntime implements ModelRuntime {
   constructor(private readonly model: string, readonly label: string, private readonly base = 'http://127.0.0.1:1234') {}
   get loaded(): boolean { return true; }
   async load(): Promise<void> { /* LM Studio loads models itself */ }
-  async infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal): Promise<unknown> {
-    const reply = await postJson(`${this.base}/v1/chat/completions`, {model: this.model, messages: [{role: 'user', content: prompt}], temperature: 0, max_tokens: maxTokens,
+  async infer(prompt: string, schema: object, maxTokens: number, signal: AbortSignal, options: InferOptions = {}): Promise<unknown> {
+    const content = options.qwen3 ? `${prompt} /no_think` : prompt;
+    const sampling = options.qwen3 ? {temperature: QWEN3_SAMPLING.fast.temperature, top_p: QWEN3_SAMPLING.fast.top_p} : {temperature: 0};
+    const reply = await postJson(`${this.base}/v1/chat/completions`, {model: this.model, messages: [{role: 'user', content}], ...sampling, max_tokens: maxTokens,
       response_format: {type: 'json_schema', json_schema: {name: 'nmsh', strict: true, schema}}}, signal);
     const choices = reply.choices as Array<{message?: {content?: string}}> | undefined;
     return parseJsonText(choices?.[0]?.message?.content);

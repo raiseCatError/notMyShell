@@ -194,5 +194,6 @@ export function shouldFoldAsk(mode: OutputFoldingMode, turns: readonly RecordedA
   if (mode === 'always') return true;
   const asked = turns.filter(turn => turn.role === 'you').length;
   const lines = turns.reduce((sum, turn) => sum + turn.text.split('\n').length, 0);
-  return asked > 1 || answers.length > 1 || lines > ASK_SMART_LINES;
+  // Smart: a short exchange (one or two questions) stays open; longer chatter folds by turns or length, not shell line thresholds.
+  return asked > 2 || lines > ASK_SMART_LINES;
 }

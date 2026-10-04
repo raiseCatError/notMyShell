@@ -207,3 +207,58 @@ export function systemDiscoveryAdapters(): DiscoveryAdapters {
     },
   };
 }
+
+/** How an existing model compares with NMSh's recommended Qwen3 0.6B Q8_0, from factual metadata only. */
+export type ModelComparison = 'stronger' | 'equivalent' | 'weaker' | 'unknown';
+
+const QUANT_BITS = (quantization?: string): number | undefined => {
+  const match = /(?:^|[^a-z])(?:i?q)(\d)/iu.exec(quantization ?? '') ?? /^(?:b?f)(16|32)$/iu.exec(quantization ?? '');
+  return match ? Number(match[1]) : undefined;
+};
+
+/**
+ * Same family and size class → equivalent (prefer the existing file: no
+ * duplicate download); a bigger Qwen3 that still fits small-task memory
+ * (≤ 4B) → stronger; smaller, or very low-bit quantization → weaker; any
+ * other family → unknown (both are shown with their facts).
+ */
+export function compareWithRecommended(model: FoundModel): ModelComparison {
+  if (model.suitability === 'unsuitable') return 'weaker';
+  const family = (model.family ?? model.label).toLowerCase();
+  const params = model.parametersB ?? parameterBillions(model.label, model.name, model.path);
+  const bits = QUANT_BITS(model.quantization ?? /(?:^|[\s_.-])(I?Q\d\w*|B?F16|F32)(?:$|[\s_.-])/iu.exec(model.label)?.[1]);
+  if (!/^qwen3/u.test(family.replace(/[\s_-]/gu, '')) || params === undefined) return 'unknown';
+  if (bits !== undefined && bits < 4) return 'weaker';
+  if (params < 0.55) return 'weaker';
+  if (params <= 0.7) return 'equivalent';
+  if (params <= 4) return 'stronger';
+  return 'unknown';
+}
+
+export interface ModelRecommendation {
+  /** What NMSh suggests first. */
+  prefer: 'existing' | 'download' | 'either';
+  existing?: FoundModel;
+  comparison?: ModelComparison;
+  reason: string;
+}
+
+/** The choice shown in /llm and Setup Cat: always both options when an existing model is found, never a silent switch. */
+export function recommendModel(found: {runtimes: FoundRuntime[]; models: FoundModel[]}): ModelRecommendation {
+  const usable = (model: FoundModel) => model.runtime === 'llama.cpp' ? found.runtimes.some(runtime => runtime.kind === 'llama.cpp')
+    : found.runtimes.some(runtime => runtime.kind === model.runtime && runtime.running);
+  const candidates = found.models.filter(model => model.suitability !== 'unsuitable' && !model.owned);
+  const rank: Record<ModelComparison, number> = {stronger: 0, equivalent: 1, unknown: 2, weaker: 3};
+  const best = candidates.map(model => ({model, comparison: compareWithRecommended(model)}))
+    .sort((a, b) => rank[a.comparison] - rank[b.comparison] || Number(usable(b.model)) - Number(usable(a.model)) || (a.model.bytes ?? 0) - (b.model.bytes ?? 0))[0];
+  if (!best) return {prefer: 'download', reason: 'No compatible model is on this machine yet.'};
+  const {model, comparison} = best;
+  const size = model.bytes ? ` · ${formatSize(model.bytes)}` : '';
+  if (model.suitability === 'large') return {prefer: 'either', existing: model, comparison, reason: `${model.label} works but is large (${model.reason}${size}); the recommended model uses far less memory.`};
+  if (comparison === 'stronger') return {prefer: 'existing', existing: model, comparison, reason: `${model.label} is a larger Qwen3 than the recommended 0.6B and still small enough here${size}.`};
+  if (comparison === 'equivalent') return {prefer: 'existing', existing: model, comparison, reason: `${model.label} is the same class as the recommended model${size}: reusing it avoids a duplicate download.`};
+  if (comparison === 'weaker') return {prefer: 'download', existing: model, comparison, reason: `${model.label} is smaller or more heavily quantized than the recommended Qwen3 0.6B Q8_0.`};
+  return {prefer: 'either', existing: model, comparison, reason: `${model.label} (${model.family ?? 'unknown family'}${model.parametersB ? ` · ~${model.parametersB}B` : ''}${model.quantization ? ` · ${model.quantization}` : ''}) can't be compared confidently with Qwen3 0.6B.`};
+}
+
+const formatSize = (bytes: number) => bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;

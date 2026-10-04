@@ -1,3 +1,4 @@
+import {askFoldLabel} from '../ask/transcriptSummary.js';
 import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
@@ -172,7 +173,7 @@ export class TranscriptPresenter {
         if (cmd.frontend === 'ask') {
           // A recorded Ask conversation folds whole: the /ask request line above stays as its identity.
           const turns = cmd.ask?.turns.length ?? hiddenLines;
-          const label = `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
+          const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/ask\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
           const commandIndex = completed.indexOf(cmd);
           if (!cmd.expanded) {
             const plain = foldHint(label, '›', width);

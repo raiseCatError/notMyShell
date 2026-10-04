@@ -96,7 +96,10 @@ test('bounded viewport: follows the newest, scrolls back, returns on send, survi
 
 test('recorded Ask: structured turns only, folded by Output folding, Ctrl+O and the user choice win, save/restore', () => {
   const short = [{role: 'ask' as const, text: 'This session runs zsh.'}];
-  const long = [{role: 'ask' as const, text: 'Which one?'}, {role: 'you' as const, text: '1'}, {role: 'ask' as const, text: 'Opening /resume.'}];
+  const long = [{role: 'ask' as const, text: 'Which one?'}, {role: 'you' as const, text: '1'}, {role: 'ask' as const, text: 'Opening /resume.'},
+    {role: 'you' as const, text: 'show my sessions'}, {role: 'ask' as const, text: 'Opening /sessions.'}, {role: 'you' as const, text: 'resume the other one'}, {role: 'ask' as const, text: 'Resumed.'}];
+  const pair = [{role: 'ask' as const, text: 'Which one?'}, {role: 'you' as const, text: '1'}, {role: 'ask' as const, text: 'Opening /resume.'}];
+  assert.equal(shouldFoldAsk('smart', pair), false, 'a short exchange stays open in Smart');
   assert.equal(shouldFoldAsk('never', long), false);
   assert.equal(shouldFoldAsk('smart', short), false, 'a short factual answer stays open');
   assert.equal(shouldFoldAsk('smart', long), true);
@@ -111,7 +114,7 @@ test('recorded Ask: structured turns only, folded by Output folding, Ctrl+O and 
   assert.deepEqual(record!.ask, {version: 1, turns: long});
   let rows = output.wrapped(100).map(row => row.plain);
   assert.ok(rows.some(row => row.includes('/ask resume yesterday')), 'the request identifies the block');
-  assert.ok(rows.some(row => /Ask conversation · 3 turns · Ctrl\+O/u.test(row)));
+  assert.ok(rows.some(row => /Ask · 7 turns · sessions · Ctrl\+O/u.test(row)), 'a deterministic topic summary from the requests');
   assert.ok(!rows.some(row => row.includes('Opening /resume')));
   output.toggleExpanded(0);
   rows = output.wrapped(100).map(row => row.plain);
