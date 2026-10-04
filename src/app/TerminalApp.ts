@@ -48,7 +48,7 @@ import {
   SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {appendFileSync, existsSync, readFileSync, realpathSync, rmSync, statSync} from 'node:fs';
+import {accessSync, appendFileSync, constants, existsSync, readFileSync, realpathSync, rmSync, statSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -161,6 +161,13 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
+import {runDoctor} from '../doctor/doctor.js';
+import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
+import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
+import {analyzePaste, KIND_LABELS, needsPreview, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
+import {WHY_FAILED} from '../ask/failure.js';
+import {nmshConfigDirectory} from '../configuration/paths.js';
+import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
 import {signatureAccent} from '../session/signatures.js';
 import {renameSession} from '../session/SocketSessionClient.js';
 import {appearanceHubKey, createAppearanceHub, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
@@ -1138,6 +1145,36 @@ export class TerminalApp {
       return;
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
+    if (this.watchPanel) {
+      const panel = this.watchPanel;
+      const action = watchPanelKey(panel, key, this.watches.active());
+      if (action?.kind === 'close') { this.watchPanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'confirm' && panel.confirm) {
+        const pending = panel.confirm;
+        panel.confirm = undefined;
+        const safety = watchSafety(pending.command);
+        if (safety.kind === 'refused') panel.message = safety.reason;
+        else { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+      } else if (action?.kind === 'pause') this.watches.pause(action.id);
+      else if (action?.kind === 'resume') this.watches.resume(action.id);
+      else if (action?.kind === 'now') this.watches.runNow(action.id);
+      else if (action?.kind === 'stop') this.watches.stop(action.id);
+      this.render();
+      return;
+    }
+    if (this.doctorPanel) {
+      const action = doctorKey(this.doctorPanel, key);
+      if (action?.kind === 'close') { this.doctorPanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'rerun') void this.openDoctor();
+      else if (action?.kind === 'action') {
+        // Doctor only opens things; any change still goes through that surface's own confirmation.
+        this.doctorPanel = undefined;
+        if (action.action.kind === 'slash') { const parsed = parseSlashCommand(action.action.command); if (parsed) void this.runSlash(action.action.command, parsed); }
+        else this.openAsk(action.action.request);
+      }
+      this.render();
+      return;
+    }
     if (this.understandingPanel) {
       const action = understandingKey(this.understandingPanel, key, this.understandingFacts());
       if (action) void this.handleUnderstandingAction(action);
@@ -1153,6 +1190,14 @@ export class TerminalApp {
       return;
     }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
+    if (this.pastePreview) {
+      const preview = this.pastePreview;
+      if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') preview.review = !preview.review;
+      else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
+      this.render();
+      return;
+    }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
     if (this.agentPanel) { this.handleAgentPanelKey(key); return; }
     if (this.askState) {
@@ -1504,6 +1549,9 @@ export class TerminalApp {
       this.editor.insert(key.value);
       this.selectedSuggestion = 0;
     } else if (key.kind === 'paste') {
+      // Paste Guard: worth-a-look pastes are previewed first (never changed); ordinary ones insert at once.
+      const analysis = analyzePaste(key.value);
+      if (needsPreview(analysis, this.promptConfiguration.pastePreview)) { this.pastePreview = {text: key.value, analysis, review: false}; this.render(); return; }
       this.editor.insertPaste(key.value);
       this.selectedSuggestion = 0;
     } else if (key.kind === 'focusNext' || key.kind === 'focusPrevious') {
@@ -1929,6 +1977,8 @@ export class TerminalApp {
     else if (slash.kind === 'ask') this.openAsk(slash.request);
     else if (slash.kind === 'providers') this.openProvidersOverview();
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
+    else if (slash.kind === 'doctor') void this.openDoctor();
+    else if (slash.kind === 'watch') this.handleWatch(command, slash.op, slash.arguments);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
       else {
@@ -1970,6 +2020,7 @@ export class TerminalApp {
       try { await writeClipboard(payload); }
       catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
+    else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
     else if (action === 'edit' || action === 'rerun') {
       this.clearBlockFocus();
       this.editor.clear();
@@ -3005,7 +3056,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3073,6 +3124,8 @@ export class TerminalApp {
       const activity = this.askActivityLine();
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
     }
+    if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
+    if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) {
       const still = !this.decorativeMotionAllowed() || colorLevel() === 'none';
       return framePanel(renderCursorPanel(this.cursorPanel, columns, Date.now(), chooseBackend(this.cursorPanel.draft, this.cursorHost ?? hostCursorFacts(process.env, host => nativeCursorIntegrated(host))), still), columns);
@@ -4817,8 +4870,30 @@ export class TerminalApp {
   private noticeRows(columns: number): string[] {
     // The agent shelf shares this chrome slot (and the screen plan's rows): hidden at rest, never a permanent row.
     const shelf = this.shelfRow(columns);
-    const rows = [...this.sessionNoticeRows(columns), ...this.taskRows(columns)];
+    const now = Date.now();
+    const rows = [...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
     return shelf ? [...rows, shelf] : rows;
+  }
+
+  /** Paste Preview rows above the composer: muted; only risky lines get a semantic color. Exactly what will be inserted. */
+  private pastePreviewRows(columns: number): string[] {
+    const preview = this.pastePreview;
+    if (!preview) return [];
+    const {analysis} = preview;
+    const lines = preview.text.replace(/\r\n?/gu, '\n').split('\n');
+    const shown = preview.review ? lines.slice(0, Math.max(4, this.dimensions().rows - 14)) : lines.slice(0, 4);
+    const rows = [`${SUBTLE}pasted · ${analysis.commands.length} command${analysis.commands.length === 1 ? '' : 's'}${analysis.lines > 1 ? ` · ${analysis.lines} lines` : ''}${analysis.characters > 2000 ? ` · ${analysis.characters} characters` : ''}${RESET}`];
+    for (const line of shown) rows.push(`  ${SECONDARY}${line}${RESET}`);
+    if (lines.length > shown.length) rows.push(`  ${SUBTLE}… ${lines.length - shown.length} more line${lines.length - shown.length === 1 ? '' : 's'}${preview.review ? '' : ' · R reviews all'}${RESET}`);
+    const risky = new Set(['destructive', 'privilege', 'pipeline']);
+    const summary = analysis.commands.slice(0, preview.review ? 30 : 6).map((command, index) => {
+      const kind = primaryKind(command.kinds);
+      const color = risky.has(kind) ? ERROR : kind === 'install' || kind === 'modifies' ? ACCENT : SUBTLE;
+      return `${color}${index + 1} ${KIND_LABELS[kind]}${RESET}${preview.review ? `  ${SUBTLE}${command.text.slice(0, 60)}${RESET}` : ''}`;
+    });
+    rows.push(preview.review ? summary.map(item => `  ${item}`).join('\n') : `  ${summary.join(`${SUBTLE} · ${RESET}`)}`);
+    rows.push(`${SUBTLE}Enter insert (nothing runs until you press Enter again) · R ${preview.review ? 'summary' : 'review'} · Esc cancel${RESET}`);
+    return rows.flatMap(row => row.split('\n')).map(row => truncateAnsi(row, columns));
   }
 
   /** Live rows for NMSh-managed tasks (shared live-activity look); finished ones linger briefly, then go. */
@@ -5124,6 +5199,85 @@ export class TerminalApp {
   }
 
   private providersOverview?: ProvidersOverviewState;
+  private doctorPanel?: DoctorPanelState;
+  private watchPanel?: WatchPanelState;
+  /** Watches NMSh schedules itself; they live (and stop) with this window. */
+  private readonly watches = new WatchTasks(resolveCommand('sh') ?? '/bin/sh');
+  private readonly watchSubscription = this.watches.onChange((_watch, transition) => {
+    if (this.stopped) return;
+    // A watch moving between failing and passing is one meaningful event.
+    if (transition) this.transitions.echo(transition === 'pass' ? 'taskDone' : 'taskFailed', Date.now());
+    this.render();
+  });
+
+  /** /watch …: start (classified first), list, pause, resume, run now, stop. */
+  private handleWatch(command: string, op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start', argument: string): void {
+    const active = this.watches.active();
+    const pick = () => {
+      const index = /^\d+$/u.test(argument) ? Number(argument) - 1 : active.length - 1;
+      return active[index];
+    };
+    if (op === 'list') { this.panelOrigin = undefined; this.watchPanel = {selected: 0, output: false}; return; }
+    if (op === 'start') {
+      const {command: watched, intervalMs} = parseWatch(argument);
+      const safety = watchSafety(watched);
+      if (safety.kind === 'refused') { this.output.addFrontendInteraction(command, safety.reason, ERROR); return; }
+      this.panelOrigin = undefined;
+      if (safety.kind === 'confirm' || safety.remote) {
+        this.watchPanel = {selected: 0, output: false, confirm: {command: watched, cwd: this.shellCwd, ...(intervalMs ? {intervalMs} : {}),
+          reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no'}};
+        return;
+      }
+      this.watches.start(watched, this.shellCwd, intervalMs, safety);
+      this.watchPanel = {selected: this.watches.active().length - 1, output: false};
+      return;
+    }
+    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stopped every watch.', INFO); return; }
+    const watch = pick();
+    if (!watch) { this.output.addFrontendInteraction(command, 'Nothing is being watched.', INFO); return; }
+    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : (this.watches.runNow(watch.id), true);
+    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Running' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the watch on ${watch.command}.` : 'Nothing changed.', INFO);
+  }
+
+  /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */
+  private async openDoctor(): Promise<void> {
+    this.panelOrigin = undefined;
+    const root = this.context.root;
+    const panel = createDoctorPanel(basename(root ?? this.shellCwd) || this.shellCwd);
+    this.doctorPanel = panel;
+    const clock = this.decorativeMotionAllowed() ? presentationClock.subscribe(() => { if (this.doctorPanel === panel && !this.stopped) this.render(); }, 100) : undefined;
+    this.render();
+    try {
+      const [serviceReachable, git] = await Promise.all([
+        this.sessionMode === 'service' ? listLiveSessions().then(() => true, () => false) : Promise.resolve(undefined),
+        root ? readGitFacts(root) : Promise.resolve(undefined),
+        this.refreshProviderStatuses().catch(() => {}),
+      ]);
+      const configuration = this.promptConfiguration;
+      const providerRows = ([['picker', configuration.picker], ['history', configuration.history], ['navigation', configuration.navigation], ['suggestions', configuration.suggestions], ['prompt', configuration.provider]] as const)
+        .flatMap(([family, id]) => {
+          const descriptor = PROVIDER_FAMILIES.flatMap(item => item.providers).find(item => item.id === id && item.kind === 'external');
+          if (!descriptor) return [];
+          const status = this.providerStatuses.get(descriptor.id);
+          return [{family, label: descriptor.label, available: status?.state === 'installed'}];
+        });
+      const model = configuration.localUnderstanding.model;
+      const runtimeAvailable = model ? (model.runtime === 'llama.cpp' ? Boolean(resolveCommand('llama-server'))
+        : Boolean(this.understanding.discovery?.runtimes.some(runtime => runtime.kind === model.runtime && runtime.running))) : false;
+      const checks = runDoctor({cwd: this.shellCwd, platform: process.platform, which: name => resolveCommand(name), exists: path => existsSync(path),
+        writable: path => { try { accessSync(path, constants.W_OK); return true; } catch { try { accessSync(join(path, '..'), constants.W_OK); return !existsSync(path); } catch { return false; } } },
+        nmsh: {configurationLoaded: true, sessionMode: this.sessionMode, ...(serviceReachable !== undefined ? {serviceReachable} : {}), transcriptDirectory: join(nmshConfigDirectory(), 'sessions'),
+          shell: {id: this.shellId, label: shellAdapter(this.shellId).label, ...(resolveCommand(this.shellId) ? {executable: resolveCommand(this.shellId)!} : {}), promptSeen: !this.startupPending},
+          host: {name: this.host.name, truecolor: colorLevel() === 'truecolor', keyboard: this.host.capabilities.enhancedKeyboard || this.host.capabilities.kittyKeyboard}},
+        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows,
+        understanding: {mode: configuration.localUnderstanding.mode, ...(model ? {model: {label: model.label, runtime: model.runtime, ...(model.path ? {path: model.path} : {}), owned: Boolean(model.owned)}} : {}),
+          runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
+        agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
+        ...(process.env.VIRTUAL_ENV ? {virtualEnv: process.env.VIRTUAL_ENV} : {})});
+      if (this.doctorPanel === panel) { panel.checks = checks; panel.selected = 0; }
+    } finally { clock?.(); }
+    this.render();
+  }
   private cursorPanel?: CursorPanelState;
   private cursorPanelClock?: () => void;
 
@@ -5404,6 +5558,8 @@ export class TerminalApp {
   /** Portable cursor effects over NMSh's own input (presentation only; Off schedules nothing). */
   private readonly cursorPresenter = new CursorPresenter(() => this.promptConfiguration.cursor, () => { if (!this.stopped) this.paintPresentation(Date.now()); });
   private caretCause: 'typing' | 'jump' = 'jump';
+  /** A paste waiting for Insert / Review / Cancel (presentation and classification only; the text is never changed). */
+  private pastePreview?: {text: string; analysis: PasteAnalysis; review: boolean};
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
     () => ({reducedMotion: !this.decorativeMotionAllowed(), effectsOff: false, color: colorLevel() !== 'none'}));
@@ -5435,6 +5591,8 @@ export class TerminalApp {
   private shelf = {visible: false, focused: false, selected: 0, shownAt: 0};
   private agentDiscoveryTimer?: () => void;
   private askGeneration = 0;
+  /** The block Explain failure was chosen on, so Ask explains that one (not just the newest failure). */
+  private explainBlock?: number;
   /** What Ask is doing right now (factual stage), for its transient live line; never recorded. */
   private askStage?: {label: string; since: number; started: number};
   private askClock?: () => void;
@@ -5536,6 +5694,15 @@ export class TerminalApp {
       return;
     }
     if (event.action.kind === 'pickFile') { await this.pickFileInAsk(state, event.action.root); this.render(); return; }
+    if (event.action.kind === 'watch' || event.action.kind === 'watchControl') {
+      const action = event.action;
+      this.closeAsk();
+      if (action.kind === 'watch') this.handleWatch('/watch', 'start', `${action.intervalMs ? `--every ${action.intervalMs / 1000}s ` : ''}${action.command}`);
+      else if (action.op === 'show') this.handleWatch('/watch', 'list', '');
+      else this.handleWatch('/watch', action.op === 'stopAll' ? 'stop' : action.op, action.op === 'stopAll' ? 'all' : '');
+      this.render();
+      return;
+    }
     this.closeAsk();
     await this.executeAskAction(event.action);
     this.render();
@@ -5865,13 +6032,22 @@ export class TerminalApp {
     if (this.askStage) this.setAskStage('Reading project files');
     const projectFacts = readProjectFacts(root ?? this.shellCwd);
     const tasks = this.managedTasks.tasks.map(task => ({id: task.id, label: task.label, status: task.status, urls: [...task.urls], startedAt: task.startedAt, lines: task.output.length, command: task.argv.join(' ')}));
+    // A failure question gets the failed block's bounded, redacted excerpt (the chosen block, else the newest failure).
+    let failure: AskContext['failure'];
+    if (WHY_FAILED.test(normalizeRequest(text))) {
+      const records = this.output.view().completed.filter(record => !record.frontend);
+      const record = (this.explainBlock !== undefined ? records.find(item => item.startId === this.explainBlock) : undefined) ?? records.find(item => (item.exitCode ?? 0) !== 0);
+      this.explainBlock = undefined;
+      if (record) failure = {command: record.command, exitCode: record.exitCode ?? 1, output: record.output.split('\n').slice(-400).join('\n'), startId: record.startId,
+        cwd: record.historicalContext?.cwd ?? this.shellCwd};
+    }
     const understanding = this.promptConfiguration.localUnderstanding;
     const llm = {mode: understanding.mode, requests: this.understanding.requests,
       ...(understanding.model ? {model: {label: understanding.model.label, runtime: understanding.model.runtime, owned: Boolean(understanding.model.owned)}} : {}),
       ...(understanding.model ? {state: stateLabel(this.understanding.status, understanding)} : {}),
       ...(this.understanding.lastRoute ? {lastRoute: this.understanding.lastRoute.route} : {}),
       ...(this.understanding.lastInference ? {lastInference: this.understanding.lastInference.label} : {})};
-    return {cwd: this.shellCwd, home: homedir(), platform: process.platform, picker: this.promptConfiguration.picker, llm, ...(projectFacts ? {project: projectFacts} : {}), tasks, ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
+    return {cwd: this.shellCwd, home: homedir(), platform: process.platform, picker: this.promptConfiguration.picker, llm, ...(failure ? {failure} : {}), ...(projectFacts ? {project: projectFacts} : {}), tasks, ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
       ...(this.context.git ? {dirty: Boolean(this.context.git.staged || this.context.git.modified || this.context.git.untracked)} : {}),
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
@@ -6771,6 +6947,8 @@ export class TerminalApp {
     this.transitions.cancel(); this.transitionClock?.(); this.transitionClock = undefined;
     this.cursorPanelClock?.(); this.cursorPanelClock = undefined;
     this.tasksSubscription();
+    this.watchSubscription();
+    this.watches.dispose();
     this.taskClock?.(); this.taskClock = undefined;
     this.askClock?.(); this.askClock = undefined;
     this.managedTasks.dispose();

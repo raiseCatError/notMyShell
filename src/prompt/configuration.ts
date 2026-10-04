@@ -437,6 +437,8 @@ export interface PromptConfiguration {
   presentation: TreatmentSettings;
   /** General NMSh UI motion (cursor motion lives in `cursor`, Chroma in `presentation`). */
   motion: MotionSettings;
+  /** Paste Preview: Smart shows multiline, chained, mutating or risky pastes before they enter the composer. */
+  pastePreview: 'smart' | 'always' | 'off';
   provider: PromptProviderId;
   onboardingComplete: boolean;
   /** Optional discovery is separate; legacy completed onboarding stays completed. */
@@ -558,6 +560,7 @@ export interface PromptConfiguration {
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
   motion: {...DEFAULT_MOTION},
+  pastePreview: 'smart',
   provider: 'nmsh',
   onboardingComplete: false,
   toolsSetupComplete: false,
@@ -670,7 +673,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {motion: normalizeMotion(value.motion), cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+  const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
     sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',

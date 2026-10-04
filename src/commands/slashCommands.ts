@@ -46,6 +46,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/ai', insertion: '/ai', description: 'Agent sessions: Claude Code and other harnesses running in the background; /ai claude starts one'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
+  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
+  {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
@@ -104,6 +106,8 @@ export type ParsedSlashCommand =
   | {kind: 'ai'; target?: string}
   | {kind: 'providers'}
   | {kind: 'llm'}
+  | {kind: 'doctor'}
+  | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -167,6 +171,13 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
   if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
+  if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
+  const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
+  if (watch) {
+    const rest = (watch[1] ?? '').trim();
+    const op = /^(stop|pause|resume|now)(?:\s+(.*))?$/u.exec(rest);
+    return op ? {kind: 'watch', op: op[1] as 'stop' | 'pause' | 'resume' | 'now', arguments: (op[2] ?? '').trim()} : {kind: 'watch', op: rest ? 'start' : 'list', arguments: rest};
+  }
   const rename = /^\/rename(?:\s+(.*))?$/u.exec(input);
   if (rename) return {kind: 'rename', name: (rename[1] ?? '').trim()};
   const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);

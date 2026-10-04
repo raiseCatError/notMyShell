@@ -49,6 +49,9 @@ export type AskAction =
   | {kind: 'startTask'; argv: string[]; cwd: string; label: string}
   | {kind: 'stopTask'; id: string}
   | {kind: 'taskOutput'; id: string}
+  /** Start a /watch of a command (classified again before it starts). */
+  | {kind: 'watch'; command: string; intervalMs?: number}
+  | {kind: 'watchControl'; op: 'stop' | 'stopAll' | 'pause' | 'resume' | 'show'}
   /** Open an http(s) URL a task printed, in the system browser. */
   | {kind: 'openUrl'; url: string}
   /** A terminal recipe NMSh built (recipes.ts); re-checked against the recipe allowlist right before running, as a visible submission. */
@@ -206,6 +209,8 @@ export interface AskContext {
   project?: import('./project.js').ProjectFacts;
   /** Background tasks NMSh started (never other processes). */
   tasks?: import('./project.js').TaskSummary[];
+  /** The failed block a 'why did this fail' request is about (bounded, redacted excerpt; never the whole log). */
+  failure?: import('./failure.js').FailureFacts;
   /** Local model facts for "what model are you using" (the same facts /llm shows). */
   llm?: import('./localModel.js').LocalModelFacts;
   /** The platform recipes are built for (process.platform). */

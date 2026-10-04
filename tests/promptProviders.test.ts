@@ -302,8 +302,8 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   assert.equal(unchanged.at(-1), '↑↓ move · ←→ change · Enter save · Esc cancel', 'consistent controls row');
 
   const press = (row: number, kind: 'left' | 'right') => { state.selectedIndex = row; handlePromptPanelKey({kind} as Key, state); };
-  // Rows: Theme family, Theme, Style, Vibrance, then Powerline's own (Start, Connector, Connector fade, Fade colors, Gap, End, Padding), Icons, Prompt symbol, Modules.
-  press(1, 'right'); press(4, 'right'); press(4, 'right'); press(5, 'right'); press(6, 'left'); press(7, 'left'); press(8, 'left'); press(9, 'right'); press(9, 'right'); press(11, 'right');
+  // Rows: Theme family, Theme, Text colors, Style, Vibrance, then Powerline's own (Start, Connector, Connector fade, Fade colors, Gap, End, Padding), Icons, Prompt symbol, Modules.
+  press(1, 'right'); press(5, 'right'); press(5, 'right'); press(6, 'right'); press(7, 'left'); press(8, 'left'); press(9, 'left'); press(10, 'right'); press(10, 'right'); press(12, 'right');
   assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
     ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
   assert.equal(state.draft.nmsh.connectorFade, 'follow', 'Connector fade cycles backwards from the default Off');

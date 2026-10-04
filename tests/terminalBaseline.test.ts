@@ -18,6 +18,9 @@ test('Terminal.app profile runs persistent editing, paste and resize without enh
     const mark = app.mark;
     app.pty.write('\u001b[200~echo PASTE-ONE\necho PASTE-TWO\u001b[201~');
     await app.waitFor(/echo PASTE-TWO/, mark);
+    // Multi-line pastes are previewed first (Paste Guard): Enter inserts, the next Enter runs.
+    app.pty.write('\r');
+    await new Promise(resolve => setTimeout(resolve, 150));
     app.pty.write('\r');
     await app.waitFor(/Completed/, mark);
     assert.match(strip(app.output.slice(mark)), /PASTE-ONE.*PASTE-TWO/su);

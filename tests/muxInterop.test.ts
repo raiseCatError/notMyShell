@@ -113,6 +113,9 @@ test('NMSh inside tmux: environment, resize, job control, fullscreen, paste; kil
       // Bracketed paste through tmux stays a paste in the composer: nothing runs.
       pane.tmux('set-buffer', 'echo PASTED-ONE\necho PASTED-TWO');
       pane.tmux('paste-buffer', '-p', '-t', 'p');
+      // Multi-line pastes are previewed first (Paste Guard); Enter inserts without running.
+      await pane.waitFor(/Enter insert/u, 'paste preview');
+      pane.keys('Enter');
       await pane.waitFor(/❯ echo PASTED-ONE\s*\n\s+echo PASTED-TWO/u, 'multi-line paste in the composer');
       assert.doesNotMatch(pane.screen(), /^PASTED-ONE$/mu, 'the pasted lines did not run');
       pane.keys('C-u');

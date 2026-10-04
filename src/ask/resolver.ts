@@ -7,6 +7,8 @@ import {browseOutcome, resolveFiles} from './fileAssist.js';
 import {resolveRecipe} from './recipes.js';
 import {resolveProject} from './project.js';
 import {resolveLocalModel} from './localModel.js';
+import {resolveWatch} from './watchAssist.js';
+import {failureOutcome, WHY_FAILED} from './failure.js';
 import {ASK_WORDS, correctRequest, correctWord, type TypoVocabulary} from './fuzzy.js';
 import {resolveActivity} from './activity.js';
 import {resolvePackage} from './packages.js';
@@ -209,12 +211,17 @@ function resolveExact(raw: string, context: AskContext, state: ResolveState = {}
   // One guide: /guide, "guide me through nmsh", and /ask help all come from the concept catalog.
   if (GUIDE_REQUEST.test(text)) return guideOutcome(context);
   if (HELP_REQUEST.test(text)) return askHelpOutcome();
+  // "why did that fail": the failed block's own evidence, read deterministically.
+  if (context.failure && WHY_FAILED.test(text)) return failureOutcome(context.failure, context);
   // The optional local model: status and where its actions live (/llm).
   const llm = resolveLocalModel(text, context);
   if (llm) return llm;
   // Recent activity from recorded facts ("what did I just do").
   const activity = resolveActivity(text, context, commands);
   if (activity) return activity;
+  // Watches: typed /watch actions, the watched command classified like /watch.
+  const watch = resolveWatch(text, raw, context);
+  if (watch) return watch;
   // Git from local facts (current branch, real remotes, listed files) and this conversation's referents.
   const git = resolveGit(text, raw, context, commands?.reference);
   if (git) return git;

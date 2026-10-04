@@ -7,7 +7,7 @@ test('one-line presentation does not alter exact submission of multiple folded p
   const app = new TerminalApp();
   const originalSubmit = app['session'].submit.bind(app['session']);
   const submitted: string[] = [];
-  app['promptConfiguration'] = normalizePromptConfiguration({composerLayout: 'oneLine'});
+  app['promptConfiguration'] = normalizePromptConfiguration({composerLayout: 'oneLine', pastePreview: 'off'});
   app['session'].submit = command => submitted.push(command);
   try {
     const first = 'alpha\nbeta\ngamma\ndelta';

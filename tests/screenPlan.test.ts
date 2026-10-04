@@ -218,7 +218,7 @@ test('mouse hit-testing respects panel takeover geometry', () => {
   const app = appWithOutput();
   try {
     Object.defineProperty(app, 'render', {value: () => {}});
-    app['appearanceState'] = {} as never;
+    app['appearanceHub'] = {} as never;
     Object.defineProperty(app, 'settingsPanelRows', {value: () => Array.from({length: 6}, () => 'panel')});
     const plan: ScreenPlan = app['planFrame'](80, 20);
     assert.equal(plan.transcript.height, 14);
@@ -259,11 +259,11 @@ test('PTY resizes to plan rows on panel open/close and full screen in passthroug
     app['render']();
     const closed = sizes.at(-1)!;
     assert.equal(closed, 16, 'v0.4: 20 rows minus gap, prompt, input, separator');
-    app['appearanceState'] = {} as never;
+    app['appearanceHub'] = {} as never;
     Object.defineProperty(app, 'settingsPanelRows', {value: () => Array.from({length: 6}, () => 'panel'), configurable: true});
     app['render']();
     assert.equal(sizes.at(-1), 14);
-    app['appearanceState'] = undefined;
+    app['appearanceHub'] = undefined;
     app['render']();
     assert.equal(sizes.at(-1), closed);
     app['passthrough'] = true;

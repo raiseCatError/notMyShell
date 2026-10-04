@@ -182,6 +182,9 @@ const THEME_ROWS: readonly SettingsRow[] = [
       const options = variantOptions(familyOf(c.nmsh.palette));
       return {...c, nmsh: {...c.nmsh, palette: options[((index % options.length) + options.length) % options.length]!.id}};
     }},
+  enumRow({id: 'pastePreview', label: 'Paste preview', description: 'Smart: multiline, chained, mutating or risky pastes are shown before they enter the composer (never changed; nothing runs until Enter). Always: every paste. Off: insert at once', category: 'Editor',
+    values: ['smart', 'always', 'off'] as const, labels: ['Smart', 'Always', 'Off'],
+    get: c => c.pastePreview, set: (c, pastePreview) => ({...c, pastePreview})}),
   enumRow({id: 'themeText', parent: 'themeFamily', label: 'UI text colors', description: 'NMSh panels and menus (not the prompt): On lets the theme color text tiers (primary, secondary, muted); Off keeps NMSh neutral text. Prompt text has its own Text colors in /prompt. Status colors keep their meaning', category: 'Appearance',
     values: [true, false], labels: ['On', 'Off'],
     get: c => c.uiChrome.themeText !== false, set: (c, themeText) => ({...c, uiChrome: {...c.uiChrome, themeText}})}),

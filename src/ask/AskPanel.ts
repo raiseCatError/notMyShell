@@ -74,7 +74,7 @@ export function createAskState(): AskState {
 export function needsConfirmation(outcome: AskOutcome): boolean {
   if (outcome.kind !== 'proposal') return false;
   if (outcome.direct && (outcome.safety === 'navigate' || outcome.safety === 'read')) return false;
-  if (outcome.action.kind === 'pickFile' || outcome.action.kind === 'taskOutput') return false;
+  if (outcome.action.kind === 'pickFile' || outcome.action.kind === 'taskOutput' || outcome.action.kind === 'watchControl') return false;
   if (outcome.safety === 'read' || outcome.safety === 'mutate' || outcome.safety === 'install') return true;
   return outcome.action.kind !== 'slash';
 }
