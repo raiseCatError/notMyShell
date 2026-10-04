@@ -2,6 +2,9 @@ import {basename, relative} from 'node:path';
 import {slashCommands} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
+import {CONCEPTS, conceptDestination, conceptIntent, matchConcepts, type Concept, type ConceptIntent} from './concepts.js';
+
+const CONCEPTS_BY_ID = new Map(CONCEPTS.map(concept => [concept.id, concept]));
 import type {AskAction, AskContext, AskOption, AskOutcome, AskTranscript, CapabilityId, ReadCommand, SafetyClass} from './types.js';
 
 /**
@@ -84,6 +87,11 @@ export const CAPABILITIES: readonly Capability[] = [
     patterns: [/\bwhat can (?:you|ask|nmsh) do\b/u, /^help$/u, /\bwhat (?:are|is) (?:your|the) (?:commands|options)\b/u], keywords: ['help', 'can', 'do']},
   {id: 'help.command', title: 'Explain an NMSh command', safety: 'answer', examples: ['what does /resume do'],
     patterns: [/\/[a-z][\w-]*/u], keywords: []},
+  // Product vocabulary (concepts.ts): matched by the concept catalog, not by these patterns.
+  {id: 'help.feature', title: 'Explain an NMSh feature', safety: 'answer', examples: ['what is chroma', 'what is the difference between completion and suggestions'],
+    patterns: [], keywords: []},
+  {id: 'feature.open', title: 'Open where an NMSh feature is configured', safety: 'navigate', examples: ['change cursor blink', 'stop folding my output', 'change my ghost text'],
+    patterns: [], keywords: []},
 ];
 
 /** Destructive or authority-escalating requests Ask understands but never performs. */
@@ -130,6 +138,8 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   const explain = /\b(?:what|how) (?:does|do|is)\b/u.test(text) && /\/[a-z][\w-]*/u.exec(text);
   if (explain) return build('help.command', text, context, raw);
   if (UNSAFE.test(text) && !scored.some(item => item.score >= CONFIDENCE.high && item.capability.safety === 'answer')) return unsafe(text, context);
+  const product = resolveConcepts(text, context, raw, scored);
+  if (product) return product;
   const top = scored[0];
   if (top && top.score >= CONFIDENCE.high) {
     const close = scored.filter(item => item.score >= CONFIDENCE.high);
@@ -344,6 +354,8 @@ export function build(id: CapabilityId, text: string, context: AskContext, raw: 
     case 'help.capabilities':
       return {kind: 'answer', capability: id, text: `Ask finds, opens, shows and switches things in NMSh. For example:\n${['open package.json', 'show my sessions', 'switch to fish',
         'check git diff', 'find error in the transcript', 'resume yesterday\'s session', 'what providers are installed'].map(example => `  ${example}`).join('\n')}\nIt never runs destructive or arbitrary commands.`};
+    case 'help.feature': case 'feature.open':
+      return resolveConcepts(text, context, raw, []) ?? unclear(context, 'I\'m not sure which part of NMSh you mean.');
     case 'help.command': {
       const name = /\/[a-z][\w-]*/u.exec(text)?.[0];
       const known = slashCommands.find(command => command.name === name);
@@ -351,6 +363,82 @@ export function build(id: CapabilityId, text: string, context: AskContext, raw: 
     }
   }
 }
+
+/** Capabilities that only open a broad surface: a named product concept is more specific than they are. */
+const GENERIC: ReadonlySet<CapabilityId> = new Set(['settings.open', 'theme.open', 'prompt.open', 'providers.open', 'file.open', 'tools.open', 'screensaver.open', 'help.capabilities']);
+/** Broad concepts: when a request names one of these and something more specific, the specific one is meant. */
+const UMBRELLA = new Set(['settings', 'theme', 'prompt', 'transcript', 'help', 'providers', 'shell', 'sessions', 'history']);
+
+/**
+ * Concept first, then intent: which NMSh feature the request names (from the
+ * product vocabulary), then what to do with it. Undefined leaves the request
+ * to the capability patterns: a strong, specific capability (switch to fish,
+ * git diff, find X) keeps priority unless a concept explicitly overrides it.
+ */
+function resolveConcepts(text: string, context: AskContext, raw: string, scored: ReadonlyArray<{capability: Capability; score: number}>): AskOutcome | undefined {
+  const match = matchConcepts(text);
+  if (!match.concepts.length && !match.ambiguous.length) return undefined;
+  const intent = conceptIntent(text);
+  const strong = scored.find(item => item.score >= CONFIDENCE.high);
+  const named = [...match.concepts, ...match.ambiguous.flat()];
+  // "open X" is a file request unless X itself names an NMSh feature ("open the palette", not "open this in zed").
+  if (strong?.capability.id === 'file.open') {
+    const object = matchConcepts(normalizeRequest(argumentText(raw, /^(?:please )?(?:open|edit|show me|view)\s+/iu)));
+    if (!object.concepts.length && !object.ambiguous.length) return undefined;
+  }
+  if (strong && !GENERIC.has(strong.capability.id) && !named.some(concept => concept.overrides?.includes(strong.capability.id))
+    && (intent !== 'explain' || strong.capability.safety === 'answer')) return undefined;
+  // An ambiguous phrase settles by intent ("open the palette"), else it is the question, unless only broad concepts compete with it.
+  const settled: Concept[] = [];
+  const open: Concept[][] = [];
+  for (const group of match.ambiguous) {
+    const preferred = group.filter(concept => concept.prefers?.includes(intent));
+    if (preferred.length === 1) settled.push(preferred[0]!); else open.push(group);
+  }
+  const specific = [...match.concepts, ...settled].filter(concept => !UMBRELLA.has(concept.id));
+  if (intent === 'explain') {
+    const explained = [...(specific.length ? specific : [...match.concepts, ...settled]), ...open.flat()].filter((concept, index, all) => all.indexOf(concept) === index).slice(0, 3);
+    const single = explained.length === 1 ? explained[0]! : undefined;
+    const follow = single && single.support !== 'unsupported' && conceptDestination(single) ? {key: `concept:${single.id}`, label: `Open ${single.configure ?? single.open}`, outcome: actOn(single, 'change', text, context, raw)} : undefined;
+    return {kind: 'answer', capability: 'help.feature', text: explained.map(concept => explained.length === 1 ? concept.description : `${concept.label}: ${concept.description}`).join('\n'), ...(follow ? {follow} : {})};
+  }
+  if (open.length && !specific.length) {
+    const group = open[0]!;
+    const verb = intent === 'off' ? 'turn off' : intent === 'on' ? 'turn on' : intent === 'open' ? 'open' : 'change';
+    return {kind: 'choose', reason: 'ambiguous', capability: 'feature.open', question: `What do you want to ${verb}?`,
+      options: group.map(concept => ({key: `concept:${concept.id}`, label: concept.label, outcome: actOn(concept, intent, text, context, raw)}))};
+  }
+  const concept = specific[0] ?? match.concepts[0] ?? settled[0]!;
+  return actOn(concept, intent, text, context, raw);
+}
+
+/** What Ask does with one concept for one intent: only existing capabilities, NMSh's own slash surfaces, or typed settings. */
+function actOn(concept: Concept, intent: ConceptIntent, text: string, context: AskContext, raw: string): AskOutcome {
+  if (concept.support === 'unsupported') return {kind: 'unsupported', text: concept.description};
+  if ((intent === 'on' || intent === 'off') && concept.toggle) {
+    const value = intent === 'on' ? concept.toggle.on : concept.toggle.off;
+    return {kind: 'proposal', capability: 'feature.open', safety: 'navigate', confidence: 0.9,
+      text: `Turn ${concept.label.split(' /')[0]!.toLowerCase()} ${intent}?`, action: {kind: 'setting', setting: concept.toggle.setting, value, label: `${concept.label}: ${intent === 'on' ? 'On' : 'Off'}`}};
+  }
+  if (concept.support === 'no-ui') {
+    const related = concept.id === 'completion' ? CONCEPT_FOLLOW.suggestions : undefined;
+    return {kind: 'answer', capability: 'help.feature', text: `${concept.description} ${concept.where ?? ''}`.trim(),
+      ...(related ? {follow: {key: 'concept:suggestions', label: 'Change ghost suggestions instead', outcome: actOn(related, 'change', text, context, raw)}} : {})};
+  }
+  if (concept.capability && intent !== 'off' && intent !== 'on' && !GENERIC.has(concept.capability)) return build(concept.capability, text, context, raw);
+  const target = intent === 'open' ? concept.open ?? concept.configure : concept.configure ?? concept.open;
+  const slash = target ? conceptDestination({...concept, open: target}) : undefined;
+  if (intent === 'off' || intent === 'on' || concept.support === 'settings') {
+    const where = concept.where ?? `${concept.label} is in ${target ?? 'Settings'}.`;
+    return {kind: 'answer', capability: 'help.feature', text: where,
+      ...(slash ? {follow: {key: `concept:${concept.id}`, label: `Open ${target}`, outcome: navigate('feature.open', `Opening ${target}.`, {kind: 'slash', slash, label: target!})}} : {})};
+  }
+  if (slash) return navigate('feature.open', `Opening ${target}${concept.where && target === '/providers' ? ` (${concept.label})` : ''}.`, {kind: 'slash', slash, label: target!});
+  if (concept.capability) return build(concept.capability, text, context, raw);
+  return {kind: 'answer', capability: 'help.feature', text: concept.where ?? concept.description};
+}
+
+const CONCEPT_FOLLOW = {get suggestions() { return CONCEPTS_BY_ID.get('suggestions')!; }};
 
 function resolveFile(raw: string, text: string, context: AskContext): AskOutcome {
   const query = argumentText(raw, /^(?:please )?(?:open|edit|show me|view)\s+/iu);

@@ -18,7 +18,7 @@ export type CapabilityId =
   | 'git.status' | 'git.diff' | 'git.branch' | 'git.log' | 'git.worktrees'
   | 'settings.open' | 'theme.open' | 'prompt.open' | 'tools.open' | 'screensaver.open' | 'providers.open'
   | 'provider.status' | 'provider.switch' | 'understanding.set'
-  | 'help.capabilities' | 'help.command';
+  | 'help.capabilities' | 'help.command' | 'help.feature' | 'feature.open';
 
 /** Fixed read-only commands. The argv is built by NMSh; the request contributes at most a factual path. */
 export type ReadCommand =
