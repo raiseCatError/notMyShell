@@ -1,6 +1,5 @@
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
-import {CHROMA_PREVIEW_NOTE} from '../appearance/chromaNotes.js';
 import {DIVIDER_LINES_HELP, dividerLinesLabel, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_DIRECTION_LABELS} from '../chroma/treatment.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
@@ -44,7 +43,7 @@ import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
-import {labelColumnWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
+import {displayWidth, labelColumnWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
@@ -65,6 +64,8 @@ export interface PromptPanelState {
   task?: TaskProgress;
   starshipModules?: boolean[];
   starshipProposal?: StarshipConfigProposal;
+  /** The palette the Chroma quick control turned Off, restored when it turns Chroma back On (panel-local, never saved). */
+  chromaRestore?: PromptConfiguration['presentation']['preset'];
   /** NMSh appearance top view: Main Prompt (default) or Rich Git. */
   view?: PromptView;
   /** `tabs`: ←/→ switch views; `rows` (default): ←/→ edit the selected row. */
@@ -81,6 +82,7 @@ const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma'];
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const ACCENT = lazyForeground(UI_COLORS.accent);
+const BOLD = '\u001B[1m';
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const ERROR = lazyForeground(UI_COLORS.failure);
 const INVERSE = '\u001B[7m';
@@ -545,8 +547,43 @@ function handleGlyphEdit(key: Key, state: PromptPanelState): boolean {
   return true;
 }
 
+/**
+ * The theme gallery's Chroma quick control: flips the draft's one Chroma
+ * setting (the palette, Off or not). Turning back On restores the palette it
+ * turned Off, else the saved one, else Lavender.
+ */
+export function toggleChromaPreview(state: PromptPanelState): void {
+  const presentation = state.draft.presentation;
+  if (presentation.preset !== 'off') {
+    state.chromaRestore = presentation.preset;
+    presentation.preset = 'off';
+  } else {
+    const saved = state.saved?.presentation.preset;
+    presentation.preset = state.chromaRestore ?? (saved && saved !== 'off' ? saved : 'lavender');
+    if (presentation.preset === 'custom' && presentation.customStops.length < MIN_CUSTOM_STOPS) presentation.customStops = [...PRESET_STOPS.lavender];
+  }
+  state.message = undefined;
+}
+
+/** One row: state and the toggle first, the explanation only when it fits. Readable without color. */
+export function chromaQuickControl(on: boolean, columns: number): string {
+  const toggle = `${ACCENT}[C]${RESET} ${PRIMARY}${on ? 'Turn Off' : 'Turn On'}${RESET}`;
+  const state = on ? `${BOLD}${PRIMARY}✦ Chroma ON${RESET}` : `${SECONDARY}Chroma OFF${RESET}`;
+  const detail = `${SUBTLE} · ${on ? 'previews are colorized' : 'showing base theme colors'}${RESET}`;
+  const hint = `${SUBTLE}  Chroma tab for details${RESET}`;
+  for (const candidate of [`${state}${detail}   ${toggle}${hint}`, `${state}${detail}   ${toggle}`, `${state}   ${toggle}`]) {
+    if (displayWidth(candidate) <= columns) return candidate;
+  }
+  return `${state}  ${toggle}`;
+}
+
 export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean {
   if (state.glyphEdit) return handleGlyphEdit(key, state);
+  if (state.step === 'appearance' && (state.view ?? 'main') === 'main' && state.draft.provider === 'nmsh'
+    && key.kind === 'text' && (key.value === 'c' || key.value === 'C')) {
+    toggleChromaPreview(state);
+    return true;
+  }
   if (key.kind === 'enter' && promptPanelOwnsKey(state, key)) {
     const row = viewRows(state)[state.selectedIndex]!;
     state.glyphEdit = {rowId: row.id, buffer: row.edit!.get(state.draft) ?? ''};
@@ -780,7 +817,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     if (themePreviews.length && view === 'main') {
       rows.push('');
       rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
-      if (state.draft.presentation.preset !== 'off' && state.draft.provider === 'nmsh') rows.push(`${SUBTLE}${CHROMA_PREVIEW_NOTE}${RESET}`);
+      if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns));
       galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
