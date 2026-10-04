@@ -34,10 +34,10 @@ export interface Glyph {
 }
 
 /** Non-blank captured cells as animatable glyphs; huge screens are sampled down to a cap. */
-export function glyphsOf(capture: ScreenCapture, textColor: number): Glyph[] {
+export function glyphsOf(capture: ScreenCapture, textColor: number, max = MAX_GLYPHS): Glyph[] {
   const cells: number[] = [];
   for (let i = 0; i < capture.glyphs.length; i += 1) if (capture.glyphs[i] !== ' ') cells.push(i);
-  const stride = Math.max(1, Math.ceil(cells.length / MAX_GLYPHS));
+  const stride = Math.max(1, Math.ceil(cells.length / max));
   const out: Glyph[] = [];
   for (let k = 0; k < cells.length; k += stride) {
     const i = cells[k]!;
@@ -353,15 +353,20 @@ export class Fireworks extends Sim {
 
 // -------------------------------------------------------------- Circletastic
 
-export type CircPhase = 'hold' | 'gather' | 'stabilize' | 'rotate' | 'accelerate' | 'destabilize' | 'explode' | 'scatter' | 'settle';
+export type CircPhase = 'hold' | 'gather' | 'spin' | 'collapse' | 'explode' | 'scatter' | 'settle';
+export type ClusterStage = 'gather' | 'spin' | 'collapse' | 'critical' | 'exploded';
 export interface RingSpec { cx: number; cy: number; r: number; dir: 1 | -1; slots: number; cluster: number }
 export interface Cluster { cx: number; cy: number; R: number; dir: 1 | -1; rings: RingSpec[] }
-const CIRC = {gather: 2.2, stabilize: 1.2, rotate: 1.8, accelerate: 5, destabilize: 1.3, scatter: 3.2, settle: 1.6, hold: 0.8,
-  spacing: 0.95, ringGap: 1.7, minClusters: 2, maxClusters: 5, omegaStart: 0.45, omegaMax: 9};
+export const CIRC = {
+  scatter: 3.2, settle: 1.6, hold: 0.7, spacing: 0.8, ringGap: 1.5, minClusters: 2, maxClusters: 5, omegaStart: 0.5, omegaCollapse: 7, omegaMax: 15,
+  collapseSeconds: 1.7, collapseScale: 0.2, criticalSeconds: 0.3, flashSeconds: 0.4, glyphCap: 1200, debrisCap: 90, shockPoints: 40,
+  /** Share of the source screen harvested on run 1, 2, 3, 4; the fifth run starts from a restored screen. */
+  harvest: [0.4, 0.62, 0.85, 0.97], runsBeforeReset: 4,
+};
 
 /** Capacity of one ring at physical radius r (rows units): glyphs are spaced by arc length. */
 export const ringCapacity = (r: number) => Math.max(0, Math.floor((2 * Math.PI * r) / CIRC.spacing));
-const innerLimit = (R: number) => Math.max(1.8, R * 0.35);
+const innerLimit = (R: number) => Math.max(1.6, R * 0.32);
 const ringRadii = (R: number) => { const out: number[] = []; for (let r = R; r >= innerLimit(R); r -= CIRC.ringGap) out.push(r); return out; };
 export const clusterCapacity = (R: number) => ringRadii(R).reduce((sum, r) => sum + ringCapacity(r), 0);
 
@@ -374,7 +379,7 @@ export const clusterCapacity = (R: number) => ringRadii(R).reduce((sum, r) => su
  */
 export function layoutCircles(count: number, width: number, height: number, rng: () => number): Cluster[] {
   const W = width / ASPECT, H = height, margin = 1.5;
-  const Rmax = Math.max(2.6, Math.min(W, H) * 0.26);
+  const Rmax = Math.max(2.6, Math.min(W, H) * 0.3);
   const place = (k: number, scale: number): Cluster[] | undefined => {
     const need = Math.ceil(count / k);
     let base = 2.6; while (base < Rmax && clusterCapacity(base) < need) base += 0.4;
@@ -415,150 +420,228 @@ export function layoutCircles(count: number, width: number, height: number, rng:
   return clusters.filter(c => c.rings.length);
 }
 
+interface ClusterRuntime {
+  stage: ClusterStage; t: number; start: number; order: number; alpha: number; scale: number; formed: boolean;
+  rings: number[]; readyAt: number; flash: number; blastAt?: number;
+}
+interface Debris { x: number; y: number; vx: number; vy: number; life: number; ch: string; fg: number }
+
 export class Circletastic extends Sim {
   readonly glyphs: Glyph[];
   phase: CircPhase = 'hold';
   phaseT = 0;
   clusters: Cluster[] = [];
+  runtime: ClusterRuntime[] = [];
   rings: RingSpec[] = [];
-  /** Per-ring angle and angular speed (rad/s). */
   angle: number[] = [];
   omega: number[] = [];
-  /** Slot assignment for participating glyphs; others stay where they were captured. */
   assigned: Array<{ring: number; slot: number} | undefined> = [];
   private delay: number[] = [];
   private duration: number[] = [];
-  private alpha = 1.4;
-  private explodeAt: number[] = [];
-  private exploded: boolean[] = [];
-  explosion: 'simultaneous' | 'staggered' = 'simultaneous';
+  /** Seeded order in which source glyphs are harvested (stable for the life of the capture). */
+  readonly harvestOrder: number[];
+  /** Glyphs removed from their source position this reset cycle (presentation only). */
+  readonly consumed = new Set<number>();
+  debris: Debris[] = [];
+  shock: Array<{cx: number; cy: number; t: number}> = [];
+  private lastBlast = -1e9;
+  private nextGap = 0.4;
   cycles = 0;
+  /** Runs since the source screen was last restored. */
+  run = 0;
   /** Phase names in the order they were entered (for tests and diagnostics). */
   readonly history: CircPhase[] = ['hold'];
-  constructor(capture: ScreenCapture, textColor: number) {
+  readonly explosions: Array<{cluster: number; at: number}> = [];
+  constructor(capture: ScreenCapture, private readonly textColor: number) {
     super(capture, 0xc12c);
-    this.glyphs = glyphsOf(capture, textColor);
+    this.glyphs = glyphsOf(capture, textColor, CIRC.glyphCap);
+    const order = this.glyphs.map((_, i) => i);
+    for (let i = order.length - 1; i > 0; i -= 1) { const j = Math.floor(this.rng() * (i + 1)); [order[i], order[j]] = [order[j]!, order[i]!]; }
+    this.harvestOrder = order;
     this.plan();
   }
-  /** ASSIGN: every participating glyph gets a ring and slot before anything moves. */
+  /** Share of the source harvested on the current run. */
+  harvestShare(): number { return CIRC.harvest[Math.min(this.run, CIRC.harvest.length - 1)]!; }
+  /** ASSIGN: pick this run's harvest, lay out the circles, and give every participant a ring and slot before anything moves. */
   private plan() {
-    this.clusters = layoutCircles(this.glyphs.length, this.capture.width, this.capture.height, this.rng);
+    const target = Math.ceil(this.harvestShare() * this.glyphs.length);
+    const harvest = this.harvestOrder.slice(0, target);
+    this.consumed.clear();
+    this.clusters = layoutCircles(harvest.length, this.capture.width, this.capture.height, this.rng);
     this.rings = this.clusters.flatMap(c => c.rings);
     this.angle = this.rings.map(() => this.rand(0, Math.PI * 2));
     this.omega = this.rings.map(() => CIRC.omegaStart);
     this.assigned = []; this.delay = []; this.duration = [];
-    // Nearest glyphs to each ring take its slots: shorter, less tangled trips.
-    const order = this.glyphs.map((_, i) => i);
+    const capacity = this.rings.reduce((sum, ring) => sum + ring.slots, 0);
+    // Harvested glyphs fill the rings; harvested glyphs beyond the capacity are consumed outright (hidden).
+    const participants = harvest.slice(0, capacity);
     let g = 0;
-    this.rings.forEach((ring, ri) => {
-      for (let s = 0; s < ring.slots && g < order.length; s += 1, g += 1) this.assigned[order[g]!] = {ring: ri, slot: s};
-    });
+    this.rings.forEach((ring, ri) => { for (let s = 0; s < ring.slots && g < participants.length; s += 1, g += 1) this.assigned[participants[g]!] = {ring: ri, slot: s}; });
+    for (const index of harvest.slice(capacity)) this.consumed.add(index);
     this.glyphs.forEach((glyph, i) => {
       glyph.a = glyph.x; glyph.r = glyph.y; glyph.t = 0; glyph.vx = glyph.vy = 0;
-      glyph.state = this.assigned[i] ? 0 : 3;
-      this.delay[i] = this.rand(0, 0.8); this.duration[i] = this.rand(1.4, CIRC.gather);
+      glyph.state = this.assigned[i] ? 0 : this.consumed.has(i) ? 4 : 3;
+      this.delay[i] = this.rand(0, 0.9); this.duration[i] = this.rand(1.2, 2.2);
     });
-    this.alpha = this.rand(1.2, 1.8);
-    this.explosion = this.rng() < 0.5 ? 'simultaneous' : 'staggered';
-    this.exploded = this.clusters.map(() => false);
-    this.explodeAt = this.clusters.map((_, i) => this.explosion === 'simultaneous' ? 0 : i * this.rand(0.35, 0.6));
+    const base = this.rand(1.5, 2.1);
+    this.runtime = this.clusters.map((_, ci) => ({
+      stage: 'gather', t: 0, start: ci === 0 ? 0 : this.rand(0.2, 0.7) * ci, order: ci,
+      // Later circles spin up harder, so they catch up with the first.
+      alpha: base * (1 + 0.65 * ci), scale: 1, formed: false, rings: this.rings.map((r, i) => (r.cluster === ci ? i : -1)).filter(i => i >= 0), readyAt: Infinity, flash: 0,
+    }));
+    this.lastBlast = -1e9; this.nextGap = this.rand(0.3, 0.6);
+    this.debris = []; this.shock = [];
   }
   slotPosition(i: number): {x: number; y: number} | undefined {
     const a = this.assigned[i];
     if (!a) return undefined;
     const ring = this.rings[a.ring]!;
+    const scale = this.runtime[ring.cluster]?.scale ?? 1;
     const th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
-    return {x: (ring.cx + Math.cos(th) * ring.r) * ASPECT, y: ring.cy + Math.sin(th) * ring.r};
+    return {x: (ring.cx + Math.cos(th) * ring.r * scale) * ASPECT, y: ring.cy + Math.sin(th) * ring.r * scale};
   }
-  /** Every participating glyph is on its slot (within a fraction of a cell). */
-  fullyFormed(): boolean {
-    return this.glyphs.every((g, i) => { const p = this.slotPosition(i); return !p || (g.state === 1 && Math.abs(g.x - p.x) < 0.5 && Math.abs(g.y - p.y) < 0.5); });
-  }
-  private go(phase: CircPhase) { this.phase = phase; this.phaseT = 0; this.history.push(phase); }
-  private spin(dt: number, accelerate: boolean, strain: number) {
-    this.rings.forEach((ring, ri) => {
-      if (accelerate && !this.exploded[ring.cluster]) this.omega[ri] = Math.min(CIRC.omegaMax * (1 + ri * 0.08), this.omega[ri]! + this.alpha * (1 + ri * 0.3) * dt);
-      this.angle[ri]! += this.omega[ri]! * ring.dir * dt;
-    });
-    this.glyphs.forEach((g, i) => {
-      const a = this.assigned[i]; if (!a || g.state !== 1) return;
-      const p = this.slotPosition(i)!;
-      // Strain: radial wobble and the odd glyph slipping outward, never before the ring fully formed.
-      const slip = strain > 0 && (i * 2654435761 >>> 0) % 97 < 3 ? strain * 1.4 : 0;
-      const wob = strain * 0.5 * Math.sin(this.t / 55 + i);
-      const ring = this.rings[a.ring]!, th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
-      g.x = p.x + Math.cos(th) * (wob + slip) * ASPECT; g.y = p.y + Math.sin(th) * (wob + slip);
-    });
-  }
+  clusterOf(i: number): number | undefined { const a = this.assigned[i]; return a ? this.rings[a.ring]!.cluster : undefined; }
+  private setPhase(phase: CircPhase) { if (phase === this.phase) return; this.phase = phase; this.phaseT = 0; this.history.push(phase); }
   update(dt: number): void {
     this.phaseT += dt;
     const w = this.capture.width, h = this.capture.height;
-    switch (this.phase) {
-      case 'hold': if (this.phaseT >= CIRC.hold) { this.glyphs.forEach(g => { g.a = g.x; g.r = g.y; g.t = 0; }); this.go('gather'); } break;
-      case 'gather':
-        this.glyphs.forEach((g, i) => {
-          const target = this.slotPosition(i); if (!target || g.state === 1) return;
-          g.t += dt;
-          const u = ease((g.t - this.delay[i]!) / this.duration[i]!);
-          const swirl = Math.sin(u * Math.PI) * 3;
-          g.x = g.a + (target.x - g.a) * u + swirl * (g.oy < h / 2 ? 1 : -1); g.y = g.r + (target.y - g.r) * u;
-          if (g.t >= this.delay[i]! + this.duration[i]!) { g.x = target.x; g.y = target.y; g.state = 1; }
-        });
-        // FULLY FORMED is global: nothing else starts until every participant is on its ring.
-        if (this.glyphs.every((g, i) => !this.assigned[i] || g.state === 1)) this.go('stabilize');
-        break;
-      case 'stabilize': if (this.phaseT >= CIRC.stabilize) this.go('rotate'); break;
-      case 'rotate': this.spin(dt, false, 0); if (this.phaseT >= CIRC.rotate) this.go('accelerate'); break;
-      case 'accelerate': this.spin(dt, true, 0); if (this.phaseT >= CIRC.accelerate) this.go('destabilize'); break;
-      case 'destabilize': this.spin(dt, true, clamp(this.phaseT / CIRC.destabilize, 0, 1)); if (this.phaseT >= CIRC.destabilize) this.go('explode'); break;
-      case 'explode':
-        this.spin(dt, true, 1);
-        this.clusters.forEach((_, ci) => { if (!this.exploded[ci] && this.phaseT >= this.explodeAt[ci]!) this.explodeCluster(ci); });
-        if (this.exploded.every(Boolean)) this.go('scatter');
-        this.integrate(dt, w, h);
-        break;
-      case 'scatter': this.integrate(dt, w, h); if (this.phaseT >= CIRC.scatter) this.go('settle'); break;
-      case 'settle':
+    if (this.phase === 'hold') { if (this.phaseT >= CIRC.hold) this.setPhase('gather'); else return; }
+    if (this.phase === 'scatter' || this.phase === 'settle') {
+      this.integrate(dt, w, h);
+      this.tickBlasts(dt);
+      if (this.phase === 'scatter' && this.phaseT >= CIRC.scatter) this.setPhase('settle');
+      else if (this.phase === 'settle') {
         for (const g of this.glyphs) if (g.state === 2) { g.vx *= 0.8; g.vy *= 0.8; }
-        this.integrate(dt, w, h);
-        if (this.phaseT >= CIRC.settle) { this.cycles += 1; this.loops = this.cycles; this.plan(); this.go('hold'); }
-        break;
+        if (this.phaseT >= CIRC.settle) this.nextRun();
+      }
+      return;
     }
+    this.runtime.forEach((rt, ci) => this.stepCluster(rt, ci, dt));
+    this.integrate(dt, w, h);
+    this.tickBlasts(dt);
+    // Order of readiness decides who blows next, one after another.
+    const ready = this.runtime.map((rt, ci) => ({rt, ci})).filter(({rt}) => rt.stage === 'critical' && rt.readyAt <= this.t).sort((a, b) => a.rt.readyAt - b.rt.readyAt);
+    if (ready.length && this.t - this.lastBlast >= this.nextGap * 1000) { this.detonate(ready[0]!.ci); this.lastBlast = this.t; this.nextGap = this.rand(0.35, 0.8); }
+    const stages = this.runtime.map(rt => rt.stage);
+    if (stages.every(stage => stage === 'exploded')) this.setPhase('scatter');
+    else if (stages.includes('exploded')) this.setPhase('explode');
+    else if (stages.some(stage => stage === 'collapse' || stage === 'critical')) this.setPhase('collapse');
+    else if (stages.includes('spin')) this.setPhase('spin');
+    else this.setPhase('gather');
   }
-  private integrate(dt: number, w: number, h: number) {
-    for (const g of this.glyphs) {
-      if (g.state !== 2) continue;
-      g.vx *= 1 - 0.55 * dt; g.vy *= 1 - 0.55 * dt;
-      g.x += g.vx * dt; g.y += g.vy * dt;
-      if (g.x < 1) { g.x = 1; g.vx = Math.abs(g.vx) * 0.5; } else if (g.x > w - 2) { g.x = w - 2; g.vx = -Math.abs(g.vx) * 0.5; }
-      if (g.y < 1) { g.y = 1; g.vy = Math.abs(g.vy) * 0.5; } else if (g.y > h - 2) { g.y = h - 2; g.vy = -Math.abs(g.vy) * 0.5; }
+  private stepCluster(rt: ClusterRuntime, ci: number, dt: number) {
+    if (rt.stage === 'exploded') return;
+    rt.t += dt;
+    if (rt.stage === 'gather') {
+      if (rt.t < rt.start) return;
+      const local = rt.t - rt.start;
+      let allHome = true;
+      this.glyphs.forEach((g, i) => {
+        if (this.clusterOf(i) !== ci || g.state === 1) return;
+        const target = this.slotPosition(i)!;
+        const u = ease((local - this.delay[i]!) / this.duration[i]!);
+        const swirl = Math.sin(u * Math.PI) * 3;
+        g.x = g.a + (target.x - g.a) * u + swirl * (g.oy < this.capture.height / 2 ? 1 : -1); g.y = g.r + (target.y - g.r) * u;
+        if (local >= this.delay[i]! + this.duration[i]!) { g.x = target.x; g.y = target.y; g.state = 1; } else allHome = false;
+      });
+      if (allHome) { rt.stage = 'spin'; rt.formed = true; rt.t = 0; }   // this circle starts turning right away
+      return;
     }
+    // Spin (and keep accelerating through the collapse): angular acceleration, never a speed jump.
+    const lead = this.omega[rt.rings[0]!]!;
+    for (const ri of rt.rings) {
+      const ring = this.rings[ri]!;
+      this.omega[ri] = Math.min(CIRC.omegaMax * (1 + 0.06 * rt.rings.indexOf(ri)), this.omega[ri]! + rt.alpha * (1 + 0.3 * rt.rings.indexOf(ri)) * dt * (rt.stage === 'collapse' ? 1.6 : 1));
+      this.angle[ri]! += this.omega[ri]! * ring.dir * dt;
+    }
+    if (rt.stage === 'spin' && lead >= CIRC.omegaCollapse) { rt.stage = 'collapse'; rt.t = 0; }
+    if (rt.stage === 'collapse') {
+      const u = clamp(rt.t / CIRC.collapseSeconds, 0, 1);
+      rt.scale = 1 - (1 - CIRC.collapseScale) * u * u;           // tightens faster and faster
+      if (u >= 1) { rt.stage = 'critical'; rt.t = 0; rt.readyAt = this.t + CIRC.criticalSeconds * 1000; }
+    }
+    if (rt.stage === 'critical') rt.scale = CIRC.collapseScale * (1 + 0.05 * Math.sin(this.t / 30));
+    // Strain: radial wobble and an occasional slipping glyph while the ring is stressed.
+    const strain = rt.stage === 'collapse' || rt.stage === 'critical' ? 1 : clamp((lead - CIRC.omegaCollapse * 0.6) / (CIRC.omegaCollapse * 0.4), 0, 1);
+    this.glyphs.forEach((g, i) => {
+      if (this.clusterOf(i) !== ci || g.state !== 1) return;
+      const p = this.slotPosition(i)!;
+      const slip = strain > 0 && (i * 2654435761 >>> 0) % 97 < 3 ? strain * 1.2 : 0;
+      const wob = strain * 0.4 * Math.sin(this.t / 55 + i);
+      const a = this.assigned[i]!, ring = this.rings[a.ring]!, th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
+      g.x = p.x + Math.cos(th) * (wob + slip) * ASPECT; g.y = p.y + Math.sin(th) * (wob + slip);
+    });
   }
-  /** The ring fails: each glyph keeps the velocity its ring was giving it, plus a radial kick and a little randomness. */
-  private explodeCluster(ci: number) {
-    this.exploded[ci] = true;
+  /** The supernova: the compressed core releases its spin; every glyph keeps tangential momentum plus a hard radial kick. */
+  private detonate(ci: number) {
+    const rt = this.runtime[ci]!; rt.stage = 'exploded'; rt.flash = CIRC.flashSeconds; rt.blastAt = this.t;
+    const cluster = this.clusters[ci]!;
+    this.explosions.push({cluster: ci, at: this.t});
+    this.shock.push({cx: cluster.cx * ASPECT, cy: cluster.cy, t: 0});
     this.glyphs.forEach((g, i) => {
       const a = this.assigned[i];
       if (!a || this.rings[a.ring]!.cluster !== ci) return;
       const ring = this.rings[a.ring]!;
       const th = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
-      const speed = this.omega[a.ring]! * ring.r * ring.dir;           // rows/s along the tangent
-      const out = this.rand(3, 9);
-      g.vx = (-Math.sin(th) * speed * 0.6 + Math.cos(th) * out) * ASPECT + this.rand(-1.5, 1.5);
-      g.vy = Math.cos(th) * speed * 0.6 + Math.sin(th) * out + this.rand(-0.8, 0.8);
+      const speed = this.omega[a.ring]! * ring.r * rt.scale * ring.dir;     // rows/s along the tangent at the moment of release
+      const out = this.rand(9, 22);
+      g.vx = (-Math.sin(th) * speed * 0.9 + Math.cos(th) * out) * ASPECT + this.rand(-2, 2);
+      g.vy = Math.cos(th) * speed * 0.9 + Math.sin(th) * out + this.rand(-1.2, 1.2);
       g.state = 2;
     });
+    // Debris: consumed source characters and sparks fly out too (bounded).
+    const pool = [...this.consumed];
+    const n = Math.min(CIRC.debrisCap - this.debris.length, 36);
+    for (let k = 0; k < n; k += 1) {
+      const a = this.rand(0, Math.PI * 2), sp = this.rand(8, 26);
+      const source = pool.length ? this.glyphs[pool[Math.floor(this.rng() * pool.length)]!] : undefined;
+      this.debris.push({x: cluster.cx * ASPECT, y: cluster.cy, vx: Math.cos(a) * sp * ASPECT, vy: Math.sin(a) * sp, life: this.rand(0.6, 1.4), ch: source?.ch ?? this.pick(['*', '·', '+', '•']), fg: source?.fg ?? 0xffffff});
+    }
+  }
+  private tickBlasts(dt: number) {
+    for (const rt of this.runtime) if (rt.flash > 0) rt.flash = Math.max(0, rt.flash - dt);
+    for (const d of this.debris) { d.x += d.vx * dt; d.y += d.vy * dt; d.vx *= 1 - 0.9 * dt; d.vy *= 1 - 0.9 * dt; d.life -= dt; }
+    this.debris = this.debris.filter(d => d.life > 0 && d.x >= 0 && d.x < this.capture.width && d.y >= 0 && d.y < this.capture.height);
+    for (const s of this.shock) s.t += dt;
+    this.shock = this.shock.filter(s => s.t < 0.55);
+  }
+  private integrate(dt: number, w: number, h: number) {
+    for (const g of this.glyphs) {
+      if (g.state !== 2) continue;
+      g.vx *= 1 - 0.5 * dt; g.vy *= 1 - 0.5 * dt;
+      g.x += g.vx * dt; g.y += g.vy * dt;
+      if (g.x < 1) { g.x = 1; g.vx = Math.abs(g.vx) * 0.5; } else if (g.x > w - 2) { g.x = w - 2; g.vx = -Math.abs(g.vx) * 0.5; }
+      if (g.y < 1) { g.y = 1; g.vy = Math.abs(g.vy) * 0.5; } else if (g.y > h - 2) { g.y = h - 2; g.vy = -Math.abs(g.vy) * 0.5; }
+    }
+  }
+  /** Next run: more of the source is consumed each time; after the configured number of runs the screen is restored cleanly. */
+  private nextRun() {
+    this.cycles += 1; this.loops = this.cycles; this.run += 1;
+    if (this.run >= CIRC.runsBeforeReset) {
+      this.run = 0;
+      for (const g of this.glyphs) { g.x = g.ox; g.y = g.oy; g.vx = g.vy = 0; g.state = 0; }
+    }
+    this.plan();
+    this.setPhase('hold'); this.phaseT = 0;
   }
   paint(grid: CellGrid, ctx: EffectContext): void {
+    // Source glyphs that are harvested (this or an earlier run) are gone from their original cells.
     const skip = new Set<number>();
-    this.glyphs.forEach((g, i) => { if (this.assigned[i]) skip.add(Math.floor(g.oy) * this.capture.width + Math.floor(g.ox)); });
+    this.glyphs.forEach(g => { if (g.state !== 3) skip.add(Math.floor(g.oy) * this.capture.width + Math.floor(g.ox)); });
     drawStatic(grid, this.capture, skip, ctx.palette.text);
-    const hot = clamp((this.omega[0] ?? 0) / CIRC.omegaMax, 0, 1);
-    const lit = this.phase === 'accelerate' || this.phase === 'destabilize' || this.phase === 'explode' ? hot : 0;
+    const accent = ctx.palette.stops[0] ?? ctx.palette.accent;
     this.glyphs.forEach((g, i) => {
-      if (!this.assigned[i]) return;
-      grid.set(g.x, g.y, g.ch, mixPacked(g.fg, ctx.palette.stops[0] ?? ctx.palette.accent, lit * 0.6));
+      if (g.state === 4 || g.state === 3) return;
+      const ci = this.clusterOf(i); const rt = ci === undefined ? undefined : this.runtime[ci];
+      const heat = rt ? (rt.stage === 'collapse' ? 0.5 + 0.4 * (1 - rt.scale) : rt.stage === 'critical' ? 1 : rt.stage === 'spin' ? clamp((this.omega[this.assigned[i]!.ring]! - CIRC.omegaStart) / CIRC.omegaCollapse, 0, 1) * 0.5 : 0) : 0;
+      const flash = rt && rt.flash > 0 ? rt.flash / CIRC.flashSeconds : 0;
+      grid.set(g.x, g.y, g.ch, mixPacked(mixPacked(g.fg, accent, heat * 0.7), 0xffffff, Math.max(flash * 0.8, rt?.stage === 'critical' ? 0.7 : 0)));
     });
+    for (const s of this.shock) {
+      const radius = s.t / 0.55 * 12;
+      for (let k = 0; k < CIRC.shockPoints; k += 1) { const a = (k / CIRC.shockPoints) * Math.PI * 2; grid.plot(s.cx + Math.cos(a) * radius * ASPECT, s.cy + Math.sin(a) * radius, '·', mixPacked(0x303040, 0xffffff, 1 - s.t / 0.55)); }
+    }
+    for (const d of this.debris) grid.plot(d.x, d.y, d.ch, mixPacked(0x303040, d.fg, clamp(d.life / 0.6, 0, 1)));
   }
 }
 

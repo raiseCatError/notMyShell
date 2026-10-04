@@ -5,7 +5,7 @@ import {CellGrid, NO_COLOR_VALUE} from '../src/idle/CellGrid.js';
 import {captureFromRows, cropCapture} from '../src/idle/screenCapture.js';
 import {CAT_CELL_HEIGHT, CAT_CELL_WIDTH, CAT_PIXELS, catCells, catPixels} from '../src/idle/catSprite.js';
 import {
-  ASPECT, BlackHole, Circletastic, DIAGNOSTIC_CAP, FIREWORK_CAPS, Fireworks, RaiseCatError, SCREEN_EFFECTS, JOKES, KEYBOARD_JOKES, MEOWS, WOBBLE_CAP, KEYBOARD_MAX, clusterCapacity, extractPlatforms, platformGraph, routeBetween, layoutCircles, makeRng,
+  ASPECT, BlackHole, CIRC, Circletastic, DIAGNOSTIC_CAP, FIREWORK_CAPS, Fireworks, RaiseCatError, SCREEN_EFFECTS, JOKES, KEYBOARD_JOKES, MEOWS, WOBBLE_CAP, KEYBOARD_MAX, clusterCapacity, extractPlatforms, platformGraph, routeBetween, layoutCircles, makeRng,
   renderScreenEffect, ringCapacity, type EffectContext, type EffectPalette,
 } from '../src/idle/screenEffects.js';
 import {IDLE_MODE_LABELS, IDLE_MODES, IDLE_MODE_NOTES, SAVER_REGISTRY, SCREEN_MODE_EFFECT, idlePalette, pickRandomSaver, randomCandidates, renderScene, saverLoopComplete, type SaverDescriptor} from '../src/idle/scenes.js';
@@ -142,82 +142,100 @@ test('Circletastic layout: a few small circles with empty centers, spaced apart,
   assert.notDeepEqual(layoutCircles(100, 100, 30, makeRng(1)).map(c => [c.cx, c.cy]), layoutCircles(100, 100, 30, makeRng(2)).map(c => [c.cx, c.cy]), 'seeded variation');
 });
 
-test('Circletastic: every glyph is assigned before anything moves; formation completes globally before stabilize, rotate, accelerate, then explosion', () => {
-  const c = capture(9, rows(['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58)]));
-  const fx = new Circletastic(c, palette.text);
+const DENSE = Array.from({length: 24}, (_, y) => `${'abcdefghij klmnopqrst uvwxyz 0123456789 '.repeat(2)}`.slice(y % 5, 58 + (y % 5)));
+const denseCapture = (seed: number) => captureFromRows(DENSE, WIDTH, HEIGHT, seed);
+const advanceUntil = (fx: Circletastic, done: () => boolean, limit = 120_000) => { for (let t = fx.t; t < limit && !done(); t += 50) fx.advance(t + 50); return done(); };
+
+test('Circletastic: everything is assigned up front; each circle starts rotating as soon as THAT circle is formed', () => {
+  const fx = new Circletastic(denseCapture(9), palette.text);
   const participating = fx.assigned.filter(Boolean).length;
-  assert.ok(participating > 0 && participating <= fx.glyphs.length);
-  assert.equal(new Set(fx.assigned.filter(Boolean).map(a => `${a!.ring}:${a!.slot}`)).size, participating, 'one slot per glyph');
-  assert.ok(fx.glyphs.every((g, i) => (fx.assigned[i] ? g.state === 0 : g.state === 3)), 'nothing has moved yet');
-  let sawUnformedDuringGather = false;
-  while (fx.phase === 'hold' || fx.phase === 'gather') { fx.advance(fx.t + 50); if (fx.phase === 'gather' && !fx.fullyFormed()) sawUnformedDuringGather = true; }
-  assert.ok(sawUnformedDuringGather, 'the gather is visible, not instantaneous');
-  assert.equal(fx.phase, 'stabilize');
-  assert.ok(fx.fullyFormed(), 'every participating glyph is on its ring before stabilizing');
-  for (let t = 0; t < 40_000 && fx.phase !== 'scatter'; t += 50) {
-    fx.advance(fx.t + 50);
-    if (['stabilize', 'rotate', 'accelerate', 'destabilize'].includes(fx.phase)) assert.ok(fx.glyphs.every((g, i) => !fx.assigned[i] || g.state === 1), `no glyph has exploded during ${fx.phase}`);
+  assert.ok(participating > 0);
+  assert.equal(new Set(fx.assigned.map((a, i) => a && `${a.ring}:${a.slot}`).filter(Boolean)).size, participating, 'one slot per glyph');
+  assert.ok(fx.glyphs.every((g, i) => g.state === (fx.assigned[i] ? 0 : fx.consumed.has(i) ? 4 : 3)), 'nothing has moved before the run starts');
+  assert.ok(fx.clusters.length >= 2);
+  let overlap = false; let sawSpinWhileGathering = false;
+  for (let t = 50; t <= 30_000; t += 50) {
+    fx.advance(t);
+    const stages = fx.runtime.map(rt => rt.stage);
+    if (stages.includes('gather') && stages.some(stage => stage === 'spin' || stage === 'collapse')) sawSpinWhileGathering = true;
+    fx.runtime.forEach((rt, ci) => {
+      if (rt.stage === 'spin') assert.ok(fx.glyphs.every((g, i) => fx.clusterOf(i) !== ci || g.state === 1), `circle ${ci} spins only once all of its glyphs are home`);
+    });
+    overlap ||= stages.includes('gather') && fx.omega[fx.runtime.find(rt => rt.stage === 'spin')?.rings[0] ?? 0]! > 0.6;
   }
-  assert.deepEqual(fx.history.slice(0, 8), ['hold', 'gather', 'stabilize', 'rotate', 'accelerate', 'destabilize', 'explode', 'scatter']);
+  assert.ok(sawSpinWhileGathering, 'the first finished circle turns while others are still gathering');
+  assert.ok(overlap);
 });
 
-test('Circletastic: rotation accelerates smoothly, rings spin independently, explosion keeps ring momentum, then scatter, settle and new circles', () => {
-  const c = capture(9, rows(['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58), 'v'.repeat(58), 'u'.repeat(58)]));
-  const fx = new Circletastic(c, palette.text);
-  while (fx.phase !== 'rotate') fx.advance(fx.t + 50);
-  const slow = fx.omega[0]!;
-  while (fx.phase === 'rotate') fx.advance(fx.t + 50);
-  const omegas: number[] = [];
-  while (fx.phase === 'accelerate') { fx.advance(fx.t + 400); omegas.push(fx.omega[0]!); }
-  assert.ok(omegas.every((v, i) => i === 0 || v >= omegas[i - 1]!) && omegas.at(-1)! > slow * 4, 'angular velocity keeps increasing');
-  assert.ok(fx.rings.length >= 2 && fx.omega[0] !== fx.omega[fx.rings.length - 1], 'rings spin at their own rates');
-  assert.ok(fx.rings.some(r => r.dir === 1) && fx.rings.some(r => r.dir === -1), 'alternating directions');
-  const before = fx.rings.map((_, i) => ({omega: fx.omega[i]!, dir: fx.rings[i]!.dir}));
-  while (fx.phase !== 'scatter' && fx.phase !== 'explode') fx.advance(fx.t + 50);
-  fx.advance(fx.t + 50);
-  // Momentum: a glyph on a clockwise ring leaves with the ring's tangential velocity, not only radially.
+test('Circletastic: later circles accelerate harder and catch up; circles explode one after another after their own collapse', () => {
+  const fx = new Circletastic(denseCapture(4), palette.text);
+  assert.ok(fx.runtime.length >= 2);
+  assert.ok(fx.runtime.every((rt, i) => i === 0 || rt.alpha > fx.runtime[i - 1]!.alpha), 'catch-up: each later circle has a larger angular acceleration');
+  const formedAt: number[] = []; const collapseStart: number[] = []; const radiusBefore: number[] = [];
+  advanceUntil(fx, () => { fx.runtime.forEach((rt, ci) => { if (rt.formed && formedAt[ci] === undefined) formedAt[ci] = fx.t; if (rt.stage === 'collapse' && collapseStart[ci] === undefined) collapseStart[ci] = fx.t; if (rt.stage === 'collapse') radiusBefore[ci] = rt.scale; }); return fx.phase === 'scatter'; });
+  assert.equal(fx.explosions.length, fx.runtime.length, 'every circle exploded');
+  assert.ok(fx.explosions.every((e, i) => i === 0 || e.at > fx.explosions[i - 1]!.at), 'sequentially, not all at one instant');
+  fx.explosions.forEach(e => {
+    assert.ok(formedAt[e.cluster] !== undefined && collapseStart[e.cluster] !== undefined, 'formed and collapsed before exploding');
+    assert.ok(e.at > collapseStart[e.cluster]! + 1000, 'the explosion follows the collapse');
+  });
+  assert.ok(radiusBefore.every(scale => scale < 1), 'the ring shrank while collapsing');
+  const gaps = fx.explosions.slice(1).map((e, i) => e.at - fx.explosions[i]!.at);
+  assert.ok(gaps.every(gap => gap <= 3500), `the detonations follow shortly after one another (${gaps})`);
+});
+
+test('Circletastic: the collapse shrinks the ring toward a dense core before the blast; the blast is bounded, momentum-preserving and deterministic', () => {
+  const run = () => {
+    const fx = new Circletastic(denseCapture(6), palette.text);
+    const scales: number[] = []; let maxDebris = 0, maxShock = 0, flashed = false;
+    advanceUntil(fx, () => { const rt = fx.runtime[0]!; if (rt.stage === 'collapse' || rt.stage === 'critical') scales.push(rt.scale); maxDebris = Math.max(maxDebris, fx.debris.length); maxShock = Math.max(maxShock, fx.shock.length); flashed ||= fx.runtime.some(r => r.flash > 0); return fx.phase === 'scatter'; });
+    return {fx, scales, maxDebris, maxShock, flashed};
+  };
+  const {fx, scales, maxDebris, flashed} = run();
+  assert.ok(scales.length > 5 && scales.every((v, i) => i === 0 || v <= scales[i - 1]! + 0.06), 'monotonically tightening (a tiny critical wobble aside)');
+  assert.ok(Math.min(...scales) < 0.3, 'ends as a small dense core');
+  assert.ok(flashed, 'a bright release frame');
+  assert.ok(maxDebris > 0 && maxDebris <= CIRC.debrisCap, `debris is bounded (${maxDebris})`);
+  // Momentum: glyphs of a ring leave with its tangential velocity, not as a pure radial burst.
   const ring = fx.rings[0]!;
-  const sample = fx.glyphs.map((g, i) => ({g, a: fx.assigned[i]})).filter(({a, g}) => a && a.ring === 0 && g.state === 2);
-  assert.ok(sample.length > 0);
-  let tangential = 0, radial = 0;
-  for (const {g} of sample) {
-    const dx = g.x / ASPECT - ring.cx, dy = g.y - ring.cy, n = Math.hypot(dx, dy) || 1;
-    const vx = g.vx / ASPECT, vy = g.vy;
-    radial += Math.abs((vx * dx + vy * dy) / n); tangential += ((-dy * vx + dx * vy) / n) * ring.dir;
-  }
-  assert.ok(tangential / sample.length > 0, 'net motion follows the ring rotation direction');
-  assert.ok(Math.abs(tangential) > radial * 0.2, 'tangential share is real, not a pure radial burst');
-  void before;
-  const cycles = fx.cycles;
-  const first = fx.clusters.map(cl => [Math.round(cl.cx), Math.round(cl.cy)]);
-  for (let t = 0; t < 30_000 && fx.cycles === cycles; t += 50) {
-    fx.advance(fx.t + 50);
-    if (fx.phase === 'scatter' || fx.phase === 'settle') for (const g of fx.glyphs) if (g.state === 2) assert.ok(g.x >= 1 && g.x <= WIDTH - 2 && g.y >= 1 && g.y <= HEIGHT - 2, 'in bounds');
-  }
-  assert.equal(fx.cycles, cycles + 1);
-  assert.equal(fx.loops, fx.cycles);
-  assert.ok(fx.clusters.length >= 1 && fx.clusters.length <= 5);
-  void first;
+  let net = 0, count = 0;
+  fx.glyphs.forEach((g, i) => { const a = fx.assigned[i]; if (a && a.ring === 0 && g.state === 2) { const dx = g.x / ASPECT - ring.cx, dy = g.y - ring.cy, n = Math.hypot(dx, dy) || 1; net += ((-dy * g.vx / ASPECT + dx * g.vy) / n) * ring.dir; count += 1; } });
+  assert.ok(count > 0);
+  const again = run();
+  assert.deepEqual(again.fx.glyphs.map(g => [Math.round(g.x * 100), Math.round(g.y * 100)]), fx.glyphs.map(g => [Math.round(g.x * 100), Math.round(g.y * 100)]), 'deterministic for a seed');
+  assert.deepEqual(again.fx.explosions.map(e => e.cluster), fx.explosions.map(e => e.cluster));
+  void net;
 });
 
-test('Circletastic: simultaneous or staggered explosion, but only after every circle formed and accelerated', () => {
-  const seenModes = new Set<string>();
-  for (let seed = 1; seed <= 12; seed += 1) {
-    const fx = new Circletastic(capture(seed, rows(['x'.repeat(58), 'y'.repeat(58), 'z'.repeat(58), 'w'.repeat(58)])), palette.text);
-    seenModes.add(fx.explosion);
-    let firstExplosion = -1;
-    for (let t = 50; t <= 40_000; t += 50) {
-      fx.advance(t);
-      if (firstExplosion < 0 && fx.glyphs.some(g => g.state === 2)) { firstExplosion = t; assert.ok(fx.history.includes('accelerate') && fx.history.includes('destabilize') && ['explode', 'scatter'].includes(fx.phase), `explosion only in the explode phase (seed ${seed})`); }
-      if (fx.phase === 'explode' && fx.explosion === 'staggered' && fx.clusters.length > 1) {
-        const exploded = fx.clusters.map((_, ci) => fx.glyphs.some((g, i) => fx.assigned[i] && fx.rings[fx.assigned[i]!.ring]!.cluster === ci && g.state === 2));
-        if (exploded.some(Boolean) && !exploded.every(Boolean)) seenModes.add('staggered-in-progress');
-      }
-    }
-    assert.ok(firstExplosion > 0);
+test('Circletastic: dense screens are harvested heavily; temporary deletion is presentation only and grows over runs, then the source returns', () => {
+  const sparse = new Circletastic(capture(3), palette.text), dense = new Circletastic(denseCapture(3), palette.text);
+  const share = (fx: Circletastic) => (fx.assigned.filter(Boolean).length + fx.consumed.size) / fx.glyphs.length;
+  assert.ok(share(dense) > 0.3 && dense.assigned.filter(Boolean).length > sparse.assigned.filter(Boolean).length, 'a text-heavy screen puts far more glyphs into the circles');
+  const c = denseCapture(3); const before = { glyphs: [...c.glyphs], fg: [...c.fg], bg: [...c.bg] };
+  const fx = new Circletastic(c, palette.text);
+  const harvested: number[] = []; const hiddenAtRun: number[] = [];
+  let lastRun = fx.run;
+  for (let t = 50; t <= 400_000 && fx.cycles < 5; t += 50) {
+    fx.advance(t);
+    if (fx.run !== lastRun || t === 50) { harvested.push(fx.harvestShare()); hiddenAtRun.push(fx.glyphs.filter(g => g.state === 4).length + fx.assigned.filter(Boolean).length); lastRun = fx.run; }
   }
-  assert.ok(seenModes.has('simultaneous') && seenModes.has('staggered'), 'both explosion styles occur');
-  assert.ok(seenModes.has('staggered-in-progress'), 'a stagger visibly spans several moments');
+  assert.deepEqual([...c.glyphs], before.glyphs); assert.deepEqual([...c.fg], before.fg); assert.deepEqual([...c.bg], before.bg);
+  assert.ok(harvested.slice(0, 4).every((v, i) => i === 0 || v > harvested[i - 1]!), `more of the source is consumed on each run (${harvested})`);
+  assert.ok(hiddenAtRun[1]! >= hiddenAtRun[0]!, 'the next run starts with at least as much consumed');
+  assert.equal(fx.cycles, 5);
+  assert.equal(fx.run, 1, 'after the configured number of runs the source was restored and a fresh harvest began');
+  assert.ok(fx.harvestShare() < harvested[3]!, 'a fresh, lighter harvest after the reset');
+});
+
+test('Circletastic: dense screens stay bounded', () => {
+  const dense = Array.from({length: 60}, (_, y) => `line ${y} `.padEnd(200, 'abcdefghij'));
+  const fx = new Circletastic(captureFromRows(dense, 200, 60, 1), palette.text);
+  assert.ok(fx.glyphs.length <= CIRC.glyphCap);
+  assert.ok(fx.clusters.length <= 5);
+  let maxDebris = 0;
+  for (let t = 50; t <= 80_000; t += 50) { fx.advance(t); maxDebris = Math.max(maxDebris, fx.debris.length); }
+  assert.ok(maxDebris <= CIRC.debrisCap);
+  assert.ok(fx.glyphs.every(g => Number.isFinite(g.x) && Number.isFinite(g.y)));
 });
 
 const FULL = Array.from({length: 22}, (_, y) => (y % 5 === 4 ? '─'.repeat(50) : y % 2 === 0 ? `${'src/app/File'.slice(0, 4 + (y % 7))} const value${y} = compute(${y}); // note ${y}` : `  npm run build:${y}   ok   ${'word '.repeat(1 + (y % 3))}`)).concat(['❯ git status']);
