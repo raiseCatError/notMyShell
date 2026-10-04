@@ -10,8 +10,9 @@ import {defaultUiColors, uiThemeInput, type UiThemeInput} from './uiTheme.js';
  * UI chrome: the colors of NMSh-owned frames, rules, tabs, selection, focus
  * accents and markers. One setting decides where they come from:
  *
- * - Follow theme (default): the active theme's chrome. Lavender Native keeps
- *   the shipped chrome exactly; other NMSh themes derive chrome from their
+ * - Follow theme (default): the active theme's chrome. Lavender Native has its
+ *   own tinted chrome (LAVENDER_CHROME); Brand / Semantic keeps the shipped
+ *   chrome exactly; other NMSh themes derive chrome from their
  *   own module colors; bundled families and custom themes use their UI roles.
  * - Custom: a preset (Native Lavender, Grayscale) or the user's own colors.
  *
@@ -54,8 +55,21 @@ export function normalizeUiChrome(value: unknown): UiChromeSettings {
 /** Neutral chrome: gray accents and rules; status colors keep their meaning. */
 const GRAYSCALE: UiThemeInput = {accent: '#c9cacf', separator: '#76787e', selection: '#45474c', success: '#74b59a', failure: '#cd737b'};
 
-/** Shipped chrome themes: NMSh's own lavender themes keep the original chrome exactly. */
-const SHIPPED_CHROME: ReadonlySet<NativePaletteId> = new Set(['lavender', 'brand']);
+/** Brand / Semantic keeps the original shipped chrome exactly. */
+const SHIPPED_CHROME: ReadonlySet<NativePaletteId> = new Set(['brand']);
+
+/**
+ * Lavender Native's own chrome: lavender-tinted near-white text tiers and a
+ * dark plum selection surface instead of neutral white and slate, an accent
+ * closer to the #A67CF3 brand, and unchanged success/failure semantics.
+ * Every text tier is at least 4.5:1 on dark lavender surfaces (#2C233A);
+ * primary on the selection is 11.5:1.
+ */
+export const LAVENDER_CHROME: UiThemeInput = {
+  primary: '#f1ebff', secondary: '#d8ccf2', subtle: '#a99bc6',
+  accent: '#b597f5', separator: '#8b84b2', selection: '#352a47',
+  success: '#74b59a', failure: '#cd737b',
+};
 
 const tone = (color: Rgb, l: number, minChroma: number, maxChroma = 0.2) => {
   const lch = toOklch(color);
@@ -69,6 +83,7 @@ const tone = (color: Rgb, l: number, minChroma: number, maxChroma = 0.2) => {
  */
 export function nativeThemeChrome(palette: NativePaletteId): UiThemeInput | undefined {
   if (SHIPPED_CHROME.has(palette)) return undefined;
+  if (palette === 'lavender') return LAVENDER_CHROME;
   const theme = NATIVE_PROMPT_THEMES[palette];
   if (!theme) return undefined;
   const accent = theme.colors('project').background;
@@ -104,7 +119,7 @@ export function resolveChrome(chrome: UiChromeSettings, palette: NativePaletteId
   if (chrome.source === 'custom') {
     if (chrome.preset === 'grayscale') return GRAYSCALE;
     if (chrome.preset === 'custom' && chrome.colors) return chromeFromColors(chrome.colors);
-    return undefined;
+    return LAVENDER_CHROME;
   }
   const input = uiThemeInput(palette, accent, custom) ?? nativeThemeChrome(palette);
   if (!input) return undefined;

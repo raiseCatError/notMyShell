@@ -147,7 +147,8 @@ const sgrCache = new Map<string, SyntaxSgr>();
 
 /** Cached per setting combination, so rendering never recomputes colors per keystroke. */
 export function syntaxSgr(syntax: SyntaxAppearance, promptPalette: NativePaletteId): SyntaxSgr {
-  const key = `${syntax.highlighting}:${syntax.colors}:${syntax.theme}:${promptPalette}`;
+  // Styles read the live chrome (text tiers, accent, status), so a chrome change must not reuse stale escapes.
+  const key = `${syntax.highlighting}:${syntax.colors}:${syntax.theme}:${promptPalette}:${JSON.stringify(UI_COLORS)}`;
   let cached = sgrCache.get(key);
   if (!cached) {
     const styles = resolveSyntaxStyles(syntax, promptPalette);

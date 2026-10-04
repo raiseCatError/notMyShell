@@ -8,6 +8,7 @@ import {readBuildIdentity} from '../src/buildInfo.js';
 import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, WELCOME_BLINK_CLOSED_MS, WELCOME_BLINK_GAPS_MS, welcomeBlinkDelay} from '../src/output/Welcome.js';
 import {HistoryViewport} from '../src/output/viewport.js';
+import {UI_COLORS} from '../src/ui/palette.js';
 import {TranscriptStore} from '../src/sessions/TranscriptStore.js';
 import {createResumeBrowser} from '../src/sessions/ResumeBrowser.js';
 import {displayWidth} from '../src/util/text.js';
@@ -59,12 +60,12 @@ test('welcome wordmark spells notMyShell with only My in brand lavender #A67CF3 
   const rows = renderWelcome(createWelcomeSnapshot(identity, '/tmp'), 80);
   assert.match(rows[0]!.plain, / {2}notMyShell v0\.2\.0$/u);
   assert.doesNotMatch(rows.map(row => row.plain).join('\n'), /NMSh|NMSH|nmsh/u);
-  const primary = '38;2;242;240;236m';
+  // The wordmark uses the live chrome's primary text (Lavender Native's is lavender-tinted, not pure white).
+  const primary = `38;2;${UI_COLORS.primary.red};${UI_COLORS.primary.green};${UI_COLORS.primary.blue}m`;
   assert.ok(rows[0]!.ansi.includes(`\u001B[1m\u001B[${primary}not\u001B[1m\u001B[38;2;166;124;243mMy\u001B[1m\u001B[${primary}Shell`), 'bold wordmark');
-  assert.match(rows[0]!.ansi, /\u001B\[22m\u001B\[38;2;125;133;144m v0\.2\.0/u, 'version is not bold');
+  assert.ok(rows[0]!.ansi.includes(`\u001B[22m\u001B[38;2;${UI_COLORS.subtle.red};${UI_COLORS.subtle.green};${UI_COLORS.subtle.blue}m v0.2.0`), 'version is not bold');
   assert.ok(rows.slice(1, 4).every(row => !row.ansi.includes('\u001B[1m')), 'metadata stays quiet');
   assert.doesNotMatch(rows[0]!.ansi, /172;252;115/u, 'the mistaken green is gone');
-  assert.match(rows[0]!.ansi, /38;2;125;133;144m v0\.2\.0/u);
   assert.match(rows[1]!.plain, /build abcdef0 · dev$/u);
 });
 
