@@ -3803,7 +3803,7 @@ export class TerminalApp {
   private themeBridgePanel?: ThemeBridgePanelState;
   private bridgeReports: TargetReport[] = [];
   /** A plan shown for confirmation, kept with the spec it came from; confirming applies exactly this plan. */
-  private bridgePlan?: {target: Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim'>; plan?: FileEditPlan; spec?: HookSpec; removal: boolean};
+  private bridgePlan?: {target: Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix'>; plan?: FileEditPlan; spec?: HookSpec; removal: boolean};
 
   private async openThemeBridge(): Promise<void> {
     this.themeBridgePanel = createThemeBridgePanel();
@@ -3821,7 +3821,7 @@ export class TerminalApp {
     const ledger = loadLedger();
     const active = activeThemeRef(config);
     return {enabled: config.themeBridge.enabled, reports: this.bridgeReports, themes: selectableThemes(config), pinned: target => config.themeBridge.targets[target].theme, ...(active ? {activeRef: active} : {}),
-      managed: target => target === 'tmux' || target === 'neovim' || target === 'vim'
+      managed: target => target === 'tmux' || target === 'neovim' || target === 'vim' || target === 'helix'
         ? {...(ledger.entries[target] && ownership(target, ledger) === 'owned' ? {artifact: artifactPath(target)} : {}), ...(ledger.entries[target]?.hook ? {include: ledger.entries[target]!.hook!.configPath} : {})}
         : undefined};
   }
@@ -3854,7 +3854,7 @@ export class TerminalApp {
     } else if (action.kind === 'reloadTmux') {
       state.message = (await reloadTmux()).message;
     } else if (action.kind === 'planHook' || action.kind === 'planRemoval') {
-      const target = action.target as Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim'>;
+      const target = action.target as Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix'>;
       if (action.kind === 'planHook') {
         if (this.promptConfiguration.themeBridge.targets[target].mode === 'independent') { state.message = 'Choose Follow NMSh or Choose theme first; an Independent target gets no include.'; this.render(); return; }
         const spec = hookSpec(target);

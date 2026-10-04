@@ -2,17 +2,18 @@ import {existsSync, readFileSync, statSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {resolveCommand, runExternal} from '../providers/providers.js';
+import {parse as parseToml} from 'smol-toml';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import {resolveSemanticPalette, type SemanticPalette} from '../appearance/semanticPalette.js';
 import {activeThemeRef, themeRefLabel, type ThemeSource} from '../appearance/themeRefs.js';
 import {BRIDGE_TARGETS, BRIDGE_TARGET_LABELS, effectiveMode, type BridgeMode, type BridgeTargetId, type ThemeBridgeSettings} from './model.js';
 import {bridgeEnvPath, writeEnvironmentFiles, type BridgeEnvironment} from './environment.js';
 import {
-  artifactPath, ledgerPath, loadLedger, ownership, removeArtifact, sha256, writeArtifact, type ManagedTarget,
+  artifactPath, helixConfigDirectory, ledgerPath, loadLedger, ownership, removeArtifact, sha256, writeArtifact, type ManagedTarget,
 } from './artifacts.js';
 import {
   fzfColorArgs, lsColorsFallback, neovimColorscheme, pagerEnvironment, parseFzfVersion, tmuxFragment, validateNeovimColorscheme,
-  validateTmuxFragment, validateVimColorscheme, validLsColors, vimColorscheme, vividTheme, TMUX_UNREPRESENTED,
+  validateTmuxFragment, validateVimColorscheme, validLsColors, vimColorscheme, vividTheme, TMUX_UNREPRESENTED, helixTheme, validateHelixTheme,
 } from './targets.js';
 
 /**
@@ -41,7 +42,7 @@ export interface TargetReport {
 }
 
 /** Executable per target (PATH lookup only; versions only where mappings depend on them). */
-const BINARIES: Record<BridgeTargetId, string> = {fzf: 'fzf', pager: 'less', lsColors: 'ls', bat: 'bat', delta: 'delta', tmux: 'tmux', neovim: 'nvim', vim: 'vim'};
+const BINARIES: Record<BridgeTargetId, string> = {fzf: 'fzf', pager: 'less', lsColors: 'ls', bat: 'bat', delta: 'delta', tmux: 'tmux', neovim: 'nvim', vim: 'vim', helix: 'hx'};
 const VERSION_ARGS: Partial<Record<BridgeTargetId, string[]>> = {fzf: ['--version'], tmux: ['-V']};
 
 const UNSUPPORTED: Partial<Record<BridgeTargetId, string>> = {
@@ -107,6 +108,11 @@ export function targetConflicts(target: BridgeTargetId, env: NodeJS.ProcessEnv =
     return /^\s*(?:colorscheme|colo)\s+\S|vim\.cmd\.colorscheme|vim\.cmd\s*\(?\s*['"]colorscheme/mu.test(text)
       ? ['Your config also chooses a colorscheme; the NMSh include, placed last, takes effect after it.'] : [];
   }
+  if (target === 'helix') {
+    const config = readSmall(join(helixConfigDirectory(env), 'config.toml'));
+    const theme = config ? /^\s*theme\s*=\s*"?([^"\n]+)"?/mu.exec(config)?.[1]?.trim() : undefined;
+    return theme && theme !== 'nmsh-bridge' ? [`Configured independently: your Helix config selects "${theme.slice(0, 40)}"; NMSh leaves it.`] : [];
+  }
   if (target === 'lsColors' && env.LS_COLORS) return ['LS_COLORS is already set; NMSh replaces it in NMSh shells while active and restores it when Independent.'];
   if (target === 'fzf' && /--color/u.test(env.FZF_DEFAULT_OPTS ?? '')) return ['FZF_DEFAULT_OPTS sets colors; NMSh-owned fzf launches never read FZF_DEFAULT_OPTS, your own fzf use keeps it.'];
   return [];
@@ -143,13 +149,17 @@ export function reportTargets({source, facts, level, env = process.env}: BridgeC
     else if (missing) status = 'Missing theme';
     else status = setting.mode === 'follow' ? 'Following NMSh' : 'Pinned theme';
     if (setting.mode !== 'independent' && bridgeColorLevel(level, env) === 'none') notes.push('NO_COLOR or no color support: nothing is injected.');
-    const managed = target === 'tmux' || target === 'neovim' || target === 'vim' ? target : undefined;
+    const managed = target === 'tmux' || target === 'neovim' || target === 'vim' || target === 'helix' ? target : undefined;
     if (managed) {
       const entry = ledger.entries[managed];
       const owned = ownership(managed, ledger, env);
       if (owned === 'owned') notes.push('Managed');
       if (owned === 'modified' || owned === 'unknown') { status = 'Conflict'; notes.push(`${artifactPath(managed, env)} exists and is not NMSh's unchanged file; NMSh will not overwrite it.`); }
-      if (entry?.hook) notes.push(setting.mode === 'independent' ? 'include installed (inactive)' : 'include installed');
+      if (managed === 'helix') {
+        if (entry?.hook) notes.push(setting.mode === 'independent' ? 'theme assignment installed (inactive)' : 'Active through NMSh-managed config');
+        else if (setting.mode !== 'independent') notes.push('Managed theme generated; select it with :theme nmsh-bridge, or review the config change');
+        if (setting.mode !== 'independent') notes.push('Coverage: syntax, markup, diff, diagnostics and editor UI. Running Helix instances are not recolored; new ones use the file.');
+      } else if (entry?.hook) notes.push(setting.mode === 'independent' ? 'include installed (inactive)' : 'include installed');
       else if (setting.mode !== 'independent') notes.push('new instances need the include (Apply)');
       if (managed === 'tmux' && setting.mode !== 'independent') { notes.push('reload available'); notes.push(TMUX_UNREPRESENTED); }
     }
@@ -208,6 +218,7 @@ const MANAGED: ReadonlyArray<{target: Extract<BridgeTargetId, ManagedTarget>; re
   {target: 'tmux', render: tmuxFragment, validate: validateTmuxFragment, format: 'tmux-fragment'},
   {target: 'neovim', render: neovimColorscheme, validate: validateNeovimColorscheme, format: 'nvim-colorscheme'},
   {target: 'vim', render: vimColorscheme, validate: validateVimColorscheme, format: 'vim-colorscheme'},
+  {target: 'helix', render: helixTheme, validate: content => validateHelixTheme(content, parseToml), format: 'helix-theme'},
 ];
 
 /**

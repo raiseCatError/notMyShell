@@ -171,7 +171,7 @@ const THEME_BRIDGE_ROW: SettingsRow = {id: 'setupThemeBridge', label: 'Extend co
   category: 'Appearance', control: 'enum', options: ['No', 'Yes'], index: c => c.themeBridge.enabled ? 1 : 0,
   select: (c, index) => ({...c, themeBridge: {...c.themeBridge, enabled: index === 1}})};
 
-const SETUP_BRIDGE_TARGETS: readonly BridgeTargetId[] = ['fzf', 'pager', 'lsColors', 'tmux', 'neovim', 'vim'];
+const SETUP_BRIDGE_TARGETS: readonly BridgeTargetId[] = ['fzf', 'pager', 'lsColors', 'tmux', 'neovim', 'vim', 'helix'];
 
 function bridgeTargetRows(draft: PromptConfiguration, context: SetupContext | undefined): SetupRow[] {
   if (!draft.themeBridge.enabled) return [];
@@ -180,7 +180,7 @@ function bridgeTargetRows(draft: PromptConfiguration, context: SetupContext | un
     row: {id: `setupBridge:${target}`, parent: 'setupThemeBridge', label: `  ${BRIDGE_TARGET_LABELS[target]}`, description: 'Independent, or follow the active NMSh theme', category: 'Appearance',
       control: 'enum', options: ['Independent', 'Follow NMSh'], index: c => c.themeBridge.targets[target].mode === 'independent' ? 0 : c.themeBridge.targets[target].mode === 'follow' ? 1 : 1,
       select: (c, index) => ({...c, themeBridge: {...c.themeBridge, targets: {...c.themeBridge.targets, [target]: {...c.themeBridge.targets[target], mode: index === 1 ? (c.themeBridge.targets[target].mode === 'choose' ? 'choose' : 'follow') : 'independent'}}}})},
-    note: () => target === 'tmux' || target === 'neovim' || target === 'vim'
+    note: () => target === 'tmux' || target === 'neovim' || target === 'vim' || target === 'helix'
       ? 'NMSh generates its own color file; adding it to your config is a separate, reviewed step in /theme-bridge'
       : target === 'fzf' ? 'Only fzf launched by NMSh; FZF_DEFAULT_OPTS and your rc files are untouched' : 'Applied in NMSh shells at the next prompt; no rc file is edited',
   } satisfies SetupRow));

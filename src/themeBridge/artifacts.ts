@@ -16,7 +16,8 @@ import type {BridgeMode, BridgeTargetId} from './model.js';
  */
 
 export const ADAPTER_VERSION = 1;
-export type ManagedTarget = Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim'> | 'vivid';
+export type ManagedTarget = Extract<BridgeTargetId, 'tmux' | 'neovim' | 'vim' | 'helix'> | 'vivid';
+export type HookTarget = Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim' | 'helix'>;
 
 export interface ConfigHook {
   /** The user's config file the hook lives in. */
@@ -53,14 +54,22 @@ export function artifactPath(target: ManagedTarget, env: NodeJS.ProcessEnv = pro
     case 'neovim': return join(root, 'nvim', 'colors', 'nmsh-bridge.lua');
     case 'vim': return join(root, 'vim', 'colors', 'nmsh-bridge.vim');
     case 'vivid': return join(root, 'vivid', 'nmsh-bridge.yml');
+    // Helix loads themes only from its own themes directory; the fixed NMSh name keeps it apart from user themes.
+    case 'helix': return join(helixConfigDirectory(env), 'themes', 'nmsh-bridge.toml');
   }
 }
 
 /** The runtimepath directory that holds `colors/` for an editor target. */
+/** Helix's configuration directory ($XDG_CONFIG_HOME/helix, else ~/.config/helix, as Helix itself uses on macOS and Linux). */
+export function helixConfigDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  const xdg = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(env.HOME || homedir(), '.config');
+  return join(xdg, 'helix');
+}
+
 export const runtimeDirectory = (target: 'neovim' | 'vim', env: NodeJS.ProcessEnv = process.env) => dirname(dirname(artifactPath(target, env)));
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'vivid'];
+const TARGETS: readonly ManagedTarget[] = ['tmux', 'neovim', 'vim', 'helix', 'vivid'];
 
 /** A malformed or stale ledger yields no ownership (so nothing can be deleted on its say-so). */
 export function loadLedger(env: NodeJS.ProcessEnv = process.env): Ledger {
@@ -167,7 +176,8 @@ export interface HookSpec {
 
 const HOOK_COMMENT = {tmux: '# NMSh Theme Bridge: loads NMSh-managed colors (remove with /theme-bridge)',
   neovim: '-- NMSh Theme Bridge: loads NMSh-managed colors (remove with /theme-bridge)',
-  vim: '" NMSh Theme Bridge: loads NMSh-managed colors (remove with /theme-bridge)'};
+  vim: '" NMSh Theme Bridge: loads NMSh-managed colors (remove with /theme-bridge)',
+  helix: '# NMSh Theme Bridge: selects the NMSh-managed theme (remove with /theme-bridge)'};
 
 /** A path safe to embed in a single-quoted tmux/Vim/Lua string without escaping rules that differ by target. */
 export function hookSafePath(path: string): boolean {
@@ -179,7 +189,14 @@ function firstExisting(paths: readonly string[]): string | undefined {
 }
 
 /** The user config a hook belongs in, and the exact lines. Existing files are preferred; nothing else is assumed. */
-export function hookSpec(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim'>, env: NodeJS.ProcessEnv = process.env, home = env.HOME || homedir()): HookSpec | {error: string} {
+export function hookSpec(target: HookTarget, env: NodeJS.ProcessEnv = process.env, home = env.HOME || homedir()): HookSpec | {error: string} {
+  if (target === 'helix') {
+    const config = join(helixConfigDirectory(env), 'config.toml');
+    const existing = readFileSafe(config);
+    // A theme the user already selected is theirs: NMSh never replaces it (`:theme nmsh-bridge` still works by hand).
+    if (existing !== undefined && /^\s*theme\s*=/mu.test(existing)) return {error: `${config} already selects a theme; NMSh leaves it. Use :theme nmsh-bridge in Helix, or change that line yourself.`};
+    return {configPath: config, lines: [HOOK_COMMENT.helix, 'theme = "nmsh-bridge"'], createIfMissing: existing === undefined};
+  }
   const xdg = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(home, '.config');
   if (target === 'tmux') {
     const fragment = artifactPath('tmux', env);
@@ -207,20 +224,28 @@ function homeRoots(home: string): string[] {
   try { return [...new Set([home, realpathSync(home)])]; } catch { return [home]; }
 }
 
+function readFileSafe(path: string): string | undefined {
+  try { return readFileSync(path, 'utf8'); } catch { return undefined; }
+}
+
 export function planHook(spec: HookSpec, home: string): {plan: FileEditPlan} | {noop: string} | {error: string} {
   const roots = homeRoots(home);
   if (spec.createIfMissing && !existsSync(spec.configPath)) {
     const result = planCreate(spec.configPath, `${spec.lines.join('\n')}\n`, roots);
     return result.kind === 'plan' ? {plan: result.plan} : {error: 'reason' in result ? result.reason : 'Cannot create that file.'};
   }
-  const result = planAppend(inspectFile(spec.configPath, roots), 'text', spec.lines.join('\n'));
+  const facts = inspectFile(spec.configPath, roots);
+  // A top-level TOML key must come before the first table, so Helix's assignment is inserted there, exactly.
+  const table = spec.lines.some(line => line.startsWith('theme = ')) && facts.content !== undefined ? /^\[[^\n]*$/mu.exec(facts.content)?.[0] : undefined;
+  if (table && facts.content!.includes(`${spec.lines.join('\n')}\n`)) return {noop: `${spec.configPath} already contains that; nothing to add.`};
+  const result = table ? planReplace(facts, table, `${spec.lines.join('\n')}\n${table}`, facts.content!.indexOf(table)) : planAppend(facts, 'text', spec.lines.join('\n'));
   if (result.kind === 'plan') return {plan: result.plan};
   if (result.kind === 'noop') return {noop: result.reason};
   return {error: 'reason' in result ? result.reason : 'Cannot edit that file.'};
 }
 
 /** Applies a confirmed hook plan and records the exact lines in the ledger. */
-export function applyHook(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim'>, plan: FileEditPlan, spec: HookSpec, env: NodeJS.ProcessEnv = process.env, now = new Date()): {ok: true} | {ok: false; error: string} {
+export function applyHook(target: HookTarget, plan: FileEditPlan, spec: HookSpec, env: NodeJS.ProcessEnv = process.env, now = new Date()): {ok: true} | {ok: false; error: string} {
   const ledger = loadLedger(env);
   const entry = ledger.entries[target];
   if (!entry) return {ok: false, error: 'Generate the managed file first.'};
@@ -232,7 +257,7 @@ export function applyHook(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vi
 }
 
 /** The plan to remove exactly the recorded hook lines; anything else in the file is untouched. */
-export function planHookRemoval(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim'>, home: string, env: NodeJS.ProcessEnv = process.env): {plan: FileEditPlan} | {gone: true} | {error: string} {
+export function planHookRemoval(target: HookTarget, home: string, env: NodeJS.ProcessEnv = process.env): {plan: FileEditPlan} | {gone: true} | {error: string} {
   const hook = loadLedger(env).entries[target]?.hook;
   if (!hook) return {error: 'NMSh has no recorded include for this target.'};
   const facts = inspectFile(hook.configPath, homeRoots(home));
@@ -245,7 +270,7 @@ export function planHookRemoval(target: Extract<ManagedTarget, 'tmux' | 'neovim'
   return result.kind === 'plan' ? {plan: result.plan} : {error: 'reason' in result ? result.reason : 'Cannot plan the removal.'};
 }
 
-export function applyHookRemoval(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim'>, plan: FileEditPlan | undefined, env: NodeJS.ProcessEnv = process.env): {ok: true} | {ok: false; error: string} {
+export function applyHookRemoval(target: HookTarget, plan: FileEditPlan | undefined, env: NodeJS.ProcessEnv = process.env): {ok: true} | {ok: false; error: string} {
   if (plan) {
     const result = applyPlan(plan);
     if (!result.ok) return {ok: false, error: result.reason};

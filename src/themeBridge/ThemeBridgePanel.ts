@@ -48,7 +48,7 @@ export interface BridgePanelContext {
   managed: (target: BridgeTargetId) => {artifact?: string; include?: string} | undefined;
 }
 
-const MANAGED = new Set<BridgeTargetId>(['tmux', 'neovim', 'vim']);
+const MANAGED = new Set<BridgeTargetId>(['tmux', 'neovim', 'vim', 'helix']);
 
 export function createThemeBridgePanel(): ThemeBridgePanelState {
   return {selected: 0};
@@ -71,7 +71,10 @@ export function themeBridgeKey(state: ThemeBridgePanelState, key: Key, context: 
       state.confirm = undefined;
       return kind === 'hook' ? {kind: 'confirmHook', target} : {kind: 'confirmRemoval', target};
     }
-    if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value.toLowerCase() === 'n')) { state.confirm = undefined; state.message = 'Nothing was changed.'; }
+    if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value.toLowerCase() === 'n')) {
+      state.confirm = undefined;
+      state.message = target === 'helix' && kind === 'hook' ? 'Nothing was changed. The generated theme stays available: run :theme nmsh-bridge inside Helix.' : 'Nothing was changed.';
+    }
     return undefined;
   }
   if (!state.detail) {
@@ -157,7 +160,7 @@ export function renderThemeBridgePanel(state: ThemeBridgePanelState, context: Br
   for (const row of rows) {
     if (row === 'mode') out.push(line(row, 'Mode', BRIDGE_MODE_LABELS[report?.mode ?? 'independent']));
     if (row === 'theme') out.push(line(row, 'Theme', report?.themeLabel ?? 'Missing theme'));
-    if (row === 'apply') out.push(line(row, 'Include', `${context.managed(target)?.include ? 'installed · Enter to review' : 'not installed · Enter to review the exact change'}`));
+    if (row === 'apply') out.push(line(row, target === 'helix' ? 'Activation' : 'Include', `${context.managed(target)?.include ? 'configured · Enter to review' : 'not configured · Enter to review the exact change'}`));
     if (row === 'reload') out.push(line(row, 'Reload', 'load the colors into the running tmux server'));
     if (row === 'remove') out.push(line(row, 'Remove', 'set Independent, remove NMSh files and (after review) the include'));
   }

@@ -201,7 +201,7 @@ const THEME_ROWS: readonly SettingsRow[] = [
     }},
   {id: 'themeStudio', parent: 'themeFamily', label: 'Theme Studio', description: 'Create, edit, import, export and manage Native themes', category: 'Appearance',
     control: 'action', actionLabel: 'Open ›', value: c => [librarySummary(c.themes), 'Open ›'].filter(Boolean).join('  '), destination: 'themeStudio'},
-  {id: 'themeBridge', label: 'Theme Bridge', description: 'Extend NMSh themes to fzf, less/man, LS_COLORS, tmux, Neovim and Vim; every tool starts Independent', category: 'Appearance',
+  {id: 'themeBridge', label: 'Theme Bridge', description: 'Extend NMSh themes to fzf, less/man, LS_COLORS, tmux, Neovim, Vim and Helix; every tool starts Independent', category: 'Appearance',
     control: 'action', actionLabel: "Open ›", value: c => { const active = BRIDGE_TARGETS.filter(target => effectiveMode(c.themeBridge, target) !== 'independent').length;
       return `${active ? `${active} tool${active === 1 ? '' : 's'}` : 'Off'}  Open ›`; }, destination: 'themeBridge'},
   enumRow({id: 'pastePreview', label: 'Paste preview', description: 'Smart: multiline, chained, mutating or risky pastes are shown before they enter the composer (never changed; nothing runs until Enter). Always: every paste. Off: insert at once', category: 'Editor',

@@ -8,10 +8,10 @@
  * normalizer can use it without import cycles.
  */
 
-export const BRIDGE_TARGETS = ['fzf', 'pager', 'lsColors', 'bat', 'delta', 'tmux', 'neovim', 'vim'] as const;
+export const BRIDGE_TARGETS = ['fzf', 'pager', 'lsColors', 'bat', 'delta', 'tmux', 'neovim', 'vim', 'helix'] as const;
 export type BridgeTargetId = typeof BRIDGE_TARGETS[number];
 export const BRIDGE_TARGET_LABELS: Record<BridgeTargetId, string> = {
-  fzf: 'fzf', pager: 'less / man', lsColors: 'LS_COLORS', bat: 'bat', delta: 'delta', tmux: 'tmux', neovim: 'Neovim', vim: 'Vim',
+  fzf: 'fzf', pager: 'less / man', lsColors: 'LS_COLORS', bat: 'bat', delta: 'delta', tmux: 'tmux', neovim: 'Neovim', vim: 'Vim', helix: 'Helix',
 };
 
 export const BRIDGE_MODES = ['independent', 'follow', 'choose'] as const;

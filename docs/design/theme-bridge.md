@@ -73,6 +73,7 @@ All targets consume the one resolved semantic palette; each target only maps sem
 | tmux | NMSh-generated fragment of style/colour options only (status, window status, pane borders, messages, modes, menus, popups, clock, display-panes, copy-mode); no keys, layout, plugins, commands or behavior; `set -gq` so older tmux skips unknown options. Optional typed reload `tmux source-file <fragment>` on request. New servers need one include line (below). Theme plugins or explicit styles in your tmux.conf are reported as conflicts, not fought. | fragment; include after confirmation |
 | Neovim | generated Lua colorscheme `nmsh-bridge` (classic groups, floats, separators, diff, diagnostics with underline/sign/virtual text, common Tree-sitter captures linked onto base groups); data only. | colorscheme; include after confirmation |
 | Vim | separate Vim colorscheme with classic groups only, truecolor plus 256-color `cterm` fallback, `background` from the theme. | colorscheme; include after confirmation |
+| Helix | native TOML theme `nmsh-bridge` in Helix's themes directory (`$XDG_CONFIG_HOME/helix/themes`, else `~/.config/helix/themes`): a named `[palette]` from the semantic palette, then syntax, markup, diff, diagnostic and editor UI scopes mapped onto it. Generation and activation are separate: activation is one confirmed `theme = "nmsh-bridge"` assignment inserted before the first table of `config.toml`; a config that already selects a theme is never changed (`:theme nmsh-bridge` works by hand). A same-named file NMSh did not write is never overwritten. Helix has no safe CLI theme switch and running instances are not recolored. | theme file; assignment after confirmation |
 | bat, delta | detected only. bat applies custom themes only from its own theme cache (`bat cache --build`); delta takes syntax themes from that cache and diff styles from git config. NMSh does not modify either, and does not fake fidelity with an unrelated built-in theme. | nothing |
 
 Already-running editors and shells outside NMSh are not recolored live; Follow NMSh applies to new instances (and NMSh shells at their next prompt).
@@ -87,12 +88,13 @@ NMSh writes one generated, validated file per shell syntax (`theme-bridge/enviro
 
 ### Includes
 
-For new tmux/Neovim/Vim instances NMSh offers one exact include, shown as a diff with the exact target path and applied with the verified config-edit planner (refuses if the file changed since it was shown). Removal removes exactly those lines (and refuses to guess if they appear more than once).
+For new tmux/Neovim/Vim/Helix instances NMSh offers one exact include, shown as a diff with the exact target path and applied with the verified config-edit planner (refuses if the file changed since it was shown). Removal removes exactly those lines (and refuses to guess if they appear more than once).
 
 | Target | File (existing one preferred) | Lines |
 | --- | --- | --- |
 | tmux | `~/.tmux.conf` or `$XDG_CONFIG_HOME/tmux/tmux.conf` | `# NMSh Theme Bridge …` and `source-file -q '<fragment>'` |
 | Neovim | `init.lua` (or `init.vim` when only that exists) | `pcall(function() vim.opt.runtimepath:append('<dir>'); vim.cmd.colorscheme('nmsh-bridge') end)` |
+| Helix | `config.toml` in the Helix config directory (must be inside home) | `# NMSh Theme Bridge …` and `theme = "nmsh-bridge"`, before the first table |
 | Vim | `~/.vimrc` or `~/.vim/vimrc` | `silent! execute 'set runtimepath+=' . fnameescape('<dir>') \| silent! colorscheme nmsh-bridge` |
 
 Every include tolerates a missing file, so an Independent target with an include left in place does nothing.
