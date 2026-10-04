@@ -19,7 +19,7 @@ export type CapabilityId =
   | 'git.status' | 'git.diff' | 'git.branch' | 'git.log' | 'git.worktrees'
   | 'settings.open' | 'theme.open' | 'prompt.open' | 'tools.open' | 'screensaver.open' | 'providers.open'
   | 'provider.status' | 'provider.switch' | 'understanding.set'
-  | 'help.capabilities' | 'help.command' | 'help.feature' | 'feature.open';
+  | 'help.capabilities' | 'help.command' | 'help.feature' | 'feature.open' | 'help.guide';
 
 /** Fixed read-only commands. The argv is built by NMSh; the request contributes at most a factual path. */
 export type ReadCommand =
@@ -160,6 +160,8 @@ export interface AskContext {
   referents?: AskReferents;
   /** Local Git facts, gathered only for requests that need them. */
   git?: GitFacts;
+  /** A few current NMSh facts by concept id (e.g. shell: "Fish (default zsh)", chroma: "Aurora"), for the guide. */
+  nmsh?: Record<string, string>;
   /** Recent completed shell commands, newest first: factual metadata, never their output. */
   recent?: RecentCommand[];
 }

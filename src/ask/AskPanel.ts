@@ -347,7 +347,7 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
   const reset = '\u001b[0m';
   const top = [`${primary}  Ask NMSh${reset}`, ''];
   const conversation = state.turns.length ? askConversationRows(state.turns, columns, options.presentation ?? 'chat', options.shell)
-    : [`  ${secondary}${ASK_GREETING}${reset}`, '', `  ${subtle}For example: ${ASK_STARTERS.slice(0, 4).join(' · ')}${reset}`];
+    : [`  ${secondary}${ASK_GREETING}${reset}`, ...(state.pending ? [] : ['', `  ${subtle}For example: ${ASK_STARTERS.slice(0, 4).join(' · ')}${reset}`])];
   // Choices and confirmations belong to the newest Ask reply: they follow it directly.
   const bottom: string[] = [];
   const choices = visibleOptions(state);

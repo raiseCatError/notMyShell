@@ -1,6 +1,6 @@
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
-import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
+import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import type {TerminalFrame} from '../terminal/TerminalRenderer.js';
 import {detectTerminalHost} from '../host/terminalHost.js';
@@ -143,7 +143,8 @@ import {gitNextSteps, gitRunAllowed, gitSummary, renderCommand} from '../ask/git
 import {readGitFacts} from '../ask/git.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import type {AskOption} from '../ask/types.js';
-import {pushTurn, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
+import {askStarters} from '../ask/guide.js';
+import {pushTurn, ASK_GREETING, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
 import {readArgv, resolveRequest} from '../ask/resolver.js';
 import {listProjectFiles} from '../ask/files.js';
 import {gitWorktrees} from '../ask/git.js';
@@ -5142,6 +5143,14 @@ export class TerminalApp {
     if (parked && !request) { parked.pending = undefined; this.askState = parked; return; }
     if (parked) this.recordAsk(parked);
     this.askState = createAskState();
+    if (!request) {
+      // Starters from strong facts only (a dirty repository, a recent command); nothing is guessed.
+      const git = this.context.git;
+      const recent = this.output.recentShell(1);
+      this.askState.pending = {kind: 'choose', reason: 'missing', question: ASK_GREETING, options: askStarters({...(this.context.root ? {repoRoot: this.context.root} : {}),
+        ...(this.context.branch ? {branch: this.context.branch} : {}), dirty: Boolean(git && (git.staged || git.modified || git.untracked)),
+        recent: recent ? [{command: recent.command, exitCode: recent.exitCode, lines: 0}] : []})};
+    }
     if (request) {
       this.askState.turns.push({role: 'you', text: request});
       this.askState.submitted = true;
@@ -5193,6 +5202,16 @@ export class TerminalApp {
     this.closeAsk();
     await this.executeAskAction(event.action);
     this.render();
+  }
+
+  /** Current facts the guide shows next to features ("now: …"): only settings NMSh already holds. */
+  private askNmshFacts(): Record<string, string> {
+    const config = this.promptConfiguration;
+    const label = (id: string) => shellAdapter(id as ShellId).label;
+    return {shell: this.shellId === config.shellBackend ? label(this.shellId) : `${label(this.shellId)} (default ${label(config.shellBackend)})`,
+      chroma: config.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[config.presentation.preset], folding: config.outputFolding === 'never' ? 'Off' : config.outputFolding === 'smart' ? 'Smart' : 'Always',
+      understanding: config.localUnderstanding.mode === 'off' ? 'Off' : config.localUnderstanding.mode === 'auto' ? 'Auto' : 'Always', layout: `${config.composerPosition} · ${config.transcriptPresentation}`,
+      suggestions: askProviderFacts(config, this.providerStatuses).find(item => item.family === 'suggestions' && item.active)?.label ?? config.suggestions};
   }
 
   /** A conversation parked by Insert; /ask with no request reopens it. */
@@ -5374,7 +5393,7 @@ export class TerminalApp {
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
       providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {}),
-      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent};
+      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent, nmsh: this.askNmshFacts()};
   }
 
   /** Every Ask action is an existing NMSh handler; read-only commands are NMSh-built argv submitted visibly. */

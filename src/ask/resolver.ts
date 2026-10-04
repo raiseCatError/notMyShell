@@ -4,6 +4,7 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
 import {resolveGit} from './gitAssist.js';
 import {resolveActivity} from './activity.js';
+import {askHelpOutcome, GUIDE_REQUEST, guideOutcome, HELP_REQUEST} from './guide.js';
 import {answerCommandQuestion, parseCommandQuestion, type CommandEnvironment} from './commands.js';
 import {CONCEPTS, conceptDestination, conceptIntent, matchConcepts, type Concept, type ConceptIntent} from './concepts.js';
 
@@ -91,6 +92,7 @@ export const CAPABILITIES: readonly Capability[] = [
   {id: 'help.command', title: 'Explain an NMSh command', safety: 'answer', examples: ['what does /resume do'],
     patterns: [/\/[a-z][\w-]*/u], keywords: []},
   // Product vocabulary (concepts.ts): matched by the concept catalog, not by these patterns.
+  {id: 'help.guide', title: 'The NMSh guide', safety: 'answer', examples: ['guide me through nmsh'], patterns: [], keywords: []},
   {id: 'help.feature', title: 'Explain an NMSh feature', safety: 'answer', examples: ['what is chroma', 'what is the difference between completion and suggestions'],
     patterns: [], keywords: []},
   {id: 'feature.open', title: 'Open where an NMSh feature is configured', safety: 'navigate', examples: ['change cursor blink', 'stop folding my output', 'change my ghost text'],
@@ -142,6 +144,9 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   if (explain) return build('help.command', text, context, raw);
   // Command knowledge: explaining git push or git clean is an answer, not an action, so it comes before the action-safety check.
   // "how do i X" still lets a strong typed capability act ("how do i open package.json").
+  // One guide: /guide, "guide me through nmsh", and /ask help all come from the concept catalog.
+  if (GUIDE_REQUEST.test(text)) return guideOutcome(context);
+  if (HELP_REQUEST.test(text)) return askHelpOutcome();
   // Recent activity from recorded facts ("what did I just do").
   const activity = resolveActivity(text, context, commands);
   if (activity) return activity;
@@ -380,6 +385,7 @@ export function build(id: CapabilityId, text: string, context: AskContext, raw: 
     case 'help.capabilities':
       return {kind: 'answer', capability: id, text: `Ask finds, opens, shows and switches things in NMSh. For example:\n${['open package.json', 'show my sessions', 'switch to fish',
         'check git diff', 'find error in the transcript', 'resume yesterday\'s session', 'what providers are installed'].map(example => `  ${example}`).join('\n')}\nIt never runs destructive or arbitrary commands.`};
+    case 'help.guide': return guideOutcome(context);
     case 'help.feature': case 'feature.open':
       return resolveConcepts(text, context, raw, []) ?? unclear(context, 'I\'m not sure which part of NMSh you mean.');
     case 'help.command': {

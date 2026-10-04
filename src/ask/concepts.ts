@@ -165,8 +165,8 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'palette', label: 'Command palette', support: 'actionable', open: '/palette', prefers: ['open'], covers: ['/palette'],
     aliases: ['command palette', 'action palette', 'actions palette', 'palette', 'search actions'],
     description: 'The palette (Ctrl+Shift+P or F1) searches every NMSh action.'},
-  {id: 'help', label: 'Help', support: 'actionable', open: '/help', covers: ['/help'],
-    aliases: ['help', 'slash commands', 'nmsh commands'],
+  {id: 'help', label: 'Help and the guide', support: 'actionable', open: '/help', covers: ['/help', '/guide'],
+    aliases: ['slash commands', 'nmsh commands', 'nmsh help'],
     description: '/help lists NMSh commands; /ask what can you do lists what Ask does.'},
   {id: 'settings', label: 'Settings', support: 'actionable', capability: 'settings.open', open: '/settings', covers: ['/settings', '/config', 'settings:General'],
     aliases: ['settings', 'preferences'],
@@ -273,3 +273,26 @@ export function conceptDestination(concept: Concept) {
   const slash = parseSlashCommand(concept.open);
   return slash && slash.kind !== 'unknown' ? slash : undefined;
 }
+
+/**
+ * The NMSh guide: sections over the same concept catalog, so /guide, /ask
+ * guide and /ask help explain exactly what Ask knows. Every public concept
+ * belongs to a section (a test enforces it); "Everything" lists them all.
+ */
+export interface GuideSection {id: string; title: string; why: string; concepts: string[]}
+
+export const GUIDE_SECTIONS: readonly GuideSection[] = [
+  {id: 'start', title: 'Getting started', why: 'NMSh is a terminal frontend over a real, persistent shell: your shell keeps its state, and NMSh adds the editor, transcript and tools around it.',
+    concepts: ['setup', 'help', 'palette', 'settings', 'version', 'updates', 'status']},
+  {id: 'look', title: 'Prompt & appearance', why: 'Make the prompt and colors yours without editing dotfiles.', concepts: ['prompt', 'theme', 'themeStudio', 'glyphs', 'cursor', 'syntax']},
+  {id: 'chroma', title: 'Chroma', why: 'Optional gradients and motion for NMSh-owned chrome only; your command output is never recolored.', concepts: ['chroma', 'effects', 'activity']},
+  {id: 'shells', title: 'Shells', why: 'One NMSh window can run zsh, Fish or Bash, and you can leave for a plain shell and come back.', concepts: ['shell', 'leave', 'otherShells']},
+  {id: 'completion', title: 'Completion & suggestions', why: 'Tab completion lists real candidates; ghost suggestions predict the rest of the line.', concepts: ['completion', 'suggestions']},
+  {id: 'history', title: 'History & transcripts', why: 'Find what you ran and what it printed, now or in earlier sessions.', concepts: ['history', 'picker', 'transcript', 'find', 'copy', 'transcripts']},
+  {id: 'sessions', title: 'Sessions', why: 'Sessions keep running when a window closes; reattach, switch or get notified.', concepts: ['sessions', 'presets', 'notices', 'commandNotifications', 'panes']},
+  {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask', 'understanding']},
+  {id: 'files', title: 'Files, folders & editor', why: 'Jump to folders and open what output mentions in your editor.', concepts: ['navigation', 'editor']},
+  {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'agents']},
+  {id: 'layout', title: 'Layout & folding', why: 'Decide where the composer sits and how much output stays in view.', concepts: ['layout', 'folding', 'statusStrip', 'idle']},
+  {id: 'keyboard', title: 'Keyboard', why: 'Terminal key integration for Shift+Enter, Option as Meta and enhanced keys.', concepts: ['keyboard']},
+];
