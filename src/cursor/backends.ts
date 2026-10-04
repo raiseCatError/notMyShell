@@ -45,15 +45,39 @@ export const KITTY_BACKEND: CursorEffectBackend = {id: 'kitty', label: 'Kitty na
 
 export interface HostCursorFacts {
   host: 'ghostty' | 'kitty' | 'other';
+  /** A friendly name for the terminal when it is recognised ("Zed", "Terminal.app"); messages use it. */
+  hostName?: string;
+  /**
+   * Who decides the color of the PHYSICAL caret. NMSh never sets it (no terminal cursor-color sequence is sent), so it is the
+   * host's own; Zed paints it from the active theme's cursor color and ignores a terminal's color request.
+   * NMSh's cursor color tints its own effects, trails and previews.
+   */
+  caretColor: 'host-controlled' | 'theme-controlled';
   version?: string;
   /** NMSh's managed native integration is installed in the host's config (include line + managed file). */
   integrated: boolean;
 }
 
+const KNOWN_HOSTS: Record<string, string> = {zed: 'Zed', Apple_Terminal: 'Terminal.app', 'iTerm.app': 'iTerm2', WezTerm: 'WezTerm', vscode: 'VS Code', ghostty: 'Ghostty'};
+
 export function hostCursorFacts(env: NodeJS.ProcessEnv, integrated: (host: 'ghostty' | 'kitty') => boolean): HostCursorFacts {
-  if (env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty') return {host: 'ghostty', ...(env.TERM_PROGRAM_VERSION ? {version: env.TERM_PROGRAM_VERSION} : {}), integrated: integrated('ghostty')};
-  if (env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') return {host: 'kitty', integrated: integrated('kitty')};
-  return {host: 'other', integrated: false};
+  const hostName = KNOWN_HOSTS[env.TERM_PROGRAM ?? ''];
+  const caretColor = env.TERM_PROGRAM === 'zed' ? 'theme-controlled' as const : 'host-controlled' as const;
+  if (env.TERM_PROGRAM === 'ghostty' || env.TERM === 'xterm-ghostty') return {host: 'ghostty', hostName: 'Ghostty', caretColor, ...(env.TERM_PROGRAM_VERSION ? {version: env.TERM_PROGRAM_VERSION} : {}), integrated: integrated('ghostty')};
+  if (env.KITTY_WINDOW_ID || env.TERM === 'xterm-kitty') return {host: 'kitty', hostName: 'Kitty', caretColor, integrated: integrated('kitty')};
+  return {host: 'other', ...(hostName ? {hostName} : {}), caretColor, integrated: false};
+}
+
+/**
+ * What "Cursor color" does and does not do on this host, in one sentence. It colors NMSh's own effects, trails and
+ * previews (and, once set up, Ghostty's or Kitty's native trail); the physical caret keeps the host's color.
+ */
+export function caretColorNote(facts: HostCursorFacts, source: string): string {
+  const who = facts.hostName ?? 'Your terminal';
+  if (source === 'host') return `Host: ${who} draws the caret in its own color; effects borrow a neutral tone.`;
+  const how = facts.caretColor === 'theme-controlled' ? `in your ${who} theme's cursor color` : 'in its own color';
+  const native = facts.integrated && facts.host !== 'other' ? ' and the native trail' : '';
+  return `Colors NMSh's effects, trails${native} and previews. ${who} draws the physical caret ${how}; NMSh does not change it.`;
 }
 
 const atLeast = (version: string | undefined, major: number, minor: number) => {
@@ -154,7 +178,7 @@ export function unavailableReason<T extends string>(feature: CursorFeature, valu
 
 /** The facts the app currently knows; Setup and Settings rows read them without owning host detection. */
 let currentFacts: HostCursorFacts | undefined;
-let factsProvider: () => HostCursorFacts = () => ({host: 'other', integrated: false});
-export function setCursorHostProvider(provider: (() => HostCursorFacts) | undefined): void { factsProvider = provider ?? (() => ({host: 'other', integrated: false})); currentFacts = undefined; }
+let factsProvider: () => HostCursorFacts = () => ({host: 'other', caretColor: 'host-controlled', integrated: false});
+export function setCursorHostProvider(provider: (() => HostCursorFacts) | undefined): void { factsProvider = provider ?? (() => ({host: 'other', caretColor: 'host-controlled', integrated: false})); currentFacts = undefined; }
 export function currentCursorHost(): HostCursorFacts { return currentFacts ?? factsProvider(); }
 export function setCursorHostFacts(facts: HostCursorFacts | undefined): void { currentFacts = facts; }

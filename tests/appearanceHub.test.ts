@@ -40,6 +40,9 @@ test('NMSh rows open the canonical editors; Motion opens the general motion scre
   const motion = text(renderAppearanceHub(hub, config(), 100, 'Lavender Native', 'Portable'));
   for (const label of ['Context transitions', 'Command launch', 'Completion highlight', 'Command completion', 'Event feedback']) assert.match(motion, new RegExp(label, 'u'));
   assert.doesNotMatch(motion, /Stiffness|Trail length/u, 'cursor physics stay in /cursor');
+  assert.match(motion, /Rendering\s+‹ Clean ›/u, 'Rendering is the first Motion choice');
+  assert.match(motion, /Advanced\s+Clean tuning ›/u);
+  appearanceHubKey(hub, {kind: 'down'}, config());
   const change = appearanceHubKey(hub, {kind: 'right'}, config());
   assert.equal(change?.kind === 'motion' && change.motion.contextTransitions, 'expressive');
   appearanceHubKey(hub, {kind: 'escape'}, config());

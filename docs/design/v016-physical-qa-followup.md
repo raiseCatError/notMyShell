@@ -112,3 +112,52 @@ Appearance gained the remaining Chroma rows. Editors Setup does not embed are la
 routes that apply the draft first. The /cursor panel opens inside Setup over the draft
 (Esc returns; nothing saves until Apply). Local understanding is Auto by default and its
 Setup copy says what that means.
+
+## Final polish before the v0.16 freeze
+
+**Motion rendering: Clean and Rich.** One event system (`Transitions`: launch, completion
+highlight, Block Seal, Semantic Echo, context morph) feeds either renderer; each transition
+carries the look it was started with. *Clean* is the transparent-safe renderer above. *Rich* is
+the filled-band look recovered from `4b04351` (`src/motion/transitions.ts` as of that commit:
+`sweepCells`, `decayCells`, `morphCells` and the `transitionPaint` strengths), now `richSweepCells`,
+`richDecayCells` and `richMorphCells` with the same blend against the same dark base, drawn as a
+`fill` that only Rich sets. Persisted as `motion.rendering` (`clean` default; configs saved before
+it existed stay Clean) and `motion.tuning.{clean,rich}.{intensity,speed}`; each rendering keeps its own
+tuning when you switch. Intensity scales how strong the paint is, speed scales how long each effect
+lasts (Normal is each renderer's baseline, so Rich starts exactly as the old look). Rendering and
+the five effect choices are in `/appearance` → Motion, Settings and Setup from one table
+(`src/motion/motionRows.ts`); Advanced (in `/appearance`) edits the selected rendering's tuning.
+Reduced Motion, Decorative Effects Off and NO_COLOR gate both. The portable cursor engine stays
+transparent-safe whichever rendering is chosen.
+
+**Cursor effects** (all in `CursorEngine`, the same code the preview runs): Smear is a solid band of
+shading, Tail a comet of shrinking dots, Smooth no trail; Fire is flame glyphs that climb and
+wobble; Sparks are sparse twinkling points thrown sideways; Lightning is a jagged bolt of slanted
+segments with forks that strikes twice; Railgun is one straight heavy beam with a flash where it
+lands; Ripple is a wave with a crest on each side; Wireframe is a bracket around the travelled span.
+Idle: Glow breathes beside the caret, Embers drift as soft dots, Flame climbs, Sparks twinkle.
+Particle gravity was in the wrong units, which threw particles out of the input rows at once; it is
+now a real acceleration. Glyphs show on blank cells (including spaces and past the end of the line);
+over text the effect tints the glyph.
+
+**Cursor color on Zed.** "Cursor color" colors NMSh's own effects, trails and previews (and, once
+set up, Ghostty's shader or Kitty's trail). NMSh sends no terminal cursor-color sequence on any host,
+so the physical caret keeps the host's color. Zed's terminal paints the caret from the active
+theme's cursor color (`theme.players().local().cursor` in `terminal_element.rs`) and does not use a
+terminal's dynamic cursor color, so an OSC 12 sequence would not help there. `HostCursorFacts`
+records `caretColor: 'theme-controlled'` for Zed and `'host-controlled'` elsewhere, and the
+Cursor color row, Setup and `/cursor` say so.
+
+**Config** is grouped into General, Appearance, Prompt & Composer, Editor, Cursor & Motion,
+Sessions & Alerts, Shell & Providers, Local Understanding and Transcript & Privacy. A row's group
+comes from its root parent, then an explicit id, then its category (`CONFIG_GROUP_BY_ID`,
+`CONFIG_GROUP_BY_CATEGORY`); the order inside a group is `CONFIG_ORDER`. Headings are display lines
+(`src/ui/groupedList.ts`, shared with Status): never selectable, never in the selection index, never
+orphaned at the bottom of the viewport; search keeps only the headings that still have a match;
+Advanced rows appear inside their group. The selected row's description gets its own two lines
+whenever the list keeps a useful size.
+
+**Status** is grouped into Build & Platform, Shell & Session, Terminal, Local Understanding, NMSh &
+Providers, Shell Environment, Services & Activity and Storage with the same facts as before.
+Sections are still plain item arrays with a `title`, `statusLineCount` counts headings and the
+blank lines between sections, and a viewport never ends on a heading.

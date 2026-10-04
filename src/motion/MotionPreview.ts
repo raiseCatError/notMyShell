@@ -59,7 +59,7 @@ function fixture(row: keyof MotionSettings, width: number): Fixture & {trigger: 
           const index = lines[1]!.indexOf(change.text);
           if (change.change === 'disappeared' || index < 0) continue;
           const column = displayWidth(lines[1]!.slice(0, index));
-          for (const [key, value] of transitionPaint.morph(column, column + displayWidth(change.text), progress(transition, now), transition.expressive, change.change)) cells.set(key, value);
+          for (const [key, value] of transitionPaint.morph(column, column + displayWidth(change.text), progress(transition, now), transition.expressive, change.change, transition.look)) cells.set(key, value);
         }
         return [new Map(), cells];
       }};
@@ -70,7 +70,7 @@ function fixture(row: keyof MotionSettings, width: number): Fixture & {trigger: 
         const transition = at(transitions, now).find(item => item.kind === 'launch');
         if (transition?.kind !== 'launch') return [];
         const t = progress(transition, now);
-        return [transitionPaint.launch(transition.style, columns, t, false), transitionPaint.launch(transition.style, columns, t, true)];
+        return [transitionPaint.launch(transition.style, columns, t, false, transition.look), transitionPaint.launch(transition.style, columns, t, true, transition.look)];
       }};
   }
   if (row === 'completionHighlight') {
@@ -79,14 +79,14 @@ function fixture(row: keyof MotionSettings, width: number): Fixture & {trigger: 
     return {lines: [line, `  ${safe ? '' : '⇥ '}Tab completed "tus"`], trigger: (transitions, start) => transitions.materialize(displayWidth(typed), displayWidth(line), line, start),
       paint: (transitions, now) => {
         const transition = at(transitions, now).find(item => item.kind === 'materialize');
-        return transition?.kind === 'materialize' ? [transitionPaint.materialize(transition.from, transition.to, progress(transition, now), transition.vivid)] : [];
+        return transition?.kind === 'materialize' ? [transitionPaint.materialize(transition.from, transition.to, progress(transition, now), transition.vivid, transition.look)] : [];
       }};
   }
   if (row === 'completionEffect') {
     return {lines: [`${check} npm test · 1.2s`, '  12 passing'], trigger: (transitions, start) => transitions.seal(0, 'success', start),
       paint: (transitions, now, columns) => {
         const transition = at(transitions, now).find(item => item.kind === 'seal');
-        return transition?.kind === 'seal' ? [transitionPaint.seal(transition.tone, columns, progress(transition, now))] : [];
+        return transition?.kind === 'seal' ? [transitionPaint.seal(transition.tone, columns, progress(transition, now), transition.look)] : [];
       }};
   }
   return {lines: [rule, `${check} task finished`], trigger: (transitions, start) => transitions.echo('taskDone', start),
@@ -94,7 +94,7 @@ function fixture(row: keyof MotionSettings, width: number): Fixture & {trigger: 
       const transition = at(transitions, now).find(item => item.kind === 'echo');
       if (transition?.kind !== 'echo') return [];
       const t = progress(transition, now);
-      return [transitionPaint.echoRule(transition.event, columns, t, transition.expressive), transition.expressive ? transitionPaint.echoInput(transition.event, columns, t) : new Map()];
+      return [transitionPaint.echoRule(transition.event, columns, t, transition.expressive, transition.look), transition.expressive ? transitionPaint.echoInput(transition.event, columns, t, transition.look) : new Map()];
     }};
 }
 

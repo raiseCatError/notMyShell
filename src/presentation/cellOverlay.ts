@@ -8,9 +8,9 @@ import {readableForeground} from '../chroma/color.js';
 /**
  * Presentation overlays on already-rendered ANSI rows, cell by cell: cursor
  * trails, particles, sweeps. An overlay never changes a row's width or its
- * text, and it never paints a background behind text: SGR has no per-cell
- * alpha, so any background would be an opaque box on a transparent or
- * frosted terminal. On a text cell an overlay shifts the glyph's own
+ * text, and (except Rich motion's explicit `fill`) never paints a background
+ * behind text: SGR has no per-cell alpha, so a background is an opaque box on a
+ * transparent or frosted terminal. On a text cell an overlay shifts the glyph's own
  * foreground (`tint`) or adds weight (`dim`, `bold`, `underline`); on a blank
  * cell it may draw a glyph. Only the visual caret may fill a cell
  * (`background` with `caret`). Rows themselves are never stored with overlays.
@@ -20,6 +20,11 @@ export interface CellPaint {
   background?: RgbColor;
   /** Shift the cell's own foreground toward a color; the glyph never changes. A cell with no explicit foreground takes the color itself. */
   tint?: {color: RgbColor; amount: number};
+  /**
+   * Rich motion only: a filled band behind the cell's own glyph (the stronger look). Clean motion and the
+   * portable cursor engine never set it, so a transparent terminal stays transparent for them.
+   */
+  fill?: RgbColor;
   dim?: boolean;
   bold?: boolean;
   underline?: boolean;
@@ -131,7 +136,7 @@ export function overlayRow(row: string, paints: ReadonlyMap<number, CellPaint>, 
         const drawsGlyph = (paint.caret || blank) && paint.foreground;
         const fg = drawsGlyph ? rgb(38, paint.foreground!) : '';
         // Only the caret may fill a cell: everything else keeps the host's own background.
-        const bg = paint.caret && paint.background ? rgb(48, paint.background) : '';
+        const bg = paint.caret && paint.background ? rgb(48, paint.background) : paint.fill ? rgb(48, paint.fill) : '';
         const text = !drawsGlyph && !blank ? textTreatment(paint, style) : drawsGlyph && paint.dim ? '\u001B[2m' : '';
         out += `${bg}${fg}${text}${drawn}\u001B[0m${style}`;
       } else out += glyph;

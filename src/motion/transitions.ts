@@ -1,4 +1,5 @@
-import type {MotionSettings} from '../prompt/configuration.js';
+import {mixRgb} from '../chroma/chroma.js';
+import type {MotionRendering, MotionSettings} from '../prompt/configuration.js';
 import type {CellPaint} from '../presentation/cellOverlay.js';
 import {UI_COLORS, type RgbColor} from '../ui/palette.js';
 
@@ -27,12 +28,26 @@ export type Tone = 'success' | 'failure' | 'muted' | 'attention' | 'warning' | '
 export const EVENT_TONES: Record<SemanticEvent, Tone> = {longSuccess: 'success', failure: 'failure', interrupted: 'muted', conflict: 'warning', attention: 'attention',
   taskDone: 'success', taskFailed: 'failure', setupDone: 'success', setupFailed: 'failure', installDone: 'success', installFailed: 'failure'};
 
+/** How a transition is drawn: the renderer and how strongly. Chosen once per event from the Motion settings. */
+export interface MotionLook {rendering: MotionRendering; intensity: number}
+export const CLEAN_LOOK: MotionLook = {rendering: 'clean', intensity: 1};
+const INTENSITY = {low: 0.6, medium: 1, high: 1.4} as const;
+/** Duration multipliers: Slow lasts longer, Fast is shorter. */
+const SPEED = {slow: 1.5, normal: 1, fast: 0.65} as const;
+
+/** The look and timing for the selected rendering (each rendering keeps its own tuning). Tolerates settings saved before rendering existed. */
+export function lookFor(motion: MotionSettings): MotionLook & {speed: number} {
+  const rendering = motion.rendering === 'rich' ? 'rich' : 'clean';
+  const tuning = motion.tuning?.[rendering];
+  return {rendering, intensity: INTENSITY[tuning?.intensity ?? 'medium'], speed: SPEED[tuning?.speed ?? 'normal']};
+}
+
 export type Transition =
-  | {kind: 'launch'; style: 'sweep' | 'pulse'; start: number; duration: number}
-  | {kind: 'materialize'; from: number; to: number; text: string; vivid: boolean; start: number; duration: number}
-  | {kind: 'seal'; blockStartId: number; tone: Tone; start: number; duration: number}
-  | {kind: 'echo'; event: SemanticEvent; expressive: boolean; start: number; duration: number}
-  | {kind: 'morph'; changes: ModuleChange[]; expressive: boolean; start: number; duration: number};
+  | {kind: 'launch'; style: 'sweep' | 'pulse'; start: number; duration: number; look: MotionLook}
+  | {kind: 'materialize'; from: number; to: number; text: string; vivid: boolean; start: number; duration: number; look: MotionLook}
+  | {kind: 'seal'; blockStartId: number; tone: Tone; start: number; duration: number; look: MotionLook}
+  | {kind: 'echo'; event: SemanticEvent; expressive: boolean; start: number; duration: number; look: MotionLook}
+  | {kind: 'morph'; changes: ModuleChange[]; expressive: boolean; start: number; duration: number; look: MotionLook};
 
 export interface ModuleChange {id: string; text: string; change: 'changed' | 'appeared' | 'disappeared'; role?: string}
 
@@ -49,18 +64,24 @@ export class Transitions {
 
   private allowed(): boolean { return motionAllowed(this.gate()); }
 
+  /** Look and speed for an event starting now; the speed scales its duration. */
+  private tuned(duration: number): {look: MotionLook; duration: number} {
+    const {speed, ...look} = lookFor(this.settings());
+    return {look, duration: Math.max(40, Math.round(duration * speed))};
+  }
+
   /** Enter submitted a shell command (never Ask or an agent composer). */
   launch(now: number): void {
     const style = this.settings().commandLaunch;
     if (style === 'off' || !this.allowed()) return;
-    this.replace('launch', {kind: 'launch', style, start: now, duration: DURATIONS.launch});
+    this.replace('launch', {kind: 'launch', style, start: now, ...this.tuned(DURATIONS.launch)});
   }
 
   /** Completion inserted [from, to) (editor grapheme indices). A newer completion replaces the older one. */
   materialize(from: number, to: number, text: string, now: number): void {
     const level = this.settings().completionHighlight;
     if (level === 'off' || to <= from || !this.allowed()) return;
-    this.replace('materialize', {kind: 'materialize', from, to, text, vivid: level === 'vivid', start: now, duration: level === 'vivid' ? DURATIONS.materializeVivid : DURATIONS.materializeSubtle});
+    this.replace('materialize', {kind: 'materialize', from, to, text, vivid: level === 'vivid', start: now, ...this.tuned(level === 'vivid' ? DURATIONS.materializeVivid : DURATIONS.materializeSubtle)});
   }
 
   /** The editor changed some other way: a stale materialization range must not linger. */
@@ -71,21 +92,21 @@ export class Transitions {
   seal(blockStartId: number, outcome: 'success' | 'failure' | 'interrupted', now: number): void {
     if (this.settings().completionEffect === 'off' || !this.allowed()) return;
     this.active = this.active.filter(item => item.kind !== 'seal');
-    this.active.push({kind: 'seal', blockStartId, tone: outcome === 'success' ? 'success' : outcome === 'failure' ? 'failure' : 'muted', start: now, duration: DURATIONS.seal});
+    this.active.push({kind: 'seal', blockStartId, tone: outcome === 'success' ? 'success' : outcome === 'failure' ? 'failure' : 'muted', start: now, ...this.tuned(DURATIONS.seal)});
   }
 
   echo(event: SemanticEvent, now: number): void {
     const level = this.settings().eventFeedback;
     if (level === 'off' || !this.allowed()) return;
     // One echo at a time: a newer meaningful event replaces the older one (no stacked flashes).
-    this.replace('echo', {kind: 'echo', event, expressive: level === 'expressive', start: now, duration: level === 'expressive' ? DURATIONS.echoExpressive : DURATIONS.echoSubtle});
+    this.replace('echo', {kind: 'echo', event, expressive: level === 'expressive', start: now, ...this.tuned(level === 'expressive' ? DURATIONS.echoExpressive : DURATIONS.echoSubtle)});
   }
 
   /** Prompt facts changed: one epoch for every module that changed together; a newer epoch retargets. */
   morph(changes: ModuleChange[], now: number): void {
     const level = this.settings().contextTransitions;
     if (level === 'off' || !changes.length || !this.allowed()) return;
-    this.replace('morph', {kind: 'morph', changes, expressive: level === 'expressive', start: now, duration: level === 'expressive' ? DURATIONS.morphExpressive : DURATIONS.morphSubtle});
+    this.replace('morph', {kind: 'morph', changes, expressive: level === 'expressive', start: now, ...this.tuned(level === 'expressive' ? DURATIONS.morphExpressive : DURATIONS.morphSubtle)});
   }
 
   private replace(kind: Transition['kind'], transition: Transition): void {
@@ -138,7 +159,7 @@ export function decayCells(from: number, to: number, t: number, color: RgbColor,
  * marks the front. The final geometry is used from the first frame. Only the
  * module's own cells are ever painted.
  */
-export function morphCells(from: number, to: number, t: number, color: RgbColor, expressive: boolean, _change: ModuleChange['change']): Map<number, CellPaint> {
+export function morphCells(from: number, to: number, t: number, color: RgbColor, expressive: boolean, _change: ModuleChange['change'], gain = 1): Map<number, CellPaint> {
   const cells = new Map<number, CellPaint>();
   const width = Math.max(1, to - from);
   const front = from + clamp01(t) * (width + 2);
@@ -146,7 +167,7 @@ export function morphCells(from: number, to: number, t: number, color: RgbColor,
     const ahead = column > front;
     const distance = Math.abs(column - front);
     if (ahead) cells.set(column, {dim: true});
-    else if (distance < 2.5) cells.set(column, {tint: {color, amount: (1 - distance / 2.5) * (expressive ? 0.75 : 0.45)}, ...(expressive ? {bold: true} : {})});
+    else if (distance < 2.5) cells.set(column, {tint: {color, amount: Math.min(1, (1 - distance / 2.5) * (expressive ? 0.75 : 0.45) * gain)}, ...(expressive ? {bold: true} : {})});
   }
   return cells;
 }
@@ -174,21 +195,73 @@ export function diffModules(previous: ReadonlyArray<{id: string; text: string; r
 }
 
 /**
+ * Rich rendering: the original filled-band look, recovered from 4b04351. Bands are
+ * blended against a dark base and set as a cell background (`fill`), so they read
+ * strongly on an opaque terminal; on a transparent one they show as a box, which is
+ * why Clean is the default.
+ */
+const RICH_BASE: RgbColor = {red: 18, green: 18, blue: 22};
+
+export function richSweepCells(width: number, t: number, color: RgbColor, strength: number, band = 10): Map<number, CellPaint> {
+  const cells = new Map<number, CellPaint>();
+  const center = -band + t * (width + band * 2);
+  for (let column = Math.max(0, Math.floor(center - band)); column < Math.min(width, Math.ceil(center + band)); column += 1) {
+    const falloff = 1 - Math.abs(column - center) / band;
+    if (falloff > 0) cells.set(column, {fill: mixRgb(RICH_BASE, color, clamp01(falloff * strength))});
+  }
+  return cells;
+}
+
+export function richDecayCells(from: number, to: number, t: number, color: RgbColor, strength: number): Map<number, CellPaint> {
+  const cells = new Map<number, CellPaint>();
+  const level = strength * (1 - clamp01(t)) ** 1.6;
+  if (level <= 0.01) return cells;
+  for (let column = from; column < to; column += 1) cells.set(column, {fill: mixRgb(RICH_BASE, color, Math.min(1, level))});
+  return cells;
+}
+
+export function richMorphCells(from: number, to: number, t: number, color: RgbColor, expressive: boolean, change: ModuleChange['change'], gain = 1): Map<number, CellPaint> {
+  const cells = new Map<number, CellPaint>();
+  const width = Math.max(1, to - from);
+  const front = from + clamp01(t) * (width + 2);
+  for (let column = from; column < to; column += 1) {
+    const ahead = column > front;
+    const distance = Math.abs(column - front);
+    if (ahead) cells.set(column, {fill: mixRgb(RICH_BASE, {red: 0, green: 0, blue: 0}, change === 'disappeared' ? 0.2 : expressive ? 0.5 : 0.35)});
+    else if (distance < 2.5) cells.set(column, {fill: mixRgb(RICH_BASE, color, clamp01((1 - distance / 2.5) * (expressive ? 0.75 : 0.5) * gain))});
+  }
+  return cells;
+}
+
+const rich = (look: MotionLook) => look.rendering === 'rich';
+const gain = (look: MotionLook, value: number) => Math.min(1, value * look.intensity);
+
+/**
  * The real per-effect paints, shared by the live frame and the /appearance →
  * Motion preview so the two can never drift. Each returns the cells for one
- * logical target row at progress t.
+ * logical target row at progress t, drawn by the transition's own look
+ * (Clean or Rich) at its own intensity.
  */
 export const transitionPaint = {
   /** Command launch over a composer row; `rule` rows (separator, border) take a stronger band. */
-  launch: (style: 'sweep' | 'pulse', columns: number, t: number, rule: boolean) =>
-    style === 'sweep' ? sweepCells(columns, t, UI_COLORS.accent, rule ? 0.7 : 0.45) : decayCells(0, columns, t, UI_COLORS.accent, 0.3),
+  launch: (style: 'sweep' | 'pulse', columns: number, t: number, rule: boolean, look: MotionLook = CLEAN_LOOK) => {
+    if (rich(look)) return style === 'sweep' ? richSweepCells(columns, t, UI_COLORS.accent, gain(look, rule ? 0.8 : 0.5)) : richDecayCells(0, columns, t, UI_COLORS.accent, gain(look, 0.35));
+    return style === 'sweep' ? sweepCells(columns, t, UI_COLORS.accent, gain(look, rule ? 0.7 : 0.45)) : decayCells(0, columns, t, UI_COLORS.accent, gain(look, 0.3));
+  },
   /** Completion highlight over the inserted columns [from, to). */
-  materialize: (from: number, to: number, t: number, vivid: boolean) => decayCells(from, to, t, UI_COLORS.accent, vivid ? 0.75 : 0.5, true),
+  materialize: (from: number, to: number, t: number, vivid: boolean, look: MotionLook = CLEAN_LOOK) =>
+    rich(look) ? richDecayCells(from, to, t, UI_COLORS.accent, gain(look, vivid ? 0.7 : 0.45)) : decayCells(from, to, t, UI_COLORS.accent, gain(look, vivid ? 0.75 : 0.5), true),
   /** Block Seal over a finished block's header row. */
-  seal: (tone: Tone, columns: number, t: number) => sweepCells(columns, t, toneColor(tone), tone === 'failure' ? 0.75 : 0.55, tone === 'failure' ? 6 : 12),
+  seal: (tone: Tone, columns: number, t: number, look: MotionLook = CLEAN_LOOK) => rich(look)
+    ? richSweepCells(columns, t, toneColor(tone), gain(look, tone === 'failure' ? 0.75 : 0.55), tone === 'failure' ? 6 : 12)
+    : sweepCells(columns, t, toneColor(tone), gain(look, tone === 'failure' ? 0.75 : 0.55), tone === 'failure' ? 6 : 12),
   /** Semantic Echo on a rule row; expressive echoes also sweep the input row. */
-  echoRule: (event: SemanticEvent, columns: number, t: number, expressive: boolean) => decayCells(0, columns, t, toneColor(EVENT_TONES[event]), expressive ? 0.7 : 0.45),
-  echoInput: (event: SemanticEvent, columns: number, t: number) => sweepCells(columns, t, toneColor(EVENT_TONES[event]), 0.35),
+  echoRule: (event: SemanticEvent, columns: number, t: number, expressive: boolean, look: MotionLook = CLEAN_LOOK) => rich(look)
+    ? richDecayCells(0, columns, t, toneColor(EVENT_TONES[event]), gain(look, expressive ? 0.6 : 0.4))
+    : decayCells(0, columns, t, toneColor(EVENT_TONES[event]), gain(look, expressive ? 0.7 : 0.45)),
+  echoInput: (event: SemanticEvent, columns: number, t: number, look: MotionLook = CLEAN_LOOK) => rich(look)
+    ? richSweepCells(columns, t, toneColor(EVENT_TONES[event]), gain(look, 0.35)) : sweepCells(columns, t, toneColor(EVENT_TONES[event]), gain(look, 0.35)),
   /** Prompt morph over one module's final columns. */
-  morph: (from: number, to: number, t: number, expressive: boolean, change: ModuleChange['change']) => morphCells(from, to, t, UI_COLORS.accent, expressive, change),
+  morph: (from: number, to: number, t: number, expressive: boolean, change: ModuleChange['change'], look: MotionLook = CLEAN_LOOK) =>
+    rich(look) ? richMorphCells(from, to, t, UI_COLORS.accent, expressive, change, look.intensity) : morphCells(from, to, t, UI_COLORS.accent, expressive, change, look.intensity),
 };

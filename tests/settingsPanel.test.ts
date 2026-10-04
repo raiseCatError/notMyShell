@@ -7,7 +7,7 @@ import {TerminalApp} from '../src/app/TerminalApp.js';
 import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {stripAnsi} from '../src/util/text.js';
-import {renderSettingsPanel} from '../src/ui/SettingsPanel.js';
+import {renderSettingsPanel, visibleSettingsRows} from '../src/ui/SettingsPanel.js';
 import {decodeKeys} from '../src/terminal/keys.js';
 
 /** Config writes land in a throwaway directory, never the developer's real settings. */
@@ -108,12 +108,13 @@ test('Transcript, Syntax, and Keyboard entries open their live panels and return
 }));
 
 test('Config Prompt provider row opens the prompt panel and returns to Config', () => withApp(app => {
-  app['settingsPanelState'] = {section: 'root', view: 'config', selectedIndex: 0, contentIndex: 1, glyphStyle: 'nerd', onboarding: false};
+  const provider = visibleSettingsRows({section: 'root', view: 'config', selectedIndex: 0, glyphStyle: 'nerd', onboarding: false}, app['promptConfiguration']).findIndex(row => row.id === 'provider');
+  app['settingsPanelState'] = {section: 'root', view: 'config', selectedIndex: 0, contentIndex: provider, glyphStyle: 'nerd', onboarding: false};
   app['handleKey']({kind: 'enter'});
   assert.ok(app['promptPanelState']);
   app['handleKey']({kind: 'escape'});
   assert.equal(app['settingsPanelState']!.view, 'config');
-  assert.equal(app['settingsPanelState']!.contentIndex, 1);
+  assert.equal(app['settingsPanelState']!.contentIndex, provider);
 }));
 
 test('Status is read-only, uses no secrets, and marks unknown build identity quietly', () => withApp(app => {

@@ -25,7 +25,9 @@ const DEFAULT_GRADIENTS: Record<CursorSettings['effect'], string[]> = {
 export function effectPalette(settings: CursorSettings, accent: RgbColor = UI_COLORS.accent): EffectPalette {
   const caret = settings.color.source === 'custom' && settings.color.custom ? hexToRgb(settings.color.custom)
     : settings.color.source === 'host' ? UI_COLORS.primary : accent;
-  const effectGradient = DEFAULT_GRADIENTS[settings.effect].map(hexToRgb);
+  // Idle effects borrow the matching movement gradient when there is no movement effect (Flame and Embers read as fire, Sparks as sparks).
+  const look: CursorSettings['effect'] = settings.effect !== 'none' ? settings.effect : settings.idleEffect === 'flame' || settings.idleEffect === 'embers' ? 'fire' : settings.idleEffect === 'sparks' ? 'sparks' : 'none';
+  const effectGradient = DEFAULT_GRADIENTS[look].map(hexToRgb);
   const trail = settings.trail.source === 'custom' && settings.trail.colors[0] ? [hexToRgb(settings.trail.colors[0])]
     : settings.trail.source === 'gradient' && settings.trail.colors.length ? settings.trail.colors.map(hexToRgb)
     : effectGradient.length && settings.color.source === 'host' ? effectGradient.slice(0, 3) : [caret];

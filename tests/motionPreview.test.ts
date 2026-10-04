@@ -86,6 +86,7 @@ test('the Motion screen shows the preview for the selected row; selecting, chang
   hub.selected = 4;
   appearanceHubKey(hub, {kind: 'enter'}, DEFAULT_PROMPT_CONFIGURATION, 100);
   assert.equal(hub.previewStart, 100);
+  appearanceHubKey(hub, {kind: 'down'}, DEFAULT_PROMPT_CONFIGURATION, 120); // Rendering → Context transitions
   const config = {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), motion: motion()};
   const shown = plain(renderAppearanceHub(hub, config, 100, 'Lavender Native', 'Portable', {gate: ON, now: 150})).join('\n');
   assert.match(shown, /Preview[\s\S]*before +~\/project/u);

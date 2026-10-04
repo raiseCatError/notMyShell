@@ -133,3 +133,22 @@ Not yet physically validated; automated coverage is in
   nothing), Reduced Motion, Decorative Effects Off, Safe glyphs, a short terminal (15
   rows: Motion hub drops the intro then the preview; large Paste Review opens directly)
   and a narrow one (40 columns).
+
+## Final pre-freeze pass
+
+The earlier v0.16 physical QA passed (maintainer, before the follow-up work). Only what changed
+afterwards needs a fresh look:
+
+- **Motion rendering**: `/appearance` → Motion → Rendering Clean / Rich. The preview shows the
+  difference at once; Rich is the stronger filled look, Clean keeps the window transparent. R replays.
+  Advanced → Intensity / Speed visibly change the preview; switching Clean ↔ Rich keeps each one's values.
+  Real effects (launch, Tab completion, Block Seal, failure echo, cwd/branch change) in both renderings.
+- **Cursor effects**, each distinct in a real window: Smear vs Tail vs Smooth; Fire (flame glyphs climbing,
+  warm colors), Sparks (sparse twinkles), Lightning (jagged slanted bolt, forks), Railgun (one straight
+  beam), Ripple (an opening wave), Wireframe (a bracket); idle Glow / Embers / Flame / Sparks. Transparent
+  window still shows no dark rectangle behind them.
+- **Zed**: Cursor shape works; Cursor color does not recolor the physical caret and the Cursor color row,
+  `/cursor` and Setup say so; the color still tints NMSh's effects and previews.
+- **Config**: grouped headings, scrolling keeps the selected row and its heading, search shows only matching
+  groups, `A` shows advanced rows inside their groups; narrow and short windows.
+- **Status**: named sections, scrolling, tones (warning/success/muted) intact.

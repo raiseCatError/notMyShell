@@ -42,7 +42,7 @@ import {renderControls} from '../ui/controls.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
-  settingsRowValue, settingsView, statusLineCount, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
+  settingsRowValue, settingsView, statusLineCount, statusSection, visibleSettingsRows, switchSettingsView, toggleSettingsRow, type SettingsDestination, type SettingsPanelState,
   type SettingsView, type StatusSections,
   SETTINGS_ENTRIES,
   SETTINGS_ROWS,
@@ -3695,13 +3695,13 @@ export class TerminalApp {
       case 'motion': {
         // The selected motion, run once on sample content by the same renderer /appearance → Motion uses; it restarts on a new row or value.
         const selected = setupSelectedRow(state);
-        const item = MOTION_ROWS.find(entry => `motion_${entry.key}` === selected?.row.id) ?? MOTION_ROWS[0]!;
+        const item = MOTION_ROWS.find(entry => `motion_${entry.key}` === selected?.row.id) ?? MOTION_ROWS.find(entry => entry.key === 'commandLaunch')!;
         const gate: MotionGate = {reducedMotion: draft.presentation.reducedMotion || isReducedMotion(), effectsOff: draft.presentation.effectsOff, color: colorLevel() !== 'none'};
         const signature = `${item.key}|${JSON.stringify(draft.motion)}|${gate.reducedMotion}|${gate.effectsOff}`;
         const now = Date.now();
         if (state.previewKey !== signature) { state.previewKey = signature; state.previewStart = now; }
         const shown = renderMotionPreview(item.key, draft.motion, gate, columns, state.previewStart ?? now, now);
-        rows.push(`  ${SUBTLE}Preview · ${item.label}${RESET}`, ...shown.rows);
+        rows.push(`  ${SUBTLE}Preview · ${item.label} · ${draft.motion.rendering === 'rich' ? 'Rich' : 'Clean'}${RESET}`, ...shown.rows);
         if (shown.busy && !this.setupCursorClock) this.setupCursorClock = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 40, 16);
         else if (!shown.busy && this.setupCursorClock) { this.setupCursorClock(); this.setupCursorClock = undefined; }
         break;
@@ -3913,7 +3913,7 @@ export class TerminalApp {
 
   /** The selected panel row: the line marked with the selection pointer. */
   private static selectedRowIndex(rows: readonly string[]): number {
-    return rows.findIndex(row => /^\s*[›>] \S/u.test(stripAnsi(row)));
+    return rows.findIndex(row => /^\s*[›>] +\S/u.test(stripAnsi(row)));
   }
 
   /** Called with the panel rows of each render: a new selection or a changed value starts one sweep. */
@@ -4226,17 +4226,30 @@ export class TerminalApp {
     const tilde = (path: string) => path === home ? '~' : path.startsWith(`${home}/`) ? `~${path.slice(home.length)}` : path;
     const terminal = this.host.name;
     const active = this.effectivePromptProvider;
+    const editorRows = (() => {
+      const host = this.hostActions();
+      const caps = host.capabilities;
+      const editor = caps.integratedEditor === 'zed' ? 'Zed' : caps.integratedEditor === 'vscode' ? 'VS Code' : undefined;
+      return [
+        ...(editor ? [{label: 'Integrated editor', value: editor}] : []),
+        {label: 'Editor bridge', value: host.id === 'none' ? (editor ? 'unavailable' : 'no editor known (set VISUAL/EDITOR or Open with)')
+          : `${host.label} · file ${caps.nativeFileOpen ? 'yes' : 'no'} · folder ${caps.nativeDirectoryOpen ? 'yes' : 'no'} · diff ${caps.nativeDiff ? 'yes' : 'no'}`,
+          ...(host.id === 'none' ? {tone: 'warning' as const} : {})},
+        ...(caps.cliMissing ? [{label: caps.cliMissing === 'zed' ? 'Zed CLI' : 'code CLI', value: 'not found on PATH', tone: 'warning' as const}] : []),
+      ];
+    })();
+    // Named sections: the same facts as before, grouped so Status reads as a short report instead of one list.
     return [
-      [
+      statusSection('Build & Platform', [
         {label: 'Version', value: build.version},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
         {label: 'Platform', value: `${process.platform} ${process.arch}`},
         {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
         {label: 'Node', value: process.version},
+      ]),
+      statusSection('Shell & Session', [
         {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
         {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},
-        ...understandingStatusRows(this.promptConfiguration.localUnderstanding, this.understanding.status)
-          .map(row => ({label: `Local understanding ${row.label === 'Mode' ? '' : row.label.toLowerCase()}`.trim(), value: row.value})),
         {label: 'Session', value: this.sessionId ? `live · ${this.sessionId}` : 'in-process', tone: this.sessionMode === 'service' ? undefined : 'muted'},
         ...(this.sessionMode === 'service' ? [
           {label: 'Session service', value: this.session.serviceBuild ? `connected · ${this.session.serviceBuild}` : 'connected · older build (no build reported)'},
@@ -4245,11 +4258,15 @@ export class TerminalApp {
           ...(this.session.features.has('notices') ? [] : [{label: 'Session notices', value: 'basic (older service reports no notices)', tone: 'muted' as const}]),
         ] : []),
         {label: 'Working directory', value: tilde(this.shellCwd)},
+      ]),
+      statusSection('Terminal', [
         ...(terminal ? [{label: 'Terminal', value: terminal}] : []),
         {label: 'Host capabilities', value: Object.entries(this.host.capabilities).filter(([, value]) => value === true).map(([key]) => key).join(', ') || 'baseline'},
         {label: 'Terminal size', value: `${columns}×${rows}`},
-      ],
-      [
+      ]),
+      statusSection('Local Understanding', understandingStatusRows(this.promptConfiguration.localUnderstanding, this.understanding.status)
+        .map(row => ({label: row.label, value: row.value}))),
+      statusSection('NMSh & Providers', [
         {label: 'Prompt provider', value: providerLabel(config.provider)},
         ...(active !== config.provider ? [{label: 'Active prompt', value: `${providerLabel(active)} (fallback)`, tone: 'warning' as const}] : []),
         {label: 'Composer', value: layoutLabel(config)},
@@ -4258,31 +4275,22 @@ export class TerminalApp {
         {label: 'Directory navigation', value: this.directoryService.status.detail ?? this.directoryService.status.active},
         {label: 'Picker', value: this.promptConfiguration.picker},
         {label: 'Command history', value: this.historyService.status.detail ?? (this.historyService.status.active === 'atuin' ? 'Atuin · local read-only' : 'NMSh Native')},
-        ...(() => {
-          const host = this.hostActions();
-          const caps = host.capabilities;
-          const editor = caps.integratedEditor === 'zed' ? 'Zed' : caps.integratedEditor === 'vscode' ? 'VS Code' : undefined;
-          return [
-            ...(editor ? [{label: 'Integrated editor', value: editor}] : []),
-            {label: 'Editor bridge', value: host.id === 'none' ? (editor ? 'unavailable' : 'no editor known (set VISUAL/EDITOR or Open with)')
-              : `${host.label} · file ${caps.nativeFileOpen ? 'yes' : 'no'} · folder ${caps.nativeDirectoryOpen ? 'yes' : 'no'} · diff ${caps.nativeDiff ? 'yes' : 'no'}`,
-              ...(host.id === 'none' ? {tone: 'warning' as const} : {})},
-            ...(caps.cliMissing ? [{label: caps.cliMissing === 'zed' ? 'Zed CLI' : 'code CLI', value: 'not found on PATH', tone: 'warning' as const}] : []),
-          ];
-        })(),
+        ...editorRows,
         {label: 'Completion sources', value: this.completionService.sourceIds.join(' + ')},
+        {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
+      ]),
+      statusSection('Shell Environment', shellEnvironmentRows(this.shellEnvironment).map(([label, value]) => ({label, value}))),
+      statusSection('Services & Activity', [
         {label: 'Session notices', value: config.sessionNotices ? (this.sessionMode === 'service' ? 'On' : 'On (needs the live-session service)') : 'Off'},
         {label: 'Agent activity', value: config.agentActivity ? 'On · local only' : 'Off'},
-        ...shellEnvironmentRows(this.shellEnvironment).map(([label, value]) => ({label, value})),
-        {label: 'History colors', value: config.transcript.historyColors === 'followPrompt' ? 'Follow prompt' : config.transcript.historyColors === 'theme' ? 'Theme' : 'Grayscale'},
-      ],
-      [
+      ]),
+      statusSection('Storage', [
         {label: 'Session journal', value: this.journalActive ? 'active' : 'inactive', tone: this.journalActive ? 'success' : 'warning'},
         {label: 'Session retention', value: config.sessionRetention === null ? 'unlimited' : `${config.sessionRetention} sessions`},
         {label: 'Config file', value: tilde(promptConfigurationPath()), tone: 'muted'},
         {label: 'Runtime directory', value: tilde(defaultRuntimeDir()), tone: 'muted'},
-      ],
-    ];
+      ]),
+    ].filter(section => section.length > 0);
   }
 
   /** Persists an inline Settings edit and applies it live; on failure the old value stays. */
@@ -6788,7 +6796,7 @@ export class TerminalApp {
 
   /**
    * The short transitions, in one composition order after Chroma and before the cursor:
-   * prompt morph, launch, materialization, Block Seal, Semantic Echo. Background tints only.
+   * prompt morph, launch, materialization, Block Seal, Semantic Echo. Drawn by the selected rendering (Clean or Rich).
    */
   private paintTransitions(rows: string[], plan: ScreenPlan, columns: number, now: number): void {
     // Context morph: a semantic diff of the prompt's modules (never raw ANSI); one epoch per change.
@@ -6811,7 +6819,7 @@ export class TerminalApp {
       const t = progress(transition, now);
       if (transition.kind === 'launch') {
         for (const region of regions('input', 'separator', 'composerBorder')) for (let index = 0; index < region.height; index += 1) {
-          add(region.top + index, transitionPaint.launch(transition.style, columns, t, region.kind !== 'input'));
+          add(region.top + index, transitionPaint.launch(transition.style, columns, t, region.kind !== 'input', transition.look));
         }
       } else if (transition.kind === 'materialize') {
         const input = regions('input')[0];
@@ -6822,14 +6830,14 @@ export class TerminalApp {
         const to = at(transition.to);
         const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
         const offset = caret.caretRow - at(this.editor.displayCursorIndex).caretRow;
-        if (from.caretRow === to.caretRow) add(input.top + from.caretRow + offset, transitionPaint.materialize(from.caretColumn, to.caretColumn, t, transition.vivid));
+        if (from.caretRow === to.caretRow) add(input.top + from.caretRow + offset, transitionPaint.materialize(from.caretColumn, to.caretColumn, t, transition.vivid, transition.look));
       } else if (transition.kind === 'seal') {
         const transcript = plan.regions.find(region => region.kind === 'transcript');
         const index = this.visibleBlocks.lastIndexOf(transition.blockStartId);
-        if (transcript && index >= 0) add(transcript.top + index, transitionPaint.seal(transition.tone, columns, t));
+        if (transcript && index >= 0) add(transcript.top + index, transitionPaint.seal(transition.tone, columns, t, transition.look));
       } else if (transition.kind === 'echo') {
-        for (const region of regions('separator', 'composerBorder')) add(region.top, transitionPaint.echoRule(transition.event, columns, t, transition.expressive));
-        if (transition.expressive) for (const region of regions('input')) add(region.top, transitionPaint.echoInput(transition.event, columns, t));
+        for (const region of regions('separator', 'composerBorder')) add(region.top, transitionPaint.echoRule(transition.event, columns, t, transition.expressive, transition.look));
+        if (transition.expressive) for (const region of regions('input')) add(region.top, transitionPaint.echoInput(transition.event, columns, t, transition.look));
       } else if (transition.kind === 'morph') {
         const prompt = regions('prompt')[0] ?? regions('input')[0];
         if (!prompt) continue;
@@ -6840,7 +6848,7 @@ export class TerminalApp {
           const start = plain.indexOf(change.text);
           if (start < 0) continue;
           const column = displayWidth(plain.slice(0, start));
-          add(prompt.top, transitionPaint.morph(column, column + displayWidth(change.text), t, transition.expressive, change.change));
+          add(prompt.top, transitionPaint.morph(column, column + displayWidth(change.text), t, transition.expressive, change.change, transition.look));
         }
       }
     }

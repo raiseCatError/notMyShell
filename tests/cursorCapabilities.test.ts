@@ -4,7 +4,7 @@ import {mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSyn
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {
-  availabilityOf, availableValues, chooseBackend, GHOSTTY_BACKEND, hostCursorFacts, KITTY_BACKEND, PORTABLE_BACKEND, setCursorHostFacts, unavailableReason, type HostCursorFacts,
+  caretColorNote, availabilityOf, availableValues, chooseBackend, GHOSTTY_BACKEND, hostCursorFacts, KITTY_BACKEND, PORTABLE_BACKEND, setCursorHostFacts, unavailableReason, type HostCursorFacts,
 } from '../src/cursor/backends.js';
 import {createCursorPanel, cursorPanelKey, cursorPanelRowKeys, renderCursorPanel, type CursorPanelEnv} from '../src/cursor/CursorPanel.js';
 import {renderCursorPreview, PREVIEW_ROWS, PREVIEW_END_MS} from '../src/cursor/CursorPreview.js';
@@ -15,7 +15,7 @@ import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_MOTIONS, DEFAULT_CURSOR, DEF
 import {adjustSettingsRow, SETTINGS_ROWS, settingsRowApplies, settingsRowValue} from '../src/ui/SettingsPanel.js';
 import {SETUP_SECTIONS} from '../src/setup/SetupCat.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
-import {cursorStyleSequence} from '../src/terminal/TerminalRenderer.js';
+import {cursorStyleSequence, TerminalRenderer} from '../src/terminal/TerminalRenderer.js';
 import {hexColor} from '../src/chroma/color.js';
 import {stripAnsi} from '../src/util/text.js';
 import {isolateConfig} from './support/isolatedConfig.js';
@@ -448,4 +448,32 @@ test('integrated Ghostty: settings changes refresh only NMSh\'s managed files an
     rmSync(home, {recursive: true, force: true});
     isolation.restore();
   }
+});
+
+test('Cursor color is truthful on Zed: it colors NMSh effects and previews, the physical caret stays the theme\'s', () => {
+  const zed = hostCursorFacts(env({TERM_PROGRAM: 'zed'}), () => false);
+  assert.equal(zed.hostName, 'Zed');
+  assert.equal(zed.caretColor, 'theme-controlled');
+  assert.equal(hostCursorFacts(env({TERM_PROGRAM: 'ghostty'}), () => false).caretColor, 'host-controlled');
+  assert.equal(hostCursorFacts(env({}), () => false).caretColor, 'host-controlled');
+  const note = caretColorNote(zed, 'custom');
+  assert.match(note, /Colors NMSh's effects, trails and previews/u);
+  assert.match(note, /Zed draws the physical caret in your Zed theme's cursor color; NMSh does not change it\./u);
+  assert.match(caretColorNote(zed, 'host'), /Zed draws the caret in its own color/u);
+  assert.match(caretColorNote(ghostty(true), 'theme'), /and the native trail/u);
+  // The panel and Setup show it; a custom color still previews on the synthetic caret.
+  const draft = settings({color: {source: 'custom', custom: '#aa66ff'}});
+  const state = createCursorPanel(draft, 0);
+  state.selected = cursorPanelRowKeys(false, draft).indexOf('color');
+  const text = stripAnsi(renderCursorPanel(state, 140, 0, panelEnv(zed, draft), 60).join('\n'));
+  assert.match(text, /Zed draws the physical caret in your Zed theme's cursor color/u);
+  // NMSh sends no terminal cursor-color sequence (OSC 12), on any host: shape works, color is NMSh's own.
+  const writes: string[] = [];
+  const renderer = new TerminalRenderer(data => { writes.push(String(data)); });
+  renderer.setCursorStyle(cursorStyleSequence('bar', 'on'));
+  renderer.enter();
+  renderer.render({rows: ['x'], cursorRow: 1, cursorColumn: 1});
+  renderer.exit?.();
+  assert.ok(writes.join('').includes('\u001b[5 q') || writes.join('').includes('\u001b[6 q') || writes.join('').includes(cursorStyleSequence('bar', 'on')), 'the shape sequence is sent');
+  assert.ok(!/\u001b\]1[12];/u.test(writes.join('')), 'no OSC 12 / OSC 112 cursor-color sequence');
 });

@@ -12,7 +12,7 @@ import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {colorEscape} from '../chroma/escape.js';
 import {padCells, truncateAnsi} from '../util/text.js';
-import {availabilityOf, availableValues, unavailableReason, type BackendChoice, type CursorFeature, type HostCursorFacts} from './backends.js';
+import {availabilityOf, availableValues, caretColorNote, unavailableReason, type BackendChoice, type CursorFeature, type HostCursorFacts} from './backends.js';
 import {describeCursorColor, resolveCursorSettings, type CursorColorContext} from './colors.js';
 import {effectPalette} from './palette.js';
 import {renderCursorPreview, type PreviewScene} from './CursorPreview.js';
@@ -133,9 +133,7 @@ const NORMAL: Row[] = [
         ...(source === 'chosen' ? {theme: d.color.theme ?? env.context.palette, themeAccent: d.color.themeAccent ?? env.context.accent} : {}),
         ...(source === 'custom' && !d.color.custom ? {custom: current ?? '#a67cf3'} : {})};
     },
-    detail: (d, env) => d.color.source === 'host' ? 'Host: your terminal draws the caret in its own color (effects borrow a neutral tone).'
-      : d.color.source === 'theme' ? 'The caret and effects use the prompt\'s theme color and follow it when the theme changes.'
-      : d.color.source === 'chosen' ? 'A theme chosen for the cursor alone; the prompt keeps its own.' : d.color.source === 'accent' ? 'NMSh\'s UI accent.' : `Custom ${hexOf(d, env)?.toUpperCase() ?? ''}`},
+    detail: (d, env) => caretColorNote(env.facts, d.color.source)},
   {key: 'colorFamily', label: 'Theme family', scene: 'jump', when: d => d.color.source === 'chosen',
     options: (_d, env) => FAMILY_IDS.filter(id => id !== 'custom' || env.context.customTheme).map(id => ({value: id, label: FAMILY_LABELS[FAMILY_IDS.indexOf(id)]!})),
     get: (d, env) => familyOf(chosenTheme(d, env)),

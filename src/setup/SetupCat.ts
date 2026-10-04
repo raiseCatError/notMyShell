@@ -20,7 +20,7 @@ import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {renderTools, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {TOOLS} from '../tools/catalog.js';
 import {renderControls} from '../ui/controls.js';
-import {chooseBackend, currentCursorHost} from '../cursor/backends.js';
+import {caretColorNote, chooseBackend, currentCursorHost} from '../cursor/backends.js';
 import type {CursorPanelState} from '../cursor/CursorPanel.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
@@ -222,7 +222,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('cursorMotion')},
     {row: configRow('cursorEffect')},
     {row: configRow('cursorIdle')},
-    {row: configRow('cursorColor'), note: draft => draft.cursor.color.source === 'host' ? 'Host: your terminal draws the caret in its own color' : undefined},
+    {row: configRow('cursorColor'), note: draft => caretColorNote(currentCursorHost(), draft.cursor.color.source)},
     {row: configRow('cursorColorFamily')},
     {row: configRow('cursorColorVariant')},
     {row: configRow('cursorColorAccent')},
@@ -270,7 +270,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   ]},
   // General NMSh motion: the same rows /appearance → Motion edits, with the same real previews.
   {id: 'motion', title: 'Motion', intro: ['Short, finite presentations of real events. Each can be Off; Reduced Motion, Decorative Effects Off and NO_COLOR stop all of them.',
-    'The preview below runs the selected one on sample content, once; it never touches your session.'], rows: MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)}))},
+    'The preview below runs the selected one on sample content, once; it never touches your session.'], rows: [{row: configRow('motion_rendering')}, ...MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)})), {row: configRow('motion_intensity')}, {row: configRow('motion_speed')}]},
   {id: 'editor', title: 'Editor', intro: ['The composer, syntax colors and suggestions.'], rows: [
     {row: configRow('composerPosition')},
     {row: configRow('composerDividers')},

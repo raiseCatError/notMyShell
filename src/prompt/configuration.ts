@@ -281,18 +281,46 @@ export interface MotionSettings {
   completionEffect: typeof COMPLETION_EFFECTS[number];
   /** Semantic Echo: a short response to meaningful events (long success, failure, attention, task done). */
   eventFeedback: typeof EVENT_FEEDBACK[number];
+  /**
+   * How the same events are drawn. Clean keeps the host's background (foreground tint, dim, underline);
+   * Rich draws the stronger filled bands. One event system feeds either renderer.
+   */
+  rendering: MotionRendering;
+  /** Each rendering keeps its own tuning, so switching never loses the other's. */
+  tuning: Record<MotionRendering, MotionTuning>;
 }
-/** Fresh installs: restrained motion. */
-export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle'};
+export const MOTION_RENDERINGS = ['clean', 'rich'] as const;
+export type MotionRendering = typeof MOTION_RENDERINGS[number];
+export const MOTION_INTENSITIES = ['low', 'medium', 'high'] as const;
+export const MOTION_SPEEDS = ['slow', 'normal', 'fast'] as const;
+/** Intensity scales how strong the paint is; speed scales how long it lasts. Medium/Normal is each renderer's own baseline. */
+export interface MotionTuning {intensity: typeof MOTION_INTENSITIES[number]; speed: typeof MOTION_SPEEDS[number]}
+export const DEFAULT_MOTION_TUNING = (): Record<MotionRendering, MotionTuning> => ({clean: {intensity: 'medium', speed: 'normal'}, rich: {intensity: 'medium', speed: 'normal'}});
+/** Fresh installs: restrained motion, Clean rendering. */
+export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle',
+  rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
 /** Existing configs without a motion group: nothing new moves until the person turns it on. */
-export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off'};
+export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off',
+  rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
 
 export function normalizeMotion(value: unknown): MotionSettings {
   if (!isRecord(value)) return {...MIGRATED_MOTION};
   const pickOne = <T extends string>(list: readonly T[], item: unknown, fallback: T): T => list.includes(item as T) ? item as T : fallback;
   return {contextTransitions: pickOne(CONTEXT_TRANSITIONS, value.contextTransitions, 'off'), commandLaunch: pickOne(COMMAND_LAUNCHES, value.commandLaunch, 'off'),
     completionHighlight: pickOne(COMPLETION_HIGHLIGHTS, value.completionHighlight, 'off'), completionEffect: pickOne(COMPLETION_EFFECTS, value.completionEffect, 'off'),
-    eventFeedback: pickOne(EVENT_FEEDBACK, value.eventFeedback, 'off')};
+    eventFeedback: pickOne(EVENT_FEEDBACK, value.eventFeedback, 'off'),
+    // Saved configs without a rendering are on today's behavior, which is Clean.
+    rendering: pickOne(MOTION_RENDERINGS, value.rendering, 'clean'), tuning: normalizeMotionTuning(value.tuning)};
+}
+
+function normalizeMotionTuning(value: unknown): Record<MotionRendering, MotionTuning> {
+  const record = isRecord(value) ? value : {};
+  const one = (item: unknown): MotionTuning => {
+    const tuning = isRecord(item) ? item : {};
+    return {intensity: MOTION_INTENSITIES.includes(tuning.intensity as never) ? tuning.intensity as MotionTuning['intensity'] : 'medium',
+      speed: MOTION_SPEEDS.includes(tuning.speed as never) ? tuning.speed as MotionTuning['speed'] : 'normal'};
+  };
+  return {clean: one(record.clean), rich: one(record.rich)};
 }
 
 export const PROMPT_TEXT_COLORS = ['neutral', 'theme'] as const;

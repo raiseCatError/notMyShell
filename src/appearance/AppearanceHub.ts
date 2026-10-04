@@ -1,6 +1,6 @@
 import type {Key} from '../terminal/keys.js';
 import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.js';
-import {MOTION_LABELS, MOTION_ROWS} from '../motion/motionRows.js';
+import {MOTION_ITEMS, MOTION_LABELS, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -20,7 +20,7 @@ import type {MotionGate} from '../motion/transitions.js';
 export type HubDestination = 'prompt' | 'cursor' | 'chrome' | 'chroma';
 
 export interface AppearanceHubState {
-  view: 'hub' | 'motion';
+  view: 'hub' | 'motion' | 'motionAdvanced';
   selected: number;
   /** Host window editing (the existing AppearanceState), when the host has appearance integration. */
   host?: AppearanceState;
@@ -49,17 +49,25 @@ function hostRowCount(state: AppearanceHubState): number {
 }
 
 export function appearanceHubKey(state: AppearanceHubState, key: Key, configuration: PromptConfiguration, now = Date.now()): HubAction | undefined {
-  if (state.view === 'motion') {
-    if (key.kind === 'escape' || key.kind === 'interrupt') { state.view = 'hub'; state.selected = NMSH_ROWS.length - 1; return undefined; }
-    if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + MOTION_ROWS.length) % MOTION_ROWS.length; state.previewStart = now; return undefined; }
+  if (state.view === 'motion' || state.view === 'motionAdvanced') {
+    const advanced = state.view === 'motionAdvanced';
+    // The Motion list: Rendering, the five effects, then Advanced (a child screen with the selected rendering's own tuning).
+    const items: readonly MotionItem[] = advanced ? MOTION_TUNING_ITEMS : MOTION_ITEMS;
+    const count = items.length + (advanced ? 0 : 1);
+    if (key.kind === 'escape' || key.kind === 'interrupt') {
+      if (advanced) { state.view = 'motion'; state.selected = MOTION_ITEMS.length; state.previewStart = now; return undefined; }
+      state.view = 'hub'; state.selected = NMSH_ROWS.length - 1; return undefined;
+    }
+    if (key.kind === 'up' || key.kind === 'down') { state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + count) % count; state.previewStart = now; return undefined; }
     if (key.kind === 'text' && key.value.toLowerCase() === 'r') { state.previewStart = now; return undefined; }
     if (key.kind === 'left' || key.kind === 'right' || key.kind === 'enter') {
-      const row = MOTION_ROWS[state.selected]!;
-      const current = configuration.motion[row.key] as string;
-      const index = row.values.indexOf(current);
-      const next = row.values[(index + (key.kind === 'left' ? -1 : 1) + row.values.length) % row.values.length]!;
+      const item = items[state.selected];
+      if (!item) { if (key.kind !== 'left') { state.view = 'motionAdvanced'; state.selected = 0; state.previewStart = now; } return undefined; }
+      const current = item.get(configuration.motion);
+      const index = item.values.indexOf(current);
+      const next = item.values[(index + (key.kind === 'left' ? -1 : 1) + item.values.length) % item.values.length]!;
       state.previewStart = now;
-      return {kind: 'motion', motion: {...configuration.motion, [row.key]: next}};
+      return {kind: 'motion', motion: item.set(configuration.motion, next)};
     }
     return undefined;
   }
@@ -85,9 +93,9 @@ export function appearanceHubKey(state: AppearanceHubState, key: Key, configurat
 
 /** The Motion screen's preview for the selected row, or undefined outside it. */
 export function hubMotionPreview(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, gate: MotionGate, now: number): MotionPreview | undefined {
-  if (state.view !== 'motion') return undefined;
-  const row = MOTION_ROWS[state.selected];
-  return row ? renderMotionPreview(row.key, configuration.motion, gate, columns, state.previewStart ?? now - 10_000, now) : undefined;
+  if (state.view !== 'motion' && state.view !== 'motionAdvanced') return undefined;
+  const item = (state.view === 'motion' ? MOTION_ITEMS : MOTION_TUNING_ITEMS)[state.selected];
+  return renderMotionPreview(item?.preview ?? 'commandLaunch', configuration.motion, gate, columns, state.previewStart ?? now - 10_000, now);
 }
 
 export function renderAppearanceHub(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, themeLabel: string, cursorBackend: string,
@@ -98,32 +106,42 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   const accent = foreground(UI_COLORS.accent);
   const reset = '\u001b[0m';
   const mark = (selected: boolean) => selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
-  if (state.view === 'motion') {
-    const head = [`${primary}  Appearance › Motion${reset}`, `  ${subtle}General NMSh motion. Cursor motion lives in /cursor; Chroma color motion in /chroma. Reduced Motion and Decorative Effects Off stop all of it.${reset}`, ''];
+  if (state.view === 'motion' || state.view === 'motionAdvanced') {
+    const advanced = state.view === 'motionAdvanced';
+    const rendering = configuration.motion.rendering === 'rich' ? 'Rich' : 'Clean';
+    const items: readonly MotionItem[] = advanced ? MOTION_TUNING_ITEMS : MOTION_ITEMS;
+    const head = [`${primary}  Appearance › Motion${advanced ? ` › Advanced (${rendering})` : ''}${reset}`, `  ${subtle}${advanced
+      ? `Tuning for ${rendering} rendering only; ${rendering === 'Rich' ? 'Clean' : 'Rich'} keeps its own values.`
+      : 'General NMSh motion. Cursor motion lives in /cursor; Chroma color motion in /chroma. Reduced Motion and Decorative Effects Off stop all of it.'}${reset}`, ''];
     const list: string[] = [];
-    MOTION_ROWS.forEach((row, index) => {
+    items.forEach((item, index) => {
       const selected = index === state.selected;
-      const value = MOTION_LABELS[configuration.motion[row.key] as string] ?? configuration.motion[row.key];
-      list.push(`${mark(selected)} ${selected ? primary : secondary}${padCells(row.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
+      const value = item.labelOf(item.get(configuration.motion));
+      list.push(`${mark(selected)} ${selected ? primary : secondary}${padCells(item.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
     });
-    const note = ['', `  ${subtle}${MOTION_ROWS[state.selected]?.note ?? ''}${reset}`];
+    if (!advanced) {
+      const selected = state.selected === items.length;
+      list.push(`${mark(selected)} ${selected ? primary : secondary}${padCells('Advanced', 24)}${reset}${selected ? accent : secondary}${rendering} tuning ›${reset}`);
+    }
+    const noteText = items[state.selected]?.note ?? `Intensity and speed for ${rendering} rendering; Enter opens them`;
+    const note = ['', `  ${subtle}${noteText}${reset}`];
     const shown = preview ? hubMotionPreview(state, configuration, columns, preview.gate, preview.now) : undefined;
-    const controls = ['', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']])];
+    const controls = ['', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(!advanced && state.selected === items.length ? [['Enter', 'open'] as [string, string]] : []), ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']])];
     // The preview is always the same size; a short terminal gives up the intro, then the preview, never the controls or the list.
-    const block = shown ? ['', `  ${subtle}Preview${reset}`, ...shown.rows] : [];
+    const block = shown ? ['', `  ${subtle}Preview · ${rendering}${reset}`, ...shown.rows] : [];
     const layouts = [[...head, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...controls], [head[0]!, ...list, ...controls]];
     const rows = height === undefined ? layouts[0]! : layouts.find(layout => layout.length <= height) ?? layouts[layouts.length - 1]!;
     return rows.map(row => truncateAnsi(row, columns));
   }
   const cursor = configuration.cursor;
   const motion = configuration.motion;
-  const anyMotion = Object.values(motion).some(value => value !== 'off');
+  const anyMotion = MOTION_ROWS.some(row => motion[row.key] !== 'off');
   const summaries: Record<string, string> = {
     prompt: `${themeLabel} · ${configuration.nmsh.textColors === 'neutral' ? 'Neutral text' : 'Theme text'}`,
     cursor: `${cursorLabel(cursor.shape)} · ${cursor.motion === 'off' ? 'no motion' : cursorLabel(cursor.motion)}${cursor.effect !== 'none' ? ` · ${cursorLabel(cursor.effect)}` : ''} · ${cursorBackend}`,
     chrome: configuration.uiChrome.source === 'theme' ? 'Follow theme' : 'Custom',
     chroma: configuration.presentation.preset === 'off' ? 'Off' : `${configuration.presentation.preset} · ${configuration.presentation.motion}`,
-    motion: anyMotion ? `Launch ${MOTION_LABELS[motion.commandLaunch]} · Context ${MOTION_LABELS[motion.contextTransitions]} · Events ${MOTION_LABELS[motion.eventFeedback]}` : 'Off',
+    motion: anyMotion ? `${motion.rendering === 'rich' ? 'Rich' : 'Clean'} · Launch ${MOTION_LABELS[motion.commandLaunch]} · Context ${MOTION_LABELS[motion.contextTransitions]} · Events ${MOTION_LABELS[motion.eventFeedback]}` : 'Off',
   };
   const rows = [`${primary}  Appearance${reset}`, `  ${subtle}Everything visual in one place; each row opens its own editor.${reset}`, '', `  ${subtle}NMSh${reset}`];
   NMSH_ROWS.forEach((row, index) => {

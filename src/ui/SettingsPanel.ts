@@ -5,7 +5,7 @@ import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATM
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
-import {MOTION_LABELS, MOTION_ROWS} from '../motion/motionRows.js';
+import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {withIdleColorSource} from '../idle/IdleVisuals.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent} from '../appearance/themeFamilies.js';
@@ -37,6 +37,7 @@ import {PICKER_PROVIDERS} from '../pickers/Picker.js';
 import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foregroundOf, status, theme} from '../chroma/chroma.js';
+import {groupedWindow, groupLines, type GroupedLine} from './groupedList.js';
 import {foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
@@ -214,10 +215,17 @@ const THEME_ROWS: readonly SettingsRow[] = [
     get: c => c.nmsh.accent, set: (c, accent) => ({...c, nmsh: {...c.nmsh, accent}})}),
 ];
 
-/** General NMSh motion (one row per effect), generated from the table /appearance → Motion uses. */
-const MOTION_SETTINGS_ROWS: readonly SettingsRow[] = MOTION_ROWS.map(item => enumRow({id: `motion_${item.key}`, label: item.label, description: `${item.note}. Off, Reduced Motion, Decorative Effects Off and NO_COLOR always stop it`, category: 'Motion',
-  values: item.values, labels: item.values.map(value => MOTION_LABELS[value] ?? value),
-  get: c => c.motion[item.key] as string, set: (c, value) => ({...c, motion: {...c.motion, [item.key]: value}})}));
+/** General NMSh motion: Rendering first, then one row per effect, then the selected rendering's tuning; all from the tables /appearance → Motion uses. */
+const motionRow = (item: MotionItem, patch: Partial<SettingsRowBase> = {}): SettingsRow => enumRow({id: `motion_${item.id}`, label: item.label, category: 'Motion',
+  description: `${item.note}. Off, Reduced Motion, Decorative Effects Off and NO_COLOR always stop motion`, ...patch,
+  values: item.values, labels: item.values.map(value => item.labelOf(value)),
+  get: c => item.get(c.motion), set: (c, value) => ({...c, motion: item.set(c.motion, value)})});
+const MOTION_SETTINGS_ROWS: readonly SettingsRow[] = [
+  motionRow(MOTION_RENDERING_ITEM),
+  ...MOTION_ROWS.map(row => motionRow({id: row.key, label: row.label, note: row.note, values: row.values, labelOf: value => MOTION_LABELS[value] ?? value,
+    get: motion => motion[row.key] as string, set: (motion, value) => ({...motion, [row.key]: value}), preview: row.key})),
+  ...MOTION_TUNING_ITEMS.map(item => motionRow({...item, label: `Motion ${item.label.toLowerCase()}`}, {level: 'advanced'})),
+];
 
 /** What a cursor value costs or how it is delivered, as a short suffix (Portable fallback, after setup), under the effective renderer. */
 function cursorSuffix(feature: CursorFeature, value: string, config: PromptConfiguration): string {
@@ -544,6 +552,70 @@ const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');
 
 export const PLANNED_AREAS = ['Layout', 'Blocks', 'Tools', 'Completion', 'Chroma'] as const;
 
+/**
+ * Config reads as a short list of named groups, scrolled continuously. A row's group comes from its
+ * root parent (children always sit under their parent), then an explicit id, then its category.
+ * Order here is the order on screen.
+ */
+export const CONFIG_GROUPS = ['General', 'Appearance', 'Prompt & Composer', 'Editor', 'Cursor & Motion', 'Sessions & Alerts', 'Shell & Providers', 'Local Understanding', 'Transcript & Privacy'] as const;
+export type ConfigGroup = typeof CONFIG_GROUPS[number];
+
+export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
+  glyphStyle: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateChecks: 'General',
+  promptVibrance: 'Appearance',
+  showShell: 'Prompt & Composer', composerPosition: 'Prompt & Composer', composerDividers: 'Prompt & Composer', divider: 'Prompt & Composer', historicalPrompt: 'Prompt & Composer',
+  transcriptPresentation: 'Editor', openWith: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
+  reducedMotion: 'Cursor & Motion', effectsOff: 'Cursor & Motion',
+  shellBackend: 'Shell & Providers', suggestions: 'Shell & Providers',
+  localUnderstanding: 'Local Understanding',
+  askRecord: 'Transcript & Privacy', askPresentation: 'Transcript & Privacy', outputFolding: 'Transcript & Privacy',
+};
+export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
+  General: 'General', Updates: 'General',
+  Appearance: 'Appearance', Presentation: 'Appearance', 'Idle visuals': 'Appearance', 'Live activity': 'Appearance',
+  Prompt: 'Prompt & Composer', Layout: 'Prompt & Composer', 'Status strip': 'Prompt & Composer',
+  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor',
+  Cursor: 'Cursor & Motion', Motion: 'Cursor & Motion',
+  Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts',
+  Tools: 'Shell & Providers', Welcome: 'Shell & Providers', History: 'Shell & Providers',
+  Ask: 'Local Understanding', Transcript: 'Transcript & Privacy',
+};
+
+function rootOf(row: SettingsRow): SettingsRow {
+  let current = row;
+  for (let depth = 0; current.parent && depth < 5; depth += 1) current = SETTINGS_ROWS.find(item => item.id === current.parent) ?? current;
+  return current;
+}
+
+/** The Config group a row is listed under. */
+export function configGroup(row: SettingsRow): ConfigGroup {
+  const root = rootOf(row);
+  return CONFIG_GROUP_BY_ID[root.id] ?? CONFIG_GROUP_BY_CATEGORY[root.category] ?? 'General';
+}
+
+/** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
+const CONFIG_ORDER: readonly string[] = [
+  'glyphStyle', 'liveSessionStartup', 'liveSessionMultiple', 'updateChecks',
+  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityColors',
+  'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
+  'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
+  'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',
+  'motion_rendering', 'motion_contextTransitions', 'motion_commandLaunch', 'motion_completionHighlight', 'motion_completionEffect', 'motion_eventFeedback', 'motion_intensity', 'motion_speed',
+  'reducedMotion', 'effectsOff',
+  'sessionNotices', 'agentActivity', 'notifications',
+  'shellBackend', 'welcome', 'suggestions', 'history', 'picker', 'navigation', 'tools', 'toolUpdateChecks', 'installSuggestions',
+  'localUnderstanding',
+  'askRecord', 'askPresentation', 'outputFolding',
+];
+const groupRank = (row: SettingsRow) => CONFIG_GROUPS.indexOf(configGroup(row));
+/** Sort key: group, the root's place in CONFIG_ORDER, the root's own position, then the row's (so a child stays under its parent). */
+function configOrder(row: SettingsRow): number[] {
+  const root = rootOf(row);
+  const listed = CONFIG_ORDER.indexOf(root.id);
+  return [groupRank(row), listed < 0 ? CONFIG_ORDER.length : listed, SETTINGS_ROWS.indexOf(root), SETTINGS_ROWS.indexOf(row)];
+}
+const compareOrder = (a: SettingsRow, b: SettingsRow) => { const x = configOrder(a); const y = configOrder(b); for (let i = 0; i < 4; i += 1) if (x[i] !== y[i]) return x[i]! - y[i]!; return 0; };
+
 /** How deep a row nests under its parents (0 for top-level rows). */
 export function settingsRowDepth(row: SettingsRow): number {
   let depth = 0;
@@ -563,9 +635,10 @@ export function visibleSettingsRows(state: SettingsPanelState, config: PromptCon
   if (view === 'status') return [];
   if (view === 'settings') return [...SETTINGS_ENTRIES];
   const query = state.searchQuery?.trim().toLowerCase();
-  const applicable = SETTINGS_ROWS.filter(row => settingsRowApplies(row, config));
+  // Grouped, in a stable order: a row keeps its place within its group, so a child stays directly under its parent.
+  const applicable = SETTINGS_ROWS.filter(row => settingsRowApplies(row, config)).sort(compareOrder);
   if (!query) return applicable.filter(row => state.showAdvanced || row.level !== 'advanced');
-  return applicable.filter(row => [row.label, row.description, row.category].some(text => text.toLowerCase().includes(query)));
+  return applicable.filter(row => [row.label, row.description, row.category, configGroup(row)].some(text => text.toLowerCase().includes(query)));
 }
 
 export function selectedSettingsRow(state: SettingsPanelState, config?: PromptConfiguration): SettingsRow | undefined {
@@ -643,8 +716,11 @@ export interface StatusItem {
   value: string;
   tone?: 'success' | 'warning' | 'muted';
 }
-/** Status groups render with a blank line between them. */
-export type StatusSections = readonly (readonly StatusItem[])[];
+/** A named Status group; arrays stay plain item lists (`flat()` still works) with an optional title. */
+export type StatusSection = readonly StatusItem[] & {title?: string};
+export type StatusSections = readonly StatusSection[];
+/** Build a titled Status section. */
+export const statusSection = (title: string, items: readonly StatusItem[]): StatusSection => Object.assign([...items], {title});
 
 export interface SettingsRenderContext {
   configuration?: PromptConfiguration;
@@ -698,27 +774,42 @@ export function renderSearchField(state: SettingsPanelState, columns: number): s
  * survives narrow widths; the label truncates first.
  */
 function renderRows(rows: readonly SettingsRow[], selected: number | undefined,
-  columns: number, query: string, valueOf: (row: SettingsRow) => string, budget: number): string[] {
+  columns: number, query: string, valueOf: (row: SettingsRow) => string, budget: number, grouped = false): string[] {
   const widest = Math.max(0, ...rows.map(row => displayWidth(valueOf(row))));
   // Dependent rows sit under their parent with a small plain indent.
   const indent = (row: SettingsRow) => '  '.repeat(settingsRowDepth(row));
   // One value column for every row; it moves left before any value is cut.
   const labelColumn = Math.max(6, Math.min(Math.max(0, ...rows.map(row => displayWidth(indent(row) + row.label))) + 4,
     columns - MARGIN.length - 2 - widest));
-  const visible = Math.max(1, budget);
-  const anchor = selected ?? 0;
-  const start = Math.max(0, Math.min(anchor - Math.floor(visible / 2), rows.length - visible));
-  const out: string[] = [];
-  rows.slice(start, start + visible).forEach((row, offset) => {
-    const active = start + offset === selected;
+  const drawRow = (row: SettingsRow, active: boolean) => {
     const pointer = active ? `${ACCENT}${GLYPHS.selection}${RESET}` : ' ';
     const value = valueOf(row);
     const valueStyled = `${active ? ACCENT : SECONDARY}${value}${RESET}`;
     const room = labelColumn - 2;
     const label = truncateAnsi(indent(row) + highlightMatches(row.label, query, active ? `${BOLD}${ACCENT}` : PRIMARY, SEARCH_MATCH) + RESET, room);
     const pad = Math.max(2, labelColumn - displayWidth(label));
-    out.push(truncateAnsi(`${MARGIN}${pointer} ${label}${' '.repeat(pad)}${valueStyled}`, columns));
-  });
+    return truncateAnsi(`${MARGIN}${pointer} ${label}${' '.repeat(pad)}${valueStyled}`, columns);
+  };
+  if (grouped) {
+    // Named groups over one continuous list: headings are not selectable and not part of the selection index.
+    const lines = groupLines(rows, configGroup);
+    const selectedLine = lines.findIndex(line => line.kind === 'item' && line.index === selected);
+    let {start, end} = groupedWindow(lines, selectedLine >= 0 ? selectedLine : undefined, budget);
+    // A "more" cue replaces the first or last line when rows are hidden; never the selected one.
+    const itemsIn = (from: number, to: number) => lines.slice(from, to).filter(line => line.kind === 'item').length;
+    if (start > 0 && selectedLine === start) start -= 1;
+    if (end < lines.length && selectedLine === end - 1) end += 1;
+    // The cue takes the last line, so the line above it must not be a heading with nothing left under it.
+    while (end < lines.length && end - 2 > start && lines[end - 2]!.kind === 'header') end -= 1;
+    const out = lines.slice(start, end).map(line => line.kind === 'header' ? `${MARGIN}${ACCENT}${line.title}${RESET}` : drawRow(line.item, line.index === selected));
+    if (start > 0) out[0] = `${MARGIN}  ${SUBTLE}↑ ${itemsIn(0, start + 1)} more${RESET}`;
+    if (end < lines.length) out[out.length - 1] = `${MARGIN}  ${SUBTLE}↓ ${itemsIn(end - 1, lines.length)} more${RESET}`;
+    return out.slice(0, Math.max(1, budget));
+  }
+  const visible = Math.max(1, budget);
+  const anchor = selected ?? 0;
+  const start = Math.max(0, Math.min(anchor - Math.floor(visible / 2), rows.length - visible));
+  const out = rows.slice(start, start + visible).map((row, offset) => drawRow(row, start + offset === selected));
   if (start > 0) out[0] = `${MARGIN}  ${SUBTLE}↑ ${start + 1} more${RESET}`;
   const below = rows.length - (start + visible);
   if (below > 0) out[out.length - 1] = `${MARGIN}  ${SUBTLE}↓ ${below + 1} more${RESET}`;
@@ -745,23 +836,27 @@ function toneColor(tone: StatusItem['tone']): string {
       : theme(tone === 'muted' ? 'subtle' : 'primary'));
 }
 
-function statusLines(sections: StatusSections, columns: number): string[] {
+/** Typed Status display lines: a heading per titled section, its rows, and a blank between sections. */
+type StatusLine = {kind: 'header'; title: string; text: string} | {kind: 'item'; text: string} | {kind: 'blank'; text: string};
+
+function statusDisplay(sections: StatusSections, columns: number): StatusLine[] {
   const items = sections.flat();
   const labelColumn = Math.min(Math.max(...items.map(item => displayWidth(item.label)), 0) + 3, Math.floor(columns / 2));
-  const lines: string[] = [];
+  const out: StatusLine[] = [];
   sections.forEach((section, index) => {
-    if (index > 0) lines.push('');
+    if (index > 0) out.push({kind: 'blank', text: ''});
+    if (section.title) out.push({kind: 'header', title: section.title, text: truncateAnsi(`${MARGIN}${ACCENT}${section.title}${RESET}`, columns)});
     for (const item of section) {
       const label = `${item.label}:`;
-      lines.push(truncateAnsi(`${MARGIN}${SECONDARY}${label}${' '.repeat(Math.max(1, labelColumn - displayWidth(label)))}${toneColor(item.tone)}${item.value}${RESET}`, columns));
+      out.push({kind: 'item', text: truncateAnsi(`${MARGIN}${section.title ? '  ' : ''}${SECONDARY}${label}${' '.repeat(Math.max(1, labelColumn - displayWidth(label)))}${toneColor(item.tone)}${item.value}${RESET}`, columns)});
     }
   });
-  return lines;
+  return out;
 }
 
-/** Lines Status occupies, so ↑↓ scrolling can clamp. */
+/** Lines Status occupies (headings and the blank lines between sections included), so ↑↓ scrolling can clamp. */
 export function statusLineCount(sections: StatusSections): number {
-  return sections.reduce((sum, section) => sum + section.length, 0) + Math.max(0, sections.length - 1);
+  return statusDisplay(sections, 80).length;
 }
 
 function renderGlyphPreview(state: SettingsPanelState, columns: number): string[] {
@@ -797,9 +892,11 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   const body: string[] = [];
 
   if (view === 'status') {
-    const lines = statusLines(context.status ?? [], columns);
-    const start = Math.max(0, Math.min(state.contentIndex ?? 0, lines.length - available));
-    body.push(...lines.slice(start, start + available));
+    const lines = statusDisplay(context.status ?? [], columns);
+    const {start, end} = groupedWindow(lines.map(line => ({kind: line.kind === 'header' ? 'header' as const : 'item' as const, title: '', item: line, index: 0})) as never, undefined, available, state.contentIndex ?? 0);
+    const shown = lines.slice(start, end);
+    while (shown.length > 1 && shown[shown.length - 1]!.kind === 'blank') shown.pop();
+    body.push(...shown.map(line => line.text));
   } else if (view === 'settings') {
     body.push(...renderRows(rows, tabsFocused ? undefined : selectedIndex, columns, '',
       row => `${SUBTLE}${row.description}`, Math.max(1, available)));
@@ -809,11 +906,13 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
   } else {
     const query = state.searchQuery?.trim() ?? '';
     body.push(...renderSearchField(state, columns));
-    const listBudget = Math.max(1, available - 3);
+    // The selected row's description gets its own two lines whenever the list keeps a useful size beside it.
+    const describe = Boolean(selectedRow) && available - 3 >= 9;
+    const listBudget = Math.max(1, available - 3 - (describe ? 2 : 0));
     if (rows.length) {
       body.push(...renderRows(rows, tabsFocused ? undefined : selectedIndex, columns, query,
-        row => `${settingsRowValue(row, config) ?? ''}${settingsRowChanged(row, config) ? ` ${CHANGED_MARK()}` : ''}`, listBudget));
-      if (selectedRow && listBudget - rows.length >= 2) {
+        row => `${settingsRowValue(row, config) ?? ''}${settingsRowChanged(row, config) ? ` ${CHANGED_MARK()}` : ''}`, listBudget, true));
+      if (selectedRow && describe) {
         body.push('', `${MARGIN}  ${highlightMatches(selectedRow.unavailable?.(config) ?? selectedRow.description, query, SUBTLE, SEARCH_MATCH)}${RESET}`);
       }
     } else body.push(`${MARGIN}  ${SUBTLE}No settings match "${query}"${RESET}`);
