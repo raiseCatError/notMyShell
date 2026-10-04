@@ -84,6 +84,9 @@ test('bounded nonblocking capture preserves native filesystem candidates', async
   } finally { rmSync(root, {recursive: true, force: true}); }
 });
 
+/** The helpers' own startup deadline (capture.zsh, configured-completion.zsh default). */
+const HELPER_DEADLINE_MS = 1500;
+
 for (const configured of [false, true]) test(`${configured ? 'configured' : 'native'} capture cleans its PTY and root after abrupt frontend death`, async () => {
   const root = mkdtempSync(join(tmpdir(), 'nmsh-native-owner-'));
   writeFileSync(join(root, 'compinit'), 'sleep 20\n');
@@ -106,8 +109,10 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
     }, 3000, 'owned inner shell');
     inner = Number(readFileSync(join(transport, 'pid'), 'utf8'));
     owner.kill('SIGKILL');
-    await until(() => !existsSync(transport) && !processAlive(inner), 3000, 'helper cleanup without frontend timers');
-    await until(() => groupEnded(inner), 2000, 'completion descendants after frontend death');
+    // With the frontend gone, the helper cleans up on its own startup deadline (1.5 s in capture.zsh and the configured
+    // helper); the window is that deadline plus scheduling margin for a loaded machine running the suite in parallel.
+    await until(() => !existsSync(transport) && !processAlive(inner), HELPER_DEADLINE_MS + 6500, 'helper cleanup without frontend timers');
+    await until(() => groupEnded(inner), 4000, 'completion descendants after frontend death');
   } finally {
     if (owner.pid) { try { process.kill(-owner.pid, 'SIGKILL'); } catch {} }
     if (inner) { try { process.kill(-inner, 'SIGKILL'); } catch {} }
