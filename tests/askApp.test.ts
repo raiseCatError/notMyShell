@@ -55,7 +55,7 @@ test('app: /ask <request> resolves at once; recorded On keeps the visible conver
     instance['handleKey']({kind: 'escape'});
     const text = transcriptText(instance);
     assert.match(text, /\/ask what shell am i using/u);
-    assert.match(text, /Ask: This session runs zsh/u);
+    assert.match(text, /Ask  This session runs zsh/u);
     assert.doesNotMatch(text, /capability|confidence|\{"kind"/u, 'no structured or model data');
   } finally { instance['stop'](0); instance['session'].kill(); }
 });

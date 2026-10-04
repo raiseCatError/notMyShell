@@ -376,6 +376,8 @@ export interface PromptConfiguration {
   sessionNotices: boolean;
   /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
   askRecord: boolean;
+  /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
+  askPresentation: 'chat' | 'normal';
   /** Optional local language understanding; Off by default, and every feature scope is opt-in. */
   localUnderstanding: LocalUnderstandingSettings;
   /** Local-only agent CLI activity stats (durations and counts; never content). */
@@ -460,6 +462,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   statusStrip: {...DEFAULT_STATUS_STRIP},
   sessionNotices: true,
   askRecord: true,
+  askPresentation: 'chat' as const,
   localUnderstanding: {mode: 'off', ask: false, folding: false},
   agentActivity: true,
   shellBackend: 'zsh',
@@ -545,7 +548,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false,
+    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),

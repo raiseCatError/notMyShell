@@ -6,7 +6,7 @@ import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
-import {shouldAutoFold, type OutputFoldingMode} from './FoldPolicy.js';
+import {shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
@@ -49,6 +49,10 @@ export interface CompletedCommand {
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
   activities?: SecondaryActivity[];
+  /** An NMSh-owned block rather than a shell command: never history, /copy or shell-output folding input. */
+  frontend?: 'ask';
+  /** A recorded Ask conversation: its visible turns as plain text (version 1). Older transcripts lack it. */
+  ask?: {version: 1; turns: RecordedAskTurn[]};
 }
 
 export interface OutputTranscript {
@@ -103,6 +107,7 @@ export class OutputBuffer {
         ...record,
         historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
         activities: record.activities?.map(activity => ({...activity})),
+        ...(record.ask ? {ask: {version: 1 as const, turns: record.ask.turns.map(turn => ({role: turn.role, text: turn.text}))}} : {}),
       })),
       lines: this.parser.snapshot(),
       visualGaps: [...this.visualGaps],
@@ -294,6 +299,44 @@ export class OutputBuffer {
     this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
     this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
+  }
+
+  /**
+   * A recorded Ask conversation as one foldable block: the request is its
+   * header line and each visible turn follows as plain rows. Folding comes
+   * from the conversation's structure (shouldFoldAsk), and Ctrl+O and the
+   * user's own fold choices apply as for any block. While a shell command is
+   * running, the conversation is added as plain rows instead.
+   */
+  addAskInteraction(request: string, turns: readonly RecordedAskTurn[]): void {
+    const body = turns.length ? turns : [{role: 'ask' as const, text: 'Closed without an answer.'}];
+    if (this.active) {
+      this.addFrontendInteraction(`/ask ${request}`, body.map(turn => `${turn.role === 'you' ? 'You' : 'Ask'}: ${turn.text}`).join('\n'), '');
+      return;
+    }
+    this.parser.ensureLineBoundary();
+    if (this.parser.completedCount() > 0) this.visualGaps.add(this.parser.completedCount());
+    const startId = this.parser.completedCount();
+    this.lineTypes.set(startId, 'metadata');
+    this.parser.addLine(`${GLYPHS.prompt} /ask ${request}`, foreground(UI_COLORS.command));
+    const outputStartId = this.parser.completedCount();
+    const plain: string[] = [];
+    for (const turn of body) {
+      turn.text.split('\n').forEach((line, index) => {
+        const row = `  ${index === 0 ? (turn.role === 'you' ? 'You  ' : 'Ask  ') : '     '}${line}`;
+        plain.push(row);
+        this.lineTypes.set(this.parser.completedCount(), 'metadata');
+        this.parser.addLine(row, turn.role === 'you' ? foreground(UI_COLORS.primary) : foreground(UI_COLORS.secondary));
+      });
+    }
+    const endId = this.parser.completedCount();
+    this.completed.unshift({command: `/ask ${request}`, output: plain.join('\n'), lifecycleText: '', exitCode: 0, startId, outputStartId, endId,
+      expanded: !shouldFoldAsk(this.outputFolding, body), frontend: 'ask', ask: {version: 1, turns: body.map(turn => ({role: turn.role, text: turn.text}))}});
+  }
+
+  /** The index-th newest shell command record (NMSh-owned blocks such as recorded Ask are skipped). */
+  recentShell(index: number): CompletedCommand | undefined {
+    return this.completed.filter(record => !record.frontend)[index - 1];
   }
 
   /** A multi-row NMSh-owned result (for example /agents); presentation rows, never shell output. */

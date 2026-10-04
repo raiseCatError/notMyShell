@@ -174,3 +174,25 @@ export function applyFoldHint(input: FoldInput, hint: SemanticFoldHint | undefin
   if ((hint.kind === 'noise' || hint.kind === 'progress' || hint.kind === 'test-detail') && hint.confidence >= 0.75 && decision.score >= HINT_BAND.low) return true;
   return decision.fold;
 }
+
+/** One visible Ask turn as recorded: plain text only, never model data. */
+export interface RecordedAskTurn {role: 'you' | 'ask'; text: string}
+
+/** Ask answers at or below this many lines stay open in Smart. */
+export const ASK_SMART_LINES = 4;
+
+/**
+ * Folding for a recorded Ask conversation, from its structure rather than
+ * the shell-output heuristic: Smart keeps one short exchange open and folds a
+ * multi-turn or long conversation; Always folds any conversation with an
+ * answer; Off never folds.
+ */
+export function shouldFoldAsk(mode: OutputFoldingMode, turns: readonly RecordedAskTurn[]): boolean {
+  if (mode === 'never') return false;
+  const answers = turns.filter(turn => turn.role === 'ask');
+  if (!answers.length) return false;
+  if (mode === 'always') return true;
+  const asked = turns.filter(turn => turn.role === 'you').length;
+  const lines = turns.reduce((sum, turn) => sum + turn.text.split('\n').length, 0);
+  return asked > 1 || answers.length > 1 || lines > ASK_SMART_LINES;
+}

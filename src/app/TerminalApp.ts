@@ -2100,7 +2100,7 @@ export class TerminalApp {
 
   private async copyRecent(index: number): Promise<void> {
     const command = index === 1 ? '/copy' : `/copy ${index}`;
-    const record = this.output.recent(index);
+    const record = this.output.recentShell(index);
     if (!record) {
       this.output.addFrontendInteraction(command, `No completed command output at /copy ${index}`, ERROR);
       return;
@@ -2976,7 +2976,7 @@ export class TerminalApp {
     }
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
-    if (this.askState) return framePanel(renderAsk(this.askState, columns), columns);
+    if (this.askState) return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4}), columns);
     if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
     if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
@@ -4802,7 +4802,7 @@ export class TerminalApp {
   private recentReferences(): OpenPanelState['references'] {
     const references: OpenPanelState['references'] = [];
     for (let index = 1; index <= 5 && references.length < 200; index += 1) {
-      const record = this.output.recent(index);
+      const record = this.output.recentShell(index);
       if (!record) break;
       const cwd = record.historicalContext?.cwd ?? this.shellCwd;
       const lines = stripAnsi(record.output).split('\n').slice(-2000).reverse();
@@ -5170,7 +5170,7 @@ export class TerminalApp {
     this.askGeneration += 1;
     if (!state) return;
     const recorded = this.promptConfiguration.askRecord ? askTranscriptText(state) : undefined;
-    if (recorded) this.output.addFrontendInteraction(`/ask ${recorded.request}`, recorded.body || 'Closed without an answer.', INFO);
+    if (recorded) this.output.addAskInteraction(recorded.request, recorded.turns);
     this.returnFromPanel();
   }
 
@@ -5227,7 +5227,7 @@ export class TerminalApp {
     const statuses = this.providerStatuses;
     const recentFiles = this.recentReferences().map(reference => resolvePath(reference.cwd, reference.path)).filter((path, index, all) => all.indexOf(path) === index).slice(0, 10);
     const recentCommands: string[] = [];
-    for (let index = 1; index <= 8; index += 1) { const record = this.output.recent(index); if (!record) break; recentCommands.push(record.command.slice(0, 80)); }
+    for (let index = 1; index <= 8; index += 1) { const record = this.output.recentShell(index); if (!record) break; recentCommands.push(record.command.slice(0, 80)); }
     // The project file list is read (names only, bounded) only for requests about opening things.
     const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
     return {cwd: this.shellCwd, home: homedir(), ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),

@@ -37,6 +37,7 @@ import {foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
 import {stepIndex, toggleValue} from './formControls.js';
+import {ASK_PRESENTATION_LABELS, ASK_PRESENTATIONS} from '../ask/AskPanel.js';
 import {displayWidth, highlightMatches, truncateAnsi} from '../util/text.js';
 
 /** The three top-level views of the one shared panel behind /settings, /config, and /status. */
@@ -267,6 +268,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     }}),
   {id: 'askRecord', label: 'Record Ask in transcript', description: 'Keep Ask questions and replies with this session\'s transcript; commands or actions you approve still follow their normal history rules', category: 'Ask',
     control: 'boolean', get: config => config.askRecord, set: (config, askRecord) => ({...config, askRecord})},
+  enumRow({id: 'askPresentation', label: 'Ask presentation', description: 'Chat puts your Ask turns on the right; Normal keeps both sides on the left. The transcript keeps its own presentation', category: 'Ask',
+    values: ASK_PRESENTATIONS, labels: ASK_PRESENTATIONS.map(mode => ASK_PRESENTATION_LABELS[mode]),
+    get: config => config.askPresentation, set: (config, askPresentation) => ({...config, askPresentation})}),
   enumRow({id: 'localUnderstanding', label: 'Local understanding', description: 'Optional local language model for the features you enable; Off never loads one. Ask and Smart Folding work without it', category: 'Ask',
     values: LOCAL_UNDERSTANDING_MODES, labels: LOCAL_UNDERSTANDING_MODES.map(mode => LOCAL_UNDERSTANDING_LABELS[mode]),
     get: config => config.localUnderstanding.mode, set: (config, mode) => ({...config, localUnderstanding: {...config.localUnderstanding, mode}})}),

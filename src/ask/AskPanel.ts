@@ -2,7 +2,8 @@ import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
-import {displayWidth, truncateAnsi} from '../util/text.js';
+import {displayWidth, repeatToWidth, truncateAnsi} from '../util/text.js';
+import {chatColumn} from '../output/TranscriptPresenter.js';
 import {filterOptions, pickOption} from './resolver.js';
 import type {AskAction, AskOption, AskOutcome} from './types.js';
 
@@ -28,6 +29,8 @@ export interface AskState {
   busy: boolean;
   /** Something was actually asked; an empty, abandoned Ask leaves no transcript. */
   submitted: boolean;
+  /** Conversation rows scrolled up from the newest (0 follows the conversation). */
+  scroll: number;
 }
 
 export type AskEvent =
@@ -40,7 +43,7 @@ export const ASK_GREETING = 'What can I help you with?';
 export const ASK_STARTERS = ['open package.json', 'show my sessions', 'switch to fish', 'check git diff', 'find errors in the transcript', 'resume yesterday\'s session'];
 
 export function createAskState(): AskState {
-  return {input: '', turns: [], selected: 0, confirm: 'yes', rejected: new Set(), busy: false, submitted: false};
+  return {input: '', turns: [], selected: 0, confirm: 'yes', rejected: new Set(), busy: false, submitted: false, scroll: 0};
 }
 
 /** Actions that change what this window shows or launch something outside NMSh are confirmed first. */
@@ -96,6 +99,8 @@ export function submitText(state: AskState, text: string): AskEvent | undefined 
   const reply = text.trim();
   if (!reply) return undefined;
   pushTurn(state, 'you', reply);
+  // Sending returns to the newest exchange.
+  state.scroll = 0;
   state.submitted = true;
   state.input = '';
   const pending = state.pending;
@@ -157,16 +162,22 @@ export function askKey(state: AskState, key: Key): AskEvent | undefined {
   if (key.kind === 'paste') { state.input += key.value.replace(/[\u0000-\u001f\u007f]+/gu, ' '); return undefined; }
   if (key.kind === 'backspace') { state.input = [...state.input].slice(0, -1).join(''); state.selected = 0; return undefined; }
   if ((key.kind === 'left' || key.kind === 'right') && confirming && !state.input) { state.confirm = state.confirm === 'yes' ? 'no' : 'yes'; return undefined; }
-  if ((key.kind === 'up' || key.kind === 'down') && options.length) {
-    state.selected = (state.selected + (key.kind === 'up' ? -1 : 1) + options.length) % options.length;
+  // ←→ and ↑↓ both move through choices, as elsewhere in NMSh.
+  if ((key.kind === 'up' || key.kind === 'down' || ((key.kind === 'left' || key.kind === 'right') && !state.input)) && options.length) {
+    const back = key.kind === 'up' || key.kind === 'left';
+    state.selected = (state.selected + (back ? -1 : 1) + options.length) % options.length;
     return undefined;
   }
+  // The conversation scrolls; the title, choices, input and controls stay put.
+  if (key.kind === 'pageUp' || key.kind === 'wheelUp') { state.scroll += key.kind === 'pageUp' ? ASK_PAGE : 3; return undefined; }
+  if (key.kind === 'pageDown' || key.kind === 'wheelDown') { state.scroll = Math.max(0, state.scroll - (key.kind === 'pageDown' ? ASK_PAGE : 3)); return undefined; }
   if (key.kind === 'enter') {
     if (state.input.trim()) return submitText(state, state.input);
     if (confirming) return confirmProposal(state, state.confirm);
     if (options.length) {
       pushTurn(state, 'you', options[state.selected]!.label);
       state.submitted = true;
+      state.scroll = 0;
       return chooseOption(state, options[state.selected]!, options);
     }
   }
@@ -174,12 +185,14 @@ export function askKey(state: AskState, key: Key): AskEvent | undefined {
 }
 
 /** The visible conversation as transcript text (the first request is the command line). Never model data. */
-export function askTranscriptText(state: AskState): {request: string; body: string} | undefined {
+export function askTranscriptText(state: AskState): {request: string; body: string; turns: AskTurn[]} | undefined {
   if (!state.submitted) return undefined;
   const first = state.turns.findIndex(turn => turn.role === 'you');
   if (first === -1) return undefined;
-  const body = state.turns.slice(first + 1).map(turn => `${turn.role === 'you' ? 'You' : 'Ask'}: ${turn.text}`).join('\n');
-  return {request: state.turns[first]!.text, body};
+  // Only the visible role and text are kept: no outcomes, options, rejected keys or model data.
+  const turns = state.turns.slice(first + 1).map(turn => ({role: turn.role, text: turn.text}));
+  const body = turns.map(turn => `${turn.role === 'you' ? 'You' : 'Ask'}: ${turn.text}`).join('\n');
+  return {request: state.turns[first]!.text, body, turns};
 }
 
 /** Word wrap by display width; long words are left for truncation. */
@@ -194,37 +207,102 @@ function wrapText(text: string, width: number): string[] {
   return lines;
 }
 
-export function renderAsk(state: AskState, columns: number): string[] {
+const ASK_PAGE = 8;
+
+/** How Ask lays out its conversation: Chat puts your turns on the right; Normal keeps both on the left. */
+export type AskPresentation = 'chat' | 'normal';
+export const ASK_PRESENTATIONS: readonly AskPresentation[] = ['chat', 'normal'];
+export const ASK_PRESENTATION_LABELS: Record<AskPresentation, string> = {chat: 'Chat', normal: 'Normal'};
+
+export interface AskRenderOptions {
+  presentation?: AskPresentation;
+  /** Rows the panel may use; the conversation gets what the pinned rows leave. */
+  height?: number;
+}
+
+/** The conversation as exchanges: each of your turns opens one, and Ask's replies belong to it. */
+export function askExchanges(turns: readonly AskTurn[]): AskTurn[][] {
+  const exchanges: AskTurn[][] = [];
+  for (const turn of turns) {
+    if (turn.role === 'you' || !exchanges.length) exchanges.push([]);
+    exchanges[exchanges.length - 1]!.push(turn);
+  }
+  return exchanges;
+}
+
+/** Conversation rows (no pinned chrome): role-labelled turns, your turns on the right in Chat, a faint rule between exchanges. */
+export function askConversationRows(turns: readonly AskTurn[], columns: number, presentation: AskPresentation = 'chat'): string[] {
+  const primary = foreground(UI_COLORS.primary);
+  const secondary = foreground(UI_COLORS.secondary);
+  const subtle = foreground(UI_COLORS.subtle);
+  const accent = foreground(UI_COLORS.accent);
+  const rule = foreground(UI_COLORS.separator);
+  const reset = '\u001b[0m';
+  const inner = Math.max(20, columns - 4);
+  const column = presentation === 'chat' ? chatColumn(inner) : undefined;
+  const rows: string[] = [];
+  askExchanges(turns).forEach((exchange, index) => {
+    if (index > 0) rows.push(`  ${rule}${repeatToWidth('─', inner)}${reset}`);
+    for (const turn of exchange) {
+      const you = turn.role === 'you';
+      if (you && column) {
+        // Right-aligned block: its widest wrapped line sets the left edge, the label sits on that edge's right.
+        const lines = turn.text.split('\n').flatMap(line => wrapText(line, column));
+        const widest = Math.max(3, ...lines.map(line => displayWidth(line)));
+        const left = 2 + inner - widest;
+        rows.push(`${' '.repeat(left + widest - 3)}${subtle}You${reset}`);
+        for (const line of lines) rows.push(`${' '.repeat(left + widest - displayWidth(line))}${primary}${line}${reset}`);
+      } else {
+        rows.push(`  ${you ? subtle : accent}${you ? 'You' : 'Ask'}${reset}`);
+        for (const line of turn.text.split('\n').flatMap(part => wrapText(part, inner))) rows.push(`  ${you ? primary : secondary}${line}${reset}`);
+      }
+    }
+  });
+  return rows;
+}
+
+export function renderAsk(state: AskState, columns: number, options: AskRenderOptions = {}): string[] {
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
   const accent = foreground(UI_COLORS.accent);
   const reset = '\u001b[0m';
-  const width = Math.max(20, columns - 6);
-  const rows = [`${primary}  Ask NMSh${reset}`, ''];
-  const wrap = (text: string, indent: string, color: string) => text.split('\n').flatMap(line => wrapText(line, width).map(part => `${indent}${color}${part}${reset}`));
-  if (!state.turns.length) {
-    rows.push(`  ${secondary}${ASK_GREETING}${reset}`, '', `  ${subtle}For example: ${ASK_STARTERS.slice(0, 4).join(' · ')}${reset}`);
-  }
-  for (const turn of state.turns.slice(-10)) {
-    rows.push(`  ${subtle}${turn.role === 'you' ? 'You' : 'Ask'}${reset}`);
-    rows.push(...wrap(turn.text, '    ', turn.role === 'you' ? primary : secondary));
-  }
-  const options = visibleOptions(state);
+  const top = [`${primary}  Ask NMSh${reset}`, ''];
+  const conversation = state.turns.length ? askConversationRows(state.turns, columns, options.presentation ?? 'chat')
+    : [`  ${secondary}${ASK_GREETING}${reset}`, '', `  ${subtle}For example: ${ASK_STARTERS.slice(0, 4).join(' · ')}${reset}`];
+  // Choices and confirmations belong to the newest Ask reply: they follow it directly.
+  const bottom: string[] = [];
+  const choices = visibleOptions(state);
   const pending = state.pending;
-  if (options.length) {
-    rows.push('');
-    options.forEach((option, index) => {
+  const confirming = pending?.kind === 'proposal' && needsConfirmation(pending);
+  if (choices.length) {
+    bottom.push('');
+    choices.forEach((option, index) => {
       const selected = index === state.selected;
       const number = option.key === 'none' ? ' ' : String(index + 1);
-      rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${subtle}${number}${reset}  ${selected ? primary : secondary}${option.label}${reset}${option.detail ? `  ${subtle}${option.detail}${reset}` : ''}`);
+      bottom.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${subtle}${number}${reset}  ${selected ? primary : secondary}${option.label}${reset}${option.detail ? `  ${subtle}${option.detail}${reset}` : ''}`);
     });
-    rows.push('', `  ${subtle}Type a number, keep typing to narrow or clarify, or Esc to cancel.${reset}`);
-  } else if (pending?.kind === 'proposal' && needsConfirmation(pending)) {
+  } else if (confirming) {
     const yes = pending.safety === 'read' ? 'Run' : pending.safety === 'install' ? 'Install' : 'Yes';
-    rows.push('', `  ${state.confirm === 'yes' ? `${accent}[ Y ${yes} ]${reset}` : `${subtle}  Y ${yes}  ${reset}`}   ${state.confirm === 'no' ? `${accent}[ N Don't ]${reset}` : `${subtle}  N Don't  ${reset}`}`);
+    bottom.push('', `  ${state.confirm === 'yes' ? `${accent}[ Y ${yes} ]${reset}` : `${subtle}  Y ${yes}  ${reset}`}   ${state.confirm === 'no' ? `${accent}[ N Don't ]${reset}` : `${subtle}  N Don't  ${reset}`}`);
   }
-  rows.push('', `  ${accent}›${reset} ${primary}${state.input}${reset}${state.busy ? `  ${subtle}…${reset}` : `${accent}▏${reset}`}`);
-  rows.push('', renderControls([['Enter', 'send'], ['↑↓', 'choose'], ['Esc', 'close']]));
-  return rows.map(row => truncateAnsi(row, columns));
+  bottom.push('', `  ${accent}›${reset} ${primary}${state.input}${reset}${state.busy ? `  ${subtle}…${reset}` : `${accent}▏${reset}`}`);
+  // The footer lists only what works right now.
+  const controls: Array<[string, string]> = [['Enter', 'send']];
+  if (choices.length || confirming) controls.push(['←→/↑↓', 'choose']);
+  const room = options.height === undefined ? Infinity : Math.max(3, options.height - top.length - bottom.length - 2);
+  const overflow = conversation.length > room;
+  if (overflow) controls.push(['PgUp/PgDn', 'scroll']);
+  controls.push(['Esc', 'close']);
+  let visible = conversation;
+  if (overflow) {
+    // Offset from the newest row: redraws keep the reader's place; a resize clamps it.
+    state.scroll = Math.max(0, Math.min(state.scroll, conversation.length - (room - 2)));
+    const span = room - 1 - (state.scroll > 0 ? 1 : 0);
+    const end = conversation.length - state.scroll;
+    const start = Math.max(0, end - span);
+    visible = [start ? `  ${subtle}↑ ${start} earlier row${start === 1 ? '' : 's'} · PgUp${reset}` : '', ...conversation.slice(start, end),
+      ...(state.scroll > 0 ? [`  ${subtle}↓ ${state.scroll} newer row${state.scroll === 1 ? '' : 's'} · PgDn${reset}`] : [])];
+  } else state.scroll = 0;
+  return [...top, ...visible, ...bottom, '', renderControls(controls)].map(row => truncateAnsi(row, columns));
 }
