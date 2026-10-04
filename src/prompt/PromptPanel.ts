@@ -44,7 +44,7 @@ import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
-import {stripAnsi, truncateAnsi} from '../util/text.js';
+import {labelColumnWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
@@ -643,7 +643,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(`${PRIMARY}Starship modules${RESET}`);
     rows.push(`${SUBTLE}Edit supported modules using Starship's config command.${RESET}`);
     STARSHIP_MODULES.forEach((module, index) => rows.push(item(index,
-      `${module.padEnd(16)} ${state.starshipModules?.[index] ? 'Disabled' : 'Enabled'}`)));
+      `${padCells(module, labelColumnWidth(STARSHIP_MODULES, columns, 2))}${state.starshipModules?.[index] ? 'Disabled' : 'Enabled'}`)));
   } else if (state.step === 'starshipConfirm') {
     const proposal = state.starshipProposal;
     rows.push(`${PRIMARY}Review Starship config change${RESET}`);
@@ -719,8 +719,8 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      const side = modulePlacement(module).padEnd(7);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(15)}${SUBTLE}${side}${module.visible ? option : 'hidden'}${RESET}`);
+      const side = modulePlacement(module);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 6)}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;
@@ -737,30 +737,32 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(renderTabStrip(PROMPT_VIEWS, PROMPT_VIEW_IDS.indexOf(view), columns, state.focus === 'tabs'), '');
     if (view === 'git') {
       const onOff = (enabled: boolean) => enabled ? 'On' : 'Off';
-      rows.push(row(0, `Enabled         ${value(onOff(draft.gitEnabled), saved && onOff(saved.gitEnabled))}`));
-      rows.push(row(1, `Colors          ${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
-      rows.push(row(2, `Geometry        ${value(gitGeometryLabel(draft.gitGeometry), saved && gitGeometryLabel(saved.gitGeometry))}`));
+      const gitWidth = labelColumnWidth(['Enabled', 'Colors', 'Geometry', 'Connector fade'], columns, 2);
+      rows.push(row(0, `${padCells('Enabled', gitWidth)}${value(onOff(draft.gitEnabled), saved && onOff(saved.gitEnabled))}`));
+      rows.push(row(1, `${padCells('Colors', gitWidth)}${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
+      rows.push(row(2, `${padCells('Geometry', gitWidth)}${value(gitGeometryLabel(draft.gitGeometry), saved && gitGeometryLabel(saved.gitGeometry))}`));
       const gitFadeNote = !state.draft.nmsh.gapEnabled && draft.gitConnectorFade !== 'off' ? `  ${SUBTLE}applies with a gap` : '';
-      rows.push(row(3, `Connector fade  ${value(gitConnectorFadeLabel(draft.gitConnectorFade), saved && gitConnectorFadeLabel(saved.gitConnectorFade))}${gitFadeNote}`));
+      rows.push(row(3, `${padCells('Connector fade', gitWidth)}${value(gitConnectorFadeLabel(draft.gitConnectorFade), saved && gitConnectorFadeLabel(saved.gitConnectorFade))}${gitFadeNote}`));
       if (gitShowcase.length) {
         rows.push('', draft.gitEnabled
           ? `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}preview only${RESET}`
           : `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}Rich Git is off · the prompt shows the branch only · dimmed sample${RESET}`);
         RICH_GIT_SHOWCASE.forEach((entry, index) => {
           const line = gitShowcase[index] ?? '';
-          rows.push(`  ${SECONDARY}${entry.label.padEnd(10)}${RESET} ${draft.gitEnabled ? line : `${SUBTLE}${stripAnsi(line)}`}${RESET}`);
+          rows.push(`  ${SECONDARY}${padCells(entry.label, labelColumnWidth(RICH_GIT_SHOWCASE.map(item => item.label), columns, 2))}${RESET}${draft.gitEnabled ? line : `${SUBTLE}${stripAnsi(line)}`}${RESET}`);
         });
       }
     } else {
       // Main Prompt and Chroma: rows derived from the draft, so hidden controls cannot be edited.
       const savedConfiguration = state.saved;
+      const labelWidth = labelColumnWidth(viewRows(state).map(entry => entry.label), columns, 2);
       viewRows(state).forEach((entry, index) => {
         const editing = state.glyphEdit?.rowId === entry.id ? state.glyphEdit : undefined;
         const text = editing ? `${editing.buffer}${INVERSE} ${RESET}` : entry.value(state.draft);
         const savedText = editing ? undefined : savedConfiguration ? entry.value(savedConfiguration) : undefined;
         const note = editing ? editing.note ?? 'type one character · Enter set · Esc cancel' : entry.note?.(state.draft);
         const body = entry.opens ? text : value(text, savedText);
-        rows.push(row(index, `${entry.label.padEnd(16)}${body}${note ? `  ${SUBTLE}${note}` : ''}`));
+        rows.push(row(index, `${padCells(entry.label, labelWidth)}${body}${note ? `  ${SUBTLE}${note}` : ''}`));
       });
       if (view === 'chroma' && state.draft.presentation.preset !== 'off') {
         rows.push(`  ${SUBTLE}Gradient  ${RESET}${treatmentSwatch(state.draft.presentation, Math.max(8, Math.min(40, columns - 14)), chromaThemeStops)}${RESET}`);
@@ -772,7 +774,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       TREATMENT_PRESETS.forEach((id, index) => {
         const marker = state.draft.presentation.preset === id ? `${ACCENT}●` : `${SUBTLE}○`;
         const savedMark = state.saved?.presentation.preset === id ? '✓' : ' ';
-        rows.push(`${marker} ${SECONDARY}${TREATMENT_PRESET_LABELS[id].padEnd(14)}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
+        rows.push(`${marker} ${SECONDARY}${padCells(TREATMENT_PRESET_LABELS[id], labelColumnWidth(Object.values(TREATMENT_PRESET_LABELS), columns, 2, 20), 1)}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }
     if (themePreviews.length && view === 'main') {
@@ -783,7 +785,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
         const savedMark = saved?.palette === id ? '✓' : ' ';
-        const label = theme.label.padEnd(17);
+        const label = padCells(theme.label, labelColumnWidth(galleryPalettes(state.draft).map(palette => NATIVE_PROMPT_THEMES[palette].label), columns, 2, 20), 1);
         rows.push(`${marker} ${SECONDARY}${label}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }

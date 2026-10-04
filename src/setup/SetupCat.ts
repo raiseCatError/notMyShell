@@ -22,7 +22,7 @@ import {TOOLS} from '../tools/catalog.js';
 import {renderControls} from '../ui/controls.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
-import {displayWidth, truncateAnsi} from '../util/text.js';
+import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
 
 /**
  * Setup Cat: one rerunnable configuration wizard over one draft. Opening it
@@ -255,7 +255,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
 
 function completionFacts(facts: CompletionFacts | undefined): string[] {
   if (!facts) return ['Configured zsh completion      Checking…'];
-  const line = (label: string, value: string) => `${label.padEnd(31)}${value}`;
+  const line = (label: string, value: string) => `${padCells(label, 29)}${value}`;
   return [
     line('Configured zsh completion', facts.completionSystem ? 'Detected' : 'Not detected · NMSh Native completion still works'),
     line('zsh-completions', facts.zshCompletions ? 'Detected · used as completion knowledge' : 'Not detected'),
@@ -490,7 +490,7 @@ export function renderSetup(state: SetupState, columns: number, height: number):
       top.push(`  ${primary}Apply these changes?${reset}`, '');
       const labelWidth = Math.min(28, Math.max(...changes.map(change => displayWidth(change.label))) + 2);
       for (const change of changes) {
-        top.push(`  ${secondary}${change.label.padEnd(labelWidth)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
+        top.push(`  ${secondary}${padCells(change.label, labelWidth - 2)}${subtle}${change.from} ${nerd ? '→' : '->'} ${reset}${success}${change.to}${reset}`);
       }
     }
   } else {
@@ -504,7 +504,7 @@ export function renderSetup(state: SetupState, columns: number, height: number):
       const pointer = selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
       const control = item.row.control === 'action' ? `${selected ? accent : secondary}${value}${reset}`
         : selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
-      top.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${(indent(item.row) + item.row.label).padEnd(labelWidth)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
+      top.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${padCells(indent(item.row) + item.row.label, labelWidth - 2)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
       if (selected && state.chooser?.rowId === item.row.id) {
         // Every choice, visible: the highlighted one is previewed live below.
         const options = chooserOptions(item.row, state.chooser.before);

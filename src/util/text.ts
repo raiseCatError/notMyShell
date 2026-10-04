@@ -51,6 +51,29 @@ export function truncateAnsi(value: string, maxWidth: number): string {
   return `${output}${output.includes('\u001B]8;') ? '\u001B]8;;\u001B\\' : ''}…\u001B[0m`;
 }
 
+/** The guaranteed space between adjacent columns of an NMSh-owned row. */
+export const COLUMN_GUTTER = 2;
+
+/**
+ * One column cell: `text` (ANSI allowed) padded to `width` display cells, then
+ * the gutter. Text wider than the column is truncated with … so the gutter
+ * always survives and the next column can never touch it.
+ */
+export function padCells(text: string, width: number, gutter = COLUMN_GUTTER): string {
+  const fitted = displayWidth(text) > width ? truncateAnsi(text, width) : text;
+  return `${fitted}${' '.repeat(Math.max(0, width - displayWidth(fitted)) + gutter)}`;
+}
+
+/**
+ * A label column wide enough for its longest label, narrowed (never below a
+ * readable minimum) when the terminal leaves fewer than `reserve` cells for
+ * the columns after it.
+ */
+export function labelColumnWidth(labels: readonly string[], columns: number, prefix = 0, reserve = 12): number {
+  const widest = Math.max(0, ...labels.map(label => displayWidth(label)));
+  return Math.max(Math.min(widest, 6), Math.min(widest, columns - prefix - COLUMN_GUTTER - reserve));
+}
+
 export function repeatToWidth(character: string, width: number): string {
   return width > 0 ? character.repeat(width) : '';
 }

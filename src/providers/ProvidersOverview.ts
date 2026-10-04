@@ -3,7 +3,7 @@ import type {PromptConfiguration} from '../prompt/configuration.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
-import {truncateAnsi, truncateText} from '../util/text.js';
+import {COLUMN_GUTTER, labelColumnWidth, padCells, truncateAnsi, truncateText} from '../util/text.js';
 import {familyFacts, PROVIDER_FAMILIES, type SwitchableFamily} from './families.js';
 import type {ProviderStatus} from './providers.js';
 
@@ -69,20 +69,22 @@ export function renderProvidersOverview(state: ProvidersOverviewState, facts: Ov
   const accent = foreground(UI_COLORS.accent);
   const reset = '\u001b[0m';
   const rows = [`${primary}  Providers${reset}  ${subtle}what NMSh uses, what else is available · [active] is in use, ${GLYPHS.selection} is the selected row${reset}`, ''];
-  const nameWidth = 20;
+  const nameWidth = labelColumnWidth([...PROVIDER_FAMILIES.map(family => family.title), 'Local understanding'], columns, 2, 30);
+  const activeWidth = Math.max(8, Math.min(28, columns - 2 - nameWidth - 2 * COLUMN_GUTTER - 8));
   const line = (index: number, title: string, active: string, tag: string) => {
     const selected = index === state.selected;
-    return `${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${title.padEnd(nameWidth)}${reset}${primary}${truncateText(active, 28).padEnd(28)}${reset}  ${subtle}${tag}${reset}`;
+    return `${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${padCells(title, nameWidth)}${reset}${primary}${padCells(truncateText(active, activeWidth), activeWidth)}${reset}${subtle}${tag}${reset}`;
   };
   PROVIDER_FAMILIES.forEach((definition, index) => {
     const familyState = familyFacts(definition, facts.configuration, facts.statuses);
     const active = definition.providers.find(provider => provider.id === familyState.active)!;
     rows.push(line(index, definition.title, active.label, familyState.notice ? `[active] fallback · ${familyState.notice}` : '[active]'));
     if (index === state.selected) {
+      const providerWidth = labelColumnWidth(familyState.rows.map(row => row.descriptor.label), columns, 6, 16);
       for (const row of familyState.rows) {
         const marks = [row.active ? '[active]' : '', row.preferred && !row.active ? '[preferred]' : ''].filter(Boolean).join(' ');
         const status = providerStateText(row.descriptor.kind, row.status, facts.installedByNmsh.has(row.descriptor.executable ?? row.descriptor.id));
-        rows.push(`      ${secondary}${row.descriptor.label.padEnd(18)}${reset} ${subtle}${status}${marks ? `  ${marks}` : ''}${row.status?.binary ? `  ${row.status.binary}` : ''}${reset}`);
+        rows.push(`      ${secondary}${padCells(row.descriptor.label, providerWidth)}${reset}${subtle}${status}${marks ? `  ${marks}` : ''}${row.status?.binary ? `  ${row.status.binary}` : ''}${reset}`);
       }
     }
   });
