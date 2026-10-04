@@ -113,6 +113,8 @@ export interface AskOption {
   /** What choosing this option means: a ready outcome, or text that refines the request. */
   outcome?: AskOutcome;
   refine?: string;
+  /** Put this text in the Ask input (caret at the end) without sending it: path completion, "open " prefixes. */
+  fill?: string;
 }
 
 /**

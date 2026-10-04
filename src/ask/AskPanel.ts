@@ -8,6 +8,9 @@ import {filterOptions, pickOption} from './resolver.js';
 import type {AskAction, AskOption, AskOutcome, AskReferents, CommandBlock} from './types.js';
 import {renderCommand} from './gitAssist.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import {CommandEditor} from '../input/CommandEditor.js';
+import {applyEditingKey} from '../input/editingKeys.js';
+import {graphemes} from '../input/inputLayout.js';
 
 /**
  * The Ask surface. Each turn advances structured state (pending outcome,
@@ -18,6 +21,9 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 export interface AskTurn {role: 'you' | 'ask'; text: string; block?: CommandBlock}
 
 export interface AskState {
+  /** The request being typed: a real editor (caret, selection, word movement), shared with the shell composer. */
+  editor: CommandEditor;
+  /** The editor's text; assigning replaces it with the caret at the end. */
   input: string;
   turns: AskTurn[];
   pending?: AskOutcome;
@@ -37,6 +43,8 @@ export interface AskState {
   referents?: AskReferents;
   /** The repository the conversation's facts came from, so results refresh the same one. */
   repoRoot?: string;
+  /** The outcome a transient completion list replaced, restored once a completion is chosen. */
+  previous?: AskOutcome;
   /** An action is running inside Ask ("Running git add…"); input waits until its result turn arrives. */
   working?: string;
 }
@@ -47,6 +55,8 @@ export type AskEvent =
   /** Copy or insert a shown command block: never executes. */
   | {kind: 'copy'; block: CommandBlock}
   | {kind: 'insert'; block: CommandBlock}
+  /** Tab in a request: complete the path or word at the caret from real files (never runs anything). */
+  | {kind: 'complete'; text: string; caret: number}
   | {kind: 'close'};
 
 const MAX_TURNS = 24;
@@ -54,7 +64,10 @@ export const ASK_GREETING = 'What can I help you with?';
 export const ASK_STARTERS = ['open package.json', 'show my sessions', 'switch to fish', 'check git diff', 'find errors in the transcript', 'resume yesterday\'s session'];
 
 export function createAskState(): AskState {
-  return {input: '', turns: [], selected: 0, confirm: 'yes', rejected: new Set(), busy: false, submitted: false, scroll: 0};
+  const editor = new CommandEditor();
+  const state = {editor, turns: [], selected: 0, confirm: 'yes', rejected: new Set(), busy: false, submitted: false, scroll: 0} as unknown as AskState;
+  Object.defineProperty(state, 'input', {enumerable: true, get: () => editor.text, set: (value: string) => editor.replaceText(value)});
+  return state;
 }
 
 /** Actions that change what this window shows or launch something outside NMSh are confirmed first. */
@@ -75,6 +88,7 @@ export function visibleOptions(state: AskState): AskOption[] {
     const keep = filterOptions(state.input, options);
     return keep.length ? keep.map(index => options[index]!) : options;
   };
+  if (pending.kind === 'choose' && pending.question === COMPLETE_QUESTION) return pending.options;
   if (pending.kind === 'choose') return pending.options.length ? [...narrowed(pending.options), ...(pending.reason === 'ambiguous' ? [NONE] : [])] : [];
   if (pending.kind === 'unclear') return [...narrowed(pending.categories)];
   if ((pending.kind === 'unsafe' || pending.kind === 'unsupported' || pending.kind === 'answer')) {
@@ -197,6 +211,7 @@ function chooseOption(state: AskState, option: AskOption, shown: AskOption[]): A
     pushTurn(state, 'ask', 'None of those, then. Tell me a little more about what you want.');
     return undefined;
   }
+  if (option.fill !== undefined) { state.input = option.fill; state.pending = state.previous; state.previous = undefined; return undefined; }
   if (option.outcome) return receiveOutcome(state, option.outcome);
   if (option.refine !== undefined) {
     if (option.refine.endsWith(' ')) { state.input = option.refine; state.pending = undefined; return undefined; }
@@ -216,26 +231,28 @@ function confirmProposal(state: AskState, choice: 'yes' | 'no'): AskEvent | unde
   return undefined;
 }
 
-export function askKey(state: AskState, key: Key): AskEvent | undefined {
+export function askKey(state: AskState, key: Key, columnsHint = 80): AskEvent | undefined {
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (state.busy || state.working) return undefined;
   const pending = state.pending;
   const options = visibleOptions(state);
   const confirming = pending?.kind === 'proposal' && needsConfirmation(pending);
-  if (key.kind === 'text') {
-    if (confirming && !state.input && /^[yn]$/iu.test(key.value)) return confirmProposal(state, key.value.toLowerCase() === 'y' ? 'yes' : 'no');
-    state.input += key.value.replace(/[\u0000-\u001f\u007f]/gu, '');
-    state.selected = 0;
-    return undefined;
-  }
-  // Pasted snippets keep their lines (config blocks, code to replace); other control characters are dropped.
-  if (key.kind === 'paste') { state.input += key.value.replace(/\r\n?/gu, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]+/gu, ' '); return undefined; }
-  if (key.kind === 'backspace') { state.input = [...state.input].slice(0, -1).join(''); state.selected = 0; return undefined; }
-  if ((key.kind === 'left' || key.kind === 'right') && confirming && !state.input) { state.confirm = state.confirm === 'yes' ? 'no' : 'yes'; return undefined; }
-  // ←→ and ↑↓ both move through choices, as elsewhere in NMSh.
-  if ((key.kind === 'up' || key.kind === 'down' || ((key.kind === 'left' || key.kind === 'right') && !state.input)) && options.length) {
+  if (key.kind === 'text' && confirming && !state.input && /^[yn]$/iu.test(key.value)) return confirmProposal(state, key.value.toLowerCase() === 'y' ? 'yes' : 'no');
+  // The editor wins whenever there is text to edit: ←→ move the caret, never the choice.
+  const empty = !state.input;
+  if ((key.kind === 'left' || key.kind === 'right') && empty && confirming) { state.confirm = state.confirm === 'yes' ? 'no' : 'yes'; return undefined; }
+  if ((key.kind === 'up' || key.kind === 'down' || ((key.kind === 'left' || key.kind === 'right') && empty)) && options.length) {
     const back = key.kind === 'up' || key.kind === 'left';
     state.selected = (state.selected + (back ? -1 : 1) + options.length) % options.length;
+    return undefined;
+  }
+  const completing = pending?.kind === 'choose' && pending.question === COMPLETE_QUESTION;
+  if (completing && key.kind === 'enter' && options.length) return chooseOption(state, options[state.selected]!, options);
+  if (key.kind === 'complete') return state.input.trim() ? {kind: 'complete', text: state.input, caret: state.editor.cursorIndex} : undefined;
+  if (applyEditingKey(state.editor, key, Math.max(20, columnsHint - 6))) {
+    // Editing dismisses a completion list; the conversation's own choices come back.
+    if (completing) { state.pending = state.previous; state.previous = undefined; }
+    if (key.kind !== 'left' && key.kind !== 'right' && !key.kind.startsWith('select') && !key.kind.startsWith('word') && !key.kind.startsWith('line') && !key.kind.startsWith('buffer')) state.selected = 0;
     return undefined;
   }
   // The conversation scrolls; the title, choices, input and controls stay put.
@@ -245,6 +262,7 @@ export function askKey(state: AskState, key: Key): AskEvent | undefined {
     if (state.input.trim()) return submitText(state, state.input);
     if (confirming) return confirmProposal(state, state.confirm);
     if (options.length) {
+      if (options[state.selected]!.fill !== undefined) return chooseOption(state, options[state.selected]!, options);
       pushTurn(state, 'you', options[state.selected]!.label);
       state.submitted = true;
       state.scroll = 0;
@@ -290,6 +308,8 @@ export interface AskRenderOptions {
   shell?: ShellId;
   /** Rows the panel may use; the conversation gets what the pinned rows leave. */
   height?: number;
+  /** The live activity line while Ask works (already styled; transient, never recorded). */
+  activity?: string;
 }
 
 /** The conversation as exchanges: each of your turns opens one, and Ask's replies belong to it. */
@@ -372,7 +392,7 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
     const yes = pending.safety === 'read' ? 'Run' : pending.safety === 'install' ? 'Install' : 'Yes';
     bottom.push('', `  ${state.confirm === 'yes' ? `${accent}[ Y ${yes} ]${reset}` : `${subtle}  Y ${yes}  ${reset}`}   ${state.confirm === 'no' ? `${accent}[ N Don't ]${reset}` : `${subtle}  N Don't  ${reset}`}`);
   }
-  bottom.push('', state.working ? `  ${subtle}${state.working}${reset}` : `  ${accent}›${reset} ${primary}${state.input.split('\n')[0]}${state.input.includes('\n') ? `${subtle} (+${state.input.split('\n').length - 1} lines)` : ''}${reset}${state.busy ? `  ${subtle}…${reset}` : `${accent}▏${reset}`}`);
+  bottom.push('', ...(state.working ? [`  ${subtle}${state.working}${reset}`] : askInputRows(state, columns - 4, options.activity)));
   // The footer lists only what works right now.
   const controls: Array<[string, string]> = [['Enter', 'send']];
   if (choices.length || confirming) controls.push(['←→/↑↓', 'choose']);
@@ -392,3 +412,57 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
   } else state.scroll = 0;
   return [...top, ...visible, ...bottom, '', renderControls(controls)].map(row => truncateAnsi(row, columns));
 }
+
+/**
+ * The Ask input as rows: the text with its real caret and selection (inverse),
+ * multiline text on its own rows. While Ask resolves, a live activity line
+ * replaces the caret (supplied by the app from the shared activity clock).
+ */
+export function askInputRows(state: AskState, width: number, activity?: string): string[] {
+  const primary = foreground(UI_COLORS.primary);
+  const subtle = foreground(UI_COLORS.subtle);
+  const accent = foreground(UI_COLORS.accent);
+  const reset = '\u001b[0m';
+  if (state.busy) return [`  ${accent}›${reset} ${primary}${state.input.split('\n')[0]}${reset}`, ...(activity ? [`  ${activity}`] : [])];
+  const chars = graphemes(state.editor.text);
+  const caret = state.editor.cursorIndex;
+  const selection = state.editor.selection;
+  const rows: string[] = [];
+  let row = '';
+  let rowWidth = 0;
+  const flush = () => { rows.push(row); row = ''; rowWidth = 0; };
+  for (let index = 0; index <= chars.length; index += 1) {
+    if (index === caret && !selection) row += `${reset}\u001b[7m${index < chars.length && chars[index] !== '\n' ? chars[index] : ' '}\u001b[27m${primary}`;
+    if (index === chars.length) break;
+    const char = chars[index]!;
+    if (char === '\n') { if (index === caret && !selection) { /* caret drawn as a space above */ } flush(); continue; }
+    if (index === caret && !selection) { rowWidth += displayWidth(char); continue; }
+    const selected = selection && index >= selection.start && index < selection.end;
+    row += selected ? `\u001b[7m${char}\u001b[27m` : char;
+    rowWidth += displayWidth(char);
+    if (rowWidth >= width) flush();
+  }
+  rows.push(row);
+  return rows.map((line, index) => `  ${index === 0 ? `${accent}›${reset}` : `${subtle}·${reset}`} ${primary}${line}${reset}`);
+}
+
+/**
+ * Apply a path completion to the Ask input: the unique or common part is
+ * typed in; when several remain they are offered as a transient list (↑↓,
+ * Enter fills, typing narrows). Choosing never sends or opens anything.
+ */
+export function applyAskCompletion(state: AskState, completion: {text: string; caret: number; candidates: Array<{value: string; directory: boolean}>}): void {
+  state.editor.replaceText(completion.text);
+  state.editor.setCursor(completion.caret);
+  if (!completion.candidates.length) return;
+  const before = [...completion.text].slice(0, completion.caret).join('');
+  const word = /(\S*)$/u.exec(before)?.[1] ?? '';
+  const head = before.slice(0, before.length - word.length);
+  const tail = [...completion.text].slice(completion.caret).join('');
+  if (state.pending?.kind !== 'choose' || state.pending.question !== COMPLETE_QUESTION) state.previous = state.pending;
+  state.pending = {kind: 'choose', reason: 'missing', question: COMPLETE_QUESTION,
+    options: completion.candidates.map(candidate => ({key: `path:${candidate.value}`, label: candidate.value, detail: candidate.directory ? 'folder' : undefined,
+      fill: `${head}${candidate.value}${candidate.directory ? '' : ' '}${tail.replace(/^ /u, '')}`}))} as AskOutcome;
+  state.selected = 0;
+}
+const COMPLETE_QUESTION = 'Complete the path';

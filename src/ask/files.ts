@@ -74,3 +74,61 @@ export function matchFiles(query: string, files: readonly string[], cwd: string,
   }
   return matches.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path)).slice(0, 8);
 }
+
+export interface DirectoryEntry {name: string; directory: boolean}
+
+/** One directory's entries (names and kinds only), directories first, hidden entries only when asked. Bounded. */
+export function listDirectory(path: string, options: {hidden?: boolean; limit?: number} = {}): DirectoryEntry[] | undefined {
+  let entries: import('node:fs').Dirent[];
+  try { entries = readdirSync(path, {withFileTypes: true}); } catch { return undefined; }
+  return entries
+    .filter(entry => options.hidden || !entry.name.startsWith('.'))
+    .map(entry => {
+      let directory = entry.isDirectory();
+      if (entry.isSymbolicLink()) { try { directory = statSync(join(path, entry.name)).isDirectory(); } catch { /* dangling link: a file */ } }
+      return {name: entry.name, directory};
+    })
+    .sort((a, b) => Number(b.directory) - Number(a.directory) || a.name.localeCompare(b.name))
+    .slice(0, options.limit ?? 500);
+}
+
+export interface PathCompletion {
+  /** The text with the completed word (unique match or longest common prefix). */
+  text: string;
+  caret: number;
+  /** Every candidate when more than one remains (relative to the typed directory). */
+  candidates: Array<{value: string; directory: boolean}>;
+}
+
+/**
+ * Complete the path word before the caret from real directory entries, the
+ * same facts the shell composer's file completion lists. Only names are read;
+ * nothing is opened or run.
+ */
+export function completePath(text: string, caret: number, cwd: string, home: string): PathCompletion | undefined {
+  const chars = [...text];
+  const before = chars.slice(0, caret).join('');
+  const word = /(\S*)$/u.exec(before)?.[1] ?? '';
+  const expanded = word.startsWith('~/') ? join(home, word.slice(2)) : word;
+  const slash = expanded.lastIndexOf('/');
+  const directoryPart = slash >= 0 ? expanded.slice(0, slash + 1) : '';
+  const prefix = slash >= 0 ? expanded.slice(slash + 1) : expanded;
+  const directory = isAbsolute(directoryPart) ? directoryPart || '/' : resolve(cwd, directoryPart || '.');
+  const entries = listDirectory(directory, {hidden: prefix.startsWith('.')});
+  if (!entries) return undefined;
+  const matches = entries.filter(entry => entry.name.startsWith(prefix));
+  const loose = matches.length ? matches : entries.filter(entry => entry.name.toLowerCase().startsWith(prefix.toLowerCase()));
+  if (!loose.length) return undefined;
+  const typedDirectory = slash >= 0 ? word.slice(0, word.length - prefix.length) : '';
+  let completion: string;
+  if (loose.length === 1) completion = loose[0]!.name + (loose[0]!.directory ? '/' : ' ');
+  else {
+    completion = loose[0]!.name;
+    for (const entry of loose) while (!entry.name.startsWith(completion)) completion = completion.slice(0, -1);
+    if (completion.length < prefix.length) completion = prefix;
+  }
+  const replaced = before.slice(0, before.length - word.length) + typedDirectory + completion;
+  const after = chars.slice(caret).join('');
+  return {text: replaced + (loose.length === 1 && completion.endsWith(' ') && after.startsWith(' ') ? after.slice(1) : after), caret: [...replaced].length,
+    candidates: loose.length > 1 ? loose.slice(0, 40).map(entry => ({value: typedDirectory + entry.name + (entry.directory ? '/' : ''), directory: entry.directory})) : []};
+}

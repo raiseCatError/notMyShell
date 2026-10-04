@@ -153,9 +153,9 @@ import {applyPlan, sha256} from '../ask/fileEdit.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import type {AskOption} from '../ask/types.js';
 import {askStarters} from '../ask/guide.js';
-import {pushTurn, ASK_GREETING, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
+import {applyAskCompletion, pushTurn, ASK_GREETING, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
 import {readArgv, resolveRequest} from '../ask/resolver.js';
-import {listProjectFiles} from '../ask/files.js';
+import {completePath, listProjectFiles} from '../ask/files.js';
 import {gitWorktrees} from '../ask/git.js';
 import type {AskAction, AskContext, AskOutcome} from '../ask/types.js';
 import {askProviderFacts, PROVIDER_FAMILIES, selectProvider} from '../providers/families.js';
@@ -1138,7 +1138,7 @@ export class TerminalApp {
     if (this.shelf.focused && this.handleShelfKey(key)) return;
     if (this.agentPanel) { this.handleAgentPanelKey(key); return; }
     if (this.askState) {
-      const event = askKey(this.askState, key);
+      const event = askKey(this.askState, key, this.dimensions().columns);
       if (event) void this.handleAskEvent(event);
       this.render();
       return;
@@ -5223,6 +5223,15 @@ export class TerminalApp {
     const state = this.askState;
     if (!state) return;
     if (event.kind === 'close') { this.closeAsk(); this.render(); return; }
+    if (event.kind === 'complete') {
+      // Paths only after the request's first word ("open pa", "find src/"): the same directory facts the composer completes from.
+      const before = [...event.text].slice(0, event.caret).join('');
+      if (!/\s/u.test(before.trimStart()) && !before.includes('/')) return;
+      const completion = completePath(event.text, event.caret, this.shellCwd, homedir());
+      if (completion) applyAskCompletion(state, completion);
+      this.render();
+      return;
+    }
     if (event.kind === 'resolve') {
       const generation = this.askGeneration;
       let outcome: AskOutcome;
