@@ -101,6 +101,8 @@ test('SIGHUP detaches; Ctrl+D ends the session; /zsh detaches it for the ordinar
 
 test('/zsh → nmsh returns to the exact session without a picker, and leaving again returns to the waiting shell', async () => {
   const sandbox = new LiveSandbox({liveSessionStartup: 'ask'});
+  // An ordinary zsh with no startup files would open zsh-newuser-install instead of a prompt.
+  writeFileSync(join(sandbox.home, '.zshrc'), '# test\n');
   try {
     const other = sandbox.launch();
     await other.waitFor(/❯/);
