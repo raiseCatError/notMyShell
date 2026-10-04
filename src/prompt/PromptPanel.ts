@@ -220,6 +220,8 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
 
 /** Main Prompt rows: theme, style and vibrance, the style's own controls, then icons and modules. */
 export function appearanceRows(configuration: PromptConfiguration): AppearanceRow[] {
+  // Prompt None keeps only the input marker (plus the theme, which still styles NMSh UI).
+  if (configuration.provider === 'none') return [...themeRows(configuration), PROMPT_SYMBOL_ROW, ...(configuration.promptSymbol === 'custom' ? [PROMPT_SYMBOL_GLYPH_ROW] : [])];
   return [
     ...themeRows(configuration),
     {id: 'textColors', label: 'Text colors', value: c => c.nmsh.textColors === 'neutral' ? 'Neutral' : 'Theme',

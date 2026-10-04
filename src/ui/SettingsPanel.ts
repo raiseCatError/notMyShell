@@ -452,7 +452,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
   ...CURSOR_ROWS,
-  {id: 'promptSymbol', when: nativePrompt, label: 'Prompt symbol', description: 'The composer marker; a custom symbol is typed in /prompt. Starship/Powerlevel10k prompts are unchanged', category: 'Prompt',
+  {id: 'promptSymbol', when: c => c.provider === 'nmsh' || c.provider === 'none', label: 'Prompt symbol', description: 'The input marker before the command (also with Prompt None); a custom symbol is typed in /prompt. Starship/Powerlevel10k prompts are unchanged', category: 'Prompt',
     // Custom is offered here only once a glyph exists; the glyph is typed in /prompt.
     control: 'enum', options: PROMPT_SYMBOL_IDS.filter(id => id !== 'custom').map(id => promptSymbolLabel(id)),
     optionsFor: c => symbolIds(c).map(id => promptSymbolLabel(id, c.promptSymbolCustom)),

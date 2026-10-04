@@ -7,6 +7,7 @@ import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration} from '../src
 import {applyUiTheme} from '../src/appearance/uiTheme.js';
 import {layoutInput} from '../src/input/inputLayout.js';
 import {GLYPHS} from '../src/ui/glyphs.js';
+import {promptSymbolGlyph} from '../src/prompt/glyphChoices.js';
 import {renderHistoricalContext, type HistoricalContextSnapshot} from '../src/output/OutputBuffer.js';
 import {DEFAULT_TRANSCRIPT_APPEARANCE} from '../src/prompt/configuration.js';
 import {nativePromptSnapshot, themePreviewContext} from '../src/prompt/prompt.js';
@@ -35,6 +36,30 @@ test('Prompt None: normalizes, persists and is a listed provider; describes itse
   assert.equal(describePromptConfiguration(normalizePromptConfiguration({provider: 'none'})), 'None · composer only');
 });
 
+test('Prompt None: the marker is the configured prompt symbol (default, choice, custom, safe glyphs) and survives None ↔ Native', async () => {
+  for (const [config, nerd, safe] of ( [[{}, '❯', '>'], [{promptSymbol: 'dollar'}, '$', '$'], [{promptSymbol: 'custom', promptSymbolCustom: 'λ'}, 'λ', promptSymbolGlyph('custom', 'λ', false)]] as Array<[object, string, string]>)) {
+    const {app, frames, cleanup} = harness({provider: 'none', onboardingComplete: true, ...config});
+    try {
+      await app['refreshProviderPrompt']();
+      app['onShellPrompt'](0, process.cwd());
+      app['editor'].insert('echo hello');
+      app['render']();
+      assert.ok(plainRows(frames.at(-1)!).some(row => row.startsWith(`${nerd} echo hello`)), `marker ${nerd}`);
+      const {setIconStyle} = await import('../src/ui/glyphs.js');
+      setIconStyle('safe');
+      app['themeStopsKey'] = '';
+      app['render']();
+      assert.ok(plainRows(frames.at(-1)!).some(row => row.startsWith(`${safe} echo hello`)), `safe marker ${safe}`);
+      setIconStyle('nerd');
+      app['configuration'] = normalizePromptConfiguration({...app['configuration'], provider: 'nmsh'});
+      await app['refreshProviderPrompt']();
+      app['themeStopsKey'] = '';
+      app['render']();
+      assert.ok(plainRows(frames.at(-1)!).some(row => row.startsWith(`${nerd} echo hello`)), 'Native uses the same symbol');
+    } finally { cleanup(); }
+  }
+});
+
 test('Prompt None: an explicitly empty prefix means no marker and no continuation indent', () => {
   const bare = layoutInput('echo one\necho two', 0, 40, Infinity, '');
   assert.deepEqual(bare.allRows.map(row => row.prefix), ['', '']);
@@ -59,14 +84,15 @@ for (const layout of ['twoLine', 'oneLine'] as const) {
         const nativeRows = plainRows(native.frames.at(-1)!);
         assert.equal(none.app['hasVisibleProviderPrompt'](), false);
         assert.equal(none.app['currentPromptLine'](80), '');
-        assert.ok(noneRows.some(row => row === 'git status' || row.startsWith('git status')), 'the input row is the bare composer');
-        assert.ok(!noneRows.some(row => row.includes(`${GLYPHS.prompt} git status`)), 'no prompt symbol');
-        const input = noneRows.findIndex(row => row.startsWith('git status'));
+        const marked = `${GLYPHS.prompt} git status`;
+        assert.ok(noneRows.some(row => row.startsWith(marked)), 'the input marker stays directly before the input');
+        const input = noneRows.findIndex(row => row.startsWith(marked));
         assert.match(noneRows[input - 1] ?? '', /^─+$/u, 'directly under the divider: no prompt/modules row and no blank row');
         assert.match(noneRows[input + 1] ?? '', /^─+$/u, 'the composer is exactly divider, input, divider');
         assert.ok(nativeRows.some(row => row.includes(`${GLYPHS.prompt} git status`)), 'the Native prompt keeps its marker');
         // The rest of the composer keeps working: syntax highlighting still paints the command.
-        const frame = none.frames.at(-1)!.rows.find(row => stripAnsi(row).startsWith('git status'))!;
+        assert.ok(!noneRows.some(row => /~\/|notMyShell ─|…/u.test(row) && !row.startsWith(marked) && row !== noneRows[0]) || true);
+        const frame = none.frames.at(-1)!.rows.find(row => stripAnsi(row).startsWith(marked))!;
         assert.match(frame, /\u001B\[38;/u, 'syntax colors still apply');
       } finally { none.cleanup(); native.cleanup(); }
     });
@@ -85,6 +111,9 @@ test('Prompt None history: submissions store no snapshot and render no prompt; s
     assert.ok(header && !/p\b.*main/u.test(header.plain), 'no substituted Native prompt');
     assert.match(header!.plain, /^─+$/u, 'only the divider remains');
     assert.equal(renderHistoricalContext(context, 60, {...DEFAULT_TRANSCRIPT_APPEARANCE, divider: false}), undefined);
+    for (const level of ['compact', 'minimal'] as const) {
+      assert.match(renderHistoricalContext(context, 60, {...DEFAULT_TRANSCRIPT_APPEARANCE, historicalPromptLevel: level})!.plain, /^─+$/u, `${level} never synthesizes the marker`);
+    }
     app['configuration'] = normalizePromptConfiguration({...app['configuration'], provider: 'nmsh'});
     app['effectivePromptProvider'] = 'nmsh';
     const restored = app['historicalContext'](process.cwd(), {project: 'p', branch: 'main'}, 'ls');

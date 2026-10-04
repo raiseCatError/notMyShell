@@ -2997,9 +2997,9 @@ export class TerminalApp {
         state.selectedIndex = 0;
         if (state.p10kStatus.installed) await this.refreshPanelPreview(state);
       } else if (state.draft.provider === 'none') {
-        // Composer only: no layout or appearance applies to an absent prompt.
-        await this.savePromptSettings();
-        return;
+        // Composer only: no layout applies; the appearance step keeps the theme and the input marker.
+        state.step = 'appearance';
+        state.selectedIndex = 0;
       } else {
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
@@ -3151,7 +3151,7 @@ export class TerminalApp {
       }
     } else if (state.step === 'layout') {
       applyLayoutChoice(state.draft, state.selectedIndex);
-      if (state.draft.provider === 'nmsh') { state.step = 'appearance'; state.selectedIndex = 0; }
+      if (state.draft.provider === 'nmsh' || state.draft.provider === 'none') { state.step = 'appearance'; state.selectedIndex = 0; }
       else await this.savePromptSettings();
     } else if (onModulesRow(state)) {
       state.step = 'modules';
@@ -3208,7 +3208,7 @@ export class TerminalApp {
     const context = state.step === 'modules' || state.step === 'appearance' || state.step === 'layout'
       ? moduleShowcaseContext() : this.promptContext();
     let providerRow: string;
-    if (previewConfig.provider === 'none') return [boundary, 'command', boundary, `${SUBTLE}None · composer only${RESET}`];
+    if (previewConfig.provider === 'none') return [`${SUBTLE}None · composer only${RESET}`, boundary, `${ACCENT}${GLYPHS.prompt}${RESET} echo hello`, boundary];
     if (previewConfig.provider !== 'nmsh') {
       const preview = this.panelExternalPrompt?.provider === previewConfig.provider ? this.panelExternalPrompt.result : undefined;
       if (!preview) return [this.externalPanelStatusText(state, previewConfig.provider, width)];
@@ -4121,7 +4121,7 @@ export class TerminalApp {
           break;
         }
         if (draft.provider === 'none') {
-          rows.push(`${label('Prompt')}${SUBTLE}None · composer only${RESET}`, `${label('Composer')}${PRIMARY}git status${RESET}`);
+          rows.push(`${label('Prompt')}${SUBTLE}None · composer only${RESET}`, `${label('Composer')}${ACCENT}${GLYPHS.prompt}${RESET} ${PRIMARY}git status${RESET}`);
           rows.push(`  ${SUBTLE}${providerExplanation('prompt', draft.provider)}${RESET}`);
           break;
         }
@@ -7449,8 +7449,8 @@ export class TerminalApp {
   }
 
   private inputFirstLinePrefix(columns: number): string | undefined {
-    // Prompt None: the composer is only the input, with no marker in either layout.
-    if (this.effectivePromptProvider === 'none') return '';
+    // Prompt None: no context at all; the input marker (the configured prompt symbol) stays.
+    if (this.effectivePromptProvider === 'none') return undefined;
     if (this.promptConfiguration.composerLayout !== 'oneLine') return undefined;
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
       const maxWidth = Math.max(0, columns - 1);
