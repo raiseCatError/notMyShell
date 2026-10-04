@@ -353,6 +353,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Off by default (Never). Any key, mouse or new output ends it and leaves everything exactly as it was.'], rows: [
     {row: configRow('idleTimeout')},
     {row: configRow('idleMode')},
+    {row: configRow('idleRunBusy')},
     {row: configRow('idleColor')},
     routeRow('setupIdleColors', 'Edit idle colors', 'The idle visuals\' own gradient stops, with a live preview', 'idleColors', 'Idle visuals'),
     {row: configRow('activityColors'), note: () => 'The running-command line only; finished commands show their plain result'},
