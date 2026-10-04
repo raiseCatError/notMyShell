@@ -51,6 +51,7 @@ import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {appendFileSync, existsSync, readFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
+import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
 import {CommandDescriptions, identityDescription} from '../shell/CommandDescriptions.js';
 import {localKnowledge} from '../shell/CommandKnowledge.js';
@@ -156,6 +157,11 @@ import {askStarters} from '../ask/guide.js';
 import {applyAskCompletion, pushTurn, ASK_GREETING, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
 import {readArgv, resolveRequest} from '../ask/resolver.js';
 import {completePath, listProjectFiles} from '../ask/files.js';
+import {recipeRunAllowed} from '../ask/recipes.js';
+import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
+import {ManagedTasks} from '../tasks/ManagedTasks.js';
+import {liveLine} from '../status/liveLine.js';
+import {browseOutcome} from '../ask/fileAssist.js';
 import {gitWorktrees} from '../ask/git.js';
 import type {AskAction, AskContext, AskOutcome} from '../ask/types.js';
 import {askProviderFacts, PROVIDER_FAMILIES, selectProvider} from '../providers/families.js';
@@ -4752,8 +4758,28 @@ export class TerminalApp {
   private noticeRows(columns: number): string[] {
     // The agent shelf shares this chrome slot (and the screen plan's rows): hidden at rest, never a permanent row.
     const shelf = this.shelfRow(columns);
-    const rows = this.sessionNoticeRows(columns);
+    const rows = [...this.sessionNoticeRows(columns), ...this.taskRows(columns)];
     return shelf ? [...rows, shelf] : rows;
+  }
+
+  /** Live rows for NMSh-managed tasks (shared live-activity look); finished ones linger briefly, then go. */
+  private taskRows(columns: number): string[] {
+    if (this.passthrough || this.externalPassthrough) return [];
+    const now = Date.now();
+    const still = this.promptConfiguration.presentation.reducedMotion || this.promptConfiguration.presentation.effectsOff || isReducedMotion();
+    return this.managedTasks.tasks.filter(task => !task.endedAt || now - task.endedAt < 8000).map(task => {
+      const live = task.status === 'starting' || task.status === 'running' || task.status === 'waiting' || task.status === 'stopping';
+      const url = task.urls[0];
+      if (!live) return truncateAnsi(`${task.status === 'failed' ? ERROR : SUCCESS}${task.status === 'failed' ? GLYPHS.failure : GLYPHS.success}${RESET} ${SECONDARY}${task.label} ${task.status === 'failed' ? `failed · exit ${task.exitCode ?? '?'}` : 'stopped'}${RESET}`, columns);
+      return truncateAnsi(liveLine(task.label, [task.status === 'running' ? undefined : task.status, url].filter(Boolean).join(' · ') || undefined, task.startedAt, now, {still}), columns);
+    });
+  }
+
+  /** A ticking clock only while a managed task is live (its elapsed time and shimmer); none otherwise. */
+  private syncTaskClock(): void {
+    const live = this.managedTasks.live().length > 0;
+    if (live && !this.taskClock) this.taskClock = presentationClock.subscribe(() => { if (!this.stopped) this.render(); }, 250);
+    else if (!live && this.taskClock) { this.taskClock(); this.taskClock = undefined; setTimeout(() => { if (!this.stopped) this.render(); }, 8100).unref(); }
   }
 
   private shelfRow(columns: number): string | undefined {
@@ -5185,6 +5211,10 @@ export class TerminalApp {
   /** External agent harness sessions (managed via supported protocols, or observed processes). */
   private readonly agents = new AgentSessions();
   private readonly agentsSubscription = this.agents.onChange(() => { if (!this.stopped) this.render(); });
+  /** Long-lived tasks Ask started (dev servers): owned by NMSh, stopped when it exits. */
+  private readonly managedTasks = new ManagedTasks();
+  private readonly tasksSubscription = this.managedTasks.onChange(() => { if (!this.stopped) { this.syncTaskClock(); this.render(); } });
+  private taskClock?: () => void;
   private agentPanel?: AgentPanelState;
   private agentView?: AgentViewState;
   /** The transient activity shelf above the composer: hidden at rest, revealed by ↓, pinned while something needs attention. */
@@ -5262,14 +5292,36 @@ export class TerminalApp {
       return;
     }
     // Actions with a factual result stay inside the conversation; navigation to another surface leaves Ask.
-    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile' || event.action.kind === 'format' || event.action.kind === 'brew') {
+    if (event.action.kind === 'git' || event.action.kind === 'recipe' || event.action.kind === 'project' || event.action.kind === 'startTask' || event.action.kind === 'stopTask'
+      || event.action.kind === 'taskOutput' || event.action.kind === 'openUrl' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile' || event.action.kind === 'format' || event.action.kind === 'brew') {
       await this.runInAsk(state, event.action);
       this.render();
       return;
     }
+    if (event.action.kind === 'pickFile') { await this.pickFileInAsk(state, event.action.root); this.render(); return; }
     this.closeAsk();
     await this.executeAskAction(event.action);
     this.render();
+  }
+
+  /**
+   * "open" with an external picker configured (fzf, Television): the project's
+   * files in that picker; the chosen file opens in the editor. Native, a
+   * missing tool or a busy terminal fall back to Ask's own file list.
+   */
+  private async pickFileInAsk(state: AskState, root: string): Promise<void> {
+    const fallback = () => { receiveOutcome(state, browseOutcome(this.shellCwd, {cwd: this.shellCwd, home: homedir(), ...(this.context.root ? {repoRoot: this.context.root} : {}),
+      editor: {label: this.hostActions().label, available: true}} as AskContext, {note: 'type to filter'})); };
+    if (this.promptConfiguration.picker === 'native' || this.pickerOpening || this.running) { fallback(); return; }
+    this.pickerOpening = true;
+    try {
+      const files = listProjectFiles(root).slice(0, 20_000);
+      const result = await openPicker(this.promptConfiguration.picker, files.map(path => ({id: path, label: path, value: path})), fallback, this.pickerHandoff);
+      if (this.askState !== state || this.stopped) return;
+      if (result?.kind === 'selected') await this.runInAsk(state, {kind: 'openFile', path: resolvePath(root, result.candidate.value)});
+      else if (result?.kind === 'fallback') fallback();
+      else pushTurn(state, 'ask', 'Nothing was opened.');
+    } finally { this.pickerOpening = false; }
   }
 
   /** The Homebrew facts one package request needs; nothing else is queried. */
@@ -5320,6 +5372,35 @@ export class TerminalApp {
     if (action.kind === 'setting') {
       await this.executeAskAction(action);
       finish(`Done: ${action.label}.`);
+      return;
+    }
+    if (action.kind === 'startTask') {
+      const project = readProjectFacts(action.cwd);
+      if (!projectRunAllowed(action.argv, project)) { finish('That script is no longer defined by this project, so nothing was started.'); return; }
+      const started = this.managedTasks.start(action.label, action.argv, action.cwd);
+      if ('error' in started) { finish(`${action.label} didn't start: ${started.error}`); return; }
+      finish(`Started ${action.label} in the background (${action.argv.join(' ')}). The shell stays free; its URL shows above the composer once it prints one.`,
+        [{key: `task:url:${started.id}`, label: 'What URL is it on?', refine: 'what url is the dev server on'}, {key: `task:out:${started.id}`, label: 'Show its output', outcome: {kind: 'proposal', capability: 'project.task', safety: 'navigate', confidence: 1, direct: true, text: 'Output', action: {kind: 'taskOutput', id: started.id}}},
+          {key: `task:stop:${started.id}`, label: 'Stop it', refine: 'stop the dev server'}]);
+      return;
+    }
+    if (action.kind === 'stopTask') {
+      const task = this.managedTasks.get(action.id);
+      finish(task && this.managedTasks.stop(action.id) ? `Stopping ${task.label}…` : 'That task isn\'t running.');
+      return;
+    }
+    if (action.kind === 'taskOutput') {
+      const task = this.managedTasks.get(action.id);
+      if (!task) { finish('That task is gone.'); return; }
+      const tail = task.output.slice(-30);
+      finish(`${task.label} · ${task.status} · ${task.output.length} line${task.output.length === 1 ? '' : 's'}${tail.length < task.output.length ? ' (last 30)' : ''}\n${tail.map(line => `  ${line}`).join('\n') || '  (no output yet)'}`);
+      return;
+    }
+    if (action.kind === 'openUrl') {
+      if (!openableUrl(action.url)) { finish('That isn\'t a URL Ask opens.'); return; }
+      const opener = process.platform === 'darwin' ? '/usr/bin/open' : resolveCommand('xdg-open') ?? resolveCommand('wslview');
+      if (!opener) { finish(`No system URL opener is available here. The URL is ${action.url}`); return; }
+      try { spawn(opener, [action.url], {detached: true, stdio: 'ignore'}).unref(); finish(`Opened ${action.url}.`); } catch { finish(`Couldn't open ${action.url}.`); }
       return;
     }
     if (action.kind === 'openFile') {
@@ -5384,7 +5465,9 @@ export class TerminalApp {
       finish(`Installed ${tool.label} at ${found}.`, next);
       return;
     }
-    if (action.kind !== 'git' && action.kind !== 'read' && action.kind !== 'format') return;
+    if (action.kind !== 'git' && action.kind !== 'read' && action.kind !== 'format' && action.kind !== 'recipe' && action.kind !== 'project') return;
+    if (action.kind === 'project' && !projectRunAllowed(action.argv, readProjectFacts(state.repoRoot ?? this.shellCwd))) { finish('That script is no longer defined by this project, so nothing was run.'); return; }
+    if (action.kind === 'recipe' && recipeRunAllowed(action.argv) !== action.risk) { finish('Ask can\'t run that command, so nothing was run.'); return; }
     const argv = action.kind === 'read' ? readArgv(action.command) : action.argv;
     if (action.kind === 'git' && gitRunAllowed(action.argv) !== action.risk) { finish('Ask can\'t run that command, so nothing was run.'); return; }
     if (action.kind === 'format' && !formatterAllowed(action.argv)) { finish('Ask can\'t run that formatter command, so nothing was run.'); return; }
@@ -5513,7 +5596,7 @@ export class TerminalApp {
         ...(record.durationMs !== undefined ? {durationMs: record.durationMs} : {}), lines: Math.max(0, (record.endId ?? record.outputStartId) - record.outputStartId)});
     }
     // The project file list is read (names only, bounded) only for requests about opening things.
-    const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
+    const files = /\b(?:open|edit|view|show|list|ls|find|where|locate|file|files|folder|repo|config|json|this|that|it|one|typescript|python|tests?)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
     const conversation = this.askState?.referents;
     // Homebrew facts only for package requests (bounded, local, auto-update off).
     const packageRequest = packageIntent(normalizeRequest(text));
@@ -5525,7 +5608,9 @@ export class TerminalApp {
     const referents = this.askState?.referents;
     const git = root && (/\b(?:git|branch|upstream|remotes?|untracked|staged?|unstaged|commit|push|pull|fetch|conflicts?|conflicted|clean|working tree|changes|changed)\b/iu.test(text) || referents?.files)
       ? await readGitFacts(root) : undefined;
-    return {cwd: this.shellCwd, home: homedir(), ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
+    const projectFacts = readProjectFacts(root ?? this.shellCwd);
+    const tasks = this.managedTasks.tasks.map(task => ({id: task.id, label: task.label, status: task.status, urls: [...task.urls], startedAt: task.startedAt, lines: task.output.length, command: task.argv.join(' ')}));
+    return {cwd: this.shellCwd, home: homedir(), platform: process.platform, picker: this.promptConfiguration.picker, ...(projectFacts ? {project: projectFacts} : {}), tasks, ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
       ...(this.context.git ? {dirty: Boolean(this.context.git.staged || this.context.git.modified || this.context.git.untracked)} : {}),
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
@@ -6343,6 +6428,9 @@ export class TerminalApp {
     this.agentDiscoveryTimer?.();
     this.agentsSubscription();
     this.agents.dispose();
+    this.tasksSubscription();
+    this.taskClock?.(); this.taskClock = undefined;
+    this.managedTasks.dispose();
     this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();

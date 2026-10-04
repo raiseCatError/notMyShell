@@ -15,8 +15,13 @@ import type {AskContext, AskOption, AskOutcome, AskReferents, CommandBlock} from
 /** Git subcommands Ask may run, and how much each changes. Anything else is never run by Ask. */
 export const GIT_RUN_POLICY: Readonly<Record<string, 'read' | 'mutate'>> = {
   status: 'read', diff: 'read', log: 'read', show: 'read', branch: 'read', remote: 'read',
-  add: 'mutate', commit: 'mutate', push: 'mutate', pull: 'mutate', fetch: 'mutate',
+  add: 'mutate', commit: 'mutate', push: 'mutate', pull: 'mutate', fetch: 'mutate', switch: 'mutate',
 };
+
+/** A branch name Git accepts (git check-ref-format's main rules), so a created branch is never a guess at quoting. */
+export function validBranchName(name: string): boolean {
+  return /^[A-Za-z0-9._/-]{1,100}$/u.test(name) && !/^[-/.]|[/.]$|\.\.|\/\/|@\{|\.lock$|^HEAD$/u.test(name);
+}
 
 /** Options that make an otherwise allowed subcommand destructive or history-rewriting. */
 const DESTRUCTIVE_OPTIONS = /^(?:-f|--force|--force-with-lease|--hard|-D|--delete|--prune|--mirror|--amend|--no-verify)$/u;
@@ -27,6 +32,9 @@ export function gitRunAllowed(argv: readonly string[]): 'read' | 'mutate' | unde
   const risk = GIT_RUN_POLICY[argv[1] ?? ''];
   if (!risk || argv.some(arg => DESTRUCTIVE_OPTIONS.test(arg.split('=')[0]!))) return undefined;
   if (argv[1] === 'branch' && argv.length > 2 && !argv.slice(2).every(arg => /^(?:-a|-r|-v|-vv|--list|--show-current)$/u.test(arg))) return undefined;
+  // switch only creates a new branch from HEAD (-c <name>) or moves to an existing one; nothing that discards work.
+  if (argv[1] === 'switch' && !((argv.length === 4 && argv[2] === '-c' && validBranchName(argv[3]!)) || (argv.length === 3 && validBranchName(argv[2]!)))) return undefined;
+  if (argv[1] === 'show' && !argv.slice(2).every(arg => /^(?:--stat|--oneline|--no-patch|-s|HEAD(?:~\d+)?|--format=[\w%:<>() -]+)$/u.test(arg))) return undefined;
   if (argv[1] === 'remote' && argv.length > 2 && !argv.slice(2).every(arg => arg === '-v')) return undefined;
   return risk;
 }
@@ -117,6 +125,8 @@ export function refineFiles(text: string, files: readonly string[]): string[] | 
   return /\b(?:except|but not|not)\b/u.test(text) ? files.filter(file => !chosen.includes(file)) : chosen;
 }
 
+const CHANGES = /\b(?:stuff|things|files|what) i(?:'ve| have)? (?:changed|modified|edited|touched)\b|\bmy (?:changes|edits)\b|\bwhat(?:'s| is| did i)? (?:changed|change)\b/u;
+const DIFF = /^(?:please )?(?:show|see|view|display)(?: me)? (?:the |my |a )?(?:git )?diff\b/u;
 const PRONOUN = /\b(?:them|those|these|it|that|this stuff|these files|those files|the files)\b/u;
 
 function untrackedOutcome(git: GitFacts): AskOutcome {
@@ -178,7 +188,8 @@ export function resolveGit(text: string, raw: string, context: AskContext, refer
   const git = context.git;
   const refs = context.referents;
   const files = refs?.files;
-  const aboutGit = /\b(?:git|branch|upstream|remote|remotes|untracked|staged|stage|unstaged|commit|push|pull|fetch|conflict|conflicts|conflicted|working tree)\b/u.test(text);
+  const aboutGit = /\b(?:git|branch|upstream|remote|remotes|untracked|staged|stage|unstaged|commit|push|pull|fetch|conflict|conflicts|conflicted|working tree)\b/u.test(text)
+    || CHANGES.test(text) || DIFF.test(text);
   const referring = Boolean(files) && PRONOUN.test(text);
   if (!aboutGit && !referring && !(refs?.block && /^(?:actually |no )?(?:only|just|except)\b/u.test(text))) return undefined;
   // Outside a repository only a question about this repository's state gets that answer; explanations and refusals resolve elsewhere.
@@ -192,6 +203,31 @@ export function resolveGit(text: string, raw: string, context: AskContext, refer
     if (subset?.length) return addOutcome(git, subset, files.kind);
   }
   const question = /\b(?:command|how (?:do|can|would) i|how to|syntax|what would|what's the|what is the)\b/u.test(text);
+  // "show me the diff", "show me the stuff i changed": the read-only diff, with the facts first.
+  if (DIFF.test(text) || (CHANGES.test(text) && /^(?:show|see|view|what|list)\b/u.test(text))) {
+    const staged = /\bstaged\b/u.test(text);
+    const summary = gitSummary(git);
+    return {kind: 'proposal', capability: 'git.diff', safety: 'read', confidence: 0.95, text: `${summary}\nShow the ${staged ? 'staged' : 'working-tree'} diff?`,
+      action: {kind: 'read', command: {id: 'git.diff', ...(staged ? {staged: true} : {})}},
+      referents: {files: {paths: [...new Set([...git.modified, ...git.deleted, ...git.untracked])], kind: 'modified'}}};
+  }
+  if (/\bstaged\b/u.test(text) && /^(?:show|list|see|what|which)\b/u.test(text) && !/\bunstaged\b/u.test(text)) {
+    return git.staged.length ? {kind: 'answer', capability: 'git.status', text: `${plural(git.staged.length, 'staged file')}:\n${listed(git.staged)}`, referents: {files: {paths: [...git.staged], kind: 'staged'}},
+      next: [{key: 'git:commit', label: 'Commit them', refine: 'commit with message "'}]}
+      : {kind: 'answer', capability: 'git.status', text: 'Nothing is staged.', next: gitNextSteps(git)};
+  }
+  // "what did my last commit do": git show --stat HEAD, read-only.
+  if (/\b(?:last|latest|previous|most recent) commit\b/u.test(text) && /\b(?:what|show|did|do|change|changed|contain)\b/u.test(text)) {
+    return answerWithBlock('Your last commit, with the files it changed:', {...contextBlock(['git', 'show', '--stat', 'HEAD'], git, 'Shows the newest commit\'s message and changed files.'), risk: 'read'});
+  }
+  // "make a new branch called test": git switch -c, a mutating action behind the final Yes.
+  const newBranch = /\b(?:make|create|start|new|add|open)\b.*\bbranch\b(?:.*\b(?:called|named)\b)?\s+["']?([\w./-]+)["']?$/u.exec(text);
+  if (newBranch && /\b(?:make|create|start|new)\b/u.test(text) && !/^(?:what|which)\b/u.test(text)) {
+    const name = newBranch[1]!;
+    if (name === 'branch' || !validBranchName(name)) return {kind: 'answer', capability: 'git.status', text: `"${name}" isn't a valid branch name.`};
+    return answerWithBlock(`Create ${name} from ${git.detached ? 'the current commit' : git.branch ?? 'HEAD'} and switch to it:`, contextBlock(['git', 'switch', '-c', name], git, `Creates ${name} at the current commit; your working tree is kept.`),
+      {branch: name});
+  }
   if (/\bforce[- ]?push\b|\bpush\b.*\b(?:--force|-f)\b/u.test(text)) {
     return answerWithBlock('A force push replaces the remote branch\'s history. Ask won\'t run it; here is the safer form to copy if you mean it.',
       {...contextBlock(['git', 'push', '--force-with-lease'], git, 'Overwrites the remote branch only if it still matches what you last fetched.'), risk: 'destructive'});
@@ -232,6 +268,13 @@ export function resolveGit(text: string, raw: string, context: AskContext, refer
   }
   if (/\bpush\b/u.test(text) && /\b(?:branch|this|it|my|changes|commits|upstream)\b/u.test(text)) return pushOutcome(git, reference);
   if (/\bpull\b/u.test(text) && /\b(?:branch|this|it|my|changes|latest|upstream)\b/u.test(text)) return pullOutcome(git);
+  // "how do i push", "what's the syntax to push": a plain push is not a force push; the syntax, then this branch's exact command.
+  if (/\b(?:push|pull)\b/u.test(text) && (question || /^(?:push|pull)$/u.test(text) || /^how\b/u.test(text))) {
+    const verb = /\bpush\b/u.test(text) ? 'push' : 'pull';
+    const syntax = verb === 'push' ? 'git push [<remote> [<branch>]] sends your commits to a remote. It never rewrites history unless you add --force.' : 'git pull [<remote> [<branch>]] fetches a remote branch and integrates it into yours.';
+    const contextual = verb === 'push' ? pushOutcome(git, reference) : pullOutcome(git);
+    return contextual.kind === 'answer' ? {...contextual, text: `${syntax}\n\nHere:\n${contextual.text}`} : contextual;
+  }
   if (/\bfetch\b/u.test(text)) return git.remotes.length ? answerWithBlock('Fetching downloads new commits from remotes without changing your branch.', contextBlock(['git', 'fetch', '--all'].filter(arg => arg !== '--all' || git.remotes.length > 1), git, 'Updates remote-tracking branches only.'))
     : {kind: 'answer', capability: 'git.status', text: 'This repository has no remotes to fetch from.'};
   if (/\bremotes?\b/u.test(text) || /\bupstream\b/u.test(text)) {

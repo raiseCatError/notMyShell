@@ -1,0 +1,208 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {resolveRequest} from '../src/ask/resolver.js';
+import {listProjectFiles} from '../src/ask/files.js';
+import {ordinalIn} from '../src/ask/fileAssist.js';
+import {explainMode, recipeRunAllowed, validHost} from '../src/ask/recipes.js';
+import {isLongRunning, projectRunAllowed, readProjectFacts, scriptArgv} from '../src/ask/project.js';
+import {gitRunAllowed, renderCommand} from '../src/ask/gitAssist.js';
+import {ManagedTasks, extractUrls} from '../src/tasks/ManagedTasks.js';
+import {createAskState, receiveOutcome, submitText} from '../src/ask/AskPanel.js';
+import type {GitFacts} from '../src/ask/git.js';
+import type {AskContext, AskOutcome, AskReferents} from '../src/ask/types.js';
+import {BundledCatalog} from '../src/shell/BundledCatalog.js';
+import {CommandReference} from '../src/shell/CommandReference.js';
+import {DeclarativeSpecSource} from '../src/shell/CompletionSources.js';
+
+let root = '';
+const specs = mkdtempSync(join(tmpdir(), 'nmsh-specs-'));
+const installed = new Set(['ping', 'df', 'du', 'lsof', 'pgrep', 'ps', 'rg', 'unzip', 'tar', 'git', 'npm', 'rm', 'chmod']);
+const commands = {reference: new CommandReference(new BundledCatalog(), new DeclarativeSpecSource(specs)),
+  identity: (name: string) => installed.has(name) ? {kind: 'executable' as const, path: `/usr/bin/${name}`} : undefined};
+const git: GitFacts = {detached: false, branch: 'main', upstream: 'origin/main', remotes: ['origin'], staged: ['a.ts'], modified: ['b.ts'], deleted: [], renamed: [], untracked: ['notes.md'], conflicted: []};
+function context(extra: Partial<AskContext> = {}): AskContext {
+  return {cwd: root, home: '/home/u', repoRoot: root, branch: 'main', worktrees: [], shell: 'zsh', defaultShell: 'zsh', shells: [], sessions: [], transcripts: [],
+    recentFiles: [], recentCommands: [], editor: {label: 'Zed', available: true}, providers: [], sessionMode: 'service', now: 0, files: listProjectFiles(root),
+    platform: 'darwin', picker: 'native', git, project: readProjectFacts(root), tasks: [], ...extra};
+}
+const ask = (text: string, extra: Partial<AskContext> = {}) => resolveRequest(text, context(extra), {}, commands);
+const shape = (outcome: AskOutcome) => outcome.kind === 'proposal' ? `proposal:${outcome.action.kind}` : `${outcome.kind}:${'capability' in outcome ? outcome.capability ?? '' : ''}`;
+
+test.before(() => {
+  root = mkdtempSync(join(tmpdir(), 'nmsh-caps-'));
+  for (const dir of ['src', 'tests', 'docs', 'node_modules/x']) mkdirSync(join(root, dir), {recursive: true});
+  writeFileSync(join(root, 'package.json'), JSON.stringify({name: 'demo', scripts: {dev: 'vite', test: 'node --test', build: 'tsc -p .', lint: 'eslint .'}}));
+  writeFileSync(join(root, 'pnpm-lock.yaml'), '');
+  for (const file of ['tsconfig.json', 'README.md', 'src/index.ts', 'src/config.ts', 'src/ask.ts', 'tests/ask.test.ts', '.env']) writeFileSync(join(root, file), file === 'src/config.ts' ? 'const foo = 1;\nexport {foo};\n' : '');
+});
+test.after(() => { rmSync(root, {recursive: true, force: true}); rmSync(specs, {recursive: true, force: true}); });
+
+test('files: list, browse, find and open are distinct capabilities over real entries', () => {
+  for (const phrase of ['show me the files here', 'what files are in this folder', 'list everything in this repo', 'can you help me list the files in my repo', 'list files', 'ls files', 'list all files in repo', 'can you show the files']) {
+    const outcome = ask(phrase);
+    assert.equal(shape(outcome), 'choose:file.browse', phrase);
+    assert.ok(outcome.kind === 'choose' && outcome.options.some(option => option.label === 'src/') && outcome.options.some(option => option.label === 'package.json'), phrase);
+    assert.ok(outcome.kind === 'choose' && !outcome.options.some(option => option.label === '.env'), 'hidden files only when asked');
+  }
+  const hidden = ask('list hidden files');
+  assert.ok(hidden.kind === 'choose' && hidden.options.some(option => option.label === '.env'));
+  assert.equal(shape(ask('open package.json')), 'proposal:openFile');
+  assert.equal(shape(ask('open')), 'choose:file.browse', 'bare open browses with Native');
+  assert.equal(shape(ask('open a file')), 'choose:file.browse');
+  assert.equal(shape(ask('open', {picker: 'fzf'})), 'proposal:pickFile', 'a configured picker is reused');
+  assert.equal(shape(ask('open src')), 'choose:file.browse');
+  assert.equal(shape(ask('find tsconfig')), 'choose:file.find');
+  const readme = ask('where is the readme');
+  assert.match(readme.kind === 'answer' ? readme.text : '', /README\.md/u);
+  const typescript = ask('show me all typescript files');
+  assert.ok(typescript.kind === 'choose' && typescript.options.length === 4 && typescript.options.every(option => option.label.endsWith('.ts')));
+  const config = ask('find files named config');
+  assert.ok(config.kind === 'choose' && config.options.some(option => option.label === 'src/config.ts'));
+});
+
+test('file referents: ordinals, "what is it" and searching inside it, revalidated against the disk', () => {
+  assert.deepEqual([ordinalIn('open the second one'), ordinalIn('open number 3'), ordinalIn('the last one'), ordinalIn('open it')], [2, 3, 'last', undefined]);
+  const state = createAskState();
+  submitText(state, 'show files in this repo');
+  receiveOutcome(state, ask('show files in this repo'));
+  const paths = state.referents?.files?.paths ?? [];
+  assert.ok(paths.length > 3);
+  const referents = state.referents as AskReferents;
+  const second = ask('open the second one', {referents});
+  const target = paths[1]!;
+  assert.ok(second.kind === 'choose' || (second.kind === 'proposal' && second.action.kind === 'openFile' && second.action.path === target));
+  const config = join(root, 'src/config.ts');
+  const what = ask('what is it', {referents: {file: config}});
+  assert.match(what.kind === 'answer' ? what.text : '', /TypeScript source · 29 bytes · 2 lines/u);
+  const where = ask('show me where foo is in it', {referents: {file: config}});
+  assert.match(where.kind === 'answer' ? where.text : '', /"foo" in src\/config\.ts · 2 lines/u);
+  const gone = ask('open the first one', {referents: {files: {paths: [join(root, 'deleted.txt')], kind: 'listed'}}});
+  assert.match(gone.kind === 'answer' ? gone.text : '', /no longer exists/u);
+});
+
+test('recipes: platform-aware commands from validated arguments; "how do i" explains, asking runs reads at once and network after Yes', () => {
+  const unzip = ask('how do i unzip a zip');
+  assert.equal(unzip.kind === 'answer' && unzip.block ? renderCommand(unzip.block, 'zsh') : '', 'unzip <archive.zip>');
+  const tar = ask('how do i make a tar.gz');
+  assert.equal(tar.kind === 'answer' && tar.block?.argv.join(' '), 'tar -czf <name.tar.gz> <folder>');
+  assert.match(ask('what does chmod 755 mean').kind === 'answer' ? (ask('what does chmod 755 mean') as {text: string}).text : '', /rwxr-xr-x[\s\S]*group  r-x/u);
+  assert.equal(explainMode('644')?.split('\n')[0], 'chmod 644 sets rw-r--r--:');
+  const ping = ask('can you ping google');
+  assert.equal(shape(ping), 'proposal:recipe');
+  assert.ok(ping.kind === 'proposal' && !ping.direct, 'network waits for the final Yes');
+  assert.deepEqual(ping.kind === 'proposal' && ping.action, {kind: 'recipe', argv: ['ping', '-c', '4', 'google.com'], risk: 'network'});
+  assert.equal(shape(ask('how do i ping something')), 'answer:help.command', 'how-to explains, never runs');
+  const disk = ask('show my disk usage');
+  assert.ok(disk.kind === 'proposal' && disk.direct && disk.action.kind === 'recipe' && disk.action.argv.join(' ') === 'df -h', 'local read runs at once');
+  const port = ask('what is using port 3000');
+  assert.deepEqual(port.kind === 'proposal' && port.action.kind === 'recipe' && port.action.argv, ['lsof', '-nP', '-iTCP:3000', '-sTCP:LISTEN']);
+  const linuxPort = ask('what is using port 3000', {platform: 'linux'});
+  assert.equal(linuxPort.kind === 'proposal' && linuxPort.action.kind === 'recipe' && linuxPort.action.argv[0], 'lsof', 'lsof is installed in this fixture');
+  const node = ask('show running node processes');
+  assert.deepEqual(node.kind === 'proposal' && node.action.kind === 'recipe' && node.action.argv, ['pgrep', '-lf', 'node']);
+  const nodeLinux = ask('show running node processes', {platform: 'linux'});
+  assert.deepEqual(nodeLinux.kind === 'proposal' && nodeLinux.action.kind === 'recipe' && nodeLinux.action.argv, ['pgrep', '-af', 'node']);
+  assert.match((ask('what\'s my local ip') as {text: string}).text, /IPv4|no non-loopback/u);
+  assert.match((ask('how much memory am i using') as {text: string}).text, /^Memory: [\d.]+ GB used of/u);
+  assert.match((ask('show current directory') as {text: string}).text, /^You're in /u);
+  const grep = ask('grep for foo');
+  assert.deepEqual(grep.kind === 'proposal' && grep.action.kind === 'recipe' && grep.action.argv, ['rg', '-n', 'foo']);
+  // Validation: hosts and run shapes.
+  assert.equal(validHost('google.com; rm -rf ~'), undefined);
+  assert.equal(validHost('github'), 'github.com');
+  assert.equal(recipeRunAllowed(['ping', '-c', '4', 'example.com']), 'network');
+  assert.equal(recipeRunAllowed(['ping', 'example.com']), undefined, 'unbounded ping is not allowed');
+  assert.equal(recipeRunAllowed(['rg', '-n', '$(whoami)']), undefined);
+  assert.equal(recipeRunAllowed(['df', '-h', '/']), undefined);
+});
+
+test('command knowledge explains dangerous commands freely; aliases and combined flags', () => {
+  const rm = ask('what does rm -rf do');
+  assert.equal(rm.kind, 'answer');
+  assert.ok(rm.kind === 'answer' && !rm.block?.run, 'explaining never offers Run');
+  const ripgrep = ask('how do i use ripgrep');
+  assert.match(ripgrep.kind === 'answer' ? ripgrep.text : '', /^rg/u);
+  const thisCommand = ask('what does this command do', {referents: {block: {argv: ['git', 'rebase', 'main'], provenance: 'reference', risk: 'destructive'}}});
+  assert.match(thisCommand.kind === 'answer' ? thisCommand.text : '', /^git rebase/u);
+});
+
+test('git: plain push is not force push; syntax questions are answered; branch creation and last commit', () => {
+  for (const phrase of ['how to push', 'how do i push', 'what\'s the syntax to push']) {
+    const outcome = ask(phrase);
+    assert.equal(outcome.kind, 'answer', phrase);
+    assert.match(outcome.kind === 'answer' ? outcome.text : '', /git push \[<remote> \[<branch>\]\]/u);
+    assert.equal(outcome.kind === 'answer' && outcome.block?.risk, 'mutate', 'a normal push is mutating, not destructive');
+  }
+  const push = ask('push this branch');
+  assert.ok(push.kind === 'answer' && push.block?.run, 'push offers Run behind the final Yes');
+  const force = ask('force push this');
+  assert.ok(force.kind === 'answer' && force.block?.risk === 'destructive' && !force.block.run);
+  assert.equal(gitRunAllowed(['git', 'push', '--force']), undefined);
+  assert.equal(gitRunAllowed(['git', 'push']), 'mutate');
+  const branch = ask('make a new branch called test');
+  assert.deepEqual(branch.kind === 'answer' && branch.block?.argv, ['git', 'switch', '-c', 'test']);
+  assert.equal(gitRunAllowed(['git', 'switch', '-c', 'test']), 'mutate');
+  assert.equal(gitRunAllowed(['git', 'switch', '--discard-changes', 'x']), undefined);
+  assert.equal(gitRunAllowed(['git', 'switch', '-c', '-bad']), undefined);
+  const last = ask('what did my last commit do');
+  assert.deepEqual(last.kind === 'answer' && last.block?.argv, ['git', 'show', '--stat', 'HEAD']);
+  assert.equal(last.kind === 'answer' && last.block?.run?.kind, 'git');
+  const staged = ask('show staged files');
+  assert.match(staged.kind === 'answer' ? staged.text : '', /1 staged file:\n.*a\.ts/u);
+  assert.equal(shape(ask('show me the diff')), 'proposal:read');
+  assert.equal(shape(ask('show me the stuff i changed')), 'proposal:read');
+  assert.equal(shape(ask('how do i pull')), 'answer:git.status');
+});
+
+test('projects: scripts with the project\'s own manager; dev servers become managed tasks; nothing invented', () => {
+  const project = readProjectFacts(root)!;
+  assert.equal(project.manager, 'pnpm');
+  assert.deepEqual(scriptArgv(project, 'dev'), ['pnpm', 'run', 'dev']);
+  assert.ok(projectRunAllowed(['pnpm', 'run', 'test'], project));
+  assert.ok(!projectRunAllowed(['npm', 'run', 'test'], project), 'the project uses pnpm');
+  assert.ok(!projectRunAllowed(['pnpm', 'run', 'deploy'], project), 'no such script');
+  assert.ok(isLongRunning('dev', 'vite') && !isLongRunning('test', 'node --test'));
+  const dev = ask('run the dev server');
+  assert.deepEqual(dev.kind === 'proposal' && dev.action, {kind: 'startTask', argv: ['pnpm', 'run', 'dev'], cwd: root, label: 'Dev server'});
+  assert.equal(dev.kind === 'proposal' && dev.safety, 'mutate', 'starting needs the final Yes');
+  assert.deepEqual((ask('run the tests') as {action: unknown}).action, {kind: 'project', argv: ['pnpm', 'run', 'test']});
+  assert.equal(shape(ask('how do i run this project')), 'answer:project.run');
+  const scripts = ask('what scripts does this project have');
+  assert.deepEqual(scripts.kind === 'choose' && scripts.options.map(option => option.label), ['dev', 'test', 'build', 'lint']);
+  const tasks = [{id: 't1', label: 'Dev server', status: 'running', urls: ['http://localhost:5173'], startedAt: 0, lines: 4, command: 'pnpm run dev'}];
+  assert.match((ask('what url is the dev server on', {tasks}) as {text: string}).text, /http:\/\/localhost:5173/u);
+  assert.deepEqual((ask('open the dev server', {tasks}) as {action: unknown}).action, {kind: 'openUrl', url: 'http://localhost:5173'});
+  assert.deepEqual((ask('show its output', {tasks}) as {action: unknown}).action, {kind: 'taskOutput', id: 't1'});
+  assert.deepEqual((ask('stop the dev server', {tasks}) as {action: unknown}).action, {kind: 'stopTask', id: 't1'});
+  assert.match((ask('stop the dev server') as {text: string}).text, /only stops tasks it started/u);
+});
+
+test('managed tasks: owned process group, bounded output, URLs from output, stop', async () => {
+  assert.deepEqual(extractUrls('  ➜  Local:   \u001b[36mhttp://localhost:5173/\u001b[39m'), ['http://localhost:5173']);
+  assert.deepEqual(extractUrls('listening on http://0.0.0.0:3000.'), ['http://localhost:3000']);
+  const tasks = new ManagedTasks();
+  const script = 'console.log("ready"); console.log("Local: http://localhost:4321/"); setInterval(() => {}, 1000);';
+  const task = tasks.start('Dev server', [process.execPath, '-e', script], root);
+  assert.ok(!('error' in task));
+  if ('error' in task) return;
+  for (let waited = 0; !task.urls.length && waited < 5000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(task.urls, ['http://localhost:4321']);
+  assert.equal(task.status, 'running');
+  assert.ok(tasks.stop(task.id));
+  for (let waited = 0; task.status !== 'completed' && waited < 6000; waited += 20) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(task.status, 'completed', 'a stopped task ends as asked');
+  assert.equal(tasks.live().length, 0);
+  tasks.dispose();
+});
+
+test('safety requests fail closed and stay explainable', () => {
+  for (const phrase of ['rm -rf this repo', 'sudo delete this', 'wipe node_modules', 'kill every node process', 'delete all untracked files']) {
+    const outcome = ask(phrase);
+    assert.ok(outcome.kind === 'unsafe' || (outcome.kind === 'answer' && (!outcome.block?.run || outcome.block.risk === 'destructive')), phrase);
+    assert.notEqual(outcome.kind, 'proposal', phrase);
+  }
+  assert.ok(ask('force push main').kind === 'answer');
+});

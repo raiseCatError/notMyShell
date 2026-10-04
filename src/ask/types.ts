@@ -18,7 +18,8 @@ export type SafetyClass = 'answer' | 'navigate' | 'read' | 'mutate' | 'install' 
 export type CapabilityId =
   | 'shell.current' | 'shell.switch' | 'shell.leave' | 'shell.default' | 'shell.install'
   | 'session.list' | 'session.resume' | 'transcript.find' | 'transcript.filter'
-  | 'file.open' | 'editor.status'
+  | 'project.run' | 'project.task'
+  | 'file.open' | 'file.list' | 'file.browse' | 'file.find' | 'editor.status'
   | 'git.status' | 'git.diff' | 'git.branch' | 'git.log' | 'git.worktrees'
   | 'settings.open' | 'theme.open' | 'prompt.open' | 'tools.open' | 'screensaver.open' | 'providers.open'
   | 'provider.status' | 'provider.switch' | 'understanding.set'
@@ -35,11 +36,23 @@ export type AskAction =
   | {kind: 'switchShell'; shell: ShellId}
   | {kind: 'installShell'; shell: ShellId}
   | {kind: 'openFile'; path: string}
+  /** The configured picker (fzf, Television…) over the project's files; Native falls back to Ask's own list. */
+  | {kind: 'pickFile'; root: string}
   | {kind: 'read'; command: ReadCommand}
   | {kind: 'resumeTranscript'; id: string}
   | {kind: 'attachSession'; id: string}
   /** A Git command NMSh built from facts (never request or model text); the allowlist and risk are checked again before it runs. */
   | {kind: 'git'; argv: string[]; risk: 'read' | 'mutate'}
+  /** A finite project script (tests, build) run as a visible shell submission; argv must be a script the project defines. */
+  | {kind: 'project'; argv: string[]}
+  /** A long-lived project script started as an NMSh-managed background task. */
+  | {kind: 'startTask'; argv: string[]; cwd: string; label: string}
+  | {kind: 'stopTask'; id: string}
+  | {kind: 'taskOutput'; id: string}
+  /** Open an http(s) URL a task printed, in the system browser. */
+  | {kind: 'openUrl'; url: string}
+  /** A terminal recipe NMSh built (recipes.ts); re-checked against the recipe allowlist right before running, as a visible submission. */
+  | {kind: 'recipe'; argv: string[]; risk: 'read' | 'network'}
   /** A Homebrew install/upgrade/uninstall of a validated name; verified with Homebrew afterwards. */
   | {kind: 'brew'; argv: string[]; name: string; expect: 'installed' | 'upgraded' | 'absent'}
   /** Run an installed formatter with its allowlisted argv on one file (visible submission). */
@@ -92,7 +105,9 @@ export interface AskReferents {
   concept?: string;
   /** The command path the conversation is about, e.g. ['git', 'push']. */
   command?: string[];
-  files?: {paths: string[]; kind: 'untracked' | 'modified' | 'staged' | 'conflicted' | 'mentioned'};
+  files?: {paths: string[]; kind: 'untracked' | 'modified' | 'staged' | 'conflicted' | 'mentioned' | 'listed'};
+  /** The folder most recently listed. */
+  directory?: string;
   branch?: string;
   remote?: string;
   /** The command block most recently shown. */
@@ -127,9 +142,11 @@ export interface AskOption {
  * - unclear: not enough to go on; ask for more, with factual categories.
  */
 export type AskOutcome =
-  | {kind: 'proposal'; capability: CapabilityId; safety: SafetyClass; text: string; action: AskAction; command?: string; confidence: number; referents?: AskReferents}
+  | {kind: 'proposal'; capability: CapabilityId; safety: SafetyClass; text: string; action: AskAction; command?: string; confidence: number; referents?: AskReferents;
+    /** The person already chose exactly this (a file picked from a list): navigation runs without another Yes. */
+    direct?: boolean}
   | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption; block?: CommandBlock; next?: AskOption[]; referents?: AskReferents}
-  | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]}
+  | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]; referents?: AskReferents}
   | {kind: 'unsupported'; text: string; alternative?: AskOption}
   | {kind: 'unsafe'; text: string; alternative?: AskOption; referents?: AskReferents}
   | {kind: 'unclear'; text: string; categories: AskOption[]};
@@ -185,6 +202,14 @@ export interface AskContext {
   brew?: BrewFacts;
   /** Config targets that apply here (from configTargets.ts), with whether each exists. */
   configs?: Array<ConfigTarget & {exists: boolean}>;
+  /** The project's own facts (package.json scripts, manager, other project files). */
+  project?: import('./project.js').ProjectFacts;
+  /** Background tasks NMSh started (never other processes). */
+  tasks?: import('./project.js').TaskSummary[];
+  /** The platform recipes are built for (process.platform). */
+  platform?: string;
+  /** The configured picker provider (native, fzf, television). */
+  picker?: string;
   /** Recent completed shell commands, newest first: factual metadata, never their output. */
   recent?: RecentCommand[];
 }

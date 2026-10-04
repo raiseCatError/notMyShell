@@ -3,6 +3,9 @@ import {slashCommands} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
 import {resolveGit} from './gitAssist.js';
+import {browseOutcome, resolveFiles} from './fileAssist.js';
+import {resolveRecipe} from './recipes.js';
+import {resolveProject} from './project.js';
 import {resolveActivity} from './activity.js';
 import {resolvePackage} from './packages.js';
 import {resolveFileRequest, type FileAssistEnvironment} from './configAssist.js';
@@ -148,6 +151,11 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   const packages = resolvePackage(text, context);
   if (packages) return packages;
   // Config files and verified edits (resolve → inspect → plan → preview → confirm); removal is answered, never planned.
+  // "find files named config" is a file search, not a config request.
+  if (/^(?:please )?(?:find|locate|search for|look for|show(?: me)?|list)\b.*\b(?:files?|folders?)\s+(?:named|called|matching)\b/u.test(text)) {
+    const named = resolveFiles(text, raw, context);
+    if (named) return named;
+  }
   const file = resolveFileRequest(raw, text, context, files);
   if (file) return file;
   // Command knowledge: explaining git push or git clean is an answer, not an action, so it comes before the action-safety check.
@@ -161,6 +169,26 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   // Git from local facts (current branch, real remotes, listed files) and this conversation's referents.
   const git = resolveGit(text, raw, context, commands?.reference);
   if (git) return git;
+  // Files from real directory facts: list, browse, find, open, ordinals over listed results.
+  const fileResult = resolveFiles(text, raw, context);
+  if (fileResult) return fileResult;
+  // Project scripts and NMSh-managed background tasks (dev servers).
+  const project = resolveProject(text, context);
+  if (project) return project;
+  // Terminal tasks as typed recipes (archives, ping, disk, ports, processes, addresses, memory, search).
+  const recipe = resolveRecipe(text, context, commands);
+  if (recipe) return recipe;
+  // "what does this command do": the command this conversation shows, else the last one run.
+  if (commands && /\b(?:this|that|the|my) (?:last |previous )?command\b/u.test(text) && /^(?:what|explain|how)\b/u.test(text) && !/\b(?:produced|caused|failed|made)\b/u.test(text)) {
+    const words = context.referents?.block && !context.referents.block.literal ? context.referents.block.argv : context.recent?.[0]?.command.split(/\s+/u);
+    const path = words?.filter(word => /^[\w.+-]+$/u.test(word) && !word.startsWith('-')).slice(0, 2) ?? [];
+    if (path.length) {
+      const found = commands.reference.lookup(path);
+      const target = found ? found.facts.path : path.slice(0, 1);
+      const answer = answerCommandQuestion({intent: 'explain', words: target}, context, commands);
+      if (answer) return answer;
+    }
+  }
   const question = commands ? parseCommandQuestion(text) : undefined;
   if (question && commands) {
     const strongAction = scored.find(item => item.score >= CONFIDENCE.high && !item.capability.id.startsWith('help.'));
@@ -363,6 +391,9 @@ export function build(id: CapabilityId, text: string, context: AskContext, raw: 
       return navigate(id, `Showing only lines with "${query}" in the latest output.`, {kind: 'slash', slash: {kind: 'filter', arguments: query}, label: `/filter ${query}`});
     }
     case 'file.open': return resolveFile(raw, text, context);
+    case 'file.list': case 'file.browse': return resolveFiles(text, raw, context) ?? browseOutcome(context.cwd, context);
+    case 'project.run': case 'project.task': return resolveProject(text, context) ?? {kind: 'answer', capability: id, text: 'Say which script to run, e.g. "run the tests".'};
+    case 'file.find': return resolveFiles(text, raw, context) ?? {kind: 'choose', reason: 'missing', capability: id, question: 'Find which file?', options: []};
     case 'editor.status':
       return {kind: 'answer', capability: id, text: context.editor.available ? `Files open in ${context.editor.label} (/open, Settings → Open with).` : context.editor.reason ?? 'No editor is available for /open here.'};
     case 'git.status': case 'git.diff': case 'git.log': {

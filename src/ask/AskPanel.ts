@@ -73,6 +73,8 @@ export function createAskState(): AskState {
 /** Actions that change what this window shows or launch something outside NMSh are confirmed first. */
 export function needsConfirmation(outcome: AskOutcome): boolean {
   if (outcome.kind !== 'proposal') return false;
+  if (outcome.direct && (outcome.safety === 'navigate' || outcome.safety === 'read')) return false;
+  if (outcome.action.kind === 'pickFile' || outcome.action.kind === 'taskOutput') return false;
   if (outcome.safety === 'read' || outcome.safety === 'mutate' || outcome.safety === 'install') return true;
   return outcome.action.kind !== 'slash';
 }
@@ -124,6 +126,14 @@ export function runProposal(block: CommandBlock, shell: ShellId = 'zsh'): AskOut
   if (block.run.kind === 'format') {
     return {kind: 'proposal', capability: 'file.open', safety: 'mutate', confidence: 0.95, text: 'Run this formatter? It rewrites the file.', command: renderCommand(block, shell), action: block.run};
   }
+  if (block.run.kind === 'project' || block.run.kind === 'startTask') {
+    return {kind: 'proposal', capability: 'project.run', safety: 'mutate', confidence: 0.95, text: block.run.kind === 'startTask' ? 'Start this in the background?' : 'Run this in the shell?',
+      command: renderCommand(block, shell), action: block.run};
+  }
+  if (block.run.kind === 'recipe') {
+    return {kind: 'proposal', capability: 'help.command', safety: 'read', confidence: 0.95, text: block.run.risk === 'network' ? 'Run this? It contacts the network.' : 'Run this read-only command?',
+      command: renderCommand(block, shell), action: block.run};
+  }
   return {kind: 'proposal', capability: 'git.status', safety: block.risk === 'read' ? 'read' : 'mutate', confidence: 0.95,
     text: block.risk === 'read' ? 'Run this read-only command?' : 'Run this command? It changes your repository.', command: renderCommand(block, shell), action: block.run};
 }
@@ -132,7 +142,7 @@ export function runProposal(block: CommandBlock, shell: ShellId = 'zsh'): AskOut
 export function receiveOutcome(state: AskState, outcome: AskOutcome): AskEvent | undefined {
   state.busy = false;
   state.pending = outcome;
-  const referents = outcome.kind === 'answer' || outcome.kind === 'unsafe' || outcome.kind === 'proposal' ? outcome.referents : undefined;
+  const referents = outcome.kind === 'answer' || outcome.kind === 'unsafe' || outcome.kind === 'proposal' || outcome.kind === 'choose' ? outcome.referents : undefined;
   if (referents) state.referents = {...state.referents, ...referents};
   state.selected = 0;
   state.input = '';

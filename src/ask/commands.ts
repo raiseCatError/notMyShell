@@ -19,6 +19,9 @@ const PROVIDER_TOOLS = new Set(['zoxide', 'fzf', 'tv', 'television', 'atuin', 's
 
 const LEAD = /^(?:please |so |ok |hey )?(?:what(?: is| are|'s| does| do)|whats|explain|tell me about|describe|how (?:do|can|would|should) i|how to|how does|show me|give me|syntax (?:of|for)|usage (?:of|for)|options (?:of|for)|flags (?:of|for))\b\s*/u;
 const TRAIL = /\s+(?:do|does|mean|means|command|commands|have|has|syntax|usage|flags|options|work|works|for|again|examples?)$/u;
+/** Names people say for a tool whose executable is different. */
+export const COMMAND_ALIASES: Readonly<Record<string, string>> = {ripgrep: 'rg', 'silver-searcher': 'ag', 'fd-find': 'fd', fdfind: 'fd', tealdeer: 'tldr',
+  'github-cli': 'gh', neovim: 'nvim', 'node.js': 'node', nodejs: 'node', golang: 'go', 'docker-compose': 'docker-compose', homebrew: 'brew', python: 'python3'};
 const FILLER = new Set(['the', 'a', 'an', 'use', 'using', 'command', 'cli', 'tool', 'program', 'this', 'my']);
 
 /** Parse a normalized request into a command question, or undefined. Pure: whether the command is known is checked by the caller. */
@@ -33,7 +36,8 @@ export function parseCommandQuestion(text: string): CommandQuestion | undefined 
   rest = rest.replace(/^(?:the )?(?:syntax|usage|flags|options) (?:of|for) /u, '');
   for (let previous = ''; previous !== rest;) { previous = rest; rest = rest.replace(TRAIL, ''); }
   const optionMatch = /(?:^|\s)(--?[a-z0-9][\w-]*(?:=\S*)?)(?=\s|$)/u.exec(rest);
-  const words = rest.replace(/(?:^|\s)--?[a-z0-9][\w-]*(?:=\S*)?(?=\s|$)/gu, ' ').split(/\s+/u).filter(word => word && !FILLER.has(word) && /^[\w.+-]+$/u.test(word));
+  const words = rest.replace(/(?:^|\s)--?[a-z0-9][\w-]*(?:=\S*)?(?=\s|$)/gu, ' ').split(/\s+/u).filter(word => word && !FILLER.has(word) && /^[\w.+-]+$/u.test(word))
+    .map((word, index) => index === 0 ? COMMAND_ALIASES[word] ?? word : word);
   if (optionMatch) return {intent: 'option', words, option: optionMatch[1]!};
   if (!words.length) return undefined;
   const howTo = /^how (?:do|can|would|should) i|^how to/u.test(lead?.[0] ?? '');
@@ -100,6 +104,14 @@ export function answerCommandQuestion(question: CommandQuestion, context: AskCon
       if (hit) {
         return {kind: 'answer', capability: 'help.command', text: `${facts.path.join(' ')} ${optionLabel(hit)}\n${hit.description ?? 'No description is available for this option.'}`,
           block: commandBlock([...facts.path, question.option.split('=')[0]!], 'reference')};
+      }
+      // Combined short flags (-rf = -r -f): each letter explained from the same facts.
+      if (question.words.length && /^-[A-Za-z]{2,6}$/u.test(question.option)) {
+        const letters = [...question.option.slice(1)].map(letter => [letter, env.reference.option(facts, `-${letter}`)] as const);
+        if (letters.every(([, option]) => option)) {
+          return {kind: 'answer', capability: 'help.command', text: `${facts.path.join(' ')} ${question.option} combines ${letters.map(([letter]) => `-${letter}`).join(' and ')}:\n${letters.map(([letter, option]) => `  -${letter}  ${option!.description ?? 'no description'}`).join('\n')}`,
+            block: commandBlock([...facts.path, question.option], 'reference'), referents: {command: facts.path}};
+        }
       }
       if (question.words.length) return {kind: 'answer', capability: 'help.command', text: `${facts.path.join(' ')} has no ${question.option} option in NMSh's local command knowledge.`};
     }
