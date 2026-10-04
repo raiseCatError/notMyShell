@@ -5,11 +5,15 @@ import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATM
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
+import {MOTION_LABELS, MOTION_ROWS} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {withIdleColorSource} from '../idle/IdleVisuals.js';
-import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
+import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent} from '../appearance/themeFamilies.js';
+import {availabilityOf, availableValues, currentCursorHost, unavailableReason, type CursorFeature} from '../cursor/backends.js';
+import {describeCursorColor, contextFor} from '../cursor/colors.js';
+import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
-import {FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
+import {defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
 import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
@@ -79,7 +83,7 @@ export function switchSettingsView(state: SettingsPanelState, delta: -1 | 1): vo
 
 /** Where Enter leads: `glyph` is the rich glyph preview inside the panel, the rest are full panels. */
 export type SettingsDestination = 'glyph' | 'appearance' | 'prompt' | 'transcript' | 'syntax' | 'layout' | 'keyboard' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'toolConfig' | 'tools'
-  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors';
+  | 'setup' | 'resetInstallSuggestions' | 'screensaver' | 'chromeColors' | 'cursor' | 'idleColors' | 'activityColors' | 'themeStudio';
 
 interface SettingsRowBase {
   id: string;
@@ -93,6 +97,12 @@ interface SettingsRowBase {
   parent?: string;
   /** Whether the row applies to the current values; rows that do not apply disappear. */
   when?: (config: PromptConfiguration) => boolean;
+  /**
+   * A reason when the row applies but nothing can be chosen here (the effective
+   * renderer or terminal cannot provide it). The row stays visible and says
+   * Unavailable with this reason; ←/→ never cycle values that cannot work.
+   */
+  unavailable?: (config: PromptConfiguration) => string | undefined;
 }
 
 /**
@@ -107,7 +117,9 @@ export type SettingsRow = SettingsRowBase & (
   | {control: 'stepper'; steps: readonly number[]; format: (value: number) => string;
     get: (config: PromptConfiguration) => number; set: (config: PromptConfiguration, value: number) => PromptConfiguration}
   | {control: 'child'; destination: SettingsDestination; value?: (config: PromptConfiguration) => string}
-  | {control: 'action'; actionLabel: string; destination: SettingsDestination}
+  | {control: 'action'; actionLabel: string; destination: SettingsDestination; value?: (config: PromptConfiguration) => string;
+    /** An action that only changes configuration (so Setup can run it on its draft instead of opening anything). */
+    run?: (config: PromptConfiguration) => PromptConfiguration}
 );
 
 function withTranscript(config: PromptConfiguration, patch: Partial<TranscriptAppearance>): PromptConfiguration {
@@ -202,6 +214,90 @@ const THEME_ROWS: readonly SettingsRow[] = [
     get: c => c.nmsh.accent, set: (c, accent) => ({...c, nmsh: {...c.nmsh, accent}})}),
 ];
 
+/** General NMSh motion (one row per effect), generated from the table /appearance → Motion uses. */
+const MOTION_SETTINGS_ROWS: readonly SettingsRow[] = MOTION_ROWS.map(item => enumRow({id: `motion_${item.key}`, label: item.label, description: `${item.note}. Off, Reduced Motion, Decorative Effects Off and NO_COLOR always stop it`, category: 'Motion',
+  values: item.values, labels: item.values.map(value => MOTION_LABELS[value] ?? value),
+  get: c => c.motion[item.key] as string, set: (c, value) => ({...c, motion: {...c.motion, [item.key]: value}})}));
+
+/** What a cursor value costs or how it is delivered, as a short suffix (Portable fallback, after setup), under the effective renderer. */
+function cursorSuffix(feature: CursorFeature, value: string, config: PromptConfiguration): string {
+  const availability = availabilityOf(feature, value, config.cursor.renderer, currentCursorHost());
+  return availability.available && availability.suffix ? ` · ${availability.suffix}` : '';
+}
+
+const CURSOR_LABELS: Record<string, string> = {off: 'Off', none: 'None', smooth: 'Smooth', smear: 'Smear', tail: 'Tail', fire: 'Fire', sparks: 'Sparks', lightning: 'Lightning', railgun: 'Railgun',
+  ripple: 'Ripple', wireframe: 'Wireframe', glow: 'Glow', embers: 'Embers', flame: 'Flame', auto: 'Auto', portable: 'Portable', native: 'Host native', low: 'Low', medium: 'Medium', high: 'High'};
+
+/**
+ * A cursor motion/effect/idle row that only offers what the effective renderer
+ * really draws. Forced Host native on a host that draws none of it says
+ * Unavailable (with why) instead of offering values that cannot work; Auto
+ * labels what Portable draws in place of the host backend.
+ */
+function cursorFeatureRow(row: SettingsRowBase & {feature: CursorFeature; values: readonly string[]; get: (c: CursorSettings) => string; set: (c: CursorSettings, value: string) => CursorSettings}): SettingsRow {
+  const {feature, values, get, set, ...base} = row;
+  const offered = (config: PromptConfiguration) => availableValues(feature, values, config.cursor.renderer, currentCursorHost());
+  const stale = (config: PromptConfiguration) => offered(config).includes(get(config.cursor)) ? [] : [get(config.cursor)];
+  return {...base, control: 'enum', options: values.map(value => CURSOR_LABELS[value] ?? value),
+    optionsFor: config => [...offered(config).map(value => `${CURSOR_LABELS[value] ?? value}${cursorSuffix(feature, value, config)}`), ...stale(config).map(value => `${CURSOR_LABELS[value] ?? value} · unavailable`)],
+    index: config => { const list = offered(config); const at = list.indexOf(get(config.cursor)); return at >= 0 ? at : list.length; },
+    select: (config, index) => { const list = offered(config); const value = list[index]; return value === undefined ? config : {...config, cursor: set(config.cursor, value)}; },
+    unavailable: config => unavailableReason(feature, values, config.cursor.renderer, currentCursorHost())};
+}
+
+const withCursor = (config: PromptConfiguration, cursor: CursorSettings): PromptConfiguration => ({...config, cursor});
+const chosenCursorTheme = (config: PromptConfiguration) => config.cursor.color.theme ?? config.nmsh.palette;
+const CURSOR_COLOR_SOURCES_UI = ['theme', 'chosen', 'accent', 'host', 'custom'] as const;
+
+/** Cursor & effects: the same values /cursor edits, one definition for Settings and Setup. Rich editing (picker, physics) lives in /cursor. */
+const CURSOR_ROWS: readonly SettingsRow[] = [
+  enumRow({id: 'cursorShape', label: 'Cursor shape', description: 'Text caret shape while NMSh owns the composer; Host default keeps your terminal\'s own cursor and sends nothing', category: 'Cursor',
+    values: CURSOR_SHAPES, labels: ['Host default', 'Block', 'Bar', 'Underline'],
+    get: c => c.cursor.shape, set: (c, shape) => ({...c, cursor: {...c.cursor, shape}})}),
+  {...enumRow({id: 'cursorBlink', parent: 'cursorShape', label: 'Blink', description: 'Caret blink; speed stays the terminal\'s own. Needs an explicit shape', category: 'Cursor',
+    values: CURSOR_BLINKS, labels: ['Host default', 'On', 'Off'],
+    get: c => c.cursor.blink, set: (c, blink) => ({...c, cursor: {...c.cursor, blink}})}),
+  unavailable: c => c.cursor.shape === 'host' ? 'Blink needs an explicit shape; Host default keeps your terminal\'s own cursor.' : undefined},
+  enumRow({id: 'cursorRenderer', label: 'Cursor renderer', description: 'Auto uses the terminal\'s GPU cursor (Ghostty, Kitty) once /cursor has set it up, and Portable otherwise. Portable is built in. Host native draws only what the terminal does', category: 'Cursor',
+    values: CURSOR_RENDERERS, labels: CURSOR_RENDERERS.map(value => CURSOR_LABELS[value]!),
+    get: c => c.cursor.renderer, set: (c, renderer) => ({...c, cursor: {...c.cursor, renderer}})}),
+  cursorFeatureRow({id: 'cursorMotion', label: 'Cursor motion', description: 'How the visual caret travels (off by default); the real caret always moves at once', category: 'Cursor',
+    feature: 'motion', values: CURSOR_MOTIONS, get: c => c.motion, set: (c, motion) => ({...c, motion: motion as CursorSettings['motion']})}),
+  cursorFeatureRow({id: 'cursorEffect', label: 'Cursor effect', description: 'What movement sheds: Fire, Sparks, Ripple and more (off by default)', category: 'Cursor',
+    feature: 'effect', values: CURSOR_EFFECTS, get: c => c.effect, set: (c, effect) => ({...c, effect: effect as CursorSettings['effect']})}),
+  cursorFeatureRow({id: 'cursorIdle', label: 'Cursor idle effect', description: 'A slow effect while the caret rests (off by default)', category: 'Cursor',
+    feature: 'idleEffect', values: CURSOR_IDLE_EFFECTS, get: c => c.idleEffect, set: (c, idleEffect) => ({...c, idleEffect: idleEffect as CursorSettings['idleEffect']})}),
+  enumRow({id: 'cursorColor', label: 'Cursor color', description: 'Follow the prompt\'s theme, choose a theme for the cursor alone, use NMSh\'s accent, keep the host\'s color, or pick your own', category: 'Cursor',
+    values: CURSOR_COLOR_SOURCES_UI, labels: ['Follow current theme', 'Choose theme', 'NMSh accent', 'Host', 'Custom'],
+    get: c => c.cursor.color.source, set: (c, source) => withCursor(c, {...c.cursor, color: {...c.cursor.color, source,
+      ...(source === 'chosen' ? {theme: c.cursor.color.theme ?? c.nmsh.palette, themeAccent: c.cursor.color.themeAccent ?? c.nmsh.accent} : {}),
+      ...(source === 'custom' && !c.cursor.color.custom ? {custom: describeCursorColor(c.cursor, contextFor(c)).hex ?? '#a67cf3'} : {})}})}),
+  {id: 'cursorColorFamily', parent: 'cursorColor', when: c => c.cursor.color.source === 'chosen', label: 'Cursor theme family', description: 'The theme family the cursor uses, independent of the prompt', category: 'Cursor',
+    control: 'enum', options: FAMILY_LABELS, optionsFor: c => FAMILY_IDS.filter(id => id !== 'custom' || c.customTheme).map(id => FAMILY_LABELS[FAMILY_IDS.indexOf(id)]!),
+    index: c => Math.max(0, FAMILY_IDS.filter(id => id !== 'custom' || c.customTheme).indexOf(familyOf(chosenCursorTheme(c)))),
+    select: (c, index) => { const ids = FAMILY_IDS.filter(id => id !== 'custom' || c.customTheme); const family = ids[index] ?? ids[0]!; return withCursor(c, {...c.cursor, color: {...c.cursor.color, theme: defaultVariant(family)}}); }},
+  {id: 'cursorColorVariant', parent: 'cursorColorFamily', when: c => c.cursor.color.source === 'chosen' && variantOptions(familyOf(chosenCursorTheme(c))).length > 1, label: 'Cursor theme variant',
+    description: 'Flavor, style or variant within the cursor\'s theme family', category: 'Cursor', control: 'enum', options: [],
+    optionsFor: c => variantOptions(familyOf(chosenCursorTheme(c))).map(option => option.label),
+    index: c => Math.max(0, variantOptions(familyOf(chosenCursorTheme(c))).findIndex(option => option.id === chosenCursorTheme(c))),
+    select: (c, index) => { const options = variantOptions(familyOf(chosenCursorTheme(c))); return withCursor(c, {...c.cursor, color: {...c.cursor.color, theme: options[((index % options.length) + options.length) % options.length]!.id}}); }},
+  enumRow({id: 'cursorColorAccent', parent: 'cursorColorFamily', when: c => c.cursor.color.source === 'chosen' && familyOf(chosenCursorTheme(c)) === 'catppuccin', label: 'Cursor accent',
+    description: 'Catppuccin accent for the cursor\'s theme', category: 'Cursor',
+    values: CATPPUCCIN_ACCENTS, labels: CATPPUCCIN_ACCENTS.map(accent => CATPPUCCIN_ACCENT_LABELS[accent]),
+    get: c => c.cursor.color.themeAccent ?? c.nmsh.accent, set: (c, accent) => withCursor(c, {...c.cursor, color: {...c.cursor.color, themeAccent: normalizeCatppuccinAccent(accent)}})}),
+  {id: 'cursorColorCustom', parent: 'cursorColor', when: c => c.cursor.color.source === 'custom', label: 'Cursor custom color', description: 'Your own #RRGGBB, chosen with the color picker; Enter opens it', category: 'Cursor',
+    control: 'action', actionLabel: 'Choose ›', destination: 'cursor', value: c => `■ ${(describeCursorColor(c.cursor, contextFor(c)).hex ?? '#a67cf3').toUpperCase()}`},
+  enumRow({id: 'cursorSpeed', level: 'advanced', label: 'Cursor speed', description: 'How long the caret takes to travel', category: 'Cursor', values: CURSOR_LEVELS, labels: CURSOR_LEVELS.map(value => CURSOR_LABELS[value]!),
+    get: c => c.cursor.speed, set: (c, speed) => ({...c, cursor: {...c.cursor, speed}})}),
+  enumRow({id: 'cursorIntensity', level: 'advanced', label: 'Cursor intensity', description: 'How strong the trail and effect colors are', category: 'Cursor', values: CURSOR_LEVELS, labels: CURSOR_LEVELS.map(value => CURSOR_LABELS[value]!),
+    get: c => c.cursor.intensity, set: (c, intensity) => ({...c, cursor: {...c.cursor, intensity}})}),
+  enumRow({id: 'cursorTrail', level: 'advanced', label: 'Cursor trail length', description: 'How far Smear and Tail stretch', category: 'Cursor', values: CURSOR_LEVELS, labels: CURSOR_LEVELS.map(value => CURSOR_LABELS[value]!),
+    get: c => c.cursor.trailLength, set: (c, trailLength) => ({...c, cursor: {...c.cursor, trailLength}})}),
+  enumRow({id: 'cursorParticles', level: 'advanced', label: 'Cursor particles', description: 'How many particles an effect sheds', category: 'Cursor', values: CURSOR_LEVELS, labels: CURSOR_LEVELS.map(value => CURSOR_LABELS[value]!),
+    get: c => c.cursor.particleAmount, set: (c, particleAmount) => ({...c, cursor: {...c.cursor, particleAmount}})}),
+  {id: 'cursorAdvanced', level: 'advanced', label: 'Advanced cursor tuning', description: 'Trail and particle colors, durations, easing and physics, in /cursor', category: 'Cursor', control: 'action', actionLabel: 'Open ›', destination: 'cursor'},
+];
+
 export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'glyphStyle', label: 'Glyph style', description: 'Nerd Font or safe terminal symbols', category: 'General',
     values: GLYPH_STYLES, labels: ['Nerd Font', 'Safe / ASCII'],
@@ -228,8 +324,22 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'syntaxHighlighting', label: 'Syntax highlighting', description: 'Color commands while typing and in new history', category: 'Syntax',
     control: 'boolean', get: config => config.syntax.highlighting, set: (config, highlighting) => ({...config, syntax: {...config.syntax, highlighting}})},
   enumRow({id: 'syntaxColors', level: 'advanced', parent: 'syntaxHighlighting', when: config => config.syntax.highlighting, label: 'Syntax colors', description: 'Follow prompt theme, a chosen theme, or grayscale', category: 'Syntax',
-    values: COLOR_MODES, labels: ['Follow prompt', 'Theme', 'Grayscale'],
+    values: COLOR_MODES, labels: ['Follow prompt', 'Choose theme', 'Grayscale'],
     get: config => config.syntax.colors, set: (config, colors) => ({...config, syntax: {...config.syntax, colors}})}),
+  {id: 'syntaxThemeFamily', level: 'advanced', parent: 'syntaxColors', when: config => config.syntax.highlighting && config.syntax.colors === 'theme', label: 'Syntax theme family',
+    description: 'The theme family syntax colors come from, independent of the prompt', category: 'Syntax', control: 'enum', options: FAMILY_LABELS,
+    optionsFor: c => FAMILY_IDS.filter(id => id !== 'custom' || c.customTheme).map(id => FAMILY_LABELS[FAMILY_IDS.indexOf(id)]!),
+    index: c => Math.max(0, FAMILY_IDS.filter(id => id !== 'custom' || c.customTheme).indexOf(familyOf(c.syntax.theme))),
+    select: (c, index) => { const ids = FAMILY_IDS.filter(id => id !== 'custom' || c.customTheme); const family = ids[index] ?? ids[0]!; return {...c, syntax: {...c.syntax, theme: defaultVariant(family)}}; }},
+  {id: 'syntaxThemeVariant', level: 'advanced', parent: 'syntaxThemeFamily', when: config => config.syntax.highlighting && config.syntax.colors === 'theme' && variantOptions(familyOf(config.syntax.theme)).length > 1,
+    label: 'Syntax theme variant', description: 'Flavor, style or variant within the syntax theme family', category: 'Syntax', control: 'enum', options: [],
+    optionsFor: c => variantOptions(familyOf(c.syntax.theme)).map(option => option.label),
+    index: c => Math.max(0, variantOptions(familyOf(c.syntax.theme)).findIndex(option => option.id === c.syntax.theme)),
+    select: (c, index) => { const options = variantOptions(familyOf(c.syntax.theme)); return {...c, syntax: {...c.syntax, theme: options[((index % options.length) + options.length) % options.length]!.id}}; }},
+  enumRow({id: 'syntaxThemeAccent', level: 'advanced', parent: 'syntaxThemeFamily', when: config => config.syntax.highlighting && config.syntax.colors === 'theme' && familyOf(config.syntax.theme) === 'catppuccin',
+    label: 'Syntax accent (shared)', description: 'Catppuccin accent; shared with the prompt theme\'s accent, so changing it here changes it there too', category: 'Syntax',
+    values: CATPPUCCIN_ACCENTS, labels: CATPPUCCIN_ACCENTS.map(accent => CATPPUCCIN_ACCENT_LABELS[accent]),
+    get: c => c.nmsh.accent, set: (c, accent) => ({...c, nmsh: {...c.nmsh, accent}})}),
   enumRow({id: 'promptStyle', label: 'Prompt style', description: 'NMSh Native look; each style keeps its own settings in /prompt', category: 'Prompt',
     values: PROMPT_STYLES, labels: PROMPT_STYLES.map(style => PROMPT_STYLE_LABELS[style]),
     get: config => config.nmsh.style, set: (config, style) => ({...config, nmsh: {...config.nmsh, style}})}),
@@ -257,7 +367,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'liveSessionMultiple', level: 'advanced', label: 'Multiple detached sessions', description: 'At launch with several: ask which, or open all in new windows', category: 'Sessions',
     values: LIVE_SESSION_MULTIPLE, labels: ['Ask which', 'Open all'],
     get: config => config.liveSessionMultiple, set: (config, liveSessionMultiple) => ({...config, liveSessionMultiple})}),
-  {id: 'sessionNotices', label: 'Session notices', description: 'Up to three factual lines above the composer when other sessions finish, fail, ask for attention or end', category: 'Sessions',
+  {id: 'sessionNotices', label: 'Session notices', description: 'Brief factual lines (up to three) above the composer when other sessions finish, fail, ask for attention or end; each fades on its own, and /sessions keeps the state', category: 'Sessions',
     control: 'boolean', get: config => config.sessionNotices, set: (config, sessionNotices) => ({...config, sessionNotices})},
   {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
     control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
@@ -317,12 +427,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'notifyWhenFocused', parent: 'notifications', when: config => config.notifications.enabled, label: 'When focused', description: 'Suppress notifications while this terminal is focused', category: NOTIFICATION_CATEGORY,
     values: FOCUS_POLICIES, labels: ['Suppress', 'Notify'],
     get: config => config.notifications.whenFocused, set: (config, whenFocused) => withNotifications(config, {whenFocused})}),
-  enumRow({id: 'cursorShape', label: 'Cursor', description: 'Text caret shape while NMSh owns the composer; Host default sends nothing', category: 'General',
-    values: CURSOR_SHAPES, labels: ['Host default', 'Block', 'Bar', 'Underline'],
-    get: c => c.cursor.shape, set: (c, shape) => ({...c, cursor: {...c.cursor, shape}})}),
-  enumRow({id: 'cursorBlink', parent: 'cursorShape', when: c => c.cursor.shape !== 'host', label: 'Blink', description: 'Caret blink; speed stays the terminal\'s own', category: 'General',
-    values: CURSOR_BLINKS, labels: ['Host default', 'On', 'Off'],
-    get: c => c.cursor.blink, set: (c, blink) => ({...c, cursor: {...c.cursor, blink}})}),
+  ...CURSOR_ROWS,
   {id: 'promptSymbol', when: nativePrompt, label: 'Prompt symbol', description: 'The composer marker; a custom symbol is typed in /prompt. Starship/Powerlevel10k prompts are unchanged', category: 'Prompt',
     // Custom is offered here only once a glyph exists; the glyph is typed in /prompt.
     control: 'enum', options: PROMPT_SYMBOL_IDS.filter(id => id !== 'custom').map(id => promptSymbolLabel(id)),
@@ -368,7 +473,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'installSuggestions', label: 'Install suggestions', description: 'Offer to install a missing curated tool when its exact command is submitted', category: 'Tools',
     control: 'boolean', get: config => config.installSuggestions, set: (config, installSuggestions) => ({...config, installSuggestions})},
   {id: 'resetInstallSuggestions', parent: 'installSuggestions', label: 'Ignored install suggestions', description: 'Tools you asked NMSh not to offer again; Enter resets the list', category: 'Tools',
-    control: 'action', actionLabel: 'Reset', destination: 'resetInstallSuggestions'},
+    control: 'action', actionLabel: 'Reset', destination: 'resetInstallSuggestions', run: config => ({...config, ignoredInstallSuggestions: []})},
   enumRow({id: 'treatmentPreset', label: 'Chroma', description: 'Colors the Native prompt; /chroma has every option. Ordinary UI chrome is not Chroma; external prompts keep their colors', category: 'Presentation',
     values: TREATMENT_PRESETS, labels: TREATMENT_PRESETS.map(preset => TREATMENT_PRESET_LABELS[preset]),
     get: c => c.presentation.preset, set: (c, preset) => ({...c, presentation: {...c.presentation, preset: preset === 'custom' && !c.presentation.customStops.length ? 'off' : preset}})}),
@@ -401,6 +506,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'treatmentCurve', parent: 'treatmentMotion', when: chromaMoving, label: 'Ramp', description: 'Easing of the animation', category: 'Presentation',
     values: TREATMENT_CURVES, labels: TREATMENT_CURVES.map(curve => TREATMENT_CURVE_LABELS[curve]),
     get: c => c.presentation.curve ?? 'linear', set: (c, curve) => ({...c, presentation: {...c.presentation, curve}})}),
+  ...MOTION_SETTINGS_ROWS,
   {id: 'reducedMotion', label: 'Reduced Motion', description: 'Static colors; no decorative movement or effects', category: 'Presentation', control: 'boolean',
     get: c => c.presentation.reducedMotion, set: (c, reducedMotion) => ({...c, presentation: {...c.presentation, reducedMotion}})},
   // Stored as effectsOff for compatibility; shown positively so nobody reads "Effects Off: Off".
@@ -476,6 +582,8 @@ export function isInlineEditable(row: SettingsRow | undefined): boolean {
 
 /** ←/→ on an enum or boolean row; undefined when the row has nothing to change inline. */
 export function adjustSettingsRow(row: SettingsRow, config: PromptConfiguration, delta: -1 | 1): PromptConfiguration | undefined {
+  // Nothing can work here: ←/→ never cycle values that cannot; the only change offered puts a stale value back to Off/None (the first option).
+  if (row.unavailable?.(config)) return row.control === 'enum' && row.index(config) !== 0 ? row.select(config, 0) : undefined;
   if (row.control === 'boolean') return row.set(config, toggleValue(row.get(config)));
   if (row.control === 'stepper') return row.set(config, stepPreset(row.steps, row.get(config), delta));
   if (row.control !== 'enum') return undefined;
@@ -519,12 +627,13 @@ export function settingsRowDestination(row: SettingsRow): SettingsDestination | 
 }
 
 export function settingsRowValue(row: SettingsRow, config: PromptConfiguration): string | undefined {
+  if (row.unavailable?.(config)) return 'Unavailable';
   switch (row.control) {
     case 'enum': return rowOptions(row, config)[row.index(config)];
     case 'stepper': return row.format(row.get(config));
     case 'boolean': return row.get(config) ? 'true' : 'false';
     case 'child': return row.value?.(config);
-    case 'action': return row.actionLabel;
+    case 'action': return row.value?.(config) ?? row.actionLabel;
   }
 }
 
@@ -705,7 +814,7 @@ export function renderSettingsPanel(state: SettingsPanelState, columns: number, 
       body.push(...renderRows(rows, tabsFocused ? undefined : selectedIndex, columns, query,
         row => `${settingsRowValue(row, config) ?? ''}${settingsRowChanged(row, config) ? ` ${CHANGED_MARK()}` : ''}`, listBudget));
       if (selectedRow && listBudget - rows.length >= 2) {
-        body.push('', `${MARGIN}  ${highlightMatches(selectedRow.description, query, SUBTLE, SEARCH_MATCH)}${RESET}`);
+        body.push('', `${MARGIN}  ${highlightMatches(selectedRow.unavailable?.(config) ?? selectedRow.description, query, SUBTLE, SEARCH_MATCH)}${RESET}`);
       }
     } else body.push(`${MARGIN}  ${SUBTLE}No settings match "${query}"${RESET}`);
   }

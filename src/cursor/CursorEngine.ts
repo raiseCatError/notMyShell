@@ -185,15 +185,20 @@ export class CursorEngine {
     return 0;
   }
 
+  /** Where the logical caret is (undefined before the first target). */
+  get caretCell(): CursorPoint | undefined { return this.goal ? {...this.goal} : undefined; }
+
   /** True while the visual caret is away from the logical one (the host caret is hidden and drawn by NMSh instead). */
   get drawsCaret(): boolean {
     return this.settings.motion !== 'off' && this.phase === 'movement';
   }
 
   /**
-   * The overlay for this frame: background tints over text cells (trail,
-   * glow) and glyphs on blank cells (particles, caret tip). Never outside
-   * `bounds`; text glyphs and their foregrounds are never changed.
+   * The overlay for this frame: foreground tints over text cells and shading
+   * glyphs on blank cells (trail, ripple, particles, caret tip). It never
+   * fills a background behind text, so a transparent terminal stays
+   * transparent; only the travelling caret and the resting caret's glow fill
+   * the single caret cell. Never outside `bounds`; text glyphs never change.
    */
   paints(palette: EffectPalette, bounds: DrawBounds, now: number): Map<number, Map<number, CellPaint>> {
     const paints = new Map<number, Map<number, CellPaint>>();
@@ -219,7 +224,8 @@ export class CursorEngine {
         const row = Math.round(this.tail.row + dy * t);
         const strength = motion === 'tail' ? t ** this.settings.advanced.trailExponent : 0.55 + 0.45 * t;
         const color = gradientAt(palette.trail.length ? palette.trail : [base], 1 - t);
-        put(row, column, {background: mixRgb(DARK, color, Math.max(0.08, strength * intensity))});
+        const amount = Math.max(0.08, strength * intensity);
+        put(row, column, {tint: {color, amount}, glyph: shade(amount), foreground: color});
       }
     }
     // Ripple rings around a jump destination.
@@ -228,7 +234,7 @@ export class CursorEngine {
       const fade = 1 - (now - ring.start) / 420;
       for (let column = Math.floor(ring.column - radius - 1); column <= Math.ceil(ring.column + radius + 1); column += 1) {
         const distance = Math.abs(column - ring.column);
-        if (Math.abs(distance - radius) < 0.6) put(ring.row, column, {background: mixRgb(DARK, palette.caret, 0.5 * fade * intensity)});
+        if (Math.abs(distance - radius) < 0.6) put(ring.row, column, {tint: {color: palette.caret, amount: 0.7 * fade * intensity}, glyph: fade > 0.5 ? '○' : '·', foreground: palette.caret});
       }
     }
     // Wireframe: an outline of the travelled box while moving.
@@ -242,26 +248,33 @@ export class CursorEngine {
       const life = 1 - particle.age / particle.life;
       const glyph = particleGlyph(this.settings.effect === 'none' ? (this.settings.idleEffect === 'sparks' ? 'sparks' : 'fire') : this.settings.effect, life * particle.heat);
       const color = gradientAt(palette.particles, 1 - life);
-      put(Math.round(particle.y), Math.round(particle.x), {glyph, foreground: mixRgb(DARK, color, Math.max(0.25, life * intensity))});
+      // A glyph where the cell is blank; over text, the text itself takes the particle's color.
+      put(Math.round(particle.y), Math.round(particle.x), {glyph, foreground: color, tint: {color, amount: Math.max(0.3, life * intensity)}, ...(intensity < 0.7 || life < 0.3 ? {dim: true} : {})});
     }
-    // Idle glow: the resting caret cell's background breathes slowly (bounded, 15 fps).
+    // Idle glow: the cell beside the resting caret breathes slowly (bounded, 15 fps). Glyph and foreground only: the caret's own cell stays the host's.
     if (this.phase === 'idle' && this.settings.idleEffect !== 'off') {
-      const pulse = 0.18 + 0.12 * Math.sin(now / 520);
-      if (this.settings.idleEffect === 'glow' || this.settings.idleEffect === 'flame') put(this.goal.row, this.goal.column, {background: mixRgb(DARK, palette.caret, pulse * intensity)});
+      const pulse = 0.35 + 0.25 * Math.sin(now / 520);
+      if (this.settings.idleEffect === 'glow' || this.settings.idleEffect === 'flame') {
+        const level = Math.max(0.15, Math.min(1, pulse * intensity));
+        put(this.goal.row, this.goal.column, {tint: {color: palette.caret, amount: level}});
+        put(this.goal.row, this.goal.column + 1, {glyph: shade(level), foreground: palette.caret, tint: {color: palette.caret, amount: level}, ...(level < 0.4 ? {dim: true} : {})});
+      }
     }
     // The visual caret while travelling: a block at the rounded head with a partial block for the fractional column.
     if (this.drawsCaret) {
       const row = Math.round(this.head.row);
       const column = Math.floor(this.head.column);
       const fraction = this.head.column - column;
-      put(row, column, {background: palette.caret, caret: true});
-      if (fraction > 0.15 && motion !== 'smooth') put(row, column + 1, {glyph: PARTIAL[Math.min(7, Math.floor(fraction * 8))], foreground: palette.caret});
+      // Drawn in the chosen shape (Host default has none of its own: a block), so the travelling caret matches the one that settles.
+      put(row, column, {caret: true, caretShape: this.settings.shape === 'host' ? 'block' : this.settings.shape, color: palette.caret});
+      if (fraction > 0.15 && motion !== 'smooth' && (this.settings.shape === 'block' || this.settings.shape === 'host')) put(row, column + 1, {glyph: PARTIAL[Math.min(7, Math.floor(fraction * 8))], foreground: palette.caret});
     }
     return paints;
   }
 }
 
-const DARK: RgbColor = {red: 16, green: 16, blue: 20};
+/** Trail shading for a blank cell: light texture, never a solid block, so the host background stays visible. */
+const shade = (amount: number) => amount > 0.6 ? '▒' : amount > 0.3 ? '░' : '·';
 const PARTIAL = ['▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'];
 
 function particleGlyph(effect: string, energy: number): string {

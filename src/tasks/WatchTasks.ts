@@ -36,7 +36,7 @@ export function watchSafety(command: string): WatchSafety {
       const target = /https?:\/\/([^/:\s]+)/u.exec(part.text)?.[1] ?? /\s([\w.-]+\.[a-z]{2,})(?:\s|$)/iu.exec(part.text)?.[1];
       if (target && !/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/u.test(target)) remote = true;
     }
-    if (kinds.includes('command') && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
+    if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
   }
   return unknown ? {kind: 'confirm', reason: 'NMSh can\'t tell whether this command changes anything; it will run every interval.', network, remote} : {kind: 'allowed', network, remote};
 }

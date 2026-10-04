@@ -21,11 +21,16 @@ export class CursorPresenter {
     this.engine = new CursorEngine(settings(), random);
   }
 
-  /** Effective settings with what a native backend already draws removed (never drawn twice). */
+  /**
+   * What the Portable engine is asked to draw: everything under Portable, only
+   * what the host backend does not draw under Auto (never drawn twice), and
+   * nothing under a forced host renderer. Shape and blink are never the engine's.
+   */
   private effective(choice?: BackendChoice): CursorSettings {
     const settings = this.settings();
-    if (!choice || choice.backend.id === 'portable') return settings;
-    return {...settings, ...(choice.nativeHandles.motion ? {motion: 'off' as const} : {}), ...(choice.nativeHandles.effect ? {effect: 'none' as const} : {})};
+    if (!choice) return settings;
+    const draws = choice.portableDraws;
+    return {...settings, ...(draws.motion ? {} : {motion: 'off' as const}), ...(draws.effect ? {} : {effect: 'none' as const}), ...(draws.idle ? {} : {idleEffect: 'off' as const})};
   }
 
   /**

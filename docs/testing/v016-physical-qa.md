@@ -79,3 +79,57 @@ WezTerm are supported profiles.
 - Windows Terminal → WSL 2 (Ubuntu): `nmsh doctor` says WSL 2; sessions,
   clipboard under WSLg, resize, passthrough. WSL 1: `nmsh doctor` says not
   supported.
+
+## Post-QA follow-up (cursor, motion, paste, notices, Setup)
+
+Not yet physically validated; automated coverage is in
+[v016-acceptance.md](v016-acceptance.md). Design:
+[../design/v016-physical-qa-followup.md](../design/v016-physical-qa-followup.md).
+
+### Ghostty (transparent / frosted window)
+- Motion: `/appearance` → Motion. Each row's preview runs once on its own fixture,
+  stops, and R replays; no dark or purple rectangle, panel height never jumps. Context
+  transitions: only cwd and branch react, `Node 22` stays still. Subtle is subtle.
+- Real motion: submit a command (launch tint, no black band), Tab-complete (only the
+  inserted text is underlined and tinted), finish a command (Block Seal tint on the
+  header), fail one (Semantic Echo on the rule).
+- Cursor shapes: `/cursor` → Shape Block / Bar / Underline: the preview caret differs and
+  the real caret changes at once, with no restart; Blink On/Off likewise.
+- Portable effects: Motion Smear/Tail, Effect Fire/Sparks/Ripple/Lightning, Idle Glow:
+  text under a trail is tinted, blank cells get shading glyphs, nothing paints a
+  background box on the transparent window.
+- Ghostty native: `/cursor` → Host native setup (confirm), then Renderer Host native:
+  Idle effect shows `Unavailable` with the reason; Lightning is not offered. Auto shows
+  `Lightning · Portable fallback`.
+- Shader refresh: change Color or Speed: the line says the shader was updated; change
+  Motion between Off and Smear: `Reload Ghostty config: ⌘⇧,` and the shortcut works.
+- Color: Follow current theme tracks `/theme`; Choose theme (family → variant → Catppuccin
+  accent) is independent of the prompt; Custom opens the picker, `#aa66ff` previews at
+  once, an invalid value is refused.
+- Setup: `/setup syntax` shows Colors, theme family, variant and accent with the real
+  syntax preview; the Cursor step previews the selected row; `Advanced cursor tuning ›`
+  opens /cursor inside Setup and Esc returns without saving.
+- Paste: a very large paste (hundreds of lines): the compact strip stays small; `R` opens
+  Review, scrolls (↑↓, PgUp/PgDn, Home/End), Enter inserts without running, Esc returns.
+  A prose paragraph says `pasted · text` and never "command"; the four-line sample reads
+  read-only / installs packages / runs project script / read-only.
+- Session notices: a command finishing in another session shows for about 12 s and then
+  disappears by itself; a failure for about 45 s; an agent asking for attention stays until
+  you focus it.
+
+### Kitty
+- `/cursor` → Host native setup; Renderer Host native offers Tail only; Effect and Idle
+  effect say `Unavailable` (`Kitty Native does not provide this effect.`). Color changes
+  rewrite only `cursor_trail_color`; `Reload Kitty config: ⌃⌘,`.
+- Motion previews and real motion: same transparent-background checks as above.
+
+### Terminal.app
+- Portable effects work; Renderer Host native says `Host native is not available in this
+  terminal.` on every motion/effect/idle row and draws nothing. Shape/Blink apply if the
+  terminal honors DECSCUSR, otherwise the preview still labels what NMSh sends.
+
+### Everywhere
+- Truecolor, forced 256-color (`NMSH_COLOR=256`), `NO_COLOR` (previews say so and paint
+  nothing), Reduced Motion, Decorative Effects Off, Safe glyphs, a short terminal (15
+  rows: Motion hub drops the intro then the preview; large Paste Review opens directly)
+  and a narrow one (40 columns).

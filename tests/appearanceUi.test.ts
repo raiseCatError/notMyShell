@@ -32,9 +32,11 @@ const clone = () => structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 test('nested settings: children sit under their parent with a small indent and disappear when they do not apply', () => {
   const off = clone();
   let rows = ids(visibleSettingsRows(config(), off));
-  for (const hidden of ['treatmentIntensity', 'treatmentMotion', 'treatmentSpeed', 'treatmentCurve', 'cursorBlink', 'stripClock', 'themeAccent']) {
+  for (const hidden of ['treatmentIntensity', 'treatmentMotion', 'treatmentSpeed', 'treatmentCurve', 'stripClock', 'themeAccent']) {
     assert.ok(!rows.includes(hidden), `${hidden} hidden`);
   }
+  assert.ok(rows.includes('cursorBlink'), 'Blink stays visible under Host default shape, as Unavailable with its reason');
+  assert.equal(settingsRowValue(SETTINGS_ROWS.find(row => row.id === 'cursorBlink')!, off), 'Unavailable');
   assert.ok(rows.includes('themeVariant'), 'NMSh family has variants');
   const on = clone();
   on.presentation.preset = 'aurora';

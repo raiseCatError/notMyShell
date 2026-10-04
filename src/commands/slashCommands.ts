@@ -22,6 +22,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
   {name: '/setup appearance', insertion: '/setup appearance', description: 'Setup Cat: theme, vibrance and Chroma'},
   {name: '/setup transcript', insertion: '/setup transcript', description: 'Setup Cat: transcript presentation, history colors, dividers and folding'},
+  {name: '/setup cursor', insertion: '/setup cursor', description: 'Setup Cat: cursor shape, effects and colors, with a live preview'},
+  {name: '/setup syntax', insertion: '/setup syntax', description: 'Setup Cat: editor, syntax colors and suggestions'},
   {name: '/setup tools', insertion: '/setup tools', description: 'Setup Cat: optional tools, update checks and install suggestions'},
   {name: '/tools', insertion: '/tools', description: 'Browse optional tools, installation previews and supported configuration'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
@@ -130,7 +132,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     return {kind: 'screensaver', start: screensaver[1] === 'start', ...(screensaver[2] ? {mode: screensaver[2] as IdleMode} : {})};
   }
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
-  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript))?\s*$/u.exec(input);
+  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};

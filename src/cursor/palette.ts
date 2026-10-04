@@ -15,9 +15,16 @@ const DEFAULT_GRADIENTS: Record<CursorSettings['effect'], string[]> = {
   lightning: ['#f2f7ff', '#8fb8ff', '#5a5cff'], railgun: ['#e8fbff', '#55d6ff', '#2b6cff'], ripple: [], wireframe: [],
 };
 
-export function effectPalette(settings: CursorSettings, accent: RgbColor = UI_COLORS.accent, theme: RgbColor = UI_COLORS.accent): EffectPalette {
+/**
+ * Palette for a settings value. Theme-derived color sources are resolved
+ * beforehand (see colors.ts), so a `custom` color here is already the real
+ * selected theme color; a source that was never resolved falls back to NMSh's
+ * accent, and Host stands in with the primary text color (the terminal draws
+ * its own caret, so Portable effects only borrow a neutral tone).
+ */
+export function effectPalette(settings: CursorSettings, accent: RgbColor = UI_COLORS.accent): EffectPalette {
   const caret = settings.color.source === 'custom' && settings.color.custom ? hexToRgb(settings.color.custom)
-    : settings.color.source === 'theme' ? theme : settings.color.source === 'accent' ? accent : UI_COLORS.primary;
+    : settings.color.source === 'host' ? UI_COLORS.primary : accent;
   const effectGradient = DEFAULT_GRADIENTS[settings.effect].map(hexToRgb);
   const trail = settings.trail.source === 'custom' && settings.trail.colors[0] ? [hexToRgb(settings.trail.colors[0])]
     : settings.trail.source === 'gradient' && settings.trail.colors.length ? settings.trail.colors.map(hexToRgb)

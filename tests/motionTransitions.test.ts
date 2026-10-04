@@ -4,7 +4,9 @@ import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 import {DEFAULT_MOTION, DEFAULT_PROMPT_CONFIGURATION, MIGRATED_MOTION, normalizeMotion, normalizePromptConfiguration, type MotionSettings} from '../src/prompt/configuration.js';
-import {decayCells, diffModules, DURATIONS, morphCells, sweepCells, Transitions} from '../src/motion/transitions.js';
+import {decayCells, diffModules, DURATIONS, morphCells, sweepCells, transitionPaint, Transitions} from '../src/motion/transitions.js';
+import {overlayRow} from '../src/presentation/cellOverlay.js';
+import {PREVIEW_HEIGHT, renderMotionPreview} from '../src/motion/MotionPreview.js';
 import {applyUiTheme} from '../src/appearance/uiTheme.js';
 import {stripAnsi} from '../src/util/text.js';
 
@@ -53,14 +55,61 @@ test('semantic module diff: only changed, appeared and disappeared modules', () 
   assert.deepEqual(diffModules(after, before).map(change => change.change).sort(), ['changed', 'disappeared', 'disappeared']);
 });
 
-test('paints tint backgrounds within bounds and decay to nothing', () => {
+test('paints tint foregrounds within bounds, decay to nothing and never fill a background', () => {
   const color = {red: 200, green: 100, blue: 255};
   assert.ok(sweepCells(40, 0.5, color, 0.8).size > 0);
   assert.equal(sweepCells(40, 1, color, 0.8).size, 0, 'the band leaves at the end');
   assert.equal(decayCells(0, 10, 1, color, 0.6).size, 0, 'materialization settles to plain syntax colors');
   const morph = morphCells(10, 20, 0.3, color, false, 'changed');
   assert.ok([...morph.keys()].every(column => column >= 10 && column < 20), 'within the module\'s final columns');
-  assert.ok([...morph.values()].every(paint => paint.background && !paint.glyph), 'never text');
+  assert.ok([...morph.values()].every(paint => (paint.tint || paint.dim) && !paint.glyph), 'never text');
+  const all = [sweepCells(40, 0.5, color, 0.8), decayCells(0, 10, 0.2, color, 0.6, true), morph, morphCells(10, 20, 0.5, color, true, 'appeared'),
+    ...[transitionPaint.launch('sweep', 40, 0.5, true), transitionPaint.launch('pulse', 40, 0.2, false), transitionPaint.materialize(3, 9, 0.1, true),
+      transitionPaint.seal('failure', 40, 0.4), transitionPaint.echoRule('failure', 40, 0.2, true), transitionPaint.echoInput('longSuccess', 40, 0.5), transitionPaint.morph(2, 8, 0.4, true, 'changed')]];
+  for (const cells of all) for (const paint of cells.values()) assert.equal(paint.background, undefined, 'no ANSI cell background from any motion paint');
+  const painted = overlayRow('\u001b[38;2;200;200;200mgit status\u001b[0m', transitionPaint.materialize(4, 10, 0.1, false));
+  assert.doesNotMatch(painted, /\u001b\[48;/u);
+  assert.match(painted, /\u001b\[4m/u, 'the inserted text is underlined');
+  assert.equal(stripAnsi(painted), 'git status');
+});
+
+test('completion highlight touches only the inserted range', () => {
+  const cells = transitionPaint.materialize(4, 10, 0.1, false);
+  assert.deepEqual([...cells.keys()], [4, 5, 6, 7, 8, 9]);
+});
+
+test('context preview: the unchanged module gets no effect, at every frame, and the panel height is fixed', () => {
+  const motion = {...DEFAULT_MOTION, contextTransitions: 'expressive' as const};
+  const columns = 100;
+  let sawChangedPainted = false;
+  for (let now = 0; now <= 400; now += 20) {
+    const preview = renderMotionPreview('contextTransitions', motion, gate, columns, 0, now);
+    assert.equal(preview.rows.length, PREVIEW_HEIGHT, 'fixed height on every frame');
+    const frame = preview.rows[1]!;
+    assert.match(stripAnsi(frame), /after +~\/src +feature\/theme +Node 22/u);
+    // The unchanged module is drawn in the row's own style only: no tint, dim, bold or underline reaches it.
+    assert.match(frame, /(?:\u001b\[0m\u001b\[38;2;\d+;\d+;\d+m|e) {2}Node 22\u001b\[0m$/u, `frame ${now}: Node 22 untouched`);
+    assert.doesNotMatch(frame, /\u001b\[48;/u, 'no backgrounds');
+    sawChangedPainted ||= /\u001b\[[124]m/u.test(frame);
+  }
+  assert.ok(sawChangedPainted, 'the changed modules are painted at some frame');
+  const settled = renderMotionPreview('contextTransitions', motion, gate, columns, 0, 5_000);
+  assert.equal(settled.busy, false);
+  assert.equal(settled.rows.length, PREVIEW_HEIGHT);
+});
+
+test('every Motion preview paints no background on any frame and keeps a fixed height', () => {
+  const motion = {...DEFAULT_MOTION, contextTransitions: 'expressive' as const, commandLaunch: 'pulse' as const, completionHighlight: 'vivid' as const, completionEffect: 'seal' as const, eventFeedback: 'expressive' as const};
+  for (const row of ['contextTransitions', 'commandLaunch', 'completionHighlight', 'completionEffect', 'eventFeedback'] as const) {
+    for (let now = 0; now <= 800; now += 25) {
+      const preview = renderMotionPreview(row, motion, gate, 90, 0, now);
+      assert.equal(preview.rows.length, PREVIEW_HEIGHT, `${row} height`);
+      assert.doesNotMatch(preview.rows.join('\n'), /\u001b\[48;/u, `${row} paints no background`);
+    }
+    assert.equal(renderMotionPreview(row, motion, gate, 90, 0, 10_000).busy, false, `${row} stops its clock`);
+  }
+  const narrow = renderMotionPreview('contextTransitions', motion, gate, 12, 0, 50);
+  assert.equal(narrow.rows.length, PREVIEW_HEIGHT);
 });
 
 function harness(config: object): {app: TerminalApp; frames: TerminalFrame[]; writes: string[]; cleanup: () => void} {

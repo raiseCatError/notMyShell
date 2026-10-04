@@ -46,3 +46,35 @@ hostActions, idleLifecycle.
 
 GitHub CI (macOS and Ubuntu, Node 22 and 26) runs on the pull request; its
 results are reported there, not claimed here.
+
+## Post-QA follow-up (cursor, motion, paste, notices, Setup)
+
+Automated validation of the changes in
+[../design/v016-physical-qa-followup.md](../design/v016-physical-qa-followup.md),
+on macOS (Apple silicon), `LANG=C.UTF-8`. Not physical validation; the new
+checklist is in [v016-physical-qa.md](v016-physical-qa.md).
+
+- `npm run build`, `npm run typecheck`, `git diff --check`: pass.
+- `npm test -- --test-concurrency=2`: 1426 tests + the 8-test ranking group,
+  1434 in all, 0 fail, 0 skipped. At the default concurrency two PTY or
+  timing-sensitive tests (`native fuzzy filtering preserves nested path capture
+  context…` plus one varying PTY test) fail under this machine's load; they pass
+  alone and at lower concurrency, and the same fuzzy-filtering test fails the same
+  way on the untouched `4b04351`.
+- New focused files: `pasteReview`, `cursorCapabilities`, `setupCoverage`; extended:
+  `motionTransitions`, `motionPreview`, `cursorEffects`, `sessionNotices`, `askApp`,
+  `appearanceUi`, `chromaPolish`.
+- What they pin: Local Understanding fresh default Auto with a saved Off kept;
+  the four-line paste classification, prose, unknown input, read-only Git and
+  `nmsh --version`, project scripts, risky pipelines; bounded Paste Review over 5000
+  lines at several heights, exact source, Enter/Esc paths and the short-terminal
+  route; notice TTLs on an injected clock and sticky attention; no ANSI background
+  from any motion paint or portable cursor effect (only the caret cell); the
+  unchanged context module untouched on every preview frame; the capability matrix,
+  Unavailable rows without arrows, `Portable fallback` labelling, forced native
+  drawing nothing without a host backend; Block/Bar/Underline/Host previews differing;
+  shape/blink applying to the live renderer; Follow vs Choose theme, family →
+  variant → accent, validated custom color through the picker; configuration
+  migration; managed-file refresh states and reload lines; Setup coverage of every
+  Settings row and entry point, syntax color mode and theme selection with the real
+  preview, routes, and the embedded /cursor editor leaving the draft until Apply.

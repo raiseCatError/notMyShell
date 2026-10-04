@@ -1,5 +1,6 @@
 import type {Key} from '../terminal/keys.js';
-import {COMMAND_LAUNCHES, COMPLETION_EFFECTS, COMPLETION_HIGHLIGHTS, CONTEXT_TRANSITIONS, EVENT_FEEDBACK, type MotionSettings, type PromptConfiguration} from '../prompt/configuration.js';
+import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.js';
+import {MOTION_LABELS, MOTION_ROWS} from '../motion/motionRows.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -36,15 +37,6 @@ export type HubAction = {kind: 'close'} | {kind: 'open'; destination: HubDestina
 const NMSH_ROWS: Array<{id: HubDestination | 'motion'; label: string}> = [
   {id: 'prompt', label: 'Prompt & theme'}, {id: 'cursor', label: 'Cursor & effects'}, {id: 'chrome', label: 'UI chrome'}, {id: 'chroma', label: 'Chroma'}, {id: 'motion', label: 'Motion'},
 ];
-
-const MOTION_ROWS: Array<{key: keyof MotionSettings; label: string; values: readonly string[]; note: string}> = [
-  {key: 'contextTransitions', label: 'Context transitions', values: CONTEXT_TRANSITIONS, note: 'Prompt modules transform in place when cwd, branch, Git state or tools change'},
-  {key: 'commandLaunch', label: 'Command launch', values: COMMAND_LAUNCHES, note: 'Enter hands the command to the shell at once; this only shows the handoff'},
-  {key: 'completionHighlight', label: 'Completion highlight', values: COMPLETION_HIGHLIGHTS, note: 'What completion just inserted, briefly'},
-  {key: 'completionEffect', label: 'Command completion', values: COMPLETION_EFFECTS, note: 'Block Seal: a finished block settles with one semantic sweep'},
-  {key: 'eventFeedback', label: 'Event feedback', values: EVENT_FEEDBACK, note: 'Semantic Echo: failures, long successes, conflicts, attention, tasks finishing'},
-];
-const MOTION_LABELS: Record<string, string> = {off: 'Off', subtle: 'Subtle', expressive: 'Expressive', sweep: 'Sweep', pulse: 'Pulse', vivid: 'Vivid', seal: 'Seal'};
 
 export function createAppearanceHub(hostName: string, host?: AppearanceState, hostGuidance?: string): AppearanceHubState {
   return {view: 'hub', selected: 0, ...(host ? {host} : {}), hostName, ...(hostGuidance ? {hostGuidance} : {}), hostDirty: false};
@@ -99,7 +91,7 @@ export function hubMotionPreview(state: AppearanceHubState, configuration: Promp
 }
 
 export function renderAppearanceHub(state: AppearanceHubState, configuration: PromptConfiguration, columns: number, themeLabel: string, cursorBackend: string,
-  preview?: {gate: MotionGate; now: number}): string[] {
+  preview?: {gate: MotionGate; now: number}, height?: number): string[] {
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
@@ -107,16 +99,20 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   const reset = '\u001b[0m';
   const mark = (selected: boolean) => selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
   if (state.view === 'motion') {
-    const rows = [`${primary}  Appearance › Motion${reset}`, `  ${subtle}General NMSh motion. Cursor motion lives in /cursor; Chroma color motion in /chroma. Reduced Motion and Decorative Effects Off stop all of it.${reset}`, ''];
+    const head = [`${primary}  Appearance › Motion${reset}`, `  ${subtle}General NMSh motion. Cursor motion lives in /cursor; Chroma color motion in /chroma. Reduced Motion and Decorative Effects Off stop all of it.${reset}`, ''];
+    const list: string[] = [];
     MOTION_ROWS.forEach((row, index) => {
       const selected = index === state.selected;
       const value = MOTION_LABELS[configuration.motion[row.key] as string] ?? configuration.motion[row.key];
-      rows.push(`${mark(selected)} ${selected ? primary : secondary}${padCells(row.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
+      list.push(`${mark(selected)} ${selected ? primary : secondary}${padCells(row.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
     });
-    rows.push('', `  ${subtle}${MOTION_ROWS[state.selected]?.note ?? ''}${reset}`);
+    const note = ['', `  ${subtle}${MOTION_ROWS[state.selected]?.note ?? ''}${reset}`];
     const shown = preview ? hubMotionPreview(state, configuration, columns, preview.gate, preview.now) : undefined;
-    if (shown) rows.push('', `  ${subtle}Preview${reset}`, ...shown.rows);
-    rows.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']]));
+    const controls = ['', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']])];
+    // The preview is always the same size; a short terminal gives up the intro, then the preview, never the controls or the list.
+    const block = shown ? ['', `  ${subtle}Preview${reset}`, ...shown.rows] : [];
+    const layouts = [[...head, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...controls], [head[0]!, ...list, ...controls]];
+    const rows = height === undefined ? layouts[0]! : layouts.find(layout => layout.length <= height) ?? layouts[layouts.length - 1]!;
     return rows.map(row => truncateAnsi(row, columns));
   }
   const cursor = configuration.cursor;

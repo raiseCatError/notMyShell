@@ -20,11 +20,16 @@ const transcriptText = (instance: TerminalApp) => {
 };
 const until = async (check: () => boolean) => { for (let i = 0; i < 200 && !check(); i += 1) await new Promise(resolve => setTimeout(resolve, 10)); };
 
-test('config: Record Ask in transcript defaults On; Settings and Setup Cat share the field; local understanding defaults Off with every scope Off', () => {
+test('config: Record Ask in transcript defaults On; Settings and Setup Cat share the field; local understanding defaults Auto with Ask eligible and folding opt-in', () => {
   assert.equal(DEFAULT_PROMPT_CONFIGURATION.askRecord, true);
   assert.equal(normalizePromptConfiguration({}).askRecord, true, 'existing users get On');
   assert.equal(normalizePromptConfiguration({askRecord: false}).askRecord, false);
-  assert.deepEqual(normalizePromptConfiguration({}).localUnderstanding, {mode: 'off', ask: false, folding: false});
+  assert.deepEqual(normalizePromptConfiguration({}).localUnderstanding, {mode: 'auto', ask: true, folding: false});
+  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.localUnderstanding, {mode: 'auto', ask: true, folding: false});
+  // An explicitly saved Off (and its scopes) is never reinterpreted as the new default.
+  assert.deepEqual(normalizePromptConfiguration({localUnderstanding: {mode: 'off', ask: false, folding: false}}).localUnderstanding, {mode: 'off', ask: false, folding: false});
+  assert.equal(normalizePromptConfiguration({localUnderstanding: {mode: 'off'}}).localUnderstanding.mode, 'off');
+  assert.equal(normalizePromptConfiguration({localUnderstanding: {mode: 'always', ask: false}}).localUnderstanding.ask, false);
   const row = SETTINGS_ROWS.find(item => item.id === 'askRecord')!;
   const section = SETUP_SECTIONS.find(item => item.id === 'ask')!;
   assert.ok(section.rows.some(item => item.row === row));

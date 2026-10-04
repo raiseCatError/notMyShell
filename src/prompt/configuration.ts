@@ -309,7 +309,12 @@ export type CursorEffect = typeof CURSOR_EFFECTS[number];
 /** A low-cadence effect while the caret rests (opt-in; Off schedules nothing). */
 export const CURSOR_IDLE_EFFECTS = ['off', 'glow', 'embers', 'flame', 'sparks'] as const;
 export type CursorIdleEffect = typeof CURSOR_IDLE_EFFECTS[number];
-export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom'] as const;
+/**
+ * Where the caret/effect color comes from. `theme` is Follow current theme (the
+ * stored name predates Choose theme and is kept so saved configs keep working);
+ * `chosen` is Choose theme: any bundled theme, independent of the prompt.
+ */
+export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom', 'chosen'] as const;
 export type CursorColorSource = typeof CURSOR_COLOR_SOURCES[number];
 export const CURSOR_TRAIL_COLORS = ['cursor', 'custom', 'gradient'] as const;
 export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient'] as const;
@@ -333,7 +338,7 @@ export interface CursorAdvanced {
 export interface CursorSettings {
   shape: CursorShape; blink: CursorBlink;
   renderer: CursorRenderer; motion: CursorMotion; effect: CursorEffect; idleEffect: CursorIdleEffect;
-  color: {source: CursorColorSource; custom?: string};
+  color: {source: CursorColorSource; custom?: string; /** Choose theme: the theme and (Catppuccin) accent the cursor uses. */ theme?: NativePaletteId; themeAccent?: CatppuccinAccent};
   trail: {source: typeof CURSOR_TRAIL_COLORS[number]; colors: string[]};
   particles: {source: typeof CURSOR_PARTICLE_COLORS[number]; colors: string[]};
   speed: CursorLevel; intensity: CursorLevel; trailLength: CursorLevel; particleAmount: CursorLevel;
@@ -361,7 +366,9 @@ export function normalizeCursor(value: unknown): CursorSettings {
   return {shape: pick(CURSOR_SHAPES, v.shape, 'host'), blink: pick(CURSOR_BLINKS, v.blink, 'host'),
     renderer: pick(CURSOR_RENDERERS, v.renderer, 'auto'), motion: pick(CURSOR_MOTIONS, v.motion, 'off'), effect: pick(CURSOR_EFFECTS, v.effect, 'none'),
     idleEffect: pick(CURSOR_IDLE_EFFECTS, v.idleEffect, 'off'),
-    color: {source: pick(CURSOR_COLOR_SOURCES, color.source, 'host'), ...(typeof color.custom === 'string' && HEX.test(color.custom) ? {custom: color.custom} : {})},
+    color: {source: pick(CURSOR_COLOR_SOURCES, color.source, 'host'), ...(typeof color.custom === 'string' && HEX.test(color.custom) ? {custom: color.custom} : {}),
+      ...(color.theme !== undefined || color.source === 'chosen' ? {theme: normalizePaletteId(color.theme)} : {}),
+      ...(color.themeAccent !== undefined ? {themeAccent: normalizeCatppuccinAccent(color.themeAccent)} : {})},
     trail: {source: pick(CURSOR_TRAIL_COLORS, trail.source, 'cursor'), colors: colors(trail.colors)},
     particles: {source: pick(CURSOR_PARTICLE_COLORS, particles.source, 'trail'), colors: colors(particles.colors)},
     speed: pick(CURSOR_LEVELS, v.speed, 'medium'), intensity: pick(CURSOR_LEVELS, v.intensity, 'medium'), trailLength: pick(CURSOR_LEVELS, v.trailLength, 'medium'),
@@ -492,7 +499,7 @@ export interface PromptConfiguration {
   askRecord: boolean;
   /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
   askPresentation: 'chat' | 'normal';
-  /** Optional local language understanding; Off by default, and every feature scope is opt-in. */
+  /** Optional local language understanding; Auto by default (deterministic first, nothing downloads without consent). Folding stays opt-in. */
   localUnderstanding: LocalUnderstandingSettings;
   /** Local-only agent CLI activity stats (durations and counts; never content). */
   agentActivity: boolean;
@@ -588,7 +595,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   sessionNotices: true,
   askRecord: true,
   askPresentation: 'chat' as const,
-  localUnderstanding: {mode: 'off', ask: false, folding: false},
+  localUnderstanding: {mode: 'auto', ask: true, folding: false},
   agentActivity: true,
   shellBackend: 'zsh',
   openWith: 'auto',
@@ -915,8 +922,9 @@ export interface LocalUnderstandingSettings {
 
 function normalizeLocalUnderstanding(value: unknown): LocalUnderstandingSettings {
   const record = isRecord(value) ? value : {};
-  const mode = LOCAL_UNDERSTANDING_MODES.includes(record.mode as LocalUnderstandingMode) ? record.mode as LocalUnderstandingMode : 'off';
-  const settings: LocalUnderstandingSettings = {mode, ask: record.ask === true, folding: record.folding === true};
+  // Only an absent or unrecognised mode gets the Auto default; a saved Off stays Off.
+  const mode = LOCAL_UNDERSTANDING_MODES.includes(record.mode as LocalUnderstandingMode) ? record.mode as LocalUnderstandingMode : 'auto';
+  const settings: LocalUnderstandingSettings = {mode, ask: typeof record.ask === 'boolean' ? record.ask : true, folding: record.folding === true};
   const model = isRecord(record.model) ? record.model : undefined;
   const runtime = model && (['llama.cpp', 'ollama', 'lmstudio'] as const).includes(model.runtime as LocalRuntimeKind) ? model.runtime as LocalRuntimeKind : undefined;
   if (model && runtime && typeof model.label === 'string' && model.label.length <= 120 && !/[\u0000-\u001f]/u.test(model.label)

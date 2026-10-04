@@ -9,8 +9,9 @@ import {dismissNotice, listSessionsWithNotices} from '../src/session/SocketSessi
 import {FrameDecoder, decodeMessage, encodeMessage, PROTOCOL_VERSION, type ServerMessage} from '../src/session/SessionProtocol.js';
 import {
   describeNotice, EndedNotices, MAX_ENDED_NOTICES, MAX_VISIBLE_NOTICES, noticeKey, programIdentity, selectNotices, SessionNoticeTracker,
-  LONG_RUNNING_MS, type SessionNotice,
+  LONG_RUNNING_MS, NOTICE_VISIBLE_MS, noticeExpiresAt, noticeVisible, ENDED_NOTICE_TTL_MS, type SessionNotice,
 } from '../src/session/SessionNotices.js';
+import {TerminalApp} from '../src/app/TerminalApp.js';
 import {planScreen, regionOf, withNoticeRows} from '../src/app/screenPlan.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
@@ -202,5 +203,67 @@ test('service: a notice survives detach, clears globally on attach, and ended se
     await service.close();
     rmSync(runtimeDir, {recursive: true, force: true});
     rmSync(home, {recursive: true, force: true});
+  }
+});
+
+test('notice visibility: routine events fade quickly, failures linger, attention is sticky; retention stays separate', () => {
+  const at = 1_000_000;
+  const completed = {...notice('a', at, 'completed')};
+  const failed = {...notice('b', at, 'failed'), exitCode: 2};
+  const long = {...notice('c', at, 'long-running'), durationMs: 900_000};
+  const endedOk = {...notice('d', at, 'ended'), exitCode: 0};
+  const endedBad = {...notice('e', at, 'ended'), exitCode: 1};
+  const attention = notice('f', at, 'attention');
+  assert.ok(NOTICE_VISIBLE_MS.completed >= 10_000 && NOTICE_VISIBLE_MS.completed <= 15_000);
+  assert.ok(NOTICE_VISIBLE_MS.ended >= 15_000 && NOTICE_VISIBLE_MS.ended <= 20_000);
+  assert.ok(NOTICE_VISIBLE_MS.failed >= 30_000 && NOTICE_VISIBLE_MS.failed <= 60_000);
+  assert.ok(NOTICE_VISIBLE_MS.endedAbnormal >= 30_000 && NOTICE_VISIBLE_MS.endedAbnormal <= 60_000);
+  assert.ok(NOTICE_VISIBLE_MS.longRunning <= 15_000, 'long-running is shown once, briefly');
+  assert.equal(noticeExpiresAt(attention), undefined, 'attention has no expiry');
+  const shown = (now: number) => selectNotices([completed, failed, long, endedOk, endedBad, attention], undefined, new Set(), now).notices.map(item => item.sessionId);
+  assert.equal(noticeVisible(completed, at + NOTICE_VISIBLE_MS.completed - 1), true);
+  assert.equal(noticeVisible(completed, at + NOTICE_VISIBLE_MS.completed), false, 'expires exactly at the boundary');
+  // Only the three newest rows paint (two plus a summary); check each notice alone for exactness.
+  const only = (item: SessionNotice, now: number) => selectNotices([item], undefined, new Set(), now).notices.length;
+  assert.equal(only(completed, at + 11_999), 1);
+  assert.equal(only(completed, at + 20_000), 0, 'a routine success never stays above the composer');
+  assert.equal(only(completed, at + 3 * 3_600_000), 0, 'not for hours');
+  assert.equal(only(endedOk, at + 19_999), 1);
+  assert.equal(only(endedOk, at + 20_000), 0);
+  assert.equal(only(failed, at + 44_999), 1);
+  assert.equal(only(failed, at + 45_000), 0);
+  assert.equal(only(endedBad, at + 44_999), 1);
+  assert.equal(only(endedBad, at + 45_000), 0);
+  assert.equal(only(long, at + 9_999), 1);
+  assert.equal(only(long, at + 10_000), 0);
+  assert.equal(only(attention, at + 24 * 3_600_000), 1, 'attention stays until focused or resolved');
+  assert.deepEqual(shown(at + 60_000), ['f'], 'after a minute only attention remains');
+  // Without a clock nothing is hidden (the service view); retention is its own, much longer constant.
+  assert.equal(selectNotices([completed], undefined).notices.length, 1);
+  assert.ok(ENDED_NOTICE_TTL_MS > NOTICE_VISIBLE_MS.endedAbnormal);
+  // Focusing the session (service clear) still resolves attention everywhere.
+  const tracker = new SessionNoticeTracker('s');
+  tracker.onExec('claude', 10);
+  tracker.onAttention(20);
+  assert.equal(tracker.notice?.kind, 'attention');
+  tracker.clear(30);
+  assert.equal(tracker.notice, undefined);
+});
+
+test('app: the poll/refresh path drops an expired notice predictably on an injected clock', () => {
+  const app = new TerminalApp();
+  Object.defineProperty(app, 'render', {value: () => {}});
+  try {
+    const at = 5_000_000;
+    app['noticeSource'] = [{sessionId: 'x', kind: 'completed', at}, {sessionId: 'y', kind: 'attention', at}];
+    app['applyNotices'](at + 1_000);
+    assert.deepEqual(app['noticeView'].notices.map((item: SessionNotice) => item.sessionId).sort(), ['x', 'y']);
+    assert.ok(app['noticeExpiry'], 'a wake-up is scheduled for the soonest expiry');
+    app['applyNotices'](at + NOTICE_VISIBLE_MS.completed + 1);
+    assert.deepEqual(app['noticeView'].notices.map((item: SessionNotice) => item.sessionId), ['y'], 'completed expired, attention stays');
+    assert.equal(app['noticeExpiry'], undefined, 'nothing left to expire: no timer');
+  } finally {
+    app['stop'](0);
+    app['session'].kill();
   }
 });

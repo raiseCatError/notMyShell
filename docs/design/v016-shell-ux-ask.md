@@ -87,12 +87,19 @@ no shell:
 
 ## Local understanding (optional)
 
-Off by default: no model is downloaded, loaded or run, and no service starts.
+Auto by default for fresh installs, with Ask eligible and Smart Folding still
+opt-in. Auto never downloads anything: with no model or runtime set up, NMSh
+works as before (deterministic Ask, normal folding), Auto simply stays
+built-in, and `/llm` or Setup can offer a model, which only downloads on an
+explicit Yes. A saved Off is never reinterpreted: only an absent mode gets
+the new default. Off means no model is downloaded, loaded or run, and no
+service starts.
 
 - **Modes**: Off; Auto (the model is asked only when built-in understanding
   is unsure, loaded lazily, unloaded after a global idle period); Always
   (asked first for enabled features, kept warm while any window is open).
-  Scopes are opt-in: Ask, Smart Folding.
+  Scopes: Ask is on by default (Auto consults the model only when built-in
+  understanding is unsure); Smart Folding is opt-in.
 - **One model for every window** (`src/understanding/ModelService.ts`): a
   user-global service on a private Unix socket in the 0700 runtime directory
   (`nmsh-model-v1.sock`). The first eligible request starts it; concurrent

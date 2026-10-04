@@ -39,9 +39,51 @@ export interface SessionNotice {
 export const MAX_VISIBLE_NOTICES = 3;
 /** A command still running after this long is worth one notice. */
 export const LONG_RUNNING_MS = 15 * 60_000;
-/** Notices for ended sessions are kept this long, bounded in count. */
+/**
+ * Retention is not visibility. The service keeps an ended session's notice
+ * this long (bounded in count) so a frontend that attaches later can still
+ * list it; /sessions and /resume own that history. What a frontend SHOWS
+ * above the composer is much shorter, see NOTICE_VISIBLE_MS.
+ */
 export const ENDED_NOTICE_TTL_MS = 60 * 60_000;
 export const MAX_ENDED_NOTICES = 8;
+
+/**
+ * How long a notice stays above the composer after its transition. A notice
+ * is an event ("something just happened elsewhere"), not a status panel:
+ * routine outcomes fade in seconds, failures linger a little longer, and only
+ * a program asking for a human (attention) stays until it is focused, answered
+ * or replaced. Long-running is shown once, briefly; /sessions owns the state.
+ */
+export const NOTICE_VISIBLE_MS = {
+  completed: 12_000,
+  ended: 20_000,
+  endedAbnormal: 45_000,
+  failed: 45_000,
+  longRunning: 10_000,
+} as const;
+
+/** Visibility window in ms, or undefined for a sticky notice (attention). */
+export function noticeVisibleMs(notice: SessionNotice): number | undefined {
+  switch (notice.kind) {
+    case 'completed': return NOTICE_VISIBLE_MS.completed;
+    case 'failed': return NOTICE_VISIBLE_MS.failed;
+    case 'long-running': return NOTICE_VISIBLE_MS.longRunning;
+    case 'ended': return notice.exitCode ? NOTICE_VISIBLE_MS.endedAbnormal : NOTICE_VISIBLE_MS.ended;
+    case 'attention': return undefined;
+  }
+}
+
+/** When the notice stops being shown (epoch ms); undefined while it is sticky. */
+export function noticeExpiresAt(notice: SessionNotice): number | undefined {
+  const visible = noticeVisibleMs(notice);
+  return visible === undefined ? undefined : notice.at + visible;
+}
+
+export function noticeVisible(notice: SessionNotice, now: number): boolean {
+  const expires = noticeExpiresAt(notice);
+  return expires === undefined || now < expires;
+}
 
 /** Stable identity of one transition: the same transition is never shown twice. */
 export function noticeKey(notice: SessionNotice): string {
@@ -151,12 +193,13 @@ export interface NoticeView {
 /**
  * Choose what to show: newest first, never this frontend's own session,
  * deduplicated by transition identity, capped at three rows. When there are
- * more, the third row becomes a collapsed "+N more" summary.
+ * more, the third row becomes a collapsed "+N more" summary. With `now`, a
+ * notice past its visibility window is not selected (see NOTICE_VISIBLE_MS).
  */
-export function selectNotices(all: readonly SessionNotice[], ownSessionId: string | undefined, dismissed: ReadonlySet<string> = new Set()): NoticeView {
+export function selectNotices(all: readonly SessionNotice[], ownSessionId: string | undefined, dismissed: ReadonlySet<string> = new Set(), now?: number): NoticeView {
   const seen = new Set<string>();
   const ordered = [...all]
-    .filter(notice => notice.sessionId !== ownSessionId && !dismissed.has(noticeKey(notice)))
+    .filter(notice => notice.sessionId !== ownSessionId && !dismissed.has(noticeKey(notice)) && (now === undefined || noticeVisible(notice, now)))
     .sort((a, b) => b.at - a.at || a.sessionId.localeCompare(b.sessionId))
     .filter(notice => { const key = noticeKey(notice); if (seen.has(key)) return false; seen.add(key); return true; });
   if (ordered.length <= MAX_VISIBLE_NOTICES) return {notices: ordered, hidden: 0};

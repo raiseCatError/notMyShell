@@ -9,7 +9,7 @@ import {chooseBackend, hostCursorFacts, GHOSTTY_BACKEND} from '../src/cursor/bac
 import {effectPalette} from '../src/cursor/palette.js';
 import {overlayRow} from '../src/presentation/cellOverlay.js';
 import {fragmentContent, includeLine, nativeCursorIntegrated, setupPlan, shaderSource, writeManagedFiles} from '../src/cursor/native.js';
-import {createCursorPanel, cursorPanelKey, previewCaret, renderCursorPanel} from '../src/cursor/CursorPanel.js';
+import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelEnv} from '../src/cursor/CursorPanel.js';
 import {DEFAULT_CURSOR, normalizeCursor, type CursorSettings} from '../src/prompt/configuration.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 
@@ -72,7 +72,12 @@ test('overlay: text keeps its glyphs and foreground; only blank cells get glyphs
   assert.equal(stripAnsi(painted).slice(0, 10), 'git status', 'text unchanged');
   assert.equal(stripAnsi(painted)[14], '*', 'a particle on a blank cell');
   assert.equal(displayWidth(stripAnsi(painted)), 15);
-  assert.match(painted, /48;2;90;40;20mi/u, 'the text cell only gets a background tint');
+  assert.doesNotMatch(painted, /\u001b\[48;/u, 'a background is never painted behind text: only the caret may fill a cell');
+  const tinted = overlayRow(row, new Map([[0, {tint: {color: {red: 255, green: 0, blue: 0}, amount: 0.5}, underline: true}]]));
+  assert.match(tinted, /\u001b\[4m\u001b\[38;2;228;100;100mg/u, 'a text cell blends its own foreground toward the tint and may underline');
+  assert.equal(stripAnsi(tinted), 'git status');
+  const caret = overlayRow(row, new Map([[0, {caret: true, background: {red: 90, green: 40, blue: 20}}]]));
+  assert.match(caret, /\u001b\[48;2;90;40;20mg/u, 'the caret cell may fill');
   assert.ok(painted.includes('\u001b[0m\u001b[38;2;200;200;200m'), 'the row\'s own style is replayed after a painted cell');
 });
 
@@ -101,7 +106,8 @@ test('backends: Auto is native only when set up; forced native on another host f
   assert.equal(chooseBackend(settings({renderer: 'auto'}), hostCursorFacts(env({TERM_PROGRAM: 'zed'}), () => false)).backend.id, 'portable');
   const forced = chooseBackend(settings({renderer: 'native'}), hostCursorFacts(env({TERM_PROGRAM: 'Apple_Terminal'}), () => false));
   assert.equal(forced.backend.id, 'portable');
-  assert.match(forced.reason, /unavailable/u);
+  assert.match(forced.reason, /not available/u);
+  assert.deepEqual(forced.portableDraws, {motion: false, effect: false, idle: false}, 'a forced host renderer without a host backend draws nothing, and says so');
   const ghostty = hostCursorFacts(env({TERM_PROGRAM: 'ghostty', TERM_PROGRAM_VERSION: '1.2.0'}), () => true);
   const native = chooseBackend(settings({renderer: 'auto', motion: 'smear', effect: 'fire'}), ghostty);
   assert.equal(native.backend, GHOSTTY_BACKEND);
@@ -143,20 +149,60 @@ test('colors: Fire is not fixed to orange; custom colors and gradients apply', (
   assert.equal(effectPalette(settings({effect: 'sparks', trail: {source: 'gradient', colors: ['#00ff88', '#00aaff']}})).trail.length, 2);
 });
 
+const panelEnv = (extra: Partial<CursorPanelEnv> = {}, draft = settings()): CursorPanelEnv => {
+  const facts = hostCursorFacts({} as NodeJS.ProcessEnv, () => false);
+  return {choice: chooseBackend(draft, facts), facts, context: {palette: 'lavender', accent: 'mauve'}, still: false, level: 'truecolor', ...extra};
+};
+
 test('/cursor panel: changes apply at once; Advanced holds physics; the preview runs the real engine', () => {
   const state = createCursorPanel(DEFAULT_CURSOR, 0);
   state.selected = 3; // Motion
-  const action = cursorPanelKey(state, {kind: 'right'});
+  const action = cursorPanelKey(state, {kind: 'right'}, panelEnv(), 10);
   assert.equal(action?.kind === 'apply' && action.settings.motion, 'smooth');
-  assert.equal(cursorPanelKey(state, {kind: 'text', value: 'a'}), undefined);
+  assert.equal(state.started, 10, 'changing a value restarts the preview');
+  assert.equal(cursorPanelKey(state, {kind: 'text', value: 'a'}, panelEnv(), 20), undefined);
   assert.ok(state.advanced);
-  const tune = cursorPanelKey(state, {kind: 'right'});
+  state.selected = 2; // Short-move duration (after Trail color and Particle color; their Edit rows appear only for Custom or Gradient)
+  const tune = cursorPanelKey(state, {kind: 'right'}, panelEnv(), 30);
   assert.equal(tune?.kind === 'apply' && tune.settings.advanced.shortMoveMs, 50);
-  assert.equal(previewCaret(1600).cause, 'jump');
-  const text = stripAnsi(renderCursorPanel(createCursorPanel(settings({motion: 'smear'}), 0), 100, 2400,
-    chooseBackend(settings(), hostCursorFacts({} as NodeJS.ProcessEnv, () => false)), false).join('\n'));
+  const text = stripAnsi(renderCursorPanel(createCursorPanel(settings({motion: 'smear'}), 0), 100, 400, panelEnv({}, settings({motion: 'smear'}))).join('\n'));
   assert.match(text, /Cursor & effects/u);
-  assert.match(text, /Preview/u);
-  assert.match(text, /Motion\s+Smear/u);
+  assert.match(text, /Preview · Shape: Host default/u);
+  assert.match(text, /Motion\s+‹? ?Smear/u);
   assert.doesNotMatch(text, /Stiffness/u, 'physics stay in Advanced');
+});
+
+test('portable effects paint foreground tints and shading glyphs, never a background behind text', () => {
+  for (const [motion, effect, idleEffect] of [['smear', 'fire', 'off'], ['tail', 'sparks', 'off'], ['smear', 'ripple', 'off'], ['off', 'none', 'glow']] as const) {
+    const engine = new CursorEngine(settings({motion, effect, idleEffect}), seededRandom(3));
+    const palette = effectPalette(settings({motion, effect, idleEffect}));
+    engine.target({row: 1, column: 2}, 0);
+    engine.target({row: 1, column: 30}, 0);
+    const seen: Array<{background?: unknown; caret?: boolean; tint?: unknown; glyph?: string}> = [];
+    for (let now = 16; now < 3000; now += 16) {
+      engine.step(now);
+      for (const line of engine.paints(palette, bounds, now).values()) for (const paint of line.values()) seen.push(paint);
+    }
+    assert.ok(seen.length > 0 || motion === 'off', `${motion}/${effect} painted something`);
+    assert.ok(seen.every(paint => !paint.background || paint.caret), `${motion}/${effect}: backgrounds only for the caret cell`);
+  }
+});
+
+test('live cursor frames never paint a background behind text; only the travelling caret fills one cell', () => {
+  const current = settings({motion: 'tail', effect: 'fire', idleEffect: 'glow', shape: 'bar'});
+  const presenter = new CursorPresenter(() => current, () => {}, seededRandom(11));
+  const rows = ['', '\u001b[38;2;200;200;200m❯ git commit -m "hello world"\u001b[0m', ''];
+  let withBackground = 0;
+  presenter.apply(rows, {row: 1, column: 4}, bounds, 'jump', true, 0);
+  for (let now = 16; now < 2500; now += 16) {
+    const column = now < 600 ? 4 + Math.floor(now / 20) : 30;
+    const frame = presenter.apply(rows, {row: 1, column}, bounds, now < 100 ? 'jump' : 'typing', true, now);
+    for (const row of frame.rows) {
+      const fills = row.match(/\u001b\[48;/gu)?.length ?? 0;
+      assert.ok(fills <= 1, `at most the caret cell is filled (${now}ms)`);
+      withBackground += fills;
+    }
+  }
+  assert.equal(withBackground, 0, 'a Bar caret and every effect draw with foreground colors only');
+  presenter.dispose();
 });

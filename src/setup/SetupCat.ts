@@ -5,7 +5,7 @@ import {
 } from '../prompt/configuration.js';
 import {STYLE_PROFILE_OPTIONS} from '../prompt/styles.js';
 import {separatorLabel} from '../prompt/glyphChoices.js';
-import {PROMPT_PROVIDERS} from '../prompt/PromptPanel.js';
+import {appearanceRows, PROMPT_PROVIDERS, type AppearanceRow} from '../prompt/PromptPanel.js';
 import {WELCOME_PROVIDERS} from '../output/WelcomeProviders.js';
 import {NAVIGATION_PROVIDERS} from '../shell/DirectoryService.js';
 import {PICKER_PROVIDERS} from '../pickers/Picker.js';
@@ -14,14 +14,17 @@ import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {lifecycleNote, type ProviderDescriptor, type ProviderStatus} from '../providers/providers.js';
 import type {CompletionFacts} from '../shell/SemanticService.js';
 import {
-  adjustSettingsRow, enumRow, settingsRowApplies, settingsRowValue, SETTINGS_ROWS, type SettingsRow,
+  adjustSettingsRow, enumRow, settingsRowApplies, settingsRowValue, SETTINGS_ROWS, type SettingsDestination, type SettingsRow,
 } from '../ui/SettingsPanel.js';
 import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {renderTools, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {TOOLS} from '../tools/catalog.js';
 import {renderControls} from '../ui/controls.js';
+import {chooseBackend, currentCursorHost} from '../cursor/backends.js';
+import type {CursorPanelState} from '../cursor/CursorPanel.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
+import {MOTION_ROWS} from '../motion/motionRows.js';
 import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
 
 /**
@@ -80,13 +83,15 @@ export interface SetupSection {
   title: string;
   intro: readonly string[];
   rows: readonly SetupRow[];
+  /** Rows that depend on the draft (the Native prompt style's own fields), appended after `rows`. */
+  dynamicRows?: (draft: PromptConfiguration) => readonly SetupRow[];
   /** Muted informational lines after the rows. */
   facts?: (draft: PromptConfiguration, context: SetupContext) => string[];
 }
 
 /** Direct entry names to the section they open. */
 export const SETUP_ENTRIES: Readonly<Record<string, string>> = {
-  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask',
+  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', syntax: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask', cursor: 'cursor', motion: 'motion', sessions: 'sessions',
 };
 
 const configRow = (id: string): SettingsRow => {
@@ -152,6 +157,52 @@ const nativeOnly = (row: SettingsRow): SettingsRow => ({...row, when: config => 
 const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider', 'Prompt provider', 'Native prompt, or your existing Starship / Powerlevel10k', 'Prompt',
   PROMPT_PROVIDERS, config => config.provider, (config, provider) => ({...config, provider}));
 
+/**
+ * An editor Setup does not embed: Enter applies this Setup (so nothing is
+ * lost), then opens the real editor. The row says so; it is a route, never a
+ * second configuration path.
+ */
+function routeRow(id: string, label: string, description: string, destination: SettingsDestination, category: string): SetupRow {
+  return {row: {id, label, description, category, control: 'action', actionLabel: 'Open ›', destination},
+    note: () => 'Enter applies this Setup first, then opens it; it keeps the choices you made here'};
+}
+
+const PROMPT_FIELDS_EXCLUDED = new Set(['themeFamily', 'themeVariant', 'themeAccent', 'themeStudio', 'style', 'vibrance', 'promptSymbol', 'promptSymbolCustom', 'modules']);
+
+/**
+ * A /prompt appearance row (it edits a configuration through `change`) as a
+ * Setup row, so the Native prompt style's own fields (edges, connector, gap,
+ * padding, fills, text colors, icons...) are edited by the very same logic,
+ * on the Setup draft. Options are found by cycling a copy, never by a second table.
+ */
+function adaptAppearanceRow(row: AppearanceRow): SettingsRow | undefined {
+  const change = row.change;
+  if (!change || row.edit || row.opens) return undefined;
+  const cycleOf = (config: PromptConfiguration): string[] => {
+    const probe = structuredClone(config);
+    const first = row.value(probe);
+    const seen = [first];
+    for (let step = 0; step < 24; step += 1) {
+      change(probe, 1);
+      const value = row.value(probe);
+      if (value === first) break;
+      seen.push(value);
+    }
+    return seen;
+  };
+  return {id: `prompt:${row.id}`, label: row.label.trim(), description: row.note ? 'The Native prompt style\'s own setting; the same field /prompt edits' : 'The Native prompt style\'s own setting; the same field /prompt edits',
+    category: 'Prompt', control: 'enum', options: [], optionsFor: cycleOf, index: () => 0,
+    select: (config, index) => {
+      const next = structuredClone(config);
+      for (let step = 0; step < index; step += 1) change(next, 1);
+      return next;
+    }};
+}
+
+const promptStyleRows = (draft: PromptConfiguration): SetupRow[] => draft.provider !== 'nmsh' ? [] : appearanceRows(draft)
+  .filter(row => !PROMPT_FIELDS_EXCLUDED.has(row.id) && !row.id.endsWith('.separator'))
+  .flatMap(row => { const adapted = adaptAppearanceRow(row); return adapted ? [{row: adapted, note: () => row.note?.(draft)}] : []; });
+
 /** Every Setup Cat row id, so callers (and tests) can find any row in the one model. */
 export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'welcome', title: 'Start', intro: [
@@ -162,16 +213,31 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   ], rows: []},
   {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
     {row: configRow('glyphStyle'), note: draft => draft.glyphStyle === 'nerd' ? 'Needs a Nerd Font in your terminal' : 'Works with any terminal font'},
-    {row: configRow('cursorShape'), note: () => 'Applied only while NMSh owns the composer; full-screen programs get your normal cursor'},
-    {row: configRow('cursorBlink')},
   ]},
+  // The same cursor rows as Settings; rich editing (the color picker, trail and particle colors, physics) is /cursor, opened over this draft.
+  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects, Off by default. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
+    {row: configRow('cursorShape'), note: draft => draft.cursor.shape === 'host' ? 'Host default: your terminal keeps its own cursor' : 'Applied while NMSh owns the composer; full-screen programs get your normal cursor'},
+    {row: configRow('cursorBlink')},
+    {row: configRow('cursorRenderer'), note: draft => chooseBackend(draft.cursor, currentCursorHost()).reason},
+    {row: configRow('cursorMotion')},
+    {row: configRow('cursorEffect')},
+    {row: configRow('cursorIdle')},
+    {row: configRow('cursorColor'), note: draft => draft.cursor.color.source === 'host' ? 'Host: your terminal draws the caret in its own color' : undefined},
+    {row: configRow('cursorColorFamily')},
+    {row: configRow('cursorColorVariant')},
+    {row: configRow('cursorColorAccent')},
+    {row: configRow('cursorColorCustom')},
+    // Speed, intensity, trail length and particle amount, trail/particle colors and the physics live in /cursor, opened over this draft.
+    {row: configRow('cursorAdvanced'), note: () => 'Speed, intensity, trail and particles, trail/particle colors and physics; changes stay in this Setup draft until Apply'},
+  ], facts: draft => [`Renderer in use: ${chooseBackend(draft.cursor, currentCursorHost()).reason}`]},
   {id: 'prompt', title: 'Prompt', intro: [NATIVE_PROMPT_RECOMMENDATION, 'Deep prompt customization lives in /prompt.'], rows: [
     {...PROMPT_PROVIDER_ROW, note: (draft, context) => draft.provider === 'nmsh' ? 'Built in · no installation required'
       : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · ${NATIVE_ONLY_NOTE}`},
     {row: nativeOnly(configRow('promptStyle'))},
     {row: nativeOnly(SEPARATOR_ROW)},
     {row: configRow('promptSymbol')},
-  ]},
+    routeRow('setupPromptModules', 'Prompt modules & custom glyphs', 'Which modules show and in what order, and your own separator or prompt glyph, in /prompt', 'prompt', 'Prompt'),
+  ], dynamicRows: draft => promptStyleRows(draft)},
   {id: 'appearance', title: 'Appearance', intro: [
     'Theme: the base NMSh prompt/UI palette · Theme text: whether it colors NMSh text · UI chrome: frames, tabs, selection, separators, accents.',
     'Chroma: an optional treatment over the Native prompt/effects and opted-in surfaces; Full Chroma may override the prompt\'s theme colors. Your terminal and editor keep their own colors.',
@@ -188,16 +254,36 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('treatmentPreset'), note: () => `${CHROMA_SCOPE_NOTE} /chroma has every option`},
     {row: configRow('treatmentIntensity')},
     {row: configRow('treatmentSemantic')},
+    {row: configRow('treatmentScope')},
+    {row: configRow('chromaRules')},
+    {row: configRow('treatmentGeometry')},
     {row: configRow('treatmentMotion')},
+    {row: configRow('treatmentSpeed')},
+    {row: configRow('treatmentCurve')},
     {row: configRow('reducedMotion')},
     {row: configRow('effectsOff')},
+    {row: configRow('shimmer')},
+    {row: configRow('autoEffects')},
+    routeRow('setupChromeColors', 'Edit UI chrome colors', 'Accent, text, separator, selection and status roles with the color picker', 'chromeColors', 'Appearance'),
+    routeRow('setupThemeStudio', 'Theme Studio (custom themes)', 'Clone, edit, import and export your own theme', 'themeStudio', 'Appearance'),
+    routeRow('setupHostWindow', 'Terminal window (opacity, blur)', 'Host window opacity and blur where your terminal supports it', 'appearance', 'Appearance'),
   ]},
+  // General NMSh motion: the same rows /appearance → Motion edits, with the same real previews.
+  {id: 'motion', title: 'Motion', intro: ['Short, finite presentations of real events. Each can be Off; Reduced Motion, Decorative Effects Off and NO_COLOR stop all of them.',
+    'The preview below runs the selected one on sample content, once; it never touches your session.'], rows: MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)}))},
   {id: 'editor', title: 'Editor', intro: ['The composer, syntax colors and suggestions.'], rows: [
     {row: configRow('composerPosition')},
+    {row: configRow('composerDividers')},
+    {row: configRow('pastePreview')},
     {row: configRow('syntaxHighlighting')},
+    {row: configRow('syntaxColors'), note: draft => draft.syntax.colors === 'followPrompt' ? 'Follows the Native prompt theme, even with Starship or Powerlevel10k' : draft.syntax.colors === 'grayscale' ? 'Brightness and weight only; no hue' : undefined},
+    {row: configRow('syntaxThemeFamily')},
+    {row: configRow('syntaxThemeVariant')},
+    {row: configRow('syntaxThemeAccent')},
     providerRow('setupSuggestions', 'Suggestions', 'Ghost-text prediction', 'Suggestions', SUGGESTION_PROVIDERS,
       config => config.suggestions, (config, suggestions) => ({...config, suggestions})),
     {row: configRow('suggestionsOnEmpty')},
+    routeRow('setupKeyboard', 'Keyboard bindings', 'Terminal key bindings, in /keyboard', 'keyboard', 'Keyboard'),
   ], facts: (_draft, context) => completionFacts(context.completion)},
   // The same transcript rows as Settings and /transcript; one draft, one save path.
   {id: 'transcript', title: 'Transcript', intro: ['How past commands look. Stored history is never changed; this is presentation only.'], rows: [
@@ -227,31 +313,86 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('shellBackend'), note: () => 'Default shell: the real shell NMSh starts underneath new sessions. /shell switches this one.'},
     {row: configRow('showShell'), note: () => 'Show current shell: the active backend always, only when it differs from the default, or never.'},
   ]},
+  // Sessions, notices, notifications and update checks: the same rows as Settings.
+  {id: 'sessions', title: 'Sessions & alerts', intro: ['How live sessions restart, what other sessions tell you, and when NMSh checks for updates.',
+    'Session notices are short events about another session (a finished command, a failure, a request for attention); /sessions keeps the state.'], rows: [
+    {row: configRow('liveSessionStartup')},
+    {row: configRow('liveSessionMultiple')},
+    {row: configRow('sessionNotices'), note: draft => draft.sessionNotices ? 'Brief: a success fades in seconds, a failure lingers a little, a request for attention stays until you look' : 'Off: other sessions never add lines above the composer'},
+    {row: configRow('agentActivity')},
+    {row: configRow('openWith')},
+    {row: configRow('notifications')},
+    {row: configRow('notifyAfter')},
+    {row: configRow('notifyOnSuccess')},
+    {row: configRow('notifyOnFailure')},
+    {row: configRow('notifyWhenFocused')},
+    {row: configRow('updateChecks')},
+  ]},
   // The same rows as Settings; nothing here implies NMSh needs a model.
   {id: 'ask', title: 'Ask & local understanding', intro: ['/ask: ask NMSh what it can do in plain English. Ask works without a language model,',
-    'and so does NMSh\'s normal Smart Folding. A local model is optional; No local model is the default.'], rows: [
+    'and so does NMSh\'s normal Smart Folding. Local understanding defaults to Auto: built-in understanding answers first, and a local model is only consulted when it is unsure and one is set up.'], rows: [
+    {row: configRow('askPresentation')},
     {row: configRow('askRecord'), note: draft => draft.askRecord ? 'Keep Ask conversations in transcripts' : 'Ask conversations are not saved; approved commands still are'},
-    {row: configRow('localUnderstanding'), note: draft => draft.localUnderstanding.mode === 'off' ? 'No local model: nothing is downloaded, loaded or run' : 'Choose the uses below; after Apply, Setup continues into model setup (/llm): it detects first, and nothing downloads without your Yes'},
+    {row: configRow('localUnderstanding'), note: draft => localUnderstandingNote(draft)},
     {row: configRow('localUnderstandingAsk'), note: () => 'Improve Ask understanding'},
     {row: configRow('localUnderstandingFolding'), note: () => 'Improve Smart Folding'},
   ]},
   {id: 'welcomeScreen', title: 'Welcome', intro: ['What a new session shows first. Vespyr is the NMSh cat.'], rows: [
     providerRow('setupWelcome', 'Welcome', 'New-session welcome', 'Welcome', WELCOME_PROVIDERS.filter(provider => WELCOME_PROVIDER_IDS.includes(provider.id)),
       config => config.welcome, (config, welcome) => ({...config, welcome})),
-    {row: configRow('statusStrip'), note: draft => draft.statusStrip.enabled ? 'Minimal: clock, plus battery only when this machine has one; more in /settings' : 'Off: no extra row'},
+    {row: configRow('statusStrip'), note: draft => draft.statusStrip.enabled ? 'Minimal: clock, plus battery only when this machine has one' : 'Off: no extra row'},
+    {row: configRow('stripClock')},
+    {row: configRow('stripBattery')},
+    {row: configRow('stripCpu')},
+    {row: configRow('stripRam')},
+    {row: configRow('stripRamDisplay')},
+    {row: configRow('stripUptime')},
   ]},
-  {id: 'idle', title: 'Idle visuals', intro: ['An optional screensaver inside NMSh, only while it owns the terminal and nothing is running.',
+  {id: 'idle', title: 'Idle & activity', intro: ['An optional screensaver inside NMSh, only while it owns the terminal and nothing is running.',
     'Off by default (Never). Any key, mouse or new output ends it and leaves everything exactly as it was.'], rows: [
     {row: configRow('idleTimeout')},
     {row: configRow('idleMode')},
-    {row: configRow('idleColor'), note: draft => draft.idleVisuals.colorSource === 'custom' ? 'Edit the Custom gradient in /screensaver' : undefined},
+    {row: configRow('idleColor')},
+    routeRow('setupIdleColors', 'Edit idle colors', 'The idle visuals\' own gradient stops, with a live preview', 'idleColors', 'Idle visuals'),
+    {row: configRow('activityColors'), note: () => 'The running-command line only; finished commands show their plain result'},
+    routeRow('setupActivityColors', 'Edit live activity colors', 'Gradient stops for the live activity line', 'activityColors', 'Live activity'),
   ]},
   {id: 'tools', title: 'Optional tools', intro: [NATIVE_FIRST_SHORT, INSTALL_DRAFT_NOTE], rows: [
     {row: configRow('toolUpdateChecks'), note: draft => draft.toolUpdateChecks === 'off' ? 'Off: NMSh never checks unless you ask in /tools' : 'Checks run in the background at startup, never while typing'},
     {row: configRow('installSuggestions')},
+    {row: configRow('resetInstallSuggestions'), note: () => 'Resets in this draft; nothing changes until Apply'},
+    routeRow('setupToolConfig', 'Tool configuration', 'Review supported Starship module changes', 'toolConfig', 'Tools'),
   ], facts: (_draft, context) => completionFacts(context.completion)},
   {id: 'review', title: 'Review & Apply', intro: [], rows: []},
 ];
+
+/** Factual Local understanding copy per mode; nothing here implies a model is installed or downloads on its own. */
+function localUnderstandingNote(draft: PromptConfiguration): string {
+  const {mode, model} = draft.localUnderstanding;
+  if (mode === 'off') return 'Off: no local model is ever consulted, loaded or run';
+  const setup = model ? `Model: ${model.label}` : 'No model is set up: built-in Ask works and Auto simply stays built-in; /llm can set one up, and nothing downloads without your Yes';
+  return mode === 'auto' ? `Auto: built-in understanding first, a local model only when it is unsure. ${setup}`
+    : `Always: a local model is consulted first when one is set up. ${setup}`;
+}
+
+/**
+ * Settings rows that Setup edits through a differently named row (its provider
+ * choices) or reaches through a labelled route. Anything else in SETTINGS_ROWS
+ * must appear in a Setup section under its own id: a test enforces it, so a new
+ * customization cannot silently become undiscoverable from Setup.
+ */
+export const SETUP_EQUIVALENTS: Readonly<Record<string, string>> = {
+  provider: 'setupPromptProvider', welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', navigation: 'setupNavigation', picker: 'setupPicker',
+  cursorSpeed: 'cursorAdvanced', cursorIntensity: 'cursorAdvanced', cursorTrail: 'cursorAdvanced', cursorParticles: 'cursorAdvanced',
+  tools: 'setupToolChoice', uiChromeColors: 'setupChromeColors', idleCustomColors: 'setupIdleColors', activityCustomColors: 'setupActivityColors',
+};
+
+/** Where each Settings entry point (a full panel) is reached from Setup: a section, or the route row that opens it. */
+export const SETUP_ENTRY_COVERAGE: Readonly<Record<string, string>> = {
+  appearance: 'setupHostWindow', glyph: 'glyphStyle', prompt: 'setupPromptModules', transcript: 'transcriptPresentation', syntax: 'syntaxHighlighting', keyboard: 'setupKeyboard',
+  welcome: 'setupWelcome', suggestions: 'setupSuggestions', history: 'setupHistory', picker: 'setupPicker', navigation: 'setupNavigation', layout: 'composerPosition', toolConfig: 'setupToolConfig', tools: 'setupBrowseTools', screensaver: 'idleTimeout', setup: 'setupToolChoice',
+  cursor: 'cursorAdvanced', themeStudio: 'setupThemeStudio', chromeColors: 'setupChromeColors', idleColors: 'setupIdleColors', activityColors: 'setupActivityColors', resetInstallSuggestions: 'resetInstallSuggestions',
+};
 
 function completionFacts(facts: CompletionFacts | undefined): string[] {
   if (!facts) return ['Configured zsh completion      Checking…'];
@@ -277,6 +418,15 @@ export interface SetupState {
    * and installer). The draft and section are untouched while it is open.
    */
   toolBrowser?: ToolsPanel;
+  /**
+   * The /cursor panel opened inside Setup Cat over the draft's cursor settings
+   * (advanced tuning, the custom color picker). It applies to the draft only;
+   * Esc returns here, and nothing is saved until Apply.
+   */
+  cursorPanel?: CursorPanelState;
+  /** The cursor preview restarts when the selected row or the draft's cursor settings change. */
+  previewKey?: string;
+  previewStart?: number;
   /**
    * Enter on an option row lists every choice under it: ↑↓ preview each one
    * live in the draft, Enter keeps it, Esc restores the value it had.
@@ -313,7 +463,7 @@ export function setupChanges(state: SetupState): Array<{label: string; from: str
   const changes: Array<{label: string; from: string; to: string}> = [];
   const seen = new Set<string>();
   for (const section of SETUP_SECTIONS) {
-    for (const {row} of section.rows) {
+    for (const {row} of [...sectionRows(section, state.draft), ...sectionRows(section, state.saved)]) {
       if (seen.has(row.id)) continue;
       seen.add(row.id);
       const from = rowValue(row, state.saved);
@@ -322,6 +472,10 @@ export function setupChanges(state: SetupState): Array<{label: string; from: str
     }
   }
   if (state.tools !== 'keep') changes.push({label: 'Optional tools', from: TOOL_CHOICE_LABELS.keep, to: TOOL_CHOICE_LABELS[state.tools]});
+  // Edits made inside an embedded editor (advanced cursor tuning) that no row summarizes are still unapplied changes.
+  if (!changes.some(change => change.label.startsWith('Cursor')) && JSON.stringify(state.draft.cursor) !== JSON.stringify(state.saved.cursor)) {
+    changes.push({label: 'Advanced cursor tuning', from: 'saved', to: 'edited'});
+  }
   return changes;
 }
 
@@ -336,18 +490,33 @@ export type SetupResult =
   | {kind: 'cancel'}
   /** Open the shared tool browser inside Setup Cat, optionally on one tool. */
   | {kind: 'browseTools'; toolId?: string}
-  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean};
+  /** Open the shared /cursor panel inside Setup Cat, over the draft. */
+  | {kind: 'cursorEditor'; advanced: boolean; row?: string}
+  /** `then`: an editor to open after Apply (a route row). */
+  | {kind: 'apply'; configuration: PromptConfiguration; tools: ToolChoice; changed: boolean; then?: SettingsDestination};
 
 /** Rows that apply to the draft (a child row disappears when its parent makes it meaningless). */
+function sectionRows(section: SetupSection, draft: PromptConfiguration): readonly SetupRow[] {
+  return [...section.rows, ...(section.dynamicRows?.(draft) ?? [])];
+}
+
 function currentRows(state: SetupState): readonly SetupRow[] {
-  const rows = SETUP_SECTIONS[state.section]!.rows.filter(item => setupRowApplies(item.row, state.draft));
+  const rows = sectionRows(SETUP_SECTIONS[state.section]!, state.draft).filter(item => setupRowApplies(item.row, state.draft));
   return state.section === sectionIndex('tools') ? [...rows, TOOL_CHOICE_ROW, BROWSE_ROW] : rows;
+}
+
+/** The selected row of the current step (undefined on steps without rows). */
+export function setupSelectedRow(state: SetupState): SetupRow | undefined {
+  return currentRows(state)[state.row];
 }
 
 function setupRowApplies(row: SettingsRow, config: PromptConfiguration): boolean {
   if (row.when && !row.when(config)) return false;
   return SETTINGS_ROWS.some(item => item.id === row.id) ? settingsRowApplies(row, config) : true;
 }
+
+/** Rows that open an editor instead of changing a value (they are routes, or run on the draft). */
+export const isRouteRow = (row: SettingsRow): boolean => row.control === 'action' && row.destination !== 'tools' && row.destination !== 'cursor' && !row.run;
 
 /** Opens the shared tool browser in place; Enter on it never leaves the step. */
 const BROWSE_ROW: SetupRow = {row: {id: 'setupBrowseTools', label: 'Browse optional tools',
@@ -405,10 +574,18 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
       if (next) state.draft = next;
     }
   } else if (key.kind === 'enter' && rows[state.row]?.row.control === 'action') {
+    const row = rows[state.row]!.row;
+    if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : 'colorCustom'};
+    // An in-draft action (reset a list), or a route: apply this Setup, then open the real editor.
+    if (row.control === 'action' && row.run) { state.draft = row.run(state.draft); return undefined; }
+    if (row.control === 'action' && row.destination !== 'tools') return {kind: 'apply', configuration: normalizePromptConfiguration(state.draft), tools: state.tools, changed: changes(), then: row.destination};
     return {kind: 'browseTools'};
-  } else if (key.kind === 'enter' && rows[state.row] && rows[state.row]!.row.id !== TOOL_CHOICE_ROW.row.id && chooserOptions(rows[state.row]!.row, state.draft).length) {
+  } else if (key.kind === 'enter' && rows[state.row] && rows[state.row]!.row.id !== TOOL_CHOICE_ROW.row.id && !rows[state.row]!.row.unavailable?.(state.draft) && chooserOptions(rows[state.row]!.row, state.draft).length) {
     const {row} = rows[state.row]!;
     state.chooser = {rowId: row.id, index: row.control === 'enum' ? row.index(state.draft) : 0, before: state.draft};
+  } else if (key.kind === 'text' && key.value.toLowerCase() === 'r' && ['cursor', 'motion'].includes(SETUP_SECTIONS[state.section]!.id)) {
+    // Replay: the preview restarts from its first frame.
+    state.previewKey = undefined;
   } else if (key.kind === 'text' && key.value.toLowerCase() === 'i' && rows[state.row]) {
     const tool = installableTool(rows[state.row]!, state);
     if (tool) return {kind: 'browseTools', toolId: tool};
@@ -502,7 +679,10 @@ export function renderSetup(state: SetupState, columns: number, height: number):
       const value = item.row.id === TOOL_CHOICE_ROW.row.id ? TOOL_CHOICE_LABELS[state.tools] : rowValue(item.row, state.draft);
       const changed = item.row.id !== TOOL_CHOICE_ROW.row.id && item.row.control !== 'action' && rowValue(item.row, state.saved) !== value;
       const pointer = selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
+      const unavailable = item.row.unavailable?.(state.draft);
+      // An unavailable row has nothing to cycle: no arrows, and the reason is shown instead of the description.
       const control = item.row.control === 'action' ? `${selected ? accent : secondary}${value}${reset}`
+        : unavailable ? `${subtle}${value}${reset}`
         : selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
       top.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${padCells(indent(item.row) + item.row.label, labelWidth - 2)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
       if (selected && state.chooser?.rowId === item.row.id) {
@@ -518,8 +698,9 @@ export function renderSetup(state: SetupState, columns: number, height: number):
     const selected = rows[state.row];
     if (selected) {
       const note = selected.row.id === TOOL_CHOICE_ROW.row.id ? toolChoiceNote(state.tools) : selected.note?.(state.draft, state.context);
-      top.push('', `  ${subtle}${selected.row.description}${reset}`);
-      if (note) top.push(`  ${subtle}${note}${reset}`);
+      const reason = selected.row.unavailable?.(state.draft);
+      top.push('', `  ${subtle}${reason ?? selected.row.description}${reset}`);
+      if (note && !reason) top.push(`  ${subtle}${note}${reset}`);
     }
   }
   if (state.confirmDiscard) top.push('', `  ${primary}Discard unapplied Setup Cat changes? Your saved settings stay exactly as they are.${reset}`);
@@ -528,15 +709,16 @@ export function renderSetup(state: SetupState, columns: number, height: number):
   const facts = section.facts?.(state.draft, state.context) ?? [];
   const preview = [...(state.context.preview ?? []), ...facts.map(line => `  ${subtle}${line}${reset}`)];
   const selectedRow = section.id === 'review' ? undefined : currentRows(state)[state.row];
-  const browsable = Boolean(selectedRow && selectedRow.row.id !== TOOL_CHOICE_ROW.row.id && chooserOptions(selectedRow.row, state.draft).length);
+  const browsable = Boolean(selectedRow && selectedRow.row.id !== TOOL_CHOICE_ROW.row.id && !selectedRow.row.unavailable?.(state.draft) && chooserOptions(selectedRow.row, state.draft).length);
   const footer = state.confirmDiscard
     ? renderControls([['Enter', 'discard changes'], ['Esc', 'keep editing']])
     : state.chooser
       ? renderControls([['↑↓', 'preview choice'], ['Enter', 'keep'], ['Esc', 'restore']])
       : renderControls([
         ...(section.rows.length || section.id === 'tools' ? [['↑↓', 'select'] as [string, string], ['←→', 'change'] as [string, string]] : []),
+        ...(['cursor', 'motion'].includes(section.id) ? [['R', 'replay preview'] as [string, string]] : []),
         ['Tab', 'next'], ['Shift+Tab', 'previous section'],
-        ['Enter', browsable ? 'choices' : selectedRow?.row.control === 'action' ? 'open'
+        ['Enter', browsable ? 'choices' : selectedRow && isRouteRow(selectedRow.row) ? 'apply & open' : selectedRow?.row.control === 'action' ? 'open'
           : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length ? 'apply' : 'close') : 'next'],
         ['Esc', 'cancel']]);
   // Frame line, head, footer and its blank line are fixed; controls come next; the preview gets what is left.

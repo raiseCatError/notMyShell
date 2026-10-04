@@ -11,6 +11,7 @@ import {diffModules, progress, transitionPaint, Transitions, type MotionGate} fr
  * transitionPaint functions, so the preview is the effect itself on fake
  * content. It never touches the composer, transcript, shell or session.
  * One run per trigger (row selected, value changed, R); never a loop.
+ * Like the live effects it only shifts foreground colors: no backgrounds.
  */
 export type MotionPreviewMode = 'animating' | 'settled' | 'off' | 'effectsOff' | 'reduced' | 'noColor';
 
@@ -27,15 +28,15 @@ export interface MotionPreview {
 export const PREVIEW_HEIGHT = 3;
 
 const DESCRIPTIONS: Record<string, string> = {
-  'contextTransitions:subtle': 'Changed prompt modules wipe into place; unchanged ones stay still.',
+  'contextTransitions:subtle': 'Only the changed modules (cwd, branch) wipe in; Node 22 stays still.',
   'contextTransitions:expressive': 'Changed prompt modules wipe in with a brighter front.',
-  'commandLaunch:sweep': 'A brief luminance band travels across the submitted command.',
-  'commandLaunch:pulse': 'The composer glows once and fades as the command is handed off.',
-  'completionHighlight:subtle': 'The text completion just inserted is tinted briefly.',
-  'completionHighlight:vivid': 'The text completion just inserted is tinted brightly, a little longer.',
-  'completionEffect:seal': 'A finished block settles with one sweep in its outcome color.',
+  'commandLaunch:sweep': 'A brief light band tints the submitted command and rule.',
+  'commandLaunch:pulse': 'The command brightens once and fades as it is handed off.',
+  'completionHighlight:subtle': 'Only the inserted completion is underlined and tinted, briefly.',
+  'completionHighlight:vivid': 'Only the inserted completion is underlined and tinted brightly, a little longer.',
+  'completionEffect:seal': 'A finished block\'s header takes one sweep of its outcome color.',
   'eventFeedback:subtle': 'Meaningful events tint the composer rule once.',
-  'eventFeedback:expressive': 'Meaningful events tint the composer rule and sweep the input once.',
+  'eventFeedback:expressive': 'Meaningful events tint the rule and sweep the input once.',
 };
 
 interface Fixture { lines: string[]; paint: (transitions: Transitions, now: number, width: number) => Array<Map<number, CellPaint>> }
@@ -47,8 +48,9 @@ function fixture(row: keyof MotionSettings, width: number): Fixture & {trigger: 
   const rule = (safe ? '-' : '─').repeat(Math.max(4, Math.min(width, 28)));
   const at = (transitions: Transitions, now: number) => transitions.live(now);
   if (row === 'contextTransitions') {
-    const before = [{id: 'cwd', text: '~/project'}, {id: 'branch', text: 'main'}];
-    const after = [{id: 'cwd', text: '~/src'}, {id: 'branch', text: 'feature/theme'}];
+    // Node 22 is the same before and after: it must receive no effect at all.
+    const before = [{id: 'cwd', text: '~/project'}, {id: 'branch', text: 'main'}, {id: 'node', text: 'Node 22'}];
+    const after = [{id: 'cwd', text: '~/src'}, {id: 'branch', text: 'feature/theme'}, {id: 'node', text: 'Node 22'}];
     const lines = [`before  ${before.map(module => module.text).join('  ')}`, `after   ${after.map(module => module.text).join('  ')}`];
     return {lines, trigger: (transitions, start) => transitions.morph(diffModules(before, after), start),
       paint: (transitions, now) => {

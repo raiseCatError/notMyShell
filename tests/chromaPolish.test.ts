@@ -296,9 +296,14 @@ test('app: Setup Cat previews come from the draft: Vespyr first, real prompt, ch
     assert.deepEqual({...UI_COLORS.accent}, liveAccent, 'live chrome restored after previewing a draft');
     state.section = sectionIndex('history');
     assert.match(app['setupPreview'](state, 100).map(stripAnsi).join('\n'), /no installation required/u);
-    state.section = sectionIndex('terminal');
-    state.draft = {...state.draft, cursor: {shape: 'bar', blink: 'off'}};
-    assert.match(app['setupPreview'](state, 100).map(stripAnsi).join('\n'), /Bar · blink off/u);
+    state.section = sectionIndex('cursor');
+    state.row = 0;
+    state.draft = {...state.draft, cursor: {...state.draft.cursor, shape: 'bar', blink: 'off'}};
+    const bar = app['setupPreview'](state, 100).map(stripAnsi).join('\n');
+    assert.match(bar, /Preview · Cursor shape: Bar/u);
+    assert.match(bar, /thin line/u);
+    state.draft = {...state.draft, cursor: {...state.draft.cursor, shape: 'block'}};
+    assert.match(app['setupPreview'](state, 100).map(stripAnsi).join('\n'), /Block · fills the cell/u, 'the preview follows the draft');
     assert.equal(app['renderer'].currentCursorStyle, '', 'previewing a cursor never changes the real cursor');
   } finally { cleanup(); }
 });

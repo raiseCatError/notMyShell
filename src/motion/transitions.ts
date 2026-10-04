@@ -1,4 +1,3 @@
-import {mixRgb} from '../chroma/chroma.js';
 import type {MotionSettings} from '../prompt/configuration.js';
 import type {CellPaint} from '../presentation/cellOverlay.js';
 import {UI_COLORS, type RgbColor} from '../ui/palette.js';
@@ -15,9 +14,12 @@ import {UI_COLORS, type RgbColor} from '../ui/palette.js';
  *
  * Each is state (start, duration, target) plus a pure paint function; the
  * logical state they present has already changed. Paints only tint cell
- * backgrounds (cellOverlay), so text and widths never move or flash. Nothing
- * is stored in transcripts or snapshots. With nothing active there is no
- * clock at all.
+ * the foreground of cells that already hold text (tint, brightness, underline;
+ * see cellOverlay), never a background: SGR has no per-cell alpha, so a
+ * background would be an opaque box on a transparent terminal, and the host's
+ * own background is always preserved. Text and widths never move or flash.
+ * Nothing is stored in transcripts or snapshots. With nothing active there is
+ * no clock at all.
  */
 export type SemanticEvent = 'longSuccess' | 'failure' | 'interrupted' | 'conflict' | 'attention' | 'taskDone' | 'taskFailed' | 'setupDone' | 'setupFailed' | 'installDone' | 'installFailed';
 export type Tone = 'success' | 'failure' | 'muted' | 'attention' | 'warning' | 'accent';
@@ -107,44 +109,44 @@ export function toneColor(tone: Tone): RgbColor {
     : tone === 'muted' ? UI_COLORS.subtle : UI_COLORS.accent;
 }
 
-const BASE: RgbColor = {red: 18, green: 18, blue: 22};
 const WARNING: RgbColor = {red: 224, green: 176, blue: 72};
 const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
 
-/** A luminance band travelling left → right across [0, width) at progress t. */
+/** A luminance band travelling left → right across [0, width) at progress t: a foreground tint, strongest at the band's center. */
 export function sweepCells(width: number, t: number, color: RgbColor, strength: number, band = 10): Map<number, CellPaint> {
   const cells = new Map<number, CellPaint>();
   const center = -band + t * (width + band * 2);
   for (let column = Math.max(0, Math.floor(center - band)); column < Math.min(width, Math.ceil(center + band)); column += 1) {
     const falloff = 1 - Math.abs(column - center) / band;
-    if (falloff > 0) cells.set(column, {background: mixRgb(BASE, color, clamp01(falloff * strength))});
+    if (falloff > 0) cells.set(column, {tint: {color, amount: clamp01(falloff * strength)}});
   }
   return cells;
 }
 
-/** A tint over [from, to) that decays to nothing. */
-export function decayCells(from: number, to: number, t: number, color: RgbColor, strength: number): Map<number, CellPaint> {
+/** A foreground tint over [from, to) that decays to nothing; `underline` marks the range while it is still strong. */
+export function decayCells(from: number, to: number, t: number, color: RgbColor, strength: number, underline = false): Map<number, CellPaint> {
   const cells = new Map<number, CellPaint>();
   const level = strength * (1 - clamp01(t)) ** 1.6;
   if (level <= 0.01) return cells;
-  for (let column = from; column < to; column += 1) cells.set(column, {background: mixRgb(BASE, color, level)});
+  for (let column = from; column < to; column += 1) cells.set(column, {tint: {color, amount: level}, ...(underline && level > 0.18 ? {underline: true} : {})});
   return cells;
 }
 
 /**
  * Prompt morph over one module's final columns: a wipe whose front reveals the
- * settled module; cells ahead of the front are briefly muted, a soft band
- * marks the front. The final geometry is used from the first frame.
+ * settled module; cells ahead of the front are briefly dimmed, a tinted band
+ * marks the front. The final geometry is used from the first frame. Only the
+ * module's own cells are ever painted.
  */
-export function morphCells(from: number, to: number, t: number, color: RgbColor, expressive: boolean, change: ModuleChange['change']): Map<number, CellPaint> {
+export function morphCells(from: number, to: number, t: number, color: RgbColor, expressive: boolean, _change: ModuleChange['change']): Map<number, CellPaint> {
   const cells = new Map<number, CellPaint>();
   const width = Math.max(1, to - from);
   const front = from + clamp01(t) * (width + 2);
   for (let column = from; column < to; column += 1) {
     const ahead = column > front;
     const distance = Math.abs(column - front);
-    if (ahead) cells.set(column, {background: mixRgb(BASE, {red: 0, green: 0, blue: 0}, change === 'disappeared' ? 0.2 : expressive ? 0.5 : 0.35)});
-    else if (distance < 2.5) cells.set(column, {background: mixRgb(BASE, color, (1 - distance / 2.5) * (expressive ? 0.75 : 0.5))});
+    if (ahead) cells.set(column, {dim: true});
+    else if (distance < 2.5) cells.set(column, {tint: {color, amount: (1 - distance / 2.5) * (expressive ? 0.75 : 0.45)}, ...(expressive ? {bold: true} : {})});
   }
   return cells;
 }
@@ -179,13 +181,13 @@ export function diffModules(previous: ReadonlyArray<{id: string; text: string; r
 export const transitionPaint = {
   /** Command launch over a composer row; `rule` rows (separator, border) take a stronger band. */
   launch: (style: 'sweep' | 'pulse', columns: number, t: number, rule: boolean) =>
-    style === 'sweep' ? sweepCells(columns, t, UI_COLORS.accent, rule ? 0.8 : 0.5) : decayCells(0, columns, t, UI_COLORS.accent, 0.35),
+    style === 'sweep' ? sweepCells(columns, t, UI_COLORS.accent, rule ? 0.7 : 0.45) : decayCells(0, columns, t, UI_COLORS.accent, 0.3),
   /** Completion highlight over the inserted columns [from, to). */
-  materialize: (from: number, to: number, t: number, vivid: boolean) => decayCells(from, to, t, UI_COLORS.accent, vivid ? 0.7 : 0.45),
+  materialize: (from: number, to: number, t: number, vivid: boolean) => decayCells(from, to, t, UI_COLORS.accent, vivid ? 0.75 : 0.5, true),
   /** Block Seal over a finished block's header row. */
   seal: (tone: Tone, columns: number, t: number) => sweepCells(columns, t, toneColor(tone), tone === 'failure' ? 0.75 : 0.55, tone === 'failure' ? 6 : 12),
   /** Semantic Echo on a rule row; expressive echoes also sweep the input row. */
-  echoRule: (event: SemanticEvent, columns: number, t: number, expressive: boolean) => decayCells(0, columns, t, toneColor(EVENT_TONES[event]), expressive ? 0.6 : 0.4),
+  echoRule: (event: SemanticEvent, columns: number, t: number, expressive: boolean) => decayCells(0, columns, t, toneColor(EVENT_TONES[event]), expressive ? 0.7 : 0.45),
   echoInput: (event: SemanticEvent, columns: number, t: number) => sweepCells(columns, t, toneColor(EVENT_TONES[event]), 0.35),
   /** Prompt morph over one module's final columns. */
   morph: (from: number, to: number, t: number, expressive: boolean, change: ModuleChange['change']) => morphCells(from, to, t, UI_COLORS.accent, expressive, change),
