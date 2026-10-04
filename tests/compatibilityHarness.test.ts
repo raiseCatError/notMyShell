@@ -128,3 +128,21 @@ test('canonical inline input and subsequent raw/canonical shell state are restor
     await app.run('echo CANONICAL-RETURNED', /CANONICAL-RETURNED/);
   } finally { await sandbox.dispose(); }
 });
+
+test('raw job-control, EOF and arrow bytes reach a full-screen program unchanged', async () => {
+  const sandbox = new LiveSandbox();
+  try {
+    const app = sandbox.launch();
+    await app.waitFor(/❯/);
+    const mark = app.mark;
+    app.pty.write(command('fullscreen') + '\r');
+    await app.waitFor(/INTERACTIVE-READY-fullscreen/, mark);
+    app.pty.write('\u001a'); await app.waitFor(/INTERACTIVE-BYTES-1a/, mark);
+    app.pty.write('\u0004'); await app.waitFor(/INTERACTIVE-BYTES-04/, mark);
+    app.pty.write('\u001b[A'); await app.waitFor(/INTERACTIVE-BYTES-1b5b41/, mark);
+    app.pty.write('\u001b[1;5C'); await app.waitFor(/INTERACTIVE-BYTES-1b5b313b3543/, mark);
+    app.pty.write('q');
+    await app.waitFor(/INTERACTIVE-EXIT-0/, mark);
+    await app.run('echo AFTER-RAW', /AFTER-RAW/);
+  } finally { await sandbox.dispose(); }
+});
