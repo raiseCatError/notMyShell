@@ -2,6 +2,7 @@ import {basename, relative} from 'node:path';
 import {slashCommands} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
+import {answerCommandQuestion, parseCommandQuestion, type CommandEnvironment} from './commands.js';
 import {CONCEPTS, conceptDestination, conceptIntent, matchConcepts, type Concept, type ConceptIntent} from './concepts.js';
 
 const CONCEPTS_BY_ID = new Map(CONCEPTS.map(concept => [concept.id, concept]));
@@ -130,13 +131,24 @@ const shellIn = (text: string): ShellId | undefined => (/\b(zsh|fish|bash)\b/u.e
 const shellLabel = (context: AskContext, id: ShellId) => context.shells.find(shell => shell.id === id)?.label ?? id;
 
 /** One resolved request: the structured outcome, never free text to run. */
-export function resolveRequest(raw: string, context: AskContext, state: ResolveState = {}): AskOutcome {
+export function resolveRequest(raw: string, context: AskContext, state: ResolveState = {}, commands?: CommandEnvironment): AskOutcome {
   const text = normalizeRequest(raw);
   if (!text) return unclear(context, 'What can I help you with?');
   const scored = scoreCapabilities(text);
   // Explaining an NMSh command wins over acting on it.
   const explain = /\b(?:what|how) (?:does|do|is)\b/u.test(text) && /\/[a-z][\w-]*/u.exec(text);
   if (explain) return build('help.command', text, context, raw);
+  // Command knowledge: explaining git push or git clean is an answer, not an action, so it comes before the action-safety check.
+  // "how do i X" still lets a strong typed capability act ("how do i open package.json").
+  const question = commands ? parseCommandQuestion(text) : undefined;
+  if (question && commands) {
+    const strongAction = scored.find(item => item.score >= CONFIDENCE.high && !item.capability.id.startsWith('help.'));
+    const howTo = /^(?:please )?how (?:do|can|would|should) i|^how to/u.test(text);
+    if (!(howTo && strongAction && question.intent !== 'option')) {
+      const answer = answerCommandQuestion(question, context, commands);
+      if (answer) return answer;
+    }
+  }
   if (UNSAFE.test(text) && !scored.some(item => item.score >= CONFIDENCE.high && item.capability.safety === 'answer')) return unsafe(text, context);
   const product = resolveConcepts(text, context, raw, scored);
   if (product) return product;

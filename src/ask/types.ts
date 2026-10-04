@@ -36,6 +36,51 @@ export type AskAction =
   | {kind: 'attachSession'; id: string}
   | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend'; value: string; label: string};
 
+/**
+ * How much an action changes, which decides what Ask may do with it:
+ * informational and read run when asked; navigate (what NMSh shows) runs when
+ * asked; configure, mutate and install always need the one final Yes/No for
+ * the exact action shown; destructive is never run by Ask (Copy/Insert only).
+ * There is no lasting approval of any kind.
+ */
+export type ActionRisk = 'informational' | 'read' | 'navigate' | 'configure' | 'mutate' | 'destructive' | 'install';
+
+/**
+ * A command Ask shows, held as structured argv and rendered with the active
+ * shell's quoting. Values come from facts (current branch, real remotes,
+ * listed files) or are explicit placeholders like <remote>; nothing is free
+ * text from the request or a model. Copy and Insert never execute; Run exists
+ * only when `run` is a typed NMSh action Ask's policy allows.
+ */
+export interface CommandBlock {
+  argv: string[];
+  /** Indices of argv that are placeholders, never filled by guessing. */
+  placeholders?: number[];
+  provenance: 'reference' | 'context';
+  risk: ActionRisk;
+  /** One line under the command: what it does here. */
+  note?: string;
+  /** The facts used to fill it, shown compactly so stale assumptions are visible. */
+  facts?: Array<[string, string]>;
+  run?: AskAction;
+}
+
+/**
+ * What this Ask conversation is currently about, so "them", "that command"
+ * and "this branch" keep their meaning between turns. Bounded, per
+ * interaction, never persisted, and never model reasoning.
+ */
+export interface AskReferents {
+  concept?: string;
+  /** The command path the conversation is about, e.g. ['git', 'push']. */
+  command?: string[];
+  files?: {paths: string[]; kind: 'untracked' | 'modified' | 'staged' | 'conflicted' | 'mentioned'};
+  branch?: string;
+  remote?: string;
+  /** The command block most recently shown. */
+  block?: CommandBlock;
+}
+
 export interface AskOption {
   label: string;
   detail?: string;
@@ -57,7 +102,7 @@ export interface AskOption {
  */
 export type AskOutcome =
   | {kind: 'proposal'; capability: CapabilityId; safety: SafetyClass; text: string; action: AskAction; command?: string; confidence: number}
-  | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption}
+  | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption; block?: CommandBlock; next?: AskOption[]; referents?: AskReferents}
   | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]}
   | {kind: 'unsupported'; text: string; alternative?: AskOption}
   | {kind: 'unsafe'; text: string; alternative?: AskOption}
@@ -94,4 +139,6 @@ export interface AskContext {
   now: number;
   /** Bounded project file list (relative paths), filled lazily by the file resolver. */
   files?: readonly string[];
+  /** What this conversation is about so far (see AskReferents). */
+  referents?: AskReferents;
 }

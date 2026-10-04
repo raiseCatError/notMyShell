@@ -138,6 +138,8 @@ function markSpans(plain: string, spans: ReadonlyArray<{start: number; end: numb
   return `${output}${plain.slice(index)}\u001b[0m`;
 }
 import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/registry.js';
+import {commandReference} from '../shell/CommandReference.js';
+import type {CommandEnvironment} from '../ask/commands.js';
 import {askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
 import {readArgv, resolveRequest} from '../ask/resolver.js';
 import {listProjectFiles} from '../ask/files.js';
@@ -5174,10 +5176,20 @@ export class TerminalApp {
     this.returnFromPanel();
   }
 
+  /** Command knowledge and identity for Ask: the completion catalog's facts and this shell's names; nothing is run. */
+  private askCommands(): CommandEnvironment {
+    return {reference: commandReference(), identity: name => {
+      const type = this.semanticService.cache.get(name);
+      if (type === 'alias' || type === 'function' || type === 'builtin') return {kind: type};
+      const path = /^[\w.+-]+$/u.test(name) ? resolveCommand(name) : undefined;
+      return path ? {kind: 'executable', path} : undefined;
+    }};
+  }
+
   /** Deterministic resolution first; an optional local interpretation may refine it (see LocalUnderstanding). */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
-    const deterministic = resolveRequest(text, context, {rejected: state.rejected});
+    const deterministic = resolveRequest(text, context, {rejected: state.rejected}, this.askCommands());
     if (!this.understanding.eligible('ask')) return deterministic;
     // Auto: built-in understanding first; the model is asked only when it is unsure. Always: the model is asked first.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
