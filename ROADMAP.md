@@ -5,7 +5,7 @@
 | | |
 |---|---|
 | **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
-| **Next development milestone** | [v0.17.0 — Host Compatibility & Tool Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **Next development milestone** | [v0.17.0 — Compatibility & Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
@@ -129,17 +129,24 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | Ask & Local Understanding | Deterministic Ask, optional local model (Auto by default, never downloads without a Yes), `/llm` |
 | Appearance | `/appearance` hub; Clean and Rich motion rendering with per-rendering tuning; cursor effects with a capability matrix; Setup Cat as the complete customization entry point; grouped Config and Status |
 
-## Next development — v0.17 Host Compatibility & Tool Discovery
+## Next development — v0.17 Compatibility & Discovery
 
-[Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15): physical validation and discovery follow-ups, none of which block v0.16.
+[Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15). Code and automated coverage for `Relevant here`, package-manager plans with bulk install, activation detection, host profiles, Linux/WSL hardening, automatic update staging and startup session kill. Physical validation in iTerm2, Kitty, WezTerm, Linux and WSL 2 is tracked as a separate `needs-human-test` follow-up and does not block the release.
 
-| Issue | Remaining scope |
+| Issue | Disposition |
 |---|---|
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Contextual `Relevant here` tool discovery from local facts, more package managers, active-hook detection |
-| [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Physical passes in iTerm2, Kitty and WezTerm |
-| [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Physical CLI/TUI interoperability runs (ongoing) |
-| [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Manual pass inside Supacode or a similar agent-oriented host |
-| [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Physical validation on real Linux and WSL 2 |
+| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Implemented in v0.17 |
+| [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Code and fixtures in v0.17; physical pass moved to a follow-up |
+| [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Maintainer exercised real CLI/TUI use; deterministic suite extended; ongoing regression tracking |
+| [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
+| [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
+
+## Planned releases
+
+| Release | Theme | Tracker |
+|---|---|---|
+| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), delivered in focused slices |
+| v0.19.0 | NMSh Native module ecosystem: architecture, lazy probes, caching and provenance first, then a bounded high-value module set (not the whole catalog) | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
 
 ## Backlog — future, unscheduled
 
@@ -147,8 +154,8 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 
 | Issue | Title |
 |---|---|
-| [#305](https://github.com/raiseCatError/notMyShell/issues/305) | NMSh Native module ecosystem and upstream module ports (also carries the user-defined prompt modules direction from the closed research issue #73) |
-| [#304](https://github.com/raiseCatError/notMyShell/issues/304) | Theme Bridge and semantic terminal integration |
+| [#305](https://github.com/raiseCatError/notMyShell/issues/305) | (planned v0.19) NMSh Native module ecosystem and upstream module ports (also carries the user-defined prompt modules direction from the closed research issue #73) |
+| [#304](https://github.com/raiseCatError/notMyShell/issues/304) | (planned v0.18) Theme Bridge and semantic terminal integration |
 | [#296](https://github.com/raiseCatError/notMyShell/issues/296) | Hosted SSH demo (post-1.0) |
 | [#20](https://github.com/raiseCatError/notMyShell/issues/20) | Ongoing polish triage index |
 
