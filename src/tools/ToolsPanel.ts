@@ -217,9 +217,12 @@ function statusBadge(state: ToolsPanel, tool: Tool): {text: string; color: strin
   return {text: '! Needs attention', color: FAILURE};
 }
 
-function tags(state: ToolsPanel, tool: Tool): string[] {
+export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
   const lifecycle = providerLifecycle(tool);
-  return [...(tool.tier ? [TOOL_TIER_LABELS[tool.tier].replace(' CLI', '')] : []), ...(state.configured.has(tool.id) ? ['Configured in NMSh'] : []),
+  return [...(tool.integration ? [`Integrated · ${tool.integration[0]!.toUpperCase()}${tool.integration.slice(1)}`] : []),
+    ...(tool.discoveryKind === 'environment' ? ['Detected environment'] : tool.tier ? [TOOL_TIER_LABELS[tool.tier]] : []),
+    ...(providerLifecycle(tool) === 'legacy' ? [`${tool.successor ?? 'Maintained alternative'} recommended`] : []),
+    ...(state.configured.has(tool.id) ? ['Configured in NMSh'] : []),
     ...(toolHasUpdate(state, tool) ? ['Update available'] : []),
     ...(lifecycle === 'legacy' ? ['Legacy'] : lifecycle === 'maintenance' ? ['Maintenance'] : []),
     ...(state.errors[tool.id] ? ['Error'] : [])];
@@ -232,7 +235,7 @@ function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: numb
   const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
   const pointer = selected ? `${ACCENT}${GLYPHS.selection}` : ' ';
   const status = columns >= 34 ? `${badge.color}${badge.text.padEnd(18)}` : `${badge.color}${badge.text.slice(0, 1)} `;
-  const extra = columns >= 60 ? `${selected ? SECONDARY : SUBTLE}${tags(state, tool).join(' · ')}` : '';
+  const extra = columns >= 60 ? `${selected ? SECONDARY : SUBTLE}${toolBadges(state, tool).join(' · ')}` : '';
   const row = `  ${pointer} ${selected ? `${BOLD}${PRIMARY}` : SECONDARY}${label}${RESET}${selected ? SELECTED : ''}${status}${extra}`;
   if (!selected) return truncateAnsi(`${row}${RESET}`, columns);
   // Fill the whole row so the selection reads as a band, not just colored text.
@@ -286,7 +289,7 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     const tool = state.detail;
     const badge = statusBadge(state, tool);
     const field = (label: string, value: string) => `  ${SUBTLE}${label.padEnd(10)}${RESET}${SECONDARY}${value}${RESET}`;
-    rows.push(`  ${PRIMARY}${BOLD}${tool.label}${RESET}  ${badge.color}${badge.text}${RESET}${tags(state, tool).length ? `  ${SUBTLE}${tags(state, tool).join(' · ')}${RESET}` : ''}`,
+    rows.push(`  ${PRIMARY}${BOLD}${tool.label}${RESET}  ${badge.color}${badge.text}${RESET}${toolBadges(state, tool).length ? `  ${SUBTLE}${toolBadges(state, tool).join(' · ')}${RESET}` : ''}`,
       `  ${SUBTLE}${tool.description}${RESET}`, '',
       field('Category', tool.category), field('Source', tool.source),
       field('Install', state.statuses[tool.id]?.state === 'missing'

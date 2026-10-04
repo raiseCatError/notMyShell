@@ -27,8 +27,8 @@ const tool = (id: string) => TOOLS.find(item => item.id === id)!;
 const plain = (rows: string[]) => rows.map(stripAnsi).join('\n');
 
 test('tiers: the conservative Recommended toolkit is unchanged; Enhanced is separate and never "better"', () => {
-  assert.deepEqual(toolsInTier('recommended').map(item => item.id).sort(), ['fd', 'fzf', 'jq', 'rg', 'zoxide']);
-  assert.deepEqual(toolsInTier('enhanced').map(item => item.id).sort(), ['atuin', 'bat', 'delta', 'direnv', 'eza', 'gh', 'lazygit', 'mise']);
+  assert.deepEqual(toolsInTier('recommended').map(item => item.id).sort(), ['fastfetch', 'fd', 'fzf', 'jq', 'rg', 'zoxide']);
+  assert.deepEqual(toolsInTier('enhanced').map(item => item.id).sort(), ['atuin', 'bat', 'btop', 'delta', 'direnv', 'duf', 'dust', 'eza', 'gh', 'glow', 'hyperfine', 'jc', 'just', 'lazygit', 'mise', 'procs', 'shellcheck', 'shfmt', 'tokei', 'watchexec', 'xh']);
   const state = createToolsPanel();
   state.tier = 'recommended';
   assert.ok(visibleTools(state).every(item => item.tier === 'recommended'));
@@ -59,8 +59,8 @@ test('lifecycle metadata is curated, muted and suggests successors without switc
   const state = createToolsPanel();
   for (const item of TOOLS) state.statuses[item.id] = {state: 'installed'};
   const list = plain(renderTools(state, 120, 60));
-  assert.match(list, /Neofetch\s+.*Installed\s+Legacy/u);
-  assert.match(list, /Macchina\s+.*Installed\s+Maintenance/u);
+  assert.match(list, /Neofetch\s+.*Installed\s+Integrated · Welcome · Fastfetch recommended · Legacy/u);
+  assert.match(list, /Macchina\s+.*Installed\s+Integrated · Welcome · Maintenance/u);
   state.detail = tool('neofetch');
   assert.match(plain(renderTools(state, 120, 40)), /Lifecycle\s+Legacy \/ archived · Fastfetch/u);
   // Rendering never discovers lifecycle over the network: it is static data.
@@ -127,11 +127,11 @@ test('no silent upgrade: Homebrew-owned tools preview brew upgrade; unknown owne
 
 test('install suggestions: exact curated names only, aliases/functions/executables win, never fuzzy', () => {
   const config = {installSuggestions: true, ignoredInstallSuggestions: [] as string[]};
-  for (const word of ['lazygit', 'gh', 'fzf', 'rg', 'fd', 'jq', 'eza', 'bat', 'zoxide']) {
+  for (const word of ['lazygit', 'gh', 'rg', 'fd', 'jq', 'eza', 'bat', 'zoxide', 'shellcheck', 'shfmt', 'just', 'hyperfine', 'watchexec', 'dust', 'duf', 'procs', 'xh', 'jc', 'btop', 'glow', 'tokei']) {
     assert.equal(installCandidate(`${word} --help`, config)?.executable, word, word);
   }
   for (const command of ['lazygitt', 'LazyGit', 'ripgrep foo', 'node x', 'python3', 'docker ps', 'kubectl get', 'neofetch',
-    './rg', 'FOO=1 rg x', '"rg"', '$rg', 'rg\nls', '', '   ']) {
+    './rg', 'FOO=1 rg x', '"rg"', '$rg', 'rg\nls', '', '   ', 'node', 'python3', 'go', 'docker', 'kubectl', 'neofetch', 'macchina', 'television', 'carapace']) {
     assert.equal(installCandidate(command, config), undefined, JSON.stringify(command));
   }
   assert.equal(suggestibleToolFor('r'), undefined);
