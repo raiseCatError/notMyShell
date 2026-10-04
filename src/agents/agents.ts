@@ -1,3 +1,5 @@
+import {harness, HARNESSES, type HarnessDescriptor} from './harnesses.js';
+
 /**
  * Factual identification of known terminal agent CLIs.
  *
@@ -7,37 +9,18 @@
  * anything here, and nothing in this module stores command arguments.
  */
 
-export type AgentId = 'claude' | 'codex';
+/** A harness id from the registry (src/agents/harnesses.ts); no fixed union, so new harnesses need no changes here. */
+export type AgentId = string;
 
-export interface AgentDescriptor {
-  id: AgentId;
-  /** Product name as its vendor writes it. */
-  name: string;
-  /** Short form used in compact status lines ("Worked with Claude for 3m"). */
-  short: string;
-  /** Executable names that identify this agent. */
-  executables: readonly string[];
-  /** Package specifiers recognized after a package runner (npx, bunx, pnpm dlx). */
-  packages: readonly string[];
-  /** Truecolor accent used only when color is allowed; generic chrome otherwise. */
-  color: string;
-  /** Nerd Font glyph and its Safe-glyph fallback. */
-  glyph: string;
-  safeGlyph: string;
-}
+export type AgentDescriptor = HarnessDescriptor;
 
-export const KNOWN_AGENTS: readonly AgentDescriptor[] = [
-  {id: 'claude', name: 'Claude Code', short: 'Claude', executables: ['claude'], packages: ['@anthropic-ai/claude-code'],
-    color: '#d97757', glyph: '✻', safeGlyph: '*'},
-  {id: 'codex', name: 'Codex CLI', short: 'Codex', executables: ['codex'], packages: ['@openai/codex'],
-    color: '#10a37f', glyph: '◇', safeGlyph: '<>'},
-];
+export const KNOWN_AGENTS: readonly AgentDescriptor[] = HARNESSES;
 
 const BY_EXECUTABLE = new Map(KNOWN_AGENTS.flatMap(agent => agent.executables.map(name => [name, agent] as const)));
 const BY_PACKAGE = new Map(KNOWN_AGENTS.flatMap(agent => agent.packages.map(name => [name, agent] as const)));
 
 export function agentDescriptor(id: AgentId): AgentDescriptor {
-  return KNOWN_AGENTS.find(agent => agent.id === id)!;
+  return harness(id) ?? {id, name: id, short: id, executables: [], packages: [], color: '#9aa4b2', glyph: '•', safeGlyph: '*'};
 }
 
 /** Prefix words that run the following command unchanged. Bounded; no flags are interpreted beyond these. */
