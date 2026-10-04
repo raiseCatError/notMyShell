@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {TOOLS, toolInstall} from '../src/tools/catalog.js';
-import {confirmToolInstall, createToolsPanel, renderTools, toolsKey, visibleTools} from '../src/tools/ToolsPanel.js';
+import {TOOLS, suggestibleToolFor, toolInstall} from '../src/tools/catalog.js';
+import {confirmToolInstall, createToolsPanel, renderTools, toolBadges, toolsKey, visibleTools} from '../src/tools/ToolsPanel.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {TaskProgress, taskProgressBar} from '../src/status/TaskProgress.js';
@@ -10,7 +10,7 @@ import {setIconStyle} from '../src/ui/glyphs.js';
 
 test('offline catalog, truthful filters and curated argv recipes do not execute discovery', () => {
   assert.equal(new Set(TOOLS.map(tool => tool.id)).size, TOOLS.length);
-  assert.deepEqual(TOOLS.filter(tool => tool.recommended).map(tool => tool.id).sort(), ['fd', 'fzf', 'jq', 'rg', 'zoxide']);
+  assert.deepEqual(TOOLS.filter(tool => tool.recommended).map(tool => tool.id).sort(), ['fastfetch', 'fd', 'fzf', 'jq', 'rg', 'zoxide']);
   const state = createToolsPanel(new Set(['fzf']));
   state.statuses.fzf = {state: 'installed', version: 'stub 1'};
   state.statuses.fd = {state: 'missing'};
@@ -24,6 +24,30 @@ test('offline catalog, truthful filters and curated argv recipes do not execute 
   assert.equal(toolInstall(TOOLS[0]!, false), undefined);
   assert.deepEqual(toolInstall(TOOLS[0]!, true)?.args, ['install', 'ripgrep']);
   assert.deepEqual(parseSlashCommand('/tools'), {kind: 'tools'});
+});
+
+test('curated developer tools use verified Homebrew package and executable names', () => {
+  const additions = ['shellcheck', 'shfmt', 'just', 'hyperfine', 'watchexec', 'dust', 'duf', 'procs', 'xh', 'jc', 'btop', 'glow', 'tokei'];
+  for (const name of additions) {
+    const item = TOOLS.find(tool => tool.id === name)!;
+    assert.ok(item, name);
+    assert.equal(item.executable, name, `${name} executable`);
+    assert.equal(item.package, name, `${name} formula`);
+    assert.equal(toolInstall(item, true)?.label, `brew install ${name}`, `${name} recipe`);
+    assert.equal(suggestibleToolFor(name), item, `${name} exact suggestion`);
+  }
+  assert.equal(TOOLS.find(tool => tool.id === 'delta')?.package, 'git-delta');
+  assert.equal(TOOLS.find(tool => tool.id === 'kubectl')?.package, 'kubernetes-cli');
+});
+
+test('badges separate provider integration, recommendation tier, lifecycle and environment facts', () => {
+  const state = createToolsPanel();
+  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'fzf')!), ['Recommended']);
+  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'fastfetch')!), ['Integrated · Welcome', 'Recommended']);
+  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'shellcheck')!), ['Enhanced']);
+  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'node')!), ['Detected environment']);
+  assert.deepEqual(toolBadges(state, TOOLS.find(tool => tool.id === 'neofetch')!), ['Integrated · Welcome', 'Fastfetch recommended', 'Legacy']);
+  assert.ok(toolBadges(state, TOOLS.find(tool => tool.id === 'macchina')!).includes('Maintenance'));
 });
 
 test('install needs a new confirmation; default cancel and failure preserve settings', async () => {
@@ -124,7 +148,7 @@ test('Tools v2: long lists scroll with a factual "more" cue; narrow widths keep 
   const state = createToolsPanel();
   const rows = renderTools(state, 90, 18).map(stripAnsi);
   assert.ok(rows.some(row => /↓ \d+ more/u.test(row)));
-  for (let index = 0; index < 30; index += 1) toolsKey(state, {kind: 'down'});
+  for (let index = 0; index < 40; index += 1) toolsKey(state, {kind: 'down'});
   const end = renderTools(state, 90, 18).map(stripAnsi);
   assert.ok(end.some(row => row.includes('›') && row.includes('Python')), 'selection stays visible at the end');
   for (const width of [20, 33, 45, 59, 61]) {
