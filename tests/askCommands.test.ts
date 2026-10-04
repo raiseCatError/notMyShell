@@ -73,3 +73,23 @@ test('explaining is not acting: destructive commands can be explained; NMSh word
   assert.match(text(ask('what is chroma')), /^Chroma paints/u, 'chroma the NMSh feature, not the catalog command');
   assert.equal(ask('how do i change the shell').kind, 'choose');
 });
+
+test('installs: offered only with a curated recipe, exact command shown, Yes/No starting on No', async () => {
+  const {createAskState, receiveOutcome, visibleOptions, askKey} = await import('../src/ask/AskPanel.js');
+  const curated: CommandEnvironment = {...env({}), install: name => name === 'vhs' ? {tool: 'vhs', label: 'brew install vhs'} : undefined};
+  const outcome = ask('what is vhs', curated);
+  assert.equal(outcome.kind, 'answer');
+  const install = outcome.kind === 'answer' ? outcome.next?.find(option => option.label === 'Install vhs') : undefined;
+  assert.ok(install?.outcome, 'curated recipe → offer');
+  assert.deepEqual(install!.outcome!.kind === 'proposal' && install!.outcome!.action, {kind: 'installTool', tool: 'vhs', label: 'brew install vhs'});
+  const state = createAskState();
+  receiveOutcome(state, outcome);
+  state.selected = visibleOptions(state).findIndex(option => option.label === 'Install vhs');
+  assert.equal(askKey(state, {kind: 'enter'}), undefined, 'choosing Install is not the confirmation');
+  assert.equal(state.confirm, 'no');
+  assert.match(state.turns.at(-1)!.text, /brew install vhs/u, 'the exact command is shown before anything runs');
+  const noRecipe = ask('what is vhs', env({}));
+  assert.match(text(noRecipe), /no curated install recipe/u);
+  assert.ok(!(noRecipe.kind === 'answer' && noRecipe.next?.some(option => /^Install/u.test(option.label))));
+  assert.ok(!(ask('what is git').kind === 'answer' && (ask('what is git') as {next?: Array<{label: string}>}).next?.some(option => /^Install/u.test(option.label))), 'installed: no offer');
+});

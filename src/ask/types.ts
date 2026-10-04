@@ -10,7 +10,7 @@ import type {GitFacts} from './git.js';
  */
 
 /** How much authority a capability needs; it decides confirmation and whether Ask may act at all. */
-export type SafetyClass = 'answer' | 'navigate' | 'read' | 'install' | 'refused';
+export type SafetyClass = 'answer' | 'navigate' | 'read' | 'mutate' | 'install' | 'refused';
 
 export type CapabilityId =
   | 'shell.current' | 'shell.switch' | 'shell.leave' | 'shell.default' | 'shell.install'
@@ -37,6 +37,8 @@ export type AskAction =
   | {kind: 'attachSession'; id: string}
   /** A Git command NMSh built from facts (never request or model text); the allowlist and risk are checked again before it runs. */
   | {kind: 'git'; argv: string[]; risk: 'read' | 'mutate'}
+  /** A curated tool install (the /tools recipe, shown exactly before the Yes); never a guessed package. */
+  | {kind: 'installTool'; tool: string; label: string}
   | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend'; value: string; label: string};
 
 /**
@@ -66,6 +68,8 @@ export interface CommandBlock {
   /** The facts used to fill it, shown compactly so stale assumptions are visible. */
   facts?: Array<[string, string]>;
   run?: AskAction;
+  /** Text the person themselves ran, shown verbatim: Copy/Insert only, never Run. */
+  literal?: string;
 }
 
 /**
@@ -111,6 +115,16 @@ export type AskOutcome =
   | {kind: 'unsafe'; text: string; alternative?: AskOption; referents?: AskReferents}
   | {kind: 'unclear'; text: string; categories: AskOption[]};
 
+export interface RecentCommand {
+  command: string;
+  cwd?: string;
+  branch?: string;
+  exitCode: number;
+  durationMs?: number;
+  /** Output line count (the output itself is never given to Ask). */
+  lines: number;
+}
+
 export interface AskSession {id: string; state: 'attached' | 'detached'; current: boolean; cwd: string; shell?: string; running?: string; createdAt: number}
 export interface AskTranscript {id: string; createdAt: string; startCwd: string; finalCwd: string; project: string; commandCount: number; live?: boolean}
 export interface AskWorktree {path: string; branch?: string; current: boolean}
@@ -146,4 +160,6 @@ export interface AskContext {
   referents?: AskReferents;
   /** Local Git facts, gathered only for requests that need them. */
   git?: GitFacts;
+  /** Recent completed shell commands, newest first: factual metadata, never their output. */
+  recent?: RecentCommand[];
 }

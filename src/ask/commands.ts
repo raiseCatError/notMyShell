@@ -1,6 +1,6 @@
 import {optionLabel, syntaxOf, type CommandFacts, type CommandReference} from '../shell/CommandReference.js';
 import {matchConcepts} from './concepts.js';
-import type {AskContext, AskOutcome, CommandBlock} from './types.js';
+import type {AskContext, AskOption, AskOutcome, CommandBlock} from './types.js';
 
 /**
  * Command questions answered from local command knowledge (the completion
@@ -43,6 +43,8 @@ export interface CommandEnvironment {
   reference: CommandReference;
   /** The command's identity in this shell, when NMSh can tell (PATH lookup and the live shell's names); never runs it. */
   identity(name: string): {kind: 'executable' | 'alias' | 'function' | 'builtin'; path?: string} | undefined;
+  /** NMSh's curated install for this exact executable name (the /tools catalog), never a guessed package. */
+  install?(name: string): {tool: string; label: string} | undefined;
 }
 
 /** Roots to search for a bare option ("what does --force-with-lease do"): this conversation's command, recent commands, then a few common tools. */
@@ -124,11 +126,28 @@ export function answerCommandQuestion(question: CommandQuestion, context: AskCon
     const options = usefulOptions(facts, question.intent === 'options' ? 12 : 6);
     if (options.length) lines.push('', question.intent === 'options' ? `Options (${facts.options.length})` : 'Useful options', ...options);
   }
-  if (question.intent === 'explain' && facts.subcommands.length && facts.path.length === 1) {
+  if (question.intent === 'explain' && facts.subcommands.length) {
     lines.push('', `Subcommands include ${facts.subcommands.slice(0, 8).map(item => item.names[0]).join(', ')}${facts.subcommands.length > 8 ? ', …' : ''}.`);
   }
   if (PROVIDER_TOOLS.has(name) && concept.concepts[0]) lines.push('', `In NMSh: ${concept.concepts[0].description}`);
-  return {kind: 'answer', capability: 'help.command', text: lines.join('\n'), ...(syntax && question.intent !== 'explain' ? {block: commandBlock(facts.path, 'reference')} : {})};
+  // Next steps from facts: install only with a curated recipe; otherwise the next useful reference.
+  const next: AskOption[] = [];
+  const root = facts.path[0]!;
+  const install = !env.identity(root) ? env.install?.(root) : undefined;
+  if (!env.identity(root) && facts.path.length === 1) {
+    if (install) next.push({key: `install:${root}`, label: `Install ${root}`, outcome: installProposal(root, install)});
+    else lines.push('NMSh has no curated install recipe for it.');
+  }
+  if (question.intent === 'explain' && syntax) next.push({key: `syntax:${path}`, label: 'Show syntax and useful options', refine: `how do i use ${path}`});
+  if (question.intent === 'syntax' && facts.options.length > 6) next.push({key: `options:${path}`, label: `All ${facts.options.length} options`, refine: `what flags does ${path} have`});
+  return {kind: 'answer', capability: 'help.command', text: lines.join('\n'), ...(syntax && question.intent !== 'explain' ? {block: commandBlock(facts.path, 'reference')} : {}),
+    ...(next.length ? {next: next.slice(0, 4)} : {}), referents: {command: facts.path}};
+}
+
+/** Install with the curated recipe: the exact command is shown, the choice starts on No, and Yes applies to this install only. */
+export function installProposal(name: string, install: {tool: string; label: string}): AskOutcome {
+  return {kind: 'proposal', capability: 'tools.open', safety: 'install', confidence: 0.95, command: install.label,
+    text: `Install ${name} with NMSh's curated recipe?`, action: {kind: 'installTool', tool: install.tool, label: install.label}};
 }
 
 /** A command block for the path only (a reference, not filled from context). */

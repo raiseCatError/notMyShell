@@ -3,6 +3,7 @@ import {slashCommands} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
 import {resolveGit} from './gitAssist.js';
+import {resolveActivity} from './activity.js';
 import {answerCommandQuestion, parseCommandQuestion, type CommandEnvironment} from './commands.js';
 import {CONCEPTS, conceptDestination, conceptIntent, matchConcepts, type Concept, type ConceptIntent} from './concepts.js';
 
@@ -141,6 +142,9 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   if (explain) return build('help.command', text, context, raw);
   // Command knowledge: explaining git push or git clean is an answer, not an action, so it comes before the action-safety check.
   // "how do i X" still lets a strong typed capability act ("how do i open package.json").
+  // Recent activity from recorded facts ("what did I just do").
+  const activity = resolveActivity(text, context, commands);
+  if (activity) return activity;
   // Git from local facts (current branch, real remotes, listed files) and this conversation's referents.
   const git = resolveGit(text, raw, context, commands?.reference);
   if (git) return git;

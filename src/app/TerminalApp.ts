@@ -139,10 +139,11 @@ function markSpans(plain: string, spans: ReadonlyArray<{start: number; end: numb
 }
 import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/registry.js';
 import {commandReference} from '../shell/CommandReference.js';
-import {gitRunAllowed} from '../ask/gitAssist.js';
+import {gitNextSteps, gitRunAllowed, gitSummary, renderCommand} from '../ask/gitAssist.js';
 import {readGitFacts} from '../ask/git.js';
 import type {CommandEnvironment} from '../ask/commands.js';
-import {askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
+import type {AskOption} from '../ask/types.js';
+import {pushTurn, askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
 import {readArgv, resolveRequest} from '../ask/resolver.js';
 import {listProjectFiles} from '../ask/files.js';
 import {gitWorktrees} from '../ask/git.js';
@@ -2980,7 +2981,7 @@ export class TerminalApp {
     }
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
-    if (this.askState) return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4}), columns);
+    if (this.askState) return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId}), columns);
     if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
     if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
     if (this.shellPanel) return framePanel(renderShellPanel(this.shellPanel, columns), columns);
@@ -5134,8 +5135,13 @@ export class TerminalApp {
   /** `/ask` and `/ask <request>` open the same Ask; with a request it is submitted at once. */
   private openAsk(request: string): void {
     this.panelOrigin = undefined;
-    this.askState = createAskState();
+    const parked = this.parkedAsk;
+    this.parkedAsk = undefined;
     this.askGeneration += 1;
+    // /ask alone returns to a conversation parked by Insert; a new request starts fresh (the parked one is recorded as closed).
+    if (parked && !request) { parked.pending = undefined; this.askState = parked; return; }
+    if (parked) this.recordAsk(parked);
+    this.askState = createAskState();
     if (request) {
       this.askState.turns.push({role: 'you', text: request});
       this.askState.submitted = true;
@@ -5161,10 +5167,105 @@ export class TerminalApp {
       this.render();
       return;
     }
-    // Execute: the conversation is recorded first (when enabled), then the typed action runs through its normal handler.
+    if (event.kind === 'copy' || event.kind === 'insert') {
+      const text = event.block.literal ?? renderCommand(event.block, this.shellId);
+      if (event.kind === 'copy') {
+        try { await writeClipboard(text); pushTurn(state, 'ask', 'Copied the command. Nothing was run.'); } catch { pushTurn(state, 'ask', 'The clipboard isn\'t available here; Insert puts the command in the composer instead.'); }
+        this.render();
+        return;
+      }
+      // Insert: the command waits, unsent, in the shell composer; the conversation is parked and /ask reopens it.
+      this.parkedAsk = state;
+      this.askState = undefined;
+      this.askGeneration += 1;
+      this.returnFromPanel();
+      this.editor.clear();
+      this.editor.insert(text);
+      this.render();
+      return;
+    }
+    // Actions with a factual result stay inside the conversation; navigation to another surface leaves Ask.
+    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool') {
+      await this.runInAsk(state, event.action);
+      this.render();
+      return;
+    }
     this.closeAsk();
     await this.executeAskAction(event.action);
     this.render();
+  }
+
+  /** A conversation parked by Insert; /ask with no request reopens it. */
+  private parkedAsk?: AskState;
+
+  /**
+   * Run an Ask action without leaving Ask: show what is running, wait for the
+   * structured result (exit status of the visible command, install outcome,
+   * applied setting), then add a factual result turn and next steps from
+   * refreshed facts. Esc remains the only way out.
+   */
+  private async runInAsk(state: AskState, action: AskAction): Promise<void> {
+    const finish = (text: string, next: AskOption[] = []) => {
+      state.working = undefined;
+      state.pending = next.length ? {kind: 'answer', capability: 'help.command', text, next} : undefined;
+      pushTurn(state, 'ask', text);
+      state.scroll = 0;
+    };
+    if (action.kind === 'setting') {
+      await this.executeAskAction(action);
+      finish(`Done: ${action.label}.`);
+      return;
+    }
+    if (action.kind === 'installTool') {
+      const tool = TOOLS.find(item => item.id === action.tool);
+      const recipe = tool ? toolInstall(tool) : undefined;
+      // Only the exact recipe that was shown and confirmed runs.
+      if (!tool || !recipe || recipe.label !== action.label) { finish('That install is no longer available here, so nothing was run.'); return; }
+      state.working = `Installing ${tool.label} · ${recipe.label}…`;
+      this.render();
+      const task = new TaskProgress(`Installing ${tool.label}`, () => this.render(), Date.now(), tool.label);
+      const outcome = await task.run(recipe.command, [...recipe.args]);
+      if (this.askState !== state) return;
+      if (outcome.status === 'succeeded') recordInstall(tool.id, recipe);
+      clearProviderDetection();
+      this.commandSources.delete(tool.executable ?? tool.id);
+      const executable = tool.executable ?? tool.id;
+      const found = resolveCommand(executable);
+      if (outcome.status !== 'succeeded' || !found) { finish(`Installing ${tool.label} did not succeed${outcome.status === 'succeeded' ? ' (it is still not found)' : ''}. Nothing else was changed.`); return; }
+      const next: AskOption[] = [{key: `syntax:${executable}`, label: 'Show syntax and useful options', refine: `how do i use ${executable}`}];
+      if (tool.family && selectProvider(this.promptConfiguration, tool.family, tool.id)) next.push({key: `use:${tool.id}`, label: `Use ${tool.label} as the ${tool.family} provider`, refine: `switch ${tool.family} to ${tool.id}`});
+      finish(`Installed ${tool.label} at ${found}.`, next);
+      return;
+    }
+    if (action.kind !== 'git' && action.kind !== 'read') return;
+    const argv = action.kind === 'git' ? action.argv : readArgv(action.command);
+    if (action.kind === 'git' && gitRunAllowed(action.argv) !== action.risk) { finish('Ask can\'t run that command, so nothing was run.'); return; }
+    const command = renderCommand({argv}, this.shellId);
+    const previous = this.output.recentShell(1)?.startId;
+    const draft = this.editor.text;
+    state.working = `Running ${command}… (its output goes to the transcript)`;
+    this.render();
+    // A normal, visible submission: the command and its output follow ordinary transcript and history rules.
+    this.editor.clear();
+    this.editor.insert(command);
+    await this.submit(false, true);
+    if (draft) this.editor.insert(draft);
+    for (let waited = 0; this.askState === state && !this.stopped && waited < 30 * 60_000; waited += 50) {
+      const latest = this.output.recentShell(1);
+      if (!this.running && latest && latest.startId !== previous) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    if (this.askState !== state) return;
+    const record = this.output.recentShell(1);
+    const ok = record?.exitCode === 0;
+    const result = `${ok ? '✓' : '✗'} ${command} ${ok ? 'finished' : `exited with status ${record?.exitCode ?? '?'}`}. Its output is in the transcript.`;
+    if (argv[0] === 'git') {
+      // Refresh the repository this conversation is about.
+      const git = await readGitFacts(state.repoRoot ?? this.shellCwd);
+      if (this.askState !== state) return;
+      if (git) { state.referents = {...state.referents, files: undefined}; finish(`${result}\n\n${gitSummary(git)}`, gitNextSteps(git)); return; }
+    }
+    finish(result);
   }
 
   /** Close Ask; its visible turns join the transcript only when "Record Ask in transcript" is on. */
@@ -5173,9 +5274,14 @@ export class TerminalApp {
     this.askState = undefined;
     this.askGeneration += 1;
     if (!state) return;
-    const recorded = this.promptConfiguration.askRecord ? askTranscriptText(state) : undefined;
-    if (recorded) this.output.addAskInteraction(recorded.request, recorded.turns);
+    this.recordAsk(state);
     this.returnFromPanel();
+  }
+
+  /** Visible turns join the transcript only when "Record Ask in transcript" is on; referents and outcomes never do. */
+  private recordAsk(state: AskState): void {
+    const recorded = this.promptConfiguration.askRecord ? askTranscriptText(state, this.shellId) : undefined;
+    if (recorded) this.output.addAskInteraction(recorded.request, recorded.turns);
   }
 
   /** Command knowledge and identity for Ask: the completion catalog's facts and this shell's names; nothing is run. */
@@ -5185,12 +5291,18 @@ export class TerminalApp {
       if (type === 'alias' || type === 'function' || type === 'builtin') return {kind: type};
       const path = /^[\w.+-]+$/u.test(name) ? resolveCommand(name) : undefined;
       return path ? {kind: 'executable', path} : undefined;
+    }, install: name => {
+      // Only a curated /tools entry for this exact executable name; never a guessed package.
+      const tool = TOOLS.find(item => (item.executable ?? item.id) === name && !item.legacy);
+      const recipe = tool ? toolInstall(tool) : undefined;
+      return tool && recipe ? {tool: tool.id, label: recipe.label} : undefined;
     }};
   }
 
   /** Deterministic resolution first; an optional local interpretation may refine it (see LocalUnderstanding). */
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
+    state.repoRoot = context.repoRoot;
     const deterministic = resolveRequest(text, context, {rejected: state.rejected}, this.askCommands());
     if (!this.understanding.eligible('ask')) return deterministic;
     // Auto: built-in understanding first; the model is asked only when it is unsure. Always: the model is asked first.
@@ -5241,7 +5353,16 @@ export class TerminalApp {
     const statuses = this.providerStatuses;
     const recentFiles = this.recentReferences().map(reference => resolvePath(reference.cwd, reference.path)).filter((path, index, all) => all.indexOf(path) === index).slice(0, 10);
     const recentCommands: string[] = [];
-    for (let index = 1; index <= 8; index += 1) { const record = this.output.recentShell(index); if (!record) break; recentCommands.push(record.command.slice(0, 80)); }
+    const recent: NonNullable<AskContext['recent']> = [];
+    for (let index = 1; index <= 8; index += 1) {
+      const record = this.output.recentShell(index);
+      if (!record) break;
+      recentCommands.push(record.command.slice(0, 80));
+      // Facts only: never the output itself.
+      recent.push({command: record.command.slice(0, 200), ...(record.historicalContext?.cwd ? {cwd: record.historicalContext.cwd} : {}),
+        ...(record.historicalContext?.branch ? {branch: record.historicalContext.branch} : {}), exitCode: record.exitCode,
+        ...(record.durationMs !== undefined ? {durationMs: record.durationMs} : {}), lines: Math.max(0, (record.endId ?? record.outputStartId) - record.outputStartId)});
+    }
     // The project file list is read (names only, bounded) only for requests about opening things.
     const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
     // Git facts (local status and remote names; no network) only when the request or the conversation is about Git or its files.
@@ -5253,7 +5374,7 @@ export class TerminalApp {
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
       providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {}),
-      ...(git ? {git} : {}), ...(referents ? {referents} : {})};
+      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent};
   }
 
   /** Every Ask action is an existing NMSh handler; read-only commands are NMSh-built argv submitted visibly. */
