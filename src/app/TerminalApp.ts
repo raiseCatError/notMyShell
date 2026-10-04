@@ -27,8 +27,8 @@ import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
 import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
   SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
 import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
-import {effectLoops, randomSequence} from '../idle/screenEffects.js';
-import {SCREEN_MODE_EFFECT} from '../idle/scenes.js';
+import {makeRng} from '../idle/screenEffects.js';
+import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
 import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
@@ -391,7 +391,7 @@ export class TerminalApp {
   private saverCapture?: ScreenCapture;
   private saverGalleryCapture?: ScreenCapture;
   private saverGalleryMode?: IdleMode;
-  private randomSaver = randomSequence(0x5eed);
+  private randomSaver = makeRng(0x5eed);
   private idleSubscription?: () => void;
   private readonly idleGrid = new CellGrid();
   private lastActivity = Date.now();
@@ -3714,8 +3714,7 @@ export class TerminalApp {
   }
 
   private pickRandomSaver(previous?: IdleMode): IdleMode {
-    const effect = this.randomSaver(previous ? SCREEN_MODE_EFFECT[previous] : undefined);
-    return (Object.entries(SCREEN_MODE_EFFECT).find(([, id]) => id === effect)?.[0] ?? 'blackHole') as IdleMode;
+    return (pickRandomSaver(this.randomSaver, previous) ?? 'blackHole') as IdleMode;
   }
 
   private tickIdle(now: number): void {
@@ -3723,11 +3722,17 @@ export class TerminalApp {
     if (!idle || idle.paused) return;
     idle.frame += 1;
     // Random switches only when the current effect finished a full loop, never mid-effect.
-    const effect = SCREEN_MODE_EFFECT[idle.mode];
-    if (idle.random && idle.capture && effect && effectLoops(idle.capture, effect) >= 1) {
-      idle.mode = this.pickRandomSaver(idle.mode);
-      idle.capture = {...idle.capture, instances: {}};
-      idle.offset = isDeterministicPresentation() ? idle.frame * IDLE_FRAME_MS[idle.mode] : Date.now() - idle.startedAt;
+    if (idle.random) {
+      const {columns, rows} = this.dimensions();
+      const sceneNow = isDeterministicPresentation() ? idle.frame * (SAVER_FRAME_MS[idle.mode] ?? 66) : now - idle.startedAt;
+      if (saverLoopComplete(idle.mode, {elapsed: sceneNow - idle.offset, width: columns, height: rows, ...(idle.capture ? {capture: idle.capture} : {})})) {
+        idle.mode = this.pickRandomSaver(idle.mode);
+        if (idle.capture) idle.capture = {...idle.capture, instances: {}};
+        idle.offset = sceneNow;
+        idle.interval = SAVER_FRAME_MS[idle.mode] ?? 66;
+        this.stopIdleFrames();
+        this.idleSubscription = presentationClock.subscribe(next => this.tickIdle(next), idle.interval);
+      }
     }
     const started = performance.now();
     this.paintIdle(now);

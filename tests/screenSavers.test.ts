@@ -5,9 +5,9 @@ import {CellGrid, NO_COLOR_VALUE} from '../src/idle/CellGrid.js';
 import {captureFromRows, cropCapture} from '../src/idle/screenCapture.js';
 import {
   ASPECT, BlackHole, Circletastic, DIAGNOSTIC_CAP, FIREWORK_CAPS, Fireworks, RaiseCatError, SCREEN_EFFECTS, extractPlatforms, layoutRings, makeRng,
-  randomSequence, renderScreenEffect, ringCapacity, type EffectContext, type EffectPalette,
+  renderScreenEffect, ringCapacity, type EffectContext, type EffectPalette,
 } from '../src/idle/screenEffects.js';
-import {IDLE_MODE_LABELS, IDLE_MODES, SCREEN_MODE_EFFECT, idlePalette, renderScene} from '../src/idle/scenes.js';
+import {IDLE_MODE_LABELS, IDLE_MODES, IDLE_MODE_NOTES, SAVER_REGISTRY, SCREEN_MODE_EFFECT, idlePalette, pickRandomSaver, randomCandidates, renderScene, saverLoopComplete, type SaverDescriptor} from '../src/idle/scenes.js';
 import {idleFrameRows} from '../src/idle/IdleVisuals.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {readFileSync} from 'node:fs';
@@ -217,13 +217,41 @@ test('raiseCatError: the real captured data is never mutated; reproducible with 
   assert.ok(grid.bg.every(v => v === NO_COLOR_VALUE) || true);
 });
 
-test('Random picks only registered effects, never the same twice in a row, and is repeatable from a seed', () => {
-  const a = randomSequence(5), b = randomSequence(5);
-  let previous: (typeof SCREEN_EFFECTS)[number] | undefined; const picks: string[] = [];
-  for (let i = 0; i < 40; i += 1) { const id = a(previous); assert.ok(SCREEN_EFFECTS.includes(id)); assert.notEqual(id, previous); previous = id; picks.push(id); }
-  let previous2: (typeof SCREEN_EFFECTS)[number] | undefined;
-  assert.deepEqual(picks, picks.map(() => { const id = b(previous2); previous2 = id; return id; }));
-  assert.deepEqual(Object.values(SCREEN_MODE_EFFECT).sort(), [...SCREEN_EFFECTS].sort());
+test('Random derives its candidates from the registry: everything registered except itself and ineligible entries', () => {
+  const candidates = randomCandidates();
+  assert.ok(!candidates.includes('random'), 'never itself');
+  for (const id of ['sparkles', 'fireworks', 'vespyr', 'blackHole', 'screenFireworks', 'circletastic', 'raiseCatError']) assert.ok(candidates.includes(id), id);
+  assert.deepEqual(candidates, IDLE_MODES.filter(id => id !== 'random'), 'every registered saver');
+  assert.match(IDLE_MODE_NOTES.random, /one of all available screen savers, changing only after a full loop/);
+  const registry: SaverDescriptor[] = [{id: 'a'}, {id: 'random'}, {id: 'b', randomEligible: false}, {id: 'c'}];
+  assert.deepEqual(randomCandidates(registry), ['a', 'c']);
+  // A future saver is picked with no change to Random: only a registry entry.
+  const future: SaverDescriptor[] = [...registry, {id: 'synthetic-future'}];
+  const rng = makeRng(1); const seen = new Set<string>(); let previous: string | undefined;
+  for (let i = 0; i < 200; i += 1) { const id = pickRandomSaver(rng, previous, future)!; seen.add(id); assert.notEqual(id, previous, 'no immediate repeat'); previous = id; }
+  assert.deepEqual([...seen].sort(), ['a', 'c', 'synthetic-future']);
+  assert.ok(!seen.has('b') && !seen.has('random'));
+  assert.equal(pickRandomSaver(makeRng(1), 'only', [{id: 'only'}]), 'only', 'a single choice may repeat');
+  assert.equal(pickRandomSaver(makeRng(1), undefined, [{id: 'random'}]), undefined);
+  const again = (seed: number) => { const r = makeRng(seed); let p: string | undefined; return Array.from({length: 30}, () => (p = pickRandomSaver(r, p)!)); };
+  assert.deepEqual(again(9), again(9), 'repeatable from a seed');
+  // The real registry is what the app uses.
+  const real = SAVER_REGISTRY.length;
+  SAVER_REGISTRY.push({id: 'synthetic-live'});
+  try { assert.ok(randomCandidates().includes('synthetic-live')); } finally { SAVER_REGISTRY.length = real; }
+});
+
+test('loop boundaries: stateful effects report their own loop; stateless scenes declare a natural cycle', () => {
+  const c = capture(); const size = {width: WIDTH, height: HEIGHT};
+  assert.equal(saverLoopComplete('circletastic', {elapsed: 1e9, ...size, capture: c}), false, 'no time-based switching for a stateful effect');
+  renderScreenEffect('circletastic', new CellGrid(), c, ctx(0));
+  const fx = c.instances.circletastic as Circletastic;
+  for (let t = 50; t < 60_000 && fx.loops < 1; t += 50) fx.advance(t);
+  assert.equal(saverLoopComplete('circletastic', {elapsed: 0, ...size, capture: c}), true);
+  assert.equal(saverLoopComplete('vespyr', {elapsed: 1000, ...size}), false);
+  assert.equal(saverLoopComplete('vespyr', {elapsed: 60_000, ...size}), true);
+  assert.equal(saverLoopComplete('sparkles', {elapsed: 5000, ...size}), false);
+  for (const entry of SAVER_REGISTRY.filter(item => item.id !== 'random')) assert.ok(entry.effect || entry.cycleMs, `${entry.id} declares a loop boundary`);
 });
 
 test('user-facing names: Black Hole, Fireworks, Circletastic, raiseCatError; the old Rings / Cat Playground names are gone', () => {
@@ -297,7 +325,7 @@ test('app: a screen saver animates the real visible screen, the first input only
 
 test('app: Random resolves to a registered screen effect; Reduced Motion never auto-starts a screen saver; busy and passthrough rules', () => {
   const random = harness({mode: 'random'});
-  try { goIdle(random.app); assert.ok(SCREEN_MODE_EFFECT[random.app['idle']!.mode], 'a concrete registered effect'); assert.ok(random.app['idle']!.random); }
+  try { goIdle(random.app); assert.ok(randomCandidates().includes(random.app['idle']!.mode), 'a concrete registered saver'); assert.ok(random.app['idle']!.random); }
   finally { random.cleanup(); }
   const old = process.env.NMSH_REDUCED_MOTION;
   process.env.NMSH_REDUCED_MOTION = '1';
@@ -327,5 +355,21 @@ test('app: a resize stops the saver and nothing is replayed against stale geomet
     assert.equal(app['idle'], undefined);
     assert.equal(app['idleSubscription'], undefined);
     assert.ok(app['idleTimer'], 're-armed for the next idle period');
+  } finally { cleanup(); }
+});
+
+test('app: Random switches only at a loop boundary, never mid-cycle, and keeps one frame subscription', () => {
+  const {app, cleanup} = harness({mode: 'random'});
+  try {
+    goIdle(app);
+    const idle = app['idle']!;
+    idle.mode = 'warp'; idle.offset = 0; idle.startedAt = Date.now();
+    app['tickIdle'](Date.now());
+    assert.equal(app['idle']!.mode, 'warp', 'mid-cycle: no switch');
+    idle.startedAt = Date.now() - 25_000;
+    app['tickIdle'](Date.now());
+    assert.notEqual(app['idle']!.mode, 'warp', 'cycle complete: a different registered saver');
+    assert.ok(randomCandidates().includes(app['idle']!.mode));
+    assert.ok(app['idleSubscription']);
   } finally { cleanup(); }
 });

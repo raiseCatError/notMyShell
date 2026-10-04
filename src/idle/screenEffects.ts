@@ -717,12 +717,6 @@ export function renderScreenEffect(id: ScreenEffectId, grid: CellGrid, capture: 
   instance.paint(grid, ctx);
 }
 
-/** Random mode: a seeded sequence over the registered effects that never repeats the previous one immediately. */
-export function randomSequence(seed: number): (previous?: ScreenEffectId) => ScreenEffectId {
-  const rng = makeRng(seed);
-  return previous => { const options = SCREEN_EFFECTS.filter(id => id !== previous); return options[Math.floor(rng() * options.length)]!; };
-}
-
 /** How many full loops the capture's running effect has completed (0 when none). */
 export function effectLoops(capture: ScreenCapture, id: ScreenEffectId): number {
   return ((capture.instances[id] as Sim | undefined)?.loops) ?? 0;
