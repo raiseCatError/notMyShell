@@ -31,6 +31,10 @@ export interface Glyph {
   ch: string; fg: number;
   ox: number; oy: number; x: number; y: number; vx: number; vy: number;
   state: number; t: number; a: number; r: number; w: number;
+  /** Seconds after the effect's gravity starts before this glyph is disturbed (distance-ordered). */
+  wake?: number;
+  /** Beyond the simulation cap: moves along a closed-form spiral instead of being integrated. */
+  lite?: boolean;
 }
 
 /** Non-blank captured cells as animatable glyphs; huge screens are sampled down to a cap. */
@@ -100,7 +104,7 @@ const ease = (u: number) => { const c = clamp(u, 0, 1); return c * c * (3 - 2 * 
 // ---------------------------------------------------------------- Black Hole
 
 export type BlackHolePhase = 'seed' | 'impact' | 'gravity' | 'accretion' | 'hold' | 'release';
-const BH = {seed: 1.6, impact: 0.6, hold: 3, release: 2.8, rest: 1.5, consumeCap: 9};
+const BH = {seed: 1.6, impact: 0.6, hold: 3, release: 2.8, rest: 1.5, consumeCap: 11, simCap: 1800, wakeSpan: 4.2};
 
 export class BlackHole extends Sim {
   readonly glyphs: Glyph[];
@@ -112,19 +116,30 @@ export class BlackHole extends Sim {
   private sparks: Array<{x: number; y: number; vx: number; vy: number; life: number}> = [];
   private coreRadius = 1.4;
   private pulse = 0;
+  /** Seconds since gravity began (continuous across gravity and accretion). */
+  gt = 0;
   constructor(capture: ScreenCapture, textColor: number) {
     super(capture, 0xb1ac);
-    this.glyphs = glyphsOf(capture, textColor);
+    // Every visible glyph takes part. Above the simulation cap the excess follows a cheap closed-form spiral,
+    // so a dense screen is still swallowed whole rather than half left untouched.
+    this.glyphs = glyphsOf(capture, textColor, Number.MAX_SAFE_INTEGER);
+    const stride = Math.max(1, Math.ceil(this.glyphs.length / BH.simCap));
+    this.glyphs.forEach((g, i) => { if (stride > 1 && i % stride !== 0) g.lite = true; });
     this.cx = capture.width / 2 + this.rand(-2, 2);
     this.cy = capture.height / 2 + this.rand(-1, 1);
+    // One global field: nearby text reacts first, the far edges and corners last, all within the same span.
+    const dist = this.glyphs.map(g => Math.hypot((g.ox - this.cx) / ASPECT, g.oy - this.cy));
+    const dmax = Math.max(1, ...dist);
+    this.glyphs.forEach((g, i) => { g.wake = BH.wakeSpan * Math.pow(dist[i]! / dmax, 0.9) + this.rand(0, 0.5); });
   }
   private reset() {
     for (const g of this.glyphs) { g.x = g.ox; g.y = g.oy; g.vx = g.vy = 0; g.state = 0; g.t = 0; }
-    this.sparks = []; this.phase = 'seed'; this.phaseT = 0; this.coreRadius = 1.4; this.loops += 1;
+    this.sparks = []; this.phase = 'seed'; this.phaseT = 0; this.gt = 0; this.coreRadius = 1.4; this.loops += 1;
   }
   private go(phase: BlackHolePhase) { this.phase = phase; this.phaseT = 0; }
   update(dt: number): void {
     this.phaseT += dt; this.pulse += dt;
+    if (this.phase === 'gravity' || this.phase === 'accretion') this.gt += dt;
     const alive = this.glyphs.filter(g => g.state !== 3).length;
     switch (this.phase) {
       case 'seed': if (this.phaseT >= BH.seed) this.go('impact'); break;
@@ -139,13 +154,18 @@ export class BlackHole extends Sim {
       case 'gravity': case 'accretion': {
         const ramp = clamp(this.phaseT / 3.5, 0, 1);
         for (const g of this.glyphs) {
-          if (g.state === 3 || g.state === 0 && false) continue;
+          if (g.state === 3) continue;
+          if (g.lite) {
+            const dur = 2.4 + 1.6 * ((g.wake ?? 0) / BH.wakeSpan);
+            if (g.state === 0 && this.gt >= (g.wake ?? 0)) { g.state = 5; g.a = Math.atan2(g.oy - this.cy, (g.ox - this.cx) / ASPECT); g.r = Math.hypot((g.ox - this.cx) / ASPECT, g.oy - this.cy); g.w = dur; }
+            if (g.state === 5 && this.gt >= (g.wake ?? 0) + g.w) g.state = 3;   // swallowed: retired from the simulation
+            continue;
+          }
           const dx = (this.cx - g.x) / ASPECT, dy = this.cy - g.y;
           const r = Math.max(0.3, Math.hypot(dx, dy));
           if (g.state === 0) {
             // Distant glyphs wake later and move subtly at first: closer ones go first.
-            const wake = (r / Math.max(this.capture.width / ASPECT, this.capture.height)) * 3.2;
-            if (this.phaseT < wake) continue;
+            if (this.gt < (g.wake ?? 0)) continue;
             g.state = 1; g.vx = g.vy = 0; g.w = this.rand(0.55, 1.1);
           }
           if (g.state === 1) {
@@ -219,6 +239,14 @@ export class BlackHole extends Sim {
     for (const g of this.glyphs) {
       if (g.state === 0 && this.phase !== 'impact') continue;
       if (g.state === 3) continue;
+      if (g.state === 5) {
+        // Closed-form inward spiral: radius shrinks, angle sweeps faster near the core.
+        const u = clamp((this.gt - (g.wake ?? 0)) / g.w, 0, 1);
+        const radius = g.r * Math.pow(1 - u, 1.5) + this.coreRadius * 0.6 * u, angle = g.a + 3.4 * u + 2.2 * u * u * u;
+        if (radius < this.coreRadius) continue;
+        grid.plot(this.cx + Math.cos(angle) * radius * ASPECT, this.cy + Math.sin(angle) * radius, g.ch, mixPacked(g.fg, rim, 0.25 + 0.5 * u));
+        continue;
+      }
       const r = Math.hypot((cx - g.x) / ASPECT, cy - g.y);
       if (r < this.coreRadius) continue;
       const near = g.state === 2 ? 1 : clamp(1 - r / 9, 0, 0.8);

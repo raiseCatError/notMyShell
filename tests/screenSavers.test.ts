@@ -610,3 +610,47 @@ test('compositing: dark chrome text never becomes dark-on-dark, authored backgro
     for (let i = 0; i < grid.glyphs.length; i += 1) if (grid.glyphs[i] !== ' ' && grid.fg[i] !== NOC) assert.ok(grid.fg[i] === NOC || ((grid.fg[i]! >> 16) + ((grid.fg[i]! >> 8) & 255) + (grid.fg[i]! & 255)) > 150 || grid.bg[i] !== NOC, `${id}: visible glyph colors`);
   }
 });
+
+const sourceCells = (c: ReturnType<typeof capture>) => c.glyphs.map((g, i) => (g !== ' ' ? i : -1)).filter(i => i >= 0);
+/** Source cells still showing their original glyph in a painted frame. */
+const untouched = (grid: CellGrid, c: ReturnType<typeof capture>) => sourceCells(c).filter(i => grid.glyphs[i] === c.glyphs[i]).length;
+
+test('Black Hole consumes the whole captured screen: sparse and dense, near and far, then rebuilds from the pristine capture', () => {
+  for (const [name, c] of [['sparse', fullCapture(2)], ['dense', denseCapture(2)], ['huge', captureFromRows(Array.from({length: 60}, (_, y) => `line ${y} `.padEnd(200, 'abcdefghij')), 200, 60, 1)]] as const) {
+    const before = {glyphs: [...c.glyphs], fg: [...c.fg], bg: [...c.bg]};
+    const fx = new BlackHole(c, palette.text);
+    const total = sourceCells(c).length;
+    assert.equal(fx.glyphs.length, total, `${name}: every eligible glyph takes part (no sampling drops)`);
+    const grid = new CellGrid(); grid.resize(c.width, c.height);
+    let peakRemaining = total, wokeFar = false, sawPhase = new Set<string>();
+    const corner = fx.glyphs.reduce((far, g) => (Math.hypot((g.ox - fx.cx) / ASPECT, g.oy - fx.cy) > Math.hypot((far.ox - fx.cx) / ASPECT, far.oy - fx.cy) ? g : far));
+    for (let t = 50; t <= 40_000; t += 50) {
+      fx.advance(t); sawPhase.add(fx.phase);
+      if (corner.state !== 0) wokeFar = true;
+      if (fx.phase === 'hold') { grid.clear(NOC); fx.paint(grid, ctx(t)); peakRemaining = Math.min(peakRemaining, untouched(grid, c)); }
+    }
+    assert.ok(sawPhase.has('hold') && sawPhase.has('release'), name);
+    assert.ok(wokeFar, `${name}: the farthest corner glyph is pulled in too`);
+    assert.ok(peakRemaining <= Math.ceil(total * 0.02), `${name}: essentially nothing of the source remains outside the hole at peak consumption (${peakRemaining}/${total})`);
+    assert.ok(fx.glyphs.every(g => g.state === 3 || g.state === 4 || g.state === 0), `${name}: swallowed glyphs retire from the simulation`);
+    assert.deepEqual([...c.glyphs], before.glyphs); assert.deepEqual([...c.fg], before.fg); assert.deepEqual([...c.bg], before.bg);
+  }
+});
+
+test('Black Hole: consumption order is nearest-first and reproducible; every loop restarts from the exact original capture', () => {
+  const order = (seed: number) => { const fx = new BlackHole(denseCapture(seed), palette.text); return [...fx.glyphs.keys()].sort((a, b) => fx.glyphs[a]!.wake! - fx.glyphs[b]!.wake! || a - b); };
+  assert.deepEqual(order(7), order(7), 'deterministic');
+  const fx = new BlackHole(denseCapture(7), palette.text);
+  const dist = (g: typeof fx.glyphs[number]) => Math.hypot((g.ox - fx.cx) / ASPECT, g.oy - fx.cy);
+  const sorted = [...fx.glyphs].sort((a, b) => a.wake! - b.wake!);
+  const early = sorted.slice(0, 30).reduce((s, g) => s + dist(g), 0) / 30, late = sorted.slice(-30).reduce((s, g) => s + dist(g), 0) / 30;
+  assert.ok(early < late, 'nearby text reacts first, far edges last');
+  const c = denseCapture(8); const loop = new BlackHole(c, palette.text);
+  let t = 0; while (loop.loops < 2 && t < 120_000) { t += 50; loop.advance(t); }
+  assert.ok(loop.loops >= 2, 'looped at least twice');
+  // After a reconstruction every glyph sits on its original cell with its original color.
+  while (loop.phase !== 'seed') { t += 50; loop.advance(t); }
+  assert.ok(loop.glyphs.every(g => g.x === g.ox && g.y === g.oy && g.state === 0), 'rebuilt from the pristine source, not from a consumed frame');
+  const grid = new CellGrid(); grid.resize(c.width, c.height); loop.paint(grid, ctx(t));
+  for (const i of sourceCells(c)) if (Math.abs(i % c.width - loop.cx) > 2 || Math.abs(Math.floor(i / c.width) - loop.cy) > 2) assert.equal(grid.glyphs[i], c.glyphs[i]);
+});
