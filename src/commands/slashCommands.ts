@@ -45,6 +45,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/ask', insertion: '/ask ', description: 'Ask NMSh what it can do in plain English'},
   {name: '/ai', insertion: '/ai', description: 'Agent sessions: Claude Code and other harnesses running in the background; /ai claude starts one'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
+  {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
@@ -103,6 +104,7 @@ export type ParsedSlashCommand =
   | {kind: 'ai'; target?: string}
   | {kind: 'providers'}
   | {kind: 'llm'}
+  | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
@@ -165,6 +167,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
   if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
+  const rename = /^\/rename(?:\s+(.*))?$/u.exec(input);
+  if (rename) return {kind: 'rename', name: (rename[1] ?? '').trim()};
   const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);
   if (directories) return {kind: 'directories', query: (directories[1] ?? '').trim()};
   const history = /^\/history(?:\s+([\s\S]*))?$/u.exec(input);

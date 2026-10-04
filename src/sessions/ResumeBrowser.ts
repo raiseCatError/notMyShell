@@ -150,7 +150,8 @@ export function describeLiveRow(session: SessionInfo, now: number): string {
     ? `${session.running.replace(/\s+/gu, ' ').slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
     : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}${session.lastExit !== undefined && session.lastExit !== 0 ? ` · last exit ${session.lastExit}` : ''}`;
   const extra = session.title && session.running ? ` · “${session.title.slice(0, 32)}”` : '';
-  return `${where} · ${what}${extra} · ${attached} · age ${formatAge(now - session.createdAt)}`;
+  const name = session.name || session.signature;
+  return `${name ? `${name} · ` : ''}${where} · ${what}${extra} · ${attached} · age ${formatAge(now - session.createdAt)}`;
 }
 
 /** Archived row: duration when the journal recorded an end, otherwise its age. */

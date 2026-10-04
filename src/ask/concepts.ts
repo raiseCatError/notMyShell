@@ -106,7 +106,7 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'leave', label: 'Leave NMSh for an ordinary shell', support: 'actionable', capability: 'shell.leave', covers: ['/zsh', '/fish', '/bash', '/exit'],
     aliases: ['leave nmsh', 'exit nmsh', 'quit nmsh', 'ordinary shell', 'plain shell', 'regular shell'],
     description: '/zsh, /fish and /bash leave NMSh for an ordinary shell (the session waits; `nmsh` returns). /exit uses your default shell.'},
-  {id: 'sessions', label: 'Live sessions', support: 'actionable', capability: 'session.list', open: '/sessions', covers: ['/sessions', 'settings:Sessions'],
+  {id: 'sessions', label: 'Live sessions', support: 'actionable', capability: 'session.list', open: '/sessions', covers: ['/sessions', '/rename', 'settings:Sessions'],
     aliases: ['live sessions', 'running sessions', 'detached sessions', 'current sessions', 'open sessions', 'other sessions', 'sessions', 'session', 'other windows', 'startup restore'],
     description: 'Live sessions are NMSh sessions running right now, attached or detached. /sessions switches to or ends one.'},
   {id: 'transcripts', label: 'Archived transcripts', support: 'actionable', capability: 'session.resume', open: '/resume', overrides: ['session.list'], covers: ['/resume'],

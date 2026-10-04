@@ -161,6 +161,8 @@ import {recipeRunAllowed} from '../ask/recipes.js';
 import {openableUrl, projectRunAllowed, readProjectFacts} from '../ask/project.js';
 import {ManagedTasks} from '../tasks/ManagedTasks.js';
 import {CursorPresenter} from '../cursor/CursorPresenter.js';
+import {signatureAccent} from '../session/signatures.js';
+import {renameSession} from '../session/SocketSessionClient.js';
 import {appearanceHubKey, createAppearanceHub, renderAppearanceHub, type AppearanceHubState} from '../appearance/AppearanceHub.js';
 import {decayCells, diffModules, EVENT_TONES, morphCells, progress, sweepCells as transitionSweep, toneColor, Transitions} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
@@ -217,7 +219,7 @@ import {AgentSessions} from '../agents/sessions/manager.js';
 import type {AgentSession} from '../agents/sessions/model.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
-import {defaultRuntimeDir} from '../session/runtimeDir.js';
+import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
 const HISTORY_SEARCH = '/history ';
@@ -1927,6 +1929,15 @@ export class TerminalApp {
     else if (slash.kind === 'ask') this.openAsk(slash.request);
     else if (slash.kind === 'providers') this.openProvidersOverview();
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
+    else if (slash.kind === 'rename') {
+      if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
+      else {
+        try {
+          const info = await renameSession(socketPathFor(defaultRuntimeDir(process.env)), this.sessionId, slash.name);
+          this.output.addFrontendInteraction(command, info ? `This session is ${info.name || info.signature || 'unnamed'}${info.name && info.signature ? ` (signature ${info.signature})` : ''}.` : 'The session service did not answer.', INFO);
+        } catch { this.output.addFrontendInteraction(command, 'The session service did not answer; nothing changed.', ERROR); }
+      }
+    }
     else this.output.addFrontendInteraction(command, `Unknown NMSh command: ${(slash as any).input || command}`, ERROR);
   }
 
@@ -3090,7 +3101,8 @@ export class TerminalApp {
           const agent = liveRowAgent(session);
           // Agent color only when identity is proven and color is allowed; generic otherwise.
           const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
-          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${who}`
+          const signature = signatureAccent(session.signature);
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
             + `${selected ? ACCENT : SECONDARY}${describeLiveRow(session, now)}${RESET}`, columns));
         });
         rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
@@ -4871,7 +4883,8 @@ export class TerminalApp {
       const {sessions, ended} = await listSessionNotices();
       if (this.stopped) return;
       const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
-      this.noticeLabels = new Map(ordered.map((session, index) => [session.id, sessionLabel(session.id, index + 1)]));
+      // The person's own name, else the familiar signature, else the old ordinal label.
+      this.noticeLabels = new Map(ordered.map((session, index) => [session.id, session.name || session.signature || sessionLabel(session.id, index + 1)]));
       const all: SessionNotice[] = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
       const next = selectNotices(all, this.sessionId, this.dismissedNotices);
       const changed = JSON.stringify(next) !== JSON.stringify(this.noticeView);

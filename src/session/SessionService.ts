@@ -1,3 +1,4 @@
+import {assignSignature} from './signatures.js';
 import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
@@ -20,6 +21,10 @@ export interface SessionRecord {
   createdAt: string;
   state: SessionState;
   protocolVersion: number;
+  /** Familiar signature ("Mango"), assigned once at creation and kept across reattaches. */
+  signature?: string;
+  /** The person's own name for the session, when they renamed it. */
+  name?: string;
 }
 
 type Send = (message: ServerMessage) => void;
@@ -125,6 +130,7 @@ export class SessionService {
     session.notices.checkLongRunning(Date.now());
     const notice = session.notices.notice;
     return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt), shell: session.backend,
+      ...(record.signature ? {signature: record.signature} : {}), ...(record.name ? {name: record.name} : {}),
       ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
       ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {}),
       ...(process && process !== 'zsh' ? {process} : {}),
@@ -268,6 +274,14 @@ export class SessionService {
             }
             break;
           }
+          case 'rename': {
+            const target = this.sessions.get(message.sessionId);
+            if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            const name = message.name.replace(/[\u0000-\u001f\u007f]/gu, '').trim().slice(0, 40);
+            if (name) target.record.name = name; else delete target.record.name;
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session)), ended: this.endedNotices.list(Date.now())});
+            break;
+          }
           case 'resize':
             if (owned) { owned.size = {columns: message.columns, rows: message.rows}; owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
             break;
@@ -337,8 +351,11 @@ export class SessionService {
     // The shell gets the launching frontend's environment and cwd, never the
     // service's own startup state. The env is opaque: it is not stored or logged.
     const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'}, backend);
-    const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
-      state: 'attached', protocolVersion: PROTOCOL_VERSION};
+    const id = randomUUID();
+    // A familiar signature unique among live sessions, assigned once; reattaching never changes it.
+    const signature = assignSignature(id, [...this.sessions.values()].flatMap(item => item.record.signature ? [item.record.signature] : []));
+    const record: SessionRecord = {id, pid: shell.pid, cwd, createdAt: new Date().toISOString(),
+      state: 'attached', protocolVersion: PROTOCOL_VERSION, signature};
     const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
       evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id)};

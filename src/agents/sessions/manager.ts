@@ -1,3 +1,4 @@
+import {assignSignature} from '../../session/signatures.js';
 import {basename, isAbsolute} from 'node:path';
 import {resolveCommand} from '../../providers/providers.js';
 import {harness, HARNESSES, type HarnessDescriptor} from '../harnesses.js';
@@ -90,7 +91,8 @@ export class AgentSessions {
     if (descriptor.control !== 'claude-stream-json') return {ok: false, reason: descriptor.controlNote ?? `NMSh has no supported control channel for ${descriptor.name}.`};
     ordinal += 1;
     const now = this.env.now();
-    const session: AgentSession = {id: `agent-${now.toString(36)}-${ordinal}`, harness: descriptor.id, level: 'managed', cwd,
+    const id = `agent-${now.toString(36)}-${ordinal}`;
+    const session: AgentSession = {id, harness: descriptor.id, level: 'managed', cwd, signature: assignSignature(id, this.sessions.flatMap(item => item.signature ? [item.signature] : [])),
       title: options.profile?.label ?? `${basename(cwd) || descriptor.short} · ${descriptor.short} ${ordinal}`, startedAt: now, state: 'starting', events: [], attention: false, updatedAt: now};
     const profile = options.profile?.harness === descriptor.id ? options.profile : undefined;
     const args = [...(profile?.model ? ['--model', profile.model] : []), ...(profile?.permissionMode ? ['--permission-mode', profile.permissionMode] : [])];
@@ -162,7 +164,8 @@ export class AgentSessions {
       for (const agent of found) {
         if (this.sessions.some(session => session.pid === agent.pid)) continue;
         const descriptor = harness(agent.harness)!;
-        this.sessions.push({id: `observed-${agent.pid}`, harness: agent.harness, level: 'observed', title: descriptor.short, ...(agent.cwd ? {cwd: agent.cwd} : {}),
+        this.sessions.push({id: `observed-${agent.pid}`, harness: agent.harness, level: 'observed', title: descriptor.short,
+          signature: assignSignature(`observed-${agent.pid}`, this.sessions.flatMap(item => item.signature ? [item.signature] : [])), ...(agent.cwd ? {cwd: agent.cwd} : {}),
           startedAt: agent.startedAt, state: 'running', pid: agent.pid, ...(agent.tty ? {tty: agent.tty} : {}), events: [], attention: false, updatedAt: this.env.now()});
         changed = true;
       }

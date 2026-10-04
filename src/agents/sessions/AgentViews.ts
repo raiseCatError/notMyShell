@@ -1,3 +1,4 @@
+import {signatureAccent} from '../../session/signatures.js';
 import {renderControls} from '../../ui/controls.js';
 import {getCurrentGlyphMode, GLYPHS} from '../../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../../ui/palette.js';
@@ -55,7 +56,7 @@ export function renderShelf(sessions: readonly AgentSession[], columns: number, 
     const chosen = focused && index === selected;
     const title = withTitle && session.level === 'managed' && !session.title.includes(' · ') ? ` · ${session.title}` : '';
     const attention = session.attention ? (getCurrentGlyphMode() === 'safe' ? '! ' : '◆ ') : '';
-    return `${chosen ? `${marker}${GLYPHS.selection} ${RESET}` : ''}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${chosen ? primary : ''}${descriptor?.short ?? session.harness}${RESET}${subtle}${title} · ${attention}${stateLabel(session, now)}${RESET}`;
+    return `${chosen ? `${marker}${GLYPHS.selection} ${RESET}` : ''}${signatureChip(session.signature)}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${chosen ? primary : ''}${descriptor?.short ?? session.harness}${RESET}${subtle}${title} · ${attention}${stateLabel(session, now)}${RESET}`;
   };
   for (const withTitle of [true, false]) {
     const row = items.map((session, index) => cell(session, index, withTitle)).join('   ');
@@ -103,7 +104,7 @@ export function renderAgentPanel(state: AgentPanelState, rows: readonly AgentPan
       const descriptor = harness(row.session.harness);
       const where = [row.session.cwd ? row.session.cwd.replace(/^\/(?:Users|home)\/[^/]+/u, '~') : undefined, row.session.tty, row.session.pid ? `pid ${row.session.pid}` : undefined].filter(Boolean).join(' · ');
       const title = state.rename !== undefined && index === state.selected ? `${state.rename}${marker}▏${RESET}` : row.session.title;
-      out.push(`${pick} ${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${padCells(`${primary}${descriptor?.short ?? row.session.harness}${RESET}`, nameWidth)}${secondary}${title}${RESET}  ${subtle}${row.session.attention ? '◆ ' : ''}${stateLabel(row.session, now)} · ${levelLabel(row.session)}${where ? ` · ${where}` : ''}${RESET}`);
+      out.push(`${pick} ${signatureChip(row.session.signature, 8)}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${padCells(`${primary}${descriptor?.short ?? row.session.harness}${RESET}`, nameWidth)}${secondary}${title}${RESET}  ${subtle}${row.session.attention ? '◆ ' : ''}${stateLabel(row.session, now)} · ${levelLabel(row.session)}${where ? ` · ${where}` : ''}${RESET}`);
     } else {
       const status = !row.executable ? 'not installed' : row.controllable ? 'installed · Enter starts a managed session' : 'installed · observed only (no supported control channel yet)';
       out.push(`${pick} ${accent(row.harness)}${glyphOf(row.harness)}${RESET} ${padCells(`${primary}${row.harness.name}${RESET}`, nameWidth)}${subtle}${status}${RESET}`);
@@ -171,7 +172,7 @@ export function renderAgentView(session: AgentSession, state: AgentViewState, co
   const subtle = foreground(UI_COLORS.subtle);
   const marker = foreground(UI_COLORS.accent);
   const width = Math.max(20, columns - 4);
-  const header = [`${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${primary}${descriptor?.short ?? session.harness} · ${session.title}${RESET}`,
+  const header = [`${signatureChip(session.signature)}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${primary}${descriptor?.short ?? session.harness} · ${session.title}${RESET}`,
     `  ${subtle}${session.cwd ? `${session.cwd.replace(/^\/(?:Users|home)\/[^/]+/u, '~')} · ` : ''}${stateLabel(session, now)}${/\d+[smh]$/u.test(stateLabel(session, now)) ? '' : ` · ${elapsedLabel(now - session.startedAt)}`} · ${session.level === 'managed' ? 'Managed' : 'Observed only'}${RESET}`, ''];
   const body: string[] = [];
   if (session.level === 'observed') {
@@ -209,4 +210,12 @@ export function renderAgentView(session: AgentSession, state: AgentViewState, co
   const end = body.length - state.scroll;
   const visible = body.slice(Math.max(0, end - room), end);
   return [...header, ...visible, ...footer].map(line => truncateAnsi(line, columns));
+}
+
+/** A session's familiar name with its subtle accent (plain text without color); the name itself is the cue. */
+export function signatureChip(signature: string | undefined, width = 0): string {
+  if (!signature) return '';
+  const accent = signatureAccent(signature);
+  const text = width ? signature.padEnd(width) : signature;
+  return `${accent ? foreground(accent) : ''}${text}\u001b[0m `;
 }

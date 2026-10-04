@@ -46,6 +46,8 @@ export type ClientMessage =
   | {type: 'dismiss'; sessionId: string}
   /** Replace this session's shell backend in place, starting it in cwd. Refused while anything would be lost. */
   | {type: 'switch-shell'; shell: string; cwd: string}
+  /** Rename a live session (display only; its id never changes). An empty name returns to its signature. */
+  | {type: 'rename'; sessionId: string; name: string}
   | {type: 'terminate'};
 
 export type ServerMessage =
@@ -116,6 +118,10 @@ export interface SessionInfo {
   lastExit?: number;
   /** Shell backend id; absent from older services (zsh). */
   shell?: string;
+  /** Familiar signature name, assigned once by the service (absent from older services). */
+  signature?: string;
+  /** The person's own name for the session, when renamed. */
+  name?: string;
   /** The session's current cross-session notice, until it is focused (#v0.16; absent from older services). */
   notice?: SessionNotice;
 }
@@ -137,6 +143,7 @@ const SHAPES: Record<string, Shape> = {
   hello: {version: 'int', client: 'string'},
   create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int', shell: 'string?'},
   'switch-shell': {shell: 'string', cwd: 'string'},
+  rename: {sessionId: 'string', name: 'string'},
   'shell-switched': {shell: 'string', pid: 'int'},
   attach: {sessionId: 'string', columns: 'int', rows: 'int'},
   detach: {},
@@ -172,7 +179,7 @@ function isEnv(value: unknown): value is Record<string, string> {
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
   running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
-  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?'};
+  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?', signature: 'string?', name: 'string?'};
 
 const NOTICE_SHAPE: Shape = {sessionId: 'string', kind: 'string', at: 'int', program: 'string?', agent: 'string?', exitCode: 'int?',
   durationMs: 'int?', cwd: 'string?'};

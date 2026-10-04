@@ -108,6 +108,14 @@ export async function listSessionsWithNotices(socketPath: string, timeoutMs = 30
   return value;
 }
 
+/** Rename a live session (display only); an empty name returns to its signature. */
+export async function renameSession(socketPath: string, sessionId: string, name: string, timeoutMs = 3000): Promise<SessionInfo | undefined> {
+  const {value, socket} = await request(socketPath, timeoutMs, {type: 'rename', sessionId, name},
+    message => (message.type === 'sessions' ? message.sessions.find(session => session.id === sessionId) ?? null : undefined));
+  socket.end();
+  return value ?? undefined;
+}
+
 /** Clear a session's notice in every attached frontend. */
 export async function dismissNotice(socketPath: string, sessionId: string, timeoutMs = 3000): Promise<void> {
   const {socket} = await request(socketPath, timeoutMs, {type: 'dismiss', sessionId},

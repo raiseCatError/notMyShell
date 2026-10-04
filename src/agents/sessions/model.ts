@@ -28,6 +28,8 @@ export interface AgentSession {
   harness: string;
   level: AgentLevel;
   title: string;
+  /** Familiar signature ("Autumn"), unique among this window's agent sessions; the title stays separately renamable. */
+  signature?: string;
   cwd?: string;
   startedAt: number;
   state: AgentState;
