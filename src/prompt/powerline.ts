@@ -1,6 +1,6 @@
 import {separatorGlyph} from './glyphChoices.js';
 import {readableTextTone, samplePromptTreatment, treatmentFor, type Treatment, type TreatmentSettings} from '../chroma/treatment.js';
-import {fromOklch, mixOklch, readableForeground, toOklch} from '../chroma/color.js';
+import {contrastOn, fromOklch, mixOklch, readableForeground, surfaceFor, toOklch} from '../chroma/color.js';
 import {graphemes} from '../input/inputLayout.js';
 import {background, foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 import {defaultStyleProfiles, type PromptStyle, type StyleProfiles} from './styles.js';
@@ -399,14 +399,19 @@ function blockPosition(index: number, count: number): number {
 /**
  * Filled-surface Chroma: each eligible block's background moves toward the
  * gradient at its place in the prompt, and its text is re-chosen for
- * contrast. Boundaries stay because neighbors sample different positions.
+ * contrast once per presentation state. Boundaries stay because neighbors
+ * sample different positions.
  */
 function treatFilled(blocks: readonly PowerlineBlock[], chroma: PromptChroma | undefined): PowerlineBlock[] {
   if (!chroma) return [...blocks];
   return blocks.map((block, index) => {
     if (!block.treatment) return block;
-    const fill = samplePromptTreatment(chroma.treatment, block.background, blockPosition(index, blocks.length), chroma.time, chroma.still);
-    return {...block, background: fill, foreground: readableForeground(fill, block.foreground)};
+    const position = blockPosition(index, blocks.length);
+    // Text is chosen once, from the motion-free treated fill; each frame's fill is then
+    // held within the range where that same text reads, so motion never flips it light/dark.
+    const text = readableForeground(samplePromptTreatment(chroma.treatment, block.background, position, 0, true), block.foreground);
+    const fill = surfaceFor(samplePromptTreatment(chroma.treatment, block.background, position, chroma.time, chroma.still), text);
+    return {...block, background: fill, foreground: text};
   });
 }
 
@@ -590,7 +595,8 @@ function paintSpans(paint: Painter, spans: readonly Span[], chroma: PromptChroma
         const position = total <= 1 ? 0 : offset / (total - 1);
         offset += displayWidth(glyph);
         const treated = samplePromptTreatment(chroma.treatment, span.color, position, chroma.time, chroma.still);
-        const color = fill ? readableForeground(fill, treated, 3) : readableTextTone(treated);
+        // On a fixed fill the hue may move but lightness only moves away from the fill, never across it.
+        const color = fill ? contrastOn(treated, fill, 3) : readableTextTone(treated);
         return `${foreground(color)}${glyph}`;
       }).join('');
     }
