@@ -73,7 +73,8 @@ test('screen plan invariants hold across a deterministic geometry matrix', () =>
     }
     assert.equal(cursor, plan.rows, `regions account for every screen row: ${label}`);
     assert.ok(plan.transcript.height >= 0 && plan.transcript.top >= 0, label);
-    assert.equal(plan.transcript.top, 0, `Dock Bottom transcript starts at the top: ${label}`);
+    if (plan.panelActive) assert.equal(plan.regions[0]!.kind === 'panel' ? plan.regions[0]!.top : 0, 0, `a panel starts at the top: ${label}`);
+    else assert.equal(plan.transcript.top, 0, `Dock Bottom transcript starts at the top: ${label}`);
     assert.equal(plan.ptyRows, legacyPtyRows(input), `PTY rows match v0.4: ${label}`);
     assert.equal(plan.panelActive, input.panelRows !== undefined, label);
     if (plan.panelActive) {
@@ -136,12 +137,12 @@ test('PTY rows keep concrete v0.4 Dock Bottom values', () => {
   assert.equal(planScreen({...base, panelRows: 99}).ptyRows, 0);
 });
 
-test('panel takeover pins the panel to the bottom and toggles geometry consistently', () => {
+test('panel takeover is top-oriented and toggles geometry consistently', () => {
   const base: ScreenPlanInput = {rows: 20, inputRows: 2, suggestions: 4, running: false, detached: true, hasOutput: true,
     contextPlacement: 'header', hasVisibleContext: true, composerLayout: 'twoLine'};
   const open = planScreen({...base, panelRows: 6});
-  assert.deepEqual(open.regions, [{kind: 'transcript', top: 0, height: 14}, {kind: 'panel', top: 14, height: 6}]);
-  assert.equal(cursorScreenRow(open, 3), 14, 'hidden cursor parks at the panel');
+  assert.deepEqual(open.regions, [{kind: 'panel', top: 0, height: 6}, {kind: 'transcript', top: 6, height: 14}]);
+  assert.equal(cursorScreenRow(open, 3), 0, 'hidden cursor parks at the panel');
   const closed = planScreen(base);
   assert.deepEqual(closed, planScreen({...base, panelRows: undefined}), 'closing restores the composer plan');
   assert.ok(regionOf(closed, 'input'));
@@ -222,12 +223,13 @@ test('mouse hit-testing respects panel takeover geometry', () => {
     Object.defineProperty(app, 'settingsPanelRows', {value: () => Array.from({length: 6}, () => 'panel')});
     const plan: ScreenPlan = app['planFrame'](80, 20);
     assert.equal(plan.transcript.height, 14);
+    assert.equal(plan.transcript.top, 6, 'the transcript is below the top-anchored panel');
     const wrapped = app['output'].wrapped(80);
     const viewStart = app['historyViewport'].resolve(wrapped.length, 14);
-    app['onInput'](sgr(35, 2, 14));
-    assert.equal(app['hoveredLineIndex'], wrapped[viewStart + 13]!.lineIndex, 'row just above the panel is transcript');
-    app['onInput'](sgr(35, 2, 15));
-    assert.equal(app['hoveredLineIndex'], undefined, 'panel rows are not transcript');
+    app['onInput'](sgr(35, 2, 6));
+    assert.equal(app['hoveredLineIndex'], undefined, 'the last panel row is not transcript');
+    app['onInput'](sgr(35, 2, 7));
+    assert.equal(app['hoveredLineIndex'], wrapped[viewStart]!.lineIndex, 'the first row below the panel is transcript');
   } finally {
     dispose(app);
   }
@@ -274,5 +276,37 @@ test('PTY resizes to plan rows on panel open/close and full screen in passthroug
     assert.equal(sizes.at(-1), closed, 'returning rebuilds the Bottom plan');
   } finally {
     dispose(app);
+  }
+});
+
+
+test('panel takeover: the panel top is fixed at row 0 in every composer position while its height changes', () => {
+  const base: ScreenPlanInput = {rows: 24, inputRows: 2, suggestions: 3, running: false, detached: false, hasOutput: true,
+    contextPlacement: 'header', hasVisibleContext: true, composerLayout: 'twoLine', transcriptRows: 40};
+  for (const composerPosition of ['bottom', 'top', 'flow'] as const) {
+    const a = planScreen({...base, composerPosition, panelRows: 8}), b = planScreen({...base, composerPosition, panelRows: 14});
+    for (const plan of [a, b]) {
+      assert.deepEqual(plan.regions.map(region => region.kind), ['panel', 'transcript'], composerPosition);
+      assert.equal(regionOf(plan, 'panel')!.top, 0, composerPosition);
+      assert.equal(plan.inputHeight, 0); assert.equal(plan.panelActive, true);
+    }
+    assert.equal(regionOf(a, 'panel')!.top, regionOf(b, 'panel')!.top, 'top does not move');
+    assert.deepEqual([regionOf(a, 'panel')!.height, regionOf(a, 'transcript')!.top, regionOf(a, 'transcript')!.height], [8, 8, 16]);
+    assert.deepEqual([regionOf(b, 'panel')!.height, regionOf(b, 'transcript')!.top, regionOf(b, 'transcript')!.height], [14, 14, 10]);
+    assert.equal(regionAt(b, 0)?.region.kind, 'panel'); assert.equal(regionAt(b, 13)?.region.kind, 'panel'); assert.equal(regionAt(b, 14)?.region.kind, 'transcript');
+    assert.equal(cursorScreenRow(b, 3), 0, 'the hidden cursor parks at the panel');
+    // Short terminals stay bounded and top-anchored; a panel as tall as the screen takes it all.
+    for (const rows of [1, 3, 6, 10]) {
+      const plan = planScreen({...base, rows, composerPosition, panelRows: 14});
+      assert.equal(regionOf(plan, 'panel')!.top, 0);
+      assert.ok(plan.regions.reduce((sum, region) => sum + region.height, 0) <= rows && plan.transcript.height >= 0);
+    }
+    assert.equal(regionOf(planScreen({...base, composerPosition, panelRows: 99}), 'transcript')?.height ?? 0, 0);
+    // No panel: the ordinary composer positions are unchanged.
+    const normal = planScreen({...base, composerPosition});
+    const input = regionOf(normal, 'input')!;
+    if (composerPosition === 'top') assert.ok(input.top < normal.transcript.top);
+    if (composerPosition === 'bottom') assert.ok(input.top > normal.transcript.top);
+    assert.equal(normal.panelActive, false);
   }
 });

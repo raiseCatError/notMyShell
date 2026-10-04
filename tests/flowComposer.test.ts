@@ -63,11 +63,12 @@ test('Flow scrolled back: the composer scrolls with the document and PTY and vie
   assert.ok(followInput.top > 0);
 });
 
-test('Flow panels pin to the bottom edge; narrow terminals and long input never overflow', () => {
+test('Flow panels are top-anchored like every other composer position; narrow terminals and long input never overflow', () => {
   const panel = planScreen({...base, panelRows: 8, transcriptRows: 3});
-  assert.deepEqual(kinds(panel), ['transcript', 'panel']);
+  assert.deepEqual(kinds(panel), ['panel', 'transcript']);
   assert.equal(panel.composerPosition, 'flow');
-  assert.equal(regionAt(panel, 23)?.region.kind, 'panel');
+  assert.equal(regionAt(panel, 0)?.region.kind, 'panel');
+  assert.equal(regionAt(panel, 23)?.region.kind, 'transcript');
   for (let rows = 1; rows <= 14; rows += 1) {
     for (const transcriptRows of [0, 2, 400]) {
       for (const [detached, viewStart] of [[false, 0], [true, 0], [true, 395], [true, 399]] as const) {

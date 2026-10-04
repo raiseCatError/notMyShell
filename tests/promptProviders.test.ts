@@ -150,7 +150,9 @@ test('onboarding preview uses a dedicated panel and hides the live composer curs
     assert.ok(frame?.rows.some(row => row.includes('Prompt setup')));
     assert.ok(frame?.rows.some(row => row.includes('Two-line preview')));
     assert.ok(frame?.rows.some(row => row.includes('Fading wedge')));
-    assert.ok(stripAnsi(frame?.rows.at(-1) ?? '').includes('Esc skip'), 'the panel occupies the bottom rows instead of leaving the regular composer beneath it');
+    assert.ok(frame?.rows.some(row => stripAnsi(row).includes('Esc skip')), 'the panel replaces the regular composer');
+    const panelTop = frame!.rows.findIndex(row => row.includes('Prompt setup'));
+    assert.ok(panelTop >= 0 && panelTop <= 2, 'the panel is top-anchored');
     const previewRows = app['promptPanelPreview'](80);
     const runtimeRow = buildContextLine(moduleShowcaseContext(), 76, app['promptPanelState']!.draft,
       app['promptPanelState']!.draft.placement);

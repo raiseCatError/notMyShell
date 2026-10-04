@@ -6853,8 +6853,8 @@ export class TerminalApp {
         case 'transcript': return visible;
         case 'gap': return [];
         case 'jump': return [this.jumpAffordance(columns)];
-        // Panels frame their composer-side edge: under Dock Top the frame line moves below the panel.
-        case 'panel': return plan.composerPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
+        // Panels are top-oriented in every composer position, so the frame line sits on the edge facing the transcript below.
+        case 'panel': return panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'inspector': return this.inspectorRows(columns);
         case 'suggestions': return [...suggestionView.items.map((suggestion, visibleIndex) => {

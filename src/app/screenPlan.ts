@@ -97,12 +97,13 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
   const rows = Math.max(1, input.rows);
   const top = input.composerPosition === 'top';
   if (input.panelRows !== undefined) {
-    // Panel takeover: the panel pins to the composer's edge and the transcript keeps the rest.
+    // Panel takeover: NMSh panels are top-oriented in every composer position. The top row
+    // stays put as the panel's height changes (it grows and shrinks downward) and the
+    // transcript keeps the rest below. The composer position only governs the ordinary composer.
     const panelHeight = Math.min(rows, Math.max(0, input.panelRows));
     const panel: Array<[RegionKind, number]> = [['panel', panelHeight]];
     const transcript: Array<[RegionKind, number]> = [['transcript', rows - panelHeight]];
-    // Flow pins panels to the bottom edge, like Bottom.
-    return build(rows, top ? [...panel, ...transcript] : [...transcript, ...panel],
+    return build(rows, [...panel, ...transcript],
       {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: input.composerPosition ?? 'bottom'});
   }
   const inspectorHeight = Math.min(Math.max(0, input.inspectorRows ?? 0), Math.max(0, rows - 8));
