@@ -48,6 +48,11 @@ export function cloneFromPalette(palette: NativePaletteId, accent = themeContext
   return cloneTheme(name ?? `My ${label}`.slice(0, 48), label, prompt, ui, defaults, variant ? variant.dark : true);
 }
 
+/** The variant a theme family opens on (the same default Settings and Setup use). */
+export function defaultVariant(family: ThemeFamilyId): NativePaletteId {
+  return DEFAULT_VARIANT[family];
+}
+
 /** Choosing a family moves to its default variant; Custom clones the current theme when there is none yet. */
 export function selectFamily(config: PromptConfiguration, family: ThemeFamilyId): PromptConfiguration {
   if (family === 'custom') {

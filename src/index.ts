@@ -1,36 +1,58 @@
-import {resolveZsh} from './shell/zshExecutable.js';
 import {SessionPresetStore, validatePresetCwd, presetNeedsAcknowledgement, type SessionPreset} from './session/SessionPresets.js';
 import {isVersionInvocation, formatBuildIdentity, readBuildIdentity} from './buildInfo.js';
-import {NESTED_NMSH_MESSAGE, createOrdinaryZshEnvironment, isManagedNmshEnvironment} from './shell/ShellHandoff.js';
+import {NESTED_NMSH_MESSAGE, createOrdinaryShellEnvironment, decideHandoffReturn, handoffReturnSession, isManagedNmshEnvironment, returnsToWaitingShell, type HandoffReturn} from './shell/ShellHandoff.js';
 import {spawn} from 'node:child_process';
 import {PRODUCT_ABBREVIATION, PRODUCT_NAME} from './config.js';
 
-function startOrdinaryZsh(cwd?: string): Promise<number> {
+/** Hand the terminal to an ordinary interactive shell, spawned from this (parent) process with NMSh markers removed. */
+function startOrdinaryShell(target: {executable: string; label: string}, cwd?: string, handoff?: HandoffReturn): Promise<number> {
   return new Promise(resolve => {
     try {
-      const shell = spawn(resolveZsh(), ['-i'], {
+      const shell = spawn(target.executable, ['-i'], {
         ...(cwd ? {cwd} : {}),
-        env: createOrdinaryZshEnvironment(),
+        env: createOrdinaryShellEnvironment(process.env, handoff),
         stdio: 'inherit',
       });
       shell.once('error', error => {
-        process.stderr.write(`NMSh could not start ordinary zsh: ${error.message}\n`);
+        process.stderr.write(`NMSh could not start ordinary ${target.label}: ${error.message}\n`);
         resolve(1);
       });
       shell.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0)));
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`NMSh could not start ordinary zsh: ${message}\n`);
+      process.stderr.write(`NMSh could not start ordinary ${target.label}: ${message}\n`);
       resolve(1);
     }
   });
+}
+
+async function runMaintenanceCommand(argv: string[]): Promise<number> {
+  const out = (text: string) => process.stdout.write(text);
+  const err = (text: string) => process.stderr.write(text);
+  const version = readBuildIdentity().version;
+  if (argv[0] === 'doctor') {
+    const {doctorReport} = await import('./cli/doctor.js');
+    out(doctorReport());
+    return 0;
+  }
+  const {ttyConfirm} = await import('./cli/configCommand.js');
+  const confirm = process.stdin.isTTY && process.stderr.isTTY ? ttyConfirm : undefined;
+  if (argv[0] === 'config') {
+    const {runConfigCommand} = await import('./cli/configCommand.js');
+    return runConfigCommand(argv.slice(1), {out, err, confirm, version});
+  }
+  const {runUninstallCommand} = await import('./cli/uninstallCommand.js');
+  return runUninstallCommand(argv.slice(1), {out, err, confirm});
 }
 
 const args = process.argv.slice(2);
 const attachIndex = args.indexOf('--attach');
 const presetIndex = args.indexOf('--preset');
 
-if (isVersionInvocation(args)) {
+if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
+  // Non-interactive maintenance commands: allowed from inside an NMSh-managed shell too.
+  process.exitCode = await runMaintenanceCommand(args);
+} else if (isVersionInvocation(args)) {
   process.stdout.write(`${formatBuildIdentity(readBuildIdentity())}\n`);
 } else if (args.includes('--presets')) {
   try { process.stdout.write(new SessionPresetStore().list().map(preset => `${preset.name}  ${preset.cwd}  ${preset.commands.length} startup command(s)`).join('\n') + '\n'); }
@@ -59,7 +81,17 @@ if (isVersionInvocation(args)) {
 } else {
   const {TerminalApp} = await import('./app/TerminalApp.js');
   const {attachSession, connectSession, listLiveSessions, SESSION_SERVICE_ENV} = await import('./session/connectSession.js');
-  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4)});
+  // New sessions start the default backend from Settings; a missing one falls back to zsh, said plainly.
+  const {loadPromptConfiguration: loadBackendConfiguration} = await import('./prompt/configuration.js');
+  const {shellAdapter} = await import('./shell/adapters/registry.js');
+  let backend = loadBackendConfiguration().shellBackend;
+  let backendNotice: string | undefined;
+  const missing = shellAdapter(backend).unavailableReason(process.env);
+  if (backend !== 'zsh' && missing) {
+    backendNotice = `${missing} Started zsh instead; your default stays ${shellAdapter(backend).label}.`;
+    backend = 'zsh';
+  }
+  const size = () => ({cwd: process.cwd(), columns: process.stdout.columns || 80, rows: Math.max(2, (process.stdout.rows || 24) - 4), shell: backend});
   const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
   let pendingPreset: SessionPreset | undefined;
@@ -109,7 +141,19 @@ if (isVersionInvocation(args)) {
       }
     } catch { /* recovery is best effort and never blocks launch */ }
   }
-  if (!pendingPreset && !explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
+  // Launched from the ordinary shell a deliberate /zsh, /fish, /bash or /exit
+  // started: return to exactly that session, without the startup picker.
+  // --new, --attach and --preset win; a gone session is never substituted.
+  const returnSession = pendingPreset || explicit ? undefined : handoffReturnSession(process.env, args);
+  let returnUnavailable = false;
+  if (returnSession && process.env[SESSION_SERVICE_ENV] !== '0') {
+    let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
+    try { live = await listLiveSessions(); } catch { /* no usable service */ }
+    const decision = decideHandoffReturn(returnSession, live);
+    if (decision.kind === 'attach') target = decision.sessionId;
+    else { notice = [notice, decision.notice].filter(Boolean).join(' '); returnUnavailable = true; }
+  }
+  if (!target && !pendingPreset && !explicit && !args.includes('--new') && process.env[SESSION_SERVICE_ENV] !== '0') {
     let live: Awaited<ReturnType<typeof listLiveSessions>> = [];
     try { live = await listLiveSessions(); } catch { /* no usable service: start fresh */ }
     const {restoreAtStartup} = await import('./session/startupRestore.js');
@@ -118,7 +162,8 @@ if (isVersionInvocation(args)) {
     const {loadPromptConfiguration, savePromptConfiguration} = await import('./prompt/configuration.js');
     const config = loadPromptConfiguration();
     const restored = await restoreAtStartup(live, {
-      policy: {startup: config.liveSessionStartup, multiple: config.liveSessionMultiple},
+      // After a failed return, never silently attach a different session: ask instead of Always.
+      policy: {startup: returnUnavailable && config.liveSessionStartup === 'always' ? 'ask' : config.liveSessionStartup, multiple: config.liveSessionMultiple},
       saveStartup: startup => {
         try { const base = loadPromptConfiguration(); savePromptConfiguration({...base, liveSessionStartup: startup}, undefined, base); } catch { /* keep going; applies this launch */ }
       },
@@ -149,6 +194,13 @@ if (isVersionInvocation(args)) {
       }
     }
     connection ??= await connectSession(size());
+    if (connection.mode === 'service' && !connection.client.features.has('shell-switch')) {
+      notice = [notice, 'Connected to an older NMSh session service (still running its live sessions): shell switching is unavailable until those sessions end; the next launch after that starts the current service.'].filter(Boolean).join(' ');
+    }
+    if (backendNotice && !connection.attached) { notice = [notice, backendNotice].filter(Boolean).join(' ') || undefined; backendNotice = undefined; }
+    if (connection.shell && connection.shell !== backend && !connection.attached) {
+      notice = [notice, `The running session service started ${connection.shell} (it predates shell backends); end its sessions to use ${backend}.`].filter(Boolean).join(' ');
+    }
     if (notice) connection = {...connection, notice: [connection.notice, notice].filter(Boolean).join(' ')};
     if (pendingPreset && connection.mode !== 'service') {
       connection.client.kill();
@@ -178,9 +230,13 @@ if (isVersionInvocation(args)) {
       explicit = false;
       continue;
     }
-    process.exitCode = app.isOrdinaryZshHandoffRequested
-      ? await startOrdinaryZsh(app.ordinaryZshHandoffCwd)
-      : exitCode;
+    const handoff = app.shellHandoff;
+    if (handoff && returnsToWaitingShell(process.env, handoff.shell, handoff.returnSession)) {
+      // This NMSh was started from the very shell that is waiting for this session: go back to it, don't nest another.
+      process.exitCode = 0;
+      break;
+    }
+    process.exitCode = handoff ? await startOrdinaryShell(handoff, handoff.cwd, handoff.returnSession ? {sessionId: handoff.returnSession, shell: handoff.shell} : undefined) : exitCode;
     break;
   }
 }

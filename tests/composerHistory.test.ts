@@ -178,12 +178,33 @@ test('composer: an open completion menu owns Down and Up within it; Up from its 
   } finally { stop(app); }
 });
 
-test('composer: slash suggestions and an open panel keep Up/Down', () => {
+test('composer: visible slash suggestions do not steal Up from history; Down enters the menu, Up from its first row leaves it', () => {
   const {app, text} = historyApp(['git status']);
   try {
-    app['onInput']('/he');
+    app['onInput']('/screensaver');
+    assert.ok(app['composerSuggestions']().length > 1, 'several slash suggestions are visible');
     app['onInput'](UP);
-    assert.equal(text(), '/he', 'slash suggestions own Up');
+    assert.equal(text(), 'git status', 'Up recalls the previous command, not another suggestion');
+    app['onInput']('\u001b[B');
+    app['editor'].clear();
+    app['onInput']('/setup');
+    app['onInput'](UP);
+    assert.equal(text(), 'git status');
+    app['editor'].clear();
+    app['onInput']('/screensaver');
+    app['onInput']('\u001b[B');
+    assert.equal(app['selectedSuggestion'], 0, 'Down enters the menu on its first row');
+    app['onInput']('\u001b[B');
+    assert.equal(app['selectedSuggestion'], 1, 'Down again moves to the next suggestion');
+    app['onInput'](UP);
+    assert.equal(app['selectedSuggestion'], 0, 'Up moves back within the menu');
+    assert.equal(text(), '/screensaver');
+    app['onInput'](UP);
+    assert.equal(text(), 'git status', 'Up from the first row leaves the menu for history');
+    app['editor'].clear();
+    app['onInput']('/screensav');
+    app['onInput']('\t');
+    assert.equal(text(), '/screensaver', 'Tab still completes the slash command');
   } finally { stop(app); }
 });
 

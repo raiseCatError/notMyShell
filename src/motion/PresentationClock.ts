@@ -7,10 +7,14 @@ export class PresentationClock {
   get subscriberCount(): number { return this.listeners.size; }
   get scheduled(): boolean { return this.timer !== undefined; }
 
-  subscribe(callback: (now: number) => void, interval = 100): () => void {
+  /**
+   * `floor` lowers the minimum interval for short-lived motion only (cursor movement asks for 16 ms while a
+   * move is in flight and unsubscribes when it settles); everything else keeps the 40 ms floor.
+   */
+  subscribe(callback: (now: number) => void, interval = 100, floor = 40): () => void {
     const key = Symbol();
     // Short one-shot sweeps may ask for up to 25 frames per second; everything else keeps 10 or fewer.
-    const bounded = Number.isFinite(interval) ? Math.max(40, Math.min(60_000, interval)) : 100;
+    const bounded = Number.isFinite(interval) ? Math.max(Math.max(16, floor), Math.min(60_000, interval)) : 100;
     this.listeners.set(key, {callback, interval: bounded, next: this.monotonic() + bounded});
     this.schedule();
     return () => { if (this.listeners.delete(key)) this.schedule(); };

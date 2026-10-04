@@ -1,4 +1,7 @@
 import {enrichCompletion} from './CommandKnowledge.js';
+import {CompletionAggregator, DeclarativeSpecSource} from './CompletionSources.js';
+import {BundledCatalog, BundledCatalogSource} from './BundledCatalog.js';
+import {nmshConfigDirectory} from '../configuration/paths.js';
 import {ConfiguredCompletionSource} from './ConfiguredCompletion.js';
 import type {CommandType} from './SemanticService.js';
 import {completionWord} from './ConfiguredCompletion.js';
@@ -74,6 +77,25 @@ export class ShellCompletionSource implements CompletionSource {
   dispose(): void { this.configured.dispose?.(); this.native.dispose?.(); }
 }
 
+/** Directory for optional user-provided declarative completion specs (none ship with NMSh). */
+export function completionSpecDirectory(env: NodeJS.ProcessEnv = process.env): string {
+  return join(nmshConfigDirectory(env), 'completion-specs');
+}
+
+/**
+ * The shell's own completion first (configured, then native fallback), and
+ * declarative specs as an additional, lower-priority source. One menu.
+ */
+export function defaultCompletionSources(shell: CompletionSource = new ShellCompletionSource()): CompletionAggregator {
+  // Priority: the live shell, then the user's own specs, then the bundled catalog.
+  const custom = new DeclarativeSpecSource(completionSpecDirectory());
+  return new CompletionAggregator([
+    {source: shell, priority: 0, timeoutMs: 3000},
+    {source: custom, priority: 10, timeoutMs: 250},
+    {source: new BundledCatalogSource(new BundledCatalog(), root => custom.load().has(root)), priority: 20, timeoutMs: 250},
+  ]);
+}
+
 /** Owns request lifetime independently of any completion source or UI. */
 export class CompletionService {
   private active?: AbortController;
@@ -81,9 +103,11 @@ export class CompletionService {
   private shellNames: ReadonlyMap<string, CommandType> = new Map();
   private usage: ReadonlyMap<string, CommandUsage> = new Map();
 
-  constructor(private readonly source: CompletionSource = new ShellCompletionSource()) {}
+  constructor(private readonly source: CompletionSource = defaultCompletionSources()) {}
 
   dispose(): void { this.cancel(); this.source.dispose?.(); }
+  /** Ids of the knowledge sources behind this service, for /status. */
+  get sourceIds(): string[] { return this.source instanceof CompletionAggregator ? this.source.sourceIds : [this.source.id]; }
   invalidate(): void { this.dispose(); }
   setShellKnowledge(names: ReadonlyMap<string, CommandType>): void { this.cancel(); this.shellNames = new Map(names); }
   /** Command-name use from eligible local history; never private or deleted entries. */

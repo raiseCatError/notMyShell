@@ -14,7 +14,7 @@ import {renderControls} from '../ui/controls.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {colorPickerKey, createColorPicker, renderColorPicker, type ColorPickerState} from '../ui/ColorPicker.js';
-import {truncateAnsi} from '../util/text.js';
+import {padCells, truncateAnsi} from '../util/text.js';
 import {
   exportTheme, importTheme, PROMPT_THEME_ROLES, ROLE_LABELS, themeSlug, UI_THEME_ROLES, type CustomTheme, type PromptThemeRole,
   type ThemeImport, type UiThemeRole,
@@ -262,7 +262,7 @@ export function renderThemeStudio(state: ThemeStudioState, columns: number, heig
   const swatch = (hex: string) => `${colorEscape(48, parseHexColor(hex)!, level)}  ${reset}`;
   const lines = STUDIO_ROWS.map((row, index) => {
     const pointer = index === state.selected ? `${accent}${GLYPHS.selection}${reset}` : ' ';
-    const label = (text: string) => `${index === state.selected ? primary : secondary}${text.padEnd(18)}${reset}`;
+    const label = (text: string) => `${index === state.selected ? primary : secondary}${padCells(text, 16)}${reset}`;
     switch (row.kind) {
       case 'name': return `${pointer} ${label('Name')}${state.editingName !== undefined ? `${primary}${state.editingName}${accent}_${reset}` : state.draft.name}`;
       case 'basedOn': return `${pointer} ${label('Based on')}${NATIVE_PROMPT_THEMES[state.base].label}  ${subtle}←→ choose · Enter reset draft to it${reset}`;

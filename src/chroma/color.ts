@@ -129,6 +129,24 @@ export type Vibrance = 'soft' | 'standard' | 'vibrant';
 export const VIBRANCE_LEVELS: readonly Vibrance[] = ['soft', 'standard', 'vibrant'];
 export const VIBRANCE_LABELS: Record<Vibrance, string> = {soft: 'Soft', standard: 'Standard', vibrant: 'Vibrant'};
 
+/**
+ * `fill` constrained so the fixed `text` stays readable on it: lightness moves
+ * away from the text (darker under light text, lighter under dark text) until
+ * the contrast holds. Animated surfaces use this so motion changes the fill,
+ * never the text's light/dark polarity.
+ */
+export function surfaceFor(fill: Rgb, text: Rgb, minimum = 4.5): Rgb {
+  if (contrastRatio(text, fill) >= minimum) return fill;
+  const lch = toOklch(fill);
+  const darken = relativeLuminance(text) >= relativeLuminance(fill);
+  for (let step = 1; step <= 32; step += 1) {
+    const amount = step / 32;
+    const candidate = fromOklch({l: darken ? lch.l * (1 - amount) : lch.l + (1 - lch.l) * amount, c: lch.c * (1 - 0.5 * amount), h: lch.h});
+    if (contrastRatio(text, candidate) >= minimum) return candidate;
+  }
+  return darken ? DARK_TEXT : LIGHT_TEXT;
+}
+
 export function normalizeVibrance(value: unknown): Vibrance {
   return VIBRANCE_LEVELS.includes(value as Vibrance) ? value as Vibrance : 'standard';
 }

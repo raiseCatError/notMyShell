@@ -1,3 +1,4 @@
+import {askFoldLabel} from '../ask/transcriptSummary.js';
 import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
@@ -169,7 +170,22 @@ export class TranscriptPresenter {
         const hiddenLines = cmd.endId - cmd.outputStartId;
         // Activity-bearing parents use their lifecycle row as the disclosure control below.
         const hasActivities = Boolean(cmd.activities?.length);
-        if (hasActivities) {
+        if (cmd.frontend === 'ask') {
+          // A recorded Ask conversation folds whole: the /ask request line above stays as its identity.
+          const turns = cmd.ask?.turns.length ?? hiddenLines;
+          const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/ask\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
+          const commandIndex = completed.indexOf(cmd);
+          if (!cmd.expanded) {
+            const plain = foldHint(label, '›', width);
+            result.push({ansi: `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
+            skipUntil = cmd.endId;
+            continue;
+          }
+          if (turns > 2) {
+            const plain = foldHint(label, '⌄', width);
+            result.push({ansi: `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
+          }
+        } else if (hasActivities) {
           if (!cmd.expanded) {
             skipUntil = cmd.endId;
             continue;

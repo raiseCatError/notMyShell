@@ -22,6 +22,8 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/setup prompt', insertion: '/setup prompt', description: 'Setup Cat: prompt provider and style'},
   {name: '/setup appearance', insertion: '/setup appearance', description: 'Setup Cat: theme, vibrance and Chroma'},
   {name: '/setup transcript', insertion: '/setup transcript', description: 'Setup Cat: transcript presentation, history colors, dividers and folding'},
+  {name: '/setup cursor', insertion: '/setup cursor', description: 'Setup Cat: cursor shape, effects and colors, with a live preview'},
+  {name: '/setup syntax', insertion: '/setup syntax', description: 'Setup Cat: editor, syntax colors and suggestions'},
   {name: '/setup tools', insertion: '/setup tools', description: 'Setup Cat: optional tools, update checks and install suggestions'},
   {name: '/tools', insertion: '/tools', description: 'Browse optional tools, installation previews and supported configuration'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
@@ -30,13 +32,36 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/layout', insertion: '/layout', description: 'Preview and choose composer position and transcript presentation'},
   {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
-  {name: '/zsh', insertion: '/zsh', description: 'Return to an ordinary interactive zsh'},
+  {name: '/shell', insertion: '/shell', description: 'Managed backend switcher: NMSh stays open; install missing shells; D sets the default'},
+  {name: '/shell zsh', insertion: '/shell zsh', description: 'Switch this NMSh session to zsh (NMSh stays open)'},
+  {name: '/shell fish', insertion: '/shell fish', description: 'Switch this NMSh session to Fish (NMSh stays open)'},
+  {name: '/shell bash', insertion: '/shell bash', description: 'Switch this NMSh session to Bash (NMSh stays open)'},
+  {name: '/zsh', insertion: '/zsh', description: 'Leave NMSh for an ordinary zsh; this session waits, and `nmsh` there returns to it'},
+  {name: '/fish', insertion: '/fish', description: 'Leave NMSh for an ordinary Fish; this session waits, and `nmsh` there returns to it'},
+  {name: '/bash', insertion: '/bash', description: 'Leave NMSh for an ordinary Bash; this session waits, and `nmsh` there returns to it'},
+  {name: '/exit', insertion: '/exit', description: 'Leave NMSh for your configured default shell (Settings → Default shell)'},
   {name: '/version', insertion: '/version', description: 'Show this compiled NMSh build identity'},
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
+  {name: '/ask', insertion: '/ask ', description: 'Ask NMSh what it can do in plain English'},
+  {name: '/ai', insertion: '/ai', description: 'Agent sessions: Claude Code and other harnesses running in the background; /ai claude starts one'},
+  {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
+  {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
+  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
+  {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
+  {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
+  {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
+  {name: '/sessions', insertion: '/sessions', description: 'Live NMSh sessions right now: switch to a detached one, kill one (nmsh --sessions outside)'},
   {name: '/resume', insertion: '/resume', description: 'Browse archived NMSh transcripts'},
+  {name: '/find', insertion: '/find ', description: 'Add a find term (Ctrl+F); terms AND together. -r regex, -c case; /find remove N, /find clear'},
+  {name: '/filter', insertion: '/filter ', description: 'Add a filter term to the newest/focused output (terms AND together; -v, -C N, -r, -c); /filter remove N, /filter clear'},
+  {name: '/open', insertion: '/open', description: 'Open a path[:line[:column]] in your editor; alone, pick a reference from recent output'},
+  {name: '/open-diff', insertion: '/open-diff ', description: 'Show two files in your editor\'s diff view (Zed, VS Code); nothing is rebuilt here'},
+  {name: '/about', insertion: '/about', description: 'About NMSh: build identity and logo (inline image where the terminal supports it)'},
+  {name: '/agents', insertion: '/agents', description: 'Local agent CLI activity: durations, runs and a heatmap (on/off/reset)'},
+  {name: '/notices', insertion: '/notices', description: 'Cross-session notices above the composer (on/off/clear)'},
   {name: '/help', insertion: '/help', description: 'Show NMSh commands'},
   {name: '/palette', insertion: '/palette', description: 'Search NMSh actions (Ctrl+Shift+P / F1)'},
   {name: '/dirs', insertion: '/dirs ', description: 'Find a directory; insert a visible cd command'},
@@ -60,14 +85,32 @@ export type ParsedSlashCommand =
   | {kind: 'syntax'}
   | {kind: 'layout'}
   | {kind: 'keyboard'}
-  | {kind: 'zsh'}
+  /** Leave NMSh for an ordinary shell; no shell means the configured default (/exit). */
+  | {kind: 'handoff'; shell?: 'zsh' | 'fish' | 'bash'}
   | {kind: 'version'}
   | {kind: 'update'; apply: boolean}
   | {kind: 'clear'}
   | {kind: 'presets'}
   | {kind: 'resume'}
+  | {kind: 'sessions'}
   | {kind: 'help'}
+  | {kind: 'about'}
+  | {kind: 'find'; arguments: string}
+  | {kind: 'open'; target: string}
+  | {kind: 'openDiff'; left: string; right: string}
+  | {kind: 'filter'; arguments: string}
+  | {kind: 'shell'; shell?: 'zsh' | 'fish' | 'bash'}
+  | {kind: 'agents'; action: 'show' | 'on' | 'off' | 'reset'}
+  | {kind: 'notices'; action: 'show' | 'on' | 'off' | 'clear'}
   | {kind: 'palette'}
+  | {kind: 'ask'; request: string}
+  /** Agent sessions: /ai opens the list; /ai <harness or profile> starts one in the background. */
+  | {kind: 'ai'; target?: string}
+  | {kind: 'providers'}
+  | {kind: 'llm'}
+  | {kind: 'doctor'}
+  | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
+  | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
@@ -89,7 +132,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     return {kind: 'screensaver', start: screensaver[1] === 'start', ...(screensaver[2] ? {mode: screensaver[2] as IdleMode} : {})};
   }
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
-  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript))?\s*$/u.exec(input);
+  const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
   if (/^\/status\s*$/u.test(input)) return {kind: 'settings', view: 'status'};
@@ -97,15 +140,48 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/syntax\s*$/u.test(input)) return {kind: 'syntax'};
   if (/^\/layout\s*$/u.test(input)) return {kind: 'layout'};
   if (/^\/keyboard\s*$/u.test(input)) return {kind: 'keyboard'};
-  if (/^\/zsh\s*$/u.test(input)) return {kind: 'zsh'};
+  const handoff = /^\/(zsh|fish|bash|exit)\s*$/u.exec(input);
+  if (handoff) return handoff[1] === 'exit' ? {kind: 'handoff'} : {kind: 'handoff', shell: handoff[1] as 'zsh' | 'fish' | 'bash'};
   if (/^\/version\s*$/u.test(input)) return {kind: 'version'};
   const update = /^\/update(?:\s+(apply))?\s*$/u.exec(input);
   if (update) return {kind: 'update', apply: update[1] === 'apply'};
   if (/^\/clear\s*$/u.test(input)) return {kind: 'clear'};
   if (/^\/presets\s*$/u.test(input)) return {kind: 'presets'};
   if (/^\/resume\s*$/u.test(input)) return {kind: 'resume'};
+  if (/^\/sessions\s*$/u.test(input)) return {kind: 'sessions'};
   if (/^\/help\s*$/u.test(input)) return {kind: 'help'};
+  if (/^\/about\s*$/u.test(input)) return {kind: 'about'};
+  const openDiff = /^\/open-diff(?:\s+("[^"]+"|'[^']+'|\S+))?(?:\s+("[^"]+"|'[^']+'|\S+))?\s*$/u.exec(input);
+  if (openDiff) return {kind: 'openDiff', left: (openDiff[1] ?? '').replace(/^["']|["']$/gu, ''), right: (openDiff[2] ?? '').replace(/^["']|["']$/gu, '')};
+  const open = /^\/open(?:\s+([\s\S]*))?$/u.exec(input);
+  if (open) return {kind: 'open', target: (open[1] ?? '').trim()};
+  const find = /^\/find(?:\s+([\s\S]*))?$/u.exec(input);
+  if (find) return {kind: 'find', arguments: find[1] ?? ''};
+  const filter = /^\/filter(?:\s+([\s\S]*))?$/u.exec(input);
+  if (filter) return {kind: 'filter', arguments: filter[1] ?? ''};
+  const shell = /^\/shell(?:\s+(zsh|fish|bash))?\s*$/u.exec(input);
+  if (shell) return shell[1] ? {kind: 'shell', shell: shell[1] as 'zsh' | 'fish' | 'bash'} : {kind: 'shell'};
+  const agents = /^\/agents(?:\s+(on|off|reset))?\s*$/u.exec(input);
+  if (agents) return {kind: 'agents', action: (agents[1] ?? 'show') as 'show' | 'on' | 'off' | 'reset'};
+  const notices = /^\/notices(?:\s+(on|off|clear))?\s*$/u.exec(input);
+  if (notices) return {kind: 'notices', action: (notices[1] ?? 'show') as 'show' | 'on' | 'off' | 'clear'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
+  if (/^\/guide\s*$/u.test(input)) return {kind: 'ask', request: 'guide'};
+  const ai = /^\/ai(?:\s+([\w.-]{1,40}))?\s*$/u.exec(input);
+  if (ai) return ai[1] ? {kind: 'ai', target: ai[1]} : {kind: 'ai'};
+  const ask = /^\/ask(?:\s+([\s\S]*))?$/u.exec(input);
+  if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
+  if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};
+  if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
+  if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
+  const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
+  if (watch) {
+    const rest = (watch[1] ?? '').trim();
+    const op = /^(stop|pause|resume|now)(?:\s+(.*))?$/u.exec(rest);
+    return op ? {kind: 'watch', op: op[1] as 'stop' | 'pause' | 'resume' | 'now', arguments: (op[2] ?? '').trim()} : {kind: 'watch', op: rest ? 'start' : 'list', arguments: rest};
+  }
+  const rename = /^\/rename(?:\s+(.*))?$/u.exec(input);
+  if (rename) return {kind: 'rename', name: (rename[1] ?? '').trim()};
   const directories = /^\/dirs(?:\s+([\s\S]*))?$/u.exec(input);
   if (directories) return {kind: 'directories', query: (directories[1] ?? '').trim()};
   const history = /^\/history(?:\s+([\s\S]*))?$/u.exec(input);

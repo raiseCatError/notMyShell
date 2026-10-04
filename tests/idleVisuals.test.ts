@@ -202,10 +202,7 @@ test('app: activation only at a safe quiet prompt', () => {
     app['passthrough'] = false;
     app['terminalFocus'] = 'blurred';
     goIdle(app);
-    assert.equal(app['idle'], undefined, 'an unfocused terminal does not start it');
-    app['terminalFocus'] = 'focused';
-    goIdle(app);
-    assert.ok(app['idle'], 'quiet prompt: it starts');
+    assert.ok(app['idle'], 'an unfocused terminal may still be visible: it starts');
   } finally { cleanup(); }
 });
 
@@ -230,7 +227,7 @@ test('app: any key dismisses, the key is not typed, and the draft, selection and
   } finally { cleanup(); }
 });
 
-test('app: mouse move, click, wheel, resize and new shell output all dismiss; focus loss pauses, focus return dismisses', () => {
+test('app: mouse move, click, wheel, resize and new shell output all dismiss; focus loss keeps it running, focus return dismisses', () => {
   const {app, cleanup} = harness();
   try {
     for (const input of ['\u001b[<35;10;5M', '\u001b[<0;10;5M', '\u001b[<64;10;5M']) {
@@ -247,8 +244,8 @@ test('app: mouse move, click, wheel, resize and new shell output all dismiss; fo
     assert.equal(app['idle'], undefined, 'shell output');
     goIdle(app);
     app['onInput']('\u001b[O');
-    assert.ok(app['idle']?.paused, 'focus out pauses');
-    assert.equal(app['idleSubscription'], undefined, 'no frames while unfocused');
+    assert.ok(app['idle'] && !app['idle'].paused, 'focus out keeps it running');
+    assert.ok(app['idleSubscription'], 'frames continue while unfocused');
     app['onInput']('\u001b[I');
     assert.equal(app['idle'], undefined, 'focus return dismisses');
   } finally { cleanup(); }

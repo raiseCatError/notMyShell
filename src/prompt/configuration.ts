@@ -32,6 +32,9 @@ import {normalizeCustomTheme, type CustomTheme} from '../appearance/customTheme.
 import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 import {DEFAULT_UI_CHROME, normalizeUiChrome, type UiChromeSettings} from '../appearance/uiChrome.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
+import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
+import {OPEN_WITH_IDS, type OpenWith} from '../host/HostActions.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
 export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
@@ -48,7 +51,7 @@ export const TRANSCRIPT_PRESENTATIONS: readonly TranscriptPresentation[] = ['nor
 export const TRANSCRIPT_PRESENTATION_LABELS: Record<TranscriptPresentation, string> = {normal: 'Normal', chat: 'Chat'};
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext' | 'shell';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
 /** Every module can sit in either area; narrow widths drop the right area first. */
@@ -56,7 +59,23 @@ export function modulePlacement(module: {placement?: ModulePlacement}): ModulePl
   return module.placement === 'right' ? 'right' : 'left';
 }
 /** `onCommand`: shown only while the typed command is one the module is about (show-on-command). */
-export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand';
+/** `shellDiffers`: shown only while this session's backend is not the default for new sessions (the `shell` module). */
+export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCommand' | 'shellDiffers';
+/** The current-shell module's visibility, stored as the module's visible flag and condition. */
+export type ShellModuleVisibility = 'whenDifferent' | 'always' | 'never';
+export const SHELL_MODULE_VISIBILITY: readonly ShellModuleVisibility[] = ['whenDifferent', 'always', 'never'];
+export const SHELL_MODULE_VISIBILITY_LABELS: Record<ShellModuleVisibility, string> = {whenDifferent: 'When different', always: 'Always', never: 'Never'};
+export function shellModuleVisibility(configuration: Pick<PromptConfiguration, 'modules'>): ShellModuleVisibility {
+  const module = configuration.modules.find(item => item.id === 'shell');
+  if (!module || !module.visible) return module ? 'never' : 'whenDifferent';
+  return module.condition === 'always' ? 'always' : 'whenDifferent';
+}
+export function applyShellModuleVisibility(configuration: Pick<PromptConfiguration, 'modules'>, visibility: ShellModuleVisibility): void {
+  let module = configuration.modules.find(item => item.id === 'shell');
+  if (!module) { module = {id: 'shell', visible: true, condition: 'shellDiffers'}; configuration.modules.push(module); }
+  module.visible = visibility !== 'never';
+  module.condition = visibility === 'always' ? 'always' : 'shellDiffers';
+}
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k';
@@ -241,13 +260,155 @@ export const CURSOR_SHAPES = ['host', 'block', 'bar', 'underline'] as const;
 export type CursorShape = typeof CURSOR_SHAPES[number];
 export const CURSOR_BLINKS = ['host', 'on', 'off'] as const;
 export type CursorBlink = typeof CURSOR_BLINKS[number];
-export interface CursorSettings {shape: CursorShape; blink: CursorBlink}
-export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host'};
+/**
+ * One registry for NMSh's UI motion, each a short, finite presentation of a
+ * real event; none delays input or execution, none runs when Off, under
+ * Reduced Motion, with Decorative Effects Off, or without color.
+ */
+export const CONTEXT_TRANSITIONS = ['off', 'subtle', 'expressive'] as const;
+export const COMMAND_LAUNCHES = ['off', 'sweep', 'pulse'] as const;
+export const COMPLETION_HIGHLIGHTS = ['off', 'subtle', 'vivid'] as const;
+export const COMPLETION_EFFECTS = ['off', 'seal'] as const;
+export const EVENT_FEEDBACK = ['off', 'subtle', 'expressive'] as const;
+export interface MotionSettings {
+  /** Prompt modules transform in place when their facts change (cwd, branch, Git state, tools). */
+  contextTransitions: typeof CONTEXT_TRANSITIONS[number];
+  /** The handoff when Enter submits a shell command. */
+  commandLaunch: typeof COMMAND_LAUNCHES[number];
+  /** What completion just inserted. */
+  completionHighlight: typeof COMPLETION_HIGHLIGHTS[number];
+  /** Block Seal: a finished block settles. */
+  completionEffect: typeof COMPLETION_EFFECTS[number];
+  /** Semantic Echo: a short response to meaningful events (long success, failure, attention, task done). */
+  eventFeedback: typeof EVENT_FEEDBACK[number];
+  /**
+   * How the same events are drawn. Clean keeps the host's background (foreground tint, dim, underline);
+   * Rich draws the stronger filled bands. One event system feeds either renderer.
+   */
+  rendering: MotionRendering;
+  /** Each rendering keeps its own tuning, so switching never loses the other's. */
+  tuning: Record<MotionRendering, MotionTuning>;
+}
+export const MOTION_RENDERINGS = ['clean', 'rich'] as const;
+export type MotionRendering = typeof MOTION_RENDERINGS[number];
+export const MOTION_INTENSITIES = ['low', 'medium', 'high'] as const;
+export const MOTION_SPEEDS = ['slow', 'normal', 'fast'] as const;
+/** Intensity scales how strong the paint is; speed scales how long it lasts. Medium/Normal is each renderer's own baseline. */
+export interface MotionTuning {intensity: typeof MOTION_INTENSITIES[number]; speed: typeof MOTION_SPEEDS[number]}
+export const DEFAULT_MOTION_TUNING = (): Record<MotionRendering, MotionTuning> => ({clean: {intensity: 'medium', speed: 'normal'}, rich: {intensity: 'medium', speed: 'normal'}});
+/** Fresh installs: restrained motion, Clean rendering. */
+export const DEFAULT_MOTION: MotionSettings = {contextTransitions: 'subtle', commandLaunch: 'sweep', completionHighlight: 'subtle', completionEffect: 'seal', eventFeedback: 'subtle',
+  rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
+/** Existing configs without a motion group: nothing new moves until the person turns it on. */
+export const MIGRATED_MOTION: MotionSettings = {contextTransitions: 'off', commandLaunch: 'off', completionHighlight: 'off', completionEffect: 'off', eventFeedback: 'off',
+  rendering: 'clean', tuning: DEFAULT_MOTION_TUNING()};
+
+export function normalizeMotion(value: unknown): MotionSettings {
+  if (!isRecord(value)) return {...MIGRATED_MOTION};
+  const pickOne = <T extends string>(list: readonly T[], item: unknown, fallback: T): T => list.includes(item as T) ? item as T : fallback;
+  return {contextTransitions: pickOne(CONTEXT_TRANSITIONS, value.contextTransitions, 'off'), commandLaunch: pickOne(COMMAND_LAUNCHES, value.commandLaunch, 'off'),
+    completionHighlight: pickOne(COMPLETION_HIGHLIGHTS, value.completionHighlight, 'off'), completionEffect: pickOne(COMPLETION_EFFECTS, value.completionEffect, 'off'),
+    eventFeedback: pickOne(EVENT_FEEDBACK, value.eventFeedback, 'off'),
+    // Saved configs without a rendering are on today's behavior, which is Clean.
+    rendering: pickOne(MOTION_RENDERINGS, value.rendering, 'clean'), tuning: normalizeMotionTuning(value.tuning)};
+}
+
+function normalizeMotionTuning(value: unknown): Record<MotionRendering, MotionTuning> {
+  const record = isRecord(value) ? value : {};
+  const one = (item: unknown): MotionTuning => {
+    const tuning = isRecord(item) ? item : {};
+    return {intensity: MOTION_INTENSITIES.includes(tuning.intensity as never) ? tuning.intensity as MotionTuning['intensity'] : 'medium',
+      speed: MOTION_SPEEDS.includes(tuning.speed as never) ? tuning.speed as MotionTuning['speed'] : 'normal'};
+  };
+  return {clean: one(record.clean), rich: one(record.rich)};
+}
+
+export const PROMPT_TEXT_COLORS = ['neutral', 'theme'] as const;
+export type PromptTextColors = typeof PROMPT_TEXT_COLORS[number];
+
+export const CURSOR_RENDERERS = ['auto', 'portable', 'native'] as const;
+export type CursorRenderer = typeof CURSOR_RENDERERS[number];
+/** How the visual caret travels; the logical caret always moves at once. */
+export const CURSOR_MOTIONS = ['off', 'smooth', 'smear', 'tail'] as const;
+export type CursorMotion = typeof CURSOR_MOTIONS[number];
+/** What the movement emits (separate from Motion: Fire is not a movement algorithm). */
+export const CURSOR_EFFECTS = ['none', 'fire', 'sparks', 'lightning', 'railgun', 'ripple', 'wireframe'] as const;
+export type CursorEffect = typeof CURSOR_EFFECTS[number];
+/** A low-cadence effect while the caret rests (opt-in; Off schedules nothing). */
+export const CURSOR_IDLE_EFFECTS = ['off', 'glow', 'embers', 'flame', 'sparks'] as const;
+export type CursorIdleEffect = typeof CURSOR_IDLE_EFFECTS[number];
+/**
+ * Where the caret/effect color comes from. `theme` is Follow current theme (the
+ * stored name predates Choose theme and is kept so saved configs keep working);
+ * `chosen` is Choose theme: any bundled theme, independent of the prompt.
+ */
+export const CURSOR_COLOR_SOURCES = ['host', 'accent', 'theme', 'custom', 'chosen'] as const;
+export type CursorColorSource = typeof CURSOR_COLOR_SOURCES[number];
+export const CURSOR_TRAIL_COLORS = ['cursor', 'custom', 'gradient'] as const;
+export const CURSOR_PARTICLE_COLORS = ['trail', 'custom', 'gradient'] as const;
+export const CURSOR_LEVELS = ['low', 'medium', 'high'] as const;
+export type CursorLevel = typeof CURSOR_LEVELS[number];
+export const CURSOR_EASINGS = ['out-cubic', 'out-expo', 'linear', 'spring'] as const;
+
+/** Physics and pacing for people who want to tune (the default view never shows these). */
+export interface CursorAdvanced {
+  shortMoveMs: number; longMoveMs: number; easing: typeof CURSOR_EASINGS[number];
+  stiffness: number; tailStiffness: number; damping: number; trailExponent: number; maxTrail: number;
+  /** Cells: moves at or under this are "short" (adjacent typing). */
+  moveThreshold: number;
+  /** ms of rest before the idle effect starts. */
+  dwellMs: number;
+  particleDensity: number; particleLifetimeMs: number; spread: number; particleSpeed: number; drag: number; gravity: number;
+  /** Frames per second while moving; idle effects use at most 15. */
+  fps: number;
+}
+
+export interface CursorSettings {
+  shape: CursorShape; blink: CursorBlink;
+  renderer: CursorRenderer; motion: CursorMotion; effect: CursorEffect; idleEffect: CursorIdleEffect;
+  color: {source: CursorColorSource; custom?: string; /** Choose theme: the theme and (Catppuccin) accent the cursor uses. */ theme?: NativePaletteId; themeAccent?: CatppuccinAccent};
+  trail: {source: typeof CURSOR_TRAIL_COLORS[number]; colors: string[]};
+  particles: {source: typeof CURSOR_PARTICLE_COLORS[number]; colors: string[]};
+  speed: CursorLevel; intensity: CursorLevel; trailLength: CursorLevel; particleAmount: CursorLevel;
+  advanced: CursorAdvanced;
+}
+export const DEFAULT_CURSOR_ADVANCED: CursorAdvanced = {shortMoveMs: 40, longMoveMs: 150, easing: 'out-cubic', stiffness: 0.6, tailStiffness: 0.35, damping: 0.85,
+  trailExponent: 1.6, maxTrail: 24, moveThreshold: 1, dwellMs: 600, particleDensity: 1, particleLifetimeMs: 520, spread: 0.6, particleSpeed: 1, drag: 0.9, gravity: 1, fps: 60};
+/** Factory defaults: no motion, no effect, no idle effect. Existing users see no surprise animation. */
+export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host', renderer: 'auto', motion: 'off', effect: 'none', idleEffect: 'off',
+  color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []},
+  speed: 'medium', intensity: 'medium', trailLength: 'medium', particleAmount: 'medium', advanced: DEFAULT_CURSOR_ADVANCED};
+
+const HEX = /^#[0-9a-f]{6}$/iu;
+const pick = <T extends string>(list: readonly T[], value: unknown, fallback: T): T => list.includes(value as T) ? value as T : fallback;
+const clampNumber = (value: unknown, min: number, max: number, fallback: number) => typeof value === 'number' && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 
 export function normalizeCursor(value: unknown): CursorSettings {
   const v = isRecord(value) ? value : {};
-  return {shape: CURSOR_SHAPES.includes(v.shape as CursorShape) ? v.shape as CursorShape : 'host',
-    blink: CURSOR_BLINKS.includes(v.blink as CursorBlink) ? v.blink as CursorBlink : 'host'};
+  const color = isRecord(v.color) ? v.color : {};
+  const trail = isRecord(v.trail) ? v.trail : {};
+  const particles = isRecord(v.particles) ? v.particles : {};
+  const advanced = isRecord(v.advanced) ? v.advanced : {};
+  const colors = (list: unknown) => Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string' && HEX.test(item)).slice(0, 6) : [];
+  const a = DEFAULT_CURSOR_ADVANCED;
+  return {shape: pick(CURSOR_SHAPES, v.shape, 'host'), blink: pick(CURSOR_BLINKS, v.blink, 'host'),
+    renderer: pick(CURSOR_RENDERERS, v.renderer, 'auto'), motion: pick(CURSOR_MOTIONS, v.motion, 'off'), effect: pick(CURSOR_EFFECTS, v.effect, 'none'),
+    idleEffect: pick(CURSOR_IDLE_EFFECTS, v.idleEffect, 'off'),
+    color: {source: pick(CURSOR_COLOR_SOURCES, color.source, 'host'), ...(typeof color.custom === 'string' && HEX.test(color.custom) ? {custom: color.custom} : {}),
+      ...(color.theme !== undefined || color.source === 'chosen' ? {theme: normalizePaletteId(color.theme)} : {}),
+      ...(color.themeAccent !== undefined ? {themeAccent: normalizeCatppuccinAccent(color.themeAccent)} : {})},
+    trail: {source: pick(CURSOR_TRAIL_COLORS, trail.source, 'cursor'), colors: colors(trail.colors)},
+    particles: {source: pick(CURSOR_PARTICLE_COLORS, particles.source, 'trail'), colors: colors(particles.colors)},
+    speed: pick(CURSOR_LEVELS, v.speed, 'medium'), intensity: pick(CURSOR_LEVELS, v.intensity, 'medium'), trailLength: pick(CURSOR_LEVELS, v.trailLength, 'medium'),
+    particleAmount: pick(CURSOR_LEVELS, v.particleAmount, 'medium'),
+    advanced: {shortMoveMs: clampNumber(advanced.shortMoveMs, 0, 200, a.shortMoveMs), longMoveMs: clampNumber(advanced.longMoveMs, 40, 600, a.longMoveMs),
+      easing: pick(CURSOR_EASINGS, advanced.easing, a.easing), stiffness: clampNumber(advanced.stiffness, 0.05, 1, a.stiffness),
+      tailStiffness: clampNumber(advanced.tailStiffness, 0.05, 1, a.tailStiffness), damping: clampNumber(advanced.damping, 0.1, 1, a.damping),
+      trailExponent: clampNumber(advanced.trailExponent, 0.5, 4, a.trailExponent), maxTrail: clampNumber(advanced.maxTrail, 2, 80, a.maxTrail),
+      moveThreshold: clampNumber(advanced.moveThreshold, 0, 8, a.moveThreshold), dwellMs: clampNumber(advanced.dwellMs, 0, 5000, a.dwellMs),
+      particleDensity: clampNumber(advanced.particleDensity, 0, 4, a.particleDensity), particleLifetimeMs: clampNumber(advanced.particleLifetimeMs, 100, 2000, a.particleLifetimeMs),
+      spread: clampNumber(advanced.spread, 0, 2, a.spread), particleSpeed: clampNumber(advanced.particleSpeed, 0.1, 4, a.particleSpeed),
+      drag: clampNumber(advanced.drag, 0.5, 1, a.drag), gravity: clampNumber(advanced.gravity, -2, 2, a.gravity), fps: clampNumber(advanced.fps, 12, 120, a.fps)}};
 }
 
 /** Optional NMSh-owned status strip; Off by default, Minimal (clock + real battery) when enabled. */
@@ -309,6 +470,10 @@ export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
 
 export interface PromptConfiguration {
   presentation: TreatmentSettings;
+  /** General NMSh UI motion (cursor motion lives in `cursor`, Chroma in `presentation`). */
+  motion: MotionSettings;
+  /** Paste Preview: Smart shows multiline, chained, mutating or risky pastes before they enter the composer. */
+  pastePreview: 'smart' | 'always' | 'off';
   provider: PromptProviderId;
   onboardingComplete: boolean;
   /** Optional discovery is separate; legacy completed onboarding stays completed. */
@@ -354,6 +519,22 @@ export interface PromptConfiguration {
   liveActivity: LiveActivitySettings;
   /** Where NMSh chrome (frames, rules, tabs, selection, accents) takes its colors from. */
   uiChrome: UiChromeSettings;
+  /** Compact cross-session notices above the composer (other sessions finished, failed, ended...). */
+  sessionNotices: boolean;
+  /** Named agent launch profiles (provider-specific, never credentials); see src/agents/sessions/manager.ts. */
+  agentProfiles: AgentProfile[];
+  /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
+  askRecord: boolean;
+  /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
+  askPresentation: 'chat' | 'normal';
+  /** Optional local language understanding; Auto by default (deterministic first, nothing downloads without consent). Folding stays opt-in. */
+  localUnderstanding: LocalUnderstandingSettings;
+  /** Local-only agent CLI activity stats (durations and counts; never content). */
+  agentActivity: boolean;
+  /** Shell backend for new sessions; /shell switches only the current session unless saved as default. */
+  shellBackend: ShellId;
+  /** Where /open and /open-diff delegate: the surrounding editor (auto), Zed, VS Code, or $VISUAL/$EDITOR. */
+  openWith: OpenWith;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -375,6 +556,12 @@ export interface PromptConfiguration {
     mirrorRight: boolean;
     /** Theme color strength; missing in older configs means Standard (unchanged colors). */
     vibrance: Vibrance;
+    /**
+     * Prompt text colors: Theme uses the theme's own text treatment; Neutral keeps every
+     * fill, connector and accent but draws ordinary text in stable neutral tones. Applies
+     * to every Native theme. Missing in older configs means Theme (saved looks unchanged).
+     */
+    textColors: PromptTextColors;
     /** Catppuccin accent; ignored by other families. */
     accent: CatppuccinAccent;
     /**
@@ -396,6 +583,8 @@ export interface PromptConfiguration {
   composerPosition: ComposerPosition;
   /** Normal or Chat rows; presentation only and independent of composer position. */
   transcriptPresentation: TranscriptPresentation;
+  /** The decorative horizontal rules around the live composer; Off reclaims their rows. Transcript dividers are separate. */
+  composerDividers: boolean;
   modules: ContextModuleConfig[];
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
@@ -405,6 +594,8 @@ export interface PromptConfiguration {
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
+  motion: {...DEFAULT_MOTION},
+  pastePreview: 'smart',
   provider: 'nmsh',
   onboardingComplete: false,
   toolsSetupComplete: false,
@@ -428,12 +619,20 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
+  agentProfiles: [],
+  sessionNotices: true,
+  askRecord: true,
+  askPresentation: 'chat' as const,
+  localUnderstanding: {mode: 'auto', ask: true, folding: false},
+  agentActivity: true,
+  shellBackend: 'zsh',
+  openWith: 'auto',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
   nmsh: {gapEnabled: true, startStyle: 'wedge', connector: 'wedge', endStyle: 'fadeWedge', palette: 'lavender', icons: 'nerd', style: 'powerline',
     connectorFade: 'off', connectorFadeColors: 'previous', gitEnabled: true, gitColors: 'semantic', gitGeometry: 'follow', gitConnectorFade: 'followMain',
-    mirrorRight: true, vibrance: 'standard', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
+    mirrorRight: true, vibrance: 'standard', textColors: 'theme', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
@@ -441,6 +640,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   placement: 'header',
   composerLayout: 'twoLine',
   composerPosition: 'bottom',
+  composerDividers: true,
   transcriptPresentation: 'normal',
   modules: [
     {id: 'project', visible: true, condition: 'always'},
@@ -451,14 +651,15 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
     {id: 'kubeContext', visible: true, condition: 'onCommand'},
     {id: 'dockerContext', visible: true, condition: 'onCommand'},
+    {id: 'shell', visible: true, condition: 'shellDiffers'},
   ],
   separator: '',
   gap: 1,
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
-const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand']);
+const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
+const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand', 'shellDiffers']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -507,7 +708,11 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome), toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+  const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+    sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
+    shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
+    openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k'
     ? promptValue.provider
@@ -540,6 +745,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     gitConnectorFade: normalizeGitConnectorFade(nativeValue.gitConnectorFade),
     mirrorRight: typeof nativeValue.mirrorRight === 'boolean' ? nativeValue.mirrorRight : true,
     vibrance: normalizeVibrance(nativeValue.vibrance),
+    textColors: (nativeValue.textColors === 'neutral' ? 'neutral' : 'theme') as PromptTextColors,
     accent: normalizeCatppuccinAccent(nativeValue.accent),
     styleProfiles: normalizeStyleProfiles(undefined)};
   const starshipConfigPath = typeof starshipValue.configPath === 'string' && starshipValue.configPath.trim()
@@ -564,7 +770,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator, ...tooling};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...tooling};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -580,6 +786,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
       visible: typeof item.visible === 'boolean' ? item.visible : fallback.visible,
       condition: typeof item.condition === 'string' && CONDITIONS.has(item.condition as ContextCondition)
         && (item.condition !== 'onCommand' || ON_COMMAND_MODULES.has(id))
+        && ((item.condition === 'shellDiffers') === (id === 'shell') || (id === 'shell' && item.condition === 'always'))
         ? item.condition as ContextCondition
         : fallback.condition,
     };
@@ -607,7 +814,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
     glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap, ...tooling};
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...tooling};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {
@@ -685,14 +892,16 @@ export function savePromptConfiguration(configuration: PromptConfiguration, path
 
 export function hasVisibleContextModule(
   configuration: PromptConfiguration,
-  context?: {branch?: string; exitStatus?: number; commandWords?: readonly string[]},
+  context?: {branch?: string; exitStatus?: number; commandWords?: readonly string[]; shell?: {differs: boolean}},
   /** Whether an on-command module is relevant to the typed command. */
   onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)
-    && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? [])));
+    && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? []))
+    && (module.id !== 'shell' || Boolean(context?.shell))
+    && (module.condition !== 'shellDiffers' || Boolean(context?.shell?.differs)));
 }
 
 /**
@@ -711,4 +920,45 @@ export function applyNativeGapChoice(configuration: PromptConfiguration, choice:
   else if (choice === 'wide') configuration.gap = 2;
   configuration.nmsh.connectorFadeColors = resolveFadeColors(configuration.nmsh.connectorFadeColors,
     configuration.nmsh.gapEnabled, configuration.gap);
+}
+
+/** Off never loads a model. Auto may, lazily, for enabled scopes. Always prefers it for enabled scopes. */
+export type LocalUnderstandingMode = 'off' | 'auto' | 'always';
+export const LOCAL_UNDERSTANDING_MODES: readonly LocalUnderstandingMode[] = ['off', 'auto', 'always'];
+export const LOCAL_UNDERSTANDING_LABELS: Record<LocalUnderstandingMode, string> = {off: 'Off', auto: 'Auto', always: 'Always'};
+export type LocalRuntimeKind = 'llama.cpp' | 'ollama' | 'lmstudio';
+
+/** The chosen model: NMSh's own download, or a compatible model found locally. Runtime state is never stored here. */
+export interface LocalModelChoice {
+  label: string;
+  runtime: LocalRuntimeKind;
+  /** GGUF file for llama.cpp. */
+  path?: string;
+  /** Model name for Ollama or LM Studio. */
+  name?: string;
+  /** NMSh downloaded it (and may remove it); otherwise it was found and is never deleted by NMSh. */
+  owned: boolean;
+}
+
+export interface LocalUnderstandingSettings {
+  mode: LocalUnderstandingMode;
+  /** Feature scopes; each is opt-in and kept when the mode is Off. */
+  ask: boolean;
+  folding: boolean;
+  model?: LocalModelChoice;
+}
+
+function normalizeLocalUnderstanding(value: unknown): LocalUnderstandingSettings {
+  const record = isRecord(value) ? value : {};
+  // Only an absent or unrecognised mode gets the Auto default; a saved Off stays Off.
+  const mode = LOCAL_UNDERSTANDING_MODES.includes(record.mode as LocalUnderstandingMode) ? record.mode as LocalUnderstandingMode : 'auto';
+  const settings: LocalUnderstandingSettings = {mode, ask: typeof record.ask === 'boolean' ? record.ask : true, folding: record.folding === true};
+  const model = isRecord(record.model) ? record.model : undefined;
+  const runtime = model && (['llama.cpp', 'ollama', 'lmstudio'] as const).includes(model.runtime as LocalRuntimeKind) ? model.runtime as LocalRuntimeKind : undefined;
+  if (model && runtime && typeof model.label === 'string' && model.label.length <= 120 && !/[\u0000-\u001f]/u.test(model.label)
+    && (typeof model.path === 'string' || typeof model.name === 'string')) {
+    settings.model = {label: model.label, runtime, owned: model.owned === true,
+      ...(typeof model.path === 'string' ? {path: model.path} : {}), ...(typeof model.name === 'string' ? {name: model.name} : {})};
+  }
+  return settings;
 }

@@ -24,12 +24,14 @@ export function calculateScreenLayout(
   contextPlacement: ContextPlacement = 'header',
   hasVisibleContext = true,
   composerLayout: ComposerLayout = 'twoLine',
+  /** Off removes the decorative rule rows around the composer (the prompt row itself stays). */
+  composerDividers = true,
 ): ScreenLayout {
   const safeRows = Math.max(1, rows);
   const oneLine = composerLayout === 'oneLine';
   const showPrompt = safeRows >= 2 && hasVisibleContext && !oneLine;
-  const showSeparator = safeRows >= 3;
-  const showComposerTopBorder = safeRows >= (oneLine ? 3 : 4)
+  const showSeparator = composerDividers && safeRows >= 3;
+  const showComposerTopBorder = composerDividers && safeRows >= (oneLine ? 3 : 4)
     && (oneLine || (showPrompt && contextPlacement === 'composer'));
   const fixedRows = Number(showPrompt) + Number(showSeparator) + Number(showComposerTopBorder);
   const minimumOutput = safeRows >= 7 ? 2 : 0;

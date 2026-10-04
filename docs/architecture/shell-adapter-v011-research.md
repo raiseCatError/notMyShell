@@ -1,5 +1,7 @@
 # ShellAdapter boundary: research after v0.11
 
+> Superseded in v0.16 by the implemented [ShellAdapter](shell-adapter.md) with zsh, Fish and Bash backends. Kept as the research record.
+
 Refs #17. zsh is the only supported shell. No Bash, Fish, Nushell or PowerShell
 backend, generic runtime adapter or implementation child is introduced here.
 

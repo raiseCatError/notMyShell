@@ -160,7 +160,8 @@ test('handshake, version mismatch, framing, containment, registry, and disconnec
 
     const [record] = service.registry;
     assert.ok(record);
-    assert.deepEqual(Object.keys(record).sort(), ['createdAt', 'cwd', 'id', 'pid', 'protocolVersion', 'state']);
+    assert.deepEqual(Object.keys(record).sort(), ['createdAt', 'cwd', 'id', 'pid', 'protocolVersion', 'signature', 'state']);
+    assert.match(record.signature!, /^[A-Z][a-z]+(?: \d+)?$/u, 'a familiar signature, never the environment');
     assert.equal(record.cwd, home);
     assert.equal(record.state, 'attached');
     assert.ok(record.pid > 0);

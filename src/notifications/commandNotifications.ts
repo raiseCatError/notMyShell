@@ -1,4 +1,5 @@
 import {spawn, type ChildProcess, type SpawnOptions} from 'node:child_process';
+import {accessSync, constants} from 'node:fs';
 import {PRODUCT_NAME} from '../config.js';
 import type {NotificationSettings} from '../prompt/configuration.js';
 import {parseSlashCommand} from '../commands/slashCommands.js';
@@ -92,13 +93,18 @@ export const OSASCRIPT_TIMEOUT_MS = 10_000;
 export class MacNotificationService implements NotificationService {
   readonly supported = true;
 
-  constructor(private readonly spawnProcess: SpawnFunction = spawn) {}
+  constructor(protected readonly spawnProcess: SpawnFunction = spawn) {}
+
+  protected command(notification: CommandNotification): [string, string[]] {
+    return [OSASCRIPT_PATH, osascriptArguments(notification)];
+  }
 
   notify(notification: CommandNotification): Promise<NotificationDelivery> {
     return new Promise(resolve => {
       let child: ChildProcess;
       try {
-        child = this.spawnProcess(OSASCRIPT_PATH, osascriptArguments(notification),
+        const [command, args] = this.command(notification);
+        child = this.spawnProcess(command, args,
           {shell: false, stdio: ['ignore', 'ignore', 'pipe'], timeout: OSASCRIPT_TIMEOUT_MS});
       } catch (error) {
         resolve({ok: false, reason: 'spawn', message: String(error)});
@@ -117,6 +123,18 @@ export class MacNotificationService implements NotificationService {
   }
 }
 
+/** Freedesktop notifications through notify-send (libnotify); argv only, `--` ends option parsing. */
+export function notifySendArguments(notification: CommandNotification): string[] {
+  return ['--app-name=NMSh', '--', `${notification.title}: ${notification.subtitle}`, notification.body];
+}
+
+export class LinuxNotificationService extends MacNotificationService {
+  constructor(private readonly notifySend: string, spawnProcess: SpawnFunction = spawn) { super(spawnProcess); }
+  protected override command(notification: CommandNotification): [string, string[]] {
+    return [this.notifySend, notifySendArguments(notification)];
+  }
+}
+
 export class UnsupportedNotificationService implements NotificationService {
   readonly supported = false;
   notify(): Promise<NotificationDelivery> {
@@ -124,6 +142,19 @@ export class UnsupportedNotificationService implements NotificationService {
   }
 }
 
-export function createNotificationService(platform: NodeJS.Platform = process.platform, spawnProcess?: SpawnFunction): NotificationService {
-  return platform === 'darwin' ? new MacNotificationService(spawnProcess) : new UnsupportedNotificationService();
+/**
+ * macOS: osascript. Linux (including WSL 2 with WSLg): notify-send when it is
+ * installed and a desktop session is reachable; otherwise unsupported. Nothing
+ * is installed.
+ */
+export function createNotificationService(platform: NodeJS.Platform = process.platform, spawnProcess?: SpawnFunction,
+  env: NodeJS.ProcessEnv = process.env): NotificationService {
+  if (platform === 'darwin') return new MacNotificationService(spawnProcess);
+  if (platform === 'linux' && (env.DBUS_SESSION_BUS_ADDRESS || env.WAYLAND_DISPLAY || env.DISPLAY)) {
+    const notifySend = (env.PATH ?? '').split(':').filter(dir => dir.startsWith('/')).map(dir => `${dir}/notify-send`).find(path => {
+      try { accessSync(path, constants.X_OK); return true; } catch { return false; }
+    });
+    if (notifySend) return new LinuxNotificationService(notifySend, spawnProcess);
+  }
+  return new UnsupportedNotificationService();
 }

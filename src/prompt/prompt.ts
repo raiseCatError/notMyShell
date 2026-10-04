@@ -6,6 +6,7 @@ import {isReducedMotion} from '../presentation/environment.js';
 import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
+import {neutralPromptText} from './powerline.js';
 import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
@@ -302,6 +303,7 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
   if (config.condition === 'nonzeroExit' && status === 0) return [];
   // Toolchains filter per toolchain below; other on-command modules need a matching command.
   if (config.condition === 'onCommand' && config.id !== 'toolchain' && !isOnCommandRelevant(config.id, context.commandWords ?? [])) return [];
+  if (config.condition === 'shellDiffers' && !context.shell?.differs) return [];
 
   switch (config.id) {
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
@@ -336,6 +338,8 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
       .filter(id => config.condition !== 'onCommand' || matchesCommand(TOOLCHAIN_TRIGGERS[id], context.commandWords))
       .map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
     case 'kubeContext': return context.kubeContext ? [{text: withIcon('kubernetes', safePromptText(context.kubeContext), icons), role: 'kubernetes'}] : [];
+    // The managed backend uses the environment-context color (as the Kubernetes context does), so every theme colors it.
+    case 'shell': return context.shell ? [{text: withIcon('shell', safePromptText(context.shell.current), icons), role: 'kubernetes'}] : [];
     case 'dockerContext': return context.dockerContext ? [{text: withIcon('docker', safePromptText(context.dockerContext), icons), role: 'docker'}] : [];
     case 'exitStatus': return [{
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,
@@ -448,14 +452,19 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
     const explicit = custom && Boolean(segment.module.foreground || segment.module.background);
     const chroma = configuration.provider === 'nmsh' && presentation.preset !== 'off' && chromaEligibleRole(segment.role, presentation.scope ?? 'prompt', presentation.semantic ?? 'preserve')
       && (!explicit || presentation.customColors === true);
+    const fill = custom ? colorFromHex(segment.module.background, colors.background) : colors.background;
+    // Text colors Neutral: the fill, connectors and accent stay the theme's; ordinary text is a stable neutral chosen from the fill.
+    // An explicit per-module text color is the person's own choice and is kept.
+    const neutral = configuration.nmsh.textColors === 'neutral' && !(custom && segment.module.foreground);
     return {
       ...(configuration.nmsh.style !== 'powerline' ? {style: configuration.nmsh.style} : {}),
       ...(chroma ? {treatment: presentation} : {}),
       id: segment.module.id,
       role: segment.role,
       text: segment.text,
-      foreground: custom ? colorFromHex(segment.module.foreground, colors.foreground) : colors.foreground,
-      background: custom ? colorFromHex(segment.module.background, colors.background) : colors.background,
+      foreground: neutral ? neutralPromptText(fill) : custom ? colorFromHex(segment.module.foreground, colors.foreground) : colors.foreground,
+      background: fill,
+      ...(neutral ? {neutralText: true} : {}),
       ...(segment.compact ? {compact: true} : {}),
       ...(isGitStateRole(segment.role) ? richGit : {}),
       ...(modulePlacement(segment.module) === 'right' ? {placement: 'right' as const} : {}),
@@ -619,6 +628,7 @@ export function moduleShowcaseContext(home = homedir()): PromptContext {
     commandWords: ['kubectl', 'docker', 'npm'],
     kubeContext: 'dev-cluster',
     dockerContext: 'colima',
+    shell: {current: 'fish', differs: true},
   };
 }
 

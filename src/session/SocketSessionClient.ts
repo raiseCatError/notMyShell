@@ -1,7 +1,9 @@
 import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ClientMessage, type ServerMessage} from './SessionProtocol.js';
+import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
+import type {SessionNotice} from './SessionNotices.js';
+import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {AttachedSession, SessionClient, SessionClientEvents, SessionOptions} from './SessionClient.js';
 
 export interface SocketConnectOptions extends SessionOptions {
@@ -20,6 +22,8 @@ type Decoded = ReturnType<FrameDecoder['push']>;
 
 interface Established<T> {
   value: T;
+  /** The service's welcome: its advertised features and build. */
+  welcome?: Extract<ServerMessage, {type: 'welcome'}>;
   socket: Socket;
   decoder: FrameDecoder;
   /** Frames that arrived in the same read as the reply; they belong to the caller. */
@@ -33,6 +37,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
     socket.setEncoding('utf8');
     const decoder = new FrameDecoder();
     let settled = false;
+    let welcome: Extract<ServerMessage, {type: 'welcome'}> | undefined;
     const fail = (message: string, code: string) => {
       if (settled) return;
       settled = true;
@@ -50,6 +55,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
         const message = result.message as ServerMessage;
         if (message.type === 'error') { fail(`session service refused: ${message.message}`, message.code); return; }
         if (message.type === 'welcome') {
+          welcome = message;
           if (message.version !== PROTOCOL_VERSION) { fail(`protocol mismatch: service ${message.version}, client ${PROTOCOL_VERSION}`, 'version'); return; }
           if ((first?.type === 'create' || first?.type === 'attach') && message.startupSafety !== 1) {
             fail('service does not advertise startup safety; end its sessions and restart the service before attaching', 'startup-safety');
@@ -65,7 +71,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
           socket.off('data', onData);
           socket.off('error', onError);
           socket.off('close', onClose);
-          resolve({value, socket, decoder, rest: results.slice(index + 1)});
+          resolve({value, socket, decoder, rest: results.slice(index + 1), ...(welcome ? {welcome} : {})});
           return;
         }
       }
@@ -94,6 +100,32 @@ export async function listSessions(socketPath: string, timeoutMs = 3000): Promis
   return value;
 }
 
+/** Live sessions plus notices for recently ended ones (older services report none). */
+export async function listSessionsWithNotices(socketPath: string, timeoutMs = 3000): Promise<{sessions: SessionInfo[]; ended: SessionNotice[]}> {
+  const {value, socket} = await request(socketPath, timeoutMs, {type: 'list'},
+    message => (message.type === 'sessions' ? {sessions: message.sessions, ended: message.ended ?? []} : undefined));
+  socket.end();
+  return value;
+}
+
+/** Rename a live session (display only); an empty name returns to its signature. */
+export async function renameSession(socketPath: string, sessionId: string, name: string, timeoutMs = 3000): Promise<SessionInfo | undefined> {
+  const {value, socket} = await request(socketPath, timeoutMs, {type: 'rename', sessionId, name},
+    message => (message.type === 'sessions' ? message.sessions.find(session => session.id === sessionId) ?? null : undefined));
+  socket.end();
+  return value ?? undefined;
+}
+
+/** Clear a session's notice in every attached frontend. */
+export async function dismissNotice(socketPath: string, sessionId: string, timeoutMs = 3000): Promise<void> {
+  const {socket} = await request(socketPath, timeoutMs, {type: 'dismiss', sessionId},
+    message => (message.type === 'dismissed' ? true : undefined));
+  socket.end();
+}
+
+export const OLDER_SERVICE_SWITCH = 'The session service running this session is an older NMSh build without shell switching. '
+  + 'Its live sessions keep running; once they end, the next nmsh launch starts the current service.';
+
 export class SessionConnectError extends Error {
   constructor(message: string, readonly code: string) { super(message); }
 }
@@ -119,9 +151,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   static async connect(options: SocketConnectOptions): Promise<SocketSessionClient> {
     const first: ClientMessage = options.attach
       ? {type: 'attach', sessionId: options.attach, columns: options.columns, rows: options.rows}
-      : {type: 'create', cwd: options.cwd, env: options.env, columns: options.columns, rows: options.rows};
-    const {value, socket, decoder, rest} = await request<AttachedSession>(options.socketPath, options.timeoutMs ?? 5000, first, message => {
-      if (message.type === 'created') return {sessionId: message.sessionId, pid: message.pid, cwd: options.cwd, fullscreen: 0, ackedSeq: 0};
+      : {type: 'create', cwd: options.cwd, env: options.env, columns: options.columns, rows: options.rows, ...(options.shell ? {shell: options.shell} : {})};
+    const {value, socket, decoder, rest, welcome} = await request<AttachedSession>(options.socketPath, options.timeoutMs ?? 5000, first, message => {
+      // An older service ignores the shell request and reports none: that is zsh.
+      if (message.type === 'created') return {sessionId: message.sessionId, pid: message.pid, cwd: options.cwd, fullscreen: 0, ackedSeq: 0, shell: message.shell ?? 'zsh'};
       if (message.type === 'attached') {
         const {type: _type, ...attached} = message;
         return attached;
@@ -129,6 +162,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       return undefined;
     });
     const client = new SocketSessionClient(socket, value.sessionId, value.pid);
+    client.shell = isShellId(value.shell) ? value.shell : 'zsh';
+    // Known at connect time: an older service advertises no features.
+    client.features = parseFeatures(welcome?.features);
+    client.serviceBuild = welcome?.build;
     if (options.attach) client.attachedSession = value;
     client.listen(decoder, rest);
     return client;
@@ -156,7 +193,31 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.socket.resume();
   }
 
+  /** Backend currently running in this session. */
+  shell: ShellId = 'zsh';
+  /** Optional capabilities the connected service advertised. */
+  features: ReadonlySet<ServiceFeature> = new Set();
+  serviceBuild?: string;
+  private pendingSwitch?: {resolve: (value: {shell: ShellId; pid: number}) => void; reject: (error: Error) => void};
+
+  switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}> {
+    // Never send a message the service did not advertise.
+    if (!this.features.has('shell-switch')) return Promise.reject(new SessionConnectError(OLDER_SERVICE_SWITCH, 'unsupported'));
+    if (this.pendingSwitch) return Promise.reject(new Error('A shell switch is already in progress.'));
+    return new Promise((resolve, reject) => {
+      this.pendingSwitch = {resolve, reject};
+      this.send({type: 'switch-shell', shell, cwd});
+    });
+  }
+
   private receive(message: ServerMessage): void {
+    if (message.type === 'shell-switched' || (message.type === 'error' && this.pendingSwitch)) {
+      const pending = this.pendingSwitch;
+      this.pendingSwitch = undefined;
+      if (message.type === 'shell-switched' && isShellId(message.shell)) { this.shell = message.shell; pending?.resolve({shell: message.shell, pid: message.pid}); }
+      else pending?.reject(new SessionConnectError(message.type === 'error' ? message.message : 'unexpected shell reply', message.type === 'error' ? message.code : 'protocol'));
+      return;
+    }
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge})}, {seq: message.seq, at: message.at});
@@ -173,6 +234,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   private finish(exitCode: number, signal?: number, lost = false): void {
     if (this.exited) return;
     this.exited = true;
+    this.pendingSwitch?.reject(new Error('The session ended.'));
+    this.pendingSwitch = undefined;
     this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
 

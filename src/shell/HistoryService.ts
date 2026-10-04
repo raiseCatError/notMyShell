@@ -2,7 +2,7 @@ import {readFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {resolveCommand, runExternal} from '../providers/providers.js';
-import {HistoryIndex, historyId, journalHistory, type HistoryEntry} from './HistoryIndex.js';
+import {HistoryIndex, historyId, journalHistory, type HistoryEntry, type HistoryRankContext, type RankedHistoryEntry, RANK_SCAN_LIMIT, rankHistory} from './HistoryIndex.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import {Worker} from 'node:worker_threads';
@@ -24,6 +24,11 @@ export class HistoryService {
   status: {selected: HistoryProviderId; active: HistoryProviderId; detail?: string} = {selected: 'native', active: 'native'};
   private readonly lifetime = new AbortController();
   readonly index: HistoryIndex;
+  /**
+   * The active backend's own history file and parser. Absent means zsh (the
+   * original source). Set by the frontend when the session's shell changes.
+   */
+  shellHistory?: {id: 'fish' | 'bash'; file: string | undefined; parse: (content: Uint8Array) => Promise<CommandEntry[]>};
 
   constructor(private readonly env: NodeJS.ProcessEnv = process.env) {
     this.index = new HistoryIndex(join(nmshConfigDirectory(env), 'history-deletions.json'));
@@ -76,9 +81,14 @@ export class HistoryService {
     if (entry) this.index.add(entry);
   }
 
-  search(query: string, signal?: AbortSignal): Promise<HistoryEntry[]> { return this.index.search(query, signal); }
+  search(query: string, signal?: AbortSignal, limit?: number): Promise<HistoryEntry[]> { return this.index.search(query, signal, limit); }
 
-  private async loadSource(provider: HistoryProviderId, signal: AbortSignal): Promise<{entries: CommandEntry[]; source: 'zsh' | 'atuin'; detail?: string}> {
+  /** Ranked against where you are now; Native only (an external provider's own order is respected via `search`). */
+  searchRanked(query: string, context: HistoryRankContext, signal?: AbortSignal): Promise<RankedHistoryEntry[]> {
+    return this.search(query, signal, RANK_SCAN_LIMIT).then(matches => (signal?.aborted ? [] : rankHistory(matches, query, context).slice(0, 100)));
+  }
+
+  private async loadSource(provider: HistoryProviderId, signal: AbortSignal): Promise<{entries: CommandEntry[]; source: 'zsh' | 'fish' | 'bash' | 'atuin'; detail?: string}> {
     let detail: string | undefined;
     if (provider === 'atuin') {
       const atuin = resolveCommand('atuin', this.env.PATH ?? '', []);
@@ -92,6 +102,11 @@ export class HistoryService {
         }
         detail = `Atuin unavailable (${result.error ?? 'query failed'}); using Native`;
       } else detail = 'Atuin is not installed; using Native';
+    }
+    const shell = this.shellHistory;
+    if (shell) {
+      try { return {entries: shell.file ? await shell.parse(await readFile(shell.file)) : [], source: shell.id, detail}; }
+      catch { return {entries: [], source: shell.id, detail}; }
     }
     try {
       const path = this.env.HISTFILE || join(this.env.HOME ?? homedir(), '.zsh_history');
@@ -111,7 +126,7 @@ export class HistoryService {
 }
 
 /** Hashing and indexing imports must yield too, not only source parsing. */
-export async function indexImportedHistory(index: HistoryIndex, entries: readonly CommandEntry[], source: 'zsh' | 'atuin', signal?: AbortSignal): Promise<void> {
+export async function indexImportedHistory(index: HistoryIndex, entries: readonly CommandEntry[], source: 'zsh' | 'fish' | 'bash' | 'atuin', signal?: AbortSignal): Promise<void> {
   for (let position = 0; position < entries.length; position++) {
     if (signal?.aborted) return;
     const entry = entries[position]!;

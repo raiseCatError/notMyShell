@@ -1,0 +1,393 @@
+import test from 'node:test';
+import {stripAnsi} from '../src/util/text.js';
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {mkdtempSync, readdirSync, readFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {ModelService, modelSocketPath, serveModelService} from '../src/understanding/ModelService.js';
+import {ModelClient} from '../src/understanding/ModelClient.js';
+import {LocalUnderstanding, understandingWelcomeText} from '../src/understanding/LocalUnderstanding.js';
+import type {ModelRuntime} from '../src/understanding/runtimes.js';
+import {foldExcerpt, redact, validateFoldHint, validateInterpretation} from '../src/understanding/tasks.js';
+import {assessModel, discoverLocal, knownModelDirectories, nmshModelDirectory, proposeSetup, type DiscoveryAdapters} from '../src/understanding/discovery.js';
+import {ggufFixture, parseGgufMetadata} from '../src/understanding/gguf.js';
+import {downloadPinned, loadRecommendedModel, officialArtifact} from '../src/understanding/recommended.js';
+import {applyFoldHint, evaluateFold, hintEligible} from '../src/output/FoldPolicy.js';
+import {OutputBuffer} from '../src/output/OutputBuffer.js';
+import {CAPABILITIES, resolveWithInterpretation} from '../src/ask/resolver.js';
+import type {AskContext} from '../src/ask/types.js';
+import type {LocalModelChoice, LocalUnderstandingSettings} from '../src/prompt/configuration.js';
+
+const MODEL: LocalModelChoice = {label: 'Qwen3 0.6B Q4_K_M', runtime: 'llama.cpp', path: '/m/qwen3.gguf', owned: true};
+const until = async (check: () => boolean, ms = 3000) => { const end = Date.now() + ms; while (!check()) { if (Date.now() > end) throw new Error('timeout'); await new Promise(resolve => setTimeout(resolve, 10)); } };
+
+class FakeRuntime implements ModelRuntime {
+  static instances: FakeRuntime[] = [];
+  loaded = false;
+  prompts: string[] = [];
+  unloads = 0;
+  constructor(readonly label: string, private readonly reply: (prompt: string) => unknown = () => ({capability: 'git.diff', confidence: 0.9}), private readonly delayMs = 5) { FakeRuntime.instances.push(this); }
+  async load(): Promise<void> { this.loaded = true; }
+  async infer(prompt: string): Promise<unknown> {
+    this.prompts.push(prompt);
+    await new Promise(resolve => setTimeout(resolve, this.delayMs));
+    const value = this.reply(prompt);
+    if (value instanceof Error) throw value;
+    return value;
+  }
+  async unload(): Promise<void> { this.loaded = false; this.unloads += 1; }
+}
+
+async function serviceFixture(options: Partial<ConstructorParameters<typeof ModelService>[0]> = {}) {
+  const dir = mkdtempSync(join('/tmp', 'nm-'));
+  let exited = 0;
+  const service = new ModelService({runtimeFor: model => new FakeRuntime(model.label), idleMs: 150, graceMs: 100, onExit: () => { exited += 1; }, ...options});
+  const server = (await serveModelService(modelSocketPath(dir), service))!;
+  const client = () => new ModelClient(modelSocketPath(dir), () => { throw new Error('a running service must be reused, not started'); });
+  return {dir, service, server, client, exited: () => exited, close: () => { server.close(); rmSync(dir, {recursive: true, force: true}); }};
+}
+const intent = (text: string) => ({text, capabilities: [{id: 'git.diff', title: 'diff'}], facts: {shell: 'zsh'}});
+
+test('defaults: local understanding Off with every scope Off; Off creates no client and runs no inference', async () => {
+  const settings: LocalUnderstandingSettings = {mode: 'off', ask: true, folding: true, model: MODEL};
+  let created = 0;
+  const understanding = new LocalUnderstanding(() => settings, () => { created += 1; return new ModelClient('/nonexistent', () => {}); });
+  assert.equal(understanding.eligible('ask'), false, 'global Off wins over enabled scopes');
+  assert.equal(await understanding.interpretAsk(intent('x'), new Set(['git.diff'])), undefined);
+  assert.equal(await understanding.foldHint({command: 'npm install', exitCode: 0, lines: []}), undefined);
+  assert.equal(await understanding.refreshStatus(), undefined);
+  assert.equal(created, 0);
+  assert.equal(understanding.requests, 0);
+  settings.mode = 'auto'; settings.ask = false;
+  assert.equal(understanding.eligible('ask'), false, 'a disabled scope never uses the model');
+  assert.equal(understanding.eligible('folding'), true);
+  assert.equal(new LocalUnderstanding(() => ({mode: 'auto', ask: true, folding: true})).eligible('ask'), false, 'no model chosen: nothing to use');
+});
+
+test('one shared service: three clients, one model load; Ask and folding share it; contexts never cross', async () => {
+  FakeRuntime.instances = [];
+  const fixture = await serviceFixture();
+  try {
+    const clients = [fixture.client(), fixture.client(), fixture.client()];
+    const results = await Promise.all(clients.map((client, index) => client.infer('intent', intent(`request-from-window-${index}`), {priority: 'interactive', mode: 'auto', model: MODEL, timeoutMs: 2000})));
+    assert.deepEqual(results, [0, 1, 2].map(() => ({capability: 'git.diff', confidence: 0.9})));
+    const fold = await clients[1]!.infer('fold', {command: 'npm install', exitCode: 0, lines: ['added 1 package']}, {priority: 'background', mode: 'auto', model: MODEL, timeoutMs: 2000});
+    assert.ok(fold);
+    assert.equal(FakeRuntime.instances.length, 1, 'one runtime for every window and both features');
+    assert.equal(fixture.service.loads, 1);
+    const prompts = FakeRuntime.instances[0]!.prompts;
+    for (const [index, prompt] of prompts.slice(0, 3).entries()) {
+      const own = /request-from-window-(\d)/u.exec(prompt)![1];
+      assert.ok(prompts.length >= 3 && [0, 1, 2].every(other => other === Number(own) || !prompt.includes(`request-from-window-${other}`)), `prompt ${index} carries only its own request`);
+    }
+    assert.equal((await clients[0]!.status())?.clients, 3);
+    for (const client of clients) client.close();
+  } finally { fixture.close(); }
+});
+
+test('lifecycle: closing one client keeps the model for the others; Auto unloads once after global idle; no clients → exit', async () => {
+  FakeRuntime.instances = [];
+  const fixture = await serviceFixture();
+  try {
+    const a = fixture.client();
+    const b = fixture.client();
+    await a.infer('intent', intent('a'), {priority: 'interactive', mode: 'auto', model: MODEL, timeoutMs: 2000});
+    a.close();
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(FakeRuntime.instances[0]!.loaded, true, 'another window is still connected');
+    await b.infer('intent', intent('b'), {priority: 'interactive', mode: 'auto', model: MODEL, timeoutMs: 2000});
+    assert.equal(fixture.service.loads, 1, 'reused, not reloaded');
+    await until(() => !FakeRuntime.instances[0]!.loaded);
+    assert.equal(FakeRuntime.instances[0]!.unloads, 1, 'one global idle unload');
+    b.close();
+    await until(() => fixture.exited() === 1);
+  } finally { fixture.close(); }
+});
+
+test('Always keeps one model warm while windows are connected; Off unloads and lets the service exit', async () => {
+  FakeRuntime.instances = [];
+  const fixture = await serviceFixture();
+  try {
+    const client = fixture.client();
+    await client.infer('intent', intent('x'), {priority: 'interactive', mode: 'always', model: MODEL, timeoutMs: 2000});
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(FakeRuntime.instances[0]!.loaded, true, 'warm past the Auto idle period');
+    assert.equal(FakeRuntime.instances.length, 1);
+    client.configure('off');
+    await until(() => fixture.exited() === 1);
+    assert.equal(FakeRuntime.instances[0]!.loaded, false);
+    client.close();
+  } finally { fixture.close(); }
+});
+
+test('priority: interactive Ask runs before queued folding; stale or excess folding is dropped', async () => {
+  FakeRuntime.instances = [];
+  const order: string[] = [];
+  const fixture = await serviceFixture({runtimeFor: () => new FakeRuntime('slow', prompt => { order.push(/Classify/u.test(prompt) ? 'fold' : 'ask'); return {kind: 'noise', confidence: 0.9}; }, 40)});
+  try {
+    const client = fixture.client();
+    const folds = [0, 1, 2, 3, 4].map(index => client.infer('fold', {command: `x${index}`, exitCode: 0, lines: []}, {priority: 'background', mode: 'auto', model: MODEL, timeoutMs: 3000}));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    const ask = client.infer('intent', intent('now'), {priority: 'interactive', mode: 'auto', model: MODEL, timeoutMs: 3000});
+    await ask;
+    const settled = await Promise.all(folds);
+    assert.ok(order.indexOf('ask') <= 1, `Ask was not stuck behind folding: ${order.join(',')}`);
+    assert.ok(settled.filter(result => result === undefined).length >= 1, 'excess advisory work was dropped');
+    client.close();
+  } finally { fixture.close(); }
+});
+
+test('failures fall back: a crashing runtime or no service yields no answer, never an error to the window', async () => {
+  const fixture = await serviceFixture({runtimeFor: () => new FakeRuntime('broken', () => new Error('crashed'))});
+  try {
+    const client = fixture.client();
+    assert.equal(await client.infer('intent', intent('x'), {priority: 'interactive', mode: 'auto', model: MODEL, timeoutMs: 2000}), undefined);
+    assert.match((await client.status())?.error ?? '', /crashed/u);
+    client.close();
+  } finally { fixture.close(); }
+  const none = new ModelClient('/tmp/nmsh-no-such-dir/x.sock', () => {});
+  assert.equal(await none.infer('intent', intent('x'), {priority: 'interactive', mode: 'auto', model: MODEL, timeoutMs: 300}), undefined);
+});
+
+test('validation: unknown capabilities, extra fields, command-like output and malformed values are rejected', () => {
+  const ids = new Set(CAPABILITIES.map(capability => capability.id));
+  assert.deepEqual(validateInterpretation({capability: 'git.diff', confidence: 0.8, arguments: {worktree: 'release'}}, ids), {capability: 'git.diff', confidence: 0.8, arguments: {worktree: 'release'}});
+  assert.equal(validateInterpretation({capability: 'shell.exec', confidence: 0.9}, ids), undefined);
+  assert.equal(validateInterpretation({capability: 'git.diff', confidence: 0.9, command: 'rm -rf ~'}, ids), undefined, 'a command field is just an unexpected field');
+  assert.equal(validateInterpretation({capability: 'git.diff', confidence: 0.9, arguments: {argv: ['rm']}}, ids), undefined);
+  assert.equal(validateInterpretation({capability: 'git.diff', confidence: 2}, ids), undefined);
+  assert.equal(validateInterpretation('git diff', ids), undefined);
+  assert.equal(validateInterpretation({capability: 'git.diff', confidence: 0.9, arguments: {target: 'a\nb'}}, ids), undefined);
+  assert.deepEqual(validateFoldHint({kind: 'noise', confidence: 0.9}), {kind: 'noise', confidence: 0.9});
+  assert.equal(validateFoldHint({kind: 'delete', confidence: 0.9}), undefined);
+  assert.equal(validateFoldHint({kind: 'noise', confidence: 0.9, hide: true}), undefined);
+});
+
+test('a model interpretation never invents objects: arguments are re-resolved against facts; low confidence is ignored', () => {
+  const context: AskContext = {cwd: '/r', home: '/h', repoRoot: '/r', worktrees: [{path: '/r', current: true}, {path: '/w/release', branch: 'release', current: false}],
+    shell: 'zsh', defaultShell: 'zsh', shells: [], sessions: [], transcripts: [], recentFiles: [], recentCommands: [], editor: {label: 'Zed', available: true},
+    providers: [], sessionMode: 'service', now: Date.now(), files: ['src/a.ts']};
+  const diff = resolveWithInterpretation('show me what i messed up since my last commit', {capability: 'git.diff', confidence: 0.9, arguments: {}}, context);
+  assert.deepEqual(diff?.kind === 'proposal' && diff.action, {kind: 'read', command: {id: 'git.diff'}}, 'the typed capability builds its own fixed argv');
+  const invented = resolveWithInterpretation('open the secret file', {capability: 'file.open', confidence: 0.95, arguments: {target: '/etc/shadow-invented'}}, context);
+  assert.equal(invented?.kind, 'answer', 'a path that does not exist is never proposed');
+  const worktree = resolveWithInterpretation('changes over there', {capability: 'git.diff', confidence: 0.9, arguments: {worktree: 'release'}}, context);
+  assert.deepEqual(worktree?.kind === 'proposal' && worktree.action, {kind: 'read', command: {id: 'git.diff', cwd: '/w/release'}});
+  assert.equal(resolveWithInterpretation('x', {capability: 'git.diff', confidence: 0.3, arguments: {}}, context), undefined, 'low confidence keeps the deterministic outcome');
+  assert.equal(resolveWithInterpretation('x', {capability: null, confidence: 0.9, arguments: {}}, context), undefined);
+});
+
+function fakeAdapters(files: Record<string, Buffer | number>, extra: Partial<DiscoveryAdapters> = {}): DiscoveryAdapters & {listed: string[]; urls: string[]} {
+  const listed: string[] = [];
+  const urls: string[] = [];
+  const adapters = {
+    home: '/h', env: {} as NodeJS.ProcessEnv, platform: 'linux' as NodeJS.Platform, listed, urls,
+    which: () => undefined,
+    listDirectory: (path: string) => {
+      listed.push(path);
+      const prefix = `${path}/`;
+      const children = new Map<string, boolean>();
+      for (const file of Object.keys(files)) if (file.startsWith(prefix)) { const rest = file.slice(prefix.length); children.set(rest.split('/')[0]!, rest.includes('/')); }
+      if (!children.size) throw new Error('ENOENT');
+      return [...children].map(([name, directory]) => ({name, directory}));
+    },
+    size: (path: string) => typeof files[path] === 'number' ? files[path] as number : (files[path] as Buffer | undefined)?.length,
+    gguf: (path: string) => Buffer.isBuffer(files[path]) ? parseGgufMetadata(files[path] as Buffer) : undefined,
+    localJson: async (url: string) => { urls.push(url); return undefined; },
+    ...extra,
+  };
+  return adapters;
+}
+
+test('discovery: bounded known directories only, GGUF metadata without loading, owned vs found, local APIs only', async () => {
+  const qwen = ggufFixture({'general.architecture': 'qwen3', 'general.name': 'Qwen3 0.6B', 'general.size_label': '0.6B', 'general.file_type': 15});
+  const embed = ggufFixture({'general.architecture': 'nomic-bert', 'general.name': 'nomic-embed-text'});
+  const big = ggufFixture({'general.architecture': 'qwen2', 'general.name': 'Qwen2.5 14B Instruct', 'general.size_label': '14B'});
+  const owned = nmshModelDirectory({}, '/h');
+  const adapters = fakeAdapters({[`${owned}/qwen3.gguf`]: qwen, '/h/.cache/llama.cpp/embed.gguf': embed, '/h/.lmstudio/models/x/big.gguf': big,
+    '/h/Documents/private/other.gguf': qwen}, {which: (name: string) => name === 'llama-server' ? '/usr/bin/llama-server' : undefined});
+  const found = await discoverLocal(adapters);
+  assert.deepEqual(found.runtimes.map(runtime => runtime.kind), ['llama.cpp']);
+  assert.deepEqual(found.models.map(model => [model.label, model.suitability, model.owned]),
+    [['Qwen3 0.6B Q4_K_M', 'recommended', true], ['Qwen2.5 14B Instruct', 'large', false], ['nomic-embed-text', 'unsuitable', false]]);
+  assert.ok(!found.models.some(model => model.path?.includes('Documents')), 'personal directories are never crawled');
+  assert.ok(adapters.listed.every(path => knownModelDirectories(adapters).some(root => path === root || path.startsWith(`${root}/`))));
+  assert.ok(!adapters.listed.includes('/h'));
+  assert.ok(adapters.urls.every(url => url.startsWith('http://127.0.0.1:')), 'no remote network');
+  assert.equal(proposeSetup(found).kind, 'use', 'an existing compatible model is offered before any download');
+});
+
+test('discovery: running Ollama is reused; incompatible is never selected; only-large asks', async () => {
+  const ollama = fakeAdapters({}, {which: (name: string) => name === 'ollama' ? '/usr/bin/ollama' : undefined,
+    localJson: async (url: string) => url.includes('11434') ? {models: [{name: 'qwen3:0.6b', size: 523_000_000, details: {family: 'qwen3', parameter_size: '751.63M', quantization_level: 'Q4_K_M'}}]} : undefined});
+  const found = await discoverLocal(ollama);
+  assert.deepEqual(found.runtimes, [{kind: 'ollama', label: 'Ollama', executable: '/usr/bin/ollama', running: true}]);
+  const proposal = proposeSetup(found);
+  assert.equal(proposal.kind === 'use' && proposal.model.name, 'qwen3:0.6b');
+  assert.equal(proposeSetup({runtimes: [{kind: 'llama.cpp', label: 'llama.cpp', running: false}], models: [{label: 'emb', runtime: 'llama.cpp', path: '/e', suitability: 'unsuitable', reason: 'embedding', owned: false}]}).kind, 'download');
+  assert.equal(proposeSetup({runtimes: [{kind: 'llama.cpp', label: 'llama.cpp', running: false}], models: [{label: 'big', runtime: 'llama.cpp', path: '/b', suitability: 'large', reason: '14B', owned: false}]}).kind, 'choose-large');
+  assert.equal(assessModel({family: 'llama', label: 'Llama 3.2 1B', parametersB: 1.2}).suitability, 'compatible');
+  assert.equal(assessModel({family: 'llama', label: 'Llama 70B', parametersB: 70}).suitability, 'unsuitable');
+});
+
+test('folding hints are advisory: errors stay visible, noise may fold a borderline block, nothing is deleted', () => {
+  const noisy = {command: 'npm install', output: Array.from({length: 40}, (_, index) => `added package-${index % 7} in ${index}ms`).join('\n'), exitCode: 0, lineCount: 40};
+  const failing = {...noisy, output: `${noisy.output}\nError: build failed`};
+  assert.equal(applyFoldHint(failing, {kind: 'noise', confidence: 0.99}), false, 'error lines veto any hint');
+  assert.equal(applyFoldHint(noisy, {kind: 'error', confidence: 0.8}), false, 'an error hint keeps output visible');
+  const borderline = {command: 'tool run', output: Array.from({length: 40}, (_, index) => `step ${index}: ${['alpha', 'beta', 'gamma', 'delta'][index % 4]} ok`).join('\n'), exitCode: 0, lineCount: 40};
+  assert.equal(hintEligible('smart', borderline), true, `score ${evaluateFold(borderline).score}`);
+  assert.equal(applyFoldHint(borderline, {kind: 'noise', confidence: 0.9}), true);
+  assert.equal(applyFoldHint(borderline, {kind: 'noise', confidence: 0.5}), evaluateFold(borderline).fold, 'unsure hints change nothing');
+  assert.equal(hintEligible('never', borderline), false);
+  assert.equal(hintEligible('always', borderline), false);
+  assert.equal(applyFoldHint(borderline, undefined), evaluateFold(borderline).fold, 'no hint (failure, timeout, Off) is the deterministic decision');
+  const buffer = new OutputBuffer();
+  buffer.setOutputFolding('never');
+  buffer.beginCommand('tool run', ['tool run']);
+  buffer.write(borderline.output + '\n');
+  const record = buffer.complete(0)!;
+  const before = record.output;
+  assert.equal(buffer.applyAdvisoryFold(record.startId, true), true);
+  assert.equal(record.output, before, 'presentation only');
+  buffer.toggleExpanded(0);
+  assert.equal(buffer.applyAdvisoryFold(record.startId, true), false, 'a block the user toggled is never overridden');
+});
+
+test('folding context is bounded and redacted: program word only, head and tail, secrets masked', () => {
+  const output = Array.from({length: 500}, (_, index) => `line ${index} token=abc${index}secretvalue`).join('\n');
+  const excerpt = foldExcerpt('curl -H "Authorization: Bearer xyz" https://example.com', output, 0);
+  assert.equal(excerpt.command, 'curl');
+  assert.equal(excerpt.lines.length, 41);
+  assert.match(excerpt.lines[20]!, /460 lines/u);
+  assert.ok(excerpt.lines.every(line => !/secretvalue/u.test(line)));
+  assert.equal(redact('see https://user:pa55@host/x'), 'see https://[redacted]@host/x');
+  assert.match(redact('key ghp_abcdefghijklmnopqrstuvwx'), /\[redacted\]/u);
+});
+
+test('welcome text never claims a model that is not loaded; it names the actual model and scopes', () => {
+  const base: LocalUnderstandingSettings = {mode: 'auto', ask: true, folding: false, model: MODEL};
+  assert.equal(understandingWelcomeText({mode: 'off', ask: true, folding: true}), 'Off');
+  assert.equal(understandingWelcomeText(base), 'Auto · model idle · Ask');
+  assert.equal(understandingWelcomeText(base, {state: 'unloaded', clients: 1, queued: 0}), 'Auto · model idle · Ask');
+  assert.equal(understandingWelcomeText(base, {state: 'ready', model: 'Qwen3 0.6B Q4_K_M', clients: 2, queued: 0}), 'Qwen3 0.6B Q4_K_M · Ask');
+  assert.equal(understandingWelcomeText({...base, ask: false, folding: true}, {state: 'busy', model: 'Llama 3.2 1B Q4_K_M', clients: 1, queued: 1}), 'Llama 3.2 1B Q4_K_M · Smart Folding');
+  assert.equal(understandingWelcomeText({...base, folding: true}, {state: 'ready', model: 'M', clients: 1, queued: 0}), 'M · Ask, Smart Folding');
+  assert.equal(understandingWelcomeText({mode: 'always', ask: false, folding: false}), 'Always · no features enabled');
+});
+
+test('recommended model: the official Qwen3 0.6B Q8_0 artifact at a pinned revision, never main or a mirror', () => {
+  const recommended = loadRecommendedModel()!;
+  assert.equal(recommended.quantization, 'Q8_0');
+  const artifact = recommended.artifact!;
+  assert.equal(artifact.repository, 'https://huggingface.co/Qwen/Qwen3-0.6B-GGUF');
+  assert.equal(artifact.file, 'Qwen3-0.6B-Q8_0.gguf');
+  assert.equal(artifact.revision, '1eaf4d9657fe65ad10a51eab76a8db5b363bddaa');
+  assert.equal(artifact.bytes, 639446688);
+  assert.equal(artifact.sha256, '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031');
+  assert.equal(artifact.license, 'Apache-2.0');
+  assert.equal(artifact.url, 'https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/1eaf4d9657fe65ad10a51eab76a8db5b363bddaa/Qwen3-0.6B-Q8_0.gguf');
+  assert.doesNotMatch(artifact.url, /\/resolve\/main\//u);
+  assert.equal(officialArtifact({...artifact, url: artifact.url.replace(artifact.revision, 'main'), revision: 'main'}), false, 'main is never used');
+  assert.equal(officialArtifact({...artifact, repository: 'https://huggingface.co/someone/Qwen3-0.6B-GGUF', url: artifact.url.replace('Qwen/', 'someone/')}), false, 'no third-party mirrors');
+});
+
+test('download: verified by exact size and sha256 into a temporary path; a mismatch is rejected, removed and never activated', async () => {
+  const official = loadRecommendedModel()!.artifact!;
+  const payload = Buffer.from('GGUF fake weights for test');
+  const fetcher = (async () => new Response(payload)) as unknown as typeof fetch;
+  const dir = mkdtempSync(join(tmpdir(), 'nmsh-dl-'));
+  try {
+    const good = {...official, bytes: payload.length, sha256: createHash('sha256').update(payload).digest('hex')};
+    const path = await downloadPinned(good, dir, () => {}, fetcher);
+    assert.equal(path, join(dir, 'Qwen3-0.6B-Q8_0.gguf'));
+    assert.deepEqual(readFileSync(path), payload);
+    rmSync(path);
+    await assert.rejects(downloadPinned(official, dir, () => {}, fetcher), /size mismatch: 26 of 639446688 bytes/u, 'the real pin rejects anything else');
+    await assert.rejects(downloadPinned({...good, sha256: '0'.repeat(64)}, dir, () => {}, fetcher), /sha256 does not match/u);
+    assert.deepEqual(readdirSync(dir), [], 'nothing unverified remains, partial or final');
+    await assert.rejects(downloadPinned({...good, url: 'https://mirror.example/Qwen3-0.6B-Q8_0.gguf'}, dir, () => {}, fetcher), /official pinned Qwen artifact/u);
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('the download is offered only when nothing suitable is already here; a failed verification is shown and never retried silently', async () => {
+  const {understandingRows, renderUnderstandingPanel, createUnderstandingPanel} = await import('../src/understanding/UnderstandingPanel.js');
+  const recommended = loadRecommendedModel()!;
+  const settings: LocalUnderstandingSettings = {mode: 'auto', ask: true, folding: false};
+  const usable = {runtimes: [{kind: 'llama.cpp' as const, label: 'llama.cpp', running: false}], models: [{label: 'Qwen3 0.6B Q4_K_M', runtime: 'llama.cpp' as const, path: '/m.gguf', suitability: 'recommended' as const, reason: 'small', owned: false}]};
+  assert.ok(!understandingRows({settings, recommended, discovery: usable}).some(row => row.kind === 'download'), 'an existing compatible model is used instead');
+  const none = {runtimes: [], models: []};
+  assert.ok(understandingRows({settings, recommended, discovery: none}).some(row => row.kind === 'download'));
+  const text = renderUnderstandingPanel(createUnderstandingPanel(), {settings, recommended, discovery: none, downloadFailure: 'sha256 does not match the pinned artifact'}, 200).join('\n');
+  assert.match(stripAnsi(text), /Retry download\s+Qwen3 0\.6B Q8_0 · 639 MB.*last attempt failed: sha256 does not match/su);
+});
+
+test('Qwen3 modes: non-thinking prefill, thinking without grammar, reasoning stripped, per-mode sampling', async () => {
+  const {isQwen3, qwen3Prompt, stripThinking, parseJsonText, QWEN3_SAMPLING} = await import('../src/understanding/runtimes.js');
+  assert.ok(isQwen3({label: 'Qwen3 0.6B Q8_0'}) && isQwen3({label: 'x', path: '/m/Qwen3-1.7B-Q4_K_M.gguf'}));
+  assert.ok(!isQwen3({label: 'Qwen2.5 1.5B'}) && !isQwen3({label: 'Qwen3-VL 2B'}) && !isQwen3({label: 'Llama 3.2 1B'}));
+  assert.equal(qwen3Prompt('hi', 'fast'), '<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n');
+  assert.equal(qwen3Prompt('hi', 'thinking'), '<|im_start|>user\nhi<|im_end|>\n<|im_start|>assistant\n');
+  assert.equal(stripThinking('<think>the user {wants} files</think>\n{"a":1}'), '{"a":1}');
+  assert.deepEqual(parseJsonText('<think>maybe {x}</think>{"capability":"files.list","confidence":0.9}'), {capability: 'files.list', confidence: 0.9});
+  assert.throws(() => parseJsonText('<think>cut off {"capability": "x"'), /no JSON/u, 'an unfinished reasoning block never leaks JSON-looking text');
+  assert.deepEqual(QWEN3_SAMPLING.thinking, {temperature: 0.6, top_p: 0.95, top_k: 20});
+  assert.deepEqual(QWEN3_SAMPLING.fast, {temperature: 0.7, top_p: 0.8, top_k: 20});
+});
+
+test('llama-server request per mode: fast is grammar-constrained, thinking is bounded and validated afterwards', async () => {
+  const {LlamaServerRuntime} = await import('../src/understanding/runtimes.js');
+  const bodies: Array<Record<string, unknown>> = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = (async (_url: string, init: {body: string}) => { bodies.push(JSON.parse(init.body)); return new Response(JSON.stringify({content: '<think>x</think>{"ok":true}'})); }) as never;
+  try {
+    const runtime = new LlamaServerRuntime('/bin/llama-server', '/m.gguf', 'Qwen3');
+    assert.deepEqual(await runtime.infer('p', {type: 'object'}, 160, AbortSignal.timeout(1000), {qwen3: true, reasoning: 'fast'}), {ok: true});
+    await runtime.infer('p', {type: 'object'}, 640, AbortSignal.timeout(1000), {qwen3: true, reasoning: 'thinking'});
+    await runtime.infer('p', {type: 'object'}, 160, AbortSignal.timeout(1000));
+  } finally { globalThis.fetch = original; }
+  assert.equal(bodies[0]!.temperature, 0.7);
+  assert.ok(bodies[0]!.json_schema && String(bodies[0]!.prompt).endsWith('<think>\n\n</think>\n\n'));
+  assert.equal(bodies[1]!.temperature, 0.6);
+  assert.equal(bodies[1]!.json_schema, undefined, 'a grammar would forbid the think block');
+  assert.equal(bodies[1]!.n_predict, 640);
+  assert.equal(bodies[2]!.temperature, 0, 'non-Qwen models keep deterministic decoding');
+});
+
+test('model selection compares facts: equivalent and stronger reuse, weaker keeps the recommendation, unknown shows both', async () => {
+  const {compareWithRecommended, recommendModel} = await import('../src/understanding/discovery.js');
+  const model = (label: string, extra: Record<string, unknown> = {}) => ({label, runtime: 'llama.cpp' as const, path: `/m/${label}.gguf`, suitability: 'compatible' as const, reason: '', owned: false, ...extra});
+  assert.equal(compareWithRecommended(model('Qwen3 0.6B Q4_K_M')), 'equivalent');
+  assert.equal(compareWithRecommended(model('Qwen3 1.7B Q4_K_M')), 'stronger');
+  assert.equal(compareWithRecommended(model('Qwen3 0.6B Q2_K')), 'weaker');
+  assert.equal(compareWithRecommended(model('Llama 3.2 1B Q4_K_M', {family: 'llama'})), 'unknown');
+  const runtimes = [{kind: 'llama.cpp' as const, label: 'llama.cpp', running: false}];
+  assert.equal(recommendModel({runtimes, models: [model('Qwen3 1.7B Q4_K_M')]}).prefer, 'existing');
+  assert.equal(recommendModel({runtimes, models: [model('Qwen3 0.6B Q2_K')]}).prefer, 'download');
+  assert.equal(recommendModel({runtimes, models: [model('Llama 3.2 1B Q4_K_M', {family: 'llama'})]}).prefer, 'either');
+  assert.equal(recommendModel({runtimes, models: [model('Qwen3 8B', {suitability: 'large', parametersB: 8})]}).prefer, 'either', 'a large model is never chosen silently');
+  assert.equal(recommendModel({runtimes, models: []}).prefer, 'download');
+});
+
+test('/llm offers removal only for the NMSh-owned model and uninstall only with provenance', async () => {
+  const {understandingRows, renderUnderstandingPanel, createUnderstandingPanel} = await import('../src/understanding/UnderstandingPanel.js');
+  const settings: LocalUnderstandingSettings = {mode: 'auto', ask: true, folding: true, model: {label: 'Qwen3 0.6B Q8_0', runtime: 'llama.cpp', path: '/d/q.gguf', owned: true}};
+  const discovery = {runtimes: [{kind: 'llama.cpp' as const, label: 'llama.cpp', running: false}], models: []};
+  const kinds = (facts: Parameters<typeof understandingRows>[0]) => understandingRows(facts).map(row => row.kind);
+  assert.ok(!kinds({settings, discovery}).includes('remove'));
+  assert.ok(kinds({settings, discovery, ownedModel: {path: '/d/q.gguf', bytes: 639e6, inUse: true}}).includes('remove'));
+  assert.ok(!kinds({settings, discovery}).includes('uninstallRuntime'));
+  assert.ok(kinds({settings, discovery, runtimeOwned: {label: 'brew install llama.cpp'}}).includes('uninstallRuntime'));
+  const text = stripAnsi(renderUnderstandingPanel(createUnderstandingPanel(), {settings, discovery, now: 10_000,
+    activity: {requests: 14, lastRoute: {route: 'model', at: 0}, lastInference: {label: 'Ask intent · non-thinking', at: 2000, ok: true}}}, 120).join('\n'));
+  assert.match(text, /Local Intelligence/u);
+  assert.match(text, /Mode\s+‹ Auto ›/u);
+  assert.match(text, /Last Ask route\s+Qwen3 0\.6B Q8_0/u);
+  assert.match(text, /Last inference\s+Ask intent · non-thinking · 8s ago/u);
+  assert.match(text, /Requests\s+14/u);
+  assert.doesNotMatch(text, /\[x\]|\[ \]|\[Auto\]/u, 'no retro controls');
+  const progress = createUnderstandingPanel();
+  progress.progress = {label: 'Qwen3 0.6B', stage: 'Downloading', received: 84e6, total: 639e6, since: 0};
+  assert.match(stripAnsi(renderUnderstandingPanel(progress, {settings, discovery, now: 3000}, 120).join('\n')), /Qwen3 0\.6B · Downloading · 84 \/ 639 MB · 13%/u);
+});

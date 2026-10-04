@@ -141,27 +141,29 @@ NMSh safely queries metadata (`whence -w`) and never executes partially typed in
 
 ## Shell Compatibility
 
-NMSh currently boots a real, controlled zsh instance.
+NMSh runs a real, persistent shell underneath and keeps it: zsh (default), Fish, or Bash 4.4+. The same composer, transcript, sessions, prompt UI, Settings, Chroma, history presentation and completion menu work over each. `/shell` lists what is installed and switches the current session in place (same session, cwd and transcript); Settings → Default shell chooses the shell for new sessions. NMSh never installs a shell. See [ShellAdapter](docs/architecture/shell-adapter.md) for exactly what differs (for example, Bash completion has no descriptions).
 
 **What works naturally:**
 - Aliases, functions, PATH, and environment variables
 - `zoxide` integration, pipelines, redirects, and external commands
 
+**No plugin manager required.** NMSh provides its editor, completion menu, prompt, transcript and sessions itself. Existing frameworks and plugin managers (Oh My Zsh, Antidote, Zinit, Fisher, …) can keep providing compatible shell-level functionality; `/status` and `nmsh doctor` show what is detected and how it relates to NMSh.
+
 **UI Plugin differences:**
-- Foreign prompt rendering in the managed shell (Powerlevel10k, RPROMPT, ZLE prompts) is suppressed so it cannot fight NMSh. You can still choose Starship or Powerlevel10k as an NMSh prompt provider. Powerlevel10k's left prompt is rendered in an isolated helper, without its prompt character, gitstatus daemon, or right prompt.
-- `zsh-autosuggestions` and `zsh-syntax-highlighting` are replaced by NMSh-native equivalents.
+- Foreign prompt rendering in the managed shell (Powerlevel10k, RPROMPT, ZLE prompts, Fish prompts) is suppressed so it cannot fight NMSh. You can still choose Starship or Powerlevel10k as an NMSh prompt provider. Powerlevel10k's left prompt is rendered in an isolated helper, without its prompt character, gitstatus daemon, or right prompt.
+- `zsh-autosuggestions` and `zsh-syntax-highlighting` draw through ZLE, which NMSh keeps off; NMSh's own suggestions and highlighting are shown instead, and the plugins keep working in `/zsh` and ordinary zsh.
 - Native `fzf-tab` integration is not currently supported; safe zsh completion/widget interoperability remains unresolved in [issue #52](https://github.com/raiseCatError/notMyShell/issues/52).
 
-NMSh loads your `~/.zshrc` in a controlled sandbox to extract environment knowledge without letting UI plugins fight for terminal control.
+NMSh loads your own shell startup files in a controlled bootstrap and never edits them.
 
-See [ROADMAP.md](ROADMAP.md) for planned shell compatibility, multi-shell adapters, and future work.
+See [ROADMAP.md](ROADMAP.md) for planned work (Nushell and native Windows are later).
 
 ## Installation
 
 **Prerequisites:**
-- macOS
+- macOS, or Linux (automated tests pass; physical terminal validation is pending), or Windows through WSL 2 (see [platforms](docs/architecture/platforms.md))
 - Node.js (v22+)
-- zsh
+- zsh (Fish and Bash 4.4+ are optional additional backends)
 - A compatible terminal host: an integrated terminal (such as Zed or VS Code) or a standalone terminal (such as Ghostty or macOS Terminal)
 
 Clone the repository and install dependencies:
@@ -181,6 +183,12 @@ After linking, run the CLI from anywhere:
 ```sh
 nmsh
 ```
+
+### Moving settings and uninstalling
+
+- `nmsh config export` / `nmsh config import FILE` move your settings between machines, hosts and shells (versioned JSON, preview before apply, selectable categories; no history or secrets). See [portability](docs/design/v016-portability-uninstall-diagnostics.md).
+- `nmsh uninstall` previews and removes only NMSh's own launcher links; your settings are kept unless `--delete-data`, and your shell config is never touched.
+- `nmsh doctor` prints a short diagnostic for issue reports.
 
 ### Updating
 
@@ -224,6 +232,8 @@ Keep your terminal. Keep your shell. Upgrade the interaction layer. NMSh is inte
 | Kitty | Supported profile | Kitty keyboard protocol and mouse reporting; new windows need `allow_remote_control`. |
 | iTerm2, WezTerm | Supported profiles | Capability profiles; not yet physically validated to the same level. |
 
+NMSh owns terminal-native interaction; the editor around it owns editor-native interaction. `/find` and `/filter` search and filter the transcript; `/open path:line:col` and `/open-diff a b` hand files to Zed or VS Code (or `$VISUAL`/`$EDITOR`) instead of rebuilding an editor inside the terminal. See [product boundary and HostActions](docs/architecture/host-actions.md). Inline images (`/about`) appear only where the host implements Kitty graphics or iTerm2 images ([image surface](docs/architecture/image-surface.md)).
+
 Where a host differs, NMSh says so factually (for example, "Appearance is configured by Zed."). Host profiles only supply conservative capability hints, and optional protocols still come from the shared probe.
 
 ## Keyboard Behavior
@@ -237,7 +247,8 @@ Where a host differs, NMSh says so factually (for example, "Appearance is config
 - **Cmd+A:** Select all input (requires Ghostty forwarding setup)
 - **Cmd+Up/Down:** Jump to top/bottom of buffer (requires Ghostty forwarding setup)
 - **Shift+Left/Right:** Character selection
-- **Up/Down:** Recall previous/next submitted commands when the caret is on the first/last editor line; Down past the newest restores your unsent draft. Multiline drafts move by line first; open menus and panels keep their own Up/Down.
+- **Up/Down:** Recall previous/next submitted commands when the caret is on the first/last editor line; Down past the newest restores your unsent draft. Multiline drafts move by line first. A completion or slash-command menu is entered with Down; Up from its first row returns to history. Panels and /history, /dirs keep their own Up/Down.
+- **Ctrl+F:** Find in the transcript (adds a term; terms AND together). `/find` does the same; Cmd+F stays the host's own find.
 - **PageUp/PageDown, mouse wheel:** Scroll output history
 
 *(Note: In VS Code, Shift+Enter is often indistinguishable from Enter by default. Use Ctrl+J as a reliable multiline fallback.)*
@@ -279,9 +290,9 @@ See [ROADMAP.md](ROADMAP.md) for future multi-shell architecture and extensibili
 ## Security & Privacy
 
 - Everything executes locally on your machine through your local shell.
-- No cloud backend is required.
-- No telemetry is collected.
-- Shell configuration reads from your local system securely.
+- No cloud backend or account is required.
+- No telemetry is collected; agent activity stats and session notices are local, optional and never contain prompts or output.
+- NMSh never edits your shell configuration. See [docs/privacy.md](docs/privacy.md).
 
 ## License
 

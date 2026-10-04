@@ -383,6 +383,12 @@ export class CommandEditor {
     this.clearSelection();
   }
 
+  /** Place the caret at a grapheme index (clamped); clears any selection. */
+  setCursor(index: number): void {
+    this.cursor = Math.max(0, Math.min(this.characters.length, index));
+    this.clearSelection();
+  }
+
   clear(): void {
     this.characters = [];
     this.cursor = 0;

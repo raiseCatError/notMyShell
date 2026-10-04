@@ -2,7 +2,8 @@ import {spawn} from 'node:child_process';
 import {extname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {InProcessSessionClient} from './InProcessSessionClient.js';
-import {SocketSessionClient, listSessions} from './SocketSessionClient.js';
+import {SocketSessionClient, dismissNotice, listSessions, listSessionsWithNotices} from './SocketSessionClient.js';
+import type {SessionNotice} from './SessionNotices.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import {TranscriptStore, type TranscriptSession} from '../sessions/TranscriptStore.js';
 import {type SessionConnection, type SessionOptions} from './SessionClient.js';
@@ -43,7 +44,7 @@ export async function attachSession(sessionId: string, options: ConnectSessionOp
         if (loaded.live?.sessionId === attached.sessionId) journal = loaded;
       } catch { /* fall through */ }
     }
-    return {client, mode: 'service', sessionId: client.sessionId, attached, ...(journal ? {journal} : {})};
+    return {client, mode: 'service', sessionId: client.sessionId, attached, shell: client.shell, ...(journal ? {journal} : {})};
   } catch (error) {
     const code = (error as {code?: string}).code ?? 'error';
     const reason = code === 'ENOENT' || code === 'ECONNREFUSED' ? 'no session service is running'
@@ -97,8 +98,8 @@ const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  */
 export async function connectSession(options: ConnectSessionOptions): Promise<SessionConnection> {
   const env = options.env ?? process.env;
-  const sessionOptions = {cwd: options.cwd, columns: options.columns, rows: options.rows};
-  if (env[SESSION_SERVICE_ENV] === '0') return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process'};
+  const sessionOptions = {cwd: options.cwd, columns: options.columns, rows: options.rows, ...(options.shell ? {shell: options.shell} : {})};
+  if (env[SESSION_SERVICE_ENV] === '0') return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process', shell: options.shell ?? 'zsh'};
   try {
     const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(env);
     ensurePrivateRuntimeDir(runtimeDir);
@@ -110,7 +111,7 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
       try {
         const client = await SocketSessionClient.connect({...sessionOptions, socketPath, env: shellEnv,
           timeoutMs: Math.max(100, deadline - Date.now())});
-        return {client, mode: 'service', sessionId: client.sessionId};
+        return {client, mode: 'service', sessionId: client.sessionId, shell: client.shell};
       } catch (error) {
         const code = (error as {code?: string}).code;
         const retryable = code === 'ENOENT' || code === 'ECONNREFUSED' || code === 'closed';
@@ -124,8 +125,24 @@ export async function connectSession(options: ConnectSessionOptions): Promise<Se
     }
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process',
+    return {client: new InProcessSessionClient(sessionOptions), mode: 'in-process', shell: options.shell ?? 'zsh',
       notice: `Session service unavailable (${reason}); running the shell in-process. `
         + 'Closing this window ends its shell: it cannot be detached or reattached.'};
   }
+}
+
+/** Live sessions and recently-ended notices, for cross-session notices; empty when no service runs. */
+export async function listSessionNotices(options: {env?: NodeJS.ProcessEnv; runtimeDir?: string} = {}): Promise<{sessions: SessionInfo[]; ended: SessionNotice[]}> {
+  const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(options.env ?? process.env);
+  try {
+    return await listSessionsWithNotices(socketPathFor(runtimeDir), 1500);
+  } catch {
+    return {sessions: [], ended: []};
+  }
+}
+
+/** Best effort: clear a session's notice in every frontend. */
+export async function dismissSessionNotice(sessionId: string, options: {env?: NodeJS.ProcessEnv; runtimeDir?: string} = {}): Promise<void> {
+  const runtimeDir = options.runtimeDir ?? defaultRuntimeDir(options.env ?? process.env);
+  try { await dismissNotice(socketPathFor(runtimeDir), sessionId, 1500); } catch { /* older service or none: nothing to clear */ }
 }

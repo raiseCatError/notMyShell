@@ -1,6 +1,5 @@
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
-import {CHROMA_PREVIEW_NOTE} from '../appearance/chromaNotes.js';
 import {DIVIDER_LINES_HELP, dividerLinesLabel, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_DIRECTION_LABELS} from '../chroma/treatment.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolGlyph, promptSymbolLabel, separatorLabel, validateGlyph} from './glyphChoices.js';
@@ -44,7 +43,7 @@ import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
-import {stripAnsi, truncateAnsi} from '../util/text.js';
+import {displayWidth, labelColumnWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
@@ -65,6 +64,8 @@ export interface PromptPanelState {
   task?: TaskProgress;
   starshipModules?: boolean[];
   starshipProposal?: StarshipConfigProposal;
+  /** The palette the Chroma quick control turned Off, restored when it turns Chroma back On (panel-local, never saved). */
+  chromaRestore?: PromptConfiguration['presentation']['preset'];
   /** NMSh appearance top view: Main Prompt (default) or Rich Git. */
   view?: PromptView;
   /** `tabs`: ←/→ switch views; `rows` (default): ←/→ edit the selected row. */
@@ -81,6 +82,7 @@ const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma'];
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const ACCENT = lazyForeground(UI_COLORS.accent);
+const BOLD = '\u001B[1m';
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const ERROR = lazyForeground(UI_COLORS.failure);
 const INVERSE = '\u001B[7m';
@@ -219,6 +221,9 @@ export function styleRows(configuration: PromptConfiguration): AppearanceRow[] {
 export function appearanceRows(configuration: PromptConfiguration): AppearanceRow[] {
   return [
     ...themeRows(configuration),
+    {id: 'textColors', label: 'Text colors', value: c => c.nmsh.textColors === 'neutral' ? 'Neutral' : 'Theme',
+      change: c => { c.nmsh.textColors = c.nmsh.textColors === 'neutral' ? 'theme' : 'neutral'; },
+      note: c => c.nmsh.textColors === 'neutral' ? 'Neutral: the theme\'s fills, connectors and accent stay; text is a steady neutral' : 'Theme: the theme\'s own text colors'},
     {id: 'style', label: 'Style', value: c => PROMPT_STYLE_LABELS[c.nmsh.style], change: (c, d) => { c.nmsh.style = cycle(PROMPT_STYLES, c.nmsh.style, d); },
       note: c => PROMPT_STYLE_NOTES[c.nmsh.style]},
     {id: 'vibrance', label: 'Vibrance', value: c => VIBRANCE_LABELS[c.nmsh.vibrance], change: (c, d) => { c.nmsh.vibrance = cycle(VIBRANCE_LEVELS, c.nmsh.vibrance, d); }},
@@ -368,7 +373,7 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
 
 const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
   project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
-  kubeContext: 'Kubernetes', dockerContext: 'Docker context',
+  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell',
 };
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
@@ -440,6 +445,7 @@ function moduleOption(module: PromptConfiguration['modules'][number]): string {
     case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
     case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
+    case 'shell': return module.condition === 'always' ? 'always' : 'when different';
     default: return 'always';
   }
 }
@@ -458,6 +464,8 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   }
   else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
     module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
+  } else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'shell') {
+    module.condition = module.condition === 'always' ? 'shellDiffers' : 'always';
   } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
     module.condition = module.condition === 'onCommand' ? 'always' : 'onCommand';
   } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
@@ -542,8 +550,43 @@ function handleGlyphEdit(key: Key, state: PromptPanelState): boolean {
   return true;
 }
 
+/**
+ * The theme gallery's Chroma quick control: flips the draft's one Chroma
+ * setting (the palette, Off or not). Turning back On restores the palette it
+ * turned Off, else the saved one, else Lavender.
+ */
+export function toggleChromaPreview(state: PromptPanelState): void {
+  const presentation = state.draft.presentation;
+  if (presentation.preset !== 'off') {
+    state.chromaRestore = presentation.preset;
+    presentation.preset = 'off';
+  } else {
+    const saved = state.saved?.presentation.preset;
+    presentation.preset = state.chromaRestore ?? (saved && saved !== 'off' ? saved : 'lavender');
+    if (presentation.preset === 'custom' && presentation.customStops.length < MIN_CUSTOM_STOPS) presentation.customStops = [...PRESET_STOPS.lavender];
+  }
+  state.message = undefined;
+}
+
+/** One row: state and the toggle first, the explanation only when it fits. Readable without color. */
+export function chromaQuickControl(on: boolean, columns: number): string {
+  const toggle = `${ACCENT}[C]${RESET} ${PRIMARY}${on ? 'Turn Off' : 'Turn On'}${RESET}`;
+  const state = on ? `${BOLD}${PRIMARY}✦ Chroma ON${RESET}` : `${SECONDARY}Chroma OFF${RESET}`;
+  const detail = `${SUBTLE} · ${on ? 'previews are colorized' : 'showing base theme colors'}${RESET}`;
+  const hint = `${SUBTLE}  Chroma tab for details${RESET}`;
+  for (const candidate of [`${state}${detail}   ${toggle}${hint}`, `${state}${detail}   ${toggle}`, `${state}   ${toggle}`]) {
+    if (displayWidth(candidate) <= columns) return candidate;
+  }
+  return `${state}  ${toggle}`;
+}
+
 export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean {
   if (state.glyphEdit) return handleGlyphEdit(key, state);
+  if (state.step === 'appearance' && (state.view ?? 'main') === 'main' && state.draft.provider === 'nmsh'
+    && key.kind === 'text' && (key.value === 'c' || key.value === 'C')) {
+    toggleChromaPreview(state);
+    return true;
+  }
   if (key.kind === 'enter' && promptPanelOwnsKey(state, key)) {
     const row = viewRows(state)[state.selectedIndex]!;
     state.glyphEdit = {rowId: row.id, buffer: row.edit!.get(state.draft) ?? ''};
@@ -640,7 +683,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(`${PRIMARY}Starship modules${RESET}`);
     rows.push(`${SUBTLE}Edit supported modules using Starship's config command.${RESET}`);
     STARSHIP_MODULES.forEach((module, index) => rows.push(item(index,
-      `${module.padEnd(16)} ${state.starshipModules?.[index] ? 'Disabled' : 'Enabled'}`)));
+      `${padCells(module, labelColumnWidth(STARSHIP_MODULES, columns, 2))}${state.starshipModules?.[index] ? 'Disabled' : 'Enabled'}`)));
   } else if (state.step === 'starshipConfirm') {
     const proposal = state.starshipProposal;
     rows.push(`${PRIMARY}Review Starship config change${RESET}`);
@@ -716,8 +759,8 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      const side = modulePlacement(module).padEnd(7);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${MODULE_LABELS[module.id].padEnd(15)}${SUBTLE}${side}${module.visible ? option : 'hidden'}${RESET}`);
+      const side = modulePlacement(module);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 6)}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;
@@ -734,30 +777,32 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(renderTabStrip(PROMPT_VIEWS, PROMPT_VIEW_IDS.indexOf(view), columns, state.focus === 'tabs'), '');
     if (view === 'git') {
       const onOff = (enabled: boolean) => enabled ? 'On' : 'Off';
-      rows.push(row(0, `Enabled         ${value(onOff(draft.gitEnabled), saved && onOff(saved.gitEnabled))}`));
-      rows.push(row(1, `Colors          ${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
-      rows.push(row(2, `Geometry        ${value(gitGeometryLabel(draft.gitGeometry), saved && gitGeometryLabel(saved.gitGeometry))}`));
+      const gitWidth = labelColumnWidth(['Enabled', 'Colors', 'Geometry', 'Connector fade'], columns, 2);
+      rows.push(row(0, `${padCells('Enabled', gitWidth)}${value(onOff(draft.gitEnabled), saved && onOff(saved.gitEnabled))}`));
+      rows.push(row(1, `${padCells('Colors', gitWidth)}${value(gitColorsLabel(draft.gitColors), saved && gitColorsLabel(saved.gitColors))}`));
+      rows.push(row(2, `${padCells('Geometry', gitWidth)}${value(gitGeometryLabel(draft.gitGeometry), saved && gitGeometryLabel(saved.gitGeometry))}`));
       const gitFadeNote = !state.draft.nmsh.gapEnabled && draft.gitConnectorFade !== 'off' ? `  ${SUBTLE}applies with a gap` : '';
-      rows.push(row(3, `Connector fade  ${value(gitConnectorFadeLabel(draft.gitConnectorFade), saved && gitConnectorFadeLabel(saved.gitConnectorFade))}${gitFadeNote}`));
+      rows.push(row(3, `${padCells('Connector fade', gitWidth)}${value(gitConnectorFadeLabel(draft.gitConnectorFade), saved && gitConnectorFadeLabel(saved.gitConnectorFade))}${gitFadeNote}`));
       if (gitShowcase.length) {
         rows.push('', draft.gitEnabled
           ? `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}preview only${RESET}`
           : `${PRIMARY}Rich Git states${RESET}  ${SUBTLE}Rich Git is off · the prompt shows the branch only · dimmed sample${RESET}`);
         RICH_GIT_SHOWCASE.forEach((entry, index) => {
           const line = gitShowcase[index] ?? '';
-          rows.push(`  ${SECONDARY}${entry.label.padEnd(10)}${RESET} ${draft.gitEnabled ? line : `${SUBTLE}${stripAnsi(line)}`}${RESET}`);
+          rows.push(`  ${SECONDARY}${padCells(entry.label, labelColumnWidth(RICH_GIT_SHOWCASE.map(item => item.label), columns, 2))}${RESET}${draft.gitEnabled ? line : `${SUBTLE}${stripAnsi(line)}`}${RESET}`);
         });
       }
     } else {
       // Main Prompt and Chroma: rows derived from the draft, so hidden controls cannot be edited.
       const savedConfiguration = state.saved;
+      const labelWidth = labelColumnWidth(viewRows(state).map(entry => entry.label), columns, 2);
       viewRows(state).forEach((entry, index) => {
         const editing = state.glyphEdit?.rowId === entry.id ? state.glyphEdit : undefined;
         const text = editing ? `${editing.buffer}${INVERSE} ${RESET}` : entry.value(state.draft);
         const savedText = editing ? undefined : savedConfiguration ? entry.value(savedConfiguration) : undefined;
         const note = editing ? editing.note ?? 'type one character · Enter set · Esc cancel' : entry.note?.(state.draft);
         const body = entry.opens ? text : value(text, savedText);
-        rows.push(row(index, `${entry.label.padEnd(16)}${body}${note ? `  ${SUBTLE}${note}` : ''}`));
+        rows.push(row(index, `${padCells(entry.label, labelWidth)}${body}${note ? `  ${SUBTLE}${note}` : ''}`));
       });
       if (view === 'chroma' && state.draft.presentation.preset !== 'off') {
         rows.push(`  ${SUBTLE}Gradient  ${RESET}${treatmentSwatch(state.draft.presentation, Math.max(8, Math.min(40, columns - 14)), chromaThemeStops)}${RESET}`);
@@ -769,18 +814,18 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       TREATMENT_PRESETS.forEach((id, index) => {
         const marker = state.draft.presentation.preset === id ? `${ACCENT}●` : `${SUBTLE}○`;
         const savedMark = state.saved?.presentation.preset === id ? '✓' : ' ';
-        rows.push(`${marker} ${SECONDARY}${TREATMENT_PRESET_LABELS[id].padEnd(14)}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
+        rows.push(`${marker} ${SECONDARY}${padCells(TREATMENT_PRESET_LABELS[id], labelColumnWidth(Object.values(TREATMENT_PRESET_LABELS), columns, 2, 20), 1)}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }
     if (themePreviews.length && view === 'main') {
       rows.push('');
       rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
-      if (state.draft.presentation.preset !== 'off' && state.draft.provider === 'nmsh') rows.push(`${SUBTLE}${CHROMA_PREVIEW_NOTE}${RESET}`);
+      if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns));
       galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;
         const savedMark = saved?.palette === id ? '✓' : ' ';
-        const label = theme.label.padEnd(17);
+        const label = padCells(theme.label, labelColumnWidth(galleryPalettes(state.draft).map(palette => NATIVE_PROMPT_THEMES[palette].label), columns, 2, 20), 1);
         rows.push(`${marker} ${SECONDARY}${label}${ACCENT}${savedMark}${RESET} ${themePreviews[index] ?? ''}${RESET}`);
       });
     }

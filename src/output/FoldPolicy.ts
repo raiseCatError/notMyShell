@@ -147,3 +147,53 @@ export function shouldAutoFold(mode: OutputFoldingMode, input: FoldInput): boole
 export function foldWindow(lineCount: number): {head: number; tail: number} {
   return lineCount >= FOLD_HEAD_LINES + FOLD_TAIL_LINES + 5 ? {head: FOLD_HEAD_LINES, tail: FOLD_TAIL_LINES} : {head: 0, tail: 0};
 }
+
+/** Advisory semantic hint from optional local understanding: never content, only a classification. */
+export interface SemanticFoldHint {kind: 'noise' | 'progress' | 'test-detail' | 'summary' | 'warning' | 'error' | 'mixed'; confidence: number}
+
+/** Deterministic decisions close to the threshold are the only ones a hint may tip. */
+export const HINT_BAND = {low: -1, high: FOLD_THRESHOLD} as const;
+
+export function hintEligible(mode: OutputFoldingMode, input: FoldInput): boolean {
+  if (mode !== 'smart' || input.exitCode !== 0 || !isFoldable(input.lineCount)) return false;
+  const decision = evaluateFold(input);
+  return decision.score >= HINT_BAND.low && decision.score < HINT_BAND.high + 2 && !decision.reasons.some(reason => /error-like|stack trace|compiler|diff-like/u.test(reason));
+}
+
+/**
+ * Applying a hint to the deterministic decision. Biased toward keeping output
+ * visible: an error or warning hint always expands; a noise hint folds only a
+ * borderline block with no failure signals and only when confident. A hint
+ * never changes content, only whether the block starts collapsed.
+ */
+export function applyFoldHint(input: FoldInput, hint: SemanticFoldHint | undefined): boolean {
+  const decision = evaluateFold(input);
+  if (!hint) return decision.fold;
+  if (decision.reasons.some(reason => /error-like|stack trace|compiler|diff-like/u.test(reason))) return false;
+  if ((hint.kind === 'error' || hint.kind === 'warning' || hint.kind === 'summary') && hint.confidence >= 0.5) return false;
+  if ((hint.kind === 'noise' || hint.kind === 'progress' || hint.kind === 'test-detail') && hint.confidence >= 0.75 && decision.score >= HINT_BAND.low) return true;
+  return decision.fold;
+}
+
+/** One visible Ask turn as recorded: plain text only, never model data. */
+export interface RecordedAskTurn {role: 'you' | 'ask'; text: string}
+
+/** Ask answers at or below this many lines stay open in Smart. */
+export const ASK_SMART_LINES = 4;
+
+/**
+ * Folding for a recorded Ask conversation, from its structure rather than
+ * the shell-output heuristic: Smart keeps one short exchange open and folds a
+ * multi-turn or long conversation; Always folds any conversation with an
+ * answer; Off never folds.
+ */
+export function shouldFoldAsk(mode: OutputFoldingMode, turns: readonly RecordedAskTurn[]): boolean {
+  if (mode === 'never') return false;
+  const answers = turns.filter(turn => turn.role === 'ask');
+  if (!answers.length) return false;
+  if (mode === 'always') return true;
+  const asked = turns.filter(turn => turn.role === 'you').length;
+  const lines = turns.reduce((sum, turn) => sum + turn.text.split('\n').length, 0);
+  // Smart: a short exchange (one or two questions) stays open; longer chatter folds by turns or length, not shell line thresholds.
+  return asked > 2 || lines > ASK_SMART_LINES;
+}

@@ -10,8 +10,10 @@ import {defaultUiColors, uiThemeInput, type UiThemeInput} from './uiTheme.js';
  * UI chrome: the colors of NMSh-owned frames, rules, tabs, selection, focus
  * accents and markers. One setting decides where they come from:
  *
- * - Follow theme (default): the active theme's chrome. Lavender Native keeps
- *   the shipped chrome exactly; other NMSh themes derive chrome from their
+ * - Follow theme (default): the active theme's chrome. Lavender Native uses
+ *   the #A67CF3 accent with neutral text and surfaces, plus optional Text and
+ *   Background tints (lavenderChrome); Brand / Semantic keeps the shipped
+ *   chrome exactly; other NMSh themes derive chrome from their
  *   own module colors; bundled families and custom themes use their UI roles.
  * - Custom: a preset (Native Lavender, Grayscale) or the user's own colors.
  *
@@ -35,9 +37,17 @@ export interface UiChromeSettings {
    * and semantic status colors keep their own roles either way.
    */
   themeText?: boolean;
+  /** Lavender Native only: lavender-tinted text tiers instead of NMSh's neutral text. Default Off. */
+  lavenderText?: LavenderTint;
+  /** Lavender Native only: dark lavender/plum surfaces instead of the neutral ones. Default Off. */
+  lavenderSurface?: LavenderTint;
 }
 
-export const DEFAULT_UI_CHROME: UiChromeSettings = {source: 'theme', preset: 'lavender', themeText: true};
+export type LavenderTint = 'off' | 'lavender';
+export const LAVENDER_TINTS: readonly LavenderTint[] = ['off', 'lavender'];
+export const LAVENDER_TINT_LABELS: Record<LavenderTint, string> = {off: 'Off', lavender: 'Lavender'};
+
+export const DEFAULT_UI_CHROME: UiChromeSettings = {source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'off', lavenderSurface: 'off'};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -48,14 +58,33 @@ export function normalizeUiChrome(value: unknown): UiChromeSettings {
     ? Object.fromEntries(UI_THEME_ROLES.map(role => [role, (colorsValue[role] as string).toLowerCase()])) as Record<UiThemeRole, string> : undefined;
   const preset = CHROME_PRESETS.includes(v.preset as ChromePreset) ? v.preset as ChromePreset : 'lavender';
   return {source: CHROME_SOURCES.includes(v.source as ChromeSource) ? v.source as ChromeSource : 'theme',
-    preset: preset === 'custom' && !colors ? 'lavender' : preset, ...(colors ? {colors} : {}), themeText: v.themeText !== false};
+    preset: preset === 'custom' && !colors ? 'lavender' : preset, ...(colors ? {colors} : {}), themeText: v.themeText !== false,
+    // Older configurations have neither field: both tints start Off.
+    lavenderText: v.lavenderText === 'lavender' ? 'lavender' : 'off', lavenderSurface: v.lavenderSurface === 'lavender' ? 'lavender' : 'off'};
 }
 
 /** Neutral chrome: gray accents and rules; status colors keep their meaning. */
 const GRAYSCALE: UiThemeInput = {accent: '#c9cacf', separator: '#76787e', selection: '#45474c', success: '#74b59a', failure: '#cd737b'};
 
-/** Shipped chrome themes: NMSh's own lavender themes keep the original chrome exactly. */
-const SHIPPED_CHROME: ReadonlySet<NativePaletteId> = new Set(['lavender', 'brand']);
+/** Brand / Semantic keeps the original shipped chrome exactly. */
+const SHIPPED_CHROME: ReadonlySet<NativePaletteId> = new Set(['brand']);
+
+/** The brand accent is Lavender Native's identity in every combination. */
+export const LAVENDER_ACCENT = '#a67cf3';
+/** Opt-in lavender text tiers (Text tint: Lavender); >= 4.5:1 on dark lavender surfaces. */
+export const LAVENDER_TEXT = {primary: '#f1ebff', secondary: '#d8ccf2', subtle: '#a99bc6'} as const;
+/** Opt-in dark plum surface (Background tint: Lavender); primary text on it is 11.5:1. */
+export const LAVENDER_SURFACE = {selection: '#352a47'} as const;
+
+/**
+ * Lavender Native chrome: the #A67CF3 accent always; NMSh's neutral text and
+ * surfaces unless the user turns on Text tint or Background tint, each
+ * independently. Separator and success/failure keep the shipped colors.
+ */
+export function lavenderChrome(chrome: Pick<UiChromeSettings, 'lavenderText' | 'lavenderSurface'>): UiThemeInput {
+  return {accent: LAVENDER_ACCENT, separator: '#8b84b2', success: '#74b59a', failure: '#cd737b',
+    ...(chrome.lavenderText === 'lavender' ? LAVENDER_TEXT : {}), ...(chrome.lavenderSurface === 'lavender' ? LAVENDER_SURFACE : {})};
+}
 
 const tone = (color: Rgb, l: number, minChroma: number, maxChroma = 0.2) => {
   const lch = toOklch(color);
@@ -104,8 +133,10 @@ export function resolveChrome(chrome: UiChromeSettings, palette: NativePaletteId
   if (chrome.source === 'custom') {
     if (chrome.preset === 'grayscale') return GRAYSCALE;
     if (chrome.preset === 'custom' && chrome.colors) return chromeFromColors(chrome.colors);
-    return undefined;
+    return lavenderChrome(chrome);
   }
+  // Lavender Native: neutral text unless Text tint is on (never derived from the accent).
+  if (palette === 'lavender') return lavenderChrome(chrome.themeText === false ? {...chrome, lavenderText: 'off'} : chrome);
   const input = uiThemeInput(palette, accent, custom) ?? nativeThemeChrome(palette);
   if (!input) return undefined;
   if (chrome.themeText === false) {

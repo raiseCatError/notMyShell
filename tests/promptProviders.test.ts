@@ -272,7 +272,7 @@ test('saved configurations gain new modules at their default position', () => {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
   assert.equal(config.modules.find(module => module.id === 'exitStatus')!.visible, false);
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
@@ -302,8 +302,8 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   assert.equal(unchanged.at(-1), '↑↓ move · ←→ change · Enter save · Esc cancel', 'consistent controls row');
 
   const press = (row: number, kind: 'left' | 'right') => { state.selectedIndex = row; handlePromptPanelKey({kind} as Key, state); };
-  // Rows: Theme family, Theme, Style, Vibrance, then Powerline's own (Start, Connector, Connector fade, Fade colors, Gap, End, Padding), Icons, Prompt symbol, Modules.
-  press(1, 'right'); press(4, 'right'); press(4, 'right'); press(5, 'right'); press(6, 'left'); press(7, 'left'); press(8, 'left'); press(9, 'right'); press(9, 'right'); press(11, 'right');
+  // Rows: Theme family, Theme, Text colors, Style, Vibrance, then Powerline's own (Start, Connector, Connector fade, Fade colors, Gap, End, Padding), Icons, Prompt symbol, Modules.
+  press(1, 'right'); press(5, 'right'); press(5, 'right'); press(6, 'right'); press(7, 'left'); press(8, 'left'); press(9, 'left'); press(10, 'right'); press(10, 'right'); press(12, 'right');
   assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
     ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
   assert.equal(state.draft.nmsh.connectorFade, 'follow', 'Connector fade cycles backwards from the default Off');
@@ -319,7 +319,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',
-    'Modules         8 of 8 shown ›',
+    'Modules         9 of 9 shown ›',
     'unsaved preview',
   ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
@@ -340,7 +340,7 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
   assert.equal(state.draft.modules[1]!.visible, false);
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
-  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
   assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
   assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');

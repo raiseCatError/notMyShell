@@ -28,7 +28,7 @@ const REFLECT: Record<string, string> = {
 };
 /** Plain-text reflection: single-character block texts make a per-character reversal exact. */
 const reflectPlain = (plain: string) => [...plain].reverse().map(glyph => REFLECT[glyph] ?? glyph).join('');
-const ALL_IDS: ContextModuleId[] = ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext'];
+const ALL_IDS: ContextModuleId[] = ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell'];
 
 function placed(ids: readonly ContextModuleId[], mirror = true): PromptConfiguration {
   const configuration = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
@@ -84,7 +84,7 @@ test('P moves every module, including Project, Path and Git branch, right and ba
 test('each module renders on the right when placed there', () => {
   const context = moduleShowcaseContext();
   const expected: Record<ContextModuleId, string> = {project: 'notMyShell', cwd: '~/Projects/notMyShell/src', gitBranch: 'feature/example',
-    gitStatus: '+2', toolchain: 'node', exitStatus: '1', kubeContext: 'dev-cluster', dockerContext: 'colima'};
+    gitStatus: '+2', toolchain: 'node', exitStatus: '1', kubeContext: 'dev-cluster', dockerContext: 'colima', shell: 'fish'};
   for (const id of ALL_IDS) {
     const configuration = placed([id]);
     const right = stripAnsi(buildRightContext({...context, cwd: id === 'project' ? '/elsewhere' : context.cwd}, 200, configuration));
