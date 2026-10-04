@@ -152,28 +152,22 @@ the family's existing panel (switch, previewed install that starts on No,
 re-detect and activate); R detects again; uninstall of what NMSh installed
 stays in `/tools`. A fallback never rewrites the saved preference.
 
-## Lavender Native polish
+## Lavender Native tints
 
-Lavender Native now has its own UI chrome (`LAVENDER_CHROME` in
-`src/appearance/uiChrome.ts`) instead of the neutral shipped chrome, which
-Brand / Semantic keeps exactly:
+Lavender Native keeps its identity through the `#A67CF3` accent (and the
+`#A67CF3` project/brand prompt block) in every combination. Two independent,
+persisted appearance settings add optional tinting
+(`uiChrome.lavenderText`, `uiChrome.lavenderSurface`; Settings → Appearance
+under the theme, and Setup Cat → Appearance; shown only for Lavender Native):
 
-| Role | Before | Lavender Native |
+| Setting | Off (default) | Lavender |
 |---|---|---|
-| Primary text | `#F2F0EC` | `#F1EBFF` |
-| Secondary text | `#B0B8C2` | `#D8CCF2` |
-| Muted text | `#7D8590` | `#A99BC6` |
-| Selection / hover surface | `#586091` | `#352A47` |
-| Accent | `#C5B9E8` | `#B597F5` |
-| Separator | `#8B84B2` | `#8B84B2` |
-| Success / failure | `#74B59A` / `#CD737B` | unchanged |
+| Text tint | NMSh neutral text: primary `#F2F0EC`, secondary `#B0B8C2`, muted `#7D8590` | primary `#F1EBFF`, secondary `#D8CCF2`, muted `#A99BC6` |
+| Background tint | neutral selection/focus surface `#586091` | dark plum `#352A47` |
 
-Contrast on dark lavender surfaces (`#2C233A`): primary 12.8:1, secondary
-9.8:1, muted 5.8:1, accent 6.2:1; primary on the selection surface 11.5:1
-(it was 5.3:1). The muted tone is a little darker than the requested
-`#B8A8D2` so it stays clearly below secondary. Prompt module colors (and the
-`#A67CF3` project/brand block), history muting (archived prompts muted within
-the theme family), NO_COLOR and lower-color fallbacks are unchanged; Theme
-text Off still uses neutral text. Every panel that reads the chrome
-(Settings, /prompt, /providers, /ask, /sessions, /resume, confirmations,
-pickers, Setup Cat and their previews) follows automatically.
+Configurations without the fields normalize to Off/Off. Separator
+(`#8B84B2`) and success/failure (`#74B59A` / `#CD737B`) are unchanged; Theme
+text Off forces neutral text; other themes ignore both settings. History
+muting, NO_COLOR, lower-color fallbacks and safe glyphs are unaffected.
+Previews (Settings, Setup Cat) render the draft chrome and restore the live
+one. The syntax-color cache fix (escapes keyed by the live chrome) stays.

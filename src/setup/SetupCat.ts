@@ -180,6 +180,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('themeVariant')},
     {row: configRow('themeAccent')},
     {row: configRow('themeText')},
+    {row: configRow('lavenderText')},
+    {row: configRow('lavenderSurface')},
     {row: configRow('promptVibrance')},
     {row: configRow('uiChrome')},
     {row: configRow('uiChromePreset')},

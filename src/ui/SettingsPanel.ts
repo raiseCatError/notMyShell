@@ -8,7 +8,7 @@ import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {withIdleColorSource} from '../idle/IdleVisuals.js';
 import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS} from '../appearance/themeFamilies.js';
-import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
+import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, variantOptions} from '../appearance/themeSelection.js';
 import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
 import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
@@ -184,6 +184,14 @@ const THEME_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'themeText', parent: 'themeFamily', label: 'Theme text', description: 'On: the theme colors NMSh text tiers (primary, secondary, muted). Off: NMSh neutral text. Status colors keep their meaning', category: 'Appearance',
     values: [true, false], labels: ['On', 'Off'],
     get: c => c.uiChrome.themeText !== false, set: (c, themeText) => ({...c, uiChrome: {...c.uiChrome, themeText}})}),
+  enumRow({id: 'lavenderText', parent: 'themeFamily', when: c => c.nmsh.palette === 'lavender', label: 'Text tint',
+    description: 'Lavender Native: Off keeps NMSh neutral text; Lavender tints primary, secondary and muted text. The #A67CF3 accent stays either way', category: 'Appearance',
+    values: LAVENDER_TINTS, labels: LAVENDER_TINTS.map(tint => LAVENDER_TINT_LABELS[tint]),
+    get: c => c.uiChrome.lavenderText ?? 'off', set: (c, lavenderText) => ({...c, uiChrome: {...c.uiChrome, lavenderText}})}),
+  enumRow({id: 'lavenderSurface', parent: 'themeFamily', when: c => c.nmsh.palette === 'lavender', label: 'Background tint',
+    description: 'Lavender Native: Off keeps neutral dark surfaces; Lavender uses subtle dark plum surfaces for selection and focus', category: 'Appearance',
+    values: LAVENDER_TINTS, labels: LAVENDER_TINTS.map(tint => LAVENDER_TINT_LABELS[tint]),
+    get: c => c.uiChrome.lavenderSurface ?? 'off', set: (c, lavenderSurface) => ({...c, uiChrome: {...c.uiChrome, lavenderSurface}})}),
   enumRow({id: 'themeAccent', parent: 'themeFamily', when: c => familyOf(c.nmsh.palette) === 'catppuccin', label: 'Accent',
     description: 'Catppuccin accent for the project module and NMSh accents', category: 'Appearance',
     values: CATPPUCCIN_ACCENTS, labels: CATPPUCCIN_ACCENTS.map(accent => CATPPUCCIN_ACCENT_LABELS[accent]),

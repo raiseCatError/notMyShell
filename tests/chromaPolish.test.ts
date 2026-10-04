@@ -6,11 +6,11 @@ import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 import {DEFAULT_TREATMENT_SETTINGS, normalizeTreatmentSettings, samplePromptTreatment, treatmentFor, treatmentInfluence, TREATMENT_MOTIONS} from '../src/chroma/treatment.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
 import {chromaEligibleRole, NATIVE_PROMPT_THEMES} from '../src/prompt/prompt.js';
-import {renderSettingsPanel, SETTINGS_ROWS, adjustSettingsRow, settingsRowValue, type SettingsPanelState} from '../src/ui/SettingsPanel.js';
+import {renderSettingsPanel, SETTINGS_ROWS, adjustSettingsRow, settingsRowApplies, settingsRowValue, type SettingsPanelState} from '../src/ui/SettingsPanel.js';
 import {renderTabStrip} from '../src/ui/PanelShell.js';
 import {UI_COLORS, foreground} from '../src/ui/palette.js';
 import {applyUiTheme, defaultUiColors, uiColorsFor} from '../src/appearance/uiTheme.js';
-import {chromeFromColors, LAVENDER_CHROME, nativeThemeChrome, normalizeUiChrome, resolveChrome} from '../src/appearance/uiChrome.js';
+import {chromeFromColors, LAVENDER_ACCENT, LAVENDER_SURFACE, LAVENDER_TEXT, lavenderChrome, nativeThemeChrome, normalizeUiChrome, resolveChrome} from '../src/appearance/uiChrome.js';
 import {createChromeEditor, chromeEditorKey} from '../src/appearance/ChromeEditor.js';
 import {createThemeStudio, draftDiffersFromBase, STUDIO_ROWS, studioKey} from '../src/appearance/ThemeStudio.js';
 import {cloneFromPalette} from '../src/appearance/themeSelection.js';
@@ -107,8 +107,8 @@ test('ownership: composer divider lines follow Chroma by default, UI theme when 
 
 test('UI chrome: Follow theme default; Lavender has its tinted chrome; Brand keeps the shipped chrome; Native themes derive their own', () => {
   const config = normalizePromptConfiguration({});
-  assert.deepEqual(config.uiChrome, {source: 'theme', preset: 'lavender', themeText: true});
-  assert.equal(resolveChrome(config.uiChrome, 'lavender', 'mauve', undefined), LAVENDER_CHROME, 'Lavender Native has its own tinted chrome');
+  assert.deepEqual(config.uiChrome, {source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'off', lavenderSurface: 'off'});
+  assert.deepEqual(resolveChrome(config.uiChrome, 'lavender', 'mauve', undefined), lavenderChrome({}), 'Lavender Native: brand accent, neutral text and surfaces by default');
   assert.equal(resolveChrome(config.uiChrome, 'brand', 'mauve', undefined), undefined, 'Brand / Semantic keeps the shipped chrome exactly');
   const forest = nativeThemeChrome('forest')!;
   assert.ok(forest, 'Forest has its own chrome');
@@ -118,15 +118,15 @@ test('UI chrome: Follow theme default; Lavender has its tinted chrome; Brand kee
 });
 
 test('UI chrome: Custom presets (Native Lavender, Grayscale, custom colors) and invalid data', () => {
-  assert.equal(resolveChrome({source: 'custom', preset: 'lavender'}, 'forest', 'mauve', undefined), LAVENDER_CHROME, 'Native Lavender regardless of theme');
+  assert.deepEqual(resolveChrome({source: 'custom', preset: 'lavender'}, 'forest', 'mauve', undefined), lavenderChrome({}), 'Native Lavender regardless of theme');
   const gray = resolveChrome({source: 'custom', preset: 'grayscale'}, 'forest', 'mauve', undefined)!;
   const lch = (hex: string) => { const c = parseHexColor(hex)!; return Math.max(c.red, c.green, c.blue) - Math.min(c.red, c.green, c.blue); };
   assert.ok(lch(gray.accent) < 10 && lch(gray.separator) < 10 && lch(gray.selection!) < 10, 'grayscale chrome has no hue');
   const colors = {accent: '#ff8800', primary: '#eeeeee', secondary: '#cccccc', subtle: '#888888', separator: '#445566', selection: '#223344',
     success: '#00aa00', warning: '#aaaa00', failure: '#aa0000', info: '#0088aa'};
   assert.equal(resolveChrome({source: 'custom', preset: 'custom', colors}, 'nord', 'mauve', undefined)?.accent, '#ff8800');
-  assert.deepEqual(normalizeUiChrome({source: 'custom', preset: 'custom', colors: {accent: 'red'}}), {source: 'custom', preset: 'lavender', themeText: true});
-  assert.deepEqual(normalizeUiChrome({source: 'bogus'}), {source: 'theme', preset: 'lavender', themeText: true});
+  assert.deepEqual(normalizeUiChrome({source: 'custom', preset: 'custom', colors: {accent: 'red'}}), {source: 'custom', preset: 'lavender', themeText: true, lavenderText: 'off', lavenderSurface: 'off'});
+  assert.deepEqual(normalizeUiChrome({source: 'bogus'}), {source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'off', lavenderSurface: 'off'});
   // Borders, rules, selected tabs and selection all read the applied chrome.
   try {
     applyUiTheme(uiColorsFor(chromeFromColors(colors)));
@@ -334,24 +334,57 @@ test('app: installing from Setup Cat uses the shared browser and returns to the 
   } finally { cleanup(); }
 });
 
-test('Lavender Native polish: tinted text and surfaces, brand intact, semantics clear, other themes unchanged', () => {
-  const hex = (value: string) => parseHexColor(value)!;
-  const hue = (value: string) => { const {red, green, blue} = hex(value); return {red, green, blue}; };
-  const lavender = LAVENDER_CHROME;
-  assert.notEqual(lavender.primary, '#ffffff');
-  assert.notDeepEqual(hue(lavender.primary!), defaultUiColors().primary, 'primary text is no longer the neutral white');
-  for (const role of ['primary', 'secondary', 'subtle', 'selection'] as const) {
-    const {red, green, blue} = hue(lavender[role]!);
-    assert.ok(blue > green && red > green, `${role} ${lavender[role]} leans lavender (blue and red above green)`);
+test('Lavender Native tints: both Off by default; each independent; #A67CF3 accent in every combination; others unchanged', () => {
+  const neutral = defaultUiColors();
+  const hex = (color: {red: number; green: number; blue: number}) => `#${[color.red, color.green, color.blue].map(value => value.toString(16).padStart(2, '0')).join('')}`;
+  assert.deepEqual(normalizeUiChrome({}).lavenderText, 'off', 'older configs: Text tint Off');
+  assert.deepEqual(normalizeUiChrome({}).lavenderSurface, 'off', 'older configs: Background tint Off');
+  assert.deepEqual(normalizeUiChrome({lavenderText: 'lavender', lavenderSurface: 'pink'}), {source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'lavender', lavenderSurface: 'off'});
+  const resolved = (lavenderText: 'off' | 'lavender', lavenderSurface: 'off' | 'lavender') => uiColorsFor(resolveChrome({source: 'theme', preset: 'lavender', themeText: true, lavenderText, lavenderSurface}, 'lavender', 'mauve', undefined))!;
+  for (const text of ['off', 'lavender'] as const) for (const surface of ['off', 'lavender'] as const) {
+    const colors = resolved(text, surface);
+    assert.equal(hex(colors.accent!), LAVENDER_ACCENT, `${text}/${surface}: accent`);
+    const primary = colors.primary ?? neutral.primary;
+    const selection = colors.selection ?? neutral.selection;
+    assert.equal(hex(primary), text === 'lavender' ? LAVENDER_TEXT.primary : '#f2f0ec', `${text}/${surface}: primary text`);
+    assert.equal(hex(colors.secondary ?? neutral.secondary), text === 'lavender' ? LAVENDER_TEXT.secondary : '#b0b8c2');
+    assert.equal(hex(colors.subtle ?? neutral.subtle), text === 'lavender' ? LAVENDER_TEXT.subtle : '#7d8590');
+    assert.equal(hex(selection), surface === 'lavender' ? LAVENDER_SURFACE.selection : '#586091', `${text}/${surface}: surface`);
+    assert.equal(hex(colors.success!), '#74b59a');
+    assert.equal(hex(colors.failure!), '#cd737b');
   }
-  const luminance = (value: string) => { const {red, green, blue} = hex(value); return 0.2126 * red + 0.7152 * green + 0.0722 * blue; };
-  assert.ok(luminance(lavender.primary!) > luminance(lavender.secondary!) && luminance(lavender.secondary!) > luminance(lavender.subtle!), 'clear text hierarchy');
-  assert.ok(luminance(lavender.selection!) < 60, 'surfaces stay dark');
-  assert.equal(lavender.success, '#74b59a', 'success keeps its meaning');
-  assert.equal(lavender.failure, '#cd737b', 'failure keeps its meaning');
-  assert.equal(promptRoleColors('project', 'lavender', 'followTheme').background.red, 0xa6, 'brand #A67CF3 stays the project color');
-  assert.equal(resolveChrome({source: 'theme', preset: 'lavender', themeText: true}, 'brand', 'mauve', undefined), undefined, 'Brand / Semantic is unchanged');
-  assert.notEqual(nativeThemeChrome('ocean')?.primary, lavender.primary, 'other Native themes keep their own derived chrome');
-  const off = resolveChrome({source: 'theme', preset: 'lavender', themeText: false}, 'lavender', 'mauve', undefined)!;
-  assert.equal(off.primary, undefined, 'Theme text Off still means neutral NMSh text');
+  assert.equal(promptRoleColors('project', 'lavender', 'followTheme').background.red, 0xa6, 'the #A67CF3 prompt block is unchanged');
+  assert.equal(resolveChrome({source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'lavender', lavenderSurface: 'lavender'}, 'brand', 'mauve', undefined), undefined, 'Brand / Semantic is unaffected');
+  assert.deepEqual(resolveChrome({source: 'theme', preset: 'lavender', themeText: true, lavenderText: 'lavender', lavenderSurface: 'lavender'}, 'ocean', 'mauve', undefined),
+    resolveChrome({source: 'theme', preset: 'lavender', themeText: true}, 'ocean', 'mauve', undefined), 'other themes ignore the Lavender tints');
+  assert.equal(resolveChrome({source: 'theme', preset: 'lavender', themeText: false, lavenderText: 'lavender'}, 'lavender', 'mauve', undefined)!.primary, undefined, 'Theme text Off still means neutral text');
+});
+
+test('Lavender tints: Settings and Setup Cat share the rows; shown only for Lavender Native; previews follow the draft', () => {
+  const base = normalizePromptConfiguration({});
+  const text = SETTINGS_ROWS.find(row => row.id === 'lavenderText')!;
+  const surface = SETTINGS_ROWS.find(row => row.id === 'lavenderSurface')!;
+  assert.equal(settingsRowApplies(text, base), true);
+  assert.equal(settingsRowApplies(surface, {...base, nmsh: {...base.nmsh, palette: 'ocean'}}), false, 'only for Lavender Native');
+  const tinted = text.control === 'enum' ? text.select(base, 1) : base;
+  assert.equal(tinted.uiChrome.lavenderText, 'lavender');
+  assert.equal(tinted.uiChrome.lavenderSurface, 'off', 'independent');
+  const appearance = SETUP_SECTIONS.find(section => section.id === 'appearance')!;
+  assert.ok(appearance.rows.some(item => item.row === text) && appearance.rows.some(item => item.row === surface));
+  const {app, cleanup} = harness({});
+  try {
+    app['render'] = () => {};
+    const before = {...UI_COLORS.primary};
+    const preview = app['withDraftTheme'](tinted, () => ({...UI_COLORS.primary}));
+    assert.deepEqual(preview, parseHexColor(LAVENDER_TEXT.primary), 'a preview of the draft uses the tinted text');
+    assert.deepEqual({...UI_COLORS.primary}, before, 'and the live chrome is restored');
+  } finally { cleanup(); }
+});
+
+test('NO_COLOR and lower-color fallbacks are unchanged by the tints', () => {
+  const previous = process.env.NO_COLOR;
+  try {
+    process.env.NO_COLOR = '1';
+    assert.equal(foreground({red: 241, green: 235, blue: 255}), '', 'no escapes at all under NO_COLOR');
+  } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
 });

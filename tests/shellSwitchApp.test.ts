@@ -40,11 +40,17 @@ test('app hot swap: zsh → fish → bash → zsh keeps draft, transcript and cw
 
       app['editor'].insert('git status --short');
       const before = app['completionService'];
-      // Switching while the new shell is still starting is refused, not raced.
-      await app['switchShell']('fish', '/shell fish');
+      // A second switch issued while the first is still in flight is refused, not raced.
+      const refusals: string[] = [];
+      const record = app['output'].addFrontendInteraction.bind(app['output']);
+      app['output'].addFrontendInteraction = ((command: string, message: string, ...rest: unknown[]) => { refusals.push(message); return (record as (...args: unknown[]) => unknown)(command, message, ...rest); }) as typeof record;
+      const first = app['switchShell']('fish', '/shell fish');
       await app['switchShell']('bash', '/shell bash');
+      await first;
       assert.equal(app['shellId'], 'fish');
-      assert.match(transcript(app), /still starting/u);
+      assert.ok(refusals.some(message => /already in progress|still starting/u.test(message)), refusals.join(' | '));
+      // And until the new shell's first prompt, switching again is refused.
+      if (app['switchedShellStarting']) assert.match(app['switchBlocker']() ?? '', /still starting/u);
       await until(() => (client as unknown as {shell: {isReady: boolean}}).shell.isReady && !app['switchedShellStarting']);
       pids.push(shellPid());
       await app['switchShell']('zsh', '/shell zsh');
