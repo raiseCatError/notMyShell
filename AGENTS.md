@@ -50,8 +50,8 @@ As the user types, partial input is tokenized. Known executables, aliases, and b
 Submitted commands retain their semantic presentation in the NMSh output history. The styling (e.g. lavender for known commands, red for unknown commands) persists even after the command completes.
 
 ## Shell compatibility
-Current: zsh-first
-Future: The ShellAdapter architecture (detailed in ROADMAP.md) is designed to eventually support Bash, Fish, Nushell, and pwsh. Multi-shell support does not exist yet.
+Released (0.7.0): zsh only.
+In v0.16 (unreleased): a real ShellAdapter with zsh, Fish and Bash 4.4+ backends ([docs/architecture/shell-adapter.md](docs/architecture/shell-adapter.md)). Nushell and PowerShell remain future.
 
 ## Testing / verification
 Canonical verification commands:
@@ -94,7 +94,7 @@ Key references:
 - [ROADMAP.md](ROADMAP.md) — product direction and issue index
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
 - [v0.7.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) — current stable release
-- [#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132) — next planned direction (see [ROADMAP.md](ROADMAP.md))
+- [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the cumulative v0.16 release candidate (unreleased); [#308](https://github.com/raiseCatError/notMyShell/issues/308) tracks release readiness
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board
 - [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
 - [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions

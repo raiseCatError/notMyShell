@@ -5,15 +5,13 @@
 | | |
 |---|---|
 | **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
+| **Next release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/milestone/14): the cumulative release candidate in [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) (`feature/v016-platform-portability-agents` → `dev`), feature-frozen and unreleased. Release readiness: [#308](https://github.com/raiseCatError/notMyShell/issues/308) |
+| **After v0.16** | [v0.17.0 — Host Compatibility & Tool Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
-| **Next direction** | [v0.8.0 — Command Intelligence & Navigation](https://github.com/raiseCatError/notMyShell/milestone/8), in development |
-| **Stacked development** | [v0.9.0 — Tools, Integrations & Workflows](https://github.com/raiseCatError/notMyShell/milestone/9), development-complete, unmerged; physical QA pending |
-| **Prior stacked milestone** | [v0.10.0 — Terminal Hosts & Compatibility](https://github.com/raiseCatError/notMyShell/milestone/10), development acceptance complete as an unmerged stack; [evidence and limitations](docs/testing/v010-acceptance.md), physical QA pending |
-| **Current stacked milestone** | [v0.13.0 — Portability & Platform Foundations](https://github.com/raiseCatError/notMyShell/milestone/13), Linux runtime/CI and Windows feasibility; unmerged, physical QA deferred |
-| **v0.16 implementation** | Sessions & agents, portability, images, Linux/WSL, ShellAdapter with Fish and Bash, transcript find and editor bridge — branch `feature/v016-platform-portability-agents`, unmerged; [physical QA pending](docs/testing/v016-physical-qa.md) |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The released package is still 0.7.0; v0.16 is not released.
 
 ## Released — v0.2.0 Structured Execution
 
@@ -116,88 +114,50 @@ The final release candidate also included the passive-hover selection fix.
 | [#172](https://github.com/raiseCatError/notMyShell/issues/172) | Semantic motion engine; shimmer migrated onto it |
 | [#173](https://github.com/raiseCatError/notMyShell/issues/173) | Deterministic presentation mode |
 
-## In development — v0.8.0 Command Intelligence & Navigation
+## Next release — v0.16 (unreleased)
 
-[Milestone #8](https://github.com/raiseCatError/notMyShell/milestone/8) contains #140, #141, #142, #143, #144, #145, #147 and #152. The [architecture and implemented scope](docs/design/command-intelligence.md) describe the unmerged review stack; the [physical-QA checklist](docs/qa/v0.8.0-physical-qa.md) remains pending. Package version stays at 0.7.0 during development.
+The milestones planned as v0.8–v0.13 were developed as a stack of review branches and are integrated, together with the v0.14–v0.16 work, in one cumulative release candidate. Their issues are closed; the milestones are closed. The maintainer's earlier physical QA of the integrated build passed; only behavior changed afterwards needs a fresh look ([checklist](docs/testing/v016-physical-qa.md)). Feature work is frozen; remaining release steps are in [#308](https://github.com/raiseCatError/notMyShell/issues/308). Package version stays 0.7.0 until release preparation is authorized.
 
-Native structured completion, command-level history, reusable optional pickers, explicit directory navigation and conservative edit-only corrections build on the released UI foundation. External completion sources remain research; #52 stays parked. #155 / #193 supply measurements without absorbing the full performance issue into this milestone.
+| Area | Implemented scope |
+|---|---|
+| Command intelligence (formerly v0.8) | Structured completion menu with a bundled static catalog generated from withfig/autocomplete and carapace-bin plus the live shell source; structured `/history`; Atuin, zoxide, fzf and Television providers; command inspector; block actions; correction suggestions; completion notifications |
+| Tools & workflows (formerly v0.9) | `/tools` browser and curated catalog (#306/#307), supported Starship configuration, optional mise awareness, session presets, welcome providers, Linguist language colors, VHS tapes |
+| Hosts & compatibility (formerly v0.10) | TerminalHost capabilities, Terminal.app baseline, Ghostty integration, passive iTerm2/Kitty/WezTerm profiles, CLI/TUI fixtures, OSC 8 links |
+| Shell intelligence (formerly v0.11) | Configured-zsh completion bridge, alias/function metadata, syntax roles, ShellAdapter research (now implemented, below) |
+| Chroma & motion (formerly v0.12) | Composable Chroma treatments, bounded transient effects on a shared clock |
+| Portability (formerly v0.13) | Linux baseline and CI, hardening; WSL reporting; Windows research (native Windows is no-go) |
+| Sessions, agents, platform (v0.16) | Session notices (short-lived events), agent activity, `/resume` viewer, `nmsh config export/import`, `nmsh uninstall`, `nmsh doctor`, images, Linux/WSL, ShellAdapter with zsh, Fish and Bash, `/find` and `/filter`, editor bridge, `/watch`, `/doctor`, paste preview and review |
+| Ask & Local Understanding | Deterministic Ask, optional local model (Auto by default, never downloads without a Yes), `/llm` |
+| Appearance | `/appearance` hub; Clean and Rich motion rendering with per-rendering tuning; cursor effects with a capability matrix; Setup Cat as the complete customization entry point; grouped Config and Status |
 
-The earlier milestone #7 now represents unscheduled Discoverability & Integrations; its unrelated scope remains separate.
+## After v0.16 — v0.17 Host Compatibility & Tool Discovery
 
-The continuation's final acceptance head is [#251](https://github.com/raiseCatError/notMyShell/pull/251),
-`docs/v08-continuation-final-verification` at `2dfbf9c12c54ada8af364bc44db87bc70f0b77c0`.
-It includes command inspector, block actions, notifications and fixture hygiene.
-These remain implemented/unmerged with cumulative physical QA pending, not reopened backlog.
+[Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15): physical validation and discovery follow-ups, none of which block v0.16.
 
-## Stacked development — v0.9.0 Tools, Integrations & Workflows
+| Issue | Remaining scope |
+|---|---|
+| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Contextual `Relevant here` tool discovery from local facts, more package managers, active-hook detection |
+| [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Physical passes in iTerm2, Kitty and WezTerm |
+| [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Physical CLI/TUI interoperability runs (ongoing) |
+| [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Manual pass inside Supacode or a similar agent-oriented host |
+| [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Physical validation on real Linux and WSL 2 |
 
-[Milestone #9](https://github.com/raiseCatError/notMyShell/milestone/9) adopts #9,
-#83, #153, #154, #176, #177 and #178. Research children #252 (supported config)
-and #253 (mise awareness) are also included. #176/#177/#178 moved from the
-unscheduled grouping; #179/#180 remain there. The stack consumes the pinned
-final v0.8 head without modifying or merging it; package version remains 0.7.0.
+## Backlog — future, unscheduled
 
-Review order: #251 → #182 → #181 → #183 → #254 → #255 → #256 (#253)
-→ #257 (#153) → final acceptance on `docs/v09-final-acceptance`.
-Linguist identity, external welcome adapters, deterministic VHS tooling,
-supported Starship configuration, Tools discovery/install, consent-based optional
-mise awareness and new-live-session presets are implemented in the unmerged stack.
-The ENOSPC checkpoint was resumed and #255 local verification passed; it is ready
-for review. See the [final development record](docs/development/v0.9.0-final-acceptance.md)
-and [single additive QA checklist](docs/qa/v0.9.0-physical-qa.md).
-Physical QA remains pending, issues remain open, version remains 0.7.0, and v0.9
-has not shipped. No unrelated backlog or release preparation is included.
-
-## Stacked development — v0.13.0 Portability & Platform Foundations
-
-[Milestone #13](https://github.com/raiseCatError/notMyShell/milestone/13) contains
-Linux research #18, Windows research #19, Linux implementation #279 and
-portability hardening #281. Its frozen cumulative base is PR #278 at
-`cfc9c08a5fb7b5f3bc637400a59da7a714a58ae4`; lower published branches are unchanged.
-Review #278 → #280 (Linux baseline/CI) → #282 (portability hardening) → final
-v0.13 acceptance/docs PR. Every PR targets its immediate predecessor; no merge
-or release is authorized. Package and lockfile remain 0.7.0. Physical QA is
-intentionally deferred. Custom prompts #73, graphics #151, layout #79 and new
-shell backends are outside this milestone.
-
-## Backlog — Research and Future Features
-
-These remain open and are not scheduled for a release.
+[Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7). These remain open and are not scheduled for a release.
 
 | Issue | Title |
 |---|---|
-| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability |
-| [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins |
-| [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules |
-| [#78](https://github.com/raiseCatError/notMyShell/issues/78) | Chroma: gradients, animated color treatments, and transient visual effects |
+| [#305](https://github.com/raiseCatError/notMyShell/issues/305) | NMSh Native module ecosystem and upstream module ports (also carries the user-defined prompt modules direction from the closed research issue #73) |
+| [#304](https://github.com/raiseCatError/notMyShell/issues/304) | Theme Bridge and semantic terminal integration |
+| [#296](https://github.com/raiseCatError/notMyShell/issues/296) | Hosted SSH demo (post-1.0) |
+| [#20](https://github.com/raiseCatError/notMyShell/issues/20) | Ongoing polish triage index |
 
-zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
+zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively. Native fzf-tab interoperability is a documented non-goal (it would require ceding editor ownership).
 
-## Later — Terminal Host Independence
+## Longer term — shells and platforms
 
-Keep TerminalHost abstraction and host compatibility separate from v0.3. NMSh core remains host agnostic; enhanced host capabilities must not become structural dependencies.
-
-| Issue | Title |
-|---|---|
-| [#10](https://github.com/raiseCatError/notMyShell/issues/10) | TerminalHost capability abstraction |
-| [#11](https://github.com/raiseCatError/notMyShell/issues/11) | Make macOS Terminal the baseline host |
-| [#12](https://github.com/raiseCatError/notMyShell/issues/12) | Ghostty enhanced integration (post-abstraction) |
-| [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Compatibility passes for iTerm2, Kitty, and WezTerm |
-| [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Investigate NMSh interoperability with Supacode and agent-oriented terminal hosts |
-
-## Ongoing — CLI/TUI Compatibility and Polish
-
-NMSh provides the surrounding interaction and presentation layer; tools such as `gh`, zoxide, Atuin, tmux, editors, and agent CLIs keep their own interfaces. See [#14](https://github.com/raiseCatError/notMyShell/issues/14) for compatibility work and [#20](https://github.com/raiseCatError/notMyShell/issues/20) for uncategorized polish that does not already have a focused issue.
-
-## Longer Term — Shells and Platforms
-
-As of v0.16 (unmerged) zsh, Fish and Bash are implemented backends behind a real [ShellAdapter](docs/architecture/shell-adapter.md); Nushell and native Windows (ConPTY + PowerShell/Nu) remain later. Before v0.16: zsh remained the only first-class backend. v0.13 implements a Linux development baseline and researches Windows/ConPTY/WSL; it is not a public platform release. Native Windows and additional shell backends remain unsupported. See [Linux foundations](docs/architecture/v013-linux-foundations.md), [Windows feasibility](docs/architecture/v013-windows-feasibility.md), and [deferred portability QA](docs/testing/v013-physical-qa.md).
-
-| Issue | Title |
-|---|---|
-| [#17](https://github.com/raiseCatError/notMyShell/issues/17) | Research ShellAdapter architecture for future multi-shell support |
-| [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Investigate Linux support |
-| [#19](https://github.com/raiseCatError/notMyShell/issues/19) | Research Windows / ConPTY feasibility |
+In v0.16 (unreleased) zsh, Fish and Bash 4.4+ are implemented backends behind a real [ShellAdapter](docs/architecture/shell-adapter.md). Nushell and PowerShell remain later. Linux and WSL 2 are supported by automated validation, with physical validation tracked in #18; native Windows (ConPTY) is a no-go per the [Windows feasibility research](docs/architecture/v013-windows-feasibility.md). See also [Linux foundations](docs/architecture/v013-linux-foundations.md).
 
 ## Design Principles
 

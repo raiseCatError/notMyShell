@@ -2,7 +2,8 @@
 
 Branch `feature/v016-platform-portability-agents`, started at `dev`
 `04ec6b56c81a90fbb847a2346e0ce2439d35594c`. Automated validation only; nothing
-here is physical terminal QA (see [v016-physical-qa.md](v016-physical-qa.md)).
+here is physical terminal QA. The maintainer's earlier physical pass of the integrated v0.16 build
+found it good; what is still pending is listed in [v016-physical-qa.md](v016-physical-qa.md).
 
 ## Environment (cloud container)
 
@@ -78,3 +79,13 @@ checklist is in [v016-physical-qa.md](v016-physical-qa.md).
   migration; managed-file refresh states and reload lines; Setup coverage of every
   Settings row and entry point, syntax color mode and theme selection with the real
   preview, routes, and the embedded /cursor editor leaving the draft until Apply.
+
+## Final pre-freeze polish (automated)
+
+Head after this pass: see PR #303. Clean/Rich motion rendering with per-rendering tuning, distinct cursor
+effects, Zed cursor-color truthfulness, grouped Config and Status.
+
+- `npm run build`, `npm run typecheck`, `git diff --check`: pass.
+- `npm test` at default concurrency: 1453 tests plus the 8-test ranking group, 0 failures.
+- New focused files: `motionRendering`, `cursorVisuals`, `settingsGrouping`; extended `settingsControls`,
+  `settingsPanel`, `appearanceHub`, `motionPreview`, `cursorCapabilities`.

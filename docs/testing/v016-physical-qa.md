@@ -1,9 +1,17 @@
-# v0.16 physical QA checklist (pending)
+# v0.16 physical QA
 
-Nothing in v0.16 has passed physical terminal QA. Cloud/CI runs (Ubuntu with
-zsh 5.9, Fish 3.7, Bash 5.2) are automated validation only. Record host and
-version, OS, font (Nerd or Safe), commit, result and failures. Supported is not
-the same as physically validated.
+## Status
+
+- **Already physically validated (baseline):** the maintainer ran the v0.16 physical QA pass on the
+  integrated build before the follow-up passes, and it passed. The checklists below from "Session
+  notices and /resume" through "Linux / WSL 2" are that baseline and are not reopened.
+- **Still required (new since that pass):** only behavior introduced or materially changed afterwards,
+  listed in the last two sections: "Post-QA follow-up" and "Final pre-freeze pass".
+- **Not covered by the maintainer's hosts:** Linux and WSL 2 on real machines (tracked in #18) and
+  iTerm2, Kitty and WezTerm windows (#13). CI on Ubuntu and macOS is automated validation only.
+
+Record host and version, OS, font (Nerd or Safe), commit, result and failures. Supported is not the
+same as physically validated.
 
 Hosts: integrated (Zed, VS Code) and standalone (Ghostty, macOS Terminal,
 Superlogical where available) are equally first-class; Kitty, iTerm2 and
@@ -82,7 +90,7 @@ WezTerm are supported profiles.
 
 ## Post-QA follow-up (cursor, motion, paste, notices, Setup)
 
-Not yet physically validated; automated coverage is in
+**New since the earlier pass; needs a fresh physical look.** Automated coverage is in
 [v016-acceptance.md](v016-acceptance.md). Design:
 [../design/v016-physical-qa-followup.md](../design/v016-physical-qa-followup.md).
 
@@ -136,8 +144,8 @@ Not yet physically validated; automated coverage is in
 
 ## Final pre-freeze pass
 
-The earlier v0.16 physical QA passed (maintainer, before the follow-up work). Only what changed
-afterwards needs a fresh look:
+**New since the earlier pass; needs a fresh physical look.** The earlier v0.16 physical QA passed
+(maintainer, before the follow-up work); only what changed afterwards is listed:
 
 - **Motion rendering**: `/appearance` → Motion → Rendering Clean / Rich. The preview shows the
   difference at once; Rich is the stronger filled look, Clean keeps the window transparent. R replays.

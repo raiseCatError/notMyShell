@@ -19,8 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Images:** capability-driven Kitty graphics / iTerm2 inline images for `/about`, with a text fallback.
 - **Linux:** freedesktop notifications via `notify-send` when available.
 
+- **Integrated development stacks (formerly planned as v0.8–v0.13):** structured completion with a bundled catalog and `/history` filters, Atuin/zoxide/fzf/Television providers, command inspector, block actions, correction suggestions, completion notifications, the `/tools` browser and curated catalog, supported Starship configuration, optional mise awareness, session presets, OSC 8 links, host capability profiles, Chroma treatments and effects, and the Linux baseline. See [ROADMAP.md](ROADMAP.md).
+- **Ask and Local Understanding:** deterministic Ask over NMSh's own capabilities and an optional local model (`/llm`); Auto by default for fresh installs, never downloads without an explicit Yes.
+- **Appearance and Setup:** `/appearance` hub; Clean and Rich motion rendering with per-rendering intensity and speed; cursor shape, motion, effects and colors with a capability matrix (Portable, Ghostty, Kitty) and a replayable preview; Setup Cat reaches every setting; Config and Status are grouped under named headings.
+- **Paste and notices:** deterministic paste classification with a bounded, scrollable Review; session notices are short-lived events with sticky attention.
+- **Doctor, watch:** `/doctor` local read-only checks and `/watch` scheduled commands.
+
 ### Notes
-- None of the above has passed physical terminal QA yet; see [docs/testing/v016-physical-qa.md](docs/testing/v016-physical-qa.md). Linux and WSL 2 are supported by automated validation only.
+- The maintainer's earlier physical QA of the integrated v0.16 build passed; changes made afterwards (listed in [docs/testing/v016-physical-qa.md](docs/testing/v016-physical-qa.md)) still need a physical look. Linux and WSL 2 are supported by automated validation only (#18).
+- The package version remains 0.7.0 until release preparation.
 
 ## [0.7.0] - 2026-10-01
 
