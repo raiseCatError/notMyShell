@@ -147,6 +147,7 @@ import {formatterAllowed} from '../ask/repair.js';
 import {packageIntent, packageQueries, type BrewFacts, type PackageIntent} from '../ask/packages.js';
 import {brewMutationAllowed, homebrewAdapter} from '../packages/homebrew.js';
 import {toolOwner} from '../tools/ToolUpdates.js';
+import {tldrExamples} from '../shell/tldr.js';
 import {normalizeRequest} from '../ask/resolver.js';
 import {applyPlan, sha256} from '../ask/fileEdit.js';
 import type {CommandEnvironment} from '../ask/commands.js';
@@ -5379,7 +5380,7 @@ export class TerminalApp {
       if (type === 'alias' || type === 'function' || type === 'builtin') return {kind: type};
       const path = /^[\w.+-]+$/u.test(name) ? resolveCommand(name) : undefined;
       return path ? {kind: 'executable', path} : undefined;
-    }, install: name => {
+    }, ...(resolveCommand('tldr') ? {examples: (path: readonly string[]) => tldrExamples(resolveCommand('tldr'), path)} : {}), install: name => {
       // Only a curated /tools entry for this exact executable name; never a guessed package.
       const tool = TOOLS.find(item => (item.executable ?? item.id) === name && !item.legacy);
       const recipe = tool ? toolInstall(tool) : undefined;

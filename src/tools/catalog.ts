@@ -53,6 +53,8 @@ export const TOOLS: readonly Tool[] = [
   tool('macchina', 'Macchina', 'Shell / Workflow', 'Optional startup welcome capture.', 'https://github.com/Macchina-CLI/macchina',
     {providerFamily: 'welcome', lifecycle: 'maintenance'}),
   tool('stow', 'GNU Stow', 'Shell / Workflow', 'Explicitly managed dotfile symlinks.', 'https://www.gnu.org/software/stow/'),
+  tool('tealdeer', 'tealdeer (TLDR pages)', 'Shell / Workflow', 'Optional TLDR pages client; Ask uses its local cache for practical command examples.', 'https://github.com/tealdeer-rs/tealdeer',
+    {executable: 'tldr', package: 'tealdeer'}),
   tool('tmux', 'tmux', 'Shell / Workflow', 'Independent terminal multiplexer.', 'https://github.com/tmux/tmux', {versionArgs: ['-V']}),
   tool('docker', 'Docker CLI', 'Containers / Infrastructure', 'Container client; daemon availability is not inferred.', 'https://docs.docker.com/', {package: 'docker'}),
   tool('kubectl', 'kubectl', 'Containers / Infrastructure', 'Kubernetes client; credentials/cluster are not inspected.', 'https://kubernetes.io/docs/reference/kubectl/', {versionArgs: undefined, package: 'kubernetes-cli'}),

@@ -11,14 +11,14 @@ import type {AskContext, AskOption, AskOutcome, CommandBlock} from './types.js';
  */
 
 export type CommandQuestion =
-  | {intent: 'explain' | 'syntax' | 'options'; words: string[]}
+  | {intent: 'explain' | 'syntax' | 'options' | 'examples'; words: string[]}
   | {intent: 'option'; words: string[]; option: string};
 
 /** Tools NMSh integrates as providers: asking about them means the tool itself, with NMSh's note added. */
 const PROVIDER_TOOLS = new Set(['zoxide', 'fzf', 'tv', 'television', 'atuin', 'starship', 'fastfetch', 'neofetch', 'deja', 'llama-server', 'ollama']);
 
 const LEAD = /^(?:please |so |ok |hey )?(?:what(?: is| are|'s| does| do)|whats|explain|tell me about|describe|how (?:do|can|would|should) i|how to|how does|show me|give me|syntax (?:of|for)|usage (?:of|for)|options (?:of|for)|flags (?:of|for))\b\s*/u;
-const TRAIL = /\s+(?:do|does|mean|means|command|commands|have|has|syntax|usage|flags|options|work|works|for|again)$/u;
+const TRAIL = /\s+(?:do|does|mean|means|command|commands|have|has|syntax|usage|flags|options|work|works|for|again|examples?)$/u;
 const FILLER = new Set(['the', 'a', 'an', 'use', 'using', 'command', 'cli', 'tool', 'program', 'this', 'my']);
 
 /** Parse a normalized request into a command question, or undefined. Pure: whether the command is known is checked by the caller. */
@@ -26,9 +26,10 @@ export function parseCommandQuestion(text: string): CommandQuestion | undefined 
   const lead = LEAD.exec(text);
   const syntaxWords = /\b(?:syntax|usage)\b/u.test(text);
   const optionWords = /\b(?:flags|options|switches)\b/u.test(text);
-  if (!lead && !syntaxWords && !optionWords) return undefined;
+  const exampleWords = /\bexamples?\b/u.test(text);
+  if (!lead && !syntaxWords && !optionWords && !exampleWords) return undefined;
   let rest = lead ? text.slice(lead[0].length) : text.replace(/^(?:what|which) (?=(?:flags|options|switches)\b)/u, '');
-  rest = rest.replace(/^(?:flags|options|switches) (?:does|do|can|for|of) /u, '');
+  rest = rest.replace(/^(?:flags|options|switches) (?:does|do|can|for|of) /u, '').replace(/^(?:show|give|list)(?: me)? /u, '').replace(/^(?:some )?examples? (?:of|for|using) /u, '');
   rest = rest.replace(/^(?:the )?(?:syntax|usage|flags|options) (?:of|for) /u, '');
   for (let previous = ''; previous !== rest;) { previous = rest; rest = rest.replace(TRAIL, ''); }
   const optionMatch = /(?:^|\s)(--?[a-z0-9][\w-]*(?:=\S*)?)(?=\s|$)/u.exec(rest);
@@ -36,13 +37,15 @@ export function parseCommandQuestion(text: string): CommandQuestion | undefined 
   if (optionMatch) return {intent: 'option', words, option: optionMatch[1]!};
   if (!words.length) return undefined;
   const howTo = /^how (?:do|can|would|should) i|^how to/u.test(lead?.[0] ?? '');
-  return {intent: optionWords ? 'options' : syntaxWords || howTo ? 'syntax' : 'explain', words};
+  return {intent: exampleWords ? 'examples' : optionWords ? 'options' : syntaxWords || howTo ? 'syntax' : 'explain', words};
 }
 
 export interface CommandEnvironment {
   reference: CommandReference;
   /** The command's identity in this shell, when NMSh can tell (PATH lookup and the live shell's names); never runs it. */
   identity(name: string): {kind: 'executable' | 'alias' | 'function' | 'builtin'; path?: string} | undefined;
+  /** Optional TLDR examples for a command path (tealdeer's local cache); empty when unavailable. */
+  examples?(path: readonly string[]): Array<{description: string; command: string}>;
   /** NMSh's curated install for this exact executable name (the /tools catalog), never a guessed package. */
   install?(name: string): {tool: string; label: string} | undefined;
 }
@@ -129,6 +132,12 @@ export function answerCommandQuestion(question: CommandQuestion, context: AskCon
   if (question.intent === 'explain' && facts.subcommands.length) {
     lines.push('', `Subcommands include ${facts.subcommands.slice(0, 8).map(item => item.names[0]).join(', ')}${facts.subcommands.length > 8 ? ', …' : ''}.`);
   }
+  // Practical examples (optional TLDR) when asked for, or when local syntax facts are sparse.
+  if (question.intent === 'examples' || (question.intent === 'syntax' && !facts.options.length)) {
+    const examples = env.examples?.(facts.path) ?? [];
+    if (examples.length) lines.push('', 'Examples from TLDR', ...examples.slice(0, 6).flatMap(example => [`  ${example.description}`, `    ${example.command}`]));
+    else if (question.intent === 'examples') lines.push('', `No local TLDR examples for ${path}.`);
+  }
   if (PROVIDER_TOOLS.has(name) && concept.concepts[0]) lines.push('', `In NMSh: ${concept.concepts[0].description}`);
   // Next steps from facts: install only with a curated recipe; otherwise the next useful reference.
   const next: AskOption[] = [];
@@ -139,6 +148,7 @@ export function answerCommandQuestion(question: CommandQuestion, context: AskCon
     else lines.push('NMSh has no curated install recipe for it.');
   }
   if (question.intent === 'explain' && syntax) next.push({key: `syntax:${path}`, label: 'Show syntax and useful options', refine: `how do i use ${path}`});
+  if (question.intent === 'examples' && !env.examples && env.install?.('tldr')) next.push({key: 'install:tldr', label: 'Install tealdeer for TLDR examples', outcome: installProposal('tldr', env.install('tldr')!)});
   if (question.intent === 'syntax' && facts.options.length > 6) next.push({key: `options:${path}`, label: `All ${facts.options.length} options`, refine: `what flags does ${path} have`});
   return {kind: 'answer', capability: 'help.command', text: lines.join('\n'), ...(syntax && question.intent !== 'explain' ? {block: commandBlock(facts.path, 'reference')} : {}),
     ...(next.length ? {next: next.slice(0, 4)} : {}), referents: {command: facts.path}};
