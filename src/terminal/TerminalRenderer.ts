@@ -140,6 +140,11 @@ export class TerminalRenderer {
     this.overlayPlaced = false;
   }
 
+  /** The rows last written to the screen, for presentation-only captures (screen savers). Never sent anywhere. */
+  snapshot(): string[] {
+    return this.previous.map(row => (row === '\u0000' ? '' : row));
+  }
+
   render(frame: TerminalFrame): void {
     if (!this.active || this.suspended) return;
     const maximum = Math.max(this.previous.length, frame.rows.length);

@@ -40,6 +40,7 @@ export async function restoreAtStartup(live: readonly SessionInfo[], deps: Start
     if (choice === 'always') deps.saveStartup('always');
     if (choice === 'never') deps.saveStartup('never');
     if (choice === 'resume' || choice === 'always') ids = [plan.session.id];
+    // 'kill' was confirmed and performed by the prompt; the session is archived and this launch starts fresh.
   }
   const [target, ...others] = ids;
   if (others.length === 0) return target ? {target} : {};

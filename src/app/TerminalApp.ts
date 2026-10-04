@@ -15,6 +15,8 @@ import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId
 import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
+import {selectOpener} from '../host/desktop.js';
+import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
 import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState} from '../setup/SetupCat.js';
@@ -23,7 +25,10 @@ import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
 import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
 import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
-  SCREENSAVER_MIN_SIZE, screensaverKey, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+  SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
+import {makeRng} from '../idle/screenEffects.js';
+import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
 import {createThemeStudio, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
@@ -91,7 +96,7 @@ import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerle
 import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
-import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
+import {applyUpdate, checkForUpdate, compareVersions, detectInstall, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
@@ -381,7 +386,12 @@ export class TerminalApp {
   private toolsPanel?: ToolsPanel;
   /** Idle visuals: one inactivity timer while armed, one frame subscription while showing; neither exists otherwise. */
   private idleTimer?: NodeJS.Timeout;
-  private idle?: {mode: IdleMode; startedAt: number; frame: number; interval: number; preview: boolean; paused: boolean; still: boolean};
+  private idle?: {mode: IdleMode; startedAt: number; frame: number; interval: number; preview: boolean; paused: boolean; still: boolean; capture?: ScreenCapture; random?: boolean; offset: number};
+  /** Snapshot of the screen taken when the screensaver gallery opened: the gallery preview's material. */
+  private saverCapture?: ScreenCapture;
+  private saverGalleryCapture?: ScreenCapture;
+  private saverGalleryMode?: IdleMode;
+  private randomSaver = makeRng(0x5eed);
   private idleSubscription?: () => void;
   private readonly idleGrid = new CellGrid();
   private lastActivity = Date.now();
@@ -537,6 +547,7 @@ export class TerminalApp {
           this.semanticService.applyShellKnowledge(marker.knowledge);
           this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
+          this.rememberShellNames(marker.knowledge);
         }
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
@@ -649,6 +660,7 @@ export class TerminalApp {
       this.shellJobs = knowledgeJobCount(attached.knowledge) ?? 0;
       this.semanticService.applyShellKnowledge(attached.knowledge);
       this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
+      this.rememberShellNames(attached.knowledge);
     }
     if (!journal) return;
     this.continuedJournal = journal;
@@ -1960,7 +1972,7 @@ export class TerminalApp {
       if (slash.start) {
         if (slash.mode) this.applySettingsConfiguration({...this.promptConfiguration, idleVisuals: {...this.promptConfiguration.idleVisuals, mode: slash.mode}});
         this.startIdle(true);
-      } else this.screensaverPanel = createScreensaverPanel(Date.now());
+      } else this.openScreensaverGallery();
     }
     // The cursor has one configuration: /cursor opens its existing Settings rows.
     else if (slash.kind === 'cursor') this.openCursorPanel();
@@ -2461,12 +2473,65 @@ export class TerminalApp {
   }
 
 
-  /** Opt-in background discovery: one quiet line per newly seen release, never an interruption. */
+  private pendingAutoUpdate?: ReleaseInfo;
+  private autoUpdateTimer?: NodeJS.Timeout;
+  private preparingUpdate?: string;
+
+  private updateFrequencyInEffect(): UpdateCheckFrequency {
+    const {updateMode, updateFrequency} = this.promptConfiguration;
+    return updateMode === 'off' || updatesDisabledByEnvironment() ? 'off' : updateFrequency;
+  }
+
+  /**
+   * Quiet, due-gated discovery. Notify only: one line per newly seen release.
+   * Automatic: remember the release and prepare it at the next idle point.
+   */
   private async quietUpdateCheck(): Promise<void> {
-    const release = await backgroundUpdateCheck(this.buildIdentity.version, this.promptConfiguration.updateChecks).catch(() => undefined);
-    if (!release || this.stopped) return;
-    this.output.addHistoryLine(`${INFO}NMSh ${release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
+    const result = await checkForUpdate(this.buildIdentity.version, this.updateFrequencyInEffect()).catch(() => ({announce: false} as const));
+    if (this.stopped) return;
+    if (this.promptConfiguration.updateMode === 'automatic' && this.updateFrequencyInEffect() !== 'off') {
+      const state = loadUpdateState();
+      const version = 'release' in result && result.release ? result.release.version : state.latestVersion;
+      const settled = version !== undefined && (state.installedVersion === version || state.failed?.version === version || state.skipped?.version === version);
+      if (version && compareVersions(version, this.buildIdentity.version) > 0 && !settled) {
+        this.pendingAutoUpdate = ('release' in result && result.release) || {version, tag: `v${version}`, summary: [],
+          url: `https://github.com/raiseCatError/notMyShell/releases/tag/v${version}`};
+        this.scheduleAutoUpdate(5_000);
+      }
+      return;
+    }
+    if (!('release' in result) || !result.release || !result.announce) return;
+    this.output.addHistoryLine(`${INFO}NMSh ${result.release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
     this.render();
+  }
+
+  private scheduleAutoUpdate(delay: number): void {
+    if (this.autoUpdateTimer || this.stopped || !this.pendingAutoUpdate) return;
+    this.autoUpdateTimer = setTimeout(() => { this.autoUpdateTimer = undefined; void this.autoUpdateTick(); }, delay);
+    this.autoUpdateTimer.unref?.();
+  }
+
+  /** Starts the build only at a calm prompt NMSh owns; otherwise waits for the next tick. */
+  private async autoUpdateTick(): Promise<void> {
+    const release = this.pendingAutoUpdate;
+    if (!release || this.stopped || this.promptConfiguration.updateMode !== 'automatic') { this.pendingAutoUpdate = undefined; return; }
+    if (this.updateInProgress || !this.idleEligible()) { this.scheduleAutoUpdate(30_000); return; }
+    this.pendingAutoUpdate = undefined;
+    this.updateInProgress = true;
+    this.preparingUpdate = release.version;
+    this.render();
+    try {
+      const outcome = await prepareAutomaticUpdate(release);
+      if (this.stopped || !outcome.announce) return;
+      const line = outcome.kind === 'ready' ? `NMSh ${outcome.version} ready · Restart NMSh to use it`
+        : outcome.kind === 'skipped' ? `NMSh ${outcome.version} is available · Automatic update skipped · Run /update for details`
+        : `Automatic update to ${outcome.version} did not complete and was rolled back · Run /update for details`;
+      this.output.addHistoryLine(`${outcome.kind === 'ready' ? SUCCESS : INFO}${line}${RESET}`);
+    } catch { /* an automatic update never crashes the session */ } finally {
+      this.updateInProgress = false;
+      this.preparingUpdate = undefined;
+      if (!this.stopped) this.render();
+    }
   }
 
   /**
@@ -2486,6 +2551,9 @@ export class TerminalApp {
         return reply(`Could not check for updates: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, ERROR);
       }
       if (compareVersions(release.version, current) <= 0) return reply(`NMSh ${current} is up to date (latest release ${release.tag}).`, SUCCESS);
+      if (readyVersion(loadUpdateState(), current) === release.version) {
+        return reply(`Running      ${current}\nInstalled    ${release.version}\nStatus       Restart NMSh to use it`, SUCCESS);
+      }
       const header = [`NMSh ${current} → ${release.version} is available.`, ...release.summary.map(line => `  ${line}`), release.url];
       const planned = await planUpdate(await detectInstall(installRoot()), release);
       if (!planned.ok) {
@@ -2503,14 +2571,43 @@ export class TerminalApp {
         this.render();
       });
       this.offeredUpdate = undefined;
-      if (result.ok) this.milestoneEffect();
+      if (result.ok) { recordInstalled(release.version); this.milestoneEffect(); }
       this.output.addHistoryLine(result.ok
-        ? `${SUCCESS}NMSh ${release.version} is installed. Restart NMSh to use it; this session keeps running ${current}.${RESET}`
+        ? `${SUCCESS}NMSh ${release.version} is ready ✓  This session is still running ${current}. Restart NMSh when convenient to use the new version.${RESET}`
         : `${ERROR}The update did not complete; the lines above say what happened.${RESET}`);
     } finally {
       this.updateInProgress = false;
       this.render();
     }
+  }
+
+  private updateStatusRows(): Array<{label: string; value: string; tone?: 'success' | 'warning' | 'muted'}> {
+    const running = this.buildIdentity.version;
+    const {updateMode, updateFrequency} = this.promptConfiguration;
+    const state = loadUpdateState();
+    const latest = state.latestVersion;
+    const newer = latest !== undefined && compareVersions(latest, running) > 0;
+    const ready = readyVersion(state, running);
+    let status: {value: string; tone?: 'success' | 'warning' | 'muted'};
+    if (this.preparingUpdate) status = {value: `Preparing ${running} → ${this.preparingUpdate}`};
+    else if (ready) status = {value: `Ready · restart NMSh to use ${ready}`, tone: 'success'};
+    else if (state.failed && latest === state.failed.version && newer) status = {value: 'Last automatic update failed · run /update', tone: 'warning'};
+    else if (state.skipped && latest === state.skipped.version && newer) status = {value: 'Automatic update skipped · run /update for details', tone: 'warning'};
+    else if (newer) status = {value: 'Update available', tone: 'warning'};
+    else if (latest) status = {value: 'Up to date', tone: 'success'};
+    else status = {value: updateMode === 'off' ? 'Not checking' : 'Check pending', tone: 'muted'};
+    const ago = state.lastCheck === undefined ? undefined : (() => {
+      const minutes = Math.max(0, Math.round((Date.now() - state.lastCheck) / 60_000));
+      return minutes < 1 ? 'just now' : minutes < 90 ? `${minutes}m ago` : minutes < 2880 ? `${Math.round(minutes / 60)}h ago` : `${Math.round(minutes / 1440)}d ago`;
+    })();
+    return [
+      {label: 'Running version', value: running},
+      ...(latest ? [{label: 'Latest release', value: latest}] : []),
+      {label: 'Mode', value: updateMode === 'automatic' ? 'Automatic' : updateMode === 'notify' ? 'Notify only' : 'Off'},
+      ...(updateMode === 'off' ? [] : [{label: 'Check frequency', value: updateFrequency === 'daily' ? 'Daily' : 'Weekly'}]),
+      {label: 'State', ...status},
+      ...(ago ? [{label: 'Last checked', value: ago}] : []),
+    ];
   }
 
   private showHelp(command: string): void {
@@ -3374,7 +3471,7 @@ export class TerminalApp {
   private openDestinationPanel(destination: SettingsDestination): void {
     if (destination === 'tools') this.startTools();
     else if (destination === 'setup') this.startSetup();
-    else if (destination === 'screensaver') this.screensaverPanel = createScreensaverPanel(Date.now());
+    else if (destination === 'screensaver') this.openScreensaverGallery();
     else if (destination === 'chromeColors') {
       const config = this.promptConfiguration;
       this.chromeEditor = createChromeEditor(config.uiChrome.colors ?? chromeColorsFrom(resolveChrome({...config.uiChrome, source: 'theme'}, config.nmsh.palette, config.nmsh.accent, config.customTheme)));
@@ -3447,10 +3544,18 @@ export class TerminalApp {
     }
   }
 
+  private shellNames?: ReadonlySet<string>;
+  private shellNamesComplete = false;
+  private rememberShellNames(knowledge: string): void {
+    this.shellNames = new Set(parseShellKnowledge(knowledge).keys());
+    this.shellNamesComplete = /^complete$/mu.test(knowledge);
+  }
+
   private startTools(onboarding = false): void {
     const config = this.promptConfiguration;
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
     state.updates = this.toolUpdates;
+    state.activation = toolId => integrationActivation(toolId, this.shellId, this.shellNames, this.shellNamesComplete);
     void refreshTools(state, () => { if (!this.stopped && this.toolsPanel === state) this.render(); });
   }
 
@@ -3562,14 +3667,17 @@ export class TerminalApp {
    */
   private idleEligible(): boolean {
     return !this.stopped && this.presentationStarted && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && !this.running && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
-      && !this.pickerOpening;
+      && (!this.running || this.promptConfiguration.idleVisuals.runWhileBusy) && !this.startupPending && !this.settingsPanelActive && !this.paletteState && !this.presetStartup?.active
+      && !this.pickerOpening && !this.updateInProgress && !this.agents.sessions.some(session => session.attention);
   }
 
   private onIdleTimeout(): void {
     const minutes = this.promptConfiguration.idleVisuals.timeout;
     if (!minutes) return;
     if (Date.now() - this.lastActivity < minutes * 60_000 - 50) { this.armIdle(); return; }
+    // Reduced Motion: screen savers never start by themselves (a manual preview still works).
+    const screenMode = SCREEN_MODE_EFFECT[this.promptConfiguration.idleVisuals.mode] !== undefined || this.promptConfiguration.idleVisuals.mode === 'random';
+    if (screenMode && idleMotion(this.promptConfiguration).still) { this.lastActivity = Date.now(); this.armIdle(); return; }
     if (this.idleEligible()) this.startIdle(false);
     else { this.lastActivity = Date.now(); this.armIdle(); }
   }
@@ -3583,20 +3691,49 @@ export class TerminalApp {
     }
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended || this.idle) return;
     if (this.idleTimer) { clearTimeout(this.idleTimer); this.idleTimer = undefined; }
+    const configured = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
+    // The screen as the user sees it right now (or, from the gallery, as it was before the gallery opened).
+    const wantsCapture = configured === 'random' || SCREEN_MODE_EFFECT[configured] !== undefined;
+    const captureDimensions = this.dimensions();
+    const captured = wantsCapture
+      ? (this.screensaverPanel && this.saverCapture ? this.saverCapture : this.captureScreen(captureDimensions.columns, captureDimensions.rows)) : undefined;
     // Exclusive ownership: every other presentation owner stops before the first idle frame.
     // The gallery (if any) stays open underneath and resumes its own preview on dismissal.
     this.suspendPresentationOwners();
-    const mode = effectiveMode(this.promptConfiguration.idleVisuals.mode, motion);
-    this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still};
+    const random = configured === 'random';
+    const mode: IdleMode = random ? this.pickRandomSaver() : configured;
+    this.idle = {mode, startedAt: Date.now(), frame: 0, interval: IDLE_FRAME_MS[mode], preview, paused: false, still: motion.still,
+      ...(captured ? {capture: {...captured, instances: {}}} : {}), random, offset: 0};
     this.renderer.invalidate();
     this.paintIdle();
     if (!motion.still) this.idleSubscription = presentationClock.subscribe(now => this.tickIdle(now), this.idle.interval);
+  }
+
+  private captureScreen(columns: number, rows: number): ScreenCapture {
+    return captureFromRows(this.renderer.snapshot(), columns, rows, isDeterministicPresentation() ? IDLE_SEED : (Date.now() ^ (process.pid << 8)) >>> 0);
+  }
+
+  private pickRandomSaver(previous?: IdleMode): IdleMode {
+    return (pickRandomSaver(this.randomSaver, previous) ?? 'blackHole') as IdleMode;
   }
 
   private tickIdle(now: number): void {
     const idle = this.idle;
     if (!idle || idle.paused) return;
     idle.frame += 1;
+    // Random switches only when the current effect finished a full loop, never mid-effect.
+    if (idle.random) {
+      const {columns, rows} = this.dimensions();
+      const sceneNow = isDeterministicPresentation() ? idle.frame * (SAVER_FRAME_MS[idle.mode] ?? 66) : now - idle.startedAt;
+      if (saverLoopComplete(idle.mode, {elapsed: sceneNow - idle.offset, width: columns, height: rows, ...(idle.capture ? {capture: idle.capture} : {})})) {
+        idle.mode = this.pickRandomSaver(idle.mode);
+        if (idle.capture) idle.capture = {...idle.capture, instances: {}};
+        idle.offset = sceneNow;
+        idle.interval = SAVER_FRAME_MS[idle.mode] ?? 66;
+        this.stopIdleFrames();
+        this.idleSubscription = presentationClock.subscribe(next => this.tickIdle(next), idle.interval);
+      }
+    }
     const started = performance.now();
     this.paintIdle(now);
     // Adaptive cadence: a frame that costs too much slows the scene instead of the shell.
@@ -3613,8 +3750,8 @@ export class TerminalApp {
     if (!idle) return;
     const {columns, rows} = this.dimensions();
     const time = idle.still ? 20_000 : sceneTime(now - idle.startedAt, idle.frame, idle.mode);
-    const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time,
-      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+    const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time: Math.max(0, time - idle.offset),
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(idle.capture ? {capture: idle.capture} : {})});
     try { this.renderer.render({rows: frame, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
     catch (error) { this.onTerminate(); throw error; }
   }
@@ -3956,6 +4093,13 @@ export class TerminalApp {
   /** Recommended-tool install state for Setup Cat's tools preview, detected once off the render path. */
   private readonly toolStatuses = new Map<string, ProviderStatus>();
 
+  private openScreensaverGallery(): void {
+    const {columns, rows} = this.dimensions();
+    this.saverCapture = this.captureScreen(columns, rows);
+    this.saverGalleryCapture = undefined;
+    this.screensaverPanel = createScreensaverPanel(Date.now());
+  }
+
   private renderScreensaverRows(state: ScreensaverPanelState, columns: number): string[] {
     const {rows} = this.dimensions();
     const settings = this.promptConfiguration.idleVisuals;
@@ -3963,9 +4107,18 @@ export class TerminalApp {
     const size = previewSize(columns, rows);
     const mode = effectiveMode(settings.mode, motion);
     const elapsed = Date.now() - state.startedAt;
-    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode, width: size.width, height: size.height,
+    // Screen savers preview over the real screen snapshot taken when the gallery opened (cropped to the preview box).
+    const previewMode: IdleMode = mode === 'random' ? 'blackHole' : mode;
+    let capture: ScreenCapture | undefined;
+    if (SCREEN_MODE_EFFECT[previewMode] && this.saverCapture) {
+      if (!this.saverGalleryCapture || this.saverGalleryCapture.width !== Math.min(size.width, this.saverCapture.width) || this.saverGalleryCapture.height !== Math.min(size.height, this.saverCapture.height) || this.saverGalleryMode !== previewMode) {
+        this.saverGalleryCapture = cropCapture(this.saverCapture, size.width, size.height); this.saverGalleryMode = previewMode;
+      }
+      capture = this.saverGalleryCapture;
+    }
+    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode: previewMode, width: capture?.width ?? size.width, height: capture?.height ?? size.height,
       time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode),
-      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd'});
+      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(capture ? {capture} : {})});
     // A real animated preview while the gallery is open; one timer, removed with the panel.
     if (!motion.still && !motion.disabled && !this.screensaverAnimation) {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.screensaverPanel) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
@@ -4247,6 +4400,7 @@ export class TerminalApp {
         {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
         {label: 'Node', value: process.version},
       ]),
+      statusSection('Updates', this.updateStatusRows()),
       statusSection('Shell & Session', [
         {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
         {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},
@@ -5980,7 +6134,7 @@ export class TerminalApp {
     }
     if (action.kind === 'openUrl') {
       if (!openableUrl(action.url)) { finish('That isn\'t a URL Ask opens.'); return; }
-      const opener = process.platform === 'darwin' ? '/usr/bin/open' : resolveCommand('xdg-open') ?? resolveCommand('wslview');
+      const opener = selectOpener();
       if (!opener) { finish(`No system URL opener is available here. The URL is ${action.url}`); return; }
       try { spawn(opener, [action.url], {detached: true, stdio: 'ignore'}).unref(); finish(`Opened ${action.url}.`); } catch { finish(`Couldn't open ${action.url}.`); }
       return;

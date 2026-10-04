@@ -8,6 +8,7 @@ import {themeChromaStops} from '../prompt/prompt.js';
 import {isDeterministicPresentation} from '../presentation/environment.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import {CellGrid} from './CellGrid.js';
+import type {ScreenCapture} from './screenCapture.js';
 import {
   HIGH_MOTION, IDLE_FRAME_MS, IDLE_MODE_LABELS, IDLE_MODE_NOTES, IDLE_MODES, idlePalette, reducedMotionScene, renderScene,
   type IdleMode, type IdlePalette,
@@ -79,12 +80,14 @@ export function sceneTime(elapsedMs: number, frame: number, mode: IdleMode, env:
 
 export interface IdleFrameInput {
   mode: IdleMode; width: number; height: number; time: number; palette: IdlePalette; level: ColorLevel; nerd: boolean;
+  /** The captured visible screen, for screen-saver modes. */
+  capture?: ScreenCapture;
 }
 
 /** One frame as terminal rows, through the shared grid. */
 export function idleFrameRows(grid: CellGrid, input: IdleFrameInput): string[] {
   grid.resize(input.width, input.height);
-  renderScene(input.mode, grid, {time: input.time, seed: IDLE_SEED, palette: input.palette, level: input.level, nerd: input.nerd});
+  renderScene(input.mode, grid, {time: input.time, seed: IDLE_SEED, palette: input.palette, level: input.level, nerd: input.nerd, ...(input.capture ? {capture: input.capture} : {})});
   return grid.toRows(input.level);
 }
 

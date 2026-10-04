@@ -22,8 +22,8 @@ const frame = (mode: IdleMode, width: number, height: number, time: number, leve
 };
 
 test('defaults: timeout Never, Aurora Drift selected, Follow Appearance; old configs load unchanged', () => {
-  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []});
-  assert.deepEqual(normalizePromptConfiguration({}).idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []});
+  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: [], runWhileBusy: false});
+  assert.deepEqual(normalizePromptConfiguration({}).idleVisuals, {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: [], runWhileBusy: false});
   for (const timeout of [0, 1, 5, 15, 30, 60]) assert.equal(normalizePromptConfiguration({idleVisuals: {timeout}}).idleVisuals.timeout, timeout);
   for (const timeout of [2, 10, 120, -1, '5']) assert.equal(normalizePromptConfiguration({idleVisuals: {timeout}}).idleVisuals.timeout, 0);
   assert.equal(normalizePromptConfiguration({idleVisuals: {mode: 'matrix'}}).idleVisuals.mode, 'aurora');
@@ -41,7 +41,7 @@ test('/screensaver opens the gallery; start runs the chosen mode; unknown modes 
 });
 
 test('every shipped mode: in bounds at 80x24, 120x40 and 180x55, deterministic, and animated', () => {
-  assert.deepEqual([...IDLE_MODES], ['aurora', 'deepSpace', 'warp', 'rain', 'sparkles', 'fireworks', 'vespyr']);
+  assert.deepEqual([...IDLE_MODES], ['aurora', 'deepSpace', 'warp', 'rain', 'sparkles', 'fireworks', 'vespyr', 'random', 'blackHole', 'screenFireworks', 'circletastic', 'raiseCatError']);
   for (const mode of IDLE_MODES) {
     for (const [width, height] of [[80, 24], [120, 40], [180, 55], [12, 4]] as const) {
       const rows = frame(mode, width, height, 4200);

@@ -2,6 +2,9 @@ import {CellGrid, mixPacked, NO_COLOR_VALUE, pack} from './CellGrid.js';
 import {fromOklch, toOklch} from '../chroma/color.js';
 import type {Rgb} from '../chroma/escape.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
+import {UI_COLORS} from '../ui/palette.js';
+import type {ScreenCapture} from './screenCapture.js';
+import {effectLoops, renderScreenEffect, type ScreenEffectId} from './screenEffects.js';
 
 /**
  * Idle visuals: deterministic, bounded, terminal-native scenes. Every scene is
@@ -9,11 +12,12 @@ import type {ColorLevel} from '../presentation/capabilities.js';
  * clock, no allocation beyond the reused CellGrid. Motion is calm (no rapid
  * flashing) and particle counts are capped independently of terminal size.
  */
-export const IDLE_MODES = ['aurora', 'deepSpace', 'warp', 'rain', 'sparkles', 'fireworks', 'vespyr'] as const;
+export const IDLE_MODES = ['aurora', 'deepSpace', 'warp', 'rain', 'sparkles', 'fireworks', 'vespyr', 'random', 'blackHole', 'screenFireworks', 'circletastic', 'raiseCatError'] as const;
 export type IdleMode = typeof IDLE_MODES[number];
 export const IDLE_MODE_LABELS: Record<IdleMode, string> = {
   aurora: 'Aurora Drift', deepSpace: 'Deep Space', warp: 'Warp Starfield', rain: 'Rain', sparkles: 'Sparkles',
-  fireworks: 'Fireworks', vespyr: 'Bouncing Vespyr',
+  fireworks: 'Night Fireworks', vespyr: 'Bouncing Vespyr',
+  random: 'Random', blackHole: 'Black Hole', screenFireworks: 'Fireworks', circletastic: 'Circletastic', raiseCatError: 'raiseCatError',
 };
 export const IDLE_MODE_NOTES: Record<IdleMode, string> = {
   aurora: 'slow aurora curtains over a starry night sky',
@@ -23,13 +27,21 @@ export const IDLE_MODE_NOTES: Record<IdleMode, string> = {
   sparkles: 'sparse sparkles that brighten and fade',
   fireworks: 'occasional bursts with gentle gravity',
   vespyr: 'Vespyr the NMSh cat bouncing around',
+  random: 'one of all available screen savers, changing only after a full loop',
+  blackHole: 'your screen text spirals into a black hole, then rebuilds',
+  screenFireworks: 'shells launch across your screen and burst through its text',
+  circletastic: 'your screen text gathers into spinning rings, flies apart, and reforms',
+  raiseCatError: 'a cat wanders your screen and raises silly, fictional errors about what it finds',
 };
 /** Calm scenes repaint less often; the ceiling is 10 frames per second. */
 export const IDLE_FRAME_MS: Record<IdleMode, number> = {
   aurora: 160, deepSpace: 250, warp: 100, rain: 100, sparkles: 150, fireworks: 100, vespyr: 125,
+  random: 66, blackHole: 66, screenFireworks: 66, circletastic: 66, raiseCatError: 66,
 };
 /** Modes that become a still calm field under Reduced Motion. */
-export const HIGH_MOTION: ReadonlySet<IdleMode> = new Set(['warp', 'rain', 'sparkles', 'fireworks', 'vespyr']);
+export const HIGH_MOTION: ReadonlySet<IdleMode> = new Set(['warp', 'rain', 'sparkles', 'fireworks', 'vespyr', 'random', 'blackHole', 'screenFireworks', 'circletastic', 'raiseCatError']);
+/** Modes that animate a capture of the visible screen. */
+export const SCREEN_MODE_EFFECT: Partial<Record<IdleMode, ScreenEffectId>> = {blackHole: 'blackHole', screenFireworks: 'fireworks', circletastic: 'circletastic', raiseCatError: 'raiseCatError'};
 
 export interface IdlePalette {
   /** Accent stops, packed 0xRRGGBB. */
@@ -49,6 +61,8 @@ export interface SceneOptions {
   level: ColorLevel;
   /** Nerd/Unicode glyphs, or Safe ASCII-leaning glyphs. */
   nerd: boolean;
+  /** The captured visible screen; present for screen-saver modes. */
+  capture?: ScreenCapture;
 }
 
 /** Palette for idle visuals from accent stops: a dark sky tinted toward their hue. */
@@ -493,14 +507,78 @@ function vespyr(grid: CellGrid, options: SceneOptions): void {
   }
 }
 
-const SCENES: Record<IdleMode, (grid: CellGrid, options: SceneOptions) => void> = {aurora, deepSpace, warp, rain, sparkles, fireworks, vespyr};
+function screenScene(effect: ScreenEffectId) {
+  return (grid: CellGrid, options: SceneOptions): void => {
+    // Without a capture there is nothing of the user's to animate: show the calm star field instead.
+    if (!options.capture) { deepSpace(grid, options); return; }
+    const {palette} = options;
+    renderScreenEffect(effect, grid, options.capture, {time: options.time, nerd: options.nerd, color: options.level !== 'none',
+      palette: {stops: palette.stops, text: 0xc8c8d4, error: pack(UI_COLORS.failure), warn: 0xe5c07b, accent: palette.stops[0] ?? 0xa67cf3}});
+  };
+}
+
+const SCENES: Record<IdleMode, (grid: CellGrid, options: SceneOptions) => void> = {aurora, deepSpace, warp, rain, sparkles, fireworks, vespyr,
+  random: screenScene('blackHole'), blackHole: screenScene('blackHole'), screenFireworks: screenScene('fireworks'), circletastic: screenScene('circletastic'), raiseCatError: screenScene('raiseCatError')};
 
 /** Paint one frame of `mode` into `grid`. */
 export function renderScene(mode: IdleMode, grid: CellGrid, options: SceneOptions): void {
-  SCENES[mode](grid, options);
+  (SAVER_REGISTRY.find(entry => entry.id === mode)?.render ?? SCENES[mode] ?? deepSpace)(grid, options);
 }
 
 /** The scene shown for a mode under Reduced Motion: calm modes hold still; high-motion modes become a still star field. */
 export function reducedMotionScene(mode: IdleMode): IdleMode {
   return HIGH_MOTION.has(mode) ? 'deepSpace' : mode;
+}
+
+
+// ---- registry ----------------------------------------------------------------
+/**
+ * The canonical list of screen savers. Random derives its candidates from this
+ * registry (everything except itself and entries marked `randomEligible:
+ * false`), so registering a saver here is all a new one needs; Random has no
+ * list of its own. `loop` says when one natural loop has completed:
+ * stateful screen effects report their own loop counter, scenes that are
+ * pure functions of time declare their cycle length.
+ */
+export interface SaverDescriptor {
+  id: string;
+  /** Default true. False only for manual-only, debugging or test entries. */
+  randomEligible?: boolean;
+  /** Stateless scene cycle in ms for a given size; ambient scenes with no natural boundary declare a fixed dwell. */
+  cycleMs?: (size: {width: number; height: number}) => number;
+  /** Stateful screen effect whose own loop counter marks the boundary. */
+  effect?: ScreenEffectId;
+  /** Custom renderer for a saver registered outside this file. */
+  render?: (grid: CellGrid, options: SceneOptions) => void;
+}
+
+const SPARKLE_CYCLE = 5200;
+export const SAVER_REGISTRY: SaverDescriptor[] = [
+  {id: 'aurora', cycleMs: () => 40_000}, {id: 'deepSpace', cycleMs: () => 30_000}, {id: 'warp', cycleMs: () => 20_000}, {id: 'rain', cycleMs: () => 20_000},
+  {id: 'sparkles', cycleMs: () => SPARKLE_CYCLE * 4},
+  {id: 'fireworks', cycleMs: () => LAUNCH_PERIOD * 6},
+  // One full vertical round trip of the bouncing cat.
+  {id: 'vespyr', cycleMs: ({height}) => Math.max(1, (2 * Math.max(1, height - CAT_HEIGHT)) / 2.4) * 1000},
+  {id: 'random', randomEligible: false},
+  {id: 'blackHole', effect: 'blackHole'}, {id: 'screenFireworks', effect: 'fireworks'}, {id: 'circletastic', effect: 'circletastic'}, {id: 'raiseCatError', effect: 'raiseCatError'},
+];
+
+export function randomCandidates(registry: readonly SaverDescriptor[] = SAVER_REGISTRY): string[] {
+  return registry.filter(entry => entry.id !== 'random' && entry.randomEligible !== false).map(entry => entry.id);
+}
+
+/** Next Random choice: from the registry, never the previous one when there is a choice. */
+export function pickRandomSaver(rng: () => number, previous?: string, registry: readonly SaverDescriptor[] = SAVER_REGISTRY): string | undefined {
+  const all = randomCandidates(registry);
+  const options = all.length > 1 ? all.filter(id => id !== previous) : all;
+  return options.length ? options[Math.floor(rng() * options.length)] : undefined;
+}
+
+/** True once the saver has completed one natural loop since it started (`elapsed` ms of its own scene time). */
+export function saverLoopComplete(id: string, state: {elapsed: number; width: number; height: number; capture?: ScreenCapture},
+  registry: readonly SaverDescriptor[] = SAVER_REGISTRY): boolean {
+  const entry = registry.find(item => item.id === id);
+  if (!entry) return true;
+  if (entry.effect && state.capture) return effectLoops(state.capture, entry.effect) >= 1;
+  return entry.cycleMs ? state.elapsed >= entry.cycleMs(state) : false;
 }

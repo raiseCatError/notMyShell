@@ -55,6 +55,8 @@ if (mode === 'streaming') {
   let carry = '';
   process.stdin.on('data', data => {
     carry += data.toString();
+    // Raw bytes arrive untouched: job-control and EOF keys are the program's, not NMSh's.
+    for (const raw of ['\u001a', '\u0004', '\u001b[A', '\u001b[1;5C']) if (carry.includes(raw)) { line('INTERACTIVE-BYTES-' + Buffer.from(raw).toString('hex')); carry = carry.replace(raw, ''); }
     if (carry.includes('\u0003')) return cleanup(130);
     const paste = /\u001b\[200~([\s\S]*?)\u001b\[201~/u.exec(carry);
     if (paste) { line('INTERACTIVE-PASTE-' + paste[1].replace(/\r?\n/gu, '|')); carry = carry.replace(paste[0], ''); }

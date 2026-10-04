@@ -326,7 +326,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('notifyOnSuccess')},
     {row: configRow('notifyOnFailure')},
     {row: configRow('notifyWhenFocused')},
-    {row: configRow('updateChecks')},
+    {row: configRow('updateMode')},
+    {row: configRow('updateFrequency')},
   ]},
   // The same rows as Settings; nothing here implies NMSh needs a model.
   {id: 'ask', title: 'Ask & local understanding', intro: ['/ask: ask NMSh what it can do in plain English. Ask works without a language model,',
@@ -352,6 +353,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Off by default (Never). Any key, mouse or new output ends it and leaves everything exactly as it was.'], rows: [
     {row: configRow('idleTimeout')},
     {row: configRow('idleMode')},
+    {row: configRow('idleRunBusy')},
     {row: configRow('idleColor')},
     routeRow('setupIdleColors', 'Edit idle colors', 'The idle visuals\' own gradient stops, with a live preview', 'idleColors', 'Idle visuals'),
     {row: configRow('activityColors'), note: () => 'The running-command line only; finished commands show their plain result'},

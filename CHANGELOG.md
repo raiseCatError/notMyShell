@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Contextual tools
+- `/tools` Discover shows a conservative **Relevant here** group from cheap local facts (Git repository, shell scripts, JavaScript/Node, Python, Go, Rust, container files, Kubernetes files or kubeconfig) and each tool's declared relevance. Only missing tools appear; nothing is executed, crawled or sent anywhere.
+- Typed package-manager plans for Homebrew, APT, DNF, pacman and zypper (WSL uses the distribution's manager). Tools without a verified package name stay manual. Non-root plans are explicit `sudo -n` argv; nothing elevates silently.
+- Bulk install: Space selects missing installable tools, Enter reviews a tool → manager → package plan, one confirmation (default No), per-tool results.
+- Tool details separate Installed, selected in NMSh and **Active in this shell** (zoxide, Atuin, fzf), from the running shell's name snapshot for all three shells; rc files are never read.
+
+### Compatibility
+- Windows Terminal (seen from WSL), iTerm2 and WezTerm host facts and new-window launchers behind the host boundary; deterministic multiplexer/`TERM=dumb` degradation tests for every profile. Physical validation in these hosts is not claimed.
+- Linux: `xdg-open`/`wslview` open helper, clipboard fallback-order tests, Fish installed in Ubuntu CI and a Fedora portability job.
+- Regression coverage that raw job-control, EOF and arrow bytes reach full-screen programs.
+
+### Screensavers
+- Four screen-based savers join the idle visuals: **Black Hole**, **Fireworks**, **Circletastic** and **raiseCatError**, plus **Random** (switches only after a full loop). They animate the current screen's own text as presentation only (transcript, PTY, history and journals are untouched), keep the host background, dismiss on the first input (which is consumed), stop on resize, and never start automatically under Reduced Motion. Still off by default (Idle visuals: Never); new **Run while busy** setting never overrides passthrough or fullscreen programs. The earlier scene is now labelled Night Fireworks.
+
+### Updates and sessions
+- **Automatic updates** (Automatic / Notify only / Off, Daily or Weekly). New installs default to Automatic / Daily; saved Daily/Weekly checks migrate to Notify only and Off stays Off. Automatic prepares a verified stable release only where `/update apply`'s own checks pass, with the same build verification and rollback; the running session keeps its version. Status shows Running version, Latest, Mode and State.
+- Detached sessions can be ended from the startup picker with `X` and confirmation; the transcript is archived and stays in `/resume`.
+
 ## [0.16.0] - 2026-10-04
 
 Sessions, Agents & Portability: a cumulative release of the work formerly planned as v0.8–v0.15, together with v0.16.

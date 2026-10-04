@@ -163,7 +163,7 @@ See [ROADMAP.md](ROADMAP.md) for planned work (Nushell and native Windows are la
 ## Installation
 
 **Prerequisites:**
-- macOS, or Linux (automated tests pass; physical terminal validation is pending), or Windows through WSL 2 (see [platforms](docs/architecture/platforms.md))
+- macOS, or Linux (beta: tested in CI on Ubuntu and Fedora; not physically validated), or Windows through WSL 2 (see [platforms](docs/architecture/platforms.md))
 - Node.js (v22+)
 - zsh (Fish and Bash 4.4+ are optional additional backends)
 - A compatible terminal host: an integrated terminal (such as Zed or VS Code) or a standalone terminal (such as Ghostty or macOS Terminal)
@@ -196,7 +196,7 @@ nmsh
 
 `/update` checks GitHub for the latest stable release and shows current → available, a short release summary, and the exact plan. `/update apply` then installs that release. NMSh updates a source checkout of this repository only when the checkout is clean, its `origin` is this repository, the fetched release tag matches the commit GitHub reports, and moving to the tag is a fast-forward. It then runs `npm install` and `npm run build` and verifies the new build identity. If anything fails, it restores the previous commit and rebuilds it. Otherwise it explains why and prints the manual steps. It never pulls arbitrary branches, discards changes, or touches your settings, transcripts, or shell profile. Restart NMSh afterwards to use the new version.
 
-Background checks are off by default; turn them on in `/settings` → Config → Update checks (Daily or Weekly). When a newer release appears, you get one quiet line per release. No credentials or telemetry are involved.
+Config → Automatic updates is Automatic, Notify only or Off, with a Daily or Weekly check frequency. New installs default to Automatic / Daily; saved Daily/Weekly notification preferences migrate to Notify only, Off stays Off. Automatic only prepares a verified stable release on an official, clean source checkout (the same checks `/update apply` makes, with the same rollback); the running session keeps its version and the new one starts on the next launch. Anything that cannot be proven safe gets one quiet notice and the manual steps. No credentials or telemetry are involved.
 
 ## Ghostty Setup
 
@@ -231,8 +231,11 @@ Keep your terminal. Keep your shell. Upgrade the interaction layer. NMSh is inte
 | VS Code | Integrated | `Shift+Enter` may require custom `keybindings.json` forwarding. Opacity/blur controls are not applicable. |
 | Ghostty | Standalone | `/keyboard` and `/appearance` integration, new windows for sessions. |
 | macOS Terminal | Standalone | Shift+Enter works out of the box; keyboard scrolling (PageUp/PageDown). |
-| Kitty | Supported profile | Kitty keyboard protocol and mouse reporting; new windows need `allow_remote_control`. |
-| iTerm2, WezTerm | Supported profiles | Capability profiles; not yet physically validated to the same level. |
+| Kitty | Capability profile (CI fixtures) | Kitty keyboard protocol, mouse reporting and graphics are assumed only from the profile plus protocol replies; new windows need `allow_remote_control`. Not physically validated. |
+| iTerm2 | Capability profile (CI fixtures) | Mouse, hyperlinks and image protocol from the profile; new windows through AppleScript. Not physically validated. |
+| WezTerm | Capability profile (CI fixtures) | Same as iTerm2 for images; new windows through `wezterm cli spawn`. Not physically validated. |
+| Windows Terminal (via WSL) | Capability profile (CI fixtures) | Detected from `WT_SESSION`; mouse, hyperlinks and truecolor only. Not physically validated. |
+| Unknown or embedded hosts | Generic | Baseline capabilities, upgraded only by protocol replies. |
 
 NMSh owns terminal-native interaction; the editor around it owns editor-native interaction. `/find` and `/filter` search and filter the transcript; `/open path:line:col` and `/open-diff a b` hand files to Zed or VS Code (or `$VISUAL`/`$EDITOR`) instead of rebuilding an editor inside the terminal. See [product boundary and HostActions](docs/architecture/host-actions.md). Inline images (`/about`) appear only where the host implements Kitty graphics or iTerm2 images ([image surface](docs/architecture/image-surface.md)).
 

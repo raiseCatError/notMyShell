@@ -2,7 +2,7 @@ import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
 import {promptConfigurationPath} from '../configuration/paths.js';
-import {UPDATE_CHECK_FREQUENCIES, type UpdateCheckFrequency} from '../update/update.js';
+import {UPDATE_CHECK_FREQUENCIES, migrateUpdateSettings, type UpdateCheckFrequency, type UpdateFrequency, type UpdateMode} from '../update/update.js';
 
 export const LIVE_SESSION_STARTUP = ['ask', 'always', 'never'] as const;
 export type LiveSessionStartup = typeof LIVE_SESSION_STARTUP[number];
@@ -437,8 +437,9 @@ export type IdleTimeout = typeof IDLE_TIMEOUTS[number];
 export const IDLE_COLOR_SOURCES = ['appearance', 'theme', 'custom'] as const;
 export type IdleColorSource = typeof IDLE_COLOR_SOURCES[number];
 export const IDLE_COLOR_LABELS: Record<IdleColorSource, string> = {appearance: 'Follow Chroma / Theme', theme: 'Theme only', custom: 'Custom'};
-export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource; customStops: string[]}
-export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: []};
+/** runWhileBusy lets the saver start during a foreground command; it never overrides passthrough or a fullscreen program. */
+export interface IdleVisualSettings {timeout: IdleTimeout; mode: IdleMode; colorSource: IdleColorSource; customStops: string[]; runWhileBusy: boolean}
+export const DEFAULT_IDLE_VISUALS: IdleVisualSettings = {timeout: 0, mode: 'aurora', colorSource: 'appearance', customStops: [], runWhileBusy: false};
 
 export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
   const v = isRecord(value) ? value : {};
@@ -446,7 +447,7 @@ export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
   const colorSource = IDLE_COLOR_SOURCES.includes(v.colorSource as IdleColorSource) ? v.colorSource as IdleColorSource : 'appearance';
   return {timeout: IDLE_TIMEOUTS.includes(v.timeout as IdleTimeout) ? v.timeout as IdleTimeout : 0,
     mode: IDLE_MODES.includes(v.mode as IdleMode) ? v.mode as IdleMode : 'aurora',
-    colorSource: colorSource === 'custom' && !customStops.length ? 'appearance' : colorSource, customStops};
+    colorSource: colorSource === 'custom' && !customStops.length ? 'appearance' : colorSource, customStops, runWhileBusy: v.runWhileBusy === true};
 }
 
 /**
@@ -483,8 +484,9 @@ export interface PromptConfiguration {
   glyphChoiceComplete: boolean;
   /** Maximum unpinned presentation sessions; null disables rotation. */
   sessionRetention: SessionRetention;
-  /** Background release checks are opt-in; `/update` always checks on request. */
-  updateChecks: UpdateCheckFrequency;
+  /** Automatic updates: Automatic prepares verified releases, Notify only announces them, Off never checks. `/update` always works on request. */
+  updateMode: UpdateMode;
+  updateFrequency: UpdateFrequency;
   /** Whether launch restores a detached live session: ask, always, or never (never only skips; it ends nothing). */
   liveSessionStartup: LiveSessionStartup;
   /** With several detached live sessions at launch: ask which, or open them all. */
@@ -602,7 +604,8 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   glyphStyle: 'nerd',
   glyphChoiceComplete: false,
   sessionRetention: 1000,
-  updateChecks: 'off',
+  updateMode: 'automatic',
+  updateFrequency: 'daily',
   liveSessionStartup: 'ask',
   liveSessionMultiple: 'ask',
   notifications: {...DEFAULT_NOTIFICATION_SETTINGS},
@@ -685,8 +688,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   const sessionRetention: SessionRetention = value.sessionRetention === null
     ? null : [100, 500, 1000, 5000].includes(value.sessionRetention as number)
       ? value.sessionRetention as SessionRetention : 1000;
-  const updateChecks: UpdateCheckFrequency = UPDATE_CHECK_FREQUENCIES.includes(value.updateChecks as UpdateCheckFrequency)
-    ? value.updateChecks as UpdateCheckFrequency : 'off';
+  const {updateMode, updateFrequency} = migrateUpdateSettings(value);
   const liveSessionStartup: LiveSessionStartup = LIVE_SESSION_STARTUP.includes(value.liveSessionStartup as LiveSessionStartup)
     ? value.liveSessionStartup as LiveSessionStartup : 'ask';
   const liveSessionMultiple: LiveSessionMultiple = LIVE_SESSION_MULTIPLE.includes(value.liveSessionMultiple as LiveSessionMultiple)
@@ -769,7 +771,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
-      toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
+      toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
       presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...tooling};
   }
 
@@ -813,7 +815,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
+    glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...tooling};
 }
 

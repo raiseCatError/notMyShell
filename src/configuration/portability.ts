@@ -30,7 +30,7 @@ export const PORTABLE_CATEGORIES = {
   statusStrip: ['statusStrip'],
   idle: ['idleVisuals', 'liveActivity'],
   notifications: ['notifications', 'sessionNotices'],
-  tools: ['toolUpdateChecks', 'installSuggestions', 'ignoredInstallSuggestions', 'updateChecks'],
+  tools: ['toolUpdateChecks', 'installSuggestions', 'ignoredInstallSuggestions', 'updateMode', 'updateFrequency'],
   sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention'],
   agents: ['agentActivity'],
   shell: ['shellBackend'],

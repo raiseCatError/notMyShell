@@ -34,6 +34,8 @@ export interface KillOptions {
   runtimeDir?: string;
   store?: TranscriptStore;
   env?: NodeJS.ProcessEnv;
+  /** Where the kill was requested, for the archive note. */
+  origin?: string;
 }
 
 /**
@@ -47,7 +49,7 @@ export async function killAndArchive(session: SessionInfo, options: KillOptions 
   // session concurrently now that the service no longer lists it.
   const outcome = await finalizeLiveSession({store: options.store ?? new TranscriptStore(), runtimeDir, sessionId: session.id,
     ...(session.journalId ? {journalId: session.journalId} : {}), cwd: session.cwd, waitMs: 10_000,
-    note: () => 'Session killed from /resume; its shell has ended.'});
+    note: () => `Session killed from ${options.origin ?? '/resume'}; its shell has ended.`});
   if (outcome.kind === 'claimed-elsewhere') throw new Error('Another NMSh window is archiving this session.');
   return outcome.session;
 }

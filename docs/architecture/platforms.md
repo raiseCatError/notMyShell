@@ -28,7 +28,8 @@ means WSL 2; `4.4.0-<build>-Microsoft` means WSL 1), `/proc/version`, then
 | Shell discovery | zsh: system paths then PATH. Fish: PATH only. Bash: PATH then system, version ≥ 4.4. |
 | Clipboard | `wl-copy` (Wayland) or `xclip`/`xsel` (X11). WSLg provides Wayland; without it `/copy` explains what is missing. |
 | Notifications | `notify-send` when installed and a desktop session (D-Bus, Wayland or X11) is reachable; otherwise unsupported, as before. |
-| Homebrew | Only used where present (Linuxbrew included); distribution package names are never guessed. |
+| Package managers (v0.17) | `/tools` builds typed executable + argv plans for APT, DNF, pacman, zypper (chosen from `/etc/os-release` ID/ID_LIKE, WSL included) and Homebrew. Only curated, factual package names have a plan; everything else is shown as manual. Non-root plans are explicitly `sudo -n …` (never a password prompt) and name the command to run yourself if sudo needs one. |
+| Open helper (v0.17) | `xdg-open`, then `wslview`; neither is required. |
 | Install/uninstall | Same source-checkout + `npm link` model; `nmsh uninstall` works from XDG paths and refuses while live sessions run. |
 | Config transfer | Exports contain no host paths, so they move between macOS and Linux. |
 | Agent detection, history | Platform-independent. |
@@ -36,3 +37,17 @@ means WSL 2; `4.4.0-<build>-Microsoft` means WSL 1), `/proc/version`, then
 
 A container without a UTF-8 locale makes zsh treat non-ASCII names as
 non-alphanumeric; one existing zsh test depends on a UTF-8 locale, as CI has.
+
+## Evidence levels (v0.17)
+
+These are different claims and are not interchangeable.
+
+| Platform | Supported | Tested in CI | Physically validated | Notes |
+|---|---|---|---|---|
+| macOS | Primary | Yes (macOS runner) | Yes (maintainer) | |
+| Linux | Beta | Ubuntu 24.04 (full suite; zsh, Fish and Bash installed) and a Fedora subset | No | Package-manager plans, clipboard/notification/open fallbacks and XDG paths run from deterministic fixtures. |
+| WSL 2 | Beta, documented limits | Fixtures only (detection, distro, Windows Terminal facts via `WT_SESSION`, mount handling, fallbacks); no WSL runner | No | NMSh inside WSL is a Linux environment. |
+| WSL 1 | Detected and reported, not supported | Fixtures | No | |
+| Native Windows | Unsupported | n/a | n/a | |
+
+Package-name tables for APT, DNF, pacman and zypper are curated from distribution naming and covered by unit tests; they were not installed on real machines in this release.

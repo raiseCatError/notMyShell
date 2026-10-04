@@ -33,3 +33,25 @@ test('Linux config paths follow XDG and ignore relative XDG values', () => {
   assert.equal(nmshConfigDirectory({HOME: '/home/u', XDG_CONFIG_HOME: 'relative'}, 'linux'), '/home/u/.config/nmsh');
   assert.equal(nmshConfigDirectory({HOME: '/home/u'}, 'linux'), '/home/u/.config/nmsh');
 });
+
+import {selectOpener} from '../src/host/desktop.js';
+import {selectClipboardBackend} from '../src/clipboard/clipboard.js';
+
+test('Linux open helper: xdg-open first, wslview as the WSL fallback, nothing when absent; never mandatory', () => {
+  const only = (...names: string[]) => (name: string) => names.includes(name) ? `/usr/bin/${name}` : undefined;
+  assert.equal(selectOpener('linux', only('xdg-open', 'wslview')), '/usr/bin/xdg-open');
+  assert.equal(selectOpener('linux', only('wslview')), '/usr/bin/wslview');
+  assert.equal(selectOpener('linux', only()), undefined);
+  assert.equal(selectOpener('darwin', only()), '/usr/bin/open');
+  assert.equal(selectOpener('win32', only('xdg-open')), undefined, 'native Windows is not supported');
+});
+
+test('Linux clipboard fallback order: wl-copy, then xclip, then xsel; nothing is mandatory', () => {
+  const only = (...names: string[]) => (name: string) => names.includes(name) ? `/bin/${name}` : undefined;
+  const both = {WAYLAND_DISPLAY: 'wayland-0', DISPLAY: ':0'};
+  assert.equal(selectClipboardBackend({platform: 'linux', env: both, resolve: only('wl-copy', 'xclip', 'xsel')})?.command, '/bin/wl-copy');
+  assert.equal(selectClipboardBackend({platform: 'linux', env: both, resolve: only('xclip', 'xsel')})?.command, '/bin/xclip', 'wl-copy missing under XWayland falls back');
+  assert.equal(selectClipboardBackend({platform: 'linux', env: both, resolve: only('xsel')})?.command, '/bin/xsel');
+  assert.equal(selectClipboardBackend({platform: 'linux', env: {WAYLAND_DISPLAY: 'wayland-0'}, resolve: only('xclip')}), undefined, 'no X11 session: no xclip');
+  assert.equal(selectClipboardBackend({platform: 'linux', env: {}, resolve: only('wl-copy', 'xclip')}), undefined, 'headless: unavailable, commands unaffected');
+});
