@@ -62,6 +62,8 @@ export interface ScreenPlanInput {
   transcriptRows?: number;
   /** Flow while scrolled back: the first transcript row in view (the composer follows the transcript's end). */
   viewStart?: number;
+  /** Decorative rule rows around the composer; Off removes them from the geometry (default On). */
+  composerDividers?: boolean;
 }
 
 export interface ScreenPlan {
@@ -114,6 +116,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     input.contextPlacement,
     input.hasVisibleContext,
     input.composerLayout,
+    input.composerDividers !== false,
   );
   if (top) {
     // Dock Top: composer, its menus, then a chronological transcript. The transcript
@@ -141,7 +144,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
     // grows or the view scrolls back.
     const followLayout = input.detached
       ? calculateScreenLayout(rows - inspectorHeight, input.inputRows, input.suggestions, input.running, false, input.hasOutput,
-        input.contextPlacement, input.hasVisibleContext, input.composerLayout)
+        input.contextPlacement, input.hasVisibleContext, input.composerLayout, input.composerDividers !== false)
       : layout;
     const capacity = followLayout.outputHeight;
     const total = Math.max(0, input.transcriptRows ?? capacity);

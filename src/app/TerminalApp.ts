@@ -5571,6 +5571,7 @@ export class TerminalApp {
       contextPlacement: this.promptConfiguration.placement,
       hasVisibleContext: this.hasVisibleProviderPrompt(),
       composerLayout: this.promptConfiguration.composerLayout,
+      composerDividers: this.promptConfiguration.composerDividers,
       panelRows,
     };
     if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return planScreen(input);

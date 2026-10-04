@@ -428,6 +428,8 @@ export interface PromptConfiguration {
   composerPosition: ComposerPosition;
   /** Normal or Chat rows; presentation only and independent of composer position. */
   transcriptPresentation: TranscriptPresentation;
+  /** The decorative horizontal rules around the live composer; Off reclaims their rows. Transcript dividers are separate. */
+  composerDividers: boolean;
   modules: ContextModuleConfig[];
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
@@ -480,6 +482,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   placement: 'header',
   composerLayout: 'twoLine',
   composerPosition: 'bottom',
+  composerDividers: true,
   transcriptPresentation: 'normal',
   modules: [
     {id: 'project', visible: true, condition: 'always'},
@@ -608,7 +611,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, spacing, gap, separator, ...tooling};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...tooling};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -652,7 +655,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
     glyphStyle, glyphChoiceComplete, sessionRetention, updateChecks, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
-    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, modules, separator, spacing, gap, ...tooling};
+    starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...tooling};
 }
 
 export function loadPromptConfiguration(path = promptConfigurationPath()): PromptConfiguration {
