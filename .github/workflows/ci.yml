@@ -38,7 +38,7 @@ jobs:
 
       - name: Install Linux shell and native build prerequisites
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y zsh build-essential python3
+        run: sudo apt-get update && sudo apt-get install -y zsh fish build-essential python3
 
       - name: Verify secure Linux system completion paths
         if: runner.os == 'Linux'
@@ -88,3 +88,36 @@ jobs:
             exit 1
           fi
           echo "No processes leaked."
+
+  # One additional distribution for package-manager and libc/shell-packaging diversity (DNF, Fedora zsh/fish).
+  # A focused subset, not a matrix: the full suite runs on Ubuntu and macOS above.
+  fedora:
+    name: Linux portability subset (Fedora)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: fedora:42
+    steps:
+      - name: Install system prerequisites
+        run: dnf install -y git zsh fish gcc-c++ make python3 which
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Platform, package-manager, updater and shell-backend tests
+        run: node --import=tsx --test --test-timeout=120000 tests/linuxPlatform.test.ts tests/clipboard.test.ts tests/tools.test.ts tests/update.test.ts tests/hostProfiles.test.ts tests/portabilityUninstall.test.ts
+        env:
+          NMSH_DISABLE_UPDATES: '1'
