@@ -43,6 +43,7 @@ export const slashCommands: readonly SlashCommand[] = [
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
   {name: '/ask', insertion: '/ask ', description: 'Ask NMSh what it can do in plain English'},
+  {name: '/ai', insertion: '/ai', description: 'Agent sessions: Claude Code and other harnesses running in the background; /ai claude starts one'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
   {name: '/presets', insertion: '/presets', description: 'Create, inspect and launch named session presets'},
@@ -97,6 +98,8 @@ export type ParsedSlashCommand =
   | {kind: 'notices'; action: 'show' | 'on' | 'off' | 'clear'}
   | {kind: 'palette'}
   | {kind: 'ask'; request: string}
+  /** Agent sessions: /ai opens the list; /ai <harness or profile> starts one in the background. */
+  | {kind: 'ai'; target?: string}
   | {kind: 'providers'}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -154,6 +157,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (notices) return {kind: 'notices', action: (notices[1] ?? 'show') as 'show' | 'on' | 'off' | 'clear'};
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
   if (/^\/guide\s*$/u.test(input)) return {kind: 'ask', request: 'guide'};
+  const ai = /^\/ai(?:\s+([\w.-]{1,40}))?\s*$/u.exec(input);
+  if (ai) return ai[1] ? {kind: 'ai', target: ai[1]} : {kind: 'ai'};
   const ask = /^\/ask(?:\s+([\s\S]*))?$/u.exec(input);
   if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
   if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};

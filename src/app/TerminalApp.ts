@@ -200,6 +200,10 @@ import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../ses
 import {OLDER_SERVICE_SWITCH} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
+import {AgentSessions} from '../agents/sessions/manager.js';
+import type {AgentSession} from '../agents/sessions/model.js';
+import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewState} from '../agents/sessions/AgentViews.js';
+import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir} from '../session/runtimeDir.js';
 
 /** Editor text that marks interactive history search. */
@@ -216,6 +220,10 @@ function recordInstall(toolId: string, install: {label: string; command: string;
 }
 /** Session notices change on human timescales; a slow poll keeps the service quiet. */
 const NOTICE_REFRESH_MS = 4000;
+/** Agent process discovery cadence while NMSh owns the screen. */
+const AGENT_DISCOVERY_MS = 15_000;
+/** The shelf hides after this long when nothing needs attention. */
+const SHELF_IDLE_MS = 6000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
 const ERROR = lazyForeground(UI_COLORS.failure);
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
@@ -1126,6 +1134,9 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.agentView) { this.handleAgentViewKey(key); return; }
+    if (this.shelf.focused && this.handleShelfKey(key)) return;
+    if (this.agentPanel) { this.handleAgentPanelKey(key); return; }
     if (this.askState) {
       const event = askKey(this.askState, key);
       if (event) void this.handleAskEvent(event);
@@ -1163,6 +1174,9 @@ export class TerminalApp {
       }
       if (key.kind === 'escape' || key.kind === 'interrupt') {
         this.resumeBrowser = undefined;
+      } else if (key.kind === 'complete' && browser.liveOnly) {
+        this.resumeBrowser = undefined;
+        this.agentPanel = {selected: 0};
       } else if (key.kind === 'deleteLineAfter') {
         const selection = resumeSelection(browser);
         if (selection?.kind === 'live' && selection.session.state === 'detached' && selection.session.id !== browser.currentId) browser.confirmKill = selection.session.id;
@@ -1538,6 +1552,7 @@ export class TerminalApp {
       }
       return;
     }
+    else if (key.kind === 'left' && this.composerIdle()) { void this.openSessionsView(); return; }
     else if (key.kind === 'left') this.editor.moveLeft();
     else if (key.kind === 'right') this.editor.moveRight();
     else if (key.kind === 'selectLeft') this.editor.selectLeft();
@@ -1554,6 +1569,8 @@ export class TerminalApp {
       this.editor.selectUp(columns, this.inputFirstLinePrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
+      // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (and a second ↓ focuses it).
+      if (!this.editor.text && !this.composerHistory.active && this.agents.sessions.length && !this.running) { this.revealShelf(); this.render(); return; }
       if (!this.editor.moveDown(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('next');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
@@ -1848,6 +1865,7 @@ export class TerminalApp {
     else if (slash.kind === 'presets') this.startPresets();
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'sessions') await this.openSessionsView();
+    else if (slash.kind === 'ai') this.openAi(command, slash.target);
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
@@ -2235,7 +2253,12 @@ export class TerminalApp {
     });
     const confirming = browser.live.find(session => session.id === browser.confirmKill);
     if (confirming) out.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
-    else out.push('', `${SUBTLE}  ↑↓ move · type to search · Enter switch to a detached session · Ctrl+K kill a detached session · Esc close${RESET}`);
+    else out.push('', `${SUBTLE}  ↑↓ move · type to search · Enter switch to a detached session · Ctrl+K kill a detached session · Tab agent sessions · Esc close${RESET}`);
+    // Agent sessions share this switcher: a compact section here, the full list (and their views) one Tab away.
+    if (this.agents.sessions.length) {
+      out.push('', `${PRIMARY}  Agent sessions${RESET}  ${SUBTLE}Tab opens them${RESET}`);
+      for (const session of shelfOrder(this.agents.sessions).slice(0, 6)) out.push(truncateAnsi(`    ${renderShelf([session], columns - 4, now)}${SUBTLE} · ${session.level === 'observed' ? 'observed only' : session.level}${RESET}`, columns));
+    }
     return out;
   }
 
@@ -2932,7 +2955,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.providersOverview || this.understandingPanel);
+      || this.resumeBrowser || this.appearanceState || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -2991,6 +3014,11 @@ export class TerminalApp {
     }
     if (this.aboutPanel) return framePanel(this.aboutRows(columns), columns);
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.agentView) {
+      const session = this.agents.get(this.agentView.sessionId);
+      if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - 4, Date.now()), columns);
+    }
+    if (this.agentPanel) return framePanel(renderAgentPanel(this.agentPanel, this.agentPanelRows(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.askState) return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId}), columns);
     if (this.understandingPanel) return framePanel(renderUnderstandingPanel(this.understandingPanel, this.understandingFacts(), columns), columns);
     if (this.providersOverview) return framePanel(renderProvidersOverview(this.providersOverview, this.providersOverviewFacts(), columns), columns);
@@ -4722,6 +4750,20 @@ export class TerminalApp {
 
   /** One compact line per notice (max three, the last may summarize overflow). */
   private noticeRows(columns: number): string[] {
+    // The agent shelf shares this chrome slot (and the screen plan's rows): hidden at rest, never a permanent row.
+    const shelf = this.shelfRow(columns);
+    const rows = this.sessionNoticeRows(columns);
+    return shelf ? [...rows, shelf] : rows;
+  }
+
+  private shelfRow(columns: number): string | undefined {
+    if (this.passthrough || this.externalPassthrough || !this.agents.sessions.length) return undefined;
+    const attention = this.agents.sessions.some(session => session.attention);
+    if (!this.shelf.visible && !this.shelf.focused && !attention) return undefined;
+    return renderShelf(this.agents.sessions, columns, Date.now(), this.shelf.selected, this.shelf.focused) || undefined;
+  }
+
+  private sessionNoticeRows(columns: number): string[] {
     if (!this.promptConfiguration.sessionNotices || this.passthrough) return [];
     const {notices, hidden} = this.noticeView;
     const now = Date.now();
@@ -5140,6 +5182,14 @@ export class TerminalApp {
 
   /** Ask's in-memory interaction; discarded on close (only visible turns may be recorded). */
   private askState?: AskState;
+  /** External agent harness sessions (managed via supported protocols, or observed processes). */
+  private readonly agents = new AgentSessions();
+  private readonly agentsSubscription = this.agents.onChange(() => { if (!this.stopped) this.render(); });
+  private agentPanel?: AgentPanelState;
+  private agentView?: AgentViewState;
+  /** The transient activity shelf above the composer: hidden at rest, revealed by ↓, pinned while something needs attention. */
+  private shelf = {visible: false, focused: false, selected: 0, shownAt: 0};
+  private agentDiscoveryTimer?: () => void;
   private askGeneration = 0;
 
   /** `/ask` and `/ask <request>` open the same Ask; with a request it is submitted at once. */
@@ -5521,6 +5571,137 @@ export class TerminalApp {
         return;
       }
     }
+  }
+
+  /** The composer is completely idle: ← and ↓ shortcuts apply only here, never over editing, menus, panels or a running command. */
+  private composerIdle(): boolean {
+    return !this.editor.text && !this.running && !this.historySearchActive && !this.directorySearchActive && this.composerSuggestions().length === 0
+      && !this.passthrough && !this.externalPassthrough && !this.settingsPanelActive && !this.editor.hasPasteAtoms;
+  }
+
+  private revealShelf(): void {
+    if (this.shelf.visible) { this.shelf.focused = true; this.shelf.selected = 0; return; }
+    this.shelf.visible = true;
+    this.shelf.shownAt = Date.now();
+    // Auto-hide after a short idle period unless something needs attention (checked on the presentation clock).
+    setTimeout(() => { if (!this.stopped) this.render(); }, SHELF_IDLE_MS + 50).unref?.();
+  }
+
+  private handleShelfKey(key: Key): boolean {
+    const items = shelfOrder(this.agents.sessions);
+    if (!items.length) { this.shelf.focused = false; return false; }
+    if (key.kind === 'left' || key.kind === 'right') this.shelf.selected = (this.shelf.selected + (key.kind === 'left' ? -1 : 1) + items.length) % items.length;
+    else if (key.kind === 'enter') { const session = items[this.shelf.selected]; this.shelf.focused = false; if (session) this.openAgentView(session.id); }
+    else if (key.kind === 'up' || key.kind === 'escape') { this.shelf.focused = false; this.shelf.shownAt = Date.now(); }
+    else return false;
+    this.render();
+    return true;
+  }
+
+  private syncAgents(): void {
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended;
+    if (wanted && !this.agentDiscoveryTimer) {
+      // Bounded, asynchronous discovery on a modest cadence, only while NMSh owns the screen; never at startup.
+      this.agentDiscoveryTimer = presentationClock.subscribe(() => void this.agents.discover(), AGENT_DISCOVERY_MS);
+      setTimeout(() => { if (!this.stopped) void this.agents.discover(); }, 3000).unref?.();
+    } else if (!wanted && this.agentDiscoveryTimer) { this.agentDiscoveryTimer(); this.agentDiscoveryTimer = undefined; }
+    const attention = this.agents.sessions.some(session => session.attention);
+    if (this.shelf.visible && !this.shelf.focused && !attention && Date.now() - this.shelf.shownAt > SHELF_IDLE_MS) this.shelf.visible = false;
+  }
+
+  private agentPanelRows() {
+    return agentPanelRows(this.agents.sessions, this.agents.harnesses());
+  }
+
+  /** /ai: the agent session list; /ai <harness|profile>: start a managed session in the background. */
+  private openAi(command: string, target?: string): void {
+    this.panelOrigin = undefined;
+    if (!target) { this.agentPanel = {selected: 0}; void this.agents.discover(); return; }
+    const profile = this.promptConfiguration.agentProfiles.find(item => item.name === target);
+    const harnessId = profile?.harness ?? target;
+    if (!harness(harnessId)) {
+      this.output.addFrontendInteraction(command, `No harness or launch profile is called "${target}". /ai lists the harnesses; profiles live in NMSh's config as agentProfiles (name, harness, and for Claude: model, permissionMode, configDir).`, INFO);
+      return;
+    }
+    const result = this.agents.launch(harnessId, this.shellCwd, profile ? {profile} : {});
+    if (!result.ok) { this.output.addFrontendInteraction(command, result.reason, ERROR); return; }
+    // The agent runs in the background; its view opens so the first message can be typed. Esc returns to the shell.
+    this.openAgentView(result.session.id);
+  }
+
+  private openAgentView(id: string): void {
+    this.agentPanel = undefined;
+    this.resumeBrowser = undefined;
+    this.agentView = {sessionId: id, input: '', expanded: new Set(), scroll: 0};
+    this.agents.acknowledge(id);
+    this.shelf.visible = false;
+  }
+
+  private handleAgentPanelKey(key: Key): void {
+    const panel = this.agentPanel!;
+    const rows = this.agentPanelRows();
+    if (panel.rename !== undefined) {
+      const row = rows[panel.selected];
+      if (key.kind === 'escape' || key.kind === 'interrupt') panel.rename = undefined;
+      else if (key.kind === 'enter') { if (row?.kind === 'session') this.agents.rename(row.session.id, panel.rename); panel.rename = undefined; }
+      else if (key.kind === 'backspace') panel.rename = [...panel.rename].slice(0, -1).join('');
+      else if (key.kind === 'text') panel.rename += key.value;
+      this.render();
+      return;
+    }
+    if (key.kind === 'escape' || key.kind === 'interrupt') { this.agentPanel = undefined; this.returnFromPanel(); }
+    else if (key.kind === 'up' || key.kind === 'down') panel.selected = (panel.selected + (key.kind === 'up' ? -1 : 1) + rows.length) % Math.max(1, rows.length);
+    else if (key.kind === 'text' && /^[rR]$/u.test(key.value) && rows[panel.selected]?.kind === 'session') panel.rename = (rows[panel.selected] as {session: AgentSession}).session.title;
+    else if (key.kind === 'text' && /^[aA]$/u.test(key.value)) { this.agentPanel = undefined; void this.runSlash('/agents', {kind: 'agents', action: 'show'}); }
+    else if (key.kind === 'enter') {
+      const row = rows[panel.selected];
+      if (row?.kind === 'session') this.openAgentView(row.session.id);
+      else if (row?.kind === 'harness') {
+        const result = this.agents.launch(row.harness.id, this.shellCwd);
+        if (result.ok) this.openAgentView(result.session.id); else panel.message = result.reason;
+      }
+    }
+    this.render();
+  }
+
+  private handleAgentViewKey(key: Key): void {
+    const view = this.agentView!;
+    const session = this.agents.get(view.sessionId);
+    if (!session || key.kind === 'escape') { this.agentView = undefined; this.returnFromPanel(); this.render(); return; }
+    view.message = undefined;
+    // Approvals are explicit: A allows once, D denies; nothing else answers them.
+    if (session.pendingApproval && !view.input && key.kind === 'text' && /^[aAdD]$/u.test(key.value)) {
+      this.agents.answer(session.id, /^[aA]$/u.test(key.value));
+    } else if (key.kind === 'interrupt') {
+      if (session.state === 'working' || session.state === 'approval') this.agents.cancel(session.id); else { this.agentView = undefined; this.returnFromPanel(); }
+    } else if (key.kind === 'toggleDetails') {
+      const tools = agentBlocks(session).filter(block => block.kind === 'tool' && block.detail);
+      const last = tools.at(-1);
+      if (last?.id) { if (view.expanded.has(last.id)) view.expanded.delete(last.id); else view.expanded.add(last.id); }
+    } else if (key.kind === 'pageUp' || key.kind === 'wheelUp') view.scroll += key.kind === 'pageUp' ? 10 : 3;
+    else if (key.kind === 'pageDown' || key.kind === 'wheelDown') view.scroll = Math.max(0, view.scroll - (key.kind === 'pageDown' ? 10 : 3));
+    else if (session.level === 'observed') { /* metadata only: no input */ }
+    else if (key.kind === 'text' || key.kind === 'paste') view.input += key.value.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/gu, '');
+    else if (key.kind === 'newline') view.input += '\n';
+    else if (key.kind === 'backspace') view.input = [...view.input].slice(0, -1).join('');
+    else if (key.kind === 'enter' && view.input.trim()) {
+      const text = view.input;
+      view.input = '';
+      const copy = /^\/copy(?:\s+(\d+))?\s*$/u.exec(text.trim());
+      if (copy) void this.copyAgentBlock(session, Number(copy[1] ?? 1));
+      else if (!this.agents.send(session.id, text)) view.message = 'This session is not accepting input.';
+      view.scroll = 0;
+    }
+    this.render();
+  }
+
+  /** /copy inside an agent view: the Nth newest reply's visible text, never protocol data. */
+  private async copyAgentBlock(session: AgentSession, index: number): Promise<void> {
+    const replies = agentBlocks(session).filter(block => block.kind === 'assistant');
+    const block = replies[replies.length - index];
+    if (!block) { if (this.agentView) this.agentView.message = 'Nothing to copy yet.'; this.render(); return; }
+    try { await writeClipboard(block.text); if (this.agentView) this.agentView.message = 'Copied the reply.'; } catch { if (this.agentView) this.agentView.message = 'The clipboard is not available here.'; }
+    this.render();
   }
 
   private openShellPanel(select?: ShellId): void {
@@ -5973,6 +6154,7 @@ export class TerminalApp {
     if (!this.presentationStarted || this.stopped || this.idle) return;
     this.syncStatusStrip();
     this.syncNotices();
+    this.syncAgents();
     const settings = this.promptConfiguration.presentation;
     const animatedRule = this.presentationFrame?.plan.regions.some(region => region.kind === 'separator' || region.kind === 'composerBorder'
       || (region.kind === 'prompt' && region.height > 0)) && dividerAnimated(settings) && colorLevel() !== 'none';
@@ -6149,6 +6331,9 @@ export class TerminalApp {
     if (this.stopped) return;
     this.stopped = true;
     this.understanding.dispose();
+    this.agentDiscoveryTimer?.();
+    this.agentsSubscription();
+    this.agents.dispose();
     this.cancelPresentation();
     this.promptPanelState?.task?.dispose();
     this.presetStartup?.cancel();

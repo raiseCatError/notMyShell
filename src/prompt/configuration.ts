@@ -33,6 +33,7 @@ import {IDLE_MODES, type IdleMode} from '../idle/scenes.js';
 import {DEFAULT_UI_CHROME, normalizeUiChrome, type UiChromeSettings} from '../appearance/uiChrome.js';
 import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import {OPEN_WITH_IDS, type OpenWith} from '../host/HostActions.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
@@ -374,6 +375,8 @@ export interface PromptConfiguration {
   uiChrome: UiChromeSettings;
   /** Compact cross-session notices above the composer (other sessions finished, failed, ended...). */
   sessionNotices: boolean;
+  /** Named agent launch profiles (provider-specific, never credentials); see src/agents/sessions/manager.ts. */
+  agentProfiles: AgentProfile[];
   /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
   askRecord: boolean;
   /** How the Ask panel lays out its conversation; independent of the transcript's presentation. */
@@ -462,6 +465,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
+  agentProfiles: [],
   sessionNotices: true,
   askRecord: true,
   askPresentation: 'chat' as const,
@@ -551,7 +555,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
