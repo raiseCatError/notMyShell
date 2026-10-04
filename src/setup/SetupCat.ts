@@ -326,7 +326,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('notifyOnSuccess')},
     {row: configRow('notifyOnFailure')},
     {row: configRow('notifyWhenFocused')},
-    {row: configRow('updateChecks')},
+    {row: configRow('updateMode')},
+    {row: configRow('updateFrequency')},
   ]},
   // The same rows as Settings; nothing here implies NMSh needs a model.
   {id: 'ask', title: 'Ask & local understanding', intro: ['/ask: ask NMSh what it can do in plain English. Ask works without a language model,',

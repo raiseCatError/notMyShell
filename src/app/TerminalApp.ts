@@ -93,7 +93,7 @@ import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerle
 import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
-import {applyUpdate, backgroundUpdateCheck, compareVersions, detectInstall, fetchLatestRelease, installRoot, planUpdate, systemRunner, type ReleaseInfo} from '../update/update.js';
+import {applyUpdate, checkForUpdate, compareVersions, detectInstall, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
@@ -2465,12 +2465,65 @@ export class TerminalApp {
   }
 
 
-  /** Opt-in background discovery: one quiet line per newly seen release, never an interruption. */
+  private pendingAutoUpdate?: ReleaseInfo;
+  private autoUpdateTimer?: NodeJS.Timeout;
+  private preparingUpdate?: string;
+
+  private updateFrequencyInEffect(): UpdateCheckFrequency {
+    const {updateMode, updateFrequency} = this.promptConfiguration;
+    return updateMode === 'off' || updatesDisabledByEnvironment() ? 'off' : updateFrequency;
+  }
+
+  /**
+   * Quiet, due-gated discovery. Notify only: one line per newly seen release.
+   * Automatic: remember the release and prepare it at the next idle point.
+   */
   private async quietUpdateCheck(): Promise<void> {
-    const release = await backgroundUpdateCheck(this.buildIdentity.version, this.promptConfiguration.updateChecks).catch(() => undefined);
-    if (!release || this.stopped) return;
-    this.output.addHistoryLine(`${INFO}NMSh ${release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
+    const result = await checkForUpdate(this.buildIdentity.version, this.updateFrequencyInEffect()).catch(() => ({announce: false} as const));
+    if (this.stopped) return;
+    if (this.promptConfiguration.updateMode === 'automatic' && this.updateFrequencyInEffect() !== 'off') {
+      const state = loadUpdateState();
+      const version = 'release' in result && result.release ? result.release.version : state.latestVersion;
+      const settled = version !== undefined && (state.installedVersion === version || state.failed?.version === version || state.skipped?.version === version);
+      if (version && compareVersions(version, this.buildIdentity.version) > 0 && !settled) {
+        this.pendingAutoUpdate = ('release' in result && result.release) || {version, tag: `v${version}`, summary: [],
+          url: `https://github.com/raiseCatError/notMyShell/releases/tag/v${version}`};
+        this.scheduleAutoUpdate(5_000);
+      }
+      return;
+    }
+    if (!('release' in result) || !result.release || !result.announce) return;
+    this.output.addHistoryLine(`${INFO}NMSh ${result.release.version} is available (you have ${this.buildIdentity.version}) · /update${RESET}`);
     this.render();
+  }
+
+  private scheduleAutoUpdate(delay: number): void {
+    if (this.autoUpdateTimer || this.stopped || !this.pendingAutoUpdate) return;
+    this.autoUpdateTimer = setTimeout(() => { this.autoUpdateTimer = undefined; void this.autoUpdateTick(); }, delay);
+    this.autoUpdateTimer.unref?.();
+  }
+
+  /** Starts the build only at a calm prompt NMSh owns; otherwise waits for the next tick. */
+  private async autoUpdateTick(): Promise<void> {
+    const release = this.pendingAutoUpdate;
+    if (!release || this.stopped || this.promptConfiguration.updateMode !== 'automatic') { this.pendingAutoUpdate = undefined; return; }
+    if (this.updateInProgress || !this.idleEligible()) { this.scheduleAutoUpdate(30_000); return; }
+    this.pendingAutoUpdate = undefined;
+    this.updateInProgress = true;
+    this.preparingUpdate = release.version;
+    this.render();
+    try {
+      const outcome = await prepareAutomaticUpdate(release);
+      if (this.stopped || !outcome.announce) return;
+      const line = outcome.kind === 'ready' ? `NMSh ${outcome.version} ready · Restart NMSh to use it`
+        : outcome.kind === 'skipped' ? `NMSh ${outcome.version} is available · Automatic update skipped · Run /update for details`
+        : `Automatic update to ${outcome.version} did not complete and was rolled back · Run /update for details`;
+      this.output.addHistoryLine(`${outcome.kind === 'ready' ? SUCCESS : INFO}${line}${RESET}`);
+    } catch { /* an automatic update never crashes the session */ } finally {
+      this.updateInProgress = false;
+      this.preparingUpdate = undefined;
+      if (!this.stopped) this.render();
+    }
   }
 
   /**
@@ -2490,6 +2543,9 @@ export class TerminalApp {
         return reply(`Could not check for updates: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`, ERROR);
       }
       if (compareVersions(release.version, current) <= 0) return reply(`NMSh ${current} is up to date (latest release ${release.tag}).`, SUCCESS);
+      if (readyVersion(loadUpdateState(), current) === release.version) {
+        return reply(`Running      ${current}\nInstalled    ${release.version}\nStatus       Restart NMSh to use it`, SUCCESS);
+      }
       const header = [`NMSh ${current} → ${release.version} is available.`, ...release.summary.map(line => `  ${line}`), release.url];
       const planned = await planUpdate(await detectInstall(installRoot()), release);
       if (!planned.ok) {
@@ -2507,14 +2563,43 @@ export class TerminalApp {
         this.render();
       });
       this.offeredUpdate = undefined;
-      if (result.ok) this.milestoneEffect();
+      if (result.ok) { recordInstalled(release.version); this.milestoneEffect(); }
       this.output.addHistoryLine(result.ok
-        ? `${SUCCESS}NMSh ${release.version} is installed. Restart NMSh to use it; this session keeps running ${current}.${RESET}`
+        ? `${SUCCESS}NMSh ${release.version} is ready ✓  This session is still running ${current}. Restart NMSh when convenient to use the new version.${RESET}`
         : `${ERROR}The update did not complete; the lines above say what happened.${RESET}`);
     } finally {
       this.updateInProgress = false;
       this.render();
     }
+  }
+
+  private updateStatusRows(): Array<{label: string; value: string; tone?: 'success' | 'warning' | 'muted'}> {
+    const running = this.buildIdentity.version;
+    const {updateMode, updateFrequency} = this.promptConfiguration;
+    const state = loadUpdateState();
+    const latest = state.latestVersion;
+    const newer = latest !== undefined && compareVersions(latest, running) > 0;
+    const ready = readyVersion(state, running);
+    let status: {value: string; tone?: 'success' | 'warning' | 'muted'};
+    if (this.preparingUpdate) status = {value: `Preparing ${running} → ${this.preparingUpdate}`};
+    else if (ready) status = {value: `Ready · restart NMSh to use ${ready}`, tone: 'success'};
+    else if (state.failed && latest === state.failed.version && newer) status = {value: 'Last automatic update failed · run /update', tone: 'warning'};
+    else if (state.skipped && latest === state.skipped.version && newer) status = {value: 'Automatic update skipped · run /update for details', tone: 'warning'};
+    else if (newer) status = {value: 'Update available', tone: 'warning'};
+    else if (latest) status = {value: 'Up to date', tone: 'success'};
+    else status = {value: updateMode === 'off' ? 'Not checking' : 'Check pending', tone: 'muted'};
+    const ago = state.lastCheck === undefined ? undefined : (() => {
+      const minutes = Math.max(0, Math.round((Date.now() - state.lastCheck) / 60_000));
+      return minutes < 1 ? 'just now' : minutes < 90 ? `${minutes}m ago` : minutes < 2880 ? `${Math.round(minutes / 60)}h ago` : `${Math.round(minutes / 1440)}d ago`;
+    })();
+    return [
+      {label: 'Running version', value: running},
+      ...(latest ? [{label: 'Latest release', value: latest}] : []),
+      {label: 'Mode', value: updateMode === 'automatic' ? 'Automatic' : updateMode === 'notify' ? 'Notify only' : 'Off'},
+      ...(updateMode === 'off' ? [] : [{label: 'Check frequency', value: updateFrequency === 'daily' ? 'Daily' : 'Weekly'}]),
+      {label: 'State', ...status},
+      ...(ago ? [{label: 'Last checked', value: ago}] : []),
+    ];
   }
 
   private showHelp(command: string): void {
@@ -4259,6 +4344,7 @@ export class TerminalApp {
         {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
         {label: 'Node', value: process.version},
       ]),
+      statusSection('Updates', this.updateStatusRows()),
       statusSection('Shell & Session', [
         {label: 'Shell', value: `${shellAdapter(this.shellId).label}${this.shellId === this.promptConfiguration.shellBackend ? '' : ` (default for new sessions: ${shellAdapter(this.promptConfiguration.shellBackend).label})`}`},
         {label: 'Shell capabilities', value: (() => { const caps = shellAdapter(this.shellId).capabilities; return `completion ${caps.completion}${caps.completionDescriptions ? ' + descriptions' : ''} · live names ${caps.liveNames ? 'yes' : 'no'} · history import ${caps.historyImport ? 'yes' : 'no'}`; })()},

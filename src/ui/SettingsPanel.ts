@@ -17,7 +17,7 @@ import {defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectFamily, varia
 import {PROMPT_SYMBOL_IDS, promptSymbolLabel} from '../prompt/glyphChoices.js';
 import {VIBRANCE_LABELS, VIBRANCE_LEVELS} from '../chroma/color.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {UPDATE_CHECK_FREQUENCIES} from '../update/update.js';
+import {UPDATE_CHECK_FREQUENCIES, UPDATE_FREQUENCIES, UPDATE_MODES} from '../update/update.js';
 import {COMPOSER_POSITIONS, COMPOSER_POSITION_LABELS, LIVE_SESSION_MULTIPLE, LIVE_SESSION_STARTUP, TRANSCRIPT_PRESENTATIONS,
   TRANSCRIPT_PRESENTATION_LABELS} from '../prompt/configuration.js';
 import {
@@ -366,9 +366,12 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
-  enumRow({id: 'updateChecks', label: 'Update checks', description: 'Quietly check GitHub for new releases; /update checks on demand', category: 'Updates',
-    values: UPDATE_CHECK_FREQUENCIES, labels: ['Off', 'Daily', 'Weekly'],
-    get: config => config.updateChecks, set: (config, updateChecks) => ({...config, updateChecks})}),
+  enumRow({id: 'updateMode', label: 'Automatic updates', description: 'Automatic prepares verified releases for the next launch (official source installs only); Notify only announces them; Off never checks. /update works on request', category: 'Updates',
+    values: UPDATE_MODES, labels: ['Automatic', 'Notify only', 'Off'],
+    get: config => config.updateMode, set: (config, updateMode) => ({...config, updateMode})}),
+  enumRow({id: 'updateFrequency', parent: 'updateMode', when: config => config.updateMode !== 'off', label: 'Check frequency', description: 'How often to look for a new stable release', category: 'Updates',
+    values: UPDATE_FREQUENCIES, labels: ['Daily', 'Weekly'],
+    get: config => config.updateFrequency, set: (config, updateFrequency) => ({...config, updateFrequency})}),
   enumRow({id: 'liveSessionStartup', label: 'Startup restore', description: 'Resume a detached live session at launch: Ask, Always, or Never (never ends none)', category: 'Sessions',
     values: LIVE_SESSION_STARTUP, labels: ['Ask', 'Always', 'Never'],
     get: config => config.liveSessionStartup, set: (config, liveSessionStartup) => ({...config, liveSessionStartup})}),
@@ -561,7 +564,7 @@ export const CONFIG_GROUPS = ['General', 'Appearance', 'Prompt & Composer', 'Edi
 export type ConfigGroup = typeof CONFIG_GROUPS[number];
 
 export const CONFIG_GROUP_BY_ID: Readonly<Record<string, ConfigGroup>> = {
-  glyphStyle: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateChecks: 'General',
+  glyphStyle: 'General', liveSessionStartup: 'General', liveSessionMultiple: 'General', updateMode: 'General', updateFrequency: 'General',
   promptVibrance: 'Appearance',
   showShell: 'Prompt & Composer', composerPosition: 'Prompt & Composer', composerDividers: 'Prompt & Composer', divider: 'Prompt & Composer', historicalPrompt: 'Prompt & Composer',
   transcriptPresentation: 'Editor', openWith: 'Editor', suggestionsOnEmpty: 'Editor', pastePreview: 'Editor',
@@ -595,7 +598,7 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
-  'glyphStyle', 'liveSessionStartup', 'liveSessionMultiple', 'updateChecks',
+  'glyphStyle', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
   'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
   'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
