@@ -7019,7 +7019,8 @@ export class TerminalApp {
       transcriptRows,
       contextPlacement: this.promptConfiguration.placement,
       hasVisibleContext: this.hasVisibleProviderPrompt(),
-      composerLayout: this.promptConfiguration.composerLayout,
+      // Prompt None is only the input: framed like the one-line composer (divider, input, divider), never a two-line gap.
+      composerLayout: this.effectivePromptProvider === 'none' ? 'oneLine' : this.promptConfiguration.composerLayout,
       composerDividers: this.promptConfiguration.composerDividers,
       panelRows,
     };

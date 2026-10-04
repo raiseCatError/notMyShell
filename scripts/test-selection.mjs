@@ -33,7 +33,8 @@ const runtimeWeights = {
   "shellSwitchApp.test.ts": 23,
   "startupBlocked.test.ts": 29,
   "startupDiscovery.test.ts": 22,
-  "startupLaunch.test.ts": 8
+  "startupLaunch.test.ts": 8,
+  "themeBridgeLive.test.ts": 12
 };
 
 export function discoverTestFiles() {

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {nmshConfigDirectory} from '../configuration/paths.js';
@@ -202,8 +202,13 @@ export function hookSpec(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim
 }
 
 /** The verified plan (exact path, exact diff) for inserting a hook; nothing is written here. */
+/** Home as given and as resolved (a symlinked home, such as macOS /var → /private/var, is still home). */
+function homeRoots(home: string): string[] {
+  try { return [...new Set([home, realpathSync(home)])]; } catch { return [home]; }
+}
+
 export function planHook(spec: HookSpec, home: string): {plan: FileEditPlan} | {noop: string} | {error: string} {
-  const roots = [home];
+  const roots = homeRoots(home);
   if (spec.createIfMissing && !existsSync(spec.configPath)) {
     const result = planCreate(spec.configPath, `${spec.lines.join('\n')}\n`, roots);
     return result.kind === 'plan' ? {plan: result.plan} : {error: 'reason' in result ? result.reason : 'Cannot create that file.'};
@@ -230,7 +235,7 @@ export function applyHook(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vi
 export function planHookRemoval(target: Extract<ManagedTarget, 'tmux' | 'neovim' | 'vim'>, home: string, env: NodeJS.ProcessEnv = process.env): {plan: FileEditPlan} | {gone: true} | {error: string} {
   const hook = loadLedger(env).entries[target]?.hook;
   if (!hook) return {error: 'NMSh has no recorded include for this target.'};
-  const facts = inspectFile(hook.configPath, [home]);
+  const facts = inspectFile(hook.configPath, homeRoots(home));
   if (facts.content === undefined) return {error: `${hook.configPath} ${facts.refusal ?? 'cannot be read'}; nothing was changed.`};
   const block = `${hook.lines.join('\n')}\n`;
   const occurrences = facts.content.split(block).length - 1;

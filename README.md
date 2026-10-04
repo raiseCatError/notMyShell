@@ -88,12 +88,16 @@ NMSh provides a richer interactive frontend without throwing away the proven rob
 - Width-aware path shortening keeps the repository name and current directory whole while abbreviating parents as the terminal narrows
 - Terminal glyph style (Nerd Font or Safe/ASCII) is chosen on first run and can be changed in `/config` (Glyph style) or previewed under `/settings` → Settings → Glyph style. Existing v0.3 configurations keep Nerd Font styling; `NMSH_ICONS=nerd|safe` overrides the saved choice for the current process.
 - Optional Starship or Powerlevel10k prompt providers; NMSh keeps the editor. The Starship module editor changes only reviewed settings, with a backup of an existing config.
+- Prompt provider **None**: composer only (no prompt row, modules, right prompt or marker); everything else in NMSh keeps working
 - Native prompt styles: Powerline, Soft, Minimal, Outline (`/prompt` → Style)
 - One-line or two-line composer layouts
 
 ### Interface
 - Command lifecycle rows with activity animation and nested Node TAP activity
-- Scrollable history with muted snapshots of each command's prompt; tune dividers and history colors with `/transcript`
+- Scrollable history with muted snapshots of each command's prompt, shown Full, Compact, Minimal or Off; tune dividers and history colors with `/transcript`
+- Native theme library: `/theme` (Theme Studio) browses Built-in themes and manages Imported and Custom ones; import NMSh Theme JSON, Base16, Base24, Windows Terminal, Oh My Posh (JSON/YAML/TOML), Kitty, Ghostty, iTerm2 or WezTerm TOML files as data only, with a preview and loss disclosure before anything is saved
+- Theme Bridge (`/theme-bridge`, opt-in per tool): fzf launched by NMSh, less/man, LS_COLORS, tmux, Neovim and Vim can Follow NMSh or use a pinned theme; nothing changes for a tool until you choose, and config includes are shown and confirmed first
+- Host cooperation on capable terminals: OSC 7 working directory and OSC 133 command zones derived from NMSh's own command lifecycle, and NMSh-authored OSC 8 links (help, docs, dev-server URLs) kept separate from program output
 - Output folding (Config → Output folding: Off / Smart / Always): long output collapses to its first and last lines around `› N lines hidden · Ctrl+O`; Smart keeps failures and useful output expanded; `/copy` and `/resume` always keep the full output
 - Composer position Bottom, Top, or Flow (Config → Composer position). Flow places the prompt and input right after the newest output, like a conventional terminal, and they scroll with it. Combine any position with Normal or Chat transcript presentation (Config → Transcript presentation). `/layout` (also Config → Layout) previews every combination with sample content before you choose.
 - Welcome providers: Vespyr (default), Fastfetch, Neofetch (legacy, if installed), or None (`/settings` → Welcome)
@@ -273,6 +277,7 @@ The `/appearance` slash command provides an interactive UI to adjust Ghostty's w
 - **Completion:** The completion bridge is not full parity with a configured interactive zsh, and native `fzf-tab` is not supported yet ([#52](https://github.com/raiseCatError/notMyShell/issues/52)).
 - **Nested activity:** Only directly observed Node TAP v13 streams produce nested activity rows.
 - **Powerlevel10k provider:** The right prompt, instant prompt, gitstatus daemon, and p10k settings defined only in `.zshrc` are not reproduced.
+- **Theme Bridge:** already-running editors and shells outside NMSh are not recolored live; bat and delta are detected but stay Independent (their custom themes need bat's cache or git config, which NMSh does not modify). Terminal title ownership (OSC 0/2) is not implemented.
 
 ## Development
 

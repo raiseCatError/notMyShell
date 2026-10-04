@@ -6,6 +6,11 @@ and, for dark variants, text tiers). They never recolor the terminal window,
 editor, tab chrome, desktop appearance or any host configuration. Zed's
 `/appearance` still says "Appearance is configured by Zed."
 
+Custom and imported themes now live in a Native theme library, and the
+opt-in Theme Bridge can extend a theme to selected terminal tools; see
+[theme-bridge.md](theme-bridge.md). With Theme Bridge Off (the default)
+the statement above holds unchanged.
+
 ## Model
 
 The configuration stores one palette id (`nmsh.palette`). Family and variant

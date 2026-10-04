@@ -167,7 +167,7 @@ const PROMPT_PROVIDER_ROW = providerRow<PromptProviderId>('setupPromptProvider',
  * second configuration path.
  */
 /** Setup's single Theme Bridge question; Yes only reveals the detected tools, each still Independent. */
-const THEME_BRIDGE_ROW: SettingsRow = {id: 'setupThemeBridge', label: 'Extend NMSh colors to terminal tools?', description: 'Theme Bridge: opt-in colors for fzf, less/man, LS_COLORS, tmux, Neovim and Vim',
+const THEME_BRIDGE_ROW: SettingsRow = {id: 'setupThemeBridge', label: 'Extend colors to tools?', description: 'Theme Bridge: opt-in colors for fzf, less/man, LS_COLORS, tmux, Neovim and Vim',
   category: 'Appearance', control: 'enum', options: ['No', 'Yes'], index: c => c.themeBridge.enabled ? 1 : 0,
   select: (c, index) => ({...c, themeBridge: {...c.themeBridge, enabled: index === 1}})};
 
@@ -268,7 +268,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Theme: the base NMSh prompt/UI palette · Theme text: whether it colors NMSh text · UI chrome: frames, tabs, selection, separators, accents.',
     'Chroma: an optional treatment over the Native prompt/effects and opted-in surfaces; Full Chroma may override the prompt\'s theme colors. Your terminal and editor keep their own colors.',
   ], rows: [
-    {row: configRow('themeFamily'), note: () => '/theme makes your own'},
+    {row: configRow('themeFamily'), note: () => 'Built-in, Imported and Custom themes; /theme creates, imports and edits them'},
     {row: configRow('themeVariant')},
     {row: configRow('themeAccent')},
     {row: configRow('themeText')},
@@ -293,7 +293,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     routeRow('setupChromeColors', 'Edit UI chrome colors', 'Accent, text, separator, selection and status roles with the color picker', 'chromeColors', 'Appearance'),
     {...routeRow('setupThemeStudio', 'Theme Studio', 'Create, edit, import, export and manage Native themes; selection is above', 'themeStudio', 'Appearance'),
       row: {id: 'setupThemeStudio', label: 'Theme Studio', description: 'Create, edit, import, export and manage Native themes; selection is above', category: 'Appearance',
-        control: 'action', actionLabel: 'Open ›', destination: 'themeStudio', value: draft => librarySummary(draft.themes) ?? ''}},
+        control: 'action', actionLabel: 'Open ›', destination: 'themeStudio', value: draft => [librarySummary(draft.themes), 'Open ›'].filter(Boolean).join('  ')}},
     {row: THEME_BRIDGE_ROW, note: draft => draft.themeBridge.enabled
       ? 'Only tools found on this system are listed; each starts Independent. Choose theme and includes for tmux/Neovim/Vim are in /theme-bridge'
       : 'No: every tool keeps its own colors; NMSh injects and changes nothing'},
