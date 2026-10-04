@@ -117,8 +117,12 @@ test('/zsh → nmsh returns to the exact session without a picker, and leaving a
     frontend.pty.write('/zsh\r');
     await until(async () => (await sandbox.sessions()).every(session => session.state === 'detached'), 15000, 'both sessions detached');
     // The ordinary zsh carries the exact return session; print it and this shell's pid.
-    frontend.pty.write('printf "RET=%s PID=%s\\n" "$NMSH_RETURN_SESSION" "$$"\r');
-    await frontend.waitFor(/RET=\S+ PID=\d+/);
+    // Keys typed while NMSh is still handing over the terminal may be lost; probe until the ordinary shell answers.
+    await until(() => {
+      if (/RET=\S+ PID=\d+/.test(strip(frontend.output))) return true;
+      frontend.pty.write('printf "RET=%s PID=%s\\n" "$NMSH_RETURN_SESSION" "$$"\r');
+      return false;
+    }, 15000, 'the ordinary shell');
     const first = /RET=(\S+) PID=(\d+)/.exec(strip(frontend.output))!;
     assert.equal(first[1], mine.id);
     const mark = frontend.mark;
