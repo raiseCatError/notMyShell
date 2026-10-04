@@ -301,20 +301,27 @@ export function conceptDestination(concept: Concept) {
  * guide and /ask help explain exactly what Ask knows. Every public concept
  * belongs to a section (a test enforces it); "Everything" lists them all.
  */
-export interface GuideSection {id: string; title: string; why: string; concepts: string[]}
+export interface GuideSection {id: string; title: string; why: string; concepts: string[]; notes?: string[]}
 
 export const GUIDE_SECTIONS: readonly GuideSection[] = [
   {id: 'start', title: 'Getting started', why: 'NMSh is a terminal frontend over a real, persistent shell: your shell keeps its state, and NMSh adds the editor, transcript and tools around it.',
     concepts: ['setup', 'help', 'palette', 'settings', 'version', 'updates', 'status']},
-  {id: 'look', title: 'Prompt & appearance', why: 'Make the prompt and colors yours without editing dotfiles.', concepts: ['prompt', 'theme', 'themeStudio', 'glyphs', 'cursor', 'motion', 'syntax']},
+  {id: 'look', title: 'Prompt & appearance', why: 'Make the prompt and colors yours without editing dotfiles.', concepts: ['prompt', 'theme', 'themeStudio', 'glyphs', 'syntax']},
+  {id: 'cursorEffects', title: 'Cursor & effects', why: 'Cursor trails and motion for NMSh-owned chrome; Reduced Motion, Effects Off and NO_COLOR are always respected.', concepts: ['cursor', 'motion']},
   {id: 'chroma', title: 'Chroma', why: 'Optional gradients and motion for NMSh-owned chrome only; your command output is never recolored.', concepts: ['chroma', 'effects', 'activity']},
   {id: 'shells', title: 'Shells', why: 'One NMSh window can run zsh, Fish or Bash, and you can leave for a plain shell and come back.', concepts: ['shell', 'leave', 'otherShells']},
   {id: 'completion', title: 'Completion & suggestions', why: 'Tab completion lists real candidates; ghost suggestions predict the rest of the line.', concepts: ['completion', 'suggestions']},
   {id: 'history', title: 'History & transcripts', why: 'Find what you ran and what it printed, now or in earlier sessions.', concepts: ['history', 'picker', 'transcript', 'find', 'copy', 'transcripts']},
   {id: 'sessions', title: 'Sessions', why: 'Sessions keep running when a window closes; reattach, switch or get notified.', concepts: ['sessions', 'agentSessions', 'presets', 'notices', 'commandNotifications', 'panes']},
-  {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask', 'understanding']},
+  {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask']},
+  {id: 'intelligence', title: 'Local intelligence', why: 'An optional local model helps Ask map vague requests to known actions. It runs on this machine, never writes commands, and Ask works fully without it.', concepts: ['understanding'],
+    notes: ['Modes: Off, Auto (used only when the deterministic resolver is unsure) and Always (consulted first). /llm shows the model, runtime and last inference.']},
+  {id: 'projects', title: 'Project & dev tasks', why: 'Ask reads this project\'s scripts (package.json, Makefile, Cargo, …) and can run them for you.', concepts: [],
+    notes: ['Try: "run the tests" · "start the dev server" · "what scripts does this project have?"', 'Dev servers run as NMSh-managed background tasks: a live status row, detected URLs to open, and "stop the dev server" to end them.']},
   {id: 'files', title: 'Files, config & editor', why: 'Jump to folders, open what output mentions, and let Ask find and open config files or add/update a setting with a verified, previewed edit (it never removes settings).', concepts: ['navigation', 'editor', 'pastePreview']},
-  {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'homebrew', 'agents', 'doctor', 'watch']},
+  {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'homebrew', 'agents']},
+  {id: 'doctorWatch', title: 'Doctor & watch', why: 'Check your setup with local, read-only checks, and watch a command change over time.', concepts: ['doctor', 'watch'],
+    notes: ['After a failure, ask "why did that fail?" for an explanation from the recorded output.']},
   {id: 'layout', title: 'Layout & folding', why: 'Decide where the composer sits and how much output stays in view.', concepts: ['layout', 'composerDividers', 'folding', 'statusStrip', 'idle']},
   {id: 'keyboard', title: 'Keyboard', why: 'Terminal key integration for Shift+Enter, Option as Meta and enhanced keys.', concepts: ['keyboard']},
 ];

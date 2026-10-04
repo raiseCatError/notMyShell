@@ -29,7 +29,7 @@ export function guideOutcome(context?: Pick<AskContext, 'nmsh'>): AskOutcome {
 export function sectionOutcome(id: string, context?: Pick<AskContext, 'nmsh'>): AskOutcome {
   const section = GUIDE_SECTIONS.find(item => item.id === id)!;
   const concepts = section.concepts.map(conceptId => byId.get(conceptId)!).filter(Boolean);
-  const lines = [section.title, section.why, ''];
+  const lines = [section.title, section.why, ...(section.notes ?? []), ''];
   for (const concept of concepts) {
     const where = concept.support === 'unsupported' ? 'not supported' : concept.configure ?? concept.open ?? concept.where ?? '';
     const fact = context?.nmsh?.[concept.id];
@@ -54,12 +54,17 @@ export function everythingOutcome(_context?: Pick<AskContext, 'nmsh'>): AskOutco
 export function askHelpOutcome(): AskOutcome {
   return {kind: 'answer', capability: 'help.capabilities', text: [
     'Ask can help with:',
-    '  NMSh settings and features    Commands and syntax',
-    '  Git in this repository        Files and your editor',
-    '  Sessions and transcripts      Providers, tools and Homebrew packages',
-    '  What you just ran             Config files: open, add or update settings (shown first, never removed)',
+    '  Files                 list, browse, find and open files ("open", "find files named config")',
+    '  Commands              syntax, flags and what a command does ("what does git clean -n do?")',
+    '  Git                   status, branches, push and pull in this repository',
+    '  Projects              run scripts, start and stop dev servers ("run the tests")',
+    '  Config                open config files; add or update a setting (shown first, never removed)',
+    '  Packages              Homebrew search, info, install and upgrade (with your Yes)',
+    '  Sessions              what you just ran, transcripts, "why did that fail?", watches',
+    '  NMSh settings         prompt, appearance, cursor, motion, /doctor ("change my ghost text")',
+    '  Local understanding   an optional local model for vague requests (/llm)',
     '',
-    'Try: "what did I just do?" · "how do I push this branch?" · "what is zoxide?" · "change my ghost text" · "show untracked files" · "what does git clean -n do?"',
+    'Try: "what did I just do?" · "how do I push this branch?" · "what is zoxide?" · "watch git status" · "check my setup"',
     '',
     'Ask never runs destructive or arbitrary commands. Anything that changes something is shown first and needs your Yes.',
   ].join('\n'), next: [{key: 'guide:open', label: 'Open the full NMSh guide', refine: 'guide'}]};

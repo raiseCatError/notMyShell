@@ -27,7 +27,7 @@ export function resolveWatch(text: string, raw: string, context: AskContext): As
   if (/^(?:please )?(?:stop|end|cancel) (?:the |all )?watch(?:ing|es)?\b/u.test(text)) return {kind: 'proposal', capability: 'project.task', safety: 'navigate', confidence: 0.95, direct: true, text: 'Stopping the watch.', action: {kind: 'watchControl', op: /\ball\b/u.test(text) ? 'stopAll' : 'stop'}};
   if (/^(?:please )?pause (?:the )?watch/u.test(text)) return {kind: 'proposal', capability: 'project.task', safety: 'navigate', confidence: 0.95, direct: true, text: 'Pausing the watch.', action: {kind: 'watchControl', op: 'pause'}};
   if (/^(?:please )?(?:resume|unpause) (?:the )?watch/u.test(text)) return {kind: 'proposal', capability: 'project.task', safety: 'navigate', confidence: 0.95, direct: true, text: 'Resuming the watch.', action: {kind: 'watchControl', op: 'resume'}};
-  if (/\bwatch(?:es)?\b.*\b(?:output|results?|status)\b|^(?:show|list) (?:the |my )?watch(?:es)?$/u.test(text)) return {kind: 'proposal', capability: 'project.task', safety: 'navigate', confidence: 0.9, direct: true, text: 'Opening /watch.', action: {kind: 'watchControl', op: 'show'}};
+  if (/^(?:show |view |open )?(?:me )?(?:the |my )?watch(?:es)?(?: output| results?| status)$|^(?:show|list) (?:the |my )?watch(?:es)?$/u.test(text)) return {kind: 'proposal', capability: 'project.task', safety: 'navigate', confidence: 0.9, direct: true, text: 'Opening /watch.', action: {kind: 'watchControl', op: 'show'}};
   // "keep running the tests every 5 seconds", "watch the tests".
   if (/\b(?:keep running|watch|rerun|re-run|keep checking)\b.*\btests?\b/u.test(text)) {
     const project = context.project;

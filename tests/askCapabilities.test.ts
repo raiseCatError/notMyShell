@@ -16,6 +16,7 @@ import type {AskContext, AskOutcome, AskReferents} from '../src/ask/types.js';
 import {BundledCatalog} from '../src/shell/BundledCatalog.js';
 import {CommandReference} from '../src/shell/CommandReference.js';
 import {DeclarativeSpecSource} from '../src/shell/CompletionSources.js';
+import {LocalUnderstanding} from '../src/understanding/LocalUnderstanding.js';
 
 let root = '';
 const specs = mkdtempSync(join(tmpdir(), 'nmsh-specs-'));
@@ -252,4 +253,56 @@ test('typo tolerance: known vocabulary only, clear winners only, paths never sil
   const git = ask('git statsu');
   assert.match(git.kind === 'proposal' ? git.text : '', /Interpreted as: git status$/u, 'a corrected command is shown before it runs');
   assert.equal(ask('gt status').kind, 'unclear', 'ambiguous fuzzy matches ask instead of guessing');
+});
+
+test('acceptance phrases: files, projects, git, safety, watch, doctor and settings resolve to their typed capabilities', () => {
+  const expected: Array<[string, string]> = [
+    ['open', 'choose:file.browse'],
+    ['find files named config', 'choose:file.find'],
+    ['open the readme', 'proposal:openFile'],
+    ['run the tests', 'proposal:project'],
+    ['start the dev server', 'proposal:startTask'],
+    ['how do i push this branch', 'answer:git.status'],
+    ['git push', 'answer:git.status'],
+    ['git pull', 'answer:git.status'],
+    ['git push --force', 'unsafe:'],
+    ['delete everything', 'unsafe:'],
+    ['show untracked files', 'answer:git.status'],
+    ['what does git clean -n do', 'answer:help.command'],
+    ['what is using port 3000', 'proposal:recipe'],
+    ['watch git status', 'proposal:watch'],
+    ['keep running the tests every 5 seconds', 'proposal:watch'],
+    ['show watch output', 'proposal:watchControl'],
+    ['stop watching', 'proposal:watchControl'],
+    ['check my setup', 'proposal:slash'],
+    ['change my cursor', 'proposal:slash'],
+    ['open settings', 'proposal:slash'],
+    ['help', 'answer:help.capabilities'],
+    ['guide', 'choose:help.guide'],
+  ];
+  for (const [phrase, want] of expected) assert.equal(shape(ask(phrase)), want, phrase);
+  const push = ask('git push');
+  assert.ok(push.kind === 'answer' && /never rewrites history unless you add --force/u.test(push.text), 'a plain push is not a force push');
+});
+
+test('acceptance: /ask help lists every category and the guide has the new sections', () => {
+  const help = ask('help');
+  assert.equal(help.kind, 'answer');
+  for (const category of ['Files', 'Commands', 'Git', 'Projects', 'Config', 'Packages', 'Sessions', 'NMSh settings', 'Local understanding']) assert.match((help as {text: string}).text, new RegExp(`\\n  ${category} `, 'u'), category);
+  const guide = ask('guide');
+  assert.equal(guide.kind, 'choose');
+  const labels = (guide as {options: Array<{label: string}>}).options.map(option => option.label);
+  for (const title of ['Cursor & effects', 'Local intelligence', 'Project & dev tasks', 'Doctor & watch']) assert.ok(labels.includes(title), title);
+});
+
+test('acceptance: local understanding Off never consults the model, Auto only when unsure, Always first', () => {
+  const model = {label: 'Qwen3 0.6B Q8_0', runtime: 'llama.cpp', path: '/m/qwen3.gguf', owned: true} as const;
+  const off = new LocalUnderstanding(() => ({mode: 'off', ask: true, folding: true, model}));
+  const auto = new LocalUnderstanding(() => ({mode: 'auto', ask: true, folding: true, model}));
+  const always = new LocalUnderstanding(() => ({mode: 'always', ask: true, folding: true, model}));
+  assert.deepEqual([off.eligible('ask'), off.prefersModel], [false, false]);
+  assert.deepEqual([auto.eligible('ask'), auto.prefersModel], [true, false]);
+  assert.deepEqual([always.eligible('ask'), always.prefersModel], [true, true]);
+  // Ask itself never needs the model: the deterministic resolver answers with understanding Off.
+  assert.equal(shape(ask('run the tests')), 'proposal:project');
 });

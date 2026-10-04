@@ -269,7 +269,7 @@ export function resolveGit(text: string, raw: string, context: AskContext, refer
   if (/\bpush\b/u.test(text) && /\b(?:branch|this|it|my|changes|commits|upstream)\b/u.test(text)) return pushOutcome(git, reference);
   if (/\bpull\b/u.test(text) && /\b(?:branch|this|it|my|changes|latest|upstream)\b/u.test(text)) return pullOutcome(git);
   // "how do i push", "what's the syntax to push": a plain push is not a force push; the syntax, then this branch's exact command.
-  if (/\b(?:push|pull)\b/u.test(text) && (question || /^(?:push|pull)$/u.test(text) || /^how\b/u.test(text))) {
+  if (/\b(?:push|pull)\b/u.test(text) && (question || /^(?:git )?(?:push|pull)$/u.test(text) || /^how\b/u.test(text))) {
     const verb = /\bpush\b/u.test(text) ? 'push' : 'pull';
     const syntax = verb === 'push' ? 'git push [<remote> [<branch>]] sends your commits to a remote. It never rewrites history unless you add --force.' : 'git pull [<remote> [<branch>]] fetches a remote branch and integrates it into yours.';
     const contextual = verb === 'push' ? pushOutcome(git, reference) : pullOutcome(git);
