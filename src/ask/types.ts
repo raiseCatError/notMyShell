@@ -1,6 +1,8 @@
 import type {ParsedSlashCommand} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {GitFacts} from './git.js';
+import type {ConfigTarget} from './configTargets.js';
+import type {FileEditPlan} from './fileEdit.js';
 
 /**
  * Ask: plain-English requests resolved to NMSh's own typed capabilities.
@@ -37,6 +39,8 @@ export type AskAction =
   | {kind: 'attachSession'; id: string}
   /** A Git command NMSh built from facts (never request or model text); the allowlist and risk are checked again before it runs. */
   | {kind: 'git'; argv: string[]; risk: 'read' | 'mutate'}
+  /** Apply a verified file edit plan (NMSh writes it; no shell). */
+  | {kind: 'applyEdit'; plan: FileEditPlan}
   /** A curated tool install (the /tools recipe, shown exactly before the Yes); never a guessed package. */
   | {kind: 'installTool'; tool: string; label: string}
   | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend'; value: string; label: string};
@@ -70,6 +74,8 @@ export interface CommandBlock {
   run?: AskAction;
   /** Text the person themselves ran, shown verbatim: Copy/Insert only, never Run. */
   literal?: string;
+  /** A generated script rendered from a verified FileEditPlan (shown, copied and inserted as is); Run applies the plan itself. */
+  script?: string;
 }
 
 /**
@@ -86,6 +92,12 @@ export interface AskReferents {
   remote?: string;
   /** The command block most recently shown. */
   block?: CommandBlock;
+  /** The config file the conversation is about. */
+  config?: {id: string; label: string; path: string};
+  /** The file most recently opened, shown or edited. */
+  file?: string;
+  /** Text the person pasted to add ("add this"), kept so "put it under terminal" can follow. */
+  snippet?: string;
 }
 
 export interface AskOption {
@@ -108,7 +120,7 @@ export interface AskOption {
  * - unclear: not enough to go on; ask for more, with factual categories.
  */
 export type AskOutcome =
-  | {kind: 'proposal'; capability: CapabilityId; safety: SafetyClass; text: string; action: AskAction; command?: string; confidence: number}
+  | {kind: 'proposal'; capability: CapabilityId; safety: SafetyClass; text: string; action: AskAction; command?: string; confidence: number; referents?: AskReferents}
   | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption; block?: CommandBlock; next?: AskOption[]; referents?: AskReferents}
   | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]}
   | {kind: 'unsupported'; text: string; alternative?: AskOption}
@@ -162,6 +174,8 @@ export interface AskContext {
   git?: GitFacts;
   /** A few current NMSh facts by concept id (e.g. shell: "Fish (default zsh)", chroma: "Aurora"), for the guide. */
   nmsh?: Record<string, string>;
+  /** Config targets that apply here (from configTargets.ts), with whether each exists. */
+  configs?: Array<ConfigTarget & {exists: boolean}>;
   /** Recent completed shell commands, newest first: factual metadata, never their output. */
   recent?: RecentCommand[];
 }

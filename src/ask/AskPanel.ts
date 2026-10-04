@@ -103,6 +103,10 @@ export function blockOptions(block: CommandBlock): AskOption[] {
 /** A command block's Run as a proposal: what the final Yes/No confirms. */
 export function runProposal(block: CommandBlock, shell: ShellId = 'zsh'): AskOutcome | undefined {
   if (!block.run || block.literal || block.placeholders?.length || block.risk === 'destructive') return undefined;
+  // A file edit's diff and command are already on screen; the final question names the file.
+  if (block.run.kind === 'applyEdit') {
+    return {kind: 'proposal', capability: 'file.open', safety: 'mutate', confidence: 0.95, text: `Apply this edit to ${block.run.plan.path}?`, action: block.run};
+  }
   return {kind: 'proposal', capability: 'git.status', safety: block.risk === 'read' ? 'read' : 'mutate', confidence: 0.95,
     text: block.risk === 'read' ? 'Run this read-only command?' : 'Run this command? It changes your repository.', command: renderCommand(block, shell), action: block.run};
 }
@@ -111,7 +115,7 @@ export function runProposal(block: CommandBlock, shell: ShellId = 'zsh'): AskOut
 export function receiveOutcome(state: AskState, outcome: AskOutcome): AskEvent | undefined {
   state.busy = false;
   state.pending = outcome;
-  const referents = outcome.kind === 'answer' || outcome.kind === 'unsafe' ? outcome.referents : undefined;
+  const referents = outcome.kind === 'answer' || outcome.kind === 'unsafe' || outcome.kind === 'proposal' ? outcome.referents : undefined;
   if (referents) state.referents = {...state.referents, ...referents};
   state.selected = 0;
   state.input = '';
@@ -221,7 +225,8 @@ export function askKey(state: AskState, key: Key): AskEvent | undefined {
     state.selected = 0;
     return undefined;
   }
-  if (key.kind === 'paste') { state.input += key.value.replace(/[\u0000-\u001f\u007f]+/gu, ' '); return undefined; }
+  // Pasted snippets keep their lines (config blocks, code to replace); other control characters are dropped.
+  if (key.kind === 'paste') { state.input += key.value.replace(/\r\n?/gu, '\n').replace(/[\u0000-\u0009\u000b-\u001f\u007f]+/gu, ' '); return undefined; }
   if (key.kind === 'backspace') { state.input = [...state.input].slice(0, -1).join(''); state.selected = 0; return undefined; }
   if ((key.kind === 'left' || key.kind === 'right') && confirming && !state.input) { state.confirm = state.confirm === 'yes' ? 'no' : 'yes'; return undefined; }
   // ←→ and ↑↓ both move through choices, as elsewhere in NMSh.
@@ -252,7 +257,7 @@ export function askTranscriptText(state: AskState, shell: ShellId = 'zsh'): {req
   const first = state.turns.findIndex(turn => turn.role === 'you');
   if (first === -1) return undefined;
   // Only the visible role and text are kept: no outcomes, options, rejected keys or model data.
-  const turns = state.turns.slice(first + 1).map(turn => ({role: turn.role, text: turn.block ? `${turn.text}\n  ${turn.block.literal ?? renderCommand(turn.block, shell)}` : turn.text}));
+  const turns = state.turns.slice(first + 1).map(turn => ({role: turn.role, text: turn.block ? `${turn.text}\n  ${turn.block.literal ?? turn.block.script ?? renderCommand(turn.block, shell)}` : turn.text}));
   const body = turns.map(turn => `${turn.role === 'you' ? 'You' : 'Ask'}: ${turn.text}`).join('\n');
   return {request: state.turns[first]!.text, body, turns};
 }
@@ -331,7 +336,7 @@ export function commandBlockRows(block: CommandBlock, width: number, shell: Shel
   const primary = foreground(UI_COLORS.primary);
   const subtle = foreground(UI_COLORS.subtle);
   const reset = '\u001b[0m';
-  const command = block.literal ?? renderCommand(block, shell);
+  const command = block.literal ?? block.script ?? renderCommand(block, shell);
   const rows = ['', ...wrapText(command, width - 4).map(line => `    ${primary}${line}${reset}`)];
   if (block.note) rows.push(...wrapText(block.note, width - 4).map(line => `    ${subtle}${line}${reset}`));
   if (block.facts?.length) rows.push(`    ${subtle}${block.facts.map(([key, value]) => `${key} ${value}`).join(' · ')}${reset}`);
@@ -364,7 +369,7 @@ export function renderAsk(state: AskState, columns: number, options: AskRenderOp
     const yes = pending.safety === 'read' ? 'Run' : pending.safety === 'install' ? 'Install' : 'Yes';
     bottom.push('', `  ${state.confirm === 'yes' ? `${accent}[ Y ${yes} ]${reset}` : `${subtle}  Y ${yes}  ${reset}`}   ${state.confirm === 'no' ? `${accent}[ N Don't ]${reset}` : `${subtle}  N Don't  ${reset}`}`);
   }
-  bottom.push('', state.working ? `  ${subtle}${state.working}${reset}` : `  ${accent}›${reset} ${primary}${state.input}${reset}${state.busy ? `  ${subtle}…${reset}` : `${accent}▏${reset}`}`);
+  bottom.push('', state.working ? `  ${subtle}${state.working}${reset}` : `  ${accent}›${reset} ${primary}${state.input.split('\n')[0]}${state.input.includes('\n') ? `${subtle} (+${state.input.split('\n').length - 1} lines)` : ''}${reset}${state.busy ? `  ${subtle}…${reset}` : `${accent}▏${reset}`}`);
   // The footer lists only what works right now.
   const controls: Array<[string, string]> = [['Enter', 'send']];
   if (choices.length || confirming) controls.push(['←→/↑↓', 'choose']);

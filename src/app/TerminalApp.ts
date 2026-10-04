@@ -141,6 +141,9 @@ import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/r
 import {commandReference} from '../shell/CommandReference.js';
 import {gitNextSteps, gitRunAllowed, gitSummary, renderCommand} from '../ask/gitAssist.js';
 import {readGitFacts} from '../ask/git.js';
+import {configTargets, systemConfigEnvironment} from '../ask/configTargets.js';
+import {systemFileAssistEnvironment} from '../ask/configAssist.js';
+import {applyPlan, sha256} from '../ask/fileEdit.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import type {AskOption} from '../ask/types.js';
 import {askStarters} from '../ask/guide.js';
@@ -5177,7 +5180,7 @@ export class TerminalApp {
       return;
     }
     if (event.kind === 'copy' || event.kind === 'insert') {
-      const text = event.block.literal ?? renderCommand(event.block, this.shellId);
+      const text = event.block.literal ?? event.block.script ?? renderCommand(event.block, this.shellId);
       if (event.kind === 'copy') {
         try { await writeClipboard(text); pushTurn(state, 'ask', 'Copied the command. Nothing was run.'); } catch { pushTurn(state, 'ask', 'The clipboard isn\'t available here; Insert puts the command in the composer instead.'); }
         this.render();
@@ -5194,7 +5197,7 @@ export class TerminalApp {
       return;
     }
     // Actions with a factual result stay inside the conversation; navigation to another surface leaves Ask.
-    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool') {
+    if (event.action.kind === 'git' || event.action.kind === 'read' || event.action.kind === 'setting' || event.action.kind === 'installTool' || event.action.kind === 'applyEdit' || event.action.kind === 'openFile') {
       await this.runInAsk(state, event.action);
       this.render();
       return;
@@ -5233,6 +5236,24 @@ export class TerminalApp {
     if (action.kind === 'setting') {
       await this.executeAskAction(action);
       finish(`Done: ${action.label}.`);
+      return;
+    }
+    if (action.kind === 'openFile') {
+      await this.openLocation('/ask', action.path, this.shellCwd);
+      finish(`Opened ${action.path.startsWith(`${homedir()}/`) ? `~${action.path.slice(homedir().length)}` : action.path} in ${this.hostActions().label}.`);
+      state.referents = {...state.referents, file: action.path};
+      return;
+    }
+    if (action.kind === 'applyEdit') {
+      const applied = applyPlan(action.plan);
+      if (!applied.ok) { finish(applied.reason); return; }
+      // Verify by reading back: the file must now be exactly what the preview showed.
+      let verified = false;
+      try { verified = sha256(readFileSync(action.plan.resolvedPath, 'utf8')) === action.plan.resultSha256; } catch { /* unreadable */ }
+      state.referents = {...state.referents, file: action.plan.path, block: undefined};
+      const open: AskOption = {key: 'edit:open', label: 'Open the file', outcome: {kind: 'proposal', capability: 'file.open', safety: 'navigate', confidence: 0.95,
+        text: `Opening ${action.plan.path}.`, action: {kind: 'openFile', path: action.plan.path}}};
+      finish(verified ? `Updated ${action.plan.path}: ${action.plan.reason}.` : `Wrote ${action.plan.path}, but reading it back did not match the preview; check the file.`, [open]);
       return;
     }
     if (action.kind === 'installTool') {
@@ -5322,7 +5343,8 @@ export class TerminalApp {
   private async resolveAsk(text: string, state: AskState): Promise<AskOutcome> {
     const context = await this.askContext(text);
     state.repoRoot = context.repoRoot;
-    const deterministic = resolveRequest(text, context, {rejected: state.rejected}, this.askCommands());
+    const deterministic = resolveRequest(text, context, {rejected: state.rejected}, this.askCommands(),
+      systemFileAssistEnvironment(homedir(), context.repoRoot, resolveCommand('python3'), process.execPath));
     if (!this.understanding.eligible('ask')) return deterministic;
     // Auto: built-in understanding first; the model is asked only when it is unsure. Always: the model is asked first.
     const unsure = deterministic.kind === 'unclear' || (deterministic.kind === 'choose' && deterministic.reason === 'ambiguous');
@@ -5384,6 +5406,10 @@ export class TerminalApp {
     }
     // The project file list is read (names only, bounded) only for requests about opening things.
     const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
+    const conversation = this.askState?.referents;
+    // Config targets (existence checks only) for requests about config files or edits.
+    const configs = /\b(?:config(?:uration)?|settings|rc|dotfile|zshrc|bashrc|add|put|insert|append|set|replace|paste|it|that|this)\b/iu.test(text) || conversation?.config || conversation?.file
+      ? configTargets(systemConfigEnvironment(this.shellId, root ?? this.shellCwd)).map(target => ({...target, exists: Boolean(target.path && existsSync(target.path))})) : undefined;
     // Git facts (local status and remote names; no network) only when the request or the conversation is about Git or its files.
     const referents = this.askState?.referents;
     const git = root && (/\b(?:git|branch|upstream|remotes?|untracked|staged?|unstaged|commit|push|pull|fetch|conflicts?|conflicted|clean|working tree|changes|changed)\b/iu.test(text) || referents?.files)
@@ -5393,7 +5419,7 @@ export class TerminalApp {
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
       providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {}),
-      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent, nmsh: this.askNmshFacts()};
+      ...(git ? {git} : {}), ...(referents ? {referents} : {}), recent, nmsh: this.askNmshFacts(), ...(configs ? {configs} : {})};
   }
 
   /** Every Ask action is an existing NMSh handler; read-only commands are NMSh-built argv submitted visibly. */

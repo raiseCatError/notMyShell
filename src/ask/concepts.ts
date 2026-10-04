@@ -291,7 +291,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   {id: 'history', title: 'History & transcripts', why: 'Find what you ran and what it printed, now or in earlier sessions.', concepts: ['history', 'picker', 'transcript', 'find', 'copy', 'transcripts']},
   {id: 'sessions', title: 'Sessions', why: 'Sessions keep running when a window closes; reattach, switch or get notified.', concepts: ['sessions', 'presets', 'notices', 'commandNotifications', 'panes']},
   {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask', 'understanding']},
-  {id: 'files', title: 'Files, folders & editor', why: 'Jump to folders and open what output mentions in your editor.', concepts: ['navigation', 'editor']},
+  {id: 'files', title: 'Files, config & editor', why: 'Jump to folders, open what output mentions, and let Ask find and open config files or add/update a setting with a verified, previewed edit (it never removes settings).', concepts: ['navigation', 'editor']},
   {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'agents']},
   {id: 'layout', title: 'Layout & folding', why: 'Decide where the composer sits and how much output stays in view.', concepts: ['layout', 'folding', 'statusStrip', 'idle']},
   {id: 'keyboard', title: 'Keyboard', why: 'Terminal key integration for Shift+Enter, Option as Meta and enhanced keys.', concepts: ['keyboard']},
