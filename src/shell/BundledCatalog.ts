@@ -65,6 +65,8 @@ export class BundledCatalog {
 
   get available(): boolean { return !!this.readIndex(); }
   get rootCount(): number { return Object.keys(this.readIndex()?.roots ?? {}).length; }
+  /** Every root command name the catalog knows (for typo recovery over known names only). */
+  rootNames(): string[] { return Object.keys(this.readIndex()?.roots ?? {}); }
   hasRoot(name: string): boolean { return Object.hasOwn(this.readIndex()?.roots ?? {}, name); }
 
   entry(key: string): CatalogNode | undefined {

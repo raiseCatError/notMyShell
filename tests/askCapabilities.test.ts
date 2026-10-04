@@ -225,3 +225,31 @@ test('local model questions answer from /llm facts; actions open /llm; model int
   const files = resolveModelIntent({capability: 'files.list', confidence: 0.9, arguments: {}}, context(), {}, commands);
   assert.equal(files?.kind === 'choose' && files.capability, 'file.browse');
 });
+
+test('typo tolerance: known vocabulary only, clear winners only, paths never silently changed', async () => {
+  const {correctWord, editDistance, correctRequest} = await import('../src/ask/fuzzy.js');
+  assert.equal(editDistance('statsu', 'status'), 1, 'transposition counts once');
+  assert.equal(correctWord('statsu', ['status', 'stash', 'show']), 'status');
+  assert.equal(correctWord('brach', ['branch', 'brash']), undefined, 'two equally close candidates: no guess');
+  assert.equal(correctWord('provders', ['providers', 'prompt']), 'providers', 'missing letter');
+  assert.equal(correctWord('chromma', ['chroma']), 'chroma', 'duplicated letter');
+  assert.equal(correctWord('stzus', ['status']), undefined, 'too far for a short word');
+  assert.equal(correctWord('gti', ['git', 'gtk']), 'git', 'three letters: transposition only');
+  assert.equal(correctWord('gt', ['git']), undefined, 'two letters are never corrected');
+  assert.equal(correctWord('mainn', ['main', 'mainn']), undefined, 'an existing exact word is kept');
+  const vocabulary = {known: new Set(['git', 'status', 'mainn.ts', 'mainn']), words: ['open', 'show', 'status'], commands: () => ['git', 'npm'], subcommands: (command: string) => command === 'git' ? ['status', 'stash', 'push'] : []};
+  assert.deepEqual(correctRequest('git statsu', vocabulary), {text: 'git status', corrections: [{from: 'statsu', to: 'status'}]});
+  assert.equal(correctRequest('open mainn', vocabulary), undefined, 'a real file name is never corrected');
+  assert.equal(correctRequest('open "statsu"', vocabulary), undefined, 'quoted text is left alone');
+  // Through Ask, with Local Understanding off.
+  const status = ask('show untrackd files');
+  assert.match(status.kind === 'answer' ? status.text : '', /^Interpreted as: show untracked files/u);
+  const typoFile = ask('open packge.json');
+  assert.ok(typoFile.kind === 'choose' && /Did you mean package\.json\?/u.test(typoFile.question) && typoFile.options[0]!.outcome?.kind === 'proposal', 'a near file is offered, not substituted');
+  assert.equal(shape(ask('opne package.json')), 'proposal:openFile');
+  const slash = ask('/provders');
+  assert.ok(slash.kind === 'proposal' && slash.action.kind === 'slash');
+  const git = ask('git statsu');
+  assert.match(git.kind === 'proposal' ? git.text : '', /Interpreted as: git status$/u, 'a corrected command is shown before it runs');
+  assert.equal(ask('gt status').kind, 'unclear', 'ambiguous fuzzy matches ask instead of guessing');
+});

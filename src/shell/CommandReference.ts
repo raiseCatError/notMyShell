@@ -44,6 +44,13 @@ export class CommandReference {
   constructor(private readonly catalog: BundledCatalog = new BundledCatalog(),
     private readonly specs: DeclarativeSpecSource | undefined = new DeclarativeSpecSource(completionSpecDirectory())) {}
 
+  /** Known command names (bundled catalog roots and custom specs): the only vocabulary command typos are matched against. */
+  commandNames(): string[] {
+    this.names ??= [...new Set([...this.catalog.rootNames(), ...(this.specs?.load().keys() ?? [])])];
+    return this.names;
+  }
+  private names?: string[];
+
   /** Whether any source has facts for this command name. */
   knows(command: string): boolean {
     return Boolean(this.rootNode(command)) || Boolean(localKnowledge(command, command, true));

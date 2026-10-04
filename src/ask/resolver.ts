@@ -7,11 +7,12 @@ import {browseOutcome, resolveFiles} from './fileAssist.js';
 import {resolveRecipe} from './recipes.js';
 import {resolveProject} from './project.js';
 import {resolveLocalModel} from './localModel.js';
+import {ASK_WORDS, correctRequest, correctWord, type TypoVocabulary} from './fuzzy.js';
 import {resolveActivity} from './activity.js';
 import {resolvePackage} from './packages.js';
 import {resolveFileRequest, type FileAssistEnvironment} from './configAssist.js';
 import {askHelpOutcome, GUIDE_REQUEST, guideOutcome, HELP_REQUEST} from './guide.js';
-import {answerCommandQuestion, parseCommandQuestion, type CommandEnvironment} from './commands.js';
+import {answerCommandQuestion, COMMAND_ALIASES, parseCommandQuestion, type CommandEnvironment} from './commands.js';
 import {CONCEPTS, conceptDestination, conceptIntent, matchConcepts, type Concept, type ConceptIntent} from './concepts.js';
 
 const CONCEPTS_BY_ID = new Map(CONCEPTS.map(concept => [concept.id, concept]));
@@ -140,8 +141,52 @@ export interface ResolveState {
 const shellIn = (text: string): ShellId | undefined => (/\b(zsh|fish|bash)\b/u.exec(text)?.[1] as ShellId | undefined);
 const shellLabel = (context: AskContext, id: ShellId) => context.shells.find(shell => shell.id === id)?.label ?? id;
 
-/** One resolved request: the structured outcome, never free text to run. */
+/**
+ * One resolved request. Exact words and aliases first; only when that leaves
+ * Ask unsure are clear typos of known vocabulary corrected (fuzzy.ts) and the
+ * request resolved again. A correction that changes a command or an action is
+ * shown ("Interpreted as: git status"); the original wording wins otherwise.
+ */
 export function resolveRequest(raw: string, context: AskContext, state: ResolveState = {}, commands?: CommandEnvironment, files?: FileAssistEnvironment): AskOutcome {
+  const exact = resolveExact(raw, context, state, commands, files);
+  // A broad fallback (a folder list, a transcript search) can hide a typo of a more specific request ("show untrackd files").
+  const broad = (outcome: AskOutcome) => (outcome.kind === 'choose' || outcome.kind === 'proposal' || outcome.kind === 'answer') && ['file.browse', 'transcript.find'].includes(outcome.capability ?? '');
+  if (!weak(exact) && !broad(exact)) return exact;
+  const corrected = correctRequest(normalizeRequest(raw), typoVocabulary(context, commands));
+  if (!corrected) return exact;
+  const retry = resolveExact(corrected.text, context, state, commands, files);
+  if (weak(retry) || (broad(exact) && (broad(retry) || retry.kind === exact.kind && (retry as {capability?: string}).capability === (exact as {capability?: string}).capability))) return exact;
+  const note = `Interpreted as: ${corrected.text}`;
+  if (retry.kind === 'proposal') return {...retry, text: `${retry.text}\n${note}`};
+  if (retry.kind === 'answer') return {...retry, text: `${note}\n${retry.text}`};
+  if (retry.kind === 'choose') return {...retry, question: `${note}\n${retry.question}`};
+  return retry;
+}
+
+const weak = (outcome: AskOutcome) => outcome.kind === 'unclear' || (outcome.kind === 'answer' && /is not an NMSh command/u.test(outcome.text)) || (outcome.kind === 'choose' && outcome.reason === 'ambiguous')
+  || (outcome.kind === 'answer' && /^No file matching|doesn't know|I don't know|not a .* subcommand NMSh knows/u.test(outcome.text))
+  || (outcome.kind === 'answer' && /\(\S+ is not a .+ subcommand NMSh knows\)/u.test(outcome.text));
+
+let typoWords: string[] | undefined;
+function typoVocabulary(context: AskContext, commands?: CommandEnvironment): TypoVocabulary {
+  typoWords ??= [...new Set([...ASK_WORDS, ...CONCEPTS.flatMap(concept => concept.aliases).flatMap(alias => alias.split(/\s+/u)).filter(word => /^[a-z][a-z-]{2,}$/u.test(word)),
+    ...slashCommands.map(command => command.name.split(' ')[0]!), ...Object.keys(COMMAND_ALIASES), 'zsh', 'fish', 'bash', 'deja', 'atuin', 'fzf', 'television', 'zoxide', 'starship', 'fastfetch', 'neofetch'])];
+  const files = (context.files ?? []).map(path => basename(path).toLowerCase());
+  const commandNames = () => commands?.reference.commandNames() ?? [];
+  const known = new Set<string>([...typoWords, ...files, ...files.map(name => name.replace(/\.[^.]+$/u, ''))]);
+  // Command names are known words too (many are English: make, find, open), so they are never "corrected" away.
+  const knownCommands = new Set(commandNames());
+  return {known: {has: (word: string) => known.has(word) || knownCommands.has(word) || COMMON.has(word)} as ReadonlySet<string>, words: typoWords, commands: commandNames,
+    subcommands: command => commands?.reference.lookup([command])?.facts.subcommands.flatMap(item => item.names) ?? []};
+}
+
+/** Everyday words that are never typo candidates. */
+const COMMON = new Set(['the', 'and', 'for', 'you', 'can', 'how', 'this', 'that', 'with', 'from', 'into', 'about', 'please', 'there', 'here', 'them', 'they', 'are', 'was',
+  'have', 'has', 'does', 'did', 'not', 'all', 'any', 'some', 'one', 'two', 'other', 'again', 'just', 'like', 'want', 'need', 'make', 'get', 'set', 'use', 'run', 'see',
+  'thing', 'stuff', 'mine', 'yours', 'more', 'less', 'last', 'first', 'second', 'third', 'next', 'previous', 'new', 'old', 'off', 'turn', 'remove', 'add', 'put', 'help',
+  'doing', 'done', 'tell', 'give', 'keep', 'every', 'each', 'what', 'when', 'why', 'who', 'way', 'today', 'yesterday', 'broken', 'failed', 'fail', 'error', 'errors']);
+
+function resolveExact(raw: string, context: AskContext, state: ResolveState = {}, commands?: CommandEnvironment, files?: FileAssistEnvironment): AskOutcome {
   const text = normalizeRequest(raw);
   if (!text) return unclear(context, 'What can I help you with?');
   const scored = scoreCapabilities(text);
@@ -534,7 +579,18 @@ function resolveFile(raw: string, text: string, context: AskContext): AskOutcome
   // Several words that pick one file clearly ("src config") resolve; a single word ("config") asks.
   if (!strong.length && query.trim().split(/\s+/u).length > 1 && matches.length > 1 && matches[0]!.score - matches[1]!.score >= CLEAR_LEAD) return openProposal(matches[0]!.path, context);
   const candidates = [...new Set([...recent, ...(strong.length ? strong : matches).map(match => match.path)])].slice(0, 6);
-  if (!candidates.length) return {kind: 'answer', capability: 'file.open', text: `No file matching "${query}" under ${displayPath(root, context) || root}. /open <path> opens a path directly.`};
+  if (!candidates.length) {
+    // A clear near miss of a real file is offered, never substituted: "Did you mean package.json?"
+    const names = (context.files ?? []).map(path => basename(path));
+    const near = correctWord(query.toLowerCase().replace(/\s+/gu, ''), names.map(name => name.toLowerCase()));
+    const match = near ? (context.files ?? []).find(path => basename(path).toLowerCase() === near) : undefined;
+    if (match) {
+      const path = `${root}/${match}`;
+      return {kind: 'choose', reason: 'missing', capability: 'file.open', question: `No file named "${query}". Did you mean ${displayPath(path, context)}?`,
+        options: [{key: `file:${path}`, label: displayPath(path, context), outcome: openProposal(path, context)}]};
+    }
+    return {kind: 'answer', capability: 'file.open', text: `No file matching "${query}" under ${displayPath(root, context) || root}. /open <path> opens a path directly.`};
+  }
   return {kind: 'choose', reason: 'ambiguous', capability: 'file.open', question: `I found ${candidates.length} matches. Which one?`,
     options: candidates.map(path => ({key: `file:${path}`, label: displayPath(path, context), outcome: openProposal(path, context)}))};
 }
@@ -605,7 +661,7 @@ function providerSwitch(text: string, context: AskContext): AskOutcome {
 
 function understanding(text: string, context: AskContext): AskOutcome {
   const mode = /\b(?:off|disable|stop|never|no)\b/u.test(text) ? 'off' : /\balways\b/u.test(text) ? 'always' : /\b(?:on|auto|enable|use|turn on)\b/u.test(text) ? 'auto' : undefined;
-  if (!mode) return navigate('understanding.set', 'Opening /providers (Local understanding).', {kind: 'slash', slash: {kind: 'providers'}, label: '/providers'});
+  if (!mode) return navigate('understanding.set', 'Opening /llm (Local Intelligence).', {kind: 'slash', slash: {kind: 'llm'}, label: '/llm'});
   return {kind: 'proposal', capability: 'understanding.set', safety: 'navigate', confidence: 0.9,
     text: mode === 'off' ? 'Turn local understanding off? Ask and Smart Folding keep working without a model.' : `Set local understanding to ${mode === 'auto' ? 'Auto' : 'Always'}? It is used only for the features you enable in /providers, and only locally.`,
     action: {kind: 'setting', setting: 'localUnderstanding', value: mode, label: `Local understanding: ${mode}`}};
