@@ -5,7 +5,7 @@ import {renderControls} from '../ui/controls.js';
 import {displayWidth, repeatToWidth, truncateAnsi} from '../util/text.js';
 import {chatColumn} from '../output/TranscriptPresenter.js';
 import {filterOptions, pickOption} from './resolver.js';
-import type {AskAction, AskOption, AskOutcome} from './types.js';
+import type {AskAction, AskOption, AskOutcome, AskReferents} from './types.js';
 
 /**
  * The Ask surface. Each turn advances structured state (pending outcome,
@@ -31,6 +31,8 @@ export interface AskState {
   submitted: boolean;
   /** Conversation rows scrolled up from the newest (0 follows the conversation). */
   scroll: number;
+  /** What the conversation is about (files, command, branch): bounded, in memory only, never recorded. */
+  referents?: AskReferents;
 }
 
 export type AskEvent =
@@ -77,6 +79,8 @@ export function visibleOptions(state: AskState): AskOption[] {
 export function receiveOutcome(state: AskState, outcome: AskOutcome): AskEvent | undefined {
   state.busy = false;
   state.pending = outcome;
+  const referents = outcome.kind === 'answer' || outcome.kind === 'unsafe' ? outcome.referents : undefined;
+  if (referents) state.referents = {...state.referents, ...referents};
   state.selected = 0;
   state.input = '';
   const text = outcome.kind === 'choose' ? outcome.question : outcome.text;

@@ -2,6 +2,7 @@ import {basename, relative} from 'node:path';
 import {slashCommands} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CLEAR_LEAD, matchFiles} from './files.js';
+import {resolveGit} from './gitAssist.js';
 import {answerCommandQuestion, parseCommandQuestion, type CommandEnvironment} from './commands.js';
 import {CONCEPTS, conceptDestination, conceptIntent, matchConcepts, type Concept, type ConceptIntent} from './concepts.js';
 
@@ -140,6 +141,9 @@ export function resolveRequest(raw: string, context: AskContext, state: ResolveS
   if (explain) return build('help.command', text, context, raw);
   // Command knowledge: explaining git push or git clean is an answer, not an action, so it comes before the action-safety check.
   // "how do i X" still lets a strong typed capability act ("how do i open package.json").
+  // Git from local facts (current branch, real remotes, listed files) and this conversation's referents.
+  const git = resolveGit(text, raw, context, commands?.reference);
+  if (git) return git;
   const question = commands ? parseCommandQuestion(text) : undefined;
   if (question && commands) {
     const strongAction = scored.find(item => item.score >= CONFIDENCE.high && !item.capability.id.startsWith('help.'));
@@ -224,6 +228,12 @@ function unsafe(text: string, context: AskContext): AskOutcome {
   const what = /\buntracked\b/u.test(text) ? 'delete untracked files' : /\bpush\b/u.test(text) ? 'push commits' : /\bcommit\b/u.test(text) ? 'commit changes'
     : /\bkill\b/u.test(text) ? 'end processes' : /\bsudo\b/u.test(text) ? 'run commands as root' : 'change or delete things';
   if (git && context.repoRoot) {
+    // The affected files become what "them" means next ("show them", "what's the command to delete them").
+    if (/\buntracked\b/u.test(text) && context.git) {
+      return {kind: 'unsafe', text: `I understand that you want to ${what}, but Ask won't run destructive or history-changing Git commands. I can show the affected files first.`,
+        alternative: {key: 'safe:untracked', label: 'Show the untracked files', refine: 'show untracked files'},
+        referents: {files: {paths: [...context.git.untracked], kind: 'untracked'}}};
+    }
     return {kind: 'unsafe', text: `I understand that you want to ${what}, but Ask won't run destructive or history-changing Git commands. I can show the affected files first.`,
       alternative: {key: 'safe:status', label: 'Show Git status', outcome: build('git.status', 'git status', context, 'git status')}};
   }

@@ -139,6 +139,8 @@ function markSpans(plain: string, spans: ReadonlyArray<{start: number; end: numb
 }
 import {shellAdapter, shellAvailability, shellInstall} from '../shell/adapters/registry.js';
 import {commandReference} from '../shell/CommandReference.js';
+import {gitRunAllowed} from '../ask/gitAssist.js';
+import {readGitFacts} from '../ask/git.js';
 import type {CommandEnvironment} from '../ask/commands.js';
 import {askKey, askTranscriptText, createAskState, receiveOutcome, renderAsk, type AskEvent, type AskState} from '../ask/AskPanel.js';
 import {readArgv, resolveRequest} from '../ask/resolver.js';
@@ -5242,11 +5244,16 @@ export class TerminalApp {
     for (let index = 1; index <= 8; index += 1) { const record = this.output.recentShell(index); if (!record) break; recentCommands.push(record.command.slice(0, 80)); }
     // The project file list is read (names only, bounded) only for requests about opening things.
     const files = /\b(?:open|edit|view|show me|file|config|json|this|that)\b/iu.test(text) ? listProjectFiles(root ?? this.shellCwd) : undefined;
+    // Git facts (local status and remote names; no network) only when the request or the conversation is about Git or its files.
+    const referents = this.askState?.referents;
+    const git = root && (/\b(?:git|branch|upstream|remotes?|untracked|staged?|unstaged|commit|push|pull|fetch|conflicts?|conflicted|clean|working tree|changes|changed)\b/iu.test(text) || referents?.files)
+      ? await readGitFacts(root) : undefined;
     return {cwd: this.shellCwd, home: homedir(), ...(root ? {repoRoot: root} : {}), ...(this.context.branch ? {branch: this.context.branch} : {}),
       ...(this.context.git ? {dirty: Boolean(this.context.git.staged || this.context.git.modified || this.context.git.untracked)} : {}),
       worktrees, shell: this.shellId, defaultShell: this.promptConfiguration.shellBackend, shells, sessions, transcripts, recentFiles, recentCommands,
       editor: {label: host.label, available: probe.kind !== 'unsupported', ...(probe.kind === 'unsupported' ? {reason: probe.reason} : {})},
-      providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {})};
+      providers: askProviderFacts(this.promptConfiguration, statuses), sessionMode: this.sessionMode, now: Date.now(), ...(files ? {files} : {}),
+      ...(git ? {git} : {}), ...(referents ? {referents} : {})};
   }
 
   /** Every Ask action is an existing NMSh handler; read-only commands are NMSh-built argv submitted visibly. */
@@ -5268,6 +5275,15 @@ export class TerminalApp {
         // A normal, visible submission: the command and its output follow ordinary transcript and history rules.
         this.editor.clear();
         this.editor.insert(argv.map(part => /^[\w./=-]+$/u.test(part) ? part : quote(part)).join(' '));
+        await this.submit(false, true);
+        return;
+      }
+      case 'git': {
+        // Re-checked here: only allowlisted, non-destructive Git argv that NMSh built from facts ever runs.
+        if (gitRunAllowed(action.argv) !== action.risk) return;
+        const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+        this.editor.clear();
+        this.editor.insert(action.argv.map(part => /^[\w@%+=:,./-]+$/u.test(part) ? part : quote(part)).join(' '));
         await this.submit(false, true);
         return;
       }

@@ -1,5 +1,6 @@
 import type {ParsedSlashCommand} from '../commands/slashCommands.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import type {GitFacts} from './git.js';
 
 /**
  * Ask: plain-English requests resolved to NMSh's own typed capabilities.
@@ -34,6 +35,8 @@ export type AskAction =
   | {kind: 'read'; command: ReadCommand}
   | {kind: 'resumeTranscript'; id: string}
   | {kind: 'attachSession'; id: string}
+  /** A Git command NMSh built from facts (never request or model text); the allowlist and risk are checked again before it runs. */
+  | {kind: 'git'; argv: string[]; risk: 'read' | 'mutate'}
   | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend'; value: string; label: string};
 
 /**
@@ -105,7 +108,7 @@ export type AskOutcome =
   | {kind: 'answer'; capability: CapabilityId; text: string; follow?: AskOption; block?: CommandBlock; next?: AskOption[]; referents?: AskReferents}
   | {kind: 'choose'; reason: 'ambiguous' | 'missing'; capability?: CapabilityId; question: string; options: AskOption[]}
   | {kind: 'unsupported'; text: string; alternative?: AskOption}
-  | {kind: 'unsafe'; text: string; alternative?: AskOption}
+  | {kind: 'unsafe'; text: string; alternative?: AskOption; referents?: AskReferents}
   | {kind: 'unclear'; text: string; categories: AskOption[]};
 
 export interface AskSession {id: string; state: 'attached' | 'detached'; current: boolean; cwd: string; shell?: string; running?: string; createdAt: number}
@@ -141,4 +144,6 @@ export interface AskContext {
   files?: readonly string[];
   /** What this conversation is about so far (see AskReferents). */
   referents?: AskReferents;
+  /** Local Git facts, gathered only for requests that need them. */
+  git?: GitFacts;
 }
