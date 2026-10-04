@@ -1,8 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {existsSync, mkdtempSync, readFileSync, rmSync} from 'node:fs';
-import {createServer} from 'node:http';
+import {mkdtempSync, readdirSync, readFileSync, rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {ModelService, modelSocketPath, serveModelService} from '../src/understanding/ModelService.js';
@@ -12,7 +11,7 @@ import type {ModelRuntime} from '../src/understanding/runtimes.js';
 import {foldExcerpt, redact, validateFoldHint, validateInterpretation} from '../src/understanding/tasks.js';
 import {assessModel, discoverLocal, knownModelDirectories, nmshModelDirectory, proposeSetup, type DiscoveryAdapters} from '../src/understanding/discovery.js';
 import {ggufFixture, parseGgufMetadata} from '../src/understanding/gguf.js';
-import {downloadPinned, loadRecommendedModel} from '../src/understanding/recommended.js';
+import {downloadPinned, loadRecommendedModel, officialArtifact} from '../src/understanding/recommended.js';
 import {applyFoldHint, evaluateFold, hintEligible} from '../src/output/FoldPolicy.js';
 import {OutputBuffer} from '../src/output/OutputBuffer.js';
 import {CAPABILITIES, resolveWithInterpretation} from '../src/ask/resolver.js';
@@ -277,20 +276,48 @@ test('welcome text never claims a model that is not loaded; it names the actual 
   assert.equal(understandingWelcomeText({mode: 'always', ask: false, folding: false}), 'Always · no features enabled');
 });
 
-test('download: only a pinned artifact, verified by exact size and sha256; a mismatch leaves nothing behind', async () => {
-  assert.equal(loadRecommendedModel()?.artifact, null, 'this build pins no artifact, so nothing downloads');
+test('recommended model: the official Qwen3 0.6B Q8_0 artifact at a pinned revision, never main or a mirror', () => {
+  const recommended = loadRecommendedModel()!;
+  assert.equal(recommended.quantization, 'Q8_0');
+  const artifact = recommended.artifact!;
+  assert.equal(artifact.repository, 'https://huggingface.co/Qwen/Qwen3-0.6B-GGUF');
+  assert.equal(artifact.file, 'Qwen3-0.6B-Q8_0.gguf');
+  assert.equal(artifact.revision, '1eaf4d9657fe65ad10a51eab76a8db5b363bddaa');
+  assert.equal(artifact.bytes, 639446688);
+  assert.equal(artifact.sha256, '9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031');
+  assert.equal(artifact.license, 'Apache-2.0');
+  assert.equal(artifact.url, 'https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/1eaf4d9657fe65ad10a51eab76a8db5b363bddaa/Qwen3-0.6B-Q8_0.gguf');
+  assert.doesNotMatch(artifact.url, /\/resolve\/main\//u);
+  assert.equal(officialArtifact({...artifact, url: artifact.url.replace(artifact.revision, 'main'), revision: 'main'}), false, 'main is never used');
+  assert.equal(officialArtifact({...artifact, repository: 'https://huggingface.co/someone/Qwen3-0.6B-GGUF', url: artifact.url.replace('Qwen/', 'someone/')}), false, 'no third-party mirrors');
+});
+
+test('download: verified by exact size and sha256 into a temporary path; a mismatch is rejected, removed and never activated', async () => {
+  const official = loadRecommendedModel()!.artifact!;
   const payload = Buffer.from('GGUF fake weights for test');
-  const server = createServer((_request, response) => { response.end(payload); });
-  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-  const port = (server.address() as {port: number}).port;
+  const fetcher = (async () => new Response(payload)) as unknown as typeof fetch;
   const dir = mkdtempSync(join(tmpdir(), 'nmsh-dl-'));
-  const artifact = {repository: 'r', revision: 'abc', file: 'm.gguf', url: `http://127.0.0.1:${port}/m.gguf`, quantization: 'Q4_K_M', license: 'Apache-2.0',
-    bytes: payload.length, sha256: createHash('sha256').update(payload).digest('hex')};
   try {
-    const path = await downloadPinned(artifact, dir, () => {});
+    const good = {...official, bytes: payload.length, sha256: createHash('sha256').update(payload).digest('hex')};
+    const path = await downloadPinned(good, dir, () => {}, fetcher);
+    assert.equal(path, join(dir, 'Qwen3-0.6B-Q8_0.gguf'));
     assert.deepEqual(readFileSync(path), payload);
-    await assert.rejects(downloadPinned({...artifact, file: 'bad.gguf', sha256: '0'.repeat(64)}, dir, () => {}), /sha256/u);
-    assert.equal(existsSync(join(dir, 'bad.gguf')), false);
-    await assert.rejects(downloadPinned({...artifact, file: 'short.gguf', bytes: payload.length + 5}, dir, () => {}), /size mismatch/u);
-  } finally { server.close(); rmSync(dir, {recursive: true, force: true}); }
+    rmSync(path);
+    await assert.rejects(downloadPinned(official, dir, () => {}, fetcher), /size mismatch: 26 of 639446688 bytes/u, 'the real pin rejects anything else');
+    await assert.rejects(downloadPinned({...good, sha256: '0'.repeat(64)}, dir, () => {}, fetcher), /sha256 does not match/u);
+    assert.deepEqual(readdirSync(dir), [], 'nothing unverified remains, partial or final');
+    await assert.rejects(downloadPinned({...good, url: 'https://mirror.example/Qwen3-0.6B-Q8_0.gguf'}, dir, () => {}, fetcher), /official pinned Qwen artifact/u);
+  } finally { rmSync(dir, {recursive: true, force: true}); }
+});
+
+test('the download is offered only when nothing suitable is already here; a failed verification is shown and never retried silently', async () => {
+  const {understandingRows, renderUnderstandingPanel, createUnderstandingPanel} = await import('../src/understanding/UnderstandingPanel.js');
+  const recommended = loadRecommendedModel()!;
+  const settings: LocalUnderstandingSettings = {mode: 'auto', ask: true, folding: false};
+  const usable = {runtimes: [{kind: 'llama.cpp' as const, label: 'llama.cpp', running: false}], models: [{label: 'Qwen3 0.6B Q4_K_M', runtime: 'llama.cpp' as const, path: '/m.gguf', suitability: 'recommended' as const, reason: 'small', owned: false}]};
+  assert.ok(!understandingRows({settings, recommended, discovery: usable}).some(row => row.kind === 'download'), 'an existing compatible model is used instead');
+  const none = {runtimes: [], models: []};
+  assert.ok(understandingRows({settings, recommended, discovery: none}).some(row => row.kind === 'download'));
+  const text = renderUnderstandingPanel(createUnderstandingPanel(), {settings, recommended, discovery: none, downloadFailure: 'sha256 does not match the pinned artifact'}, 200).join('\n');
+  assert.match(text, /Retry download of Qwen3 0\.6B Q8_0 \(639 MB\).*last attempt failed: sha256 does not match/su);
 });

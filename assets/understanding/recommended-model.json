@@ -5,7 +5,17 @@
     "repository": "https://huggingface.co/Qwen/Qwen3-0.6B",
     "license": "Apache-2.0"
   },
-  "quantization": "Q4_K_M",
-  "artifact": null,
-  "note": "No artifact is pinned in this build. A maintainer pins one with scripts/local-model/pin-model.mjs, which records the exact revision, file, byte size and sha256 from the publisher. Until then NMSh offers compatible models already on this machine and does not download."
+  "quantization": "Q8_0",
+  "artifact": {
+    "publisher": "Qwen",
+    "repository": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF",
+    "revision": "1eaf4d9657fe65ad10a51eab76a8db5b363bddaa",
+    "file": "Qwen3-0.6B-Q8_0.gguf",
+    "url": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/1eaf4d9657fe65ad10a51eab76a8db5b363bddaa/Qwen3-0.6B-Q8_0.gguf",
+    "source": "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/blob/1eaf4d9657fe65ad10a51eab76a8db5b363bddaa/Qwen3-0.6B-Q8_0.gguf",
+    "quantization": "Q8_0",
+    "bytes": 639446688,
+    "sha256": "9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031",
+    "license": "Apache-2.0"
+  }
 }

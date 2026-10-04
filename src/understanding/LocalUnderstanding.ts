@@ -17,6 +17,8 @@ export class LocalUnderstanding {
   private client?: ModelClient;
   status?: ModelStatus;
   discovery?: {runtimes: FoundRuntime[]; models: FoundModel[]};
+  /** The last recommended-model download failed verification; shown, never retried automatically. */
+  downloadFailure?: string;
   /** Diagnostics: how many inference requests this window sent. */
   requests = 0;
 

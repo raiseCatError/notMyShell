@@ -37,6 +37,8 @@ export interface UnderstandingFacts {
   discovery?: {runtimes: FoundRuntime[]; models: FoundModel[]};
   status?: ModelStatus;
   recommended?: RecommendedModel;
+  /** The last download failed verification: the row says so and a retry is an explicit choice. */
+  downloadFailure?: string;
   /** The llama.cpp runtime recipe NMSh can run (e.g. `brew install llama.cpp`), when one is known here. */
   runtimeRecipe?: string;
 }
@@ -45,7 +47,9 @@ export function understandingRows(facts: UnderstandingFacts): UnderstandingRow[]
   const rows: UnderstandingRow[] = [{kind: 'mode'}, {kind: 'scope', scope: 'ask'}, {kind: 'scope', scope: 'folding'}];
   for (const model of facts.discovery?.models ?? []) if (model.suitability !== 'unsuitable') rows.push({kind: 'model', model});
   const hasLlama = facts.discovery?.runtimes.some(runtime => runtime.kind === 'llama.cpp');
-  if (facts.recommended?.artifact) rows.push({kind: 'download'});
+  // The download is offered only when nothing suitable is already here and usable.
+  const needed = !facts.discovery || proposeSetup(facts.discovery).kind !== 'use';
+  if (facts.recommended?.artifact && needed) rows.push({kind: 'download'});
   if (!hasLlama && facts.runtimeRecipe) rows.push({kind: 'runtime'});
   return rows;
 }
@@ -92,7 +96,7 @@ export function renderUnderstandingPanel(state: UnderstandingPanelState, facts: 
     if (state.confirm.kind === 'download' && recommended?.artifact) {
       const artifact = recommended.artifact;
       rows.push(`  ${primary}Download ${recommended.model} ${artifact.quantization}?${reset}`, '',
-        `    ${secondary}From ${artifact.repository} (revision ${artifact.revision.slice(0, 12)}) · license ${artifact.license}${reset}`,
+        `    ${secondary}Official ${artifact.publisher ?? 'Qwen'} release: ${artifact.repository} · ${artifact.file} · revision ${artifact.revision.slice(0, 12)} · license ${artifact.license}${reset}`,
         `    ${secondary}Download ${formatBytes(artifact.bytes)} · stored locally (~${formatBytes(artifact.bytes)}) · verified by sha256${reset}`,
         `    ${subtle}Inference runs on this machine; nothing you type is sent anywhere.${reset}`);
     } else {
@@ -111,7 +115,8 @@ export function renderUnderstandingPanel(state: UnderstandingPanelState, facts: 
     else if (row.kind === 'model') {
       const current = settings.model && settings.model.runtime === row.model.runtime && (settings.model.path === row.model.path && settings.model.name === row.model.name);
       rows.push(`${mark(index)}   ${secondary}${row.model.label}${reset}  ${subtle}${row.model.runtime}${row.model.bytes ? ` · ${formatBytes(row.model.bytes)}` : ''} · ${row.model.reason}${current ? '  [current]' : ''}${row.model.owned ? '' : ' · found on this machine'}${reset}`);
-    } else if (row.kind === 'download') rows.push(`${mark(index)}   ${secondary}Download ${recommended!.model} ${recommended!.artifact!.quantization} (${formatBytes(recommended!.artifact!.bytes)})${reset}  ${subtle}recommended${reset}`);
+    } else if (row.kind === 'download') rows.push(`${mark(index)}   ${secondary}${facts.downloadFailure ? 'Retry download of' : 'Download'} ${recommended!.model} ${recommended!.artifact!.quantization} (${formatBytes(recommended!.artifact!.bytes)})${reset}  `
+      + `${subtle}${facts.downloadFailure ? `last attempt failed: ${facts.downloadFailure}` : 'official Qwen · recommended'}${reset}`);
     else rows.push(`${mark(index)}   ${secondary}Install the llama.cpp runtime${reset}  ${subtle}${facts.runtimeRecipe}${reset}`);
   });
   rows.push('');
@@ -124,7 +129,7 @@ export function renderUnderstandingPanel(state: UnderstandingPanelState, facts: 
     const proposal = proposeSetup(facts.discovery);
     rows.push(`  ${secondary}${proposal.note}${proposal.kind === 'choose-large' ? ' Use it anyway, or stay with built-in understanding.' : ''}${reset}`);
     if (!recommended?.artifact && proposal.kind !== 'use') {
-      rows.push(`  ${subtle}No recommended download is pinned in this build (it needs a verified size and sha256), so NMSh will not download one.${reset}`);
+      rows.push(`  ${subtle}The recommended model is unavailable in this build (no verified official artifact), so NMSh will not download one.${reset}`);
     }
   }
   for (const row of understandingStatusRows(settings, facts.status)) rows.push(`  ${subtle}${row.label.padEnd(8)}${reset} ${secondary}${row.value}${reset}`);

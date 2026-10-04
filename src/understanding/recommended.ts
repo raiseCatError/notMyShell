@@ -10,7 +10,9 @@ import {fileURLToPath} from 'node:url';
  * downloaded. Weights are never part of the NMSh package.
  */
 export interface PinnedArtifact {
+  publisher?: string;
   repository: string;
+  source?: string;
   revision: string;
   file: string;
   url: string;
@@ -33,10 +35,22 @@ export function loadRecommendedModel(path = RECOMMENDED_MODEL_PATH): Recommended
     const value = JSON.parse(readFileSync(path, 'utf8')) as RecommendedModel & {version?: number};
     if (value.version !== 1 || typeof value.model !== 'string') return undefined;
     const artifact = value.artifact;
-    const pinned = artifact && typeof artifact.url === 'string' && /^https:\/\//u.test(artifact.url) && /^[0-9a-f]{64}$/u.test(artifact.sha256)
-      && Number.isSafeInteger(artifact.bytes) && artifact.bytes > 0 ? artifact : null;
+    const pinned = artifact && officialArtifact(artifact) ? artifact : null;
     return {model: value.model, upstream: value.upstream, quantization: value.quantization, artifact: pinned};
   } catch { return undefined; }
+}
+
+/**
+ * NMSh downloads only the official Qwen artifact, at a pinned commit: the
+ * official repository, a 40-hex revision (never `main` or another ref) in the
+ * URL, an exact size and sha256. Mirrors, other publishers and third-party
+ * quantizations are rejected, so there is no fallback download.
+ */
+export const OFFICIAL_REPOSITORY = 'https://huggingface.co/Qwen/Qwen3-0.6B-GGUF';
+export function officialArtifact(artifact: PinnedArtifact): boolean {
+  return artifact.repository === OFFICIAL_REPOSITORY && /^[0-9a-f]{40}$/u.test(artifact.revision)
+    && artifact.url === `${OFFICIAL_REPOSITORY}/resolve/${artifact.revision}/${artifact.file}` && /^[\w.-]+\.gguf$/u.test(artifact.file)
+    && /^[0-9a-f]{64}$/u.test(artifact.sha256) && Number.isSafeInteger(artifact.bytes) && artifact.bytes > 0;
 }
 
 export function formatBytes(bytes: number): string {
@@ -51,6 +65,7 @@ export function formatBytes(bytes: number): string {
 export async function downloadPinned(artifact: PinnedArtifact, directory: string, onProgress: (received: number) => void,
   fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
   mkdirSync(directory, {recursive: true, mode: 0o700});
+  if (!officialArtifact(artifact)) throw new Error('not the official pinned Qwen artifact; NMSh downloads nothing else');
   const target = join(directory, artifact.file.replace(/[^\w.-]+/gu, '_'));
   const temporary = `${target}.${process.pid}.partial`;
   const response = await fetcher(artifact.url, signal ? {signal} : {});

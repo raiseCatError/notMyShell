@@ -119,12 +119,22 @@ Off by default: no model is downloaded, loaded or run, and no service starts.
   excerpt (program word, head/tail lines) may yield an advisory class. Error
   signals always win; a hint never changes output and never overrides a block
   the user toggled.
-- **Recommended model**: Qwen3 0.6B (Apache-2.0). Its artifact must be pinned
-  by a maintainer (`scripts/local-model/pin-model.mjs`) with revision, bytes
-  and sha256 from the publisher; this build pins none (the publisher's
-  metadata could not be reached from the build environment), so NMSh does not
-  download and offers models already present instead. Weights are never in
-  the npm package. A pinned download is verified by exact size and sha256.
+- **Recommended model**: the official Qwen release only — Qwen3 0.6B
+  `Qwen3-0.6B-Q8_0.gguf` from `Qwen/Qwen3-0.6B-GGUF` (Apache-2.0), pinned to
+  revision `1eaf4d9657fe65ad10a51eab76a8db5b363bddaa`, 639,446,688 bytes,
+  sha256 `9465e63a22add5354d9bb4b99e90117043c7124007664907259bd16d043bb031`
+  (`assets/understanding/recommended-model.json`). Q8_0 keeps official
+  provenance and less quantization loss at ~639 MB. It is offered only when
+  no suitable model is already present, and only with explicit consent. The
+  download streams to a temporary file, is checked for the exact size and
+  sha256, and only then is renamed into NMSh's model directory; a mismatch is
+  rejected, the incomplete file removed, nothing is loaded, and NMSh does not
+  retry until the user chooses to. Only the official repository at a pinned
+  40-hex revision is accepted: never `main`, mirrors, other publishers or
+  third-party quantizations, and there is no fallback download. A compatible
+  model the user already has (any reasonable quantization) can still be
+  chosen. `scripts/local-model/pin-model.mjs` remains for deliberate future
+  re-pins. Weights are never in the npm package.
 - The welcome shows one factual row segment (`Local understanding Off`,
   `Auto · model idle · Ask`, or the loaded model's label); it is snapshotted,
   so archived welcomes never change. `/status` and `/providers` report mode,

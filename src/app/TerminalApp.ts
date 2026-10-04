@@ -5015,6 +5015,7 @@ export class TerminalApp {
     const recommended = loadRecommendedModel();
     return {settings: this.promptConfiguration.localUnderstanding, ...(this.understanding.discovery ? {discovery: this.understanding.discovery} : {}),
       ...(this.understanding.status ? {status: this.understanding.status} : {}), ...(recommended ? {recommended} : {}),
+      ...(this.understanding.downloadFailure ? {downloadFailure: this.understanding.downloadFailure} : {}),
       ...(brew && (process.platform === 'darwin' || process.platform === 'linux') ? {runtimeRecipe: 'brew install llama.cpp'} : {})};
   }
 
@@ -5063,11 +5064,15 @@ export class TerminalApp {
         panel.working = undefined;
         update(settings => ({...settings, mode: settings.mode === 'off' ? 'auto' : settings.mode,
           model: {label: `Qwen3 0.6B ${artifact.quantization}`, runtime: 'llama.cpp', path, owned: true}}));
+        this.understanding.downloadFailure = undefined;
         await this.refreshUnderstandingDiscovery(true);
         panel.message = 'Downloaded and verified (sha256). It loads on first use and unloads when idle.';
       } catch (error) {
         panel.working = undefined;
-        panel.message = `Download failed: ${error instanceof Error ? error.message : String(error)}. Nothing was changed.`;
+        // Verification failure is remembered: the model is not used and nothing retries until you choose to.
+        this.understanding.downloadFailure = error instanceof Error ? error.message : String(error);
+        panel.message = `The recommended model was not installed: ${this.understanding.downloadFailure}. The incomplete file was removed; nothing was changed. `
+          + 'Ask and Smart Folding keep working without it, and you can still choose a compatible model already on this machine.';
       }
       this.render();
     }
