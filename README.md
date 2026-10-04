@@ -196,7 +196,7 @@ nmsh
 
 `/update` checks GitHub for the latest stable release and shows current → available, a short release summary, and the exact plan. `/update apply` then installs that release. NMSh updates a source checkout of this repository only when the checkout is clean, its `origin` is this repository, the fetched release tag matches the commit GitHub reports, and moving to the tag is a fast-forward. It then runs `npm install` and `npm run build` and verifies the new build identity. If anything fails, it restores the previous commit and rebuilds it. Otherwise it explains why and prints the manual steps. It never pulls arbitrary branches, discards changes, or touches your settings, transcripts, or shell profile. Restart NMSh afterwards to use the new version.
 
-Background checks are off by default; turn them on in `/settings` → Config → Update checks (Daily or Weekly). When a newer release appears, you get one quiet line per release. No credentials or telemetry are involved.
+Config → Automatic updates is Automatic, Notify only or Off, with a Daily or Weekly check frequency. New installs default to Automatic / Daily; saved Daily/Weekly notification preferences migrate to Notify only, Off stays Off. Automatic only prepares a verified stable release on an official, clean source checkout (the same checks `/update apply` makes, with the same rollback); the running session keeps its version and the new one starts on the next launch. Anything that cannot be proven safe gets one quiet notice and the manual steps. No credentials or telemetry are involved.
 
 ## Ghostty Setup
 

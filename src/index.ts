@@ -161,17 +161,27 @@ if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
     const {detectTerminalHost} = await import('./host/terminalHost.js');
     const {loadPromptConfiguration, savePromptConfiguration} = await import('./prompt/configuration.js');
     const config = loadPromptConfiguration();
+    // Same confirmed termination as /resume. Service truth is re-read first: a session that ended
+    // meanwhile is simply gone, and one attached elsewhere is never touched.
+    const killDetached = async (session: (typeof live)[number]): Promise<'killed' | 'gone' | 'attached'> => {
+      const [{killAndArchive}, {TranscriptStore}] = await Promise.all([import('./session/liveSessions.js'), import('./sessions/TranscriptStore.js')]);
+      const current = (await listLiveSessions().catch(() => [])).find(item => item.id === session.id);
+      if (!current) return 'gone';
+      if (current.state !== 'detached') return 'attached';
+      try { await killAndArchive(current, {store: new TranscriptStore(), origin: 'the startup picker'}); return 'killed'; }
+      catch (error) {
+        if (!(await listLiveSessions().catch(() => [current])).some(item => item.id === session.id)) return 'gone';
+        throw error;
+      }
+    };
     const restored = await restoreAtStartup(live, {
       // After a failed return, never silently attach a different session: ask instead of Always.
       policy: {startup: returnUnavailable && config.liveSessionStartup === 'always' ? 'ask' : config.liveSessionStartup, multiple: config.liveSessionMultiple},
       saveStartup: startup => {
         try { const base = loadPromptConfiguration(); savePromptConfiguration({...base, liveSessionStartup: startup}, undefined, base); } catch { /* keep going; applies this launch */ }
       },
-      askOne: session => picker.runStartupScreen(columns => picker.renderSinglePrompt(session, columns, Date.now()), picker.singlePromptKey),
-      pick: sessions => {
-        const state = picker.createMultiPicker(sessions);
-        return picker.runStartupScreen(columns => picker.renderMultiPicker(state, columns, Date.now()), key => picker.multiPickerKey(state, key));
-      },
+      askOne: session => picker.askWithKill(session, {run: picker.runStartupScreen, kill: killDetached}),
+      pick: sessions => picker.pickWithKill(sessions, {run: picker.runStartupScreen, kill: killDetached}),
       host: detectTerminalHost(),
       selfCommand: [process.execPath, ...process.execArgv.filter(arg => !arg.startsWith('--inspect')), process.argv[1]!],
     });
