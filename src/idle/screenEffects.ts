@@ -509,7 +509,10 @@ export class Circletastic extends Sim {
     this.glyphs.forEach((glyph, i) => {
       glyph.a = glyph.x; glyph.r = glyph.y; glyph.t = 0; glyph.vx = glyph.vy = 0;
       glyph.state = this.assigned[i] ? 0 : this.consumed.has(i) ? 4 : 3;
-      this.delay[i] = this.rand(0, 0.9); this.duration[i] = this.rand(1.2, 2.2);
+      this.delay[i] = this.rand(0, 0.9); this.duration[i] = this.rand(1.3, 2.4);
+      // How far around the circle this glyph sweeps while gathering (signed by the ring's direction): far glyphs take broader arcs.
+      const ringDir = this.assigned[i] ? this.rings[this.assigned[i]!.ring]!.dir : 1;
+      glyph.w = ringDir * this.rand(0.35, 1.1); glyph.vy = 0;
     });
     const base = this.rand(1.5, 2.1);
     this.runtime = this.clusters.map((_, ci) => ({
@@ -563,14 +566,28 @@ export class Circletastic extends Sim {
     if (rt.stage === 'gather') {
       if (rt.t < rt.start) return;
       const local = rt.t - rt.start;
+      // The vortex: the ring is already turning while it forms, and every glyph spirals into it,
+      // sweeping around the ring's center as its radius closes. Angular speed converges on the ring's
+      // own (the easing has zero slope at both ends), so there is no snap from gathering to rotating.
+      for (const ri of rt.rings) {
+        this.omega[ri] = Math.min(CIRC.omegaMax, this.omega[ri]! + rt.alpha * 0.4 * dt);
+        this.angle[ri]! += this.omega[ri]! * this.rings[ri]!.dir * dt;
+      }
       let allHome = true;
       this.glyphs.forEach((g, i) => {
         if (this.clusterOf(i) !== ci || g.state === 1) return;
-        const target = this.slotPosition(i)!;
+        const a = this.assigned[i]!, ring = this.rings[a.ring]!;
+        const theta = this.angle[a.ring]! + (a.slot / ring.slots) * Math.PI * 2;
+        if (local < this.delay[i]!) { allHome = false; return; }
+        if (g.vy === 0) {                                  // first moment: remember where on the circle the glyph is coming from
+          const rho0 = Math.hypot(g.a / ASPECT - ring.cx, g.r - ring.cy), phi0 = Math.atan2(g.r - ring.cy, g.a / ASPECT - ring.cx);
+          g.vx = Math.atan2(Math.sin(phi0 - theta), Math.cos(phi0 - theta)); g.vy = 1; g.t = rho0;
+        }
         const u = ease((local - this.delay[i]!) / this.duration[i]!);
-        const swirl = Math.sin(u * Math.PI) * 3;
-        g.x = g.a + (target.x - g.a) * u + swirl * (g.oy < this.capture.height / 2 ? 1 : -1); g.y = g.r + (target.y - g.r) * u;
-        if (local >= this.delay[i]! + this.duration[i]!) { g.x = target.x; g.y = target.y; g.state = 1; } else allHome = false;
+        const rho0 = g.t, rho = rho0 + (ring.r - rho0) * u;
+        const phi = theta + (1 - u) * (g.vx + g.w * Math.PI * 2);
+        g.x = (ring.cx + Math.cos(phi) * rho) * ASPECT; g.y = ring.cy + Math.sin(phi) * rho;
+        if (local >= this.delay[i]! + this.duration[i]!) { const p = this.slotPosition(i)!; g.x = p.x; g.y = p.y; g.state = 1; g.vx = g.vy = 0; } else allHome = false;
       });
       if (allHome) { rt.stage = 'spin'; rt.formed = true; rt.t = 0; }   // this circle starts turning right away
       return;

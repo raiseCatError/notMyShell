@@ -58,6 +58,8 @@ export interface ScreenPlanInput {
   panelRows?: number;
   /** Dock Bottom (default), Dock Top, or Flow. */
   composerPosition?: ComposerPosition;
+  /** Where full-width NMSh panels sit: Bottom (default) or Top. Independent of the composer position. */
+  panelPosition?: 'bottom' | 'top';
   /** Presented transcript rows; Dock Top and Flow use it to keep what follows next to the newest output. */
   transcriptRows?: number;
   /** Flow while scrolled back: the first transcript row in view (the composer follows the transcript's end). */
@@ -85,6 +87,8 @@ export interface ScreenPlan {
   viewportRows: number;
   composerPosition: ComposerPosition;
   panelActive: boolean;
+  /** Where the active panel is anchored (meaningful while panelActive). */
+  panelPosition: 'bottom' | 'top';
 }
 
 export interface RegionHit {
@@ -97,14 +101,14 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
   const rows = Math.max(1, input.rows);
   const top = input.composerPosition === 'top';
   if (input.panelRows !== undefined) {
-    // Panel takeover: NMSh panels are top-oriented in every composer position. The top row
-    // stays put as the panel's height changes (it grows and shrinks downward) and the
-    // transcript keeps the rest below. The composer position only governs the ordinary composer.
+    // Panel takeover follows the explicit NMSh panel position, never the composer position:
+    // Bottom keeps the bottom edge fixed (the top edge moves with height), Top keeps the top edge fixed.
     const panelHeight = Math.min(rows, Math.max(0, input.panelRows));
     const panel: Array<[RegionKind, number]> = [['panel', panelHeight]];
     const transcript: Array<[RegionKind, number]> = [['transcript', rows - panelHeight]];
-    return build(rows, [...panel, ...transcript],
-      {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: input.composerPosition ?? 'bottom'});
+    const atTop = input.panelPosition === 'top';
+    return build(rows, atTop ? [...panel, ...transcript] : [...transcript, ...panel],
+      {inputHeight: 0, suggestionCount: 0, panelActive: true, composerPosition: input.composerPosition ?? 'bottom', panelPosition: atTop ? 'top' : 'bottom'});
   }
   const inspectorHeight = Math.min(Math.max(0, input.inspectorRows ?? 0), Math.max(0, rows - 8));
   const layout = calculateScreenLayout(
@@ -188,7 +192,7 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
 function build(
   rows: number,
   stack: Array<[RegionKind, number]>,
-  extra: Pick<ScreenPlan, 'inputHeight' | 'suggestionCount' | 'panelActive' | 'composerPosition'>,
+  extra: Pick<ScreenPlan, 'inputHeight' | 'suggestionCount' | 'panelActive' | 'composerPosition'> & {panelPosition?: 'bottom' | 'top'},
 ): ScreenPlan {
   const regions: Region[] = [];
   let transcript: Region = {kind: 'transcript', top: 0, height: 0};
@@ -200,7 +204,7 @@ function build(
     if (height > 0) regions.push(region);
     top += height;
   }
-  return {rows, regions, transcript, ptyRows: transcript.height, viewportRows: Math.max(1, transcript.height), ...extra};
+  return {rows, regions, transcript, ptyRows: transcript.height, viewportRows: Math.max(1, transcript.height), panelPosition: 'bottom', ...extra};
 }
 
 /**

@@ -36,10 +36,11 @@ test('Dock Top keeps jump and activity right after the newest output, and PTY ro
   assert.equal(full.transcript.height, full.ptyRows);
 });
 
-test('Dock Top panels open on the composer edge; narrow row counts never overflow', () => {
-  const panel = planScreen({...base, panelRows: 8, composerPosition: 'top'});
+test('Dock Top panels follow the panel position, not the composer; narrow row counts never overflow', () => {
+  const panel = planScreen({...base, panelRows: 8, composerPosition: 'top', panelPosition: 'top'});
   assert.deepEqual(kinds(panel), ['panel', 'transcript']);
   assert.equal(regionAt(panel, 0)?.region.kind, 'panel');
+  assert.deepEqual(kinds(planScreen({...base, panelRows: 8, composerPosition: 'top'})), ['transcript', 'panel'], 'default panel position is Bottom');
   for (let rows = 1; rows <= 12; rows += 1) {
     const plan = planScreen({...base, rows, inputRows: 3, suggestions: 4, running: true, composerPosition: 'top', transcriptRows: 2});
     assert.ok(plan.regions.reduce((sum, region) => sum + region.height, 0) <= rows, `rows ${rows}`);

@@ -104,7 +104,7 @@ export function createScreensaverPanel(now: number): ScreensaverPanelState {
   return {selected: 0, startedAt: now};
 }
 
-export type ScreensaverAction = {kind: 'close'} | {kind: 'start'} | {kind: 'editColors'} | {kind: 'change'; settings: IdleVisualSettings} | undefined;
+export type ScreensaverAction = {kind: 'close'} | {kind: 'start'} | {kind: 'replay'} | {kind: 'editColors'} | {kind: 'change'; settings: IdleVisualSettings} | undefined;
 
 /** Choosing Custom starts from the colors in effect, so nothing jumps; existing custom stops are kept. */
 export function withIdleColorSource(configuration: PromptConfiguration, colorSource: IdleVisualSettings['colorSource']): IdleVisualSettings {
@@ -119,6 +119,8 @@ const cycle = <T>(values: readonly T[], value: T, delta: number): T => values[(v
 /** ↑↓ rows, ←→ change (saved immediately, like Config rows), Enter on Start preview runs it full screen. */
 export function screensaverKey(state: ScreensaverPanelState, key: Key, settings: IdleVisualSettings, configuration?: PromptConfiguration): ScreensaverAction {
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
+  // Lowercase r restarts the visible preview from a pristine source (the gallery has no free-text field).
+  if (key.kind === 'text' && key.value === 'r') return {kind: 'replay'};
   if (key.kind === 'up') state.selected = (state.selected + ROWS.length - 1) % ROWS.length;
   else if (key.kind === 'down') state.selected = (state.selected + 1) % ROWS.length;
   else if (key.kind === 'enter' || (key.kind === 'text' && key.value.toLowerCase() === 'p')) {
@@ -167,7 +169,8 @@ export function renderScreensaverPanel(state: ScreensaverPanelState, columns: nu
   if (motion.disabled) out.push(`  ${subtle}Decorative effects are Off: idle visuals stay off until they are On again.${reset}`);
   else if (motion.still) out.push(`  ${subtle}Reduced Motion: shown still${HIGH_MOTION.has(settings.mode) ? ' as a calm star field' : ''}.${reset}`);
   if (context.preview.length) out.push('', ...context.preview.map(line => `  ${line}`));
-  out.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ['Enter', 'preview'], ['Esc', 'close']]));
+  const replayable = !motion.disabled && !motion.still;
+  out.push('', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(replayable ? [['r', 'replay'] as [string, string]] : []), ['Enter', 'preview'], ['Esc', 'close']]));
   return framePanel(out.map(line => truncateAnsi(line, columns)), columns).slice(0, Math.max(1, height));
 }
 

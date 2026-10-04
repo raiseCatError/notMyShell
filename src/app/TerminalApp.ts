@@ -900,9 +900,27 @@ export class TerminalApp {
     }
     // Focus reports alone are not user activity (a terminal can report them on its own).
     if (keys.some(key => key.kind !== 'focusIn' && key.kind !== 'focusOut')) this.noteActivity();
-    for (const key of keys) this.handleKey(key);
+    for (const key of keys) {
+      const before = {text: this.editor.text, index: this.editor.displayCursorIndex};
+      this.handleKey(key);
+      this.noteCaretTravel(before);
+    }
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
+  }
+
+  /**
+   * A multi-cell caret jump on the same editor line starts the soft travel trail. Purely visual: the logical caret
+   * already moved, nothing waits for the animation, and a newer jump retargets the old trail.
+   */
+  private noteCaretTravel(before: {text: string; index: number}): void {
+    if (this.editor.text !== before.text || this.editor.displayCursorIndex === before.index || this.settingsPanelActive || this.passthrough) return;
+    const columns = this.dimensions().columns;
+    const prefix = this.inputFirstLinePrefix(columns);
+    const at = (index: number) => layoutInput(this.editor.displayText, index, columns, Number.POSITIVE_INFINITY, prefix);
+    const from = at(before.index), to = at(this.editor.displayCursorIndex);
+    if (from.caretRow !== to.caretRow) return;
+    this.transitions.travel(from.caretColumn, to.caretColumn, to.caretRow, Date.now());
   }
 
   private readonly onResize = (): void => {
@@ -4133,6 +4151,13 @@ export class TerminalApp {
   private handleScreensaverKey(key: Key, state: ScreensaverPanelState): void {
     const action = screensaverKey(state, key, this.promptConfiguration.idleVisuals, this.promptConfiguration);
     if (!action) return;
+    if (action.kind === 'replay') {
+      // Restart from the pristine snapshot: a fresh clock and a fresh effect instance, no stacked timers.
+      state.startedAt = Date.now();
+      this.saverGalleryCapture = undefined;
+      if (!idleMotion(this.promptConfiguration).still) this.render();
+      return;
+    }
     if (action.kind === 'editColors') {
       this.screensaverPanel = undefined;
       this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
@@ -5106,6 +5131,11 @@ export class TerminalApp {
       if (source && this.inspectorVisible) this.render();
     });
     return undefined;
+  }
+
+  /** The panel position being shown: Setup previews its unsaved draft so the choice is visible immediately. */
+  private panelPositionInEffect(): 'bottom' | 'top' {
+    return (this.setupState?.draft ?? this.promptConfiguration).panelPosition === 'top' ? 'top' : 'bottom';
   }
 
   private planFrame(
@@ -6723,6 +6753,7 @@ export class TerminalApp {
       detached: this.historyViewport.detached,
       hasOutput: transcriptRows > 0,
       composerPosition: this.promptConfiguration.composerPosition,
+      panelPosition: this.panelPositionInEffect(),
       transcriptRows,
       contextPlacement: this.promptConfiguration.placement,
       hasVisibleContext: this.hasVisibleProviderPrompt(),
@@ -6850,11 +6881,12 @@ export class TerminalApp {
     const separator = `${paintDivider(repeatToWidth(GLYPHS.separator, columns), this.promptConfiguration.presentation, Date.now())}${RESET}`;
     const regionRows = (region: Region): string[] => {
       switch (region.kind) {
-        case 'transcript': return visible;
+        // Setup Cat owns a clean screen: the ordinary transcript/welcome is not drawn behind it (presentation only; nothing is cleared).
+        case 'transcript': return this.setupState ? [] : visible;
         case 'gap': return [];
         case 'jump': return [this.jumpAffordance(columns)];
-        // Panels are top-oriented in every composer position, so the frame line sits on the edge facing the transcript below.
-        case 'panel': return panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
+        // The frame line sits on the panel edge that faces the transcript: the bottom edge for a Top panel.
+        case 'panel': return plan.panelPosition === 'top' && panelRows && /^[─-]+$/u.test(stripAnsi(panelRows[0] ?? ''))
           ? [...panelRows.slice(1), panelRows[0]!] : panelRows ?? [];
         case 'inspector': return this.inspectorRows(columns);
         case 'suggestions': return [...suggestionView.items.map((suggestion, visibleIndex) => {
@@ -6938,7 +6970,7 @@ export class TerminalApp {
     if (!panel?.png || panel.protocol === 'none' || !region) return undefined;
     const size = this.aboutLogoSize(columns);
     // framePanel's frame line leads the panel (it moves below the panel under Dock Top), then title and spacer.
-    const row = region.top + (plan.composerPosition === 'top' ? 0 : 1) + 2;
+    const row = region.top + (plan.panelPosition === 'top' ? 0 : 1) + 2;
     if (row + size.rows > region.top + region.height) return undefined;
     return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2, size);
   }
@@ -6953,7 +6985,7 @@ export class TerminalApp {
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     const content = this.settingsPanelRows(cached.frame.columns ?? 80);
     if (Math.min(cached.plan.rows, content.length) !== region.height) { this.render(); return; }
-    const projected = cached.plan.composerPosition === 'top' && /^[─-]+$/u.test(stripAnsi(content[0] ?? ''))
+    const projected = cached.plan.panelPosition === 'top' && /^[─-]+$/u.test(stripAnsi(content[0] ?? ''))
       ? [...content.slice(1), content[0]!] : content;
     const rows = [...cached.frame.rows];
     for (let index = 0; index < region.height; index++) rows[region.top + index] = projected[index] ?? '';
@@ -6998,6 +7030,12 @@ export class TerminalApp {
         const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
         const offset = caret.caretRow - at(this.editor.displayCursorIndex).caretRow;
         if (from.caretRow === to.caretRow) add(input.top + from.caretRow + offset, transitionPaint.materialize(from.caretColumn, to.caretColumn, t, transition.vivid, transition.look));
+      } else if (transition.kind === 'travel') {
+        const input = regions('input')[0];
+        if (!input) continue;
+        const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
+        add(input.top + transition.row + (caret.caretRow - layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns, Number.POSITIVE_INFINITY, this.inputFirstLinePrefix(columns)).caretRow),
+          transitionPaint.travel(transition.from, transition.to, t, transition.look));
       } else if (transition.kind === 'seal') {
         const transcript = plan.regions.find(region => region.kind === 'transcript');
         const index = this.visibleBlocks.lastIndexOf(transition.blockStartId);

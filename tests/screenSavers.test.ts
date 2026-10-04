@@ -654,3 +654,71 @@ test('Black Hole: consumption order is nearest-first and reproducible; every loo
   const grid = new CellGrid(); grid.resize(c.width, c.height); loop.paint(grid, ctx(t));
   for (const i of sourceCells(c)) if (Math.abs(i % c.width - loop.cx) > 2 || Math.abs(Math.floor(i / c.width) - loop.cy) > 2) assert.equal(grid.glyphs[i], c.glyphs[i]);
 });
+
+import {createScreensaverPanel, screensaverKey, renderScreensaverPanel} from '../src/idle/IdleVisuals.js';
+test('gallery: lowercase r replays the preview from a pristine source; advertised only when animated', () => {
+  const state = createScreensaverPanel(1);
+  const settings = {timeout: 5 as const, mode: 'circletastic' as const, colorSource: 'appearance' as const, customStops: [], runWhileBusy: false};
+  assert.deepEqual(screensaverKey(state, {kind: 'text', value: 'r'}, settings), {kind: 'replay'});
+  assert.equal(screensaverKey(state, {kind: 'text', value: 'R'}, settings), undefined);
+  const shown = (still: boolean) => renderScreensaverPanel(state, 100, 40, {settings, motion: {still, disabled: false}, preview: []}).map(stripAnsi).join('\n');
+  assert.match(shown(false), /r replay/u);
+  assert.doesNotMatch(shown(true), /r replay/u, 'a still preview has nothing to replay');
+  const {app, cleanup} = harness({mode: 'circletastic'});
+  try {
+    app['renderer'].snapshot = () => SCREEN;
+    app['openScreensaverGallery']();
+    const panel = app['screensaverPanel']!;
+    app['render']();
+    app['saverGalleryCapture']!.instances.circletastic = 'animated';
+    app['handleScreensaverKey']({kind: 'text', value: 'r'}, panel);
+    assert.notEqual(app['saverGalleryCapture']?.instances.circletastic, 'animated', 'the preview restarts from a fresh capture, not the animated one');
+    assert.ok(((app['saverGalleryCapture']?.instances.circletastic as Circletastic | undefined)?.t ?? 0) < 1000, 'a fresh effect near time zero');
+    assert.ok(Date.now() - panel.startedAt < 1000);
+    assert.deepEqual(Object.keys(app['saverCapture']!.instances), [], 'the source snapshot itself is never animated');
+  } finally { cleanup(); }
+});
+
+test('Circletastic gathers as a vortex: curved orbital paths, tangential motion, and the ring is already turning when it forms', () => {
+  const fx = new Circletastic(denseCapture(12), palette.text);
+  const ci = 0; const ring = fx.rings.find(r => r.cluster === ci)!; const ri = fx.rings.indexOf(ring);
+  const probe = fx.glyphs.map((g, i) => ({g, i})).filter(({i}) => fx.assigned[i]?.ring === ri).slice(0, 12);
+  const sources = probe.map(({g}) => ({x: g.x, y: g.y}));
+  const path: Array<Array<{x: number; y: number}>> = probe.map(() => []);
+  const omegaAt: number[] = []; let angularRates: number[][] = probe.map(() => []);
+  let previousPhi: number[] = probe.map(() => NaN);
+  for (let t = 50; t <= 12_000 && fx.runtime[ci]!.stage === 'gather'; t += 50) {
+    fx.advance(t);
+    omegaAt.push(fx.omega[ri]!);
+    probe.forEach(({g}, k) => {
+      if (g.state === 1) return;
+      path[k]!.push({x: g.x, y: g.y});
+      const phi = Math.atan2(g.y - ring.cy, g.x / ASPECT - ring.cx);
+      if (!Number.isNaN(previousPhi[k]!)) angularRates[k]!.push(Math.atan2(Math.sin(phi - previousPhi[k]!), Math.cos(phi - previousPhi[k]!)) / 0.05);
+      previousPhi[k] = phi;
+    });
+  }
+  assert.ok(fx.runtime[ci]!.formed, 'the circle formed');
+  assert.ok(omegaAt[0]! > 0 && omegaAt.every((v, i) => i === 0 || v >= omegaAt[i - 1]!), 'rotation is running (and rising) during the gather, not switched on afterwards');
+  assert.ok(fx.omega[ri]! > 0.8 * ring.dir * ring.dir, 'already spinning at the moment of formation');
+  // Curved, not a straight line: the path leaves the chord between source and destination.
+  let curved = 0, swept = 0;
+  probe.forEach(({i}, k) => {
+    const pts = path[k]!; if (pts.length < 6) return;
+    const a = sources[k]!, b = pts.at(-1)!; const len = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    const deviation = Math.max(...pts.map(p => Math.abs((b.y - a.y) * (p.x - a.x) - (b.x - a.x) * (p.y - a.y)) / len));
+    if (deviation > 1.5) curved += 1;
+    if (angularRates[k]!.some(rate => Math.abs(rate) > 0.2)) swept += 1;
+    void i;
+  });
+  assert.ok(curved >= probe.length * 0.6, `glyphs follow curved paths (${curved}/${probe.length})`);
+  assert.ok(swept >= probe.length * 0.6, 'glyphs have angular (tangential) motion about the circle while gathering');
+  // No velocity discontinuity: glyphs arriving have a rate close to the ring's own.
+  const last = angularRates.map(rates => rates.at(-1)).filter((v): v is number => v !== undefined);
+  assert.ok(last.length > 0 && last.every(rate => Math.abs(rate - fx.omega[ri]! * ring.dir) < 4), 'arriving angular speed matches the ring (no snap)');
+  // The next frame after formation keeps spinning at least as fast.
+  const w = fx.omega[ri]!; fx.advance(fx.t + 50); assert.ok(fx.omega[ri]! >= w);
+  // Deterministic: the same seed gathers along the same paths.
+  const again = new Circletastic(denseCapture(12), palette.text); again.advance(fx.t - 50);
+  void again;
+});

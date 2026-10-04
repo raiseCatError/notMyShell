@@ -129,7 +129,7 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     const controls = ['', renderControls([['↑↓', 'select'], ['←→', 'change'], ...(!advanced && state.selected === items.length ? [['Enter', 'open'] as [string, string]] : []), ...(shown ? [['R', 'replay'] as [string, string]] : []), ['Esc', 'back']])];
     // The preview is always the same size; a short terminal gives up the intro, then the preview, never the controls or the list.
     const block = shown ? ['', `  ${subtle}Preview · ${rendering}${reset}`, ...shown.rows] : [];
-    const layouts = [[...head, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...controls], [head[0]!, ...list, ...controls]];
+    const layouts = [[...head, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...block, ...controls], [head[0]!, ...list, ...note, ...controls], [head[0]!, ...list, ...controls], [...list, ...controls]];
     const rows = height === undefined ? layouts[0]! : layouts.find(layout => layout.length <= height) ?? layouts[layouts.length - 1]!;
     return rows.map(row => truncateAnsi(row, columns));
   }

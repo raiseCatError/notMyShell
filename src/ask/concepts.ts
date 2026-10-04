@@ -47,7 +47,7 @@ export interface Concept {
 const SUGGESTIONS_WHERE = 'Settings → Suggestions (provider and empty-prompt prediction), or /providers';
 
 export const CONCEPTS: readonly Concept[] = [
-  {id: 'completion', label: 'Tab completion / completion menu', support: 'no-ui', covers: ['planned:Completion'],
+  {id: 'completion', label: 'Tab completion / completion menu', support: 'no-ui', covers: [],
     aliases: ['tab completion', 'tab complete', 'completion', 'completions', 'completion menu', 'complete menu', 'autocomplete menu', 'completion settings',
       'autocomplete', 'auto complete', 'auto-complete', 'autocompletion', 'auto completion'],
     description: 'Tab completion opens a menu of structured candidates (commands, options, files, Git refs) from your shell\'s own completion, custom specs and NMSh\'s bundled catalog.',
@@ -67,7 +67,7 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'themeStudio', label: 'Theme Studio (custom themes)', support: 'actionable', open: '/theme', covers: ['/theme'],
     aliases: ['theme studio', 'custom theme', 'custom themes', 'import theme', 'export theme', 'my own theme'],
     description: 'Theme Studio clones a Native theme so you can edit, import and export your own.'},
-  {id: 'chroma', label: 'Chroma', support: 'actionable', open: '/chroma', covers: ['/chroma', 'settings:Presentation', 'planned:Chroma'],
+  {id: 'chroma', label: 'Chroma', support: 'actionable', open: '/chroma', covers: ['/chroma', 'settings:Presentation'],
     aliases: ['chroma', 'gradient', 'gradients', 'animated colors', 'animated colours', 'color motion', 'colour motion', 'prompt gradient', 'rainbow prompt', 'chroma palette',
       'animated prompt colors', 'animated prompt colours', 'animated prompt'],
     description: 'Chroma paints NMSh-owned chrome (prompt, dividers) with a palette gradient, optionally animated (Travel, Breathe, Comet, Pulse). Palette Off turns it off.',
@@ -83,7 +83,7 @@ export const CONCEPTS: readonly Concept[] = [
     where: 'Settings → Layout → Composer dividers (On/Off)',
     aliases: ['composer dividers', 'composer divider', 'input dividers', 'input divider', 'input lines', 'lines around the input', 'divider lines', 'input box lines', 'composer lines', 'input separators'],
     description: 'Composer dividers are the two thin rules above and below the input. Off removes them and gives their rows back to output.'},
-  {id: 'layout', label: 'Layout', support: 'actionable', open: '/layout', covers: ['/layout', 'settings:Layout', 'planned:Layout'],
+  {id: 'layout', label: 'Layout', support: 'actionable', open: '/layout', covers: ['/layout', 'settings:Layout'],
     aliases: ['layout', 'transcript layout', 'transcript presentation', 'chat mode', 'chat layout', 'composer position', 'composer at the top', 'flow mode', 'classic mode'],
     description: 'Layout chooses where the composer sits (bottom, top, or Flow after the newest output) and whether the transcript is Normal or Chat (commands on the right).'},
   {id: 'history', label: 'Command history', support: 'actionable', open: '/history', configure: '/providers', where: 'Settings → History → Command history provider, or /providers',
@@ -143,7 +143,7 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'activity', label: 'Live activity', support: 'actionable', open: '/activity', covers: ['/activity', 'settings:Live activity'],
     aliases: ['live activity', 'activity colors', 'activity colours', 'running command line', 'spinner', 'elapsed time'],
     description: 'Live activity is the animated line with elapsed time while a command runs; /activity sets its colors.'},
-  {id: 'tools', label: 'Optional tools', support: 'actionable', capability: 'tools.open', open: '/tools', covers: ['/tools', 'settings:Tools', 'planned:Tools'],
+  {id: 'tools', label: 'Optional tools', support: 'actionable', capability: 'tools.open', open: '/tools', covers: ['/tools', 'settings:Tools'],
     aliases: ['tools', 'optional tools', 'installs', 'install suggestions'],
     description: '/tools lists optional tools NMSh can use, with previewed installs that start on No.'},
   {id: 'presets', label: 'Session presets', support: 'actionable', open: '/presets', covers: ['/presets'],
@@ -221,7 +221,6 @@ export const CONCEPTS: readonly Concept[] = [
 
 /** Public surfaces Ask deliberately has no concept for, with the reason (the coverage audit checks these too). */
 export const ASK_EXCLUDED: Readonly<Record<string, string>> = {
-  'planned:Blocks': 'A planned settings area with no feature behind it yet; Ask says nothing about it rather than describe something that does not exist.',
 };
 
 export type ConceptIntent = 'explain' | 'on' | 'off' | 'open' | 'change';
