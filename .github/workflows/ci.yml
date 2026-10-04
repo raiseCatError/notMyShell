@@ -98,7 +98,7 @@ jobs:
     container: fedora:42
     steps:
       - name: Install system prerequisites
-        run: dnf install -y git zsh fish gcc-c++ make python3 which
+        run: dnf install -y git zsh fish gcc-c++ make python3 which lsof procps-ng
 
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -121,3 +121,4 @@ jobs:
         run: node --import=tsx --test --test-timeout=120000 tests/linuxPlatform.test.ts tests/clipboard.test.ts tests/tools.test.ts tests/update.test.ts tests/hostProfiles.test.ts tests/portabilityUninstall.test.ts
         env:
           NMSH_DISABLE_UPDATES: '1'
+          COLORTERM: truecolor
