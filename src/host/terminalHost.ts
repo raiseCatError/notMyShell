@@ -63,7 +63,20 @@ export function detectTerminalHost(env: NodeJS.ProcessEnv = process.env, platfor
     return {capabilities, integration, keyboardGuidance: guidance, name: 'Terminal', newWindow: argv => ({command: 'osascript', args: ['-e',
       `tell application "Terminal" to do script ${appleScriptString(argv.map(shellQuote).join(' '))}`]})};
   }
-  if (env.KITTY_WINDOW_ID) {
+  if (program === 'iTerm.app' && platform === 'darwin') {
+    // Fixed AppleScript in the running iTerm2; the command is one quoted shell string, like Terminal.app.
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'iTerm2', newWindow: argv => ({command: 'osascript', args: ['-e',
+      `tell application "iTerm" to create window with default profile command ${appleScriptString(argv.map(shellQuote).join(' '))}`]})};
+  }
+  if (program === 'WezTerm' || env.WEZTERM_PANE) {
+    // `wezterm cli` talks to the running mux; failure falls back like any unsupported host.
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'WezTerm', newWindow: argv => ({command: 'wezterm', args: ['cli', 'spawn', '--new-window', '--', ...argv]})};
+  }
+  if (env.WT_SESSION && !env.TERM_PROGRAM) {
+    // Reachable from WSL when Windows Terminal forwards WT_SESSION; NMSh does not drive Windows from Linux.
+    return {capabilities, integration, keyboardGuidance: guidance, name: 'Windows Terminal'};
+  }
+  if (env.KITTY_WINDOW_ID || program === 'kitty') {
     // Needs kitty remote control (allow_remote_control); failure falls back like any unsupported host.
     return {capabilities, integration, keyboardGuidance: guidance, name: 'kitty', newWindow: argv => ({command: 'kitten', args: ['@', 'launch', '--type=os-window', ...argv]})};
   }

@@ -27,7 +27,7 @@ const MOUSE_PROFILE = {
   textSelectionInteraction: 'shift' as const, hyperlinks: true, truecolor: true,
 };
 
-export type TerminalProfile = 'ghostty' | 'iterm2' | 'kitty' | 'wezterm' | 'zed' | 'baseline';
+export type TerminalProfile = 'ghostty' | 'iterm2' | 'kitty' | 'wezterm' | 'zed' | 'windows-terminal' | 'baseline';
 
 export function terminalProfile(env: NodeJS.ProcessEnv): TerminalProfile {
   // An explicit program wins over inherited outer-host variables.
@@ -45,6 +45,8 @@ export function terminalProfile(env: NodeJS.ProcessEnv): TerminalProfile {
   if (env.WEZTERM_PANE) return 'wezterm';
   if (env.GHOSTTY_RESOURCES_DIR) return 'ghostty';
   if (env.ZED_TERM) return 'zed';
+  // Windows Terminal exports WT_SESSION and forwards it into WSL through WSLENV.
+  if (env.WT_SESSION) return 'windows-terminal';
   return 'baseline';
 }
 
@@ -57,6 +59,15 @@ export function terminalProfile(env: NodeJS.ProcessEnv): TerminalProfile {
  */
 const ZED_PROFILE = {
   mouseReporting: true, mouseMovement: false, clickSupport: true, textSelectionInteraction: 'shift' as const,
+};
+
+/**
+ * Windows Terminal (seen from WSL through WT_SESSION): standard SGR mouse
+ * reports with Shift selection, truecolor and OSC 8 hyperlinks. No movement
+ * tracking, graphics or enhanced keyboard is assumed; probes decide the rest.
+ */
+const WINDOWS_TERMINAL_PROFILE = {
+  mouseReporting: true, mouseMovement: false, clickSupport: true, textSelectionInteraction: 'shift' as const, hyperlinks: true, truecolor: true,
 };
 
 /**
@@ -76,6 +87,7 @@ export function resolveHostCapabilities(env: NodeJS.ProcessEnv = process.env): T
   if (!nested && env.TERM !== 'dumb') {
     const profile = terminalProfile(env);
     if (profile === 'zed') Object.assign(result, ZED_PROFILE);
+    else if (profile === 'windows-terminal') Object.assign(result, WINDOWS_TERMINAL_PROFILE);
     else if (profile !== 'baseline') Object.assign(result, MOUSE_PROFILE);
     if (profile === 'ghostty') Object.assign(result, {enhancedKeyboard: true, kittyKeyboard: true,
       appearanceIntegration: true, hostConfiguration: true});

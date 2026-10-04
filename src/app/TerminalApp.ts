@@ -15,6 +15,7 @@ import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId
 import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
+import {selectOpener} from '../host/desktop.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
@@ -5991,7 +5992,7 @@ export class TerminalApp {
     }
     if (action.kind === 'openUrl') {
       if (!openableUrl(action.url)) { finish('That isn\'t a URL Ask opens.'); return; }
-      const opener = process.platform === 'darwin' ? '/usr/bin/open' : resolveCommand('xdg-open') ?? resolveCommand('wslview');
+      const opener = selectOpener();
       if (!opener) { finish(`No system URL opener is available here. The URL is ${action.url}`); return; }
       try { spawn(opener, [action.url], {detached: true, stdio: 'ignore'}).unref(); finish(`Opened ${action.url}.`); } catch { finish(`Couldn't open ${action.url}.`); }
       return;

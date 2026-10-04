@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {BASELINE_CAPABILITIES, resolveHostCapabilities} from '../src/host/capabilities.js';
+import {BASELINE_CAPABILITIES, resolveHostCapabilities, terminalProfile} from '../src/host/capabilities.js';
 import {resolveProbeReplies} from '../src/host/probe.js';
 import {detectTerminalHost} from '../src/host/terminalHost.js';
 import {TerminalRenderer} from '../src/terminal/TerminalRenderer.js';
@@ -118,4 +118,42 @@ test('reattaching across profiles updates input modes while keeping the real she
       await until(async () => (await sandbox.sessions())[0]?.state === 'detached', 15000, 'profile detach');
     }
   } finally { await sandbox.dispose(); }
+});
+
+test('Windows Terminal (via WSL WT_SESSION): conservative capabilities, no graphics or enhanced keyboard assumed, no host-specific window launcher', () => {
+  const env = {WT_SESSION: 'abc', WSL_DISTRO_NAME: 'Ubuntu'};
+  const capabilities = resolveHostCapabilities(env);
+  assert.equal(terminalProfile(env), 'windows-terminal');
+  assert.deepEqual([capabilities.mouseReporting, capabilities.clickSupport, capabilities.mouseMovement, capabilities.hyperlinks, capabilities.truecolor], [true, true, false, true, true]);
+  assert.deepEqual([capabilities.kittyKeyboard, capabilities.enhancedKeyboard, capabilities.graphicsProtocol, capabilities.synchronizedOutput], [false, false, 'none', false]);
+  const host = detectTerminalHost(env, 'linux');
+  assert.equal(host.name, 'Windows Terminal');
+  assert.equal(host.newWindow, undefined);
+  assert.equal(terminalProfile({...env, TERM_PROGRAM: 'vscode'}), 'baseline', 'an explicit program wins over a forwarded variable');
+  assert.equal(resolveHostCapabilities({...env, TMUX: '/tmp/x'}).mouseReporting, false, 'multiplexers hide the outer host');
+});
+
+test('new-window launchers are typed argv per host and never interpolate command words into scripts', () => {
+  const argv = ['nmsh', '--attach', "a b'c"];
+  const iterm = detectTerminalHost({TERM_PROGRAM: 'iTerm.app'}, 'darwin').newWindow!(argv);
+  assert.equal(iterm.command, 'osascript');
+  assert.equal(iterm.args[0], '-e');
+  assert.match(iterm.args[1]!, /^tell application "iTerm" to create window with default profile command "nmsh --attach 'a b'\\\\''c'"$/u);
+  assert.equal(detectTerminalHost({TERM_PROGRAM: 'iTerm.app'}, 'linux').newWindow, undefined, 'iTerm2 is macOS only');
+  assert.deepEqual(detectTerminalHost({TERM_PROGRAM: 'WezTerm'}, 'linux').newWindow!(argv), {command: 'wezterm', args: ['cli', 'spawn', '--new-window', '--', ...argv]});
+  assert.deepEqual(detectTerminalHost({WEZTERM_PANE: '3'}, 'darwin').newWindow!(['x']), {command: 'wezterm', args: ['cli', 'spawn', '--new-window', '--', 'x']});
+  assert.deepEqual(detectTerminalHost({TERM_PROGRAM: 'kitty'}, 'linux').newWindow!(['x']), {command: 'kitten', args: ['@', 'launch', '--type=os-window', 'x']});
+  assert.equal(detectTerminalHost({TERM_PROGRAM: 'kitty'}, 'linux').name, 'kitty');
+});
+
+test('every host profile degrades inside a multiplexer and when TERM is dumb, from capabilities alone', () => {
+  for (const env of [{TERM_PROGRAM: 'iTerm.app'}, {TERM_PROGRAM: 'kitty'}, {TERM_PROGRAM: 'WezTerm'}, {TERM_PROGRAM: 'ghostty'}, {TERM_PROGRAM: 'zed'}, {WT_SESSION: 'x'}]) {
+    for (const nested of [{TMUX: '/tmp/t'}, {STY: '1'}, {ZELLIJ: '1'}, {TERM: 'screen-256color'}]) {
+      const capabilities = resolveHostCapabilities({...env, ...nested});
+      assert.equal(capabilities.graphicsProtocol, 'none', JSON.stringify({env, nested}));
+      assert.equal(capabilities.kittyKeyboard, false);
+      assert.equal(capabilities.mouseReporting, false);
+    }
+    assert.equal(resolveHostCapabilities({...env, TERM: 'dumb'}).hyperlinks, false);
+  }
 });
