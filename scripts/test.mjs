@@ -1,8 +1,9 @@
 import {spawn} from 'node:child_process';
 import {mkdtempSync, readdirSync, realpathSync, rmSync} from 'node:fs';
-import {tmpdir} from 'node:os';
+import {availableParallelism, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
+import {discoverTestFiles, parseTestOptions, selectTestGroups} from './test-selection.mjs';
 
 /** Short private temp roots keep Unix sockets below their path length limit. */
 export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio = 'inherit', report = message => console.error(message)} = {}) {
@@ -14,7 +15,10 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
     const env = {...process.env, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config'), NMSH_DISABLE_UPDATES: '1'};
     // A nested runner must not impersonate its parent's test worker.
     delete env.NODE_TEST_CONTEXT;
-    const child = spawn(process.execPath, ['--import=tsx', '--test', ...args, ...files], {
+    // PTY workers also own shell/helper processes. Bound fan-out on larger
+    // development hosts; explicit Node --test-concurrency options still win.
+    const concurrency = Math.max(1, Math.min(4, availableParallelism() - 1));
+    const child = spawn(process.execPath, ['--import=tsx', '--test', `--test-concurrency=${concurrency}`, ...args, ...files], {
       cwd, stdio, env,
     });
     let interrupted = false;
@@ -43,15 +47,12 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const files = readdirSync('tests', {recursive: true}).filter(name => name.endsWith('.test.ts')).map(name => join('tests', name)).sort();
-  // Preserve the history latency budget without measuring competing PTY/render
-  // fixtures on shared runners. All ranking tests still run canonically.
-  const ranking = files.filter(file => file.endsWith('suggestionRanking.test.ts'));
-  const runtime = files.filter(file => !ranking.includes(file));
   try {
+    const {args, ...selection} = parseTestOptions(process.argv.slice(2));
+    const groups = selectTestGroups(discoverTestFiles(), selection);
     process.exitCode = 0;
-    for (const group of [runtime, ranking]) {
-      if (group.length) process.exitCode = Math.max(process.exitCode, (await runTestFiles(group, process.argv.slice(2))).code);
+    for (const group of groups) {
+      if (group.length) process.exitCode = Math.max(process.exitCode, (await runTestFiles(group, args)).code);
     }
   }
   catch (error) { console.error(error); process.exitCode = 1; }

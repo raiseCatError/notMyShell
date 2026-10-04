@@ -53,12 +53,24 @@ Submitted commands retain their semantic presentation in the NMSh output history
 Released (0.16.0): a real ShellAdapter with zsh, Fish and Bash 4.4+ backends ([docs/architecture/shell-adapter.md](docs/architecture/shell-adapter.md)). Nushell and PowerShell remain future.
 
 ## Testing / verification
-Canonical verification commands:
+During implementation, run focused affected tests. Use `npm run verify:fast` for
+ordinary iteration (build, an explicit core test subset, and diff checks); it is
+not the final gate. Before pushing a meaningful checkpoint, run `npm run verify`
+(build, the full canonical suite, and diff checks). Build already checks the
+source TypeScript; `npm run typecheck` remains available for direct use.
+
+For release-sensitive changes run `npm run verify:release`, which adds benchmark
+script typechecking and bounded timing smoke. These commands reuse local
+node_modules; use `npm ci` for clean CI/release environments. Batch coherent
+changes and avoid pushing tiny or known-broken edits to use Actions as a test
+runner. GitHub CI provides independent platform verification, not a replacement
+for local checks. See [development verification](docs/development-verification.md)
+for sharding, platform gates and exact-release evidence requirements.
+
 ```bash
-npm run build
-npm run typecheck
-npm test
-git diff --check
+npm run verify:fast
+npm run verify
+npm run verify:release
 ```
 
 When writing tests involving `TerminalApp`, you must carefully tear down child processes and temp ZDOTDIRs:
@@ -127,12 +139,9 @@ When given a task such as "work on the next Ready NMSh issue", follow this workf
 
 9. **Add or update automated tests for behavior changes** where appropriate.
 
-10. **Run the canonical verification suite:**
+10. **Run canonical local verification before pushing a coherent checkpoint:**
     ```bash
-    npm run build
-    npm run typecheck
-    npm test
-    git diff --check
+    npm run verify
     ```
 
 11. **Commit and push the feature branch.**
@@ -330,10 +339,7 @@ Cloud agents must detect their actual environment. Do not assume a cloud VM is m
 
 The project requires Node >=22. Prefer `npm ci` then run supported canonical verification:
 ```bash
-npm run build
-npm run typecheck
-npm test
-git diff --check
+npm run verify
 ```
 
 GitHub CI remains an integration gate.
