@@ -52,10 +52,27 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
   shell config is treated as executable, never as plain data
 - Keep Awake (/caffeinate, /awake, /zoomies): OS mechanism, NMSh-owned background process
 - Chroma, motion, screensavers and Vespyr (the NMSh cat); Safe glyphs, NO_COLOR, Reduced Motion
-- /ask: plain requests mapped onto typed NMSh actions (optional local model)
+- /btw (compatibility alias /ask): plain requests mapped onto typed NMSh actions (optional local model)
 - cross-session notices, agent activity stats (/agents), /open and /open-diff
 - nmsh config export/import, nmsh uninstall, nmsh doctor
 - NMSH_DETERMINISTIC=1 for repeatable presentation in tests and VHS demos
+
+## Native modules / Context Engine (unreleased)
+
+Current engineering focus: Capability → immutable Fact → Module → Surface Router
+→ Main Prompt / Context Rail / Right Context. Core services own bounded collection;
+modules and renderers consume resolved facts without I/O. Facts carry provenance,
+freshness, trust, sensitivity and persistence policy. The Rail is live frontend
+geometry, separate from transcript snapshots and the right-context anchor.
+
+The first-party module registry, fact adapter and surface routing are implemented
+on feature/305-context-engine. Installable declarative Context Packs, broader
+capability scheduling and Status Strip module routing remain upcoming. No finalized
+pack SDK or executable plugin API is available. Repository entry must never execute
+arbitrary repo-controlled code through discovery; metadata is parser-only and
+probes are curated core operations, not commands supplied by packs or repositories.
+
+Reel: https://youtu.be/zIzq_88R5OI (preview: assets/promo/nmsh-promo.png)
 
 ## NMSh is NOT
 
@@ -83,6 +100,8 @@ src/output/AnsiOutputParser.ts
 src/output/viewport.ts
 src/terminal/TerminalRenderer.ts
 src/app/screenPlan.ts (one geometry plan per frame)
+src/context/ (facts, trusted services, surface router)
+src/prompt/configuration.ts, src/prompt/railLayout.ts, src/prompt/railComposition.ts
 src/keepAwake/ (controller, panel, presentation)
 src/themeBridge/ (targets, ownership ledger)
 
@@ -97,6 +116,7 @@ SECURITY.md
 CHANGELOG.md
 SUPPORT.md
 LICENSE
+docs/architecture/context-modules.md
 docs/architecture/shell-adapter.md
 docs/architecture/platforms.md
 docs/architecture/host-actions.md

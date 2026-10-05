@@ -100,6 +100,22 @@ External renderers receive shell context such as directory and exit status. Thei
 
 These helpers have time/output limits and use pipes rather than attaching their UI to the host terminal. They are still trust boundaries: running an installed prompt program or loading Powerlevel10k configuration can execute that provider's code.
 
+### Native modules and the Context Engine
+
+Native context follows a shared pipeline:
+
+```text
+trusted core capabilities → immutable facts → native modules
+    → Surface Router → Main Prompt / Context Rail / Right Context
+    → semantic segment painter → shared screen plan
+```
+
+Capabilities own collection and its safety policy. Facts describe values with provenance, freshness, trust and privacy metadata. Modules consume resolved values; rendering and routing do not perform discovery or launch probes. The current implementation adapts the existing shell-context snapshot into this fact model rather than replacing shell collection with a separate system.
+
+The Main Prompt carries identity and navigation context. Right Context is a separately anchored prompt area. The Context Rail is live native context attached to the composer, vertically or Right of Prompt; its position does not turn it into Right Context. Width fitting preserves the independent right-context anchor and drops Rail content by priority when space is scarce. Rail rows are frontend geometry, not transcript output, and the live Rail is not archived into command history.
+
+This is the current development implementation, not a released pack platform. Context Packs are planned as declarative data requesting known capabilities; arbitrary code, commands and repository hooks are outside that model. See [Context Modules](docs/architecture/context-modules.md) for the current module set, surface behavior and discovery boundaries.
+
 **Prompt None can still show a composer marker.** The marker identifies where input starts and belongs to NMSh's editor presentation. Removing context does not remove the editor's own marker or accessories.
 
 ## 7. Output and transcript
@@ -265,7 +281,7 @@ The prompt inside a pane belongs to the program running there; tmux's status app
 
 ## 19. Ask
 
-Ask resolves plain-English requests into NMSh's existing capabilities. Its first path is deterministic: intents, command knowledge, project facts, and supported actions work without a model.
+`/btw` opens **Ask NMSh**; `/ask` remains a compatibility alias for the same feature. Ask resolves plain-English requests into NMSh's existing capabilities. Its first path is deterministic: intents, command knowledge, project facts, and supported actions work without a model.
 
 Results are typed answers, proposals, choices, unsupported requests, or refusals. Actions identify specific operations such as opening a panel, attaching a session, changing a setting, running a fixed command, or applying a verified edit plan. Existing controllers perform those operations.
 
@@ -299,6 +315,8 @@ Configuration loading normalizes data, supplies defaults, and migrates older sha
 
 The central distinction is between **data NMSh can validate** and **code an external system executes**. Normal interactive shell startup and explicitly selected providers execute trusted user-installed code. Import and discovery workflows do not receive that same authority.
 
+Entering a repository must never itself execute arbitrary repository-controlled code through NMSh context discovery. Context metadata is read as bounded data; curated core probes own executable selection and policy. Normal user-configured shell startup and explicitly chosen external providers remain separate trust boundaries.
+
 Theme imports use bounded parsers without templates, includes, or code execution. Arbitrary configuration is not generically rewritten. Supported installs and helper operations use fixed executables and structured argument arrays rather than interpolating requests into shell strings. Helpers have time/output bounds appropriate to their role.
 
 Generated-file hashes and ownership records protect external artifacts; process verification protects stop/kill operations. A discovered file, tool, or PID is not proof that NMSh owns it. Raw PTY output retains program formatting through a controlled presentation path, and unauthenticated output cannot complete an NMSh command by impersonating its private protocol.
@@ -316,6 +334,7 @@ These boundaries do not make arbitrary shell commands or providers harmless. The
 | Live service, sockets, replay and attachment | `src/session/` |
 | Saved transcripts and resume UI | `src/sessions/` |
 | Output parsing, folding, selection and presentation | `src/output/` |
+| Context facts, trusted collection and surface routing | `src/context/`, `src/prompt/configuration.ts`, `src/prompt/railLayout.ts` |
 | Native/external prompts and shared settings | `src/prompt/`, `src/configuration/` |
 | Panels and shared UI primitives | `src/ui/` plus feature-specific panel modules |
 | Theme Studio, palettes and decoration | `src/appearance/`, `src/chroma/`, `src/motion/`, `src/cursor/`, `src/idle/` |
@@ -367,6 +386,7 @@ These documents expand particular areas. Older design and research records expla
 - [Terminal stack](docs/architecture/terminal-stack.md): layer terminology; its zsh-only and bottom-editor wording predates the current adapters/layouts.
 - [Terminal hosts](docs/architecture/terminal-host.md) and [multiplexer interoperability](docs/architecture/multiplexer-interop.md): capability boundaries and nested-terminal behavior.
 - [notMyUI](docs/architecture/notmyui.md) and [TUI primitives](docs/architecture/tui-primitives-v012.md): common controls, surfaces, and focus.
+- [Context Modules](docs/architecture/context-modules.md): capabilities, facts, native routing, Context Rail and pack direction.
 - [Prompt customization](docs/architecture/prompt-customization.md): Native context, shape, and appearance choices.
 - [Supported tool configuration](docs/architecture/supported-tool-configuration.md): configuration classes, adapters, and ownership.
 - [Theme Bridge design](docs/design/theme-bridge.md): imports, target behavior, environment sink, and generated-file safety.

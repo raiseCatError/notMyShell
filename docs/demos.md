@@ -2,6 +2,14 @@
 
 Four chapters of real NMSh: make it yours, see it move, work with your tools, and return to your sessions. Each chapter opens with a featured recording; expand the walkthroughs for the rest.
 
+## See notMyShell in motion
+
+[![Watch the notMyShell reel on YouTube](../assets/promo/nmsh-promo.png)](https://youtu.be/zIzq_88R5OI)
+
+[Watch the reel on YouTube](https://youtu.be/zIzq_88R5OI). The preview uses the repository's existing promo poster.
+
+## Feature recordings
+
 [Customization](#customization) · [Color and motion](#color-and-motion) · [Tools and shells](#tools-and-shells) · [Sessions](#sessions)
 
 Every GIF runs the real binary in a disposable home (`~/Projects/demo`), with an opaque 1440 × 960 capture and neutral demo welcome. VHS provides a clean terminal surface; these are not Ghostty or Zed desktop captures. The clips were recorded on macOS; Linux and Windows/WSL behavior is covered by automated tests. [Recording sources and reproduction](../scripts/demos/README.md).
@@ -185,6 +193,8 @@ The frontend receives `SIGHUP`, as from a closing window. The build continues; `
 ## Architecture
 
 The simple stack follows the original artwork: terminal host, NMSh frontend and real shell, with Vespyr beside the NMSh title.
+
+Read the [Context Modules guide](architecture/context-modules.md) for the native module pipeline, Context Rail and declarative pack direction. These recordings illustrate the frontend and real-shell relationship; they do not cover every unreleased module setting.
 
 <p align="center"><img alt="Vertical NMSh terminal stack with square borders" src="../assets/readme/architecture.svg" width="640"></p>
 

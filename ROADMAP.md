@@ -6,12 +6,26 @@
 |---|---|
 | **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
 | **Next development milestone** | [v0.17.0 — Compatibility & Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305); foundation and Context Rail implemented on `feature/305-context-engine`, unreleased |
 | **In development (unreleased)** | [PR #315](https://github.com/raiseCatError/notMyShell/pull/315) — Theme Studio, Theme Bridge, tool configuration, shell frameworks, Keep Awake; see CHANGELOG → Unreleased |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
 GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The released package is 0.16.0; v0.17 is the next development milestone.
+
+## Current engineering focus — native modules and Context Engine
+
+The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model. This work is unreleased; the stable package remains v0.16.0 and the release sequence below remains the planned track.
+
+| State | Scope |
+|---|---|
+| Implemented on the feature branch | Typed fact metadata and privacy filtering; trusted bounded metadata/Git collection; the first-party module registry; Main Prompt / Right Context / Context Rail routing; Rail geometry, priority fitting and shared previews |
+| Preserved | Existing Native module order, visibility and left/right placement; real zsh/Bash/Fish sessions; prompt snapshots and fullscreen passthrough |
+| Upcoming | General capability scheduling and fuller fact migration; a bounded expansion of useful first-party modules; installable declarative Context Packs with validation and policy |
+| Deferred | Status Strip module routing and any executable extension tier; no finalized public pack API |
+
+Repository entry must never grant authority to execute arbitrary repository-controlled code. Discovery remains parser-only or uses curated core probes with explicit bounds and policy.
 
 ## Released — v0.2.0 Structured Execution
 
@@ -147,7 +161,7 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | Release | Theme | Tracker |
 |---|---|---|
 | v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), delivered in focused slices; in development on [PR #315](https://github.com/raiseCatError/notMyShell/pull/315), not released. Still deferred: terminal title ownership (OSC 0/2), delta custom styles, terminal emulator and editor base-theme takeover. |
-| v0.19.0 | NMSh Native module ecosystem: architecture, lazy probes, caching and provenance first, then a bounded high-value module set (not the whole catalog) | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
+| v0.19.0 | NMSh Native module ecosystem: current Context Engine foundation and Rail, then capability scheduling, a bounded first-party module expansion and declarative packs | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
 
 ## Backlog — future, unscheduled
 
@@ -155,7 +169,6 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 
 | Issue | Title |
 |---|---|
-| [#305](https://github.com/raiseCatError/notMyShell/issues/305) | (planned v0.19) NMSh Native module ecosystem and upstream module ports (also carries the user-defined prompt modules direction from the closed research issue #73) |
 | [#304](https://github.com/raiseCatError/notMyShell/issues/304) | (planned v0.18) Theme Bridge and semantic terminal integration |
 | [#296](https://github.com/raiseCatError/notMyShell/issues/296) | Hosted SSH demo (post-1.0) |
 | [#20](https://github.com/raiseCatError/notMyShell/issues/20) | Ongoing polish triage index |

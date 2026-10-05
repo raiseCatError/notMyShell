@@ -18,16 +18,24 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch is the released state; newer work (themes, Theme Bridge, tool configuration, shell frameworks, Keep Awake) is in development and listed under *Unreleased* in the [changelog](CHANGELOG.md).
+Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch is the released state; newer work (themes, Theme Bridge, tool configuration, shell frameworks, Keep Awake) is in development and listed under *Unreleased* in the [changelog](CHANGELOG.md). The Context Engine and Context Rail are being developed on `feature/305-context-engine`.
 
 <div align="center">
   <img alt="NMSh: typing a highlighted command, running it with live activity, then switching the theme from /theme" src="assets/readme/nmsh-demo.gif" width="960">
   <p><em>Typing with semantic highlighting, live command feedback, and a theme change from <code>/theme</code>. Recorded from the real binary with <a href="scripts/demos/README.md">VHS</a>.</em></p>
 </div>
 
+## See notMyShell in motion
+
+[![Watch the notMyShell reel on YouTube](assets/promo/nmsh-promo.png)](https://youtu.be/zIzq_88R5OI)
+
+[Watch the reel → YouTube](https://youtu.be/zIzq_88R5OI) · [View the X post → X](https://x.com/raiseCatError/status/2107187652181303325?s=20)
+
+Explore the [demo gallery](docs/demos.md) by feature.
+
 ## What NMSh is (and is not)
 
-NMSh is a **frontend**. Your shell stays underneath and does what it always did: parsing, execution, aliases, functions, environment, job control. NMSh owns what you see and type: the composer and editor, completion and suggestions, history and transcript, prompt and themes.
+NMSh is a **frontend**. Your shell stays underneath and does what it always did: parsing, execution, aliases, functions, environment, job control. NMSh owns what you see and type: the composer and editor, completion and suggestions, history and transcript, prompt and layout, sessions, themes and Chroma, tool panels, and local guidance. Fullscreen and raw interactive terminal applications use the passthrough path; their input and display remain with the real program.
 
 <div align="center">
   <picture>
@@ -56,6 +64,14 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 <div align="center">
   <img alt="Vespyr, the NMSh cat, sitting on a divider" src="assets/readme/vespyr-divider.svg" width="600">
 </div>
+
+## Native modules and the Context Engine
+
+The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
+
+The development branch implements fact metadata, native module routing and the Context Rail. Installable, declarative Context Packs are upcoming; they are not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+
+Read the [Context Modules guide](docs/architecture/context-modules.md) for the implemented surfaces, discovery boundaries and pack direction, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
 ## Visual tour
 
@@ -175,6 +191,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md) — how NMSh works end to end, in plain language; deeper docs live under `docs/architecture/` and `docs/design/`
+- [Context Modules](docs/architecture/context-modules.md) — facts, routing, Context Rail and declarative pack direction
 - [Demo gallery](docs/demos.md) — every feature clip in one place
 - [ShellAdapter](docs/architecture/shell-adapter.md), [platforms](docs/architecture/platforms.md), [terminal stack](docs/architecture/terminal-stack.md)
 - [Themes, imports and Theme Bridge](docs/design/theme-bridge.md), [Chroma and UI chrome](docs/design/chroma-and-ui-chrome.md), [idle visuals](docs/design/idle-visuals.md)
