@@ -144,11 +144,20 @@ test('/shell indicator controls edit the existing module and never switch the se
     assert.match(renderShellPanel(app['shellPanel']!, 100).map(stripAnsi).join('\n'), /Side.*Left/u);
     const reopened = app['shellPanel']!;
     applyShellIndicatorAction(app['promptConfiguration'], {kind: 'indicatorVisibility', visibility: 'whenDifferent'});
-    app['promptConfiguration'].shellBackend = 'zsh';
-    reopened.selected = reopened.shells.findIndex(item => item.adapter.id === 'fish');
+    const target = reopened.shells.find(item => item.executable && item.adapter.id !== 'zsh')
+      ?? reopened.shells.find(item => item.executable);
+    assert.ok(target, 'at least one supported shell is available');
+    const targetShell = target.adapter.id;
+    app['promptConfiguration'].shellBackend = targetShell === 'zsh' ? 'bash' : 'zsh';
+    app['shellId'] = targetShell;
+    const activeShell = app['shellId'];
+    const activeSession = app['session'];
+    assert.equal(renderedModules(app['promptContext'](''), app['promptConfiguration']).some(module => module.id === 'shell'), true);
+    reopened.selected = reopened.shells.indexOf(target);
     app['onInput']('d');
-    assert.equal(app['promptConfiguration'].shellBackend, 'fish');
-    assert.equal(app['shellId'], 'fish');
+    assert.equal(app['promptConfiguration'].shellBackend, targetShell);
+    assert.equal(app['shellId'], activeShell, 'changing the default does not switch the active shell');
+    assert.equal(app['session'], activeSession, 'changing the default does not replace the session');
     assert.equal(renderedModules(app['promptContext'](''), app['promptConfiguration']).some(module => module.id === 'shell'), false);
   } finally { app['stop'](0); app['session'].kill(); if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous; rmSync(root, {recursive: true, force: true}); }
 });
