@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest published stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch contains the prepared **v0.17.0 — Context Engine, Themes & Discovery** release candidate; tagging and publication are pending. See the [changelog](CHANGELOG.md#0170---2026-10-06) for its implemented scope.
+Latest published stable release: [v0.17.0 — Context Engine, Themes & Discovery](https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0170---2026-10-06) for its implemented scope.
 
 ## See notMyShell in motion
 
@@ -64,7 +64,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-The v0.17.0 release candidate implements fact metadata, native module routing and the Context Rail. Installable, declarative Context Packs are upcoming; they are not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+v0.17.0 implements fact metadata, native module routing and the Context Rail. Installable, declarative Context Packs are upcoming; they are not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
 Read the [Context Modules guide](docs/architecture/context-modules.md) for the implemented surfaces, discovery boundaries and pack direction, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
@@ -103,9 +103,7 @@ The gallery uses wide, opaque recordings from the real NMSh build, with a dispos
 
 ### Homebrew
 
-> Homebrew support is being prepared for v0.17.0. These instructions are not available yet; use the source installation below until the published formula has passed installation, formula tests and interactive startup validation.
-
-Homebrew is the recommended install method on macOS once the v0.17.0 formula is published and validated.
+Homebrew is the recommended install method on macOS.
 
 ```sh
 brew install raiseCatError/tap/nmsh

@@ -82,7 +82,7 @@ Context Engine, Themes & Discovery: native context routing and Rail foundations,
 
 ### Updates and sessions
 - **Automatic updates** (Automatic / Notify only / Off, Daily or Weekly). New installs default to Automatic / Daily; saved Daily/Weekly checks migrate to Notify only and Off stays Off. Automatic prepares a verified stable release only where `/update apply`'s own checks pass, with the same build verification and rollback; the running session keeps its version. Status shows Running version, Latest, Mode and State.
-- Homebrew install provenance prevents the source-checkout updater from mutating the Cellar. Homebrew distribution is still being prepared and is not yet available; publishing remains disabled.
+- Homebrew install provenance prevents the source-checkout updater from mutating the Cellar. Homebrew distribution is now available through `brew install raiseCatError/tap/nmsh`; automated publishing from this repository remains disabled.
 - Detached sessions can be ended from the startup picker with `X` and confirmation; the transcript is archived and stays in `/resume`.
 
 ## [0.16.0] - 2026-10-04

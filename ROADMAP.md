@@ -4,23 +4,23 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
-| **Prepared release candidate** | v0.17.0 — Context Engine, Themes & Discovery; on `master`, tagging and publication pending |
-| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305); foundation and Context Rail implemented on `master` in the v0.17.0 release candidate |
-| **Included in the release candidate** | Theme Studio, Theme Bridge, tool configuration, shell frameworks, Keep Awake and Context Engine foundation; merged through [PR #322](https://github.com/raiseCatError/notMyShell/pull/322), see CHANGELOG → 0.17.0 |
+| **Current release** | [v0.17.0 — Context Engine, Themes & Discovery](https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0) — released |
+| **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
+| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305); foundation and Context Rail implemented on `master` in the v0.17.0 release |
+| **Included in v0.17.0** | Theme Studio, Theme Bridge, tool configuration, shell frameworks, Keep Awake and Context Engine foundation; merged through [PR #322](https://github.com/raiseCatError/notMyShell/pull/322), see CHANGELOG → 0.17.0 |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release is 0.16.0; the package on `master` is the 0.17.0 release candidate.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The latest published release and package version are 0.17.0.
 
 ## Current engineering focus — native modules and Context Engine
 
-The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model. The foundation is in the v0.17.0 release candidate on `master`; the broader module ecosystem remains ongoing.
+The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model. The foundation is in the v0.17.0 release on `master`; the broader module ecosystem remains ongoing.
 
 | State | Scope |
 |---|---|
-| Implemented in the v0.17.0 release candidate | Typed fact metadata and privacy filtering; trusted bounded metadata/Git collection; the first-party module registry; Main Prompt / Right Context / Context Rail routing; Rail geometry, priority fitting and shared previews |
+| Implemented in the v0.17.0 release | Typed fact metadata and privacy filtering; trusted bounded metadata/Git collection; the first-party module registry; Main Prompt / Right Context / Context Rail routing; Rail geometry, priority fitting and shared previews |
 | Preserved | Existing Native module order, visibility and left/right placement; real zsh/Bash/Fish sessions; prompt snapshots and fullscreen passthrough |
 | Upcoming | General capability scheduling and fuller fact migration; a bounded expansion of useful first-party modules; installable declarative Context Packs with validation and policy |
 | Deferred | Status Strip module routing and any executable extension tier; no finalized public pack API |
@@ -144,7 +144,7 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | Ask & Local Understanding | Deterministic Ask, optional local model (Auto by default, never downloads without a Yes), `/llm` |
 | Appearance | `/appearance` hub; Clean and Rich motion rendering with per-rendering tuning; cursor effects with a capability matrix; Setup Cat as the complete customization entry point; grouped Config and Status |
 
-## Release candidate — v0.17 Context Engine, Themes & Discovery
+## Released — v0.17 Context Engine, Themes & Discovery
 
 [Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15). Code and automated coverage for `Relevant here`, package-manager plans with bulk install, activation detection, host profiles, Linux/WSL hardening, automatic update staging and startup session kill. Physical validation in iTerm2, Kitty, WezTerm, Linux and WSL 2 is tracked as a separate `needs-human-test` follow-up and does not block the release.
 
@@ -160,7 +160,7 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 
 | Release | Theme | Tracker |
 |---|---|---|
-| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), core Theme Bridge and host semantics are included in the v0.17.0 release candidate; remaining refinements follow in focused slices. Still deferred: terminal title ownership (OSC 0/2), delta custom styles, terminal emulator and editor base-theme takeover. |
+| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), core Theme Bridge and host semantics are included in the v0.17.0 release; remaining refinements follow in focused slices. Still deferred: terminal title ownership (OSC 0/2), delta custom styles, terminal emulator and editor base-theme takeover. |
 | v0.19.0 | NMSh Native module ecosystem: capability scheduling beyond the v0.17.0 Context Engine foundation and Rail, a bounded first-party module expansion and declarative packs | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
 
 ## Backlog — future, unscheduled
