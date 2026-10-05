@@ -118,7 +118,7 @@ npm may ask to allow `node-pty`'s install script; it is required. To start NMSh 
 command = direct:/absolute/path/to/node /absolute/path/to/nmsh
 ```
 
-Do not make NMSh your login shell; it is a frontend and your shell stays your shell.
+Do not set nmsh as your system/login shell with chsh. Keep zsh, Bash or Fish as your real shell. If you want NMSh to open automatically, configure your terminal app (Ghostty, Zed, etc.) to launch nmsh instead.
 
 **Updating:** `/update` shows the latest stable release and the exact plan; `/update apply` installs it into a clean official source checkout, verifies the build, and rolls back on failure. Automatic updates (Automatic / Notify only / Off) use the same checks.
 
