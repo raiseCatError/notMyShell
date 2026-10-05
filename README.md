@@ -20,16 +20,11 @@
 
 Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch is the released state; newer work (themes, Theme Bridge, tool configuration, shell frameworks, Keep Awake) is in development and listed under *Unreleased* in the [changelog](CHANGELOG.md). The Context Engine and Context Rail are being developed on `feature/305-context-engine`.
 
-<div align="center">
-  <img alt="NMSh: typing a highlighted command, running it with live activity, then switching the theme from /theme" src="assets/readme/nmsh-demo.gif" width="960">
-  <p><em>Typing with semantic highlighting, live command feedback, and a theme change from <code>/theme</code>. Recorded from the real binary with <a href="scripts/demos/README.md">VHS</a>.</em></p>
-</div>
-
 ## See notMyShell in motion
 
-[![Watch the notMyShell reel on YouTube](assets/promo/nmsh-promo.png)](https://youtu.be/zIzq_88R5OI)
+https://github.com/user-attachments/assets/7f2cbe74-ad86-4d13-bbe3-04e334cff81b
 
-[Watch the reel → YouTube](https://youtu.be/zIzq_88R5OI) · [View the X post → X](https://x.com/raiseCatError/status/2107187652181303325?s=20)
+[Watch the 4K reel fullscreen → YouTube](https://youtu.be/zIzq_88R5OI) · [View the X post → X](https://x.com/raiseCatError/status/2107187652181303325?s=20)
 
 Explore the [demo gallery](docs/demos.md) by feature.
 
@@ -76,6 +71,16 @@ Read the [Context Modules guide](docs/architecture/context-modules.md) for the i
 ## Visual tour
 
 A workspace that stays readable. A palette that feels like yours. Explore the full recordings by chapter, from first setup to returning to a running session.
+
+<details>
+<summary>Composer and live feedback walkthrough</summary>
+
+<div align="center">
+  <img alt="NMSh: typing a highlighted command, running it with live activity, then switching the theme from /theme" src="assets/readme/nmsh-demo.gif" width="960">
+  <p><em>Typing with semantic highlighting, live command feedback, and a theme change from <code>/theme</code>. Recorded from the real binary with <a href="scripts/demos/README.md">VHS</a>.</em></p>
+</div>
+
+</details>
 
 <p align="center">
   <a href="docs/demos.md#theme-studio"><img alt="Preview: Theme Studio with live colors and custom themes" src="assets/readme/theme-studio.png" width="420"></a>
