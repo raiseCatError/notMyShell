@@ -1,43 +1,103 @@
-/** Reproducible stack diagrams; Vespyr comes from the production sprite. */
+/** Stack diagrams based on the original vertical NMSh artwork. */
 import {writeFileSync} from 'node:fs';
 import {CAT_BODY, CAT_EYE, catPixels} from '../../src/idle/catSprite.js';
+
+const INK = '#F2F0EC';
+const QUIET = '#B0B8C2';
+const ACCENT = '#C5B9E8';
 const escape = (text: string) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;');
-const label = (x: number, y: number, text: string, size = 18, color = '#f2f0ec') => `<text x="${x}" y="${y}" fill="${color}" font-size="${size}">${escape(text)}</text>`;
-function cat(x: number, y: number, scale = 4): string {
-  return catPixels('idle').flatMap((row, ry) => [...row].flatMap((pixel, rx) => pixel === '.' ? [] : [`<rect x="${x + rx * scale}" y="${y + ry * scale}" width="${scale}" height="${scale}" fill="#${(pixel === 'E' ? CAT_EYE : CAT_BODY).toString(16)}"/>`])).join('');
+function text(x: number, y: number, value: string, size = 16, color = QUIET, centered = false, bold = false): string {
+  return `<text x="${x}" y="${y}" font-size="${size}" fill="${color}"${centered ? ' text-anchor="middle"' : ''}${bold ? ' font-weight="600"' : ''}>${escape(value)}</text>`;
 }
-const box = (x: number, y: number, w: number, h: number, title: string, lines: string[], accent = false) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="14" fill="${accent ? '#252139' : '#1d202c'}" stroke="${accent ? '#c5b9e8' : '#555b70'}"/>${label(x + 20, y + 32, title, title.length > 25 ? 17 : 20, accent ? '#c5b9e8' : '#f2f0ec')}${lines.map((text, i) => label(x + 20, y + 61 + i * 24, text, 15, '#b0b8c2')).join('')}`;
-const arrow = (path: string, dashed = false) => `<path d="${path}" fill="none" stroke="${dashed ? '#7fc4cc' : '#8b84b2'}" stroke-width="2" ${dashed ? 'stroke-dasharray="6 5"' : ''} marker-end="url(#arrow)"/>`;
-function svg(w: number, h: number, title: string, body: string): string {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" role="img" aria-label="${title}"><title>${title}</title><defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="#8b84b2"/></marker></defs><rect width="${w}" height="${h}" rx="20" fill="#15141c"/><g font-family="ui-sans-serif,system-ui,sans-serif">${body}</g></svg>\n`;
+function cat(x: number, y: number, scale = 3): string {
+  return catPixels('idle').flatMap((row, ry) => [...row].flatMap((pixel, rx) => pixel === '.' ? [] : [
+    `<rect x="${x + rx * scale}" y="${y + ry * scale}" width="${scale}" height="${scale}" fill="#${(pixel === 'E' ? CAT_EYE : CAT_BODY).toString(16)}"/>`,
+  ])).join('');
 }
-const heading = cat(32, 24) + label(103, 50, 'notMyShell', 26, '#c5b9e8');
-const simple = heading + label(32, 84, 'Your terminal. Your real shell. NMSh brings them together.', 17, '#b0b8c2')
-  + box(32, 125, 270, 116, 'Terminal host', ['Ghostty · Zed · Terminal.app', 'Fonts, window, key transport'])
-  + box(344, 125, 270, 116, 'NMSh frontend', ['Composer, prompt, feedback', 'Transcript, themes, sessions'], true)
-  + box(656, 125, 270, 116, 'Persistent real shell', ['ShellAdapter + hidden PTY', 'zsh · Bash 4.4+ · Fish'])
-  + arrow('M302 180 L338 180') + arrow('M614 180 L650 180')
-  + box(656, 286, 270, 90, 'CLI / TUI programs', ['git · npm · Vim · agent CLIs'])
-  + arrow('M791 241 L791 280') + label(32, 292, 'Shell state survives between commands.', 18)
-  + label(32, 322, 'Fullscreen programs use passthrough to the host.', 16, '#7fc4cc');
-writeFileSync(new URL('../../assets/readme/architecture.svg', import.meta.url), svg(960, 408, 'NMSh terminal stack', simple));
-const detailed = heading + label(32, 87, 'Runtime flow · one persistent shell, one geometry plan per frame', 18, '#b0b8c2')
-  + box(32, 128, 280, 112, 'Terminal host', ['Keys, mouse, resize → NMSh', '← rendered cells / raw passthrough'])
-  + box(366, 128, 340, 112, 'NMSh editor & command routing', ['Composer → lexical Highlighter', 'Slash actions or shell submission'], true)
-  + box(760, 128, 310, 112, 'Detached helpers', ['Isolated SemanticService', 'Completion · optional understanding'])
-  + arrow('M312 182 L360 182') + arrow('M706 182 L754 182')
-  + box(366, 294, 340, 134, 'ScreenPlan & presentation', ['Shared geometry: render, cursor, hit test', 'OutputBuffer → FOLLOW / DETACHED', 'Clock → motion, Chroma, live status'], true)
-  + arrow('M536 240 L536 288')
-  + arrow('M366 352 L172 352 L172 246')
-  + box(366, 482, 340, 112, 'SessionClient', ['Session service: detach / reattach', 'Or in-process session transport'])
-  + arrow('M712 216 L736 216 L736 538 L712 538') + label(746, 399, 'submit', 15, '#b0b8c2')
-  + arrow('M510 482 L510 434') + label(525, 461, 'output + lifecycle markers', 14, '#b0b8c2')
-  + box(32, 482, 280, 112, 'Persistence', ['Session journal / archives', 'History · configuration · themes'])
-  + arrow('M366 545 L318 545')
-  + box(760, 482, 310, 112, 'ShellSession + ShellAdapter', ['One persistent PTY', 'zsh / Bash / Fish → CLI & TUI'])
-  + arrow('M706 557 L754 557')
-  + arrow('M915 482 L915 267 L172 267 L172 246', true)
-  + label(770, 289, 'interactive raw passthrough', 14, '#7fc4cc')
-  + label(32, 647, 'Raw PTY output keeps its colors. Semantic highlighting belongs to NMSh input and submitted commands.', 16, '#b0b8c2')
-  + label(32, 677, 'Helpers never attach to the host controlling TTY. ScreenPlan controls PTY size as well as frontend layout.', 16, '#b0b8c2');
-writeFileSync(new URL('../../assets/readme/architecture-detailed.svg', import.meta.url), svg(1100, 716, 'NMSh detailed runtime flow', detailed));
+function frame(x: number, y: number, width: number, height: number, accent = false): string {
+  return `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${accent ? '#1E1B2E' : '#0B0B0F'}" stroke="${accent ? ACCENT : '#3D444D'}" stroke-width="2"/>`;
+}
+function arrow(path: string, dashed = false): string {
+  return `<path d="${path}" fill="none" stroke="#7D8590" stroke-width="2"${dashed ? ' stroke-dasharray="5 5"' : ''} marker-end="url(#arrow)"/>`;
+}
+function svg(width: number, height: number, title: string, description: string, body: string): string {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-labelledby="title description">
+<title id="title">${escape(title)}</title><desc id="description">${escape(description)}</desc>
+<defs><marker id="arrow" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0 0 L6 3 L0 6" fill="#7D8590"/></marker></defs>
+<rect width="${width}" height="${height}" fill="#0B0B0F"/>
+<g font-family="ui-sans-serif, system-ui, sans-serif">${body}</g>
+</svg>\n`;
+}
+
+// The original three-layer composition: NMSh is wider, accented and central.
+const simple = frame(170, 28, 300, 94)
+  + text(320, 63, 'Terminal host', 22, INK, true, true)
+  + text(320, 91, 'Ghostty / Zed / Terminal.app', 16, QUIET, true)
+  + arrow('M320 122 L320 184')
+  + text(340, 159, 'Input / display', 14)
+  + frame(100, 190, 440, 146, true)
+  + cat(222, 215)
+  + text(283, 247, 'notMyShell', 27, ACCENT, false, true)
+  + text(320, 282, 'Composer · prompt · highlighting', 17, ACCENT, true)
+  + text(320, 308, 'Transcript · themes · live feedback', 16, QUIET, true)
+  + arrow('M320 336 L320 398')
+  + text(340, 374, 'Persistent PTY', 14)
+  + frame(170, 404, 300, 110)
+  + text(320, 439, 'Real shell', 22, INK, true, true)
+  + text(320, 467, 'zsh / Bash 4.4+ / Fish', 17, QUIET, true)
+  + text(320, 493, 'Execution · aliases · state', 16, QUIET, true)
+  + text(320, 546, 'Fullscreen apps use passthrough to the host.', 14, QUIET, true);
+writeFileSync(new URL('../../assets/readme/architecture.svg', import.meta.url), svg(640, 568,
+  'NMSh: terminal host, frontend, real shell',
+  'The terminal host sends input to NMSh. NMSh owns editing and presentation over a persistent zsh, Bash or Fish PTY. Fullscreen applications pass through to the host.', simple));
+
+// Keep the same vertical spine. Supporting services sit outside the frontend.
+const detailed = text(24, 32, 'NMSh / runtime flow', 18, INK, false, true)
+  + frame(360, 62, 280, 94)
+  + text(500, 96, 'Terminal host', 21, INK, true, true)
+  + text(500, 124, 'Keys · mouse · resize · display', 15, QUIET, true)
+  + arrow('M500 156 L500 204')
+  + frame(268, 210, 464, 342, true)
+  + cat(407, 227)
+  + text(468, 259, 'notMyShell', 26, ACCENT, false, true)
+  + text(500, 286, 'Owns editing and presentation', 15, QUIET, true)
+  + frame(292, 312, 416, 80)
+  + text(316, 342, 'Composer & command routing', 19, INK, false, true)
+  + text(316, 370, 'Lexical Highlighter · slash actions · shell input', 15)
+  + arrow('M500 392 L500 438')
+  + frame(292, 444, 416, 84)
+  + text(316, 474, 'ScreenPlan & presentation', 19, INK, false, true)
+  + text(316, 499, 'Shared geometry · OutputBuffer · motion clock', 15)
+  + text(500, 544, 'Prompt · Chroma · activity · FOLLOW / DETACHED', 14, ACCENT, true)
+  + arrow('M268 486 L244 486 L244 109 L354 109')
+  + text(86, 186, 'Rendered frame', 14)
+  + frame(768, 312, 208, 128)
+  + text(786, 342, 'Isolated helpers', 18, INK, false, true)
+  + text(786, 370, 'SemanticService', 15)
+  + text(786, 394, 'Completion / local AI', 15)
+  + text(786, 418, 'Never the host TTY', 14)
+  + arrow('M708 352 L762 352')
+  + arrow('M708 378 L746 378 L746 654 L694 654')
+  + text(753, 577, 'Submit', 14)
+  + frame(312, 608, 376, 96)
+  + text(500, 643, 'SessionClient', 21, INK, true, true)
+  + text(500, 671, 'Service or in-process transport', 15, QUIET, true)
+  + arrow('M312 652 L250 652 L250 486 L286 486')
+  + text(76, 574, 'Output + markers', 14)
+  + frame(24, 608, 208, 96)
+  + text(42, 638, 'Persistence', 18, INK, false, true)
+  + text(42, 663, 'Journal / archives', 15)
+  + text(42, 687, 'History / config / themes', 14)
+  + arrow('M312 680 L238 680')
+  + arrow('M500 704 L500 760')
+  + text(519, 738, 'Input / output', 14)
+  + frame(312, 766, 376, 112)
+  + text(500, 799, 'ShellSession + ShellAdapter', 21, INK, true, true)
+  + text(500, 828, 'Persistent PTY · zsh / Bash / Fish', 16, QUIET, true)
+  + text(500, 855, 'CLI commands / interactive programs', 15, QUIET, true)
+  + arrow('M688 820 L988 820 L988 50 L654 50 L654 109 L646 109', true)
+  + text(772, 782, 'Raw passthrough', 15)
+  + text(500, 915, 'Raw output keeps its colors. Semantic colors belong to NMSh input and submitted commands.', 14, QUIET, true);
+writeFileSync(new URL('../../assets/readme/architecture-detailed.svg', import.meta.url), svg(1000, 940,
+  'NMSh detailed runtime flow',
+  'A vertical host, frontend, session transport and shell stack. Isolated helpers support the composer. Output and lifecycle markers return to the frontend. Interactive programs bypass frontend presentation through raw passthrough.', detailed));

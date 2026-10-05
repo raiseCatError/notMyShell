@@ -31,7 +31,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 <div align="center">
   <picture>
-    <img alt="Terminal host → NMSh frontend → ShellAdapter → your real shell" src="assets/readme/architecture.svg" width="960">
+    <img alt="Terminal host → NMSh frontend → ShellAdapter → your real shell" src="assets/readme/architecture.svg" width="640">
   </picture>
 </div>
 
@@ -59,56 +59,24 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 ## Visual tour
 
-A real shell with room to breathe. These opaque, wide recordings use a disposable home and a neutral demo identity. Every interaction runs the real NMSh build; [committed tapes](scripts/demos/README.md) reproduce the clips.
+A workspace that stays readable. A palette that feels like yours. Explore the full recordings by chapter, from first setup to returning to a running session.
 
-**Make it yours.** Setup Cat, shared theme families, semantic syntax previews, prompt styles and composer layouts.
+<p align="center">
+  <a href="docs/demos.md#theme-studio"><img alt="Preview: Theme Studio with live colors and custom themes" src="assets/readme/theme-studio.png" width="420"></a>
+</p>
 
-<img alt="Setup Cat with current choices and live theme previews" src="assets/readme/setup.gif" width="960">
+<p align="center"><a href="docs/demos.md#theme-studio"><b>Your palette</b> — Theme Studio</a></p>
 
-**Let it move.** Chroma adds gradients and animated color. The controls label preview state and show how to return to base theme colors.
+| Explore | What you’ll see |
+| --- | --- |
+| [Customization](docs/demos.md#customization) | Setup Cat, composer layouts, prompt styles, theme families and syntax previews |
+| [Color and motion](docs/demos.md#color-and-motion) | Chroma gradients, live feedback, every screensaver, Vespyr and raiseCatError |
+| [Tools and shells](docs/demos.md#tools-and-shells) | Ask, provider choices, checked tools, Theme Bridge, Fish and real Vim |
+| [Sessions](docs/demos.md#sessions) | Detach, reattach and Keep Awake |
 
-<img alt="Rich motion, live command status and animation previews" src="assets/readme/motion.gif" width="960">
+[Full demo gallery](docs/demos.md) · [Detailed runtime diagram](assets/readme/architecture-detailed.svg)
 
-<img alt="Changing Chroma gradients and returning to base theme colors" src="assets/readme/chroma.gif" width="960">
-
-<details>
-<summary><b>Explore prompts, themes and syntax</b></summary>
-
-<img alt="Prompt styles and Bottom, Top and Flow composer layouts" src="assets/readme/composer.gif" width="960">
-<img alt="Theme Studio with live previews and custom theme editing" src="assets/readme/themes.gif" width="960">
-<img alt="Syntax family and variant selection with semantic previews" src="assets/readme/syntax.gif" width="960">
-
-</details>
-
-<details>
-<summary><b>Ask, choose tools, switch shells, and return from Vim</b></summary>
-
-<img alt="Local ask guidance and optional local-understanding settings" src="assets/readme/ask.gif" width="960">
-<img alt="Providers and tools with persistent chosen-item checkboxes" src="assets/readme/tools.gif" width="960">
-<img alt="Entering and exiting Vim, then switching to Fish with the NMSh theme preserved" src="assets/readme/shell-vim.gif" width="960">
-
-</details>
-
-<details>
-<summary><b>Sessions and Keep Awake</b></summary>
-
-Commands keep running when the window goes away. Keep Awake uses an explicit OS-backed session; this recording uses an inert backend.
-
-<img alt="Detaching during a build and reattaching to its live session" src="assets/readme/sessions.gif" width="960">
-<img alt="Keep Awake on the composer edge and Status Strip, then stopping" src="assets/readme/keep-awake.gif" width="960">
-
-</details>
-
-<details>
-<summary><b>Every named screensaver, including Vespyr and raiseCatError</b></summary>
-
-<img alt="Aurora Drift, Deep Space, Warp Starfield and Rain" src="assets/readme/screensavers.gif" width="960">
-<img alt="Sparkles, Night Fireworks, Black Hole, Fireworks and Circletastic" src="assets/readme/screensavers-motion.gif" width="960">
-<img alt="Bouncing Vespyr and raiseCatError" src="assets/readme/screensavers-cats.gif" width="960">
-
-</details>
-
-[Full demo gallery](docs/demos.md) · [Detailed runtime diagram](assets/readme/architecture-detailed.svg) · [20-second motion promo](assets/promo/nmsh-promo.mp4)
+The gallery uses wide, opaque recordings from the real NMSh build, with a disposable home and neutral demo identity. [Committed tapes](scripts/demos/README.md) reproduce every clip.
 
 ## Install
 
