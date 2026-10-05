@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, readdirSync} from 'node:fs';
+import {existsSync, readdirSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
@@ -39,3 +39,18 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
     } finally { await sandbox.dispose(); }
   });
 }
+
+test('live bash: with ls aliased in ~/.bashrc (as Ubuntu ships it) and File listing colors on, the managed shell parses its bootstrap and becomes ready',
+  {skip: bash ? false : 'bash not installed', timeout: 90_000}, async () => {
+    const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'bash', themeBridge: {enabled: true, targets: {lsColors: {mode: 'follow'}}}},
+      {PATH: `${bash!.replace(/\/bash$/u, '')}:${process.env.PATH}`});
+    try {
+      writeFileSync(join(sandbox.home, '.bashrc'), "alias ls='ls -F'\nalias gls='gls -F'\n");
+      const frontend = sandbox.launch();
+      const envFile = join(sandbox.config, 'nmsh', 'theme-bridge', 'environment.bash');
+      await until(() => existsSync(envFile), 20_000, 'the Theme Bridge environment file');
+      await frontend.run('echo BASH-READY', /BASH-READY/u);
+      await frontend.run('echo "lc=${LS_COLORS:+set}"', /lc=set/u);
+      assert.doesNotMatch(frontend.output, /syntax error/u);
+    } finally { await sandbox.dispose(); }
+  });

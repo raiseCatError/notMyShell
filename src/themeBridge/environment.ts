@@ -257,8 +257,9 @@ nmsh_bridge_listing() {
     { builtin alias "$2" || builtin declare -F "$2"; } >/dev/null 2>&1 && return 0
     builtin type -P "$2" >/dev/null 2>&1 || return 0
     case $2 in
-      ls) ls() { command ls --color=auto "$@"; } ;;
-      gls) gls() { command gls --color=auto "$@"; } ;;
+      # 'function name' form: Bash alias-expands 'name()' while parsing, and ls is often an alias (Ubuntu's default bashrc).
+      ls) function ls { command ls --color=auto "$@"; } ;;
+      gls) function gls { command gls --color=auto "$@"; } ;;
     esac
     printf -v "$marker" '%s' 1
   elif [[ -n "\${!marker+x}" ]]; then
