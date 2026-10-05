@@ -120,7 +120,7 @@ test('/prompt offers five providers (None is composer only) and an honest Powerl
   let rows = renderPromptPanel(state, 140, []).map(stripAnsi);
   assert.ok(rows.some(row => row.includes('NMSh Native · built-in themes, geometry, and modules  ●  ✓ saved')));
   assert.ok(rows.some(row => row.includes('Powerlevel10k · use your ~/.p10k.zsh left prompt')));
-  assert.ok(rows.some(row => row.includes('None · composer only: no prompt row, modules or marker')));
+  assert.ok(rows.some(row => row.includes('None · composer only: no prompt row or modules; the input marker stays')));
   handlePromptPanelKey({kind: 'up'} as Key, state);
   assert.equal(state.selectedIndex, 4, 'wraps to None, the last provider');
   assert.ok(rows.some(row => row.includes('Oh My Posh · render with oh-my-posh; no shell rc change')));

@@ -23,7 +23,8 @@
     "bench:smoke": "node scripts/timing-smoke.mjs",
     "verify:fast": "npm run build && npm run test:fast && git diff --check",
     "verify": "npm run build && npm test && git diff --check",
-    "verify:release": "npm run verify && npm run typecheck:bench && npm run bench:smoke"
+    "verify:release": "npm run verify && npm run typecheck:bench && npm run bench:smoke",
+    "demos": "node scripts/demos/render.mjs"
   },
   "keywords": [
     "terminal",

@@ -35,7 +35,7 @@ Settings → Theme (and /setup appearance) picks a Built-in theme (NMSh themes a
 
 ## Prompt None and history
 
-/prompt → None keeps only the composer: no prompt row, modules, right prompt or marker. Editing, suggestions, syntax colors, history, themes and Theme Bridge keep working, and commands submitted under None store no prompt snapshot. /transcript → Historical prompt shows past prompts Full, Compact (place, branch, marker), Minimal (marker) or Off; stored snapshots are never changed.
+/prompt → None keeps only the composer and its input marker: no prompt row, modules or right prompt. Editing, suggestions, syntax colors, history, themes and Theme Bridge keep working, and commands submitted under None store no prompt snapshot. /transcript → Historical prompt shows past prompts Full, Compact (place, branch, marker), Minimal (marker) or Off; stored snapshots are never changed.
 
 ## Theme Bridge
 

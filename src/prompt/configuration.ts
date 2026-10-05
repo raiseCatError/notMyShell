@@ -83,7 +83,7 @@ export function applyShellModuleVisibility(configuration: Pick<PromptConfigurati
 }
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
-/** `none` is composer only: no prompt row, modules, right prompt or marker; everything else in NMSh stays on. */
+/** `none` is composer only: no prompt row, modules or right prompt (the input marker stays); everything else in NMSh stays on. */
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none';
 export type NativeEndStyle = PowerlineEdgeStyle;
 export type NativeStartStyle = PowerlineEdgeStyle;

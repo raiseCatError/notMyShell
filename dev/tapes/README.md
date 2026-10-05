@@ -1,15 +1,19 @@
-# Demo capture: VHS and asciinema
+# Development VHS tapes
 
-NMSh keeps two recording tools with separate jobs and invents no third:
+Two VHS sets with separate jobs:
 
-- **VHS** (`dev/tapes/*.tape`) is the canonical *scripted, reproducible* demo
-  tool: README captures, deterministic feature demos (Settings, Chroma, idle
-  visuals) and development tapes.
-- **asciinema** (`scripts/readme-demo/record.cjs`, via tmux) records *real
-  interactive sessions*: debugging and support evidence, replayable terminal
-  event streams and optional web playback.
+- **`scripts/demos/`** is the canonical source of README and `docs/demos.md`
+  media: `npm run demos` records committed tapes into `assets/readme/` from a
+  disposable demo home. Change those tapes when published media should change.
+- **`dev/tapes/`** (this directory) holds development captures: feature and
+  regression looks (Settings, Chroma, idle visuals, shimmer) written to the
+  ignored `dev/tapes/output/`. They are never published as-is.
 
-Neither is a runtime dependency, and neither is installed for NMSh users.
+The earlier asciinema/tmux recorder (`scripts/readme-demo/`) was retired: it
+recorded against the maintainer's real home. Use plain `asciinema rec` by hand
+when a real interactive session is needed as support evidence.
+
+Neither set is a runtime dependency, and neither is installed for NMSh users.
 
 ## VHS tapes
 

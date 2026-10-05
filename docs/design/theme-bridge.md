@@ -110,4 +110,4 @@ Every include tolerates a missing file, so an Independent target with an include
 
 ## Not in this slice
 
-Terminal title / OSC 0/2 ownership; terminal emulator or editor base-theme takeover (Ghostty/Kitty palettes, Zed/VS Code); delta custom styles; arbitrary Oh My Zsh theme import; an Oh My Posh runtime provider; the #305 module ecosystem.
+Terminal title / OSC 0/2 ownership; terminal emulator or editor base-theme takeover (Ghostty/Kitty palettes, Zed/VS Code); delta custom styles; arbitrary Oh My Zsh theme import; the #305 module ecosystem. (An Oh My Posh prompt provider has since landed separately; see CHANGELOG.)

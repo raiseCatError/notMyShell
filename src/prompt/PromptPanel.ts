@@ -94,7 +94,7 @@ export const PROMPT_PROVIDERS: readonly ProviderDescriptor<PromptProviderId>[] =
   {id: 'starship', family: 'prompt', label: 'Starship', kind: 'external', executable: 'starship', description: 'use its themes/configuration'},
   {id: 'powerlevel10k', family: 'prompt', label: 'Powerlevel10k', kind: 'external', description: 'use your ~/.p10k.zsh left prompt'},
   {id: 'ohMyPosh', family: 'prompt', label: 'Oh My Posh', kind: 'external', executable: 'oh-my-posh', description: 'render with oh-my-posh; no shell rc change'},
-  {id: 'none', family: 'prompt', label: 'None', kind: 'none', description: 'composer only: no prompt row, modules or marker'},
+  {id: 'none', family: 'prompt', label: 'None', kind: 'none', description: 'composer only: no prompt row or modules; the input marker stays'},
 ];
 export const PROVIDER_ORDER: readonly PromptProviderId[] = PROMPT_PROVIDERS.map(provider => provider.id);
 

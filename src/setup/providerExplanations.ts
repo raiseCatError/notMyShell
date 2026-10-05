@@ -34,7 +34,7 @@ export const PROVIDER_EXPLANATIONS: Readonly<Record<string, Readonly<Record<stri
     nmsh: 'Built in · NMSh Native prompt with themes, styles and Chroma · no installation required',
     starship: 'Optional external · renders your installed Starship and its configuration',
     powerlevel10k: 'Optional external · your existing ~/.p10k.zsh left prompt',
-    none: 'Composer only · no prompt row, modules or marker; themes still style NMSh UI, syntax and Theme Bridge',
+    none: 'Composer only · no prompt row or modules (the input marker stays); themes still style NMSh UI, syntax and Theme Bridge',
   },
 };
 

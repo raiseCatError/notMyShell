@@ -6,6 +6,7 @@
 |---|---|
 | **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
 | **Next development milestone** | [v0.17.0 — Compatibility & Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **In development (unreleased)** | [PR #315](https://github.com/raiseCatError/notMyShell/pull/315) — Theme Studio, Theme Bridge, tool configuration, shell frameworks, Keep Awake; see CHANGELOG → Unreleased |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
@@ -145,7 +146,7 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 
 | Release | Theme | Tracker |
 |---|---|---|
-| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), delivered in focused slices |
+| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), delivered in focused slices; in development on [PR #315](https://github.com/raiseCatError/notMyShell/pull/315), not released. Still deferred: terminal title ownership (OSC 0/2), delta custom styles, terminal emulator and editor base-theme takeover. |
 | v0.19.0 | NMSh Native module ecosystem: architecture, lazy probes, caching and provenance first, then a bounded high-value module set (not the whole catalog) | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
 
 ## Backlog — future, unscheduled

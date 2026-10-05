@@ -1,12 +1,12 @@
 # NMSh Agent Guide
 
 ## What NMSh is
-notMyShell (NMSh) is a terminal frontend that operates over a persistent, real zsh session. Instead of replacing the shell or running commands as isolated subprocesses, NMSh orchestrates a hidden pseudo-terminal (PTY) running zsh. It captures input via a fixed editor, highlights it semantically, and sends it to the real shell. 
+notMyShell (NMSh) is a terminal frontend that operates over a persistent, real shell session (zsh by default, Bash 4.4+ or Fish through the ShellAdapter). Instead of replacing the shell or running commands as isolated subprocesses, NMSh orchestrates a hidden pseudo-terminal (PTY) running that shell. It captures input in its own composer, highlights it semantically, and sends it to the real shell.
 
 ## Core invariants
 - NMSh is a frontend over a persistent real shell.
 - Do not replace ShellSession with command-by-command spawning.
-- Preserve real zsh state between commands.
+- Preserve real shell state between commands (zsh, Bash and Fish alike).
 - Raw PTY stdout/stderr must remain raw/presentation-safe.
 - Do not semantically recolor arbitrary PTY output.
 - NMSh-owned submitted command lines may have semantic highlighting.
@@ -29,9 +29,12 @@ notMyShell (NMSh) is a terminal frontend that operates over a persistent, real z
 - **history viewport**: Scrollable past commands and raw PTY output
 - **autocomplete/suggestions**: Real-time completion hints below the input
 - **live activity**: Real-time animation and elapsed time for running commands
-- **context/prompt**: Evaluated from the shell and displayed on the bottom editor
-- **persistent editor**: The fixed input box at the bottom of the screen
-- **separator**: A visual divider between output and the editor
+- **context/prompt**: Evaluated from the shell; NMSh Native or an external provider (Starship, Oh My Posh, Powerlevel10k), or None
+- **composer**: The persistent editor, docked Bottom or Top, or in Flow after the newest output; one-line or two-line
+- **composer edges**: Optional divider rows around the composer (one shared edge renderer); NMSh-owned accessories such as Keep Awake use a free edge and never touch prompt content
+- **frontend chrome**: Status Strip, notices, find bar and accessory rows are planned by `src/app/screenPlan.ts`, never written to the transcript
+
+`src/app/screenPlan.ts` is the single geometry source per frame: render, hit testing, cursor, viewport and PTY sizing all read the same plan.
 
 NMSh uses a FOLLOW mode during execution, pinning the output viewport to the bottom. During historical inspection, it enters DETACHED mode.
 
@@ -50,7 +53,17 @@ As the user types, partial input is tokenized. Known executables, aliases, and b
 Submitted commands retain their semantic presentation in the NMSh output history. The styling (e.g. lavender for known commands, red for unknown commands) persists even after the command completes.
 
 ## Shell compatibility
-Released (0.16.0): a real ShellAdapter with zsh, Fish and Bash 4.4+ backends ([docs/architecture/shell-adapter.md](docs/architecture/shell-adapter.md)). Nushell and PowerShell remain future.
+Released (0.16.0): a real ShellAdapter with zsh, Fish and Bash 4.4+ backends ([docs/architecture/shell-adapter.md](docs/architecture/shell-adapter.md)). Nushell and PowerShell remain future. Changes must keep all three backends working.
+
+## Safety boundaries
+- Shell config, framework code and parseable tool configs are executable: never source, merge or silently edit them. Offered edits are exact diffs behind a confirmation.
+- Theme imports and dotfiles are data: bounded parsers, no includes, templates, network or repository code execution; dotfiles exact copies fail closed.
+- NMSh changes only what its ownership ledger proves it wrote; Keep Awake signals only its own verified process.
+- Installs are typed argv shown before confirmation; special installers are never run by NMSh.
+- Chroma never reaches generated external artifacts.
+
+## Current surfaces (unreleased beyond v0.16.0)
+Theme Studio (`/theme`), Theme Bridge (`/theme-bridge`), `/providers`, `/tools` with filesystem-detected shell frameworks, `/configure`, `/tmux` Config Studio, `/integrations`, `/dotfiles`, the Oh My Posh provider, and Keep Awake (`/caffeinate`, `/awake`, `/zoomies`, with composer-edge, Status Strip, idle-reminder and screensaver presentation). See CHANGELOG.md → Unreleased.
 
 ## Testing / verification
 During implementation, run focused affected tests. Use `npm run verify:fast` for
@@ -71,7 +84,10 @@ for sharding, platform gates and exact-release evidence requirements.
 npm run verify:fast
 npm run verify
 npm run verify:release
+npm run demos          # re-record README/docs media with VHS (scripts/demos/README.md)
 ```
+
+Do not hardcode test totals in docs; they change with every slice.
 
 When writing tests involving `TerminalApp`, you must carefully tear down child processes and temp ZDOTDIRs:
 ```typescript
@@ -87,6 +103,7 @@ app['session'].kill();
 - prefer localized changes
 - do not casually rewrite the renderer or PTY architecture
 - no fabricated manual verification
+- commits and PRs carry no AI attribution and no AI co-author trailers
 - distinguish automated verification from human GUI/runtime validation
 
 ## Planning and GitHub tracking
@@ -102,10 +119,12 @@ For substantial implementation work:
 5. **Only close work requiring human validation after that validation occurs**
 
 Key references:
+- [ARCHITECTURE.md](ARCHITECTURE.md) — the human-readable architecture overview (runtime and data flows, repository map); deeper detail in `docs/architecture/` and `docs/design/`
 - [ROADMAP.md](ROADMAP.md) — product direction and issue index
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
 - [v0.16.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — current stable release
-- [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the merged cumulative v0.16 release; [#308](https://github.com/raiseCatError/notMyShell/issues/308) tracks release readiness
+- [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the merged cumulative v0.16 release
+- [PR #315](https://github.com/raiseCatError/notMyShell/pull/315) — open development PR for the work after v0.16.0 (not released; the package version stays 0.16.0)
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board
 - [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
 - [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions

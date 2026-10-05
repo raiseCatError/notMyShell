@@ -70,7 +70,7 @@ test('Prompt None: an explicitly empty prefix means no marker and no continuatio
 
 for (const layout of ['twoLine', 'oneLine'] as const) {
   for (const panelPosition of ['bottom', 'top'] as const) {
-    test(`Prompt None (${layout}, panels ${panelPosition}): no prompt row, modules, right prompt or marker; the composer collapses`, async () => {
+    test(`Prompt None (${layout}, panels ${panelPosition}): no prompt row, modules or right prompt (the input marker stays); the composer collapses`, async () => {
       const none = harness({provider: 'none', composerLayout: layout, panelPosition, onboardingComplete: true});
       const native = harness({provider: 'nmsh', composerLayout: layout, panelPosition, onboardingComplete: true});
       try {

@@ -17,10 +17,11 @@ npm run build
 
 Before starting work, check:
 
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the pieces fit together; start here before changing a subsystem
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
 - **[v0.16.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0)** — current stable release
-- **[#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132)** — next planned direction (see [ROADMAP.md](ROADMAP.md))
+- **[PR #315](https://github.com/raiseCatError/notMyShell/pull/315)** — current development after v0.16.0 (unreleased; see [ROADMAP.md](ROADMAP.md))
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model
@@ -93,3 +94,7 @@ When opening a Pull Request:
 - **Reproducibility**: Keep generated/demo assets reproducible using the scripts in `scripts/`.
 
 Commits do not need to follow an excessively strict convention (e.g. Conventional Commits), but clear, descriptive messages are preferred.
+
+## Visual docs and demos
+
+README and [docs/demos.md](docs/demos.md) media come from committed VHS tapes in [`scripts/demos/`](scripts/demos/README.md). If a change alters what a clip shows, re-record it with `npm run demos` (or `npm run demos -- <name>`) and commit the tape and the regenerated asset together. Recordings run against a disposable demo home and never read your own NMSh config, shell rc files or history.

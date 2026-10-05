@@ -1,5 +1,7 @@
 # notMyShell (NMSh)
 
+Stable release: v0.16.0. Unreleased development continues on feature branches (see CHANGELOG.md).
+
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 
 Shell backends (real persistent shells, via ShellAdapter):
@@ -32,35 +34,34 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 
 ## Core capabilities
 
-- fixed/persistent bottom input editor
-- scrollable command and output history
-- semantic syntax highlighting
-- submitted commands retain semantic highlighting in history
-- multiline editing
-- shell-aware autocomplete/completion
-- ghost/history suggestions
+- persistent composer: Bottom, Top or Flow; one-line or two-line; multiline editing
+- semantic syntax highlighting (classified against the real shell; partial input never runs)
+- shell-aware completion menu and ghost suggestions
 - real aliases, functions, environment, cwd and shell state
-- command lifecycle/activity UI
-- passthrough for fullscreen/interactive terminal programs
-- /copy
-- /history
-- /appearance
-- /keyboard
-- zoxide integration
-- Atuin/history bridge where accurate
-- fzf/fullscreen passthrough where accurate
-- cross-session notices and the /resume session viewer
-- local-only agent activity stats (/agents) for Claude Code and Codex CLI
-- /find and /filter over the transcript
-- /open and /open-diff delegation to Zed, VS Code or $VISUAL/$EDITOR
+- transcript with command blocks, folding, /find and /filter, plain-text /copy
+- command lifecycle and live activity feedback
+- passthrough for fullscreen/interactive programs
+- live sessions: windows detach instead of killing the shell; /resume, nmsh --attach
+- prompt providers: NMSh Native (default), Starship, Oh My Posh, Powerlevel10k, None
+- Theme Studio (/theme): built-in, imported (data-only parsers) and custom themes
+- Theme Bridge (/theme-bridge, opt-in): fzf, less/man, file listing colors, bat,
+  tmux, Vim, Neovim, Helix; delta detected only; ownership ledger, reviewed includes
+- curated tools and providers (/tools, /providers), tool configuration (/configure,
+  /tmux), integration health (/integrations), safe dotfiles import (/dotfiles)
+- shell frameworks detected (Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit, Antidote);
+  shell config is treated as executable, never as plain data
+- Keep Awake (/caffeinate, /awake, /zoomies): OS mechanism, NMSh-owned background process
+- Chroma, motion, screensavers and Vespyr (the NMSh cat); Safe glyphs, NO_COLOR, Reduced Motion
+- /ask: plain requests mapped onto typed NMSh actions (optional local model)
+- cross-session notices, agent activity stats (/agents), /open and /open-diff
 - nmsh config export/import, nmsh uninstall, nmsh doctor
-- capability-driven inline images (/about) with text fallback
-- no plugin manager required; read-only framework/plugin diagnostics
+- NMSH_DETERMINISTIC=1 for repeatable presentation in tests and VHS demos
 
 ## NMSh is NOT
 
 - not a shell replacement
 - not a terminal emulator
+- not a prompt theme
 - not an AI shell
 - not a command-by-command subprocess wrapper
 - not a Warp clone
@@ -81,10 +82,14 @@ src/output/OutputBuffer.ts
 src/output/AnsiOutputParser.ts
 src/output/viewport.ts
 src/terminal/TerminalRenderer.ts
+src/app/screenPlan.ts (one geometry plan per frame)
+src/keepAwake/ (controller, panel, presentation)
+src/themeBridge/ (targets, ownership ledger)
 
 ## Documentation
 
 README.md
+ARCHITECTURE.md
 ROADMAP.md
 AGENTS.md
 CONTRIBUTING.md
@@ -96,6 +101,9 @@ docs/architecture/shell-adapter.md
 docs/architecture/platforms.md
 docs/architecture/host-actions.md
 docs/architecture/image-surface.md
+docs/design/theme-bridge.md
+docs/demos.md
+docs/testing/deterministic-presentation.md
 docs/privacy.md
 
 ## Repository
