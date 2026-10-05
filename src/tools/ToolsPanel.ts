@@ -2,11 +2,11 @@ import type {Key} from '../terminal/keys.js';
 import {clearProviderDetection, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
 import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
 import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
-import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand} from '../ui/PanelShell.js';
+import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand, fullWidthRowBand} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
-import {foregroundOf, mixRgb} from '../chroma/chroma.js';
+import {foregroundOf} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
-import {displayWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
+import {stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {detectTool, TOOLS, TOOL_CATEGORIES, TOOL_TIER_LABELS, localExecutableTool, promoteLocalExecutables, toolInstall, toolInstallUnavailable, type Tool, type ToolTier} from './catalog.js';
 import type {PromptProviderId} from '../prompt/configuration.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -409,17 +409,16 @@ function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: numb
   const badges = columns >= 60 ? toolBadges(state, tool).join(' · ') : '';
   const queued = state.selection?.has(tool.id) === true && state.tab === 'discover';
   const noColor = colorLevel() === 'none';
-  const chosenBand = noColor ? '\u001b[7m' : background(mixRgb(UI_COLORS.accent, UI_COLORS.projectForeground, 0.78));
+  const chosenBand = noColor ? '\u001b[7m' : background(UI_COLORS.selection);
   if (!selected) {
     const row = `    ${SECONDARY}${label}${RESET}${badge.color}${statusText}${RESET}${SUBTLE}${badges}${RESET}`;
-    const body = truncateAnsi(row, columns);
-    return queued ? `${chosenBand}${body}${chosenBand}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}` : body;
+    return queued ? fullWidthRowBand(row, columns, chosenBand) : truncateAnsi(row, columns);
   }
   // The shared selected band (the active tab's treatment): pointer, bold label, and every quiet part lifted
   // to the band's foreground; Installed and Needs attention keep their meaning colors.
   const quiet = onSelectedBand();
   const statusColor = badge.color === SUBTLE ? quiet : badge.color;
-  const focusedChosenColor = queued ? mixRgb(UI_COLORS.projectBackground, UI_COLORS.accent, 0.22) : undefined;
+  const focusedChosenColor = queued ? UI_COLORS.selection : undefined;
   return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${ACCENT}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns, focusedChosenColor);
 }
 

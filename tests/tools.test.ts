@@ -7,6 +7,7 @@ import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {TaskProgress, taskProgressBar} from '../src/status/TaskProgress.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {setIconStyle} from '../src/ui/glyphs.js';
+import {background, UI_COLORS} from '../src/ui/palette.js';
 import {discoverLocalExecutables, invalidateLocalDiscovery} from '../src/tools/localDiscovery.js';
 import {promoteLocalExecutables} from '../src/tools/catalog.js';
 import {mkdtemp, mkdir, chmod, rm, writeFile, existsSync} from 'node:fs';
@@ -417,10 +418,21 @@ test('the selected tool row is an unmistakable band that follows the selection, 
   }
 });
 
-test('Space-chosen rows keep a subtle theme band after focus moves, without checkboxes', () => {
+test('Space-chosen rows use the semantic selection surface continuously without markers', () => {
   const saved = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR};
   try {
     delete process.env.NO_COLOR; process.env.NMSH_COLOR = 'truecolor';
+    const selectionBand = background(UI_COLORS.selection);
+    const assertContinuous = (row: string, band: string) => {
+      assert.ok(row.startsWith(band), 'band starts at the first column');
+      assert.equal(displayWidth(row), 100, 'band fills the entire row including padding');
+      const resets = [...row.matchAll(/\u001b\[0m/gu)];
+      assert.ok(resets.length > 1, 'row contains internal style resets');
+      for (const reset of resets.slice(0, -1)) {
+        assert.ok(row.slice(reset.index! + reset[0].length).startsWith(band), 'every internal reset immediately reopens the band');
+      }
+      assert.ok(row.endsWith('\u001b[0m'), 'final reset closes the band');
+    };
     const state = createToolsPanel();
     for (const tool of TOOLS) state.statuses[tool.id] = {state: 'missing'};
     const first = visibleTools(state)[0]!;
@@ -428,11 +440,15 @@ test('Space-chosen rows keep a subtle theme band after focus moves, without chec
     assert.ok(!firstBefore.includes('[ ]'), 'ordinary row has no checkbox');
     toolsKey(state, {kind: 'text', value: ' '});
     const focusedChosen = renderTools(state, 100, 40).find(row => stripAnsi(row).includes(first.label))!;
+    assertContinuous(focusedChosen, selectionBand);
     assert.ok(focusedChosen.includes('\u001b[48;') && stripAnsi(focusedChosen).includes('›'), 'focused chosen row keeps the existing focus treatment');
     assert.ok(!stripAnsi(focusedChosen).includes('[x]'));
     toolsKey(state, {kind: 'down'});
     const rows = renderTools(state, 100, 40);
     const chosenAway = rows.find(row => stripAnsi(row).includes(first.label))!;
+    assertContinuous(chosenAway, selectionBand);
+    assert.ok(stripAnsi(chosenAway).startsWith(`    ${first.label}`), 'unfocused queued row has only the ordinary indentation and label');
+    assert.ok(stripAnsi(focusedChosen).startsWith(`  › ${first.label}`), 'focused queued row has only the existing focus pointer');
     const focusedOther = rows.find(row => stripAnsi(row).includes(visibleTools(state)[1]!.label))!;
     assert.ok(chosenAway.includes('\u001b[48;'), 'chosen row retains a colored band without focus');
     assert.ok(focusedOther.includes('\u001b[48;') && stripAnsi(focusedOther).includes('›'), 'ordinary focused row uses the existing focus treatment');
@@ -441,6 +457,7 @@ test('Space-chosen rows keep a subtle theme band after focus moves, without chec
     delete process.env.NMSH_COLOR; process.env.NO_COLOR = '1';
     toolsKey(state, {kind: 'down'});
     const noColorRows = renderTools(state, 100, 40);
+    assertContinuous(noColorRows.find(row => stripAnsi(row).includes(first.label))!, '\u001b[7m');
     assert.ok(noColorRows.find(row => stripAnsi(row).includes(first.label))?.includes('\u001b[7m'), 'NO_COLOR retains chosen distinction with reverse video');
     assert.ok(!noColorRows.some(row => stripAnsi(row).includes('[x]') || stripAnsi(row).includes('[ ]')));
   } finally {

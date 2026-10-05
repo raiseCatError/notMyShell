@@ -62,6 +62,11 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
 export function selectedRowBand(row: string, columns: number, chosenColor?: RgbColor): string {
   const none = colorLevel() === 'none';
   const band = none ? '\u001B[7m' : `${background(chosenColor ?? UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
+  return fullWidthRowBand(row, columns, band);
+}
+
+/** Keep a full-width surface active across embedded style resets and trailing padding. */
+export function fullWidthRowBand(row: string, columns: number, band: string): string {
   const body = truncateAnsi(row, columns).replaceAll(RESET, `${RESET}${band}`);
   return `${band}${body}${band}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}`;
 }
