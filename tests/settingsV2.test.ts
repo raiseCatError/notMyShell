@@ -48,20 +48,20 @@ test('default Config hides advanced rows; A reveals them; search always finds th
 }); 
 
 test('changed-from-default is a text cue and reset targets one setting', () => {
-  const changed = {...DEFAULT_PROMPT_CONFIGURATION, updateChecks: 'weekly' as const, outputFolding: 'always' as const};
-  assert.equal(settingsRowChanged(row('updateChecks'), DEFAULT_PROMPT_CONFIGURATION), false);
-  assert.equal(settingsRowChanged(row('updateChecks'), changed), true);
-  const reset = resetSettingsRow(row('updateChecks'), changed)!;
-  assert.equal(reset.updateChecks, DEFAULT_PROMPT_CONFIGURATION.updateChecks);
+  const changed = {...DEFAULT_PROMPT_CONFIGURATION, updateFrequency: 'weekly' as const, outputFolding: 'always' as const};
+  assert.equal(settingsRowChanged(row('updateFrequency'), DEFAULT_PROMPT_CONFIGURATION), false);
+  assert.equal(settingsRowChanged(row('updateFrequency'), changed), true);
+  const reset = resetSettingsRow(row('updateFrequency'), changed)!;
+  assert.equal(reset.updateFrequency, DEFAULT_PROMPT_CONFIGURATION.updateFrequency);
   assert.equal(reset.outputFolding, 'always', 'other settings untouched');
   assert.equal(resetSettingsRow(row('provider'), changed), undefined);
 });
 
 test('rendering marks changed rows and offers reset only when it applies', () => {
-  const index = visibleSettingsRows(config()).findIndex(item => item.id === 'updateChecks');
-  const changed = {...DEFAULT_PROMPT_CONFIGURATION, updateChecks: 'weekly' as const};
+  const index = visibleSettingsRows(config()).findIndex(item => item.id === 'updateFrequency');
+  const changed = {...DEFAULT_PROMPT_CONFIGURATION, updateFrequency: 'weekly' as const};
   const shown = plain(renderSettingsPanel(config({contentIndex: index}), 100, Infinity, {configuration: changed}));
-  assert.ok(shown.some(line => line.includes('Update checks') && line.includes('Weekly •')));
+  assert.ok(shown.some(line => line.includes('Check frequency') && line.includes('Weekly •')));
   assert.ok(shown.at(-1)!.includes('R reset to'));
   const clean = plain(renderSettingsPanel(config({contentIndex: index}), 100, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
   assert.ok(!clean.some(line => line.includes('•')) && !clean.at(-1)!.includes('R reset'));
@@ -70,11 +70,11 @@ test('rendering marks changed rows and offers reset only when it applies', () =>
 
 test('R resets the focused setting, A toggles advanced, and position is remembered', () => withApp(app => {
   app['openSettingsPanel']('config');
-  app['applySettingsConfiguration']({...app['promptConfiguration'], updateChecks: 'weekly'});
-  const index = visibleSettingsRows(app['settingsPanelState']!).findIndex(item => item.id === 'updateChecks');
+  app['applySettingsConfiguration']({...app['promptConfiguration'], updateFrequency: 'weekly'});
+  const index = visibleSettingsRows(app['settingsPanelState']!).findIndex(item => item.id === 'updateFrequency');
   app['settingsPanelState']!.contentIndex = index;
   app['handleKey']({kind: 'text', value: 'r'});
-  assert.equal(app['promptConfiguration'].updateChecks, DEFAULT_PROMPT_CONFIGURATION.updateChecks);
+  assert.equal(app['promptConfiguration'].updateFrequency, DEFAULT_PROMPT_CONFIGURATION.updateFrequency);
   app['handleKey']({kind: 'text', value: 'a'});
   assert.equal(app['settingsPanelState']!.showAdvanced, true);
   assert.equal(app['settingsPanelState']!.contentIndex, 0);
@@ -98,3 +98,17 @@ test('R does nothing while searching, so it can be typed', () => withApp(app => 
   app['handleKey']({kind: 'text', value: 'r'});
   assert.equal(app['settingsPanelState']!.searchQuery, 'r');
 }));
+
+
+import {normalizePromptConfiguration as normalizeConfig} from '../src/prompt/configuration.js';
+test('panel position: Bottom by default, persisted, malformed values fall back, independent of the composer position', () => {
+  assert.equal(DEFAULT_PROMPT_CONFIGURATION.panelPosition, 'bottom');
+  assert.equal(normalizeConfig({}).panelPosition, 'bottom');
+  assert.equal(normalizeConfig({panelPosition: 'top'}).panelPosition, 'top');
+  for (const bad of ['left', 'flow', 3, null, true]) assert.equal(normalizeConfig({panelPosition: bad}).panelPosition, 'bottom');
+  assert.equal(normalizeConfig({composerPosition: 'top'}).panelPosition, 'bottom', 'a Top composer does not imply Top panels');
+  assert.equal(normalizeConfig({panelPosition: 'top'}).composerPosition, 'bottom', 'nor the other way round');
+  const row = SETTINGS_ROWS.find(item => item.id === 'panelPosition')!;
+  assert.equal(row.category, 'General');
+  assert.equal(row.control === 'enum' && row.options.join(), 'Bottom,Top');
+});

@@ -1,0 +1,30 @@
+name: Linux shell prerequisites
+description: Install missing shell/build tools and secure system completion paths
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        # Ubuntu images supply native build tools; probe rather than reinstall.
+        packages=()
+        command -v zsh >/dev/null || packages+=(zsh)
+        command -v fish >/dev/null || packages+=(fish)
+        command -v g++ >/dev/null || packages+=(g++)
+        command -v make >/dev/null || packages+=(make)
+        command -v python3 >/dev/null || packages+=(python3)
+        if (( ${#packages[@]} )); then
+          sudo apt-get update
+          sudo apt-get install -y "${packages[@]}"
+        fi
+        insecure="$(zsh -fc 'autoload -Uz compaudit; compaudit' 2>/dev/null || true)"
+        while IFS= read -r path; do
+          [ -z "$path" ] && continue
+          case "$path" in
+            /usr/share/zsh|/usr/share/zsh/*|/usr/local/share/zsh|/usr/local/share/zsh/*)
+              sudo chown root:root "$path"
+              sudo chmod go-w "$path"
+              ;;
+            *) echo "::error::Unexpected insecure completion path: $path"; exit 1 ;;
+          esac
+        done <<< "$insecure"
+        zsh -fc 'autoload -Uz compaudit; compaudit'

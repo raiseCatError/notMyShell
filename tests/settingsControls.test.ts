@@ -76,17 +76,22 @@ test('search field is bordered, inset, and shows focus with a caret and accent b
   }
 });
 
+/** Position of a row in Config's selectable order (headings are never part of it). */
+const rowIndex = (id: string, showAdvanced = true) => visibleSettingsRows(config({showAdvanced}), DEFAULT_PROMPT_CONFIGURATION).findIndex(row => row.id === id);
+
 test('Config rows are compact, single-line, with aligned values and a pointer', () => {
-  const rows = plain(renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
-  const list = rows.filter(row => /^ {2}[› ] (Glyph style|Prompt provider|History divider|Divider density|Prompt snapshots|History colors)/u.test(row));
+  const divider = rowIndex('divider');
+  const rows = plain(renderSettingsPanel(config({contentIndex: divider, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION}));
+  const list = rows.filter(row => /^ {2}[› ] (?: {2})?(Glyph style|History divider|Divider density|Divider colors|Prompt snapshots|History colors)/u.test(row));
   assert.equal(list.length, 6);
-  const first = rows.indexOf(list[0]!);
-  assert.deepEqual(rows.slice(first, first + 6), list, 'one line per setting, no blank lines between them');
+  const first = rows.indexOf(list[1]!);
+  assert.deepEqual(rows.slice(first, first + 5), list.slice(1), 'one line per setting, no blank lines between them');
   const valueStarts = list.map(row => { const match = /^(.*?\S)(\s{2,})\S/u.exec(row)!; return match[1]!.length + match[2]!.length; });
   assert.equal(new Set(valueStarts).size, 1, `values align: ${list.join('|')}`);
-  assert.match(list[2]!, /^ {2}› History divider\s+true$/u);
+  assert.match(list[1]!, /^ {2}› History divider\s+true$/u);
+  assert.match(list[2]!, /^ {4} {2}Divider density\s+Normal$/u, 'dependent rows indent under their parent');
   assert.match(list[0]!, /^ {4}Glyph style\s+Nerd Font$/u, 'enum values are plain, not ‹ › wrapped');
-  const styled = renderSettingsPanel(config({contentIndex: 2, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION});
+  const styled = renderSettingsPanel(config({contentIndex: divider, showAdvanced: true}), 80, Infinity, {configuration: DEFAULT_PROMPT_CONFIGURATION});
   const accent = foreground(UI_COLORS.accent);
   const selected = styled.find(row => stripAnsi(row).includes('› History divider'))!;
   assert.ok(selected.includes(`\u001B[1m${accent}History divider`), 'selected label is bold accent');
@@ -110,17 +115,17 @@ test('search highlights matches restrainedly, distinct from the selected row', (
 test('footer follows Claude-style phrasing for the focused control', () => {
   const footer = (state: SettingsPanelState) => stripAnsi(renderSettingsPanel(state, 120).at(-1)!).trim();
   assert.equal(footer(config()), 'Enter/Space to change · / to search · A show advanced · Esc to close');
-  assert.equal(footer(config({contentIndex: 1})), 'Enter to open · ←/→ to switch · / to search · A show advanced · Esc to close');
+  assert.equal(footer(config({contentIndex: rowIndex('provider', false)})), 'Enter to open · ←/→ to switch · / to search · A show advanced · Esc to close');
   assert.equal(footer(config({searchFocused: true, searchQuery: 'x'})), '↑↓ results · Enter select · Esc clear');
   assert.equal(footer(config({view: 'status'})), '←/→ to switch · ↑↓ to scroll · Esc to close');
   assert.ok(!footer(config()).includes('Tab'));
 });
 
-test('Settings view lists panel entry points and truthful planned areas', () => {
+test('Settings view lists panel entry points and carries no stale roadmap copy', () => {
   const rows = plain(renderSettingsPanel(config({view: 'settings'}), 90));
   assert.ok(rows.some(row => /› Appearance\s+Terminal opacity and blur/u.test(row)));
-  assert.ok(rows.some(row => row.includes('Planned for v0.4')));
-  assert.ok(rows.some(row => row.includes('Layout · Blocks')));
+  assert.ok(!rows.some(row => /Planned for|v0\.4/u.test(row)), 'features that shipped are not listed as planned');
+  assert.ok(!rows.some(row => row.includes('Layout · Blocks')));
 });
 
 test('Left/Right change an enum inline and persist it; Enter changes too', () => withApp(async (app, path) => {
@@ -139,14 +144,13 @@ test('Left/Right change an enum inline and persist it; Enter changes too', () =>
 test('Space and Enter toggle a real boolean; values stay shared with Status', () => withApp(async (app, path) => {
   app['openSettingsPanel']('config');
   app['settingsPanelState']!.showAdvanced = true;
-  app['handleKey']({kind: 'down'});
-  app['handleKey']({kind: 'down'});
+  app['settingsPanelState']!.contentIndex = rowIndex('divider');
   app['handleKey']({kind: 'text', value: ' '});
   assert.equal(app['promptConfiguration'].transcript.divider, false);
   assert.equal(JSON.parse(await readFile(path, 'utf8')).transcript.divider, false);
   app['handleKey']({kind: 'enter'});
   assert.equal(app['promptConfiguration'].transcript.divider, true);
-  for (let step = 0; step < 3; step++) app['handleKey']({kind: 'down'});
+  for (let step = 0; step < 4; step++) app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'right'});
   assert.equal(app['promptConfiguration'].transcript.historyColors, 'theme');
   assert.ok(app['statusSections']().flat().some(item => item.label === 'History colors' && item.value === 'Theme'));
@@ -200,7 +204,7 @@ test('panel chrome never enters transcript, resume data, or copy payload', () =>
 
 test('narrow widths keep values visible and never overflow', () => {
   for (const columns of [24, 32, 40]) {
-    for (const [contentIndex, value] of [[0, 'Nerd Font'], [5, 'Follow prompt'], [2, 'true']] as const) {
+    for (const [contentIndex, value] of [[rowIndex('glyphStyle'), 'Nerd Font'], [rowIndex('historyColors'), 'Follow prompt'], [rowIndex('divider'), 'true']] as const) {
       const rows = renderSettingsPanel(config({contentIndex, showAdvanced: true}), columns, 40);
       for (const line of rows) assert.ok(displayWidth(line) <= columns, `${columns}: ${stripAnsi(line)}`);
       assert.ok(rows.some(line => stripAnsi(line).includes(value)), `${columns}: ${value}`);

@@ -4,6 +4,32 @@ export interface StyledCell {
   text: string;
   width: number;
   style: string;
+  /** Original program-emitted OSC 8, never generated presentation. */
+  hyperlink?: string;
+  /**
+   * The link was authored by NMSh itself (help, docs, task URLs, NMSh-written
+   * files) through addAuthoredLine and passed the authored-target check.
+   * Raw PTY links never carry this mark.
+   */
+  authored?: true;
+}
+
+/** Targets NMSh may author: http(s) without credentials, and local file URLs. */
+export function authoredTargetAllowed(target: string): boolean {
+  if (!target || target.length > 4096 || /[\u0000-\u0020\u007f-\u009f]/u.test(target)) return false;
+  try {
+    const url = new URL(target);
+    if (url.protocol === 'file:') return !url.hostname;
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname) && !url.username && !url.password;
+  } catch { return false; }
+}
+
+const revisions = new WeakMap<StyledLine, number>();
+export function lineRevision(line: StyledLine): number { return revisions.get(line) ?? 0; }
+
+export function validOsc8Payload(payload: string): boolean {
+  return payload.length <= 4096 && /^8;[^;]*;.+$/u.test(payload)
+    && !/[\u0000-\u001f\u007f-\u009f]/u.test(payload);
 }
 
 export type StyledLine = Array<StyledCell | null | undefined>;
@@ -16,6 +42,10 @@ export class AnsiOutputParser {
   private column = 0;
   private style = '';
   private pending = '';
+  private hyperlink?: string;
+  /** While writing an NMSh-authored line: OSC 8 becomes an authored link only for allowed targets. */
+  private authoring = false;
+  private discardingOsc = false;
 
   constructor(private readonly onClear?: () => void) {}
 
@@ -23,6 +53,14 @@ export class AnsiOutputParser {
     const input = this.pending + chunk;
     this.pending = '';
     let index = 0;
+    if (this.discardingOsc) {
+      const bell = input.indexOf('\u0007');
+      const st = input.indexOf('\u001B\\');
+      const end = bell < 0 ? st : st < 0 ? bell : Math.min(bell, st);
+      if (end < 0) { this.pending = input.endsWith('\u001B') ? '\u001B' : ''; return; }
+      index = end + (input[end] === '\u0007' ? 1 : 2);
+      this.discardingOsc = false;
+    }
 
     while (index < input.length) {
       const character = input[index] ?? '';
@@ -30,6 +68,11 @@ export class AnsiOutputParser {
         const parsed = this.consumeEscape(input, index);
         if (!parsed.complete) {
           this.pending = input.slice(index);
+          if (input[index + 1] === ']' && this.pending.length > 8192) {
+            this.discardingOsc = true;
+            this.hyperlink = undefined;
+            this.pending = input.endsWith('\u001B') ? '\u001B' : '';
+          }
           break;
         }
         index = parsed.next;
@@ -66,21 +109,29 @@ export class AnsiOutputParser {
       const width = stringWidth(value);
       if (width === 0) {
         const previous = this.findPreviousCell();
-        if (previous) previous.text += value;
+        if (previous) { previous.text += value; this.touch(); }
       } else {
         this.put(value, width);
       }
     }
   }
 
+  /** An NMSh-authored line: its OSC 8 links are marked authored when the target is allowed, dropped otherwise. */
+  addAuthoredLine(text: string, style = ''): void {
+    this.authoring = true;
+    try { this.addLine(text, style); } finally { this.authoring = false; }
+  }
+
   addLine(text: string, style = ''): void {
     this.ensureLineBoundary();
+    this.hyperlink = undefined;
     this.style = style;
     this.write(text);
     this.lines.push(this.current);
     this.current = [];
     this.column = 0;
     this.style = '';
+    this.hyperlink = undefined;
   }
 
   ensureLineBoundary(): void {
@@ -97,11 +148,15 @@ export class AnsiOutputParser {
     const oldColumn = this.column;
     const oldStyle = this.style;
     const oldPending = this.pending;
+    const oldHyperlink = this.hyperlink;
+    const oldDiscardingOsc = this.discardingOsc;
 
     this.current = [];
     this.column = 0;
     this.style = '';
     this.pending = '';
+    this.discardingOsc = false;
+    this.hyperlink = undefined;
     
     this.write(text);
     if (this.pending.length > 0) {
@@ -114,6 +169,8 @@ export class AnsiOutputParser {
     this.column = oldColumn;
     this.style = oldStyle;
     this.pending = oldPending;
+    this.hyperlink = oldHyperlink;
+    this.discardingOsc = oldDiscardingOsc;
   }
 
   completedCount(): number {
@@ -160,6 +217,8 @@ export class AnsiOutputParser {
     this.column = 0;
     this.style = '';
     this.pending = '';
+    this.discardingOsc = false;
+    this.hyperlink = undefined;
     for (const line of lines) {
       const restored: StyledLine = line.map(cell => cell === null ? null : 'empty' in cell ? undefined : {...cell});
       this.lines.push(restored);
@@ -189,12 +248,23 @@ export class AnsiOutputParser {
       const stringTerminator = input.indexOf('\u001B\\', start + 2);
       const end = bell === -1 ? stringTerminator : stringTerminator === -1 ? bell : Math.min(bell, stringTerminator);
       if (end === -1) return {complete: false, next: start};
+      const payload = input.slice(start + 2, end);
+      if (payload.startsWith('8;')) {
+        const separator = payload.indexOf(';', 2);
+        if (separator !== -1) {
+          const target = payload.slice(separator + 1);
+          // Preserve safe original payloads; reject controls and bound retained data.
+          this.hyperlink = target && validOsc8Payload(payload) && (!this.authoring || authoredTargetAllowed(target))
+            ? payload : undefined;
+        } else this.hyperlink = undefined;
+      }
       return {complete: true, next: end + (input[end] === '\u0007' ? 1 : 2)};
     }
     return {complete: true, next: Math.min(input.length, start + 2)};
   }
 
   private applyCsi(params: string, final: string): void {
+    this.touch();
     const values = params.replace(/^\?/u, '').split(';').map(value => Number(value || '0'));
     const amount = values[0] || 1;
     if (final === 'm') {
@@ -222,10 +292,13 @@ export class AnsiOutputParser {
 
   private put(text: string, width: number): void {
     for (let position = 0; position < width; position += 1) this.current[this.column + position] = undefined;
-    this.current[this.column] = {text, width, style: this.style};
+    this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
+    this.touch();
     for (let position = 1; position < width; position += 1) this.current[this.column + position] = null;
     this.column += width;
   }
+
+  private touch(): void { revisions.set(this.current, lineRevision(this.current) + 1); }
 
   private findPreviousCell(): StyledCell | undefined {
     for (let index = Math.min(this.column - 1, this.current.length - 1); index >= 0; index -= 1) {

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="44" viewBox="0 0 800 44" role="img" aria-label="Vespyr, the NMSh cat" shape-rendering="crispEdges">
+  <style>
+    .line { stroke: #d0d4da; stroke-width: 1; }
+    .eye { fill: #161220; animation: blink 6.2s step-end infinite; }
+    @keyframes blink { 0%, 96.5% { fill: #161220; } 97% { fill: #ac96e6; } }
+    @media (prefers-color-scheme: dark) { .line { stroke: #3d444d; } }
+    @media (prefers-reduced-motion: reduce) { .eye { animation: none; } }
+  </style>
+  <line x1="100" y1="37.5" x2="362" y2="37.5" class="line"/>
+  <line x1="438" y1="37.5" x2="700" y2="37.5" class="line"/>
+  <rect x="376" y="6" width="4" height="4" fill="#ac96e6"/>
+  <rect x="392" y="6" width="4" height="4" fill="#ac96e6"/>
+  <rect x="376" y="10" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="10" width="4" height="4" fill="#ac96e6"/>
+  <rect x="384" y="10" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="10" width="4" height="4" fill="#ac96e6"/>
+  <rect x="392" y="10" width="4" height="4" fill="#ac96e6"/>
+  <rect x="376" y="14" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="14" width="4" height="4" class="eye"/>
+  <rect x="384" y="14" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="14" width="4" height="4" class="eye"/>
+  <rect x="392" y="14" width="4" height="4" fill="#ac96e6"/>
+  <rect x="424" y="14" width="4" height="4" fill="#ac96e6"/>
+  <rect x="376" y="18" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="18" width="4" height="4" class="eye"/>
+  <rect x="384" y="18" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="18" width="4" height="4" class="eye"/>
+  <rect x="392" y="18" width="4" height="4" fill="#ac96e6"/>
+  <rect x="420" y="18" width="4" height="4" fill="#ac96e6"/>
+  <rect x="376" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="384" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="392" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="396" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="400" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="404" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="408" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="412" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="416" y="22" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="384" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="392" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="396" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="400" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="404" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="408" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="412" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="416" y="26" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="384" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="392" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="396" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="400" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="404" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="408" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="412" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="416" y="30" width="4" height="4" fill="#ac96e6"/>
+  <rect x="380" y="34" width="4" height="4" fill="#ac96e6"/>
+  <rect x="388" y="34" width="4" height="4" fill="#ac96e6"/>
+  <rect x="408" y="34" width="4" height="4" fill="#ac96e6"/>
+  <rect x="416" y="34" width="4" height="4" fill="#ac96e6"/>
+</svg>

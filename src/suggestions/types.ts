@@ -15,9 +15,7 @@ export const SUGGESTION_PROVIDERS: readonly ProviderDescriptor<SuggestionProvide
   {id: 'deja', family: 'suggestions', label: 'Deja', kind: 'external', executable: 'deja', versionArgs: ['version'],
     description: 'your installed Deja engine; records through its zsh hooks',
     setup: 'Deja learns through its zsh hooks: run `deja import` once and keep `deja init zsh` in ~/.zshrc.',
-    ...(process.platform === 'darwin'
-      ? {install: {label: 'brew install Giammarco-Ferranti/deja/deja', command: 'brew', args: ['install', 'Giammarco-Ferranti/deja/deja']}}
-      : {})},
+    recipe: {brew: 'Giammarco-Ferranti/deja/deja', platforms: ['darwin']}},
   {id: 'none', family: 'suggestions', label: 'None', kind: 'none', description: 'no ghost text'},
 ];
 

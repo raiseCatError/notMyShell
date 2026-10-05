@@ -9,7 +9,7 @@ import {buildContextLine, buildThemePreviewLine, NATIVE_PROMPT_THEMES, NMSH_BRAN
 import {applyNativeGapChoice, NATIVE_PALETTE_IDS, nativeGapChoice, normalizePromptConfiguration, DEFAULT_PROMPT_CONFIGURATION, savePromptConfiguration, loadPromptConfiguration} from '../src/prompt/configuration.js';
 import {detectStarship, normalizeStarshipConfigPath, parseStarshipPrompt, renderStarshipPrompt} from '../src/prompt/starship.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
-import {APPEARANCE_MODULES_ROW, applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, LAYOUT_CHOICES, layoutChoiceIndex, promptDraftChanged, renderPromptPanel} from '../src/prompt/PromptPanel.js';
+import {appearanceModulesRow, applyLayoutChoice, describePromptConfiguration, handlePromptPanelKey, LAYOUT_CHOICES, layoutChoiceIndex, promptDraftChanged, renderPromptPanel} from '../src/prompt/PromptPanel.js';
 import {detectToolchains} from '../src/shell/ShellContext.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import type {Key} from '../src/terminal/keys.js';
@@ -24,10 +24,10 @@ const contrast = (a: {red: number; green: number; blue: number}, b: {red: number
   return (high! + 0.05) / (low! + 0.05);
 };
 
-test('five visible native themes exist, stay readable, and keep adjacent segments distinct', () => {
-  assert.deepEqual(NATIVE_PALETTE_IDS, ['lavender', 'brand', 'cool', 'warm', 'grayscale']);
+test('native themes exist (original five first, ids kept), stay readable, and keep adjacent segments distinct', () => {
+  assert.deepEqual(NATIVE_PALETTE_IDS, ['lavender', 'brand', 'cool', 'warm', 'grayscale', 'aurora', 'ocean', 'sunset', 'forest', 'rose', 'nebula', 'highContrast']);
   assert.deepEqual(NATIVE_PALETTE_IDS.map(id => NATIVE_PROMPT_THEMES[id].label),
-    ['Lavender Native', 'Brand / Semantic', 'Cool First', 'Warm First', 'Grayscale']);
+    ['Lavender Native', 'Brand / Semantic', 'Cool First', 'Warm First', 'Grayscale', 'Aurora', 'Ocean', 'Sunset', 'Forest', 'Rose', 'Nebula', 'High Contrast Neon']);
   const order = ['project', 'cwd', 'gitBranch', 'node', 'go', 'python', 'docker', 'failure'] as const;
   for (const id of NATIVE_PALETTE_IDS) {
     const theme = NATIVE_PROMPT_THEMES[id];
@@ -272,10 +272,29 @@ test('saved configurations gain new modules at their default position', () => {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'discoveredTools']);
   assert.equal(config.modules.find(module => module.id === 'exitStatus')!.visible, false);
+  assert.equal(config.modules.find(module => module.id === 'discoveredTools')!.visible, false, 'the added module stays opt-in');
+  assert.equal(config.modules.find(module => module.id === 'project')!.visible, true, 'existing settings are preserved');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
+});
+
+test('discovered-tools Native module consumes supplied shared facts and deterministic previews', () => {
+  const context = {cwd: '/tmp/repo', project: 'repo', discovery: {pathKey: '', discoveredAt: 1,
+    measurements: {directoriesRead: 1, entriesInspected: 2, executableChecks: 2}, executables: [
+    {id: 'executable:one', name: 'one', path: '/bin/one', family: 'path' as const, evidence: 'PATH'},
+    {id: 'executable:two', name: 'two', path: '/bin/two', family: 'path' as const, evidence: 'PATH'},
+  ]}};
+  const hidden = normalizePromptConfiguration({});
+  assert.ok(!stripAnsi(buildContextLine(context, 100, hidden, 'composer')).includes('local tools'));
+  const enabled = normalizePromptConfiguration({modules: [{id: 'discoveredTools', visible: true, condition: 'always'}]});
+  const firstRender = stripAnsi(buildContextLine(context, 100, enabled, 'composer'));
+  const secondRender = stripAnsi(buildContextLine(context, 100, enabled, 'composer'));
+  assert.ok(firstRender.includes('2 local tools'));
+  assert.equal(secondRender, firstRender);
+  assert.deepEqual(context.discovery.measurements, {directoriesRead: 1, entriesInspected: 2, executableChecks: 2}, 'rendering consumes facts without repeating discovery');
+  assert.ok(stripAnsi(buildThemePreviewLine(enabled, 'brand', 100)).includes('2 local tools') === false, 'synthetic preview never depends on live PATH facts');
 });
 
 test('toolchains are detected from marker files in cwd and repository root', async () => {
@@ -302,14 +321,16 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
   assert.equal(unchanged.at(-1), '↑↓ move · ←→ change · Enter save · Esc cancel', 'consistent controls row');
 
   const press = (row: number, kind: 'left' | 'right') => { state.selectedIndex = row; handlePromptPanelKey({kind} as Key, state); };
-  press(0, 'right'); press(1, 'right'); press(1, 'right'); press(2, 'right'); press(3, 'left'); press(4, 'left'); press(5, 'left'); press(6, 'right'); press(6, 'right'); press(7, 'right');
+  // Rows: Theme family, Theme, Text colors, Style, Vibrance, then Powerline's own (Start, Connector, Connector fade, Fade colors, Gap, End, Padding), Icons, Prompt symbol, Modules.
+  press(1, 'right'); press(5, 'right'); press(5, 'right'); press(6, 'right'); press(7, 'left'); press(8, 'left'); press(9, 'left'); press(10, 'right'); press(10, 'right'); press(12, 'right');
   assert.deepEqual([state.draft.nmsh.palette, state.draft.nmsh.startStyle, state.draft.nmsh.connector, nativeGapChoice(state.draft), state.draft.nmsh.endStyle, state.draft.nmsh.icons],
     ['brand', 'flat', 'flat', 'compact', 'fadeFlat', 'off']);
   assert.equal(state.draft.nmsh.connectorFade, 'follow', 'Connector fade cycles backwards from the default Off');
   assert.equal(state.draft.nmsh.connectorFadeColors, 'previous', 'Mixed (cycled back from Previous at Normal) resolves to Previous at Compact');
   const changed = renderPromptPanel(state, 160, ['live preview'], ['L', 'B', 'C', 'W', 'G']).map(stripAnsi);
   for (const expected of [
-    'Theme           ‹ Brand / Semantic ›  saved: Lavender Native',
+    'Theme family    ‹ NMSh ›',
+    '  Theme         ‹ Brand / Semantic ›  saved: Lavender Native',
     'Start           ‹ Flat ›  saved: Wedge',
     'Connector       ‹ Flat ›  saved: Wedge',
     'Connector fade  ‹ Follow connector ›  saved: Off',
@@ -317,11 +338,11 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',
-    'Modules         8 of 8 shown ›',
+    'Modules         9 of 10 shown ›',
     'unsaved preview',
   ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
-  state.selectedIndex = APPEARANCE_MODULES_ROW;
+  state.selectedIndex = appearanceModulesRow(state.draft);
   assert.match(stripAnsi(renderPromptPanel(state, 160, []).at(-1)!), /Enter edit modules/u);
   assert.equal(describePromptConfiguration(saved), summary);
 });
@@ -333,12 +354,13 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
     {id: 'toolchain', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
+    {id: 'shell', visible: true, condition: 'shellDiffers'},
   ]});
   const state = {onboarding: false, step: 'modules' as const, selectedIndex: 1, draft: structuredClone(saved), saved};
   assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
   assert.equal(state.draft.modules[1]!.visible, false);
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
-  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'shell', 'kubeContext', 'dockerContext', 'discoveredTools']);
   assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
   assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');
@@ -357,7 +379,7 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
   assert.ok(rows.some(row => /○ Path +left +hidden/u.test(row)));
   assert.ok(rows.some(row => /› ● Exit status +right +‹ always ›/u.test(row)));
-  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · M mirror right: On · Enter/Esc done');
+  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · S surface · M mirror: On · Enter/Esc done');
   assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
   const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);
   try {

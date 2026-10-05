@@ -1,3 +1,4 @@
+import {applyOutputFilter, type OutputFilter} from './TranscriptSearch.js';
 import {AnsiOutputParser, type SerializedLine} from './AnsiOutputParser.js';
 import {type WrappedRow} from './viewport.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
@@ -5,7 +6,7 @@ import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
-import {shouldAutoFold, type OutputFoldingMode} from './FoldPolicy.js';
+import {shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
@@ -17,6 +18,8 @@ export interface HistoricalContextSnapshot {
   project?: string;
   branch?: string;
   prompt?: PromptSnapshot;
+  /** Submitted under Prompt None: there was no prompt, so history renders none (never a substituted Native one). */
+  promptless?: true;
 }
 
 export interface SecondaryActivity {
@@ -32,6 +35,10 @@ export interface SecondaryActivity {
 }
 
 export interface CompletedCommand {
+  /** Only explicitly eligible commands enter command history; transcript retention is separate. */
+  historyEligible?: boolean;
+  startedAt?: number;
+  durationMs?: number;
   command: string;
   output: string;
   lifecycleText: string;
@@ -44,6 +51,10 @@ export interface CompletedCommand {
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
   activities?: SecondaryActivity[];
+  /** An NMSh-owned block rather than a shell command: never history, /copy or shell-output folding input. */
+  frontend?: 'ask';
+  /** A recorded Ask conversation: its visible turns as plain text (version 1). Older transcripts lack it. */
+  ask?: {version: 1; turns: RecordedAskTurn[]};
 }
 
 export interface OutputTranscript {
@@ -98,6 +109,7 @@ export class OutputBuffer {
         ...record,
         historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
         activities: record.activities?.map(activity => ({...activity})),
+        ...(record.ask ? {ask: {version: 1 as const, turns: record.ask.turns.map(turn => ({role: turn.role, text: turn.text}))}} : {}),
       })),
       lines: this.parser.snapshot(),
       visualGaps: [...this.visualGaps],
@@ -280,7 +292,11 @@ export class OutputBuffer {
     this.parser.addLine(text, style);
   }
 
-  addFrontendInteraction(command: string, result: string, resultStyle = ''): void {
+  /**
+   * `authoredLinks`: the result was rendered by NMSh (for example /help) and
+   * may carry NMSh-authored OSC 8 links; they are kept as authored cells.
+   */
+  addFrontendInteraction(command: string, result: string, resultStyle = '', authoredLinks = false): void {
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) {
       this.visualGaps.add(this.parser.completedCount());
@@ -288,7 +304,61 @@ export class OutputBuffer {
     this.lineTypes.set(this.parser.completedCount(), 'metadata');
     this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
     this.lineTypes.set(this.parser.completedCount(), 'metadata');
-    this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
+    if (authoredLinks) this.parser.addAuthoredLine(`  ${GLYPHS.info} ${result}`, resultStyle);
+    else this.parser.addLine(`  ${GLYPHS.info} ${result}`, resultStyle);
+  }
+
+  /**
+   * A recorded Ask conversation as one foldable block: the request is its
+   * header line and each visible turn follows as plain rows. Folding comes
+   * from the conversation's structure (shouldFoldAsk), and Ctrl+O and the
+   * user's own fold choices apply as for any block. While a shell command is
+   * running, the conversation is added as plain rows instead.
+   */
+  addAskInteraction(request: string, turns: readonly RecordedAskTurn[], command: '/btw' | '/ask' = '/btw'): void {
+    const body = turns.length ? turns : [{role: 'ask' as const, text: 'Closed without an answer.'}];
+    if (this.active) {
+      this.addFrontendInteraction(`${command} ${request}`, body.map(turn => turn.text.split('\n').map((line, index) => `${index === 0 ? (turn.role === 'you' ? 'You   ' : 'Ask   ') : '      '}${line}`).join('\n')).join('\n'), '');
+      return;
+    }
+    this.parser.ensureLineBoundary();
+    if (this.parser.completedCount() > 0) this.visualGaps.add(this.parser.completedCount());
+    const startId = this.parser.completedCount();
+    this.lineTypes.set(startId, 'metadata');
+    this.parser.addLine(`${GLYPHS.prompt} ${command} ${request}`, foreground(UI_COLORS.command));
+    const outputStartId = this.parser.completedCount();
+    const plain: string[] = [];
+    // Compact exchanges: a role column, then the turn's own lines; a blank row separates exchanges.
+    body.forEach((turn, turnIndex) => {
+      if (turn.role === 'you' && turnIndex > 0) { plain.push(''); this.lineTypes.set(this.parser.completedCount(), 'metadata'); this.parser.addLine('', ''); }
+      turn.text.split('\n').forEach((line, index) => {
+        const row = `  ${index === 0 ? (turn.role === 'you' ? 'You   ' : 'Ask   ') : '      '}${line}`;
+        plain.push(row);
+        this.lineTypes.set(this.parser.completedCount(), 'metadata');
+        this.parser.addLine(row, turn.role === 'you' ? foreground(UI_COLORS.primary) : foreground(UI_COLORS.secondary));
+      });
+    });
+    const endId = this.parser.completedCount();
+    this.completed.unshift({command: `${command} ${request}`, output: plain.join('\n'), lifecycleText: '', exitCode: 0, startId, outputStartId, endId,
+      expanded: !shouldFoldAsk(this.outputFolding, body), frontend: 'ask', ask: {version: 1, turns: body.map(turn => ({role: turn.role, text: turn.text}))}});
+  }
+
+  /** The index-th newest shell command record (NMSh-owned blocks such as recorded Ask are skipped). */
+  recentShell(index: number): CompletedCommand | undefined {
+    return this.completed.filter(record => !record.frontend)[index - 1];
+  }
+
+  /** A multi-row NMSh-owned result (for example /agents); presentation rows, never shell output. */
+  addFrontendBlock(command: string, rows: readonly string[], authoredLinks = false): void {
+    this.parser.ensureLineBoundary();
+    if (this.parser.completedCount() > 0) this.visualGaps.add(this.parser.completedCount());
+    this.lineTypes.set(this.parser.completedCount(), 'metadata');
+    this.parser.addLine(`${GLYPHS.prompt} ${command}`, foreground(UI_COLORS.command));
+    for (const row of rows) {
+      this.lineTypes.set(this.parser.completedCount(), 'metadata');
+      if (authoredLinks) this.parser.addAuthoredLine(`  ${row}`, '');
+      else this.parser.addLine(`  ${row}`, '');
+    }
   }
 
   recent(index: number): CompletedCommand | undefined {
@@ -297,8 +367,29 @@ export class OutputBuffer {
 
   /** Rows for this transcript as the owned presenter draws them. */
   wrapped(width: number): WrappedRow[] {
-    return this.presenter.rows(this.view(), width);
+    const rows = this.presenter.rows(this.view(), width);
+    if (!this.outputFilter) return rows;
+    // Cached per presented rows + filter, so frames and hit-tests never re-filter.
+    if (this.filterCache?.rows === rows && this.filterCache.filter === this.outputFilter) return this.filterCache.result;
+    // Presentation only: stored lines, records and /copy payloads are untouched.
+    const result = applyOutputFilter(rows, this.outputFilter, line => !this.lineTypes.has(line));
+    this.filterCache = {rows, filter: this.outputFilter, result: result.rows};
+    this.filterStatus = {kept: result.kept, total: result.total, ...(result.error ? {error: result.error} : {})};
+    return result.rows;
   }
+
+  private outputFilter?: OutputFilter;
+  private filterCache?: {rows: WrappedRow[]; filter: OutputFilter; result: WrappedRow[]};
+  /** Last applied filter's counts, for status text. */
+  filterStatus?: {kept: number; total: number; error?: string};
+
+  /** Show only matching output lines of one block (presentation only); undefined clears it. */
+  setOutputFilter(filter: OutputFilter | undefined): void {
+    this.outputFilter = filter;
+    if (!filter) this.filterStatus = undefined;
+  }
+
+  get activeFilter(): OutputFilter | undefined { return this.outputFilter; }
 
   /** Read-only view of the transcript data for presentation. */
   view(): TranscriptView {
@@ -350,7 +441,22 @@ export class OutputBuffer {
     const cmd = this.completed[commandIndex];
     if (cmd) {
       cmd.expanded = !cmd.expanded;
+      this.userToggled.add(cmd.startId);
     }
+  }
+
+  /** Blocks the user expanded or collapsed themselves; advisory hints never override them. */
+  private readonly userToggled = new Set<number>();
+
+  /**
+   * Advisory folding from a late semantic hint: only for a block the user has
+   * not touched. Presentation only; the output itself is never changed.
+   */
+  applyAdvisoryFold(startId: number, folded: boolean): boolean {
+    const record = this.completed.find(item => item.startId === startId);
+    if (!record || this.userToggled.has(startId) || record.activities?.length || record.expanded === !folded) return false;
+    record.expanded = !folded;
+    return true;
   }
 
   toggleActivityExpanded(activityId: string): void {

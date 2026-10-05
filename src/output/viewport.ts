@@ -1,4 +1,4 @@
-import type {StyledCell, StyledLine} from './AnsiOutputParser.js';
+import {validOsc8Payload, type StyledCell, type StyledLine} from './AnsiOutputParser.js';
 
 const RESET = '\u001B[0m';
 
@@ -16,6 +16,8 @@ export interface WrappedRow {
   blockStartId?: number;
   /** Leading alignment columns (Chat); surfaces and hit bounds start after them. */
   indent?: number;
+  /** The synthetic "filter active" row; presentation only, never transcript data. */
+  isFilterHint?: boolean;
 }
 
 export interface StickyHeader {
@@ -42,16 +44,18 @@ export function stickyHeaderFor(rows: WrappedRow[], viewStart: number): StickyHe
   return commandRowAbove ? {startId, targetIndex} : undefined;
 }
 
-export function wrapStyledLine(line: StyledLine, width: number): WrappedRow[] {
+export function wrapStyledLine(line: StyledLine, width: number, hyperlinks = false): WrappedRow[] {
   if (width <= 0) return [];
   const rows: WrappedRow[] = [];
   let ansi = '';
   let plain = '';
   let column = 0;
   let activeStyle = '';
+  let activeLink: string | undefined;
 
   const flush = () => {
-    rows.push({ansi: `${ansi}${RESET}`, plain});
+    rows.push({ansi: `${ansi}${activeLink ? '\u001B]8;;\u001B\\' : ''}${RESET}`, plain});
+    activeLink = undefined;
     ansi = '';
     plain = '';
     column = 0;
@@ -63,6 +67,12 @@ export function wrapStyledLine(line: StyledLine, width: number): WrappedRow[] {
     if (cell === null) continue;
     const actual: StyledCell = cell ?? {text: ' ', width: 1, style: ''};
     if (column > 0 && column + actual.width > width) flush();
+    const link = hyperlinks && actual.hyperlink && validOsc8Payload(actual.hyperlink) ? actual.hyperlink : undefined;
+    if (link !== activeLink) {
+      if (activeLink) ansi += '\u001B]8;;\u001B\\';
+      if (link) ansi += `\u001B]${link}\u001B\\`;
+      activeLink = link;
+    }
     if (actual.style !== activeStyle) {
       ansi += `${RESET}${actual.style}`;
       activeStyle = actual.style;

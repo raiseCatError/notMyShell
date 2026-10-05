@@ -6,6 +6,102 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### UI consistency and showcase
+- Shared bold accent focus labels across menus, settings, pickers and setup; `/tools` keeps explicit checked markers when focus moves, including without color.
+- Consistent Chroma preview state and base-color guidance; `/syntax` exposes the shared theme families and variants, with previews and cache updates for custom colors and accents.
+- First launch opens Setup Cat. Apply completes onboarding even without appearance edits; presets and completed onboarding bypass discovery.
+- The current-shell module leads the default Native prompt; the former untouched default migrates, while customized module ordering is preserved.
+- Larger opaque demo recordings with neutral welcome identity, expanded feature/screensaver coverage, two architecture diagrams and a standalone silent motion promo.
+
+### Themes, Theme Bridge and host cooperation
+- **Prompt provider None**: composer only (no prompt row, modules or right prompt; the input marker stays) while editing, suggestions, syntax colors, history, themes and Theme Bridge keep working; commands submitted under None store no prompt snapshot.
+- **Historical prompt** Full / Compact / Minimal / Off (`/transcript`, Settings, Setup); presentation only over the unchanged stored snapshot.
+- **Native theme library**: any number of Custom and Imported themes with stable ids (bounded to 64); the single custom theme migrates into it and stays active. Imported is provenance only: imported themes are ordinary Native themes you can edit, rename, duplicate, export, select and pin.
+- **Theme Studio** (`/theme`): Built-in · Imported · Custom · Import tabs, one editor and the real Native preview for every theme. Settings → Theme and `/setup appearance` select Built-in, Imported and Custom themes directly.
+- **Imports**: NMSh Theme JSON, Base16, Base24, Windows Terminal, Oh My Posh (JSON, YAML, TOML; static colors only), Kitty, Ghostty (allowlist), iTerm2 `.itermcolors` (no XML entities) and WezTerm TOML (Lua refused). Data only, previewed with mapping and loss disclosure before saving; exports never include local source paths.
+- **Theme Bridge** (`/theme-bridge`, opt-in, default Off): one switch plus **Apply themes** Manual / Follow NMSh / Choose theme. Under Manual each tool is Independent / Follow NMSh / Choose theme; under a global policy per-tool rows are view-only and the Manual choices are kept for later. One persistent panel with inline rows (Esc collapses before it closes), grouped by capability. fzf launched by NMSh, less/man termcap colors and **File listing colors** (GNU `ls`/`gls` via LS_COLORS with vivid when installed, BSD/macOS `ls` via CLICOLOR/LSCOLORS) through an NMSh-owned shell environment applied by the zsh, Bash and Fish adapters at the next prompt; generated tmux, Neovim, Vim, Helix and bat themes (bat: a real `.tmTheme`, a reviewed `bat cache --build` verified with `bat --list-themes`, `BAT_THEME` through the environment) with an ownership ledger, staged validated writes, a typed tmux reload and exact includes added only after review. delta is shown and not editable. "Remove managed setup" removes NMSh's files and includes; "Set Independent" only stops applying. No rc file, terminal or editor theme, or git config is changed.
+- Theme Studio: local **Preview Chroma** (default Off, never saved) and **Duplicate current** into Custom (`<name> - Custom`). Chroma is reachable from `/prompt`, `/appearance` and Setup (Appearance and Prompt, with a Setup-local preview toggle).
+- **Host semantics**: OSC 7 working directory and OSC 133 command zones derived from NMSh's command lifecycle on capable hosts and tmux; NMSh-authored OSC 8 links in `/help` and dev-server task rows, kept separate from program links.
+- `/appearance` is a compact launcher: Theme Studio, Prompt, Cursor & effects, UI chrome, Chroma, Motion, Theme Bridge and host window.
+
+### Providers, tools and integrations
+
+- **Keep Awake** (`/caffeinate`, `/awake`, `/zoomies`; one surface and state): Idle, Display, System and All, optional `30m`/`2h` timeouts, `status` and `stop`. Backends are detected, not assumed: Apple `/usr/bin/caffeinate` (fixed flags; System needs AC power), `systemd-inhibit` with `idle`/`sleep` only around an NMSh-owned wait helper (Display is reported unsupported on Linux), and Windows `SetThreadExecutionState` from a fixed hidden PowerShell helper (no away mode, no `powercfg`). The assertion is a detached process that outlives the window; ownership is a random token plus the exact command line, so an unverifiable record is cleared and nothing is killed. Changing mode asks first (default No) and starts the new assertion before releasing the old.
+- Keep Awake **presentation**: while active, `Awake · <mode>` is NMSh composer chrome (never prompt or provider output). Placement **Composer edge** (default) uses a plain top divider, else the bottom divider when a header prompt owns the top edge, else one row next to the composer; **Above composer** and **Input row** (only when it is completely safe; editor width, caret and hit testing account for it) are explicit choices, and a fallback never rewrites the setting. Both edges render through one shared edge renderer, so animated Chroma dividers keep it. An enabled **Status Strip** always includes it (narrowing before it drops); after 30 s without NMSh input an **idle reminder** adds the time and a muted `/zoomies stop`; the **screensaver** shows a small positioned status (default Bottom left). Display is Text, Icon or Icon + text. Off shows nothing. The panel gains Duration and these settings; Ask answers status questions and plans timed, change and stop requests through the same controller.
+- Fixed: `/caffeinate`, `/awake` or `/zoomies` without arguments opened a panel that was never drawn, so the composer looked occupied until Ctrl+C (the Mise panel had the same problem). A start or stop from the panel now returns to the composer at once; the assertion was and remains an NMSh-owned background process, never a shell command.
+
+- **Shell frameworks and prompt engines:** `/tools` detects tools by an explicit strategy (executable or a registered filesystem detector), so Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit and Antidote appear with factual status (`Installed · Zsh framework · used by Zsh only` under Bash/Fish). Detection grants no install, configuration or provider authority. Oh My Zsh has a guided install that keeps `.zshrc` and a `.zshrc.pre-oh-my-zsh` comparison with a reviewed restore; NMSh never runs its installer. Powerlevel10k is a `/tools` item that routes to the existing provider and `p10k configure` flow. **Oh My Posh** is a new Prompt provider (`oh-my-posh print primary`, argv only, no TTY, bounded, cancellable; Native fallback when it fails) and a curated `/tools` install (homebrew/core); its config can be imported into Theme Studio as static colors. Ask understands these requests; dotfiles treats `.p10k.zsh`, Oh My Zsh themes/plugins and Oh My Posh configs as inspect-only.
+- `/providers` is one inline panel: each family with its status (● Active, ✓ Selected · fallback, Available, Missing · Enter to install); Enter selects immediately or installs after a confirmation (default No). Shortcuts `/picker` (`/pickers`), `/suggestions`, `/navigation`, `/welcome`, `/history-provider` and `/providers <family>` open it focused.
+- Pickers follow the composer: with the composer at the bottom the query sits at the bottom and results above it (NMSh Native and fzf); at the top the query is at the top.
+- **Tool Configuration** (`/configure`, `/tmux`): one first-party registry says which tools NMSh can configure (tmux, Starship), which it themes, and which are inspect-only (shell rc files, Neovim/Vim config). Detection never grants write authority.
+- **tmux Config Studio** (`/tmux`): General settings from a documented catalog, keymaps and prefix with conflict display, a Status Studio with a live preview (status modules never run shell), an optional NMSh pane frontend (`default-command` that runs a fixed `/bin/sh` program with the NMSh path passed as quoted argv data, never as shell text, and falls back to your login shell inside NMSh; `default-shell` untouched), and import of a supported subset of an existing tmux.conf (`if-shell`, `run-shell`, `source-file` and `#()` are never followed). Each value shows where it comes from. Everything goes into one NMSh-managed tmux file, included once after review.
+- `/integrations`: health of every managed integration (current, missing, stale, conflict) with Review all / Apply all (default No); after one-time activation, managed files update automatically when the theme changes.
+- `/dotfiles [path or Git URL]`: plain, Git, GNU Stow and chezmoi sources. Remote sources are cloned only after confirmation (depth 1, no submodules, hooks disabled). Nothing in the repository is run, templates are not rendered, tmux imports supported fields only, Starship/Helix/bat and all executable configs are inspect-only (parseable config can still run commands, so nothing is copied without an explicit per-tool safety validator, and none exists today), conflicting values default to your current ones, and one combined review (default No) precedes any change. The repository is never modified.
+- Ask maps tmux, provider, Theme Bridge, integrations and dotfiles requests onto these typed actions only, behind its final Yes/No.
+- Commands: `/motion`, `/chrome`, `/glyphs` (`/glyph`), `/composer` (alias of `/layout`), `/strip` (`/status-strip`), `/configure`, `/tmux`, `/integrations`, `/dotfiles`. `/help` groups commands by area (Appearance, Composer & transcript, Providers, Tools & integration) and the palette lists each surface once with a readable label. Individual settings are not commands.
+
+### Contextual tools
+- `/tools` Discover shows a conservative **Relevant here** group from cheap local facts (Git repository, shell scripts, JavaScript/Node, Python, Go, Rust, container files, Kubernetes files or kubeconfig) and each tool's declared relevance. Only missing tools appear; nothing is executed, crawled or sent anywhere.
+- Typed package-manager plans for Homebrew, APT, DNF, pacman and zypper (WSL uses the distribution's manager). Tools without a verified package name stay manual. Non-root plans are explicit `sudo -n` argv; nothing elevates silently.
+- Bulk install: Space selects missing installable tools, Enter reviews a tool → manager → package plan, one confirmation (default No), per-tool results.
+- Tool details separate Installed, selected in NMSh and **Active in this shell** (zoxide, Atuin, fzf), from the running shell's name snapshot for all three shells; rc files are never read.
+
+### Compatibility
+- Windows Terminal (seen from WSL), iTerm2 and WezTerm host facts and new-window launchers behind the host boundary; deterministic multiplexer/`TERM=dumb` degradation tests for every profile. Physical validation in these hosts is not claimed.
+- Linux: `xdg-open`/`wslview` open helper, clipboard fallback-order tests, Fish installed in Ubuntu CI and a Fedora portability job.
+- Regression coverage that raw job-control, EOF and arrow bytes reach full-screen programs.
+
+### Screensavers
+- Four screen-based savers join the idle visuals: **Black Hole**, **Fireworks**, **Circletastic** and **raiseCatError**, plus **Random** (switches only after a full loop). They animate the current screen's own text as presentation only (transcript, PTY, history and journals are untouched), keep the host background, dismiss on the first input (which is consumed), stop on resize, and never start automatically under Reduced Motion. Still off by default (Idle visuals: Never); new **Run while busy** setting never overrides passthrough or fullscreen programs. The earlier scene is now labelled Night Fireworks.
+
+### Polish
+- Shell Environment (Status and `nmsh doctor`) starts with the shell backing the session (never inferred from `$SHELL`), says "none · plain zsh/bash/fish" when there is no framework, and scopes framework and plugin rows to that shell; other shells' environments are listed separately.
+- Screensavers: the capture keeps authored backgrounds and readable glyph colors (no black-on-dark chrome), Circletastic forms a few small circles completely before it stabilizes, rotates, accelerates and explodes (all at once or staggered, keeping ring momentum), and raiseCatError now uses the NMSh cat sprite, roams the whole screen, overlaps text freely, meows, and sometimes sits on a purely visual fake keyboard (never reaching the editor or shell).
+- Any exact command in the curated `/tools` catalog (not only Recommended ones) is recognized when missing; the prompt names the package when it differs (`tldr` is provided by tealdeer). TLDR (tealdeer) is now Recommended; Ask uses only its local cache (`--no-auto-update`) and says when examples are unavailable.
+
+### Polish (this pass)
+- `/tools`: the selected row is the shared selected band (the active tab's treatment): full width, bold, readable on the band, reverse video under `NO_COLOR`.
+- Prompt None wording: the input marker stays (it always did); help, the prompt picker and Setup now say so.
+
+### Docs and demos
+- [ARCHITECTURE.md](ARCHITECTURE.md): a plain-language overview of how NMSh works, linked from the README, CONTRIBUTING, AGENTS and llms.txt.
+- README rewritten around what NMSh is, a short hero clip, a visual tour and the safety model; stale zsh-only, fixed-bottom, bat and release claims corrected.
+- Reproducible visual docs: `npm run demos` renders the README and [demo gallery](docs/demos.md) clips from committed VHS tapes in `scripts/demos/` against a disposable demo home (no user config, no network, the inert Keep Awake backend). It replaces the old asciinema/tmux recorder. A small Vespyr divider is generated from the real sprite.
+
+### Updates and sessions
+- **Automatic updates** (Automatic / Notify only / Off, Daily or Weekly). New installs default to Automatic / Daily; saved Daily/Weekly checks migrate to Notify only and Off stays Off. Automatic prepares a verified stable release only where `/update apply`'s own checks pass, with the same build verification and rollback; the running session keeps its version. Status shows Running version, Latest, Mode and State.
+- Detached sessions can be ended from the startup picker with `X` and confirmation; the transcript is archived and stays in `/resume`.
+
+## [0.16.0] - 2026-10-04
+
+Sessions, Agents & Portability: a cumulative release of the work formerly planned as v0.8–v0.15, together with v0.16.
+
+### Sessions & agents
+- Persistent live shells, detach/reattach, session presets and a clearer `/resume` and `/sessions` viewer with factual state, age and duration.
+- Short-lived cross-session notices, sticky attention, and familiar session names and accents.
+- `/agents` local activity counts, durations and heatmaps; `/ai` managed and observed agent sessions. Activity tracking can be disabled or reset and does not store prompts or output.
+
+### Shells & portability
+- A shared ShellAdapter for zsh, Fish and Bash 4.4+; `/shell` switches the current session and Settings chooses the default for new sessions.
+- Linux/WSL groundwork, platform diagnostics, Linux notifications through `notify-send`, host capability profiles and conservative presentation fallbacks. Physical Linux/WSL and additional-host validation remains follow-up work.
+- Settings export/import, launcher uninstall with data retained by default, and provenance-aware tool removal.
+
+### Ask, completion & developer tooling
+- Ask explains NMSh capabilities locally, with optional Qwen Local Understanding through `/llm`; model downloads require explicit confirmation.
+- Structured completion with live shell knowledge, a bundled Fig + Carapace static catalog, provenance, custom declarative specs and richer completion descriptions.
+- Context-ranked history with agent/source filters; optional Atuin, zoxide, fzf and Television providers; command inspection and conservative correction suggestions.
+- Curated `/tools`, supported Starship configuration, consent-based mise project/task awareness, project workflows and `/watch` scheduled commands.
+
+### Appearance & interaction
+- `/appearance`, richer prompt customization, Chroma treatments and bounded effects; Clean and Rich motion with independent intensity and speed.
+- Portable cursor effects and capability-gated Ghostty/Kitty integration with previews and clear fallback behavior.
+- Expanded Setup Cat, grouped Config and Status, idle visual galleries and completion UI polish.
+
+### Transcript, safety & fixes
+- `/find`, presentation-only `/filter`, transcript selection, block actions, OSC 8 links, `/open` references and `/open-diff` editor integration.
+- Capability-gated images with a text fallback; deterministic paste classification, preview and scrollable review; `/doctor` read-only diagnostics and failure explanations.
+- Hardened session recovery, shell helper isolation, terminal modes, completion cancellation and configuration preservation; fixes to divider colors, slash-command history and presentation lifecycles.
+
 ## [0.7.0] - 2026-10-01
 
 UI Foundation & Customization: a shared internal UI toolkit (notMyUI), Chroma color roles, reduced-presentation modes, Markdown-authored help, and Settings v2.

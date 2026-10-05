@@ -1,11 +1,15 @@
+import {assignSignature} from './signatures.js';
 import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
 import {connect, createServer, type Server, type Socket} from 'node:net';
 import {ShellSession} from '../shell/ShellSession.js';
+import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
+import {shellAdapter} from '../shell/adapters/registry.js';
 import {SessionEvidence} from './SessionEvidence.js';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
+import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
 import {SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
+import {EndedNotices, SessionNoticeTracker} from './SessionNotices.js';
 import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
 
 export const SERVICE_NAME = 'nmshd';
@@ -17,6 +21,10 @@ export interface SessionRecord {
   createdAt: string;
   state: SessionState;
   protocolVersion: number;
+  /** Familiar signature ("Mango"), assigned once at creation and kept across reattaches. */
+  signature?: string;
+  /** The person's own name for the session, when they renamed it. */
+  name?: string;
 }
 
 type Send = (message: ServerMessage) => void;
@@ -24,6 +32,11 @@ type Send = (message: ServerMessage) => void;
 interface ManagedSession {
   record: SessionRecord;
   shell: ShellSession;
+  /** Backend of the current shell; replaced in place by switch-shell. */
+  backend: ShellId;
+  /** Kept in memory only, to start a replacement backend with the same environment; never stored or logged. */
+  env: Record<string, string>;
+  size: {columns: number; rows: number};
   /** The one writable frontend; undefined while detached. */
   controller?: Send;
   running?: {command: string; since: number};
@@ -36,6 +49,9 @@ interface ManagedSession {
   backlog: StreamBacklog;
   /** What the foreground program's own output says: recency, title, attention, last exit. */
   evidence: SessionEvidence;
+  /** This session's cross-session notice; cleared when the session is focused. */
+  notices: SessionNoticeTracker;
+  knowledge?: string;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -51,6 +67,8 @@ export interface SessionServiceOptions {
   backlogLimits?: BacklogLimits;
   /** Live sessions allowed at once; detached ones are never ended to make room. */
   maxSessions?: number;
+  /** Build identity reported in the welcome (informational). */
+  build?: string;
 }
 
 export const DEFAULT_MAX_SESSIONS = 16;
@@ -58,8 +76,10 @@ export const DEFAULT_MAX_SESSIONS = 16;
 function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
     case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
-    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at};
-    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at};
+    case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at,
+      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed})};
+    case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at,
+      ...(event.knowledge === undefined ? {} : {knowledge: event.knowledge})};
   }
 }
 
@@ -85,6 +105,7 @@ export class SessionService {
   private server: Server | undefined;
   private readonly sessions = new Map<string, ManagedSession>();
   private readonly connections = new Set<Socket>();
+  private readonly endedNotices = new EndedNotices();
   private idleTimer: NodeJS.Timeout | undefined;
   private closed = false;
   readonly done: Promise<void>;
@@ -104,7 +125,12 @@ export class SessionService {
     const evidence = session.evidence.snapshot();
     // Read only when someone lists sessions; nothing polls the process table.
     const process = running ? session.shell.foregroundProcess : undefined;
-    return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt),
+    session.notices.observeProcess(process);
+    if (evidence.attentionSince !== undefined) session.notices.onAttention(evidence.attentionSince);
+    session.notices.checkLongRunning(Date.now());
+    const notice = session.notices.notice;
+    return {id: record.id, pid: record.pid, state: record.state, cwd: record.cwd, createdAt: Date.parse(record.createdAt), shell: session.backend,
+      ...(record.signature ? {signature: record.signature} : {}), ...(record.name ? {name: record.name} : {}),
       ...(running ? {running: running.command, runningSince: running.since} : {idleSince: session.idleSince}),
       ...(session.backlog.journalId ? {journalId: session.backlog.journalId} : {}),
       ...(process && process !== 'zsh' ? {process} : {}),
@@ -112,7 +138,8 @@ export class SessionService {
       ...(evidence.lastOutputAt !== undefined ? {lastOutputAt: evidence.lastOutputAt} : {}),
       ...(evidence.title ? {title: evidence.title} : {}),
       ...(evidence.attentionSince !== undefined ? {attentionSince: evidence.attentionSince} : {}),
-      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {})};
+      ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {}),
+      ...(notice ? {notice} : {})};
   }
 
   async start(): Promise<void> {
@@ -164,7 +191,8 @@ export class SessionService {
             return;
           }
           greeted = true;
-          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME});
+          send({type: 'welcome', version: PROTOCOL_VERSION, service: SERVICE_NAME, startupSafety: 1, features: SERVICE_FEATURES.join(','),
+            ...(this.options.build ? {build: this.options.build} : {})});
           continue;
         }
         switch (message.type) {
@@ -175,8 +203,10 @@ export class SessionService {
               break;
             }
             try {
-              owned = this.create(message.cwd, message.env, message.columns, message.rows, send);
-              send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid});
+              const backend = message.shell === undefined ? 'zsh' : message.shell;
+              if (!isShellId(backend)) throw new Error(`unknown shell backend ${backend}`);
+              owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend);
+              send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid, shell: owned.backend});
             } catch (error) {
               send({type: 'error', code: 'spawn', message: error instanceof Error ? error.message : String(error)});
             }
@@ -188,12 +218,17 @@ export class SessionService {
             if (session.controller) { send({type: 'error', code: 'attached', message: 'session is attached to another frontend'}); break; }
             owned = session;
             this.bind(session, send);
+            // Opening a session is focusing it: its notice is no longer news in any window.
+            session.notices.clear();
+            this.endedNotices.dismiss(session.record.id);
             const info = this.info(session);
             const {backlog} = session;
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
               ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
-              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq});
+              ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq,
+              ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge}), shell: session.backend,
+              ...(session.shell.isReady ? {} : {startup: session.shell.startupTail() ?? ''})});
             // Everything the journal does not have yet, then the live stream continues.
             const missed = backlog.events();
             for (const event of missed) send(toMessage(event));
@@ -210,11 +245,45 @@ export class SessionService {
             }
             break;
           case 'list':
-            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session))});
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session)), ended: this.endedNotices.list(Date.now())});
             break;
-          case 'input': owned?.evidence.onInput(); owned?.shell.write(message.data); break;
+          case 'dismiss':
+            this.sessions.get(message.sessionId)?.notices.clear();
+            this.endedNotices.dismiss(message.sessionId);
+            send({type: 'dismissed', sessionId: message.sessionId});
+            break;
+          case 'input':
+            owned?.evidence.onInput();
+            owned?.notices.clear();
+            if (owned) {
+              const rejected = (data: string, submission: boolean) => send({type: 'input-rejected', data, submission: submission ? 1 : 0});
+              owned.shell.once('inputRejected', rejected);
+              owned.shell.write(message.data, message.submission === 1);
+              owned.shell.off('inputRejected', rejected);
+            }
+            break;
+          case 'switch-shell': {
+            if (!owned) { send({type: 'error', code: 'state', message: 'no session to switch'}); break; }
+            const refusal = this.switchRefusal(owned, message.shell);
+            if (refusal) { send({type: 'error', code: refusal.code, message: refusal.message}); break; }
+            try {
+              this.switchShell(owned, message.shell as ShellId, message.cwd);
+              send({type: 'shell-switched', shell: owned.backend, pid: owned.record.pid});
+            } catch (error) {
+              send({type: 'error', code: 'switch-failed', message: error instanceof Error ? error.message : String(error)});
+            }
+            break;
+          }
+          case 'rename': {
+            const target = this.sessions.get(message.sessionId);
+            if (!target) { send({type: 'error', code: 'unknown', message: 'no live session with that id'}); break; }
+            const name = message.name.replace(/[\u0000-\u001f\u007f]/gu, '').trim().slice(0, 40);
+            if (name) target.record.name = name; else delete target.record.name;
+            send({type: 'sessions', sessions: [...this.sessions.values()].map(session => this.info(session)), ended: this.endedNotices.list(Date.now())});
+            break;
+          }
           case 'resize':
-            if (owned) { owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
+            if (owned) { owned.size = {columns: message.columns, rows: message.rows}; owned.resizes += 1; this.resize(owned, message.columns, message.rows, send); }
             break;
           case 'ack': owned?.backlog.ack(message.seq, message.journalId); break;
           case 'kill': {
@@ -278,18 +347,26 @@ export class SessionService {
     }
   }
 
-  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send): ManagedSession {
+  private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send, backend: ShellId = 'zsh'): ManagedSession {
     // The shell gets the launching frontend's environment and cwd, never the
     // service's own startup state. The env is opaque: it is not stored or logged.
-    const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'});
-    const record: SessionRecord = {id: randomUUID(), pid: shell.pid, cwd, createdAt: new Date().toISOString(),
-      state: 'attached', protocolVersion: PROTOCOL_VERSION};
-    const session: ManagedSession = {record, shell, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
+    const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'}, backend);
+    const id = randomUUID();
+    // A familiar signature unique among live sessions, assigned once; reattaching never changes it.
+    const signature = assignSignature(id, [...this.sessions.values()].flatMap(item => item.record.signature ? [item.record.signature] : []));
+    const record: SessionRecord = {id, pid: shell.pid, cwd, createdAt: new Date().toISOString(),
+      state: 'attached', protocolVersion: PROTOCOL_VERSION, signature};
+    const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
-      evidence: new SessionEvidence()};
+      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id)};
     this.sessions.set(record.id, session);
-    // Every event is retained until a frontend journal acknowledges it, and
-    // sent live when a frontend is attached.
+    this.wire(session);
+    return session;
+  }
+
+  /** Connect a session's current shell to its stream. Every event is retained until a frontend journal acknowledges it. */
+  private wire(session: ManagedSession): void {
+    const {record, shell} = session;
     const emit = (event: BacklogEvent, live: ServerMessage = toMessage(event)) => {
       session.backlog.append(event);
       session.controller?.(live);
@@ -302,22 +379,29 @@ export class SessionService {
       if (kept) emit({kind: 'output', seq: ++session.seq, at, data: kept}, {type: 'output', data, seq: session.seq, at});
       else session.controller?.({type: 'output', data});
     });
-    shell.on('exec', command => {
+    shell.on('startup', output => session.controller?.({type: 'startup', output}));
+    shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
       session.running = {command, since: at};
       session.evidence.onExec();
-      emit({kind: 'exec', seq: ++session.seq, at, command});
+      session.notices.onExec(command, at);
+      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
     });
     shell.on('prompt', marker => {
+      session.knowledge = marker.knowledge;
       record.cwd = marker.cwd;
       session.running = undefined;
       session.idleSince = Date.now();
       session.evidence.onPrompt(marker.exitCode);
+      session.notices.onPrompt(marker.exitCode, Date.now(), marker.cwd);
       session.screen.reset();
-      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd});
+      emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd,
+        ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge})});
     });
     shell.on('exit', event => {
       this.sessions.delete(record.id);
+      // Ending with no window attached is news; with one attached, that window saw it.
+      if (!session.controller) this.endedNotices.add(session.notices.ended(event.exitCode, Date.now(), record.cwd));
       // Detached: keep what the journal lacks on disk for archiving. Attached:
       // the frontend journal is authoritative and the backlog goes.
       if (session.controller) session.backlog.dispose();
@@ -326,7 +410,45 @@ export class SessionService {
       session.controller = undefined;
       this.maybeShutdown();
     });
-    return session;
+  }
+
+  /**
+   * Why a backend switch must not happen now, if anything would be lost: a
+   * running command or full-screen program, a shell still starting, or
+   * background/stopped jobs (ending the old shell would end them too).
+   */
+  private switchRefusal(session: ManagedSession, target: string): {code: string; message: string} | undefined {
+    if (!isShellId(target)) return {code: 'unknown-shell', message: `${target} is not a supported shell backend (zsh, fish, bash).`};
+    if (target === session.backend) return {code: 'same-shell', message: `This session already runs ${shellAdapter(target).label}.`};
+    const available = shellAdapter(target).unavailableReason(session.env);
+    if (available) return {code: 'unavailable', message: available};
+    if (!session.shell.isReady) return {code: 'busy', message: 'The current shell is still starting; switch once it is ready.'};
+    if (session.running) return {code: 'busy', message: `"${session.running.command.slice(0, 60)}" is still running; switching would end it. Finish or interrupt it first.`};
+    if (session.screen.ownsTerminal) return {code: 'busy', message: 'A full-screen program owns the terminal; switching would end it.'};
+    const jobs = knowledgeJobCount(session.knowledge);
+    if (jobs) return {code: 'jobs', message: `${jobs} background or stopped job${jobs === 1 ? '' : 's'} would end with the current shell. Finish them first (jobs, fg, kill %N).`};
+    return undefined;
+  }
+
+  /**
+   * Replace the shell process under the same session identity. The old
+   * shell's listeners are removed before it is ended, so its exit never ends
+   * the session; the new one starts in cwd with the original environment.
+   */
+  private switchShell(session: ManagedSession, target: ShellId, cwd: string): void {
+    const next = new ShellSession(cwd, session.size.columns, session.size.rows, session.env.HOME || '', {...session.env, [SESSION_MODE_ENV]: 'service'}, target);
+    const previous = session.shell;
+    previous.removeAllListeners();
+    previous.kill();
+    session.shell = next;
+    session.backend = target;
+    session.record.pid = next.pid;
+    session.record.cwd = cwd;
+    session.knowledge = undefined;
+    session.running = undefined;
+    session.idleSince = Date.now();
+    session.screen.reset();
+    this.wire(session);
   }
 
   private maybeShutdown(): void {

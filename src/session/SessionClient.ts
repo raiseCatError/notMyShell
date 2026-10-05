@@ -1,9 +1,13 @@
 import type {EventEmitter} from 'node:events';
 import type {ShellMarker} from '../shell/ShellProtocol.js';
 import type {TranscriptSession} from '../sessions/TranscriptStore.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import type {ServiceFeature} from './SessionProtocol.js';
 
 /** Position of an event in a service session's stream, when it has one. */
 export interface StreamStamp {
+  /** Explicit zsh history eligibility; absent from older services. */
+  historyAllowed?: number;
   seq?: number;
   /** When the service observed the event (epoch ms). */
   at?: number;
@@ -16,6 +20,10 @@ export interface SessionClientEvents {
   prompt: [ShellMarker, StreamStamp];
   /** zsh is about to run a command line (preexec). */
   exec: [string, StreamStamp];
+  /** Bounded, sanitized startup output while the shell has not yet reached its first prompt. */
+  startup: [string];
+  /** Input was not queued or written; the caller can restore it. */
+  inputRejected: [data: string, submission: boolean];
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
@@ -46,6 +54,16 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
   detach(): void;
   /** Stream events up to seq are durable in journalId; the service may drop them. */
   ack(seq: number, journalId: string): void;
+  /**
+   * Replace the shell backend of this same session, started in cwd. Resolves
+   * once the new shell is spawned (its readiness arrives as a normal prompt
+   * event); rejects with a factual reason when switching would lose anything.
+   */
+  switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}>;
+  /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
+  readonly features: ReadonlySet<ServiceFeature>;
+  /** Build of the session service, when it reported one. */
+  readonly serviceBuild?: string;
 }
 
 /** State of a live session this frontend attached to rather than created. */
@@ -62,12 +80,20 @@ export interface AttachedSession {
   /** Journal the previous frontend kept for this session, and how far it got. */
   journalId?: string;
   ackedSeq: number;
+  /** Latest bounded name snapshot, independent of journal acknowledgements. */
+  knowledge?: string;
+  /** Set only while the shell has not reached its first prompt: its startup output so far. */
+  startup?: string;
+  /** Backend of the session; absent from older services (zsh). */
+  shell?: string;
 }
 
 export interface SessionOptions {
   cwd: string;
   columns: number;
   rows: number;
+  /** Shell backend for a new session; zsh when absent. */
+  shell?: ShellId;
 }
 
 /** Exported into the managed shell so users can see which mode owns it. */
@@ -83,4 +109,6 @@ export interface SessionConnection {
   journal?: TranscriptSession;
   /** Set when the service was unavailable and the shell runs in-process. */
   notice?: string;
+  /** Backend actually running (an older service may only run zsh). */
+  shell?: ShellId;
 }

@@ -3,7 +3,7 @@
 If you need help with NMSh, please follow the guidelines below to ensure your request reaches the right place.
 
 ## Bug Reports
-If you have encountered a bug, panic, or reproducible crash, please open a **[Bug Report](../../issues/new?template=bug_report.yml)** via GitHub Issues. Make sure to fill out the requested template so we can reliably reproduce the problem.
+If you have encountered a bug, panic, or reproducible crash, please open a **[Bug Report](../../issues/new?template=bug_report.yml)** via GitHub Issues. Make sure to fill out the requested template so we can reliably reproduce the problem. Including the output of `nmsh doctor` (or `/doctor`) helps; it contains no history, prompts or secrets.
 
 ## Feature Requests
 If you have an idea for a new feature or improvement, please open a **[Feature Request](../../issues/new?template=feature_request.yml)** via GitHub Issues.

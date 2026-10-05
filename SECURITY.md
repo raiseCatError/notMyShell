@@ -4,7 +4,7 @@ Security is critical for NMSh, as it executes and presents shell commands and ha
 
 ## Supported Versions
 
-Formal stable version releases do not exist yet. Security fixes currently target the latest `master` branch (and the latest published release when releases begin).
+Security fixes target the latest stable release (currently v0.16.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
 
 ## Scope
 
@@ -17,6 +17,18 @@ Examples of in-scope security vulnerabilities include:
 - Arbitrary file access
 - Privilege or security boundary mistakes
 - Unsafe configuration writes
+- A path where NMSh executes content it should only read (theme imports, dotfiles repositories, tool configs)
+- NMSh stopping, replacing or deleting something it cannot prove it created
+
+## Boundaries NMSh is designed to keep
+
+Reports that break any of these are in scope:
+
+- **Shell configuration is executable.** NMSh never sources, merges or silently edits rc files or framework code; the few edits it offers (an include line, restoring a backed-up `.zshrc`) are exact diffs applied only after confirmation.
+- **Imports are data.** Theme imports use bounded data parsers (no includes, templates, Lua, entities or network). `/dotfiles` never runs repository content, clones only after confirmation (no submodules, hooks disabled), and fails closed when a copy cannot be verified exactly.
+- **Ownership.** Generated files are tracked in an ownership ledger and replaced or removed only while their content still matches; Keep Awake signals only a process whose token and exact command line match its record.
+- **Installers.** Tool installs are typed package-manager argv shown before confirmation; nothing elevates silently. Special installers (Oh My Zsh) are never run by NMSh.
+- **External prompt providers** (Starship, Oh My Posh, Powerlevel10k) run as bounded, non-interactive helpers with argv only; their output is treated as untrusted display text.
 
 ## Reporting a Vulnerability
 

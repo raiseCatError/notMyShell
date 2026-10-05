@@ -1,16 +1,17 @@
+import {THEME_FAMILIES} from '../appearance/themeFamilies.js';
+import {familyOf, defaultVariant, variantOptions} from '../appearance/themeSelection.js';
 import {
-  NATIVE_PALETTE_IDS,
   SYNTAX_COLOR_MODES,
   type NativePaletteId,
   type SyntaxAppearance,
   type SyntaxColorMode,
 } from '../prompt/configuration.js';
-import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, themeContext} from '../prompt/prompt.js';
 import type {CommandType} from '../shell/SemanticService.js';
 import type {Key} from '../terminal/keys.js';
 import {DRAFT_PANEL_ACTIONS, renderActionHelp} from '../ui/actions.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {graphemes} from './inputLayout.js';
 import {Highlighter} from './Highlighter.js';
@@ -24,12 +25,12 @@ export interface SyntaxPanelState {
   message?: string;
 }
 
-type Row = 'highlighting' | 'colors' | 'theme';
+type Row = 'highlighting' | 'colors' | 'family' | 'theme';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const ACCENT = foreground(UI_COLORS.accent);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const RESET = '\u001B[0m';
 
 /** Short rows that together exercise every token type. */
@@ -56,7 +57,7 @@ export function colorModeLabel(mode: SyntaxColorMode): string {
 /** Colors only matter while highlighting is on; Theme only in Choose theme. */
 function rows(draft: SyntaxAppearance): Row[] {
   if (!draft.highlighting) return ['highlighting'];
-  return ['highlighting', 'colors', ...(draft.colors === 'theme' ? ['theme' as const] : [])];
+  return ['highlighting', 'colors', ...(draft.colors === 'theme' ? ['family' as const, ...(variantOptions(familyOf(draft.theme)).length > 1 ? ['theme' as const] : [])] : [])];
 }
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
@@ -78,7 +79,12 @@ export function handleSyntaxPanelKey(key: Key, state: SyntaxPanelState): boolean
     switch (available[state.selectedIndex]) {
       case 'highlighting': draft.highlighting = !draft.highlighting; break;
       case 'colors': draft.colors = cycle(SYNTAX_COLOR_MODES, draft.colors, delta); break;
-      case 'theme': draft.theme = cycle(NATIVE_PALETTE_IDS, draft.theme, delta); break;
+      case 'family': {
+        const families = THEME_FAMILIES.filter(family => family.id !== 'custom' || themeContext().custom).map(family => family.id);
+        draft.theme = defaultVariant(cycle(families, familyOf(draft.theme), delta));
+        break;
+      }
+      case 'theme': draft.theme = cycle(variantOptions(familyOf(draft.theme)).map(option => option.id), draft.theme, delta); break;
       default: return false;
     }
     state.selectedIndex = Math.min(state.selectedIndex, rows(draft).length - 1);
@@ -103,31 +109,32 @@ export function renderSyntaxPanel(state: SyntaxPanelState, columns: number, prom
   const labels: Record<Row, string> = {
     highlighting: `Highlighting   ${value(onOff(draft.highlighting), onOff(saved.highlighting))}`,
     colors: `Colors         ${value(colorModeLabel(draft.colors), colorModeLabel(saved.colors))}`,
-    theme: `Theme          ${value(NATIVE_PROMPT_THEMES[draft.theme].label, NATIVE_PROMPT_THEMES[saved.theme].label)}`,
+    family: `Family         ${value(THEME_FAMILIES.find(family => family.id === familyOf(draft.theme))!.label, THEME_FAMILIES.find(family => family.id === familyOf(saved.theme))!.label)}`,
+    theme: `Variant          ${value(NATIVE_PROMPT_THEMES[draft.theme].label, NATIVE_PROMPT_THEMES[saved.theme].label)}`,
   };
   rows(draft).forEach((row, index) => {
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${selected ? ACCENT : SECONDARY}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}›` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
   if (draft.highlighting && draft.colors === 'followPrompt') {
-    out.push(`  ${SUBTLE}Following ${NATIVE_PROMPT_THEMES[promptPalette].label} (the Native palette, even with Starship or Powerlevel10k)${RESET}`);
+    out.push(`  ${SUBTLE}Following ${NATIVE_PROMPT_THEMES[promptPalette].label} (the saved NMSh theme, including with external prompts)${RESET}`);
   }
 
   const gallery: string[] = [];
   if (draft.highlighting && draft.colors === 'theme') {
     gallery.push('', `${PRIMARY}Syntax themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
-    for (const id of NATIVE_PALETTE_IDS) {
+    for (const {id} of variantOptions(familyOf(draft.theme))) {
       const marker = draft.theme === id ? `${ACCENT}●` : `${SUBTLE}○`;
       const savedMark = saved.highlighting && saved.colors === 'theme' && saved.theme === id ? '✓' : ' ';
       const sample = renderSyntaxPreviewLine(SYNTAX_PREVIEW_LINES[1], {...draft, theme: id}, promptPalette);
-      gallery.push(`${marker} ${SECONDARY}${NATIVE_PROMPT_THEMES[id].label.padEnd(17)}${ACCENT}${savedMark}${RESET} ${sample}`);
+      gallery.push(`${marker} ${SECONDARY}${NATIVE_PROMPT_THEMES[id].label.padEnd(23)}${ACCENT}${savedMark}${RESET} ${sample}`);
     }
   }
 
   const preview = ['', `${PRIMARY}Preview${RESET}  ${syntaxDraftChanged(state) ? `${ACCENT}unsaved preview` : `${SUBTLE}matches current`}${RESET}`,
     ...SYNTAX_PREVIEW_LINES.map(line => `  ${ACCENT}${GLYPHS.prompt}${RESET} ${renderSyntaxPreviewLine(line, draft, promptPalette)}`)];
   if (state.message) preview.push(`${SECONDARY}${state.message}${RESET}`);
-  const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
+  const controls = ['', `  ${SUBTLE}Theme families are shared with /theme. Syntax colors affect NMSh input and submitted commands only.${RESET}`, renderActionHelp(DRAFT_PANEL_ACTIONS)];
 
   const includeGallery = out.length + gallery.length + preview.length + controls.length <= rowsAvailable;
   return [...out, ...(includeGallery ? gallery : []), ...preview, ...controls].map(row => truncateAnsi(row, columns));

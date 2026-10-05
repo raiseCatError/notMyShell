@@ -1,13 +1,18 @@
+import {presentationClock} from '../motion/PresentationClock.js';
+import {isReducedMotion} from '../presentation/environment.js';
 import {spawn, type ChildProcessByStdio} from 'node:child_process';
 import {environmentFor, resolveCommand, STANDARD_TOOL_DIRECTORIES} from '../providers/providers.js';
 import type {Readable} from 'node:stream';
 import {formatDuration} from './commandTiming.js';
-import {shimmerText} from './shimmer.js';
+import {interpolateRgb, shimmerIntensity, shimmerText} from './shimmer.js';
+import {colorLevel} from '../presentation/capabilities.js';
+import {presentationAnimationElapsed} from '../presentation/environment.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 
 export type TaskStatus = 'running' | 'succeeded' | 'failed';
 export interface TaskSnapshot {
+  reducedMotion?: boolean;
   label: string;
   resultLabel?: string;
   status: TaskStatus;
@@ -25,13 +30,23 @@ const RESET = '\u001B[0m';
 /** A factual, bounded UI state and child-process runner for NMSh-owned tasks. */
 export class TaskProgress {
   readonly state: TaskSnapshot;
-  private timer?: NodeJS.Timeout;
+  private timer?: () => void;
   private timeout?: NodeJS.Timeout;
   private child?: ChildProcessByStdio<null, Readable, Readable>;
   private settled = false;
+  private cancel?: () => void;
 
   constructor(label: string, private readonly onChange: () => void, now = Date.now(), resultLabel?: string) {
     this.state = {label, ...(resultLabel ? {resultLabel} : {}), status: 'running', startedAt: now, details: ''};
+  }
+
+  setReducedMotion(reduced: boolean): void {
+    if (this.state.reducedMotion === reduced) return;
+    this.state.reducedMotion = reduced;
+    if (this.timer) {
+      this.timer();
+      this.timer = presentationClock.subscribe(this.onChange, reduced || isReducedMotion() ? 1000 : 100);
+    }
   }
 
   /** Call only with an actual measured total. Package-manager installs use indeterminate mode. */
@@ -60,10 +75,11 @@ export class TaskProgress {
       const finish = (error?: string) => {
         if (this.settled) return;
         this.settled = true;
+        this.cancel = undefined;
         this.state.status = error ? 'failed' : 'succeeded';
         this.state.error = error;
         this.state.endedAt = Date.now();
-        if (this.timer) clearInterval(this.timer);
+        this.timer?.();
         if (this.timeout) clearTimeout(this.timeout);
         this.timer = undefined;
         this.timeout = undefined;
@@ -80,17 +96,21 @@ export class TaskProgress {
           return;
         }
         // argv only, never a shell string; the tool's directory joins PATH for its own subprocesses.
-        const child = spawn(binary, args, {stdio: ['ignore', 'pipe', 'pipe'], env: environmentFor(binary)});
+        const child = spawn(binary, args, {stdio: ['ignore', 'pipe', 'pipe'], detached: true, env: environmentFor(binary)});
         this.child = child;
+        const cancel = (reason: string) => {
+          if (child.pid) { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already exited. */ } }
+          finish(reason);
+        };
+        this.cancel = () => cancel('Cancelled');
         child.stdout.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));
         child.stderr.on('data', (chunk: Buffer) => this.appendDetails(chunk.toString('utf8')));
         child.once('error', error => finish(error.message));
-        child.once('exit', (code, signal) => finish(code === 0 ? undefined : `Exit ${code ?? signal ?? 'unknown'}`));
-        this.timer = setInterval(this.onChange, 100);
+        child.once('close', (code, signal) => finish(code === 0 ? undefined : `Exit ${code ?? signal ?? 'unknown'}`));
+        this.timer = presentationClock.subscribe(this.onChange, this.state.reducedMotion || isReducedMotion() ? 1000 : 100);
         this.timeout = setTimeout(() => {
           this.appendDetails('\nTimed out.\n');
-          child.kill('SIGTERM');
-          finish('Timed out');
+          cancel('Timed out');
         }, timeoutMs);
         this.onChange();
       } catch (error) {
@@ -100,11 +120,11 @@ export class TaskProgress {
   }
 
   dispose(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.timer?.();
     if (this.timeout) clearTimeout(this.timeout);
     this.timer = undefined;
     this.timeout = undefined;
-    this.child?.kill('SIGTERM');
+    this.cancel?.();
   }
 }
 
@@ -121,15 +141,46 @@ export function taskProgressBar(state: TaskSnapshot, now = Date.now(), width = 2
     const count = Math.round(width * state.completed / state.total);
     return fill.repeat(count) + track.repeat(Math.max(0, width - count));
   }
-  const position = Math.floor((now - state.startedAt) / 100) % width;
+  const position = Math.floor((state.reducedMotion ? 0 : presentationAnimationElapsed(now - state.startedAt)) / 100) % width;
   return track.repeat(position) + head + track.repeat(width - position - 1);
+}
+
+/**
+ * The bar as a living row, from the same travelling-wave primitive as the label
+ * shimmer. Presentation only: a determinate bar keeps its factual fill and the
+ * wave moves inside the filled cells (unfilled cells never light up); an
+ * indeterminate bar has a travelling segment and never invents a percentage.
+ * Colors are the theme's working/secondary roles, so imported themes work. With
+ * Reduced Motion, no color or a finished task the plain static bar is used.
+ */
+export function animatedProgressBar(state: TaskSnapshot, now = Date.now(), width = 24): string {
+  const plain = taskProgressBar(state, now, width);
+  if (state.status !== 'running' || state.reducedMotion || isReducedMotion() || colorLevel() === 'none') return `${foreground(UI_COLORS.secondary)}${plain}${RESET}`;
+  const elapsed = presentationAnimationElapsed(now - state.startedAt);
+  const safe = getCurrentGlyphMode() === 'safe';
+  const track = foreground(UI_COLORS.secondary);
+  const tone = (level: number) => foreground(interpolateRgb(UI_COLORS.workingBase, UI_COLORS.workingPeak, level));
+  const cells = [...plain];
+  if (state.total && state.completed !== undefined) {
+    const count = Math.round(width * state.completed / state.total);
+    return cells.map((glyph, index) => (index < count
+      ? `${tone(shimmerIntensity(elapsed, index, width, false))}${glyph}` : `${track}${glyph}`)).join('') + RESET;
+  }
+  // Indeterminate: a soft segment sweeping left to right and looping smoothly.
+  const trail = safe ? ['#', '+', '-'] : ['█', '▓', '▒'];
+  const head = (elapsed / 90) % (width + 8) - 4;
+  const trackGlyph = safe ? '-' : '─';
+  return Array.from({length: width}, (_, index) => {
+    const distance = Math.abs(index - head);
+    return distance < trail.length ? `${tone(1 - distance / trail.length)}${trail[Math.floor(distance)]}` : `${track}${trackGlyph}`;
+  }).join('') + RESET;
 }
 
 export function renderTaskProgress(state: TaskSnapshot, now = Date.now()): string[] {
   const duration = taskElapsed(state, now);
   if (state.status === 'running') {
-    return [`${shimmerText(`${getCurrentGlyphMode() === 'safe' ? '*' : '◈'} ${state.label}…`, now - state.startedAt, true)}${RESET}  ${duration}`,
-      `${foreground(UI_COLORS.secondary)}  ${taskProgressBar(state, now)}${RESET}`];
+    return [`${shimmerText(`${getCurrentGlyphMode() === 'safe' ? '*' : '◈'} ${state.label}…`, state.reducedMotion ? 0 : presentationAnimationElapsed(now - state.startedAt), !state.reducedMotion && !isReducedMotion())}${RESET}  ${duration}`,
+      `  ${animatedProgressBar(state, now)}`];
   }
   const success = state.status === 'succeeded';
   const icon = success ? GLYPHS.success : GLYPHS.failure;

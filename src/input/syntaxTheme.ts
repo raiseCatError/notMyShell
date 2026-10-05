@@ -4,7 +4,7 @@ import {
   type PromptConfiguration,
   type SyntaxAppearance,
 } from '../prompt/configuration.js';
-import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, themeContext} from '../prompt/prompt.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 import type {Token, TokenType} from './Highlighter.js';
 
@@ -147,7 +147,9 @@ const sgrCache = new Map<string, SyntaxSgr>();
 
 /** Cached per setting combination, so rendering never recomputes colors per keystroke. */
 export function syntaxSgr(syntax: SyntaxAppearance, promptPalette: NativePaletteId): SyntaxSgr {
-  const key = `${syntax.highlighting}:${syntax.colors}:${syntax.theme}:${promptPalette}`;
+  // Styles read the live chrome (text tiers, accent, status), so a chrome change must not reuse stale escapes.
+  const context = themeContext();
+  const key = `${syntax.highlighting}:${syntax.colors}:${syntax.theme}:${promptPalette}:${context.accent}:${JSON.stringify(context.custom?.prompt)}:${JSON.stringify(UI_COLORS)}`;
   let cached = sgrCache.get(key);
   if (!cached) {
     const styles = resolveSyntaxStyles(syntax, promptPalette);

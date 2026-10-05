@@ -57,6 +57,22 @@ test('past the spool limit output is dropped with a count; command boundaries ar
   rmSync(dir, {recursive: true, force: true});
 });
 
+test('prompt metadata (a large alias/function list) never consumes the output budget', () => {
+  const dir = scratch();
+  const backlog = new StreamBacklog(join(dir, 's.jsonl'), {memoryBytes: 10, spoolBytes: 200});
+  // Ubuntu's global compinit puts hundreds of autoload names in each prompt's knowledge.
+  const knowledge = 'function _x\n'.repeat(1000);
+  backlog.append({kind: 'prompt', seq: 1, at: 1, exitCode: 0, cwd: '/w', knowledge});
+  backlog.append({kind: 'exec', seq: 2, at: 2, command: 'seq 1 50'});
+  backlog.append(output(3, 'o'.repeat(200)));
+  backlog.append({kind: 'prompt', seq: 4, at: 4, exitCode: 0, cwd: '/w', knowledge});
+  assert.equal(backlog.truncatedBytes, 0, 'output within the limit is complete');
+  assert.deepEqual(backlog.events().map(event => event.kind), ['prompt', 'exec', 'output', 'prompt']);
+  backlog.append(output(5, 'z'.repeat(20)));
+  assert.equal(backlog.truncatedBytes, 20, 'the output cap still holds');
+  rmSync(dir, {recursive: true, force: true});
+});
+
 test('a spool torn by a crash mid-write reads back as its complete records', () => {
   const dir = scratch();
   const path = join(dir, 's.jsonl');

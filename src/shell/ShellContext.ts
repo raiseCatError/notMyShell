@@ -1,13 +1,16 @@
-import {execFile} from 'node:child_process';
+import type {ContextFacts} from '../context/facts.js';
+import {runContextGit} from '../context/trustedServices.js';
 import {access, readdir} from 'node:fs/promises';
 import {basename, normalize} from 'node:path';
 import {homedir} from 'node:os';
-import {promisify} from 'node:util';
+import type {LocalDiscoverySnapshot} from '../tools/localDiscovery.js';
 
-const execFileAsync = promisify(execFile);
 
 export interface PromptContext {
   cwd: string;
+  home?: string;
+  /** Policy-bearing resolved facts override legacy fields without collecting on render. */
+  facts?: ContextFacts;
   project: string;
   /** Repository top level when cwd is inside one; the path display keeps its name whole. */
   root?: string;
@@ -18,11 +21,15 @@ export interface PromptContext {
   exitStatus?: number;
   /** Toolchains detected from marker files in cwd or the repository root. */
   toolchains?: ToolchainId[];
+  /** Shared cached executable/plugin facts; consumers never rescan PATH. */
+  discovery?: LocalDiscoverySnapshot;
   /** Command words of the editor buffer, for show-on-command modules; never executed. */
   commandWords?: readonly string[];
   /** Show-on-command lookups, present once resolved. */
   kubeContext?: string;
   dockerContext?: string;
+  /** The backend under this session (never $SHELL), and whether it differs from the default for new sessions. */
+  shell?: {current: string; differs: boolean};
 }
 
 export interface GitStatus {
@@ -64,16 +71,7 @@ export interface GitProbe {
   run(cwd: string, args: string[]): Promise<string>;
 }
 
-const systemGitProbe: GitProbe = {
-  async run(cwd, args) {
-    const {stdout} = await execFileAsync('git', ['-C', cwd, ...args], {
-      encoding: 'utf8',
-      timeout: 2000,
-      maxBuffer: 1024 * 1024,
-    });
-    return stdout.trim();
-  },
-};
+const systemGitProbe: GitProbe = {run: runContextGit};
 
 const CONFLICT_CODES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 
@@ -110,11 +108,13 @@ export async function resolvePromptContext(
   probe: GitProbe = systemGitProbe,
   home = homedir(),
   /** Rich Git Off skips the status probe; branch detection still runs. */
-  options: {status?: boolean} = {},
+  options: {status?: boolean; path?: string; discovery?: LocalDiscoverySnapshot} = {},
 ): Promise<PromptContext> {
+  const discovery = options.discovery;
   const normalizedCwd = normalize(cwd);
   const normalizedHome = normalize(home);
-  if (normalizedCwd === normalizedHome) return {cwd, project: '~'};
+  const discovered = discovery ? {discovery} : {};
+  if (normalizedCwd === normalizedHome) return {cwd, project: '~', ...discovered};
 
   try {
     const root = await probe.run(cwd, ['rev-parse', '--show-toplevel']);
@@ -132,9 +132,9 @@ export async function resolvePromptContext(
     } catch {
       // A large or unavailable repository must not hold the prompt hostage.
     }
-    return withToolchains({cwd, project: basename(root) || basename(cwd), ...(root ? {root} : {}), branch: branch || undefined, ...(git ? {git} : {})},
+    return withToolchains({cwd, project: basename(root) || basename(cwd), ...(root ? {root} : {}), branch: branch || undefined, ...(git ? {git} : {}), ...discovered},
       await detectToolchains([cwd, root]));
   } catch {
-    return withToolchains({cwd, project: basename(cwd) || cwd}, await detectToolchains([cwd]));
+    return withToolchains({cwd, project: basename(cwd) || cwd, ...discovered}, await detectToolchains([cwd]));
   }
 }

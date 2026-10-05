@@ -1,3 +1,4 @@
+import {providerInstall} from '../src/providers/providers.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chmod, mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
@@ -66,11 +67,9 @@ test('TaskProgress spawns the resolved binary with argv and reports a factual mi
 test('Fastfetch, Deja and Starship all install through the same brew command; Neofetch has no recipe', async () => {
   const fastfetch = WELCOME_PROVIDERS.find(provider => provider.id === 'fastfetch')!;
   const deja = SUGGESTION_PROVIDERS.find(provider => provider.id === 'deja')!;
-  if (process.platform === 'darwin') {
-    assert.equal(fastfetch.install?.command, 'brew');
-    assert.equal(deja.install?.command, 'brew');
-  }
-  assert.equal(WELCOME_PROVIDERS.find(provider => provider.id === 'neofetch')!.install, undefined);
+  assert.equal(providerInstall(fastfetch, 'darwin', true)?.command, 'brew');
+  assert.equal(providerInstall(deja, 'darwin', true)?.command, 'brew');
+  assert.equal(providerInstall(WELCOME_PROVIDERS.find(provider => provider.id === 'neofetch')!, 'darwin', true), undefined);
   const source = await readFile(new URL('../src/app/TerminalApp.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /existsSync\(join\(directory, 'brew'\)\)/u, 'Starship no longer has its own PATH-only brew check');
   assert.match(source, /resolveCommand\('brew'\)/u);

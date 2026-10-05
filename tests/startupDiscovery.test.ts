@@ -102,6 +102,8 @@ test('Always and Never from the prompt persist; Never ends nothing and /resume s
     assert.doesNotMatch(strip(later.output), /detached live session/, 'Never: no prompt, no picker');
     assert.ok(![aPid].includes(await shellPid(later)));
     await detachedCount(sandbox, 2);
+    // PID output arrives before the prompt; wait for completion before a frontend command.
+    await until(async () => (await sandbox.sessions()).filter(session => session.state === 'attached').every(session => !session.running), 15000, 'attached shell idle');
     const mark = later.mark;
     later.pty.write('/resume\r');
     await later.waitFor(/LIVE[\s\S]*detached/, mark);
@@ -214,7 +216,7 @@ test('/resume shows LIVE and ARCHIVED; Kill Session confirms and archives; LIVE 
     const hub = await started(sandbox, ['--new']);
     let mark = hub.mark;
     hub.pty.write('/resume\r');
-    await hub.waitFor(/LIVE[\s\S]*running sleep 600[\s\S]*ARCHIVED/, mark);
+    await hub.waitFor(/LIVE[\s\S]*sleep 600[\s\S]*ARCHIVED/, mark);
 
     // Select the /tmp session (sessions are listed in service order) and kill it.
     const live = (await sandbox.sessions()).filter(session => session.state === 'detached');

@@ -17,10 +17,11 @@ npm run build
 
 Before starting work, check:
 
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the pieces fit together; start here before changing a subsystem
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.7.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0)** — current stable release
-- **[#132 Flow / Classic composer](https://github.com/raiseCatError/notMyShell/issues/132)** — next planned direction (see [ROADMAP.md](ROADMAP.md))
+- **[v0.16.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0)** — current stable release
+- **[PR #315](https://github.com/raiseCatError/notMyShell/pull/315)** — current development after v0.16.0 (unreleased; see [ROADMAP.md](ROADMAP.md))
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model
@@ -38,13 +39,24 @@ Then submit a Pull Request from `feature/example` to `dev`.
 
 ## Canonical verification
 
-Before submitting a pull request, ensure that your changes pass the canonical verification suite:
+During implementation, run focused affected tests. Use `npm run verify:fast` for
+ordinary iteration (build, an explicit core test subset, and diff checks); it is
+not the final gate. Before pushing a meaningful checkpoint, run `npm run verify`
+(build, the full canonical suite, and diff checks). Build already checks the
+source TypeScript; `npm run typecheck` remains available for direct use.
+
+For release-sensitive changes run `npm run verify:release`, which adds benchmark
+script typechecking and bounded timing smoke. These commands reuse local
+node_modules; use `npm ci` for clean CI/release environments. Batch coherent
+changes and avoid pushing tiny or known-broken edits to use Actions as a test
+runner. GitHub CI provides independent platform verification, not a replacement
+for local checks. See [development verification](docs/development-verification.md)
+for sharding, platform gates and exact-release evidence requirements.
 
 ```bash
-npm run build
-npm run typecheck
-npm test
-git diff --check
+npm run verify:fast
+npm run verify
+npm run verify:release
 ```
 
 *Note: When writing tests involving `TerminalApp`, you must carefully tear down child processes and temp ZDOTDIRs using `app['stop'](0)` and `app['session'].kill()` to prevent zombie processes.*
@@ -82,3 +94,7 @@ When opening a Pull Request:
 - **Reproducibility**: Keep generated/demo assets reproducible using the scripts in `scripts/`.
 
 Commits do not need to follow an excessively strict convention (e.g. Conventional Commits), but clear, descriptive messages are preferred.
+
+## Visual docs and demos
+
+README and [docs/demos.md](docs/demos.md) media come from committed VHS tapes in [`scripts/demos/`](scripts/demos/README.md). If a change alters what a clip shows, re-record it with `npm run demos` (or `npm run demos -- <name>`) and commit the tape and the regenerated asset together. Recordings run against a disposable demo home and never read your own NMSh config, shell rc files or history.

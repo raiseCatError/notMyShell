@@ -4,12 +4,28 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.7.0 — UI Foundation & Customization](https://github.com/raiseCatError/notMyShell/releases/tag/v0.7.0) |
+| **Current release** | [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — released |
+| **Next development milestone** | [v0.17.0 — Compatibility & Discovery](https://github.com/raiseCatError/notMyShell/milestone/15) |
+| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305); foundation and Context Rail implemented on `feature/305-context-engine`, unreleased |
+| **In development (unreleased)** | [PR #315](https://github.com/raiseCatError/notMyShell/pull/315) — Theme Studio, Theme Bridge, tool configuration, shell frameworks, Keep Awake; see CHANGELOG → Unreleased |
+| **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
-| **Next direction** | Not yet defined; see the Backlog below and open issues |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
 
-GitHub issues define actionable remaining work. A merged implementation may still be open with `needs-human-test` while physical terminal checks are pending. Closed issues represent completed work, not a promise that future refinements are finished.
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished. The released package is 0.16.0; v0.17 is the next development milestone.
+
+## Current engineering focus — native modules and Context Engine
+
+The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model. This work is unreleased; the stable package remains v0.16.0 and the release sequence below remains the planned track.
+
+| State | Scope |
+|---|---|
+| Implemented on the feature branch | Typed fact metadata and privacy filtering; trusted bounded metadata/Git collection; the first-party module registry; Main Prompt / Right Context / Context Rail routing; Rail geometry, priority fitting and shared previews |
+| Preserved | Existing Native module order, visibility and left/right placement; real zsh/Bash/Fish sessions; prompt snapshots and fullscreen passthrough |
+| Upcoming | General capability scheduling and fuller fact migration; a bounded expansion of useful first-party modules; installable declarative Context Packs with validation and policy |
+| Deferred | Status Strip module routing and any executable extension tier; no finalized public pack API |
+
+Repository entry must never grant authority to execute arbitrary repository-controlled code. Discovery remains parser-only or uses curated core probes with explicit bounds and policy.
 
 ## Released — v0.2.0 Structured Execution
 
@@ -112,53 +128,60 @@ The final release candidate also included the passive-hover selection fix.
 | [#172](https://github.com/raiseCatError/notMyShell/issues/172) | Semantic motion engine; shimmer migrated onto it |
 | [#173](https://github.com/raiseCatError/notMyShell/issues/173) | Deterministic presentation mode |
 
-## Backlog — Research and Future Features
+## Released — v0.16.0 Sessions, Agents & Portability
 
-These remain open and are not scheduled for a release.
+The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumulative release. PR #303 is merged; final CI and the maintainer physical sanity pass passed. User-facing changes are in [CHANGELOG.md](CHANGELOG.md). Linux/WSL and other-host physical follow-ups remain in v0.17.
+
+| Area | Implemented scope |
+|---|---|
+| Command intelligence (formerly v0.8) | Structured completion menu with a bundled static catalog generated from withfig/autocomplete and carapace-bin plus the live shell source; structured `/history`; Atuin, zoxide, fzf and Television providers; command inspector; block actions; correction suggestions; completion notifications |
+| Tools & workflows (formerly v0.9) | `/tools` browser and curated catalog (#306/#307), supported Starship configuration, optional mise awareness, session presets, welcome providers, Linguist language colors, VHS tapes |
+| Hosts & compatibility (formerly v0.10) | TerminalHost capabilities, Terminal.app baseline, Ghostty integration, passive iTerm2/Kitty/WezTerm profiles, CLI/TUI fixtures, OSC 8 links |
+| Shell intelligence (formerly v0.11) | Configured-zsh completion bridge, alias/function metadata, syntax roles, ShellAdapter research (now implemented, below) |
+| Chroma & motion (formerly v0.12) | Composable Chroma treatments, bounded transient effects on a shared clock |
+| Portability (formerly v0.13) | Linux baseline and CI, hardening; WSL reporting; Windows research (native Windows is no-go) |
+| Sessions, agents, platform (v0.16) | Session notices (short-lived events), agent activity, `/resume` viewer, `nmsh config export/import`, `nmsh uninstall`, `nmsh doctor`, images, Linux/WSL, ShellAdapter with zsh, Fish and Bash, `/find` and `/filter`, editor bridge, `/watch`, `/doctor`, paste preview and review |
+| Ask & Local Understanding | Deterministic Ask, optional local model (Auto by default, never downloads without a Yes), `/llm` |
+| Appearance | `/appearance` hub; Clean and Rich motion rendering with per-rendering tuning; cursor effects with a capability matrix; Setup Cat as the complete customization entry point; grouped Config and Status |
+
+## Next development — v0.17 Compatibility & Discovery
+
+[Milestone #15](https://github.com/raiseCatError/notMyShell/milestone/15). Code and automated coverage for `Relevant here`, package-manager plans with bulk install, activation detection, host profiles, Linux/WSL hardening, automatic update staging and startup session kill. Physical validation in iTerm2, Kitty, WezTerm, Linux and WSL 2 is tracked as a separate `needs-human-test` follow-up and does not block the release.
+
+| Issue | Disposition |
+|---|---|
+| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Implemented in v0.17 |
+| [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Code and fixtures in v0.17; physical pass moved to a follow-up |
+| [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Maintainer exercised real CLI/TUI use; deterministic suite extended; ongoing regression tracking |
+| [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
+| [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
+
+## Planned releases
+
+| Release | Theme | Tracker |
+|---|---|---|
+| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), delivered in focused slices; in development on [PR #315](https://github.com/raiseCatError/notMyShell/pull/315), not released. Still deferred: terminal title ownership (OSC 0/2), delta custom styles, terminal emulator and editor base-theme takeover. |
+| v0.19.0 | NMSh Native module ecosystem: current Context Engine foundation and Rail, then capability scheduling, a bounded first-party module expansion and declarative packs | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
+
+## Backlog — future, unscheduled
+
+[Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7). These remain open and are not scheduled for a release.
 
 | Issue | Title |
 |---|---|
-| [#52](https://github.com/raiseCatError/notMyShell/issues/52) | Configured-zsh completion parity and fzf-tab interoperability |
-| [#75](https://github.com/raiseCatError/notMyShell/issues/75) | Native parity with common zsh editor plugins |
-| [#9](https://github.com/raiseCatError/notMyShell/issues/9) | Optional shell-tool discovery and first-run setup |
-| [#73](https://github.com/raiseCatError/notMyShell/issues/73) | Custom user-defined prompt modules |
-| [#78](https://github.com/raiseCatError/notMyShell/issues/78) | Chroma: gradients, animated color treatments, and transient visual effects |
-| [#83](https://github.com/raiseCatError/notMyShell/issues/83) | Tool configuration center inside `/settings` |
-| [#84](https://github.com/raiseCatError/notMyShell/issues/84) | Command inspector |
-| [#85](https://github.com/raiseCatError/notMyShell/issues/85) | Interactive command/output block controls |
-| [#106](https://github.com/raiseCatError/notMyShell/issues/106) | Command completion notifications for long-running commands |
+| [#304](https://github.com/raiseCatError/notMyShell/issues/304) | (planned v0.18) Theme Bridge and semantic terminal integration |
+| [#296](https://github.com/raiseCatError/notMyShell/issues/296) | Hosted SSH demo (post-1.0) |
+| [#20](https://github.com/raiseCatError/notMyShell/issues/20) | Ongoing polish triage index |
 
-zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively.
+zsh-autosuggestions and zsh-syntax-highlighting are not required plugins; NMSh provides those UI roles natively. Native fzf-tab interoperability is a documented non-goal (it would require ceding editor ownership).
 
-## Later — Terminal Host Independence
+## Longer term — shells and platforms
 
-Keep TerminalHost abstraction and host compatibility separate from v0.3. NMSh core remains host agnostic; enhanced host capabilities must not become structural dependencies.
-
-| Issue | Title |
-|---|---|
-| [#10](https://github.com/raiseCatError/notMyShell/issues/10) | TerminalHost capability abstraction |
-| [#11](https://github.com/raiseCatError/notMyShell/issues/11) | Make macOS Terminal the baseline host |
-| [#12](https://github.com/raiseCatError/notMyShell/issues/12) | Ghostty enhanced integration (post-abstraction) |
-| [#13](https://github.com/raiseCatError/notMyShell/issues/13) | Compatibility passes for iTerm2, Kitty, and WezTerm |
-| [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Investigate NMSh interoperability with Supacode and agent-oriented terminal hosts |
-
-## Ongoing — CLI/TUI Compatibility and Polish
-
-NMSh provides the surrounding interaction and presentation layer; tools such as `gh`, zoxide, Atuin, tmux, editors, and agent CLIs keep their own interfaces. See [#14](https://github.com/raiseCatError/notMyShell/issues/14) for compatibility work and [#20](https://github.com/raiseCatError/notMyShell/issues/20) for uncategorized polish that does not already have a focused issue.
-
-## Longer Term — Shells and Platforms
-
-zsh remains the only first-class backend. ShellAdapter research and Linux/Windows investigations remain future work; multi-shell and those platform targets are not promised today.
-
-| Issue | Title |
-|---|---|
-| [#17](https://github.com/raiseCatError/notMyShell/issues/17) | Research ShellAdapter architecture for future multi-shell support |
-| [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Investigate Linux support |
-| [#19](https://github.com/raiseCatError/notMyShell/issues/19) | Research Windows / ConPTY feasibility |
+In v0.16.0 zsh, Fish and Bash 4.4+ are implemented backends behind a real [ShellAdapter](docs/architecture/shell-adapter.md). Nushell and PowerShell remain later. Linux and WSL 2 are supported by automated validation, with physical validation tracked in #18; native Windows (ConPTY) is a no-go per the [Windows feasibility research](docs/architecture/v013-windows-feasibility.md). See also [Linux foundations](docs/architecture/v013-linux-foundations.md).
 
 ## Design Principles
 
-- NMSh is a frontend over a persistent real zsh session.
+- NMSh is a frontend over a persistent real shell session (zsh, Fish or Bash through ShellAdapter).
 - The terminal host renders cells and interprets ANSI; NMSh is not a terminal emulator.
 - Raw PTY output remains recoverable and is not semantically recolored.
 - Fullscreen applications retain the passthrough path.

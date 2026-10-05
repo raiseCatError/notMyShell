@@ -184,8 +184,9 @@ test('the live editor styles every token type through the resolver', () => withA
   const cache = app['semanticService'].cache;
   for (const [word, type] of SYNTAX_PREVIEW_SEMANTICS) cache.set(word, type);
   app['promptConfiguration'] = {...app['promptConfiguration'], nmsh: {...app['promptConfiguration'].nmsh, palette: 'cool'}};
-  const sgr = syntaxSgr(on(), 'cool');
   const row = await liveFrame(app, 'git -v "s" $X ~/p | ll; echo; greet; unknown-cmd arg # c');
+  // Expected escapes under the chrome the frame was drawn with (the cool theme's).
+  const sgr = syntaxSgr(on(), 'cool');
   const expect = (text: string, type: TokenType) => assert.ok(row.includes(`${sgr[type]}${text[0]}`), `${type} (${text}) styled`);
   expect('git', 'KnownCommand');
   expect('-v', 'Flag');
@@ -345,9 +346,10 @@ test('the syntax panel edits, previews, and persists its rows', () => withApp(as
   app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'right'});
   assert.equal(state.draft.colors, 'theme');
-  assert.ok(panel().some(row => /Theme\s+‹ Lavender Native ›/u.test(row)));
+  assert.ok(panel().some(row => /Variant\s+‹ Lavender Native ›/u.test(row)));
   assert.ok(panel().some(row => row.includes('Syntax themes')), 'theme gallery shown');
   app['handleKey']({kind: 'down'});
+  app['handleKey']({kind: 'down'}); // Family, then its Variant
   app['handleKey']({kind: 'right'});
   app['handleKey']({kind: 'right'});
   assert.equal(state.draft.theme, 'cool');

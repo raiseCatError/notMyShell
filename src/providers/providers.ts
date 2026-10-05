@@ -7,7 +7,7 @@ import {delimiter, join} from 'node:path';
  * runtime interface (prompt render, welcome render, suggestion query, ...);
  * this module only describes providers and how their availability looks.
  */
-export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions';
+export type ProviderFamily = 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation' | 'tool';
 export type ProviderKind = 'native' | 'external' | 'none';
 
 export interface ProviderInstall {
@@ -28,10 +28,44 @@ export interface ProviderDescriptor<Id extends string = string> {
   versionArgs?: readonly string[];
   /** Upstream is archived; kept for compatibility, never recommended. */
   legacy?: boolean;
-  /** Offered only with explicit confirmation. */
+  /**
+   * Curated upstream lifecycle, updated deliberately during NMSh release work
+   * (never discovered over the network). `legacy` implies Legacy / archived.
+   */
+  lifecycle?: ProviderLifecycle;
+  /** A maintained alternative named factually when this one is legacy. */
+  successor?: string;
+  /** Offered only with explicit confirmation. Prefer `recipe`; a fixed `install` is used as given. */
   install?: ProviderInstall;
+  /**
+   * Curated Homebrew formula (core, or a fixed `owner/tap/formula`). Used on
+   * macOS, and on Linux only where Homebrew is actually installed; NMSh never
+   * guesses distribution package names, runs install scripts or uses sudo.
+   */
+  recipe?: {brew: string; platforms?: readonly NodeJS.Platform[]};
+  /** Official upstream page, named when no recipe applies. */
+  source?: string;
   /** One-line setup note shown while the provider is highlighted. */
   setup?: string;
+}
+
+export type ProviderLifecycle = 'active' | 'maintenance' | 'legacy';
+export const LIFECYCLE_LABELS: Record<ProviderLifecycle, string> = {active: 'Active', maintenance: 'Maintenance mode', legacy: 'Legacy / archived'};
+
+/** Curated lifecycle; Active when nothing says otherwise. */
+export function providerLifecycle(descriptor: Pick<ProviderDescriptor, 'legacy' | 'lifecycle'>): ProviderLifecycle {
+  return descriptor.legacy ? 'legacy' : descriptor.lifecycle ?? 'active';
+}
+
+/**
+ * A muted, factual lifecycle note, or undefined for active providers. It
+ * names a successor only for legacy providers and never switches anything.
+ */
+export function lifecycleNote(descriptor: Pick<ProviderDescriptor, 'legacy' | 'lifecycle' | 'successor'>): string | undefined {
+  const lifecycle = providerLifecycle(descriptor);
+  if (lifecycle === 'active') return undefined;
+  const successor = lifecycle === 'legacy' && descriptor.successor ? ` · ${descriptor.successor} is the recommended maintained alternative.` : '';
+  return `${LIFECYCLE_LABELS[lifecycle]}${successor}`;
 }
 
 export type ProviderState = 'builtin' | 'installed' | 'missing' | 'unhealthy';
@@ -99,7 +133,8 @@ export interface ExternalResult {
  * host TTY) so a timeout kills everything it started. Never throws.
  */
 export function runExternal(binary: string, args: readonly string[], options: {timeoutMs?: number; maxBytes?: number;
-  env?: NodeJS.ProcessEnv; cwd?: string} = {}): Promise<ExternalResult> {
+  env?: NodeJS.ProcessEnv; cwd?: string; signal?: AbortSignal; terminationGraceMs?: number} = {}): Promise<ExternalResult> {
+  if (options.signal?.aborted) return Promise.resolve({ok: false, stdout: '', error: 'cancelled'});
   const maxBytes = options.maxBytes ?? 256 * 1024;
   return new Promise(resolve => {
     let child: ReturnType<typeof spawn>;
@@ -116,12 +151,33 @@ export function runExternal(binary: string, args: readonly string[], options: {t
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', abort);
       if (child.exitCode === null && child.signalCode === null && child.pid) {
+        // PTY-owning helpers need their EXIT trap to reap a separate inner group.
+        // Keep this opt-in and bounded; ordinary providers retain immediate kill.
+        if (options.terminationGraceMs) {
+          const pid = child.pid;
+          const deadline = setTimeout(() => {
+            try { process.kill(-pid, 'SIGKILL'); } catch { /* Already gone. */ }
+            resolve(result);
+          }, Math.min(100, Math.max(1, options.terminationGraceMs)));
+          child.once('close', () => {
+            clearTimeout(deadline);
+            // A closed parent does not prove TERM-ignoring descendants exited.
+            try { process.kill(-pid, 'SIGKILL'); } catch { /* Group already gone. */ }
+            resolve(result);
+          });
+          try { process.kill(-pid, 'SIGTERM'); } catch { clearTimeout(deadline); resolve(result); }
+          return;
+        }
         try { process.kill(-child.pid, 'SIGKILL'); } catch { /* Already gone. */ }
       }
       resolve(result);
     };
+    const abort = () => finish({ok: false, stdout: '', error: 'cancelled'});
     const timer = setTimeout(() => finish({ok: false, stdout: '', error: 'timed out'}), options.timeoutMs ?? 2000);
+    options.signal?.addEventListener('abort', abort, {once: true});
+    if (options.signal?.aborted) abort();
     child.stdout!.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > maxBytes) finish({ok: false, stdout: '', error: 'output too large'});
@@ -196,4 +252,31 @@ export function providerRowText(descriptor: ProviderDescriptor, options: {draft?
   const badge = options.status === 'none' ? '' : `  [${providerStatusLabel(descriptor, options.status)}]`;
   return `${descriptor.label} · ${descriptor.description}${badge}`
     + `${options.draft === descriptor.id ? '  ●' : ''}${options.saved === descriptor.id ? '  ✓ saved' : ''}`;
+}
+
+/** The install this platform supports for a provider, or undefined. Pure apart from the brew lookup. */
+export function providerInstall(descriptor: ProviderDescriptor, platform: NodeJS.Platform = process.platform,
+  hasBrew: boolean = resolveCommand('brew') !== undefined): ProviderInstall | undefined {
+  if (descriptor.install) return descriptor.install;
+  const recipe = descriptor.recipe;
+  if (!recipe || !hasBrew || (platform !== 'darwin' && platform !== 'linux')) return undefined;
+  if (recipe.platforms && !recipe.platforms.includes(platform)) return undefined;
+  return {label: `brew install ${recipe.brew}`, command: 'brew', args: ['install', recipe.brew]};
+}
+
+/** Why no install is offered, in plain words, instead of a dead-end "not available". */
+export function installUnavailableReason(descriptor: ProviderDescriptor, platform: NodeJS.Platform = process.platform,
+  hasBrew: boolean = resolveCommand('brew') !== undefined): string {
+  const source = descriptor.source ? ` See ${descriptor.source}.` : '';
+  if (descriptor.legacy) return `${descriptor.label} is archived upstream; NMSh uses it only if it is already installed.`;
+  if (!descriptor.recipe && !descriptor.install) return `NMSh has no curated install for ${descriptor.label}. Install it yourself, then reopen this list.${source}`;
+  if (descriptor.recipe?.platforms && !descriptor.recipe.platforms.includes(platform)) {
+    return `The curated ${descriptor.label} install is for ${descriptor.recipe.platforms.map(name => name === 'darwin' ? 'macOS' : name).join(', ')} only.${source}`;
+  }
+  if (!hasBrew) {
+    return platform === 'linux'
+      ? `Homebrew is not installed, and NMSh does not guess distribution package names. Install ${descriptor.label} with your package manager.${source}`
+      : `Homebrew is not installed. Install ${descriptor.label} from its official source.${source}`;
+  }
+  return `NMSh has no install for ${descriptor.label} on this platform.${source}`;
 }

@@ -4,7 +4,6 @@ on:
   push:
     branches: [master, dev]
   pull_request:
-    branches: [master, dev]
   workflow_dispatch:
 
 permissions:
@@ -15,43 +14,184 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  verify:
-    name: Verify
-    runs-on: macos-latest
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-24.04
+    outputs:
+      code: ${{ steps.changes.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          # Never path-skip the workflow: the final CI check must always exist.
+          # Push/manual runs always collect comprehensive evidence.
+          if [[ "$EVENT" != pull_request ]]; then
+            echo 'code=true' >> "$GITHUB_OUTPUT"
+          else
+            git diff --check "$BASE" "$HEAD"
+            git diff --no-renames --name-only -z "$BASE" "$HEAD" > /tmp/changed-files
+            python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
+          files = Path('/tmp/changed-files').read_bytes().split(b'\0')
+          docs_only = all(f.startswith(b'docs/') or f.endswith(b'.md') for f in files if f)
+          print('code=' + str(not docs_only).lower())
+          PYTHON
+          fi
+
+  quality:
+    name: Quality (Node 26)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck:bench
+      - run: npm run test:fast
+      - run: git diff --check
+
+  tests:
+    name: Tests (${{ matrix.os }}, ${{ matrix.shard }}/2)
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04]
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+        if: runner.os == 'Linux'
+      - run: npm ci
+      # Built-launcher tests must execute rather than silently skip on fresh runners.
+      - run: npm run build
+      - run: npm test -- --shard=${{ matrix.shard }}/2 --test-timeout=120000
+      - name: Process leak check
+        if: always()
+        run: bash scripts/check-process-leaks.sh
+
+  node22:
+    name: Node 22 compatibility
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:node22 -- --test-timeout=120000
+      - name: Process leak check
+        if: always()
+        run: bash scripts/check-process-leaks.sh
+
+  timings:
+    name: Timing smoke (${{ matrix.os }}, Node 26)
+    if: github.event_name != 'pull_request'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+      - uses: ./.github/actions/linux-shells
+        if: runner.os == 'Linux'
+      - run: npm ci
+      - run: npm run bench:smoke
+      - name: Process leak check
+        if: always()
+        run: bash scripts/check-process-leaks.sh
+
+  fedora:
+    name: Linux portability subset (Fedora)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: fedora:42
+    steps:
+      - name: Install system prerequisites
+        run: dnf install -y git zsh fish gcc-c++ make python3 which lsof procps-ng
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:fedora -- --test-timeout=120000
+      - name: Process leak check
+        if: always()
+        run: bash scripts/check-process-leaks.sh
+
+  status:
+    name: CI
+    if: always()
+    needs: [changes, quality, tests, node22, timings, fedora]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require all applicable gates
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PYTHON'
+          import json, os
+          jobs = json.loads(os.environ['RESULTS'])
+          code = jobs['changes']['outputs'].get('code')
+          required = ['changes']
+          if code == 'true':
+              required += ['quality', 'tests', 'node22']
+          elif code != 'false':
+              raise SystemExit('Missing change classification')
+          if '${{ github.event_name }}' != 'pull_request':
+              required += ['timings', 'fedora']
+          failed = [name for name in required if jobs[name]['result'] != 'success']
+          if failed:
+              raise SystemExit('Failed or skipped required gates: ' + ', '.join(failed))
+          print('All applicable CI gates passed')
+          PYTHON
+
+  # Preserve the exact check names required by the existing master ruleset.
+  required-checks:
+    name: Verify (${{ matrix.node-version }})
+    needs: status
+    if: always()
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         node-version: [22.x, 26.x]
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build
-        run: npm run build
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Run tests
-        run: npm test
-
-      - name: Verify working tree clean
-        run: git diff --check
-
-      - name: Process leak check
-        run: |
-          if ps -axo pid,ppid,pgid,command | grep -E '[z]sh.*nmsh-semantic|[n]msh-semantic|viewportSyntax' | grep -v grep; then
-            echo "::error::NMSh helper or test processes leaked!"
-            exit 1
-          fi
-          echo "No processes leaked."
+      - name: Require aggregate CI success
+        env:
+          RESULT: ${{ needs.status.result }}
+        run: test "$RESULT" = success

@@ -1,4 +1,5 @@
 import {colorEscape} from '../chroma/escape.js';
+import type {ColorLevel} from '../presentation/capabilities.js';
 
 export interface RgbColor {
   red: number;
@@ -35,4 +36,34 @@ export function foreground(color: RgbColor): string {
 
 export function background(color: RgbColor): string {
   return colorEscape(48, color);
+}
+
+/** Keyboard focus is accent + weight; the pointer still identifies it without color. */
+export function focusForeground(focused: boolean, resting: RgbColor = UI_COLORS.secondary, level?: ColorLevel): string {
+  return focused ? `\u001b[1m${colorEscape(38, UI_COLORS.accent, level)}` : colorEscape(38, resting, level);
+}
+
+/**
+ * An escape resolved when it is used (template interpolation, concatenation,
+ * replaceAll), not when a module loads. Module-level color constants use it
+ * so theme changes and NO_COLOR apply to every panel immediately.
+ */
+class LazyEscape {
+  constructor(private readonly resolve: () => string) {}
+  toString(): string { return this.resolve(); }
+  valueOf(): string { return this.resolve(); }
+  toJSON(): string { return this.resolve(); }
+}
+
+/** Any escape computed at use, for colors derived from chrome roles. */
+export function lazyEscape(resolve: () => string): string {
+  return new LazyEscape(resolve) as unknown as string;
+}
+
+export function lazyForeground(color: RgbColor): string {
+  return new LazyEscape(() => foreground(color)) as unknown as string;
+}
+
+export function lazyBackground(color: RgbColor): string {
+  return new LazyEscape(() => background(color)) as unknown as string;
 }

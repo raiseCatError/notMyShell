@@ -1,7 +1,10 @@
+import {paintTreatment, type TreatmentSettings} from '../chroma/treatment.js';
 import {background, foreground, UI_COLORS} from './palette.js';
 import {truncateAnsi, displayWidth} from '../util/text.js';
 import {theme} from '../chroma/chroma.js';
 import {renderSurface} from './surface.js';
+import {colorLevel} from '../presentation/capabilities.js';
+import type {RgbColor} from './palette.js';
 
 const RESET = '\u001B[0m';
 const BOLD = '\u001B[1m';
@@ -50,7 +53,32 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
   return truncateAnsi(line, width);
 }
 
+/**
+ * The strong selected-row treatment, shared with the active tab: one
+ * full-width deep-lavender band with the theme's project foreground. Without
+ * color it is reverse video, so the selection never depends on color alone.
+ * Every reset inside the row re-opens the band, so styled parts stay on it.
+ */
+export function selectedRowBand(row: string, columns: number, chosenColor?: RgbColor): string {
+  const none = colorLevel() === 'none';
+  const band = none ? '\u001B[7m' : `${background(chosenColor ?? UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
+  return fullWidthRowBand(row, columns, band);
+}
+
+/** Keep a full-width surface active across embedded style resets and trailing padding. */
+export function fullWidthRowBand(row: string, columns: number, band: string): string {
+  const body = truncateAnsi(row, columns).replaceAll(RESET, `${RESET}${band}`);
+  return `${band}${body}${band}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}`;
+}
+
+/** Foreground for quiet text on the selected band: readable on it, never the dim muted gray. */
+export function onSelectedBand(): string {
+  return colorLevel() === 'none' ? '' : foreground(UI_COLORS.projectForeground);
+}
+
 /** Framing belongs to the live overlay, never to OutputBuffer or an archive. */
-export function framePanel(rows: string[], columns: number): string[] {
-  return renderSurface(rows, columns, {frame: 'topLine', frameColor: theme('separator')});
+export function framePanel(rows: string[], columns: number, treatment?: TreatmentSettings): string[] {
+  const framed = renderSurface(rows, columns, {frame: 'topLine', frameColor: theme('separator')});
+  if (treatment && treatment.preset !== 'off') framed[0] = paintTreatment(framed[0]!.replace(/\u001B\[[0-9;]*m/gu, ''), treatment, 'panel-frame', UI_COLORS.separator);
+  return framed;
 }

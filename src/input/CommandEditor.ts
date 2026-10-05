@@ -251,9 +251,10 @@ export class CommandEditor {
     if (this.selectionAnchor === this.cursor) this.selectionAnchor = undefined;
   }
 
-  moveUp(columns: number, firstLinePrefix?: string): void {
+  /** False when the caret is already on the first visual row (nothing above to move to). */
+  moveUp(columns: number, firstLinePrefix?: string): boolean {
     this.clearSelection();
-    this.moveVertical(columns, -1, firstLinePrefix);
+    return this.moveVertical(columns, -1, firstLinePrefix);
   }
 
   selectUp(columns: number, firstLinePrefix?: string): void {
@@ -262,9 +263,10 @@ export class CommandEditor {
     if (this.selectionAnchor === this.cursor) this.selectionAnchor = undefined;
   }
 
-  moveDown(columns: number, firstLinePrefix?: string): void {
+  /** False when the caret is already on the last visual row. */
+  moveDown(columns: number, firstLinePrefix?: string): boolean {
     this.clearSelection();
-    this.moveVertical(columns, 1, firstLinePrefix);
+    return this.moveVertical(columns, 1, firstLinePrefix);
   }
 
   selectDown(columns: number, firstLinePrefix?: string): void {
@@ -374,6 +376,19 @@ export class CommandEditor {
     if (this.cursor < this.characters.length) this.characters.splice(this.cursor, 1);
   }
 
+  /** Replace the whole buffer with plain text, caret at the end (history recall). */
+  replaceText(value: string): void {
+    this.characters = graphemes(normalizedText(value));
+    this.cursor = this.characters.length;
+    this.clearSelection();
+  }
+
+  /** Place the caret at a grapheme index (clamped); clears any selection. */
+  setCursor(index: number): void {
+    this.cursor = Math.max(0, Math.min(this.characters.length, index));
+    this.clearSelection();
+  }
+
   clear(): void {
     this.characters = [];
     this.cursor = 0;
@@ -404,10 +419,10 @@ export class CommandEditor {
     return total;
   }
 
-  private moveVertical(columns: number, direction: -1 | 1, firstLinePrefix?: string): void {
+  private moveVertical(columns: number, direction: -1 | 1, firstLinePrefix?: string): boolean {
     const current = layoutInput(this.displayText, this.displayCursorIndex, columns, Number.POSITIVE_INFINITY, firstLinePrefix);
     const targetRow = current.caretRow + direction;
-    if (targetRow < 0 || targetRow >= current.allRows.length) return;
+    if (targetRow < 0 || targetRow >= current.allRows.length) return false;
     let bestIndex = this.cursor;
     let bestDistance = Number.POSITIVE_INFINITY;
     for (let index = 0; index <= this.characters.length; index += 1) {
@@ -420,5 +435,6 @@ export class CommandEditor {
       }
     }
     this.cursor = bestIndex;
+    return true;
   }
 }

@@ -218,7 +218,7 @@ test('mouse hit-testing respects panel takeover geometry', () => {
   const app = appWithOutput();
   try {
     Object.defineProperty(app, 'render', {value: () => {}});
-    app['appearanceState'] = {} as never;
+    app['appearanceHub'] = {} as never;
     Object.defineProperty(app, 'settingsPanelRows', {value: () => Array.from({length: 6}, () => 'panel')});
     const plan: ScreenPlan = app['planFrame'](80, 20);
     assert.equal(plan.transcript.height, 14);
@@ -259,11 +259,11 @@ test('PTY resizes to plan rows on panel open/close and full screen in passthroug
     app['render']();
     const closed = sizes.at(-1)!;
     assert.equal(closed, 16, 'v0.4: 20 rows minus gap, prompt, input, separator');
-    app['appearanceState'] = {} as never;
+    app['appearanceHub'] = {} as never;
     Object.defineProperty(app, 'settingsPanelRows', {value: () => Array.from({length: 6}, () => 'panel'), configurable: true});
     app['render']();
     assert.equal(sizes.at(-1), 14);
-    app['appearanceState'] = undefined;
+    app['appearanceHub'] = undefined;
     app['render']();
     assert.equal(sizes.at(-1), closed);
     app['passthrough'] = true;
@@ -274,5 +274,43 @@ test('PTY resizes to plan rows on panel open/close and full screen in passthroug
     assert.equal(sizes.at(-1), closed, 'returning rebuilds the Bottom plan');
   } finally {
     dispose(app);
+  }
+});
+
+test('panel takeover follows the explicit NMSh panel position (default Bottom), never the composer position', () => {
+  const base: ScreenPlanInput = {rows: 24, inputRows: 2, suggestions: 3, running: false, detached: false, hasOutput: true,
+    contextPlacement: 'header', hasVisibleContext: true, composerLayout: 'twoLine', transcriptRows: 40};
+  for (const composerPosition of ['bottom', 'top', 'flow'] as const) {
+    const unset = planScreen({...base, composerPosition, panelRows: 8});
+    assert.deepEqual(unset.regions.map(region => region.kind), ['transcript', 'panel'], `${composerPosition}: default is Bottom`);
+    assert.equal(unset.panelPosition, 'bottom');
+    for (const panelPosition of ['bottom', 'top'] as const) {
+      const a = planScreen({...base, composerPosition, panelPosition, panelRows: 8}), b = planScreen({...base, composerPosition, panelPosition, panelRows: 14});
+      const pa = regionOf(a, 'panel')!, pb = regionOf(b, 'panel')!;
+      assert.equal(a.panelPosition, panelPosition);
+      if (panelPosition === 'top') {
+        assert.deepEqual(a.regions.map(region => region.kind), ['panel', 'transcript']);
+        assert.equal(pa.top, 0); assert.equal(pb.top, 0, 'the top edge stays put as the height changes');
+        assert.deepEqual([regionOf(b, 'transcript')!.top, regionOf(b, 'transcript')!.height], [14, 10]);
+      } else {
+        assert.deepEqual(a.regions.map(region => region.kind), ['transcript', 'panel']);
+        assert.equal(pa.top + pa.height, 24); assert.equal(pb.top + pb.height, 24, 'the bottom edge stays put as the height changes');
+        assert.equal(pb.top, 10);
+      }
+      assert.equal(regionAt(b, pb.top)?.region.kind, 'panel'); assert.equal(regionAt(b, pb.top + pb.height - 1)?.region.kind, 'panel');
+      assert.equal(cursorScreenRow(b, 3), pb.top, 'the hidden cursor parks at the panel');
+      assert.equal(a.inputHeight, 0); assert.equal(a.panelActive, true);
+      for (const rows of [1, 3, 6, 10]) {
+        const short = planScreen({...base, rows, composerPosition, panelPosition, panelRows: 14});
+        assert.ok(short.regions.reduce((sum, region) => sum + region.height, 0) <= rows && short.transcript.height >= 0);
+        if (panelPosition === 'top') assert.equal(regionOf(short, 'panel')!.top, 0);
+      }
+    }
+    // Without a panel the composer behaves exactly as configured.
+    const normal = planScreen({...base, composerPosition, panelPosition: 'top'});
+    assert.equal(normal.panelActive, false);
+    const input = regionOf(normal, 'input')!;
+    if (composerPosition === 'top') assert.ok(input.top < normal.transcript.top);
+    if (composerPosition === 'bottom') assert.ok(input.top > normal.transcript.top);
   }
 });

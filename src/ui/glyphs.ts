@@ -2,6 +2,12 @@ export type GlyphMode = 'nerd' | 'safe';
 export type IconStylePref = 'auto' | 'nerd' | 'safe';
 
 let userPref: IconStylePref = 'nerd';
+/** The composer prompt marker: Nerd/Unicode glyph and its Safe (ASCII) form. */
+let promptSymbol = {nerd: '❯', safe: '>'};
+
+export function setPromptSymbol(nerd: string, safe: string): void {
+  promptSymbol = {nerd, safe};
+}
 
 export function setIconStyle(pref: IconStylePref): void {
   userPref = pref;
@@ -27,7 +33,7 @@ export const GLYPHS = {
   get jumpDown() { return getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'; },
   get separator() { return getCurrentGlyphMode() === 'nerd' ? '─' : '-'; },
   get search() { return getCurrentGlyphMode() === 'nerd' ? '\uF002' : '/'; },
-  get prompt() { return getCurrentGlyphMode() === 'nerd' ? '❯' : '>'; },
+  get prompt() { return getCurrentGlyphMode() === 'nerd' ? promptSymbol.nerd : promptSymbol.safe; },
   // U+E0D7 starts independent segments; U+E0B0 is the only transition/end wedge.
   get powerlineLeading() { return getCurrentGlyphMode() === 'nerd' ? '' : '<'; },
   get powerlineTrailing() { return getCurrentGlyphMode() === 'nerd' ? '' : '>'; },
@@ -63,7 +69,7 @@ export function powerlineShapeGlyphs(shape: PowerlineShape): {open: string; clos
   }
 }
 
-export type ModuleIconId = 'gitBranch' | 'node' | 'go' | 'python' | 'docker' | 'kubernetes';
+export type ModuleIconId = 'gitBranch' | 'node' | 'go' | 'python' | 'docker' | 'kubernetes' | 'shell';
 
 /** Nerd Font module icons; empty in safe glyph mode so text stays self-describing. */
 export function moduleIcon(id: ModuleIconId): string {
@@ -75,5 +81,6 @@ export function moduleIcon(id: ModuleIconId): string {
     case 'python': return '\ue606';
     case 'docker': return '\uf308';
     case 'kubernetes': return '\u{f10fe}';
+    case 'shell': return '\uf489';
   }
 }

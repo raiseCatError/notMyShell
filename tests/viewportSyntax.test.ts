@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { TerminalApp } from '../src/app/TerminalApp.js';
-import { UI_COLORS, foreground } from '../src/ui/palette.js';
+import { UI_COLORS, foreground, lazyForeground } from '../src/ui/palette.js';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const ACCENT = foreground(UI_COLORS.accent);
-const ERROR = foreground(UI_COLORS.failure);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const SUBTLE = foreground(UI_COLORS.subtle);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const ACCENT = lazyForeground(UI_COLORS.accent);
+const ERROR = lazyForeground(UI_COLORS.failure);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const STOPPED = foreground({red: 198, green: 156, blue: 109}); // amber/string
 const RESET = '\u001B[0m';
 

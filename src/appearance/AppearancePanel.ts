@@ -1,11 +1,11 @@
 import {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {BlurMode} from './ghostty.js';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const INTERACTIVE = foreground(UI_COLORS.accent);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const INTERACTIVE = lazyForeground(UI_COLORS.accent);
 const RESET = '\u001B[0m';
 
 export const BLUR_MODES: BlurMode[] = ['Off', 'Numeric', 'Glass Regular', 'Glass Clear'];
@@ -63,7 +63,7 @@ export function renderAppearancePanel(state: AppearanceState, columns: number): 
   };
 
   const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
-  const labelColor = (index: number) => index === state.selectedIndex ? PRIMARY : SECONDARY;
+  const labelColor = (index: number) => focusForeground(index === state.selectedIndex);
 
   // Opacity
   rows.push(`  ${sel(0)} ${labelColor(0)}Opacity      ${INTERACTIVE}${drawBar(state.opacity)}  ${Math.round(state.opacity * 100)}%${RESET}`);

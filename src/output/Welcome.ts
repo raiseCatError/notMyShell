@@ -1,8 +1,12 @@
 import {homedir} from 'node:os';
+import {colorLevel} from '../presentation/capabilities.js';
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import type {BuildIdentity} from '../buildInfo.js';
+import type {WelcomeProviderId} from '../prompt/configuration.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import type {WrappedRow} from './viewport.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 
 const RESET = '\u001B[0m';
 const BODY = {red: 172, green: 150, blue: 230};
@@ -16,16 +20,24 @@ const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 export interface WelcomeSnapshot {
   identity: BuildIdentity;
+  /** Recording identity is presentation only; version reporting stays factual. */
+  demo?: boolean;
   cwd: string;
-  shell: 'zsh';
+  /** The backend NMSh manages for this presentation (never $SHELL). */
+  shell: ShellId;
+  /**
+   * Local understanding as it was when this presentation began (e.g. "Off",
+   * "Auto · model idle · Ask"). Snapshotted: later model loads never rewrite it.
+   */
+  understanding?: string;
   /** External welcome captured once at session start; absent means Vespyr. */
-  provider?: 'fastfetch' | 'neofetch';
+  provider?: Exclude<WelcomeProviderId, 'vespyr' | 'none'>;
   /** SGR-only rows the external provider printed. */
   captured?: string[];
 }
 
-export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string): WelcomeSnapshot {
-  return {identity: {...identity}, cwd, shell: 'zsh'};
+export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shell: ShellId = 'zsh', understanding?: string): WelcomeSnapshot {
+  return {identity: {...identity}, demo: process.env.NMSH_DEMO === '1', cwd, shell, ...(understanding ? {understanding} : {})};
 }
 
 function safe(value: string): string {
@@ -98,6 +110,11 @@ function catRow(row: number, frame: WelcomeCatFrame = 'open'): {ansi: string; pl
   return {ansi, plain};
 }
 
+/** The approved Vespyr sprite alone (four rows), for places that show the mascot without the Welcome card. */
+export function vespyrSprite(frame: WelcomeCatFrame = 'open'): string[] {
+  return Array.from({length: CAT_ROWS}, (_, row) => catRow(row, frame).ansi);
+}
+
 interface Span {
   text: string;
   color: typeof BODY;
@@ -133,15 +150,16 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
       {text: 'not', color: UI_COLORS.primary, bold: true},
       {text: 'My', color: BRAND_ACCENT, bold: true},
       {text: 'Shell', color: UI_COLORS.primary, bold: true},
-      {text: ` ${safe(versionLabel(identity.version))}`, color: UI_COLORS.subtle},
+      {text: ` ${snapshot.demo ? 'demo' : safe(versionLabel(identity.version))}`, color: UI_COLORS.subtle},
     ],
     [
-      {text: `build ${safe(identity.commit)}`, color: UI_COLORS.subtle},
-      ...(identity.branch ? [{text: ` · ${safe(identity.branch)}`, color: UI_COLORS.secondary}] : []),
-      ...(identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
+      {text: snapshot.demo ? 'A real shell. A livelier terminal.' : `build ${safe(identity.commit)}`, color: UI_COLORS.subtle},
+      ...(!snapshot.demo && identity.branch ? [{text: ` · ${safe(identity.branch)}`, color: UI_COLORS.secondary}] : []),
+      ...(!snapshot.demo && identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
     ],
     [{text: shortCwd(snapshot.cwd), color: UI_COLORS.secondary}],
-    [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}}],
+    [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}},
+      ...(snapshot.understanding ? [{text: ` · Local understanding ${safe(snapshot.understanding)}`, color: UI_COLORS.subtle}] : [])],
   ];
   const gutter = 2;
   const cat = width >= 42;
@@ -157,7 +175,7 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
     const spacer = ' '.repeat(gutter);
     rows.push({plain: `${prefix.plain}${spacer}${text.plain}`, ansi: `${prefix.ansi}${spacer}${text.ansi}`});
   }
-  const line = repeatToWidth('─', width);
+  const line = repeatToWidth(getCurrentGlyphMode() === 'safe' ? '-' : '─', width);
   rows.push({plain: line, ansi: `${foreground(DIVIDER)}${line}${RESET}`});
   // All rows belong to ordinary scrollback; none have a PTY line index.
   return rows.filter(row => displayWidth(row.plain) <= width);
@@ -170,7 +188,7 @@ export const MIN_CAPTURED_WELCOME_WIDTH = 24;
 function renderCapturedWelcome(captured: readonly string[], width: number): WrappedRow[] {
   if (width < MIN_CAPTURED_WELCOME_WIDTH) return [];
   const rows = captured.map(line => {
-    const ansi = truncateAnsi(line, width);
+    const ansi = truncateAnsi(colorLevel() === 'none' ? stripAnsi(line) : line, width);
     return {ansi: `${ansi}${RESET}`, plain: stripAnsi(ansi)};
   });
   const line = repeatToWidth('─', width);

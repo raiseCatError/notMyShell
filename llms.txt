@@ -1,46 +1,84 @@
 # notMyShell (NMSh)
 
+Stable release: v0.16.0. Unreleased development continues on feature branches (see CHANGELOG.md).
+
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 
-Current primary backend:
-- zsh
+Shell backends (real persistent shells, via ShellAdapter):
+- zsh (default), Fish, Bash 4.4+; /shell switches the current session in place
 
-Current primary platform:
-- macOS
+Platforms:
+- macOS (supported)
+- Linux (automated tests; physical validation pending)
+- Windows only through WSL 2 (WSL 1 and native Windows unsupported)
 
-Primary terminal host during development:
-- Ghostty
+Terminal hosts:
+- intentionally terminal-host independent; no host is required or preferred
+- integrated terminals (such as Zed and VS Code) and standalone terminals
+  (such as Ghostty and macOS Terminal) are both first-class and regularly
+  used during development and physical testing
+- other compatible hosts are supported through capability profiles, some
+  without the same level of physical validation
 
 Core architecture:
 
 Terminal host
 → NMSh frontend
-→ persistent real zsh PTY
+→ ShellAdapter (zsh / Fish / Bash)
+→ persistent real shell PTY
+
+Product boundary: NMSh owns terminal-native interaction (composer,
+completion menu, transcript, find/filter, sessions, history, prompt);
+the editor around it owns editing, project search, rich diff and
+navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 
 ## Core capabilities
 
-- fixed/persistent bottom input editor
-- scrollable command and output history
-- semantic syntax highlighting
-- submitted commands retain semantic highlighting in history
-- multiline editing
-- shell-aware autocomplete/completion
-- ghost/history suggestions
+- persistent composer: Bottom, Top or Flow; one-line or two-line; multiline editing
+- semantic syntax highlighting (classified against the real shell; partial input never runs)
+- shell-aware completion menu and ghost suggestions
 - real aliases, functions, environment, cwd and shell state
-- command lifecycle/activity UI
-- passthrough for fullscreen/interactive terminal programs
-- /copy
-- /history
-- /appearance
-- /keyboard
-- zoxide integration
-- Atuin/history bridge where accurate
-- fzf/fullscreen passthrough where accurate
+- transcript with command blocks, folding, /find and /filter, plain-text /copy
+- command lifecycle and live activity feedback
+- passthrough for fullscreen/interactive programs
+- live sessions: windows detach instead of killing the shell; /resume, nmsh --attach
+- prompt providers: NMSh Native (default), Starship, Oh My Posh, Powerlevel10k, None
+- Theme Studio (/theme): built-in, imported (data-only parsers) and custom themes
+- Theme Bridge (/theme-bridge, opt-in): fzf, less/man, file listing colors, bat,
+  tmux, Vim, Neovim, Helix; delta detected only; ownership ledger, reviewed includes
+- curated tools and providers (/tools, /providers), tool configuration (/configure,
+  /tmux), integration health (/integrations), safe dotfiles import (/dotfiles)
+- shell frameworks detected (Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit, Antidote);
+  shell config is treated as executable, never as plain data
+- Keep Awake (/caffeinate, /awake, /zoomies): OS mechanism, NMSh-owned background process
+- Chroma, motion, screensavers and Vespyr (the NMSh cat); Safe glyphs, NO_COLOR, Reduced Motion
+- /btw (compatibility alias /ask): plain requests mapped onto typed NMSh actions (optional local model)
+- cross-session notices, agent activity stats (/agents), /open and /open-diff
+- nmsh config export/import, nmsh uninstall, nmsh doctor
+- NMSH_DETERMINISTIC=1 for repeatable presentation in tests and VHS demos
+
+## Native modules / Context Engine (unreleased)
+
+Current engineering focus: Capability → immutable Fact → Module → Surface Router
+→ Main Prompt / Context Rail / Right Context. Core services own bounded collection;
+modules and renderers consume resolved facts without I/O. Facts carry provenance,
+freshness, trust, sensitivity and persistence policy. The Rail is live frontend
+geometry, separate from transcript snapshots and the right-context anchor.
+
+The first-party module registry, fact adapter and surface routing are implemented
+on feature/305-context-engine. Installable declarative Context Packs, broader
+capability scheduling and Status Strip module routing remain upcoming. No finalized
+pack SDK or executable plugin API is available. Repository entry must never execute
+arbitrary repo-controlled code through discovery; metadata is parser-only and
+probes are curated core operations, not commands supplied by packs or repositories.
+
+Reel: https://youtu.be/zIzq_88R5OI (preview: assets/promo/nmsh-promo.png)
 
 ## NMSh is NOT
 
 - not a shell replacement
 - not a terminal emulator
+- not a prompt theme
 - not an AI shell
 - not a command-by-command subprocess wrapper
 - not a Warp clone
@@ -49,6 +87,11 @@ Terminal host
 
 src/app/TerminalApp.ts
 src/shell/ShellSession.ts
+src/shell/adapters/ (ShellAdapter, Zsh/Fish/Bash adapters)
+src/session/SessionService.ts, src/session/SessionNotices.ts
+src/host/HostActions.ts, src/host/platform.ts
+src/output/TranscriptSearch.ts
+src/presentation/ImageSurface.ts
 src/shell/SemanticService.ts
 src/input/Highlighter.ts
 src/input/CommandEditor.ts
@@ -56,10 +99,16 @@ src/output/OutputBuffer.ts
 src/output/AnsiOutputParser.ts
 src/output/viewport.ts
 src/terminal/TerminalRenderer.ts
+src/app/screenPlan.ts (one geometry plan per frame)
+src/context/ (facts, trusted services, surface router)
+src/prompt/configuration.ts, src/prompt/railLayout.ts, src/prompt/railComposition.ts
+src/keepAwake/ (controller, panel, presentation)
+src/themeBridge/ (targets, ownership ledger)
 
 ## Documentation
 
 README.md
+ARCHITECTURE.md
 ROADMAP.md
 AGENTS.md
 CONTRIBUTING.md
@@ -67,6 +116,15 @@ SECURITY.md
 CHANGELOG.md
 SUPPORT.md
 LICENSE
+docs/architecture/context-modules.md
+docs/architecture/shell-adapter.md
+docs/architecture/platforms.md
+docs/architecture/host-actions.md
+docs/architecture/image-surface.md
+docs/design/theme-bridge.md
+docs/demos.md
+docs/testing/deterministic-presentation.md
+docs/privacy.md
 
 ## Repository
 

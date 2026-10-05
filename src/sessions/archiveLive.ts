@@ -35,19 +35,24 @@ export async function archiveLiveSession(options: ArchiveLiveOptions): Promise<T
   }
   const output = new OutputBuffer();
   let cwd = journal?.finalCwd ?? options.cwd;
-  let running: {command: string; startedAt: number} | undefined;
+  let running: {command: string; startedAt: number; historyAllowed?: number} | undefined;
   if (journal) {
     output.restoreTranscript(journal.transcript);
     const active = journal.live?.running;
     if (active) {
       output.resumeActive(active.command, active.startId, active.outputStartId);
-      running = {command: active.command, startedAt: active.startedAt};
+      running = {command: active.command, startedAt: active.startedAt, historyAllowed: active.historyAllowed};
     }
   }
   const seen = journal?.live?.seq ?? 0;
   const complete = (exitCode: number, at: number, interrupted: boolean) => {
     if (!running) return;
     const record = output.complete(exitCode);
+    if (record) {
+      record.startedAt = running.startedAt;
+      record.durationMs = Math.max(0, at - running.startedAt);
+      record.historyEligible = running.historyAllowed === 1 && !/^\s/u.test(running.command);
+    }
     const parts = completedActivity(running.command, at - running.startedAt, new Date(at), interrupted ? 0 : exitCode,
       interrupted, extractFacts(running.command, record?.output ?? ''));
     output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
@@ -59,7 +64,7 @@ export async function archiveLiveSession(options: ArchiveLiveOptions): Promise<T
     if (event.kind === 'exec') {
       if (running) continue;
       output.beginCommand(event.command, [`❯ ${event.command}`], undefined, {cwd});
-      running = {command: event.command, startedAt: event.at};
+      running = {command: event.command, startedAt: event.at, historyAllowed: event.historyAllowed};
     } else if (event.kind === 'output') {
       output.write(event.data);
     } else {

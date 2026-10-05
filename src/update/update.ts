@@ -21,6 +21,32 @@ const OFFICIAL_REMOTE = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/gi
 export type UpdateCheckFrequency = 'off' | 'daily' | 'weekly';
 export const UPDATE_CHECK_FREQUENCIES: readonly UpdateCheckFrequency[] = ['off', 'daily', 'weekly'];
 
+/** Automatic installs a verified release in the background; Notify only announces it; Off never contacts GitHub. */
+export type UpdateMode = 'automatic' | 'notify' | 'off';
+export const UPDATE_MODES: readonly UpdateMode[] = ['automatic', 'notify', 'off'];
+export type UpdateFrequency = 'daily' | 'weekly';
+export const UPDATE_FREQUENCIES: readonly UpdateFrequency[] = ['daily', 'weekly'];
+
+/**
+ * One settings model. A saved installation keeps what it chose: the former
+ * `updateChecks` off/daily/weekly maps to Off, or Notify only with that
+ * frequency; it never becomes an automatic install. Only a configuration with
+ * no saved keys at all (a fresh install) gets Automatic / Daily.
+ */
+export function migrateUpdateSettings(value: Record<string, unknown>): {updateMode: UpdateMode; updateFrequency: UpdateFrequency} {
+  const mode = UPDATE_MODES.find(item => item === value.updateMode);
+  const frequency = UPDATE_FREQUENCIES.find(item => item === value.updateFrequency);
+  if (mode) return {updateMode: mode, updateFrequency: frequency ?? 'daily'};
+  if (value.updateChecks === 'daily' || value.updateChecks === 'weekly') return {updateMode: 'notify', updateFrequency: value.updateChecks};
+  if (Object.keys(value).length === 0) return {updateMode: 'automatic', updateFrequency: 'daily'};
+  return {updateMode: 'off', updateFrequency: frequency ?? 'daily'};
+}
+
+/** Tests and CI never contact GitHub or touch the checkout through the background updater. */
+export function updatesDisabledByEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.NMSH_DISABLE_UPDATES === '1' || env.NODE_TEST_CONTEXT !== undefined;
+}
+
 export interface ReleaseInfo {
   version: string;
   tag: string;
@@ -116,10 +142,41 @@ export function installRoot(moduleUrl = import.meta.url): string {
 
 export type InstallInfo =
   | {kind: 'checkout'; root: string; branch?: string; head: string}
+  /** Installed with Homebrew: the keg owns these files; updates go through `brew upgrade nmsh`. */
+  | {kind: 'homebrew'; root: string; version: string; prefix: string; tap?: string}
   | {kind: 'unsupported'; root: string; reason: string};
+
+/**
+ * A Homebrew keg, from Homebrew's own metadata: NMSh's libexec inside
+ * <prefix>/Cellar/nmsh/<version>/ next to the INSTALL_RECEIPT.json Homebrew
+ * writes for every installed keg (it names the tap). No brew process is run.
+ */
+export function detectHomebrewInstall(root: string): Extract<InstallInfo, {kind: 'homebrew'}> | undefined {
+  let real: string;
+  try { real = realpathSync(root); } catch { return undefined; }
+  const match = /^(.+)\/Cellar\/nmsh\/([^/]+)\/libexec$/u.exec(real);
+  if (!match) return undefined;
+  const [, prefix, version] = match;
+  try {
+    const receipt = JSON.parse(readFileSync(join(prefix!, 'Cellar', 'nmsh', version!, 'INSTALL_RECEIPT.json'), 'utf8')) as {source?: {tap?: unknown}};
+    const tap = typeof receipt.source?.tap === 'string' ? receipt.source.tap : undefined;
+    return {kind: 'homebrew', root: real, version: version!, prefix: prefix!, ...(tap ? {tap} : {})};
+  } catch { return undefined; }
+}
+
+/** One factual provenance line for /version, /status and diagnostics (no network, no brew process). */
+export function installProvenanceLabel(root: string = installRoot()): string {
+  const homebrew = detectHomebrewInstall(root);
+  if (homebrew) return `Homebrew${homebrew.tap ? ` (${homebrew.tap})` : ''} · update with brew upgrade nmsh`;
+  return existsSync(join(root, '.git')) ? `source checkout · ${root}` : `other/manual installation · ${root}`;
+}
+
+export const HOMEBREW_UPDATE_STEPS = ['brew update', 'brew upgrade nmsh'] as const;
 
 /** Provenance from facts only: an official, clean git checkout, or unsupported with the reason. */
 export async function detectInstall(root: string, runner: CommandRunner = systemRunner): Promise<InstallInfo> {
+  const homebrew = detectHomebrewInstall(root);
+  if (homebrew) return homebrew;
   if (!existsSync(join(root, '.git'))) {
     return {kind: 'unsupported', root, reason: `${root} is not a git checkout, so NMSh cannot tell how it was installed.`};
   }
@@ -161,6 +218,9 @@ export function manualSteps(root: string, tag: string): string[] {
 export async function planUpdate(install: InstallInfo, release: ReleaseInfo, runner: CommandRunner = systemRunner,
   tagCommit: (tag: string) => Promise<string> = tag => fetchTagCommit(tag)): Promise<PlanResult> {
   const manual = manualSteps(install.root, release.tag);
+  if (install.kind === 'homebrew') {
+    return {ok: false, reason: `Installed with Homebrew${install.tap ? ` (${install.tap})` : ''}; Homebrew owns these files, so NMSh does not change them.`, manual: [...HOMEBREW_UPDATE_STEPS]};
+  }
   if (install.kind !== 'checkout') return {ok: false, reason: install.reason, manual: [`Download ${release.url}`, 'and reinstall it the way you installed NMSh.']};
   const {root} = install;
   const dirty = await runner.run('git', ['status', '--porcelain', '--untracked-files=no'], root);
@@ -262,7 +322,17 @@ export interface UpdateState {
   lastCheck?: number;
   latestVersion?: string;
   notifiedVersion?: string;
+  /** A release built and verified on disk by NMSh; the running process may still be older. */
+  installedVersion?: string;
+  /** Automatic install was not possible for this release (provenance/safety); announced once. */
+  skipped?: {version: string; reason: string; notified?: boolean};
+  /** Automatic install of this release failed and was rolled back; not retried until a newer release or /update apply. */
+  failed?: {version: string; at: number; reason: string; notified?: boolean};
 }
+
+const bounded = (value: unknown) => typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f-\u009f]/gu, ' ').slice(0, 200) : '';
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
 export function updateStatePath(env: NodeJS.ProcessEnv = process.env): string {
   return join(nmshConfigDirectory(env), 'update-state.json');
@@ -275,6 +345,11 @@ export function loadUpdateState(path = updateStatePath()): UpdateState {
       ...(typeof value.lastCheck === 'number' ? {lastCheck: value.lastCheck} : {}),
       ...(typeof value.latestVersion === 'string' ? {latestVersion: value.latestVersion} : {}),
       ...(typeof value.notifiedVersion === 'string' ? {notifiedVersion: value.notifiedVersion} : {}),
+      ...(typeof value.installedVersion === 'string' ? {installedVersion: value.installedVersion} : {}),
+      ...(isRecord(value.skipped) && typeof value.skipped.version === 'string'
+        ? {skipped: {version: value.skipped.version, reason: bounded(value.skipped.reason), ...(value.skipped.notified === true ? {notified: true} : {})}} : {}),
+      ...(isRecord(value.failed) && typeof value.failed.version === 'string' && typeof value.failed.at === 'number'
+        ? {failed: {version: value.failed.version, at: value.failed.at, reason: bounded(value.failed.reason), ...(value.failed.notified === true ? {notified: true} : {})}} : {}),
     };
   } catch {
     return {};
@@ -295,29 +370,103 @@ export function isCheckDue(frequency: UpdateCheckFrequency, state: UpdateState, 
   return state.lastCheck === undefined || now - state.lastCheck >= PERIOD_MS[frequency] || now < state.lastCheck;
 }
 
+export interface CheckResult {
+  /** The latest stable release, when it was fetched and is newer than the running version. */
+  release?: ReleaseInfo;
+  /** First time this release is seen: Notify only announces it now. */
+  announce: boolean;
+}
+
 /**
- * One quiet background check. Returns the version to announce, at most
- * once per newly seen release; every failure is silent.
+ * One quiet, due-gated release check. Off (or a check that is not due) makes
+ * no request. Every failure is silent.
  */
-export async function backgroundUpdateCheck(current: string, frequency: UpdateCheckFrequency, options: {
+export async function checkForUpdate(current: string, frequency: UpdateCheckFrequency, options: {
   now?: number; statePath?: string; fetchImpl?: FetchLike;
-} = {}): Promise<ReleaseInfo | undefined> {
+} = {}): Promise<CheckResult> {
   const now = options.now ?? Date.now();
   const state = loadUpdateState(options.statePath);
-  if (!isCheckDue(frequency, state, now)) return undefined;
+  if (!isCheckDue(frequency, state, now)) return {announce: false};
   let release: ReleaseInfo;
   try {
     release = await fetchLatestRelease(options.fetchImpl);
   } catch {
     try { saveUpdateState({...state, lastCheck: now}, options.statePath); } catch { /* best effort */ }
-    return undefined;
+    return {announce: false};
   }
-  const announce = compareVersions(release.version, current) > 0 && state.notifiedVersion !== release.version;
+  const newer = compareVersions(release.version, current) > 0;
+  const announce = newer && state.notifiedVersion !== release.version;
   try {
-    saveUpdateState({lastCheck: now, latestVersion: release.version,
-      ...(announce ? {notifiedVersion: release.version} : state.notifiedVersion ? {notifiedVersion: state.notifiedVersion} : {})}, options.statePath);
+    saveUpdateState({...state, lastCheck: now, latestVersion: release.version,
+      ...(announce ? {notifiedVersion: release.version} : {})}, options.statePath);
   } catch {
     // Unwritable state only means the next launch checks again.
   }
-  return announce ? release : undefined;
+  return {...(newer ? {release} : {}), announce};
+}
+
+/** Notify-only form: the release to announce, at most once per newly seen release. */
+export async function backgroundUpdateCheck(current: string, frequency: UpdateCheckFrequency, options: {
+  now?: number; statePath?: string; fetchImpl?: FetchLike;
+} = {}): Promise<ReleaseInfo | undefined> {
+  const result = await checkForUpdate(current, frequency, options);
+  return result.announce ? result.release : undefined;
+}
+
+export type AutomaticOutcome =
+  | {kind: 'ready'; version: string; announce: boolean}
+  | {kind: 'skipped'; version: string; reason: string; announce: boolean}
+  | {kind: 'failed'; version: string; reason: string; announce: boolean};
+
+/**
+ * Prepare a release in the background with exactly the manual updater's plan
+ * and apply functions, so every safety check, build verification and rollback
+ * is shared. The running process is never touched. Nothing here throws.
+ */
+export async function prepareAutomaticUpdate(release: ReleaseInfo, options: {
+  statePath?: string; root?: string; runner?: CommandRunner; tagCommit?: (tag: string) => Promise<string>;
+  readIdentity?: (root: string) => {version?: string; commit?: string}; now?: number;
+} = {}): Promise<AutomaticOutcome> {
+  const runner = options.runner ?? systemRunner;
+  const save = (state: UpdateState) => { try { saveUpdateState(state, options.statePath); } catch { /* best effort */ } };
+  const state = loadUpdateState(options.statePath);
+  if (state.installedVersion === release.version) return {kind: 'ready', version: release.version, announce: false};
+  // No retry storm: a failed release waits for a newer release or an explicit /update apply.
+  if (state.failed?.version === release.version) return {kind: 'failed', version: release.version, reason: state.failed.reason, announce: false};
+  const skip = (reason: string): AutomaticOutcome => {
+    const announce = state.skipped?.version !== release.version || state.skipped.notified !== true;
+    save({...loadUpdateState(options.statePath), skipped: {version: release.version, reason: bounded(reason), notified: true}});
+    return {kind: 'skipped', version: release.version, reason, announce};
+  };
+  try {
+    const install = await detectInstall(options.root ?? installRoot(), runner);
+    const planned = await planUpdate(install, release, runner, options.tagCommit ?? (tag => fetchTagCommit(tag)));
+    if (!planned.ok) return skip(planned.reason);
+    const result = await applyUpdate(planned.plan, runner, () => undefined, options.readIdentity);
+    if (result.ok) {
+      const { skipped: _skipped, failed: _failed, ...rest } = loadUpdateState(options.statePath);
+      save({...rest, installedVersion: release.version});
+      return {kind: 'ready', version: release.version, announce: true};
+    }
+    const reason = bounded(result.log.filter(line => /fail|could not|rollback|restored/iu.test(line)).slice(-2).join(' ')) || 'the update did not complete';
+    save({...loadUpdateState(options.statePath), failed: {version: release.version, at: options.now ?? Date.now(), reason, notified: true}});
+    return {kind: 'failed', version: release.version, reason, announce: true};
+  } catch (error) {
+    const reason = bounded(error instanceof Error ? error.message : String(error));
+    save({...loadUpdateState(options.statePath), failed: {version: release.version, at: options.now ?? Date.now(), reason, notified: true}});
+    return {kind: 'failed', version: release.version, reason, announce: true};
+  }
+}
+
+/** A version prepared on disk that this process is not running yet. */
+export function readyVersion(state: UpdateState, running: string): string | undefined {
+  return state.installedVersion && compareVersions(state.installedVersion, running) > 0 ? state.installedVersion : undefined;
+}
+
+/** Record a successful explicit `/update apply` the same way, and clear stale automatic failure bookkeeping. */
+export function recordInstalled(version: string, statePath?: string): void {
+  try {
+    const { skipped: _skipped, failed: _failed, ...rest } = loadUpdateState(statePath);
+    saveUpdateState({...rest, installedVersion: version}, statePath);
+  } catch { /* best effort */ }
 }

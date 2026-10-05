@@ -1,11 +1,11 @@
 import {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 
-const PRIMARY = foreground(UI_COLORS.primary);
-const SECONDARY = foreground(UI_COLORS.secondary);
-const INTERACTIVE = foreground(UI_COLORS.accent);
-const WARNING = foreground(UI_COLORS.failure);
+const PRIMARY = lazyForeground(UI_COLORS.primary);
+const SECONDARY = lazyForeground(UI_COLORS.secondary);
+const INTERACTIVE = lazyForeground(UI_COLORS.accent);
+const WARNING = lazyForeground(UI_COLORS.failure);
 const RESET = '\u001B[0m';
 
 export interface KeyboardState {
@@ -20,20 +20,20 @@ export function handleKeyboardKey(key: Key, state: KeyboardState): boolean {
   return false;
 }
 
-export function renderKeyboardPanel(state: KeyboardState, columns: number): string[] {
+export function renderKeyboardPanel(state: KeyboardState, columns: number, hostName = 'the host'): string[] {
   const rows: string[] = [];
   rows.push(`${PRIMARY}  Keyboard Integration${RESET}`);
   rows.push('');
-  rows.push(`  ${WARNING}Note: Installing these bindings affects all Ghostty tabs globally.${RESET}`);
+  rows.push(`  ${WARNING}Note: Installing these bindings affects all ${hostName} tabs globally.${RESET}`);
   rows.push('');
   
   const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
-  const labelColor = (index: number) => index === state.selectedIndex ? PRIMARY : SECONDARY;
+  const labelColor = (index: number) => focusForeground(index === state.selectedIndex);
 
-  rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Arrows, Opt+Backspace  Install for Ghostty${RESET}`);
+  rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Arrows, Opt+Backspace  Install for ${hostName}${RESET}`);
 
   rows.push('');
-  rows.push(`  ${SECONDARY}Ghostty normally collapses Backspace and Option+Backspace to the${RESET}`);
+  rows.push(`  ${SECONDARY}${hostName} normally collapses Backspace and Option+Backspace to the${RESET}`);
   rows.push(`  ${SECONDARY}same DEL byte. Installing this allows NMSh to distinguish them.${RESET}`);
   rows.push('');
   rows.push(`  ${SECONDARY}Enter install · Esc cancel${RESET}`);

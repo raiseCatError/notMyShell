@@ -7,7 +7,7 @@ import {TerminalApp} from '../src/app/TerminalApp.js';
 import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {stripAnsi} from '../src/util/text.js';
-import {renderSettingsPanel} from '../src/ui/SettingsPanel.js';
+import {renderSettingsPanel, visibleSettingsRows} from '../src/ui/SettingsPanel.js';
 import {decodeKeys} from '../src/terminal/keys.js';
 
 /** Config writes land in a throwaway directory, never the developer's real settings. */
@@ -108,12 +108,13 @@ test('Transcript, Syntax, and Keyboard entries open their live panels and return
 }));
 
 test('Config Prompt provider row opens the prompt panel and returns to Config', () => withApp(app => {
-  app['settingsPanelState'] = {section: 'root', view: 'config', selectedIndex: 0, contentIndex: 1, glyphStyle: 'nerd', onboarding: false};
+  const provider = visibleSettingsRows({section: 'root', view: 'config', selectedIndex: 0, glyphStyle: 'nerd', onboarding: false}, app['promptConfiguration']).findIndex(row => row.id === 'provider');
+  app['settingsPanelState'] = {section: 'root', view: 'config', selectedIndex: 0, contentIndex: provider, glyphStyle: 'nerd', onboarding: false};
   app['handleKey']({kind: 'enter'});
   assert.ok(app['promptPanelState']);
   app['handleKey']({kind: 'escape'});
   assert.equal(app['settingsPanelState']!.view, 'config');
-  assert.equal(app['settingsPanelState']!.contentIndex, 1);
+  assert.equal(app['settingsPanelState']!.contentIndex, provider);
 }));
 
 test('Status is read-only, uses no secrets, and marks unknown build identity quietly', () => withApp(app => {
@@ -124,9 +125,16 @@ test('Status is read-only, uses no secrets, and marks unknown build identity qui
     for (const key of [{kind: 'down'}, {kind: 'enter'}, {kind: 'text', value: ' '}, {kind: 'text', value: '/'}] as const) app['handleKey'](key);
     assert.equal(JSON.stringify(app['promptConfiguration']), before);
     assert.equal(app['settingsPanelState']!.searchFocused, undefined, '/ does not search in Status');
+    // Additional provider status may overflow one screen. Verify the first viewport explicitly.
+    app['settingsPanelState']!.contentIndex = 0;
     const rows = app['settingsPanelRows'](80).map(stripAnsi).join('\n');
     assert.match(rows, /Version:/u);
-    assert.match(rows, /Session journal:\s+(active|inactive)/u);
+    const facts = app['statusSections']().flat();
+    assert.ok(facts.some(item => item.label === 'Platform' && item.value === `${process.platform} ${process.arch}`));
+    assert.ok(facts.some(item => item.label === 'Node' && item.value === process.version));
+    assert.ok(facts.some(item => item.label === 'Shell' && item.value === 'zsh'));
+
+    assert.ok(facts.some(item => item.label === 'Session journal' && /^(active|inactive)/u.test(item.value)));
     assert.ok(!rows.includes('sk-super-secret-value'));
     app['buildIdentity'] = {version: 'unknown', commit: 'unknown'};
     assert.ok(app['statusSections']().flat().some(item => item.label === 'Build' && item.value === 'unknown' && item.tone === 'muted'));

@@ -155,11 +155,120 @@ test('background checks are opt-in, periodic, quiet on failure, and announce a r
   }
 });
 
-test('/update is explicit and checks default to off', () => {
+test('/update is explicit', () => {
   assert.deepEqual(parseSlashCommand('/update'), {kind: 'update', apply: false});
   assert.deepEqual(parseSlashCommand('/update apply'), {kind: 'update', apply: true});
   assert.equal(parseSlashCommand('/update now')?.kind, 'unknown');
-  assert.equal(DEFAULT_PROMPT_CONFIGURATION.updateChecks, 'off');
-  assert.equal(normalizePromptConfiguration({updateChecks: 'weekly'}).updateChecks, 'weekly');
-  assert.equal(normalizePromptConfiguration({updateChecks: 'hourly'}).updateChecks, 'off');
+});
+
+const update = (input: Record<string, unknown>) => { const c = normalizePromptConfiguration(input); return [c.updateMode, c.updateFrequency]; };
+test('update settings: fresh installs are Automatic / Daily; saved intent is preserved, never upgraded to automatic', () => {
+  assert.deepEqual([DEFAULT_PROMPT_CONFIGURATION.updateMode, DEFAULT_PROMPT_CONFIGURATION.updateFrequency], ['automatic', 'daily']);
+  assert.deepEqual(update({}), ['automatic', 'daily']);
+  assert.deepEqual(update({updateChecks: 'off', onboardingComplete: true}), ['off', 'daily']);
+  assert.deepEqual(update({updateChecks: 'daily'}), ['notify', 'daily']);
+  assert.deepEqual(update({updateChecks: 'weekly'}), ['notify', 'weekly']);
+  assert.deepEqual(update({updateChecks: 'hourly'}), ['off', 'daily'], 'unrecognised saved value stays off');
+  assert.deepEqual(update({onboardingComplete: true}), ['off', 'daily'], 'a saved config that predates the setting was Off');
+  assert.deepEqual(update({updateMode: 'automatic', updateFrequency: 'weekly', updateChecks: 'off'}), ['automatic', 'weekly'], 'new keys win');
+  assert.equal('updateChecks' in normalizePromptConfiguration({updateChecks: 'daily'}), false, 'no competing legacy setting remains');
+});
+
+
+import {mkdtempSync, readFileSync as readFile, statSync, writeFileSync as writeFile} from 'node:fs';
+import {checkForUpdate, loadUpdateState, prepareAutomaticUpdate, readyVersion, recordInstalled, saveUpdateState, updatesDisabledByEnvironment} from '../src/update/update.js';
+
+const stateFile = () => join(mkdtempSync(join(tmpdir(), 'nmsh-upd-')), 'cfg', 'update-state.json');
+const newer: ReleaseInfo = {version: '0.17.0', tag: 'v0.17.0', url: 'https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0', summary: []};
+const OFFICIAL = 'https://github.com/raiseCatError/notMyShell.git';
+const NEW_SHA = 'c'.repeat(40);
+const identity = () => ({version: '0.17.0', commit: NEW_SHA.slice(0, 7)});
+/** An official, clean, fast-forwardable checkout unless an answer overrides it. */
+const healthy = (extra: Record<string, string | Error> = {}) => scripted({
+  'git rev-parse --show-toplevel': process.cwd(), 'git remote get-url': OFFICIAL, 'git rev-parse HEAD': HEAD, 'git symbolic-ref': 'master',
+  'git status --porcelain --untracked-files=no': '', 'git fetch': '', 'git rev-parse v0.17.0': NEW_SHA, 'git merge-base': '', ...extra,
+});
+const harness = (runner: CommandRunner, statePath: string, tagCommit = async () => NEW_SHA) => ({statePath, runner, root: process.cwd(), tagCommit, readIdentity: identity});
+
+test('semver jump 0.16.0 -> 0.17.0 is newer; updates are disabled under the test runner', () => {
+  assert.equal(compareVersions('0.17.0', '0.16.0'), 1);
+  assert.equal(compareVersions('0.16.0', '0.17.0'), -1);
+  assert.equal(updatesDisabledByEnvironment({}), false);
+  assert.equal(updatesDisabledByEnvironment({NMSH_DISABLE_UPDATES: '1'}), true);
+});
+
+test('Off makes no request; notify-only discovery never mutates; repeated checks announce a release once', async () => {
+  const statePath = stateFile();
+  const fetchImpl = fakeFetch({tag_name: 'v0.17.0', html_url: 'https://example/r', body: ''});
+  assert.deepEqual(await checkForUpdate('0.16.0', 'off', {statePath, fetchImpl, now: 1e12}), {announce: false});
+  assert.equal(fetchImpl.urls.length, 0);
+  const first = await checkForUpdate('0.16.0', 'daily', {statePath, fetchImpl, now: 1e12});
+  assert.equal(first.announce, true); assert.equal(first.release?.version, '0.17.0');
+  const second = await checkForUpdate('0.16.0', 'daily', {statePath, fetchImpl, now: 1e12 + 90_000_000});
+  assert.equal(second.announce, false, 'same release is not announced twice'); assert.equal(second.release?.version, '0.17.0');
+  assert.equal(statSync(statePath).mode & 0o777, 0o600, 'update state stays private');
+});
+
+test('automatic: an eligible install is prepared through the shared plan/apply; the running version stays distinct', async () => {
+  const statePath = stateFile();
+  const runner = healthy();
+  const outcome = await prepareAutomaticUpdate(newer, harness(runner, statePath));
+  assert.deepEqual(outcome, {kind: 'ready', version: '0.17.0', announce: true});
+  assert.ok(runner.calls.some(call => call.startsWith('git merge --ff-only')) && runner.calls.includes('npm run build'));
+  assert.ok(!runner.calls.some(call => DESTRUCTIVE.test(call)));
+  const state = loadUpdateState(statePath);
+  assert.equal(state.installedVersion, '0.17.0');
+  assert.equal(readyVersion(state, '0.16.0'), '0.17.0', 'prepared on disk, not yet running');
+  assert.equal(readyVersion(state, '0.17.0'), undefined, 'once running it, nothing is pending');
+  const again = await prepareAutomaticUpdate(newer, harness(runner, statePath));
+  assert.deepEqual(again, {kind: 'ready', version: '0.17.0', announce: false}, 'no second install, no second notice');
+});
+
+for (const [name, answers, tagCommit, pattern] of [
+  ['dirty tracked tree', {'git status --porcelain --untracked-files=no': ' M src/x.ts'}, undefined, /uncommitted changes/u],
+  ['unofficial remote', {'git remote get-url': 'https://github.com/someone/fork.git'}, undefined, /not github\.com/u],
+  ['diverged checkout', {'git merge-base': new Error('not ancestor')}, undefined, /not a fast-forward/u],
+  ['tag and GitHub disagree', {}, async () => 'd'.repeat(40), /does not match GitHub/u],
+] as Array<[string, Record<string, string | Error>, (() => Promise<string>) | undefined, RegExp]>) {
+  test(`automatic: ${name} is never changed, and the skip is announced once`, async () => {
+    const statePath = stateFile();
+    const runner = healthy(answers);
+    const outcome = await prepareAutomaticUpdate(newer, harness(runner, statePath, tagCommit));
+    assert.equal(outcome.kind, 'skipped'); assert.match((outcome as {reason: string}).reason, pattern); assert.equal(outcome.announce, true);
+    assert.ok(!runner.calls.some(call => /git (?:merge --ff|switch|reset)|npm /u.test(call)), 'nothing was moved or built');
+    const repeat = await prepareAutomaticUpdate(newer, harness(healthy(answers), statePath, tagCommit));
+    assert.equal(repeat.announce, false, 'no repeated nagging');
+    assert.equal(loadUpdateState(statePath).installedVersion, undefined);
+  });
+}
+
+test('automatic: a failing build rolls back, is announced once and is not retried in a loop', async () => {
+  const statePath = stateFile();
+  const runner = healthy({'npm run build': new Error('tsc failed')});
+  const outcome = await prepareAutomaticUpdate(newer, harness(runner, statePath));
+  assert.equal(outcome.kind, 'failed'); assert.equal(outcome.announce, true);
+  assert.ok(runner.calls.some(call => call.startsWith('git reset --keep')), 'rollback ran');
+  assert.equal(loadUpdateState(statePath).installedVersion, undefined);
+  const calls = runner.calls.length;
+  const retry = await prepareAutomaticUpdate(newer, harness(runner, statePath));
+  assert.equal(retry.kind, 'failed'); assert.equal(retry.announce, false);
+  assert.equal(runner.calls.length, calls, 'no commands run on the repeat');
+  recordInstalled('0.17.0', statePath);
+  assert.equal(loadUpdateState(statePath).failed, undefined, 'a successful manual apply clears the failure');
+});
+
+test('automatic: a runner that throws unexpectedly never escapes', async () => {
+  const outcome = await prepareAutomaticUpdate(newer, {statePath: stateFile(), root: process.cwd(), runner: {run: async () => { throw new Error('boom'); }}});
+  assert.ok(['skipped', 'failed'].includes(outcome.kind));
+});
+
+test('update state round-trips new fields, bounded and private; untracked files do not affect the tracked-clean probe', () => {
+  const statePath = stateFile();
+  saveUpdateState({lastCheck: 1, installedVersion: '0.17.0', failed: {version: '0.18.0', at: 5, reason: 'x'.repeat(500)}}, statePath);
+  const state = loadUpdateState(statePath);
+  assert.equal(state.installedVersion, '0.17.0');
+  assert.equal(state.failed?.reason.length, 200);
+  assert.equal(statSync(statePath).mode & 0o777, 0o600);
+  assert.doesNotMatch(readFile(statePath, 'utf8'), /token|secret/iu);
+  writeFile(statePath, '{"failed": {"version": 3}}'); assert.deepEqual(loadUpdateState(statePath), {});
 });

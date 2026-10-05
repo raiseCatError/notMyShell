@@ -1,14 +1,17 @@
 export type Key =
+  | {kind: 'focusIn' | 'focusOut'}
   | {kind: 'text'; value: string}
   | {kind: 'paste'; value: string}
   | {kind: 'deleteWord' | 'deleteLineBefore' | 'deleteLineAfter' | 'wordLeft' | 'wordRight' | 'selectWordLeft' | 'selectWordRight'} 
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  ['\u001B[I', 'focusIn'],
+  ['\u001B[O', 'focusOut'],
   // Kitty keyboard protocol (CSI > 1 u, enabled by TerminalRenderer on entry;
   // Ghostty honors it) encodes Escape as its functional key code (27) rather
   // than a lone raw ESC byte. Without these, Escape falls through to the
@@ -80,10 +83,12 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001BOB', 'down'],
   ['\u001B[97;5u', 'lineHome'], // Kitty Ctrl+A
   ['\u001B[101;5u', 'lineEnd'], // Kitty Ctrl+E
+  ['\u001B[120;5u', 'historyDelete'], // Ctrl+X: only active in command history
   ['\u001B[119;5u', 'deleteWord'], // Kitty Ctrl+W
   ['\u001B[117;5u', 'deleteLineBefore'], // Kitty Ctrl+U
   ['\u001B[107;5u', 'deleteLineAfter'], // Kitty Ctrl+K
   ['\u001B[99;5u', 'interrupt'], // Kitty Ctrl+C
+  ['\u001B[102;5u', 'find'], // Kitty Ctrl+F
   ['\u001B[100;5u', 'eof'], // Kitty Ctrl+D
   ['\u001B[122;5u', 'suspend'], // Kitty Ctrl+Z
   ['\u001B[90;5u', 'suspend'], // Kitty Ctrl+Z (uppercase Z)
@@ -122,8 +127,11 @@ export function decodeKeys(input: string): Key[] {
       else if (base === 65) keys.push({kind: 'wheelDown'});
       // Shift+mouse is native text selection: never click, toggle, or hover.
       else if (shift) { /* ignored */ }
-      else if (motion && (base === 3 || base === 0)) keys.push({kind: 'mouseMove', x, y});
+      // Motion with the primary button held is a drag (NMSh transcript selection); without a button it is hover.
+      else if (motion && base === 0) keys.push({kind: 'mouseDrag', x, y});
+      else if (motion && base === 3) keys.push({kind: 'mouseMove', x, y});
       else if (!motion && base === 0 && isPress) keys.push({kind: 'mouseClick', x, y});
+      else if (!motion && base === 0 && !isPress) keys.push({kind: 'mouseRelease', x, y});
       index += sgrMatch[0].length;
       continue;
     }
@@ -157,7 +165,9 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0001') keys.push({kind: 'lineHome'} as Key); // Ctrl+A
     else if (value === '\u0005') keys.push({kind: 'lineEnd'} as Key); // Ctrl+E
     else if (value === '\u001B') keys.push({kind: 'escape'} as Key);
+    else if (value === '\u0018') keys.push({kind: 'historyDelete'} as Key);
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
+    else if (value === '\u0006') keys.push({kind: 'find'} as Key); // Ctrl+F: NMSh transcript find
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
     else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N
     else if (value === '\u0010') keys.push({kind: 'suggestPrevious'} as Key); // Ctrl+P
@@ -173,6 +183,24 @@ export class KeyDecoder {
   reset(): void {
     this.pasteBuffer = undefined;
     this.keyBuffer = '';
+  }
+
+  /**
+   * A lone ESC is held in case an escape sequence follows. Terminals send a
+   * whole sequence in one write, so a lone ESC still held after a short pause
+   * is the Escape key; the owner flushes it then. Otherwise it would be
+   * delivered only with the next keystroke (ESC then → became Escape + Right).
+   */
+  get pendingEscape(): boolean {
+    return this.pasteBuffer === undefined && this.keyBuffer === '\u001B';
+  }
+
+  /** Decodes whatever is held as complete keys (a held lone ESC becomes Escape). */
+  flush(): Key[] {
+    if (this.pasteBuffer !== undefined || !this.keyBuffer) return [];
+    const held = this.keyBuffer;
+    this.keyBuffer = '';
+    return decodeKeys(held);
   }
 
   push(input: string): Key[] {

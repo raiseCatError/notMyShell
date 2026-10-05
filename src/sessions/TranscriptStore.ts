@@ -42,7 +42,7 @@ export interface LiveLink {
   /** Last shell stream event reflected in this transcript. */
   seq: number;
   /** The command in flight when this checkpoint was taken. */
-  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number};
+  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number};
 }
 
 function parseLive(value: unknown): LiveLink | undefined {
@@ -70,28 +70,33 @@ function isTranscript(value: unknown): value is OutputTranscript {
   if (!value || typeof value !== 'object') return false;
   const transcript = value as Partial<OutputTranscript>;
   return (transcript.welcome === undefined || (typeof transcript.welcome.cwd === 'string'
-    && transcript.welcome.shell === 'zsh'
+    && (transcript.welcome.shell === 'zsh' || transcript.welcome.shell === 'fish' || transcript.welcome.shell === 'bash')
     && transcript.welcome.identity !== null
     && typeof transcript.welcome.identity === 'object'
     && typeof transcript.welcome.identity.version === 'string'
     && typeof transcript.welcome.identity.commit === 'string'
     && (transcript.welcome.identity.branch === undefined || typeof transcript.welcome.identity.branch === 'string')
     && (transcript.welcome.identity.dirty === undefined || typeof transcript.welcome.identity.dirty === 'boolean')
+    && (transcript.welcome.understanding === undefined || typeof transcript.welcome.understanding === 'string')
     && (transcript.welcome.provider === undefined || transcript.welcome.provider === 'fastfetch' || transcript.welcome.provider === 'neofetch')
     && (transcript.welcome.captured === undefined
       || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)
-    && transcript.records.every(record => record && typeof record.command === 'string'
+    && transcript.records.every(record => record && (record.historyEligible === undefined || typeof record.historyEligible === 'boolean')
+      && (record.startedAt === undefined || Number.isFinite(record.startedAt))
+      && (record.durationMs === undefined || (Number.isFinite(record.durationMs) && record.durationMs >= 0))
+      && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
       && typeof record.outputStartId === 'number'
       && (record.historicalContext === undefined
         || (typeof record.historicalContext.cwd === 'string'
           && (record.historicalContext.project === undefined || typeof record.historicalContext.project === 'string')
-          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')))
+          && (record.historicalContext.branch === undefined || typeof record.historicalContext.branch === 'string')
+          && (record.historicalContext.promptless === undefined || record.historicalContext.promptless === true)))
       && (record.historicalContext?.prompt === undefined || (typeof record.historicalContext.prompt === 'object'
         && record.historicalContext.prompt !== null
-        && ['nmsh', 'starship', 'powerlevel10k'].includes(record.historicalContext.prompt.provider)
+        && ['nmsh', 'starship', 'powerlevel10k', 'ohMyPosh'].includes(record.historicalContext.prompt.provider)
         && Array.isArray(record.historicalContext.prompt.segments)
         && (record.historicalContext.prompt.gapEnabled === undefined || typeof record.historicalContext.prompt.gapEnabled === 'boolean')
         && record.historicalContext.prompt.segments.every(segment => segment && typeof segment.text === 'string'

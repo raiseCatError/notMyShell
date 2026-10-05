@@ -6,10 +6,13 @@ import {detectProvider, findExecutable, runExternal, type ProviderDescriptor} fr
 export const WELCOME_PROVIDERS: readonly ProviderDescriptor<WelcomeProviderId>[] = [
   {id: 'vespyr', family: 'welcome', label: 'Vespyr', kind: 'native', description: 'the NMSh cat with build and directory'},
   {id: 'fastfetch', family: 'welcome', label: 'Fastfetch', kind: 'external', executable: 'fastfetch', versionArgs: ['--version'],
-    description: 'your installed fastfetch and its configuration',
-    ...(process.platform === 'darwin' ? {install: {label: 'brew install fastfetch', command: 'brew', args: ['install', 'fastfetch']}} : {})},
+    description: 'your installed fastfetch and its configuration', recipe: {brew: 'fastfetch'}, source: 'https://github.com/fastfetch-cli/fastfetch'},
   {id: 'neofetch', family: 'welcome', label: 'Neofetch', kind: 'external', executable: 'neofetch', versionArgs: ['--version'], legacy: true,
-    description: 'archived upstream; used only if already installed'},
+    successor: 'Fastfetch', description: 'archived upstream; used only if already installed'},
+  {id: 'macchina', family: 'welcome', label: 'Macchina', kind: 'external', executable: 'macchina', versionArgs: ['--version'], lifecycle: 'maintenance',
+    description: 'system information fetcher in maintenance mode', recipe: {brew: 'macchina'}, source: 'https://github.com/Macchina-CLI/macchina'},
+  {id: 'zigfetch', family: 'welcome', label: 'Zigfetch', kind: 'external', executable: 'zigfetch',
+    description: 'minimal system information fetcher; uses your installed configuration'},
   {id: 'none', family: 'welcome', label: 'None', kind: 'none', description: 'no startup welcome'},
 ];
 
@@ -18,7 +21,7 @@ export function welcomeProvider(id: WelcomeProviderId): ProviderDescriptor<Welco
 }
 
 /** Fetch tools use their own configuration; `--pipe false` keeps colors without a TTY. */
-const CAPTURE_ARGS: Record<'fastfetch' | 'neofetch', readonly string[]> = {fastfetch: ['--pipe', 'false'], neofetch: []};
+const CAPTURE_ARGS: Partial<Record<WelcomeProviderId, readonly string[]>> = {fastfetch: ['--pipe', 'false']};
 export const WELCOME_CAPTURE_TIMEOUT_MS = 2500;
 const MAX_CAPTURE_BYTES = 128 * 1024;
 const MAX_ROWS = 40;
@@ -30,15 +33,17 @@ export type WelcomeCapture = {ok: true; lines: string[]} | {ok: false; reason: s
  * Runs the user's installed fetch tool once (argv, no stdin, timeout,
  * bounded output) and flattens what it printed into SGR-only rows.
  */
-export async function captureWelcome(id: 'fastfetch' | 'neofetch', cwd: string, env: NodeJS.ProcessEnv = process.env): Promise<WelcomeCapture> {
-  const status = await detectProvider(welcomeProvider(id), env.PATH ?? '');
+export async function captureWelcome(id: Exclude<WelcomeProviderId, 'vespyr' | 'none'>, cwd: string,
+  env: NodeJS.ProcessEnv = process.env): Promise<WelcomeCapture> {
+  const descriptor = welcomeProvider(id);
+  const status = await detectProvider(descriptor, env.PATH ?? '');
   if (status.state !== 'installed' || !status.binary) return {ok: false, reason: 'not installed'};
-  // A plain `zsh -f` parent lets fetch tools report the shell NMSh fronts instead of node;
-  // the command stays argv (`"$0" "$@"`), and `exit` keeps zsh from exec-replacing itself.
+  // Run under plain zsh so fetch tools report NMSh's shell rather than node.
+  // The script is fixed and only forwards positional argv; provider data is never interpolated.
   const zsh = findExecutable('zsh', env.PATH ?? '');
   const [binary, args] = zsh
-    ? [zsh, ['-f', '-c', '"$0" "$@"; exit $?', status.binary, ...CAPTURE_ARGS[id]]]
-    : [status.binary, CAPTURE_ARGS[id]];
+    ? [zsh, ['-f', '-c', '"$0" "$@"; exit $?', status.binary, ...(CAPTURE_ARGS[id] ?? [])]]
+    : [status.binary, CAPTURE_ARGS[id] ?? []];
   const result = await runExternal(binary, args, {timeoutMs: WELCOME_CAPTURE_TIMEOUT_MS, maxBytes: MAX_CAPTURE_BYTES,
     cwd, env: {...env, TERM: env.TERM ?? 'xterm-256color'}});
   if (!result.ok) return {ok: false, reason: result.error ?? 'failed'};

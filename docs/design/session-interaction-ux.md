@@ -139,7 +139,7 @@ Live sessions are owned by the per-user session service (`nmshd`), which listens
     - Never only skips restoring at launch. It never ends a session, and `/resume`, detach and reattach are unaffected.
   - **Multiple detached sessions:** Ask which (default) or Open all.
     - The picker uses ↑↓ to move, Space to select, A to select all (A again clears), and Enter to resume the selected sessions. Esc, or Enter with nothing selected, starts fresh.
-  - Neither screen has a destructive key: killing stays a confirmed `/resume` action. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
+  - Both screens have one destructive key, `X`, which only opens a confirmation (Enter/Y kills, Esc/N/Ctrl+C cancels). The kill is the same confirmed termination `/resume` uses; the transcript is archived and stays in `/resume`. Sessions attached elsewhere are never touched, and killing the last one starts a fresh session. `--new` still skips restoring, and `--attach <id>` attaches one session explicitly.
   - When several sessions are restored, this window attaches the first. Each other one opens in a new window of the host terminal, running `nmsh --attach <id>`:
     - Ghostty on macOS: Ghostty's AppleScript API (`new surface configuration`, then `new window with configuration`). It opens a normal window in the running Ghostty app. The command words are passed as `osascript` arguments and shell-quoted with `quoted form of`, never written into the script. macOS asks once for Automation permission. If AppleScript is disabled or permission is denied, NMSh names the session's `nmsh --attach` command instead.
     - Ghostty on Linux: `ghostty -e`.
