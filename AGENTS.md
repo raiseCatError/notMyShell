@@ -62,8 +62,8 @@ Released (0.16.0): a real ShellAdapter with zsh, Fish and Bash 4.4+ backends ([d
 - Installs are typed argv shown before confirmation; special installers are never run by NMSh.
 - Chroma never reaches generated external artifacts.
 
-## Current surfaces (unreleased beyond v0.16.0)
-Theme Studio (`/theme`), Theme Bridge (`/theme-bridge`), `/providers`, `/tools` with filesystem-detected shell frameworks, `/configure`, `/tmux` Config Studio, `/integrations`, `/dotfiles`, the Oh My Posh provider, and Keep Awake (`/caffeinate`, `/awake`, `/zoomies`, with composer-edge, Status Strip, idle-reminder and screensaver presentation). See CHANGELOG.md → Unreleased.
+## Current surfaces (v0.17.0 release candidate)
+Theme Studio (`/theme`), Theme Bridge (`/theme-bridge`), `/providers`, `/tools` with filesystem-detected shell frameworks, `/configure`, `/tmux` Config Studio, `/integrations`, `/dotfiles`, the Oh My Posh provider, and Keep Awake (`/caffeinate`, `/awake`, `/zoomies`, with composer-edge, Status Strip, idle-reminder and screensaver presentation). Context Engine fact metadata, native module routing and Context Rail are also implemented. See CHANGELOG.md → 0.17.0; tagging and publication are pending.
 
 ## Testing / verification
 During implementation, run focused affected tests. Use `npm run verify:fast` for
@@ -126,7 +126,7 @@ Key references:
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
 - [v0.16.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0) — current stable release
 - [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the merged cumulative v0.16 release
-- [PR #315](https://github.com/raiseCatError/notMyShell/pull/315) — open development PR for the work after v0.16.0 (not released; the package version stays 0.16.0)
+- [PR #322](https://github.com/raiseCatError/notMyShell/pull/322) — merged checkpoint on master; package 0.17.0 is the release candidate, not yet tagged or published
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board
 - [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
 - [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions

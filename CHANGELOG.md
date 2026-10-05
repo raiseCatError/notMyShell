@@ -6,8 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-10-06
+
+Context Engine, Themes & Discovery: native context routing and Rail foundations, Theme Studio and Theme Bridge, shell/transcript refinements, contextual tools and portability hardening.
+
+### Context Engine and shell/transcript UX
+- **Context Engine foundation:** immutable fact metadata (provenance, freshness, trust, sensitivity and persistence), a native module registry, bounded trusted metadata/Git collection, and Surface Router placement across Main Prompt, Context Rail and Right Context. Repository entry never executes arbitrary repository-controlled code through discovery. General capability scheduling, a broader first-party module catalog and installable declarative Context Packs remain upcoming; no finalized pack SDK or executable plugin API is available.
+- **Context Rail:** independent relation, direction, integration, spacing and divider-anchor controls; one or two actual content rows; horizontal Inside dividers; priority overflow; shared preview/live geometry. Right shell context retains its independent anchor, and existing custom prompt/module configurations are preserved.
+- `/transcript` exposes the same Normal / Chat live presentation setting as `/layout` and Settings, alongside historical prompt and divider controls.
+- `/shell` keeps the current row visibly ticked and highlighted independently of keyboard focus, with explicit current/default markers. Shell indicator Hidden / When not default / Always and Left / Right edit the existing prompt module; changing Side preserves a saved Hidden state and never changes the active session.
+- `/btw` is the canonical local guidance command; `/ask` remains a compatibility alias of the same feature.
+- Portable shell/default-selection coverage, selection-band assertions and canonical CI sharding; full macOS/Ubuntu suites, Node 22 compatibility, Fedora portability and bounded timing smoke cover release candidates.
+
 ### UI consistency and showcase
-- Shared bold accent focus labels across menus, settings, pickers and setup; `/tools` keeps explicit checked markers when focus moves, including without color.
+- Shared bold accent focus labels across menus, settings, pickers and setup; `/tools` keeps full-row semantic selection bands when focus moves, with reverse video without color.
 - Consistent Chroma preview state and base-color guidance; `/syntax` exposes the shared theme families and variants, with previews and cache updates for custom colors and accents.
 - First launch opens Setup Cat. Apply completes onboarding even without appearance edits; presets and completed onboarding bypass discovery.
 - The current-shell module leads the default Native prompt; the former untouched default migrates, while customized module ordering is preserved.
@@ -65,11 +77,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Docs and demos
 - [ARCHITECTURE.md](ARCHITECTURE.md): a plain-language overview of how NMSh works, linked from the README, CONTRIBUTING, AGENTS and llms.txt.
-- README rewritten around what NMSh is, a short hero clip, a visual tour and the safety model; stale zsh-only, fixed-bottom, bat and release claims corrected.
+- README rewritten around what NMSh is, a GitHub-hosted reel hero with YouTube/X links, a mascot-left-of-logo lockup, a visual tour and the safety model; stale zsh-only, fixed-bottom, bat and release claims corrected.
 - Reproducible visual docs: `npm run demos` renders the README and [demo gallery](docs/demos.md) clips from committed VHS tapes in `scripts/demos/` against a disposable demo home (no user config, no network, the inert Keep Awake backend). It replaces the old asciinema/tmux recorder. A small Vespyr divider is generated from the real sprite.
 
 ### Updates and sessions
 - **Automatic updates** (Automatic / Notify only / Off, Daily or Weekly). New installs default to Automatic / Daily; saved Daily/Weekly checks migrate to Notify only and Off stays Off. Automatic prepares a verified stable release only where `/update apply`'s own checks pass, with the same build verification and rollback; the running session keeps its version. Status shows Running version, Latest, Mode and State.
+- Homebrew install provenance prevents the source-checkout updater from mutating the Cellar. Homebrew distribution is still being prepared and is not yet available; publishing remains disabled.
 - Detached sessions can be ended from the startup picker with `X` and confirmation; the transcript is archived and stays in `/resume`.
 
 ## [0.16.0] - 2026-10-04
