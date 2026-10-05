@@ -128,7 +128,8 @@ export const OH_MY_ZSH_INSTALL: InstallAdapter = {
   safeArgs: ['--unattended', '--keep-zshrc'],
   handoff: 'manual-terminal',
   steps: env => {
-    const file = join(env.TMPDIR && isAbsolute(env.TMPDIR) ? env.TMPDIR : '/tmp', 'ohmyzsh-install.sh');
+    // A file in your own home, not a predictable name in a shared temp directory that another user could replace between download and run.
+    const file = join(env.HOME && isAbsolute(env.HOME) ? env.HOME : homedir(), 'ohmyzsh-install.sh');
     const settings = Object.entries(OH_MY_ZSH_INSTALL.safeEnvironment).map(([name, value]) => `${name}=${value}`).join(' ');
     return [`curl -fsSL -o ${quote(file)} ${OH_MY_ZSH_INSTALLER_URL}`, `less ${quote(file)}`, `shasum -a 256 ${quote(file)}`,
       `${settings} sh ${quote(file)} ${OH_MY_ZSH_INSTALL.safeArgs.join(' ')}`];

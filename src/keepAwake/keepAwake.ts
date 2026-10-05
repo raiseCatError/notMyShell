@@ -169,7 +169,9 @@ export const systemProbe: ProcessProbe = {
       try { return readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\u0000').filter(Boolean).join(' '); } catch { return undefined; }
     }
     if (process.platform === 'win32') {
-      const result = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Math.trunc(pid)}").CommandLine`], {encoding: 'utf8', timeout: 5000, windowsHide: true});
+      // Absolute System32 path: never a PATH lookup.
+      const root = process.env.SystemRoot ?? process.env.windir ?? 'C:\\Windows';
+      const result = spawnSync(`${root}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`, ['-NoProfile', '-NonInteractive', '-Command', `(Get-CimInstance Win32_Process -Filter "ProcessId=${Math.trunc(pid)}").CommandLine`], {encoding: 'utf8', timeout: 5000, windowsHide: true});
       return result.status === 0 ? result.stdout.trim() || undefined : undefined;
     }
     const result = spawnSync('/bin/ps', ['-ww', '-o', 'command=', '-p', String(Math.trunc(pid))], {encoding: 'utf8', timeout: 3000});

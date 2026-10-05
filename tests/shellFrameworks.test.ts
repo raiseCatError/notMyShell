@@ -230,11 +230,12 @@ test('Oh My Zsh guided install: NMSh never downloads or runs it; the safe settin
     for (const file of ['src/tools/frameworks.ts', 'src/tools/OhMyZshView.ts']) {
       assert.doesNotMatch(readFileSync(file, 'utf8'), /child_process|fetch\(|https\.get|spawn|exec\(/u, `${file} cannot run or fetch anything`);
     }
-    const steps = OH_MY_ZSH_INSTALL.steps({TMPDIR: '/tmp'}).join('\n');
+    const steps = OH_MY_ZSH_INSTALL.steps({HOME: '/home/me', TMPDIR: '/tmp'}).join('\n');
+    assert.doesNotMatch(steps, /\/tmp\//u, 'never a predictable file in a shared temp directory');
     assert.doesNotMatch(steps, /\|\s*(?:ba|z)?sh\b|sh -c "\$\(curl/u, 'no curl | sh');
-    assert.match(steps, /^curl -fsSL -o '\/tmp\/ohmyzsh-install\.sh' https:\/\/raw\.githubusercontent\.com\/ohmyzsh\/ohmyzsh\/master\/tools\/install\.sh$/mu, 'download to a file first');
+    assert.match(steps, /^curl -fsSL -o '\/home\/me\/ohmyzsh-install\.sh' https:\/\/raw\.githubusercontent\.com\/ohmyzsh\/ohmyzsh\/master\/tools\/install\.sh$/mu, 'download to a file first');
     assert.match(steps, /^less /mu, 'inspect before running');
-    assert.match(steps, /KEEP_ZSHRC=yes CHSH=no RUNZSH=no REPO=ohmyzsh\/ohmyzsh REMOTE=https:\/\/github\.com\/ohmyzsh\/ohmyzsh\.git BRANCH=master sh '\/tmp\/ohmyzsh-install\.sh' --unattended --keep-zshrc/u);
+    assert.match(steps, /KEEP_ZSHRC=yes CHSH=no RUNZSH=no REPO=ohmyzsh\/ohmyzsh REMOTE=https:\/\/github\.com\/ohmyzsh\/ohmyzsh\.git BRANCH=master sh '\/home\/me\/ohmyzsh-install\.sh' --unattended --keep-zshrc/u);
 
     const zshrc = box.put(join(box.home, '.zshrc'), 'export EDITOR=vim\n');
     const view = openGuidedInstall(box.env) as Extract<OhMyZshView, {kind: 'guided'}>;
