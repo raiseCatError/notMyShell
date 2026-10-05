@@ -1,6 +1,6 @@
 <div align="center">
   <picture>
-    <img alt="NMSh Logo" src="assets/brand/nmsh-logo.png" width="300">
+    <img alt="Vespyr beside the NMSh / notMyShell logo" src="assets/brand/nmsh-lockup.svg" width="500">
   </picture>
 
   <p><b>A terminal frontend for your real shell.</b></p>
@@ -101,7 +101,26 @@ The gallery uses wide, opaque recordings from the real NMSh build, with a dispos
 
 ## Install
 
-NMSh is installed from source today. You need:
+### Homebrew
+
+> Homebrew support is being prepared for v0.17.0. These instructions are not available yet; use the source installation below until the published formula has passed installation, formula tests and interactive startup validation.
+
+Homebrew is the recommended install method on macOS once the v0.17.0 formula is published and validated.
+
+```sh
+brew install raiseCatError/tap/nmsh
+nmsh
+```
+
+To uninstall the Homebrew package:
+
+```sh
+brew uninstall nmsh
+```
+
+### Build from source
+
+You need:
 
 - macOS, Linux (beta: automated CI on Ubuntu and Fedora, not yet physically validated) or Windows through WSL 2 ([platforms](docs/architecture/platforms.md))
 - Node.js 22 or newer
@@ -124,9 +143,9 @@ command = direct:/absolute/path/to/node /absolute/path/to/nmsh
 
 Do not set `nmsh` as your system/login shell with `chsh`. Keep zsh, Bash or Fish as your real shell. If you want NMSh to open automatically, configure your terminal app (for example Ghostty or Zed) to launch `nmsh` instead.
 
-**Updating:** `/update` shows the latest stable release and the exact plan; `/update apply` installs it into a clean official source checkout, verifies the build, and rolls back on failure. Automatic updates (Automatic / Notify only / Off) use the same checks.
+**Updating:** For Homebrew installations, use `brew upgrade raiseCatError/tap/nmsh`; `/update` directs you to Homebrew rather than changing files in the Cellar. For source installations, `/update` shows the latest stable release and the exact plan; `/update apply` installs it into a clean official source checkout, verifies the build, and rolls back on failure. Automatic updates (Automatic / Notify only / Off) use the same checks.
 
-**Moving and removing:** `nmsh config export` / `nmsh config import FILE` move settings between machines (preview first, no history or secrets); `nmsh uninstall` removes only NMSh's own launcher links; `nmsh doctor` prints a diagnostic for bug reports.
+**Moving and removing:** `nmsh config export` / `nmsh config import FILE` move settings between machines (preview first, no history or secrets); for source installations, `nmsh uninstall` removes only NMSh's own launcher links (use `brew uninstall nmsh` for Homebrew packages); `nmsh doctor` prints a diagnostic for bug reports.
 
 ## Core commands
 

@@ -17,7 +17,8 @@ permissions:
 
 jobs:
   formula:
-    if: ${{ !github.event.release.prerelease && !github.event.release.draft }}
+    # Distribution is not configured yet. Enable only in the separate Homebrew setup pass.
+    if: ${{ false }}
     runs-on: ubuntu-latest
     steps:
       - name: Release facts
