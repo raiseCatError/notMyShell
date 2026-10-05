@@ -20,8 +20,8 @@ Before starting work, check:
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the pieces fit together; start here before changing a subsystem
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.16.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0)** — current stable release
-- **[PR #322](https://github.com/raiseCatError/notMyShell/pull/322)** — merged master checkpoint for the v0.17.0 release candidate (tagging and publication pending; see [ROADMAP.md](ROADMAP.md))
+- **[v0.17.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0)** — current stable release
+- **[PR #322](https://github.com/raiseCatError/notMyShell/pull/322)** — merged master checkpoint for the published v0.17.0 release (see [ROADMAP.md](ROADMAP.md))
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model
