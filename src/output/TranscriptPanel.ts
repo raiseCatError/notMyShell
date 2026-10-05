@@ -13,7 +13,7 @@ import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import type {Key} from '../terminal/keys.js';
 import {DRAFT_PANEL_ACTIONS, renderActionHelp} from '../ui/actions.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {renderHistoricalContext, type HistoricalContextSnapshot} from './OutputBuffer.js';
 import {FOLD_HEAD_LINES, FOLD_TAIL_LINES, OUTPUT_FOLDING_MODES, type OutputFoldingMode} from './FoldPolicy.js';
@@ -126,7 +126,7 @@ export function renderTranscriptPanel(state: TranscriptPanelState, columns: numb
   };
   available.forEach((row, index) => {
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${selected ? ACCENT : SECONDARY}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}›` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
 
   const preview = (appearance: TranscriptAppearance) => renderHistoricalContext(sample, width - 2, appearance, treatment)?.ansi;

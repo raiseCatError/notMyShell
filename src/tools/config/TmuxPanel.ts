@@ -1,7 +1,7 @@
 import type {Key} from '../../terminal/keys.js';
 import {framePanel, renderTabStrip} from '../../ui/PanelShell.js';
 import {renderControls} from '../../ui/controls.js';
-import {foreground, background, UI_COLORS} from '../../ui/palette.js';
+import {focusForeground, foreground, background, UI_COLORS} from '../../ui/palette.js';
 import {GLYPHS} from '../../ui/glyphs.js';
 import {editText} from '../../ui/formControls.js';
 import {padCells, truncateAnsi} from '../../util/text.js';
@@ -267,7 +267,7 @@ export function renderTmuxPanel(state: TmuxPanelState, columns: number, height: 
   list.forEach((row, rowIndex) => {
     const selected = state.focus === 'list' && rowIndex === index;
     const value = state.keyEntry && row.id === `bind:${state.keyEntry.action}` ? `${primary}${state.keyEntry.text}${accent}_${reset}` : selected && row.editable ? `${accent}‹ ${row.value} ›${reset}` : row.value;
-    body.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${selected ? primary : secondary}${padCells(row.label, 24)}${reset}${value}`);
+    body.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${focusForeground(selected)}${padCells(row.label, 24)}${reset}${value}`);
     if (selected && row.detail) body.push(`    ${subtle}${row.detail}${reset}`);
   });
   if (state.tab === 'status') body.push('', `  ${subtle}Preview · tmux status line (sample facts)${reset}`, statusPreview(state.draft, columns));

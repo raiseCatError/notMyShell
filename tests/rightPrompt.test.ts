@@ -45,7 +45,7 @@ test('v0.3 configs gain Git status right after the branch, wherever it was moved
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
+  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
   assert.equal(config.modules[1]!.visible, false);
 });
 

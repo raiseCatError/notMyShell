@@ -102,8 +102,10 @@ spawned or evaluated.
   original environment, and keeps the same session id, stream, backlog,
   journal and notices. Attach/reattach works after a switch (`attached`
   carries the backend).
-- Kept: NMSh transcript, session identity, cwd, unsent composer draft,
+- Presentation: the old shell view is archived in `/resume`; the new backend starts a fresh view and welcome.
+- Kept: session identity, cwd, unsent composer draft,
   settings/theme/Chroma/layout, NMSh history and session metadata.
+- Prompt: the current-shell module leads the default Native prompt when the session shell differs from the default. Custom module ordering in `/prompt` is preserved.
 - Rebuilt: completion source, classification, shell history import, live
   names, lifecycle hooks, prompt suppression.
 - Not carried over, and said so in the transcript: aliases, functions,

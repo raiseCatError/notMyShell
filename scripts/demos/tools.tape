@@ -22,8 +22,10 @@ Sleep 0.5s
 Enter
 Sleep 2.5s
 Down@3
+Space
 Sleep 1s
 Down@3
+Space
 Sleep 1s
 Enter
 Sleep 2.5s

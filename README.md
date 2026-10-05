@@ -21,7 +21,7 @@
 Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch is the released state; newer work (themes, Theme Bridge, tool configuration, shell frameworks, Keep Awake) is in development and listed under *Unreleased* in the [changelog](CHANGELOG.md).
 
 <div align="center">
-  <img alt="NMSh: typing a highlighted command, running it with live activity, then switching the theme from /theme" src="assets/readme/nmsh-demo.gif" width="760">
+  <img alt="NMSh: typing a highlighted command, running it with live activity, then switching the theme from /theme" src="assets/readme/nmsh-demo.gif" width="960">
   <p><em>Typing with semantic highlighting, live command feedback, and a theme change from <code>/theme</code>. Recorded from the real binary with <a href="scripts/demos/README.md">VHS</a>.</em></p>
 </div>
 
@@ -31,7 +31,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 <div align="center">
   <picture>
-    <img alt="Terminal host → NMSh frontend → ShellAdapter → your real shell" src="assets/readme/architecture.svg" width="500">
+    <img alt="Terminal host → NMSh frontend → ShellAdapter → your real shell" src="assets/readme/architecture.svg" width="960">
   </picture>
 </div>
 
@@ -59,41 +59,56 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 ## Visual tour
 
-Every clip below is the real NMSh binary, recorded from a disposable demo home with committed [VHS tapes](scripts/demos/). More in the [demo gallery](docs/demos.md).
+A real shell with room to breathe. These opaque, wide recordings use a disposable home and a neutral demo identity. Every interaction runs the real NMSh build; [committed tapes](scripts/demos/README.md) reproduce the clips.
 
-<table>
-  <tr>
-    <td width="50%" valign="top">
-      <b>Composer &amp; prompts</b><br>
-      <sub><code>/prompt</code> and <code>/layout</code>: one-line ↔ two-line, Bottom → Top → Flow, prompt styles.</sub><br><br>
-      <img alt="Changing the composer layout and prompt style" src="assets/readme/composer.gif">
-    </td>
-    <td width="50%" valign="top">
-      <b>Themes</b><br>
-      <sub><code>/theme</code>: browse built-in themes with a live preview, then duplicate one into Custom.</sub><br><br>
-      <img alt="Theme Studio switching between built-in themes" src="assets/readme/themes.gif">
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" valign="top">
-      <b>Live sessions</b><br>
-      <sub>A command keeps running while its window is gone; reattach and it is still there.</sub><br><br>
-      <img alt="Detaching from a running session and reattaching" src="assets/readme/sessions.gif">
-    </td>
-    <td width="50%" valign="top">
-      <b>Screensavers &amp; Vespyr</b><br>
-      <sub><code>/screensaver</code>: a few of the built-in savers, including Bouncing Vespyr.</sub><br><br>
-      <img alt="Screensaver gallery previews" src="assets/readme/screensavers.gif">
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" valign="top">
-      <b>Keep Awake</b><br>
-      <sub><code>/zoomies display</code> starts it and hands the prompt straight back; <code>Awake · Display</code> sits on the composer edge and in the Status Strip; <code>/zoomies stop</code> ends it. (Recorded with the inert demo backend, so nothing was actually kept awake.)</sub><br><br>
-      <img alt="Starting and stopping Keep Awake" src="assets/readme/keep-awake.gif" width="760">
-    </td>
-  </tr>
-</table>
+**Make it yours.** Setup Cat, shared theme families, semantic syntax previews, prompt styles and composer layouts.
+
+<img alt="Setup Cat with current choices and live theme previews" src="assets/readme/setup.gif" width="960">
+
+**Let it move.** Chroma adds gradients and animated color. The controls label preview state and show how to return to base theme colors.
+
+<img alt="Rich motion, live command status and animation previews" src="assets/readme/motion.gif" width="960">
+
+<img alt="Changing Chroma gradients and returning to base theme colors" src="assets/readme/chroma.gif" width="960">
+
+<details>
+<summary><b>Explore prompts, themes and syntax</b></summary>
+
+<img alt="Prompt styles and Bottom, Top and Flow composer layouts" src="assets/readme/composer.gif" width="960">
+<img alt="Theme Studio with live previews and custom theme editing" src="assets/readme/themes.gif" width="960">
+<img alt="Syntax family and variant selection with semantic previews" src="assets/readme/syntax.gif" width="960">
+
+</details>
+
+<details>
+<summary><b>Ask, choose tools, switch shells, and return from Vim</b></summary>
+
+<img alt="Local ask guidance and optional local-understanding settings" src="assets/readme/ask.gif" width="960">
+<img alt="Providers and tools with persistent chosen-item checkboxes" src="assets/readme/tools.gif" width="960">
+<img alt="Entering and exiting Vim, then switching to Fish with the NMSh theme preserved" src="assets/readme/shell-vim.gif" width="960">
+
+</details>
+
+<details>
+<summary><b>Sessions and Keep Awake</b></summary>
+
+Commands keep running when the window goes away. Keep Awake uses an explicit OS-backed session; this recording uses an inert backend.
+
+<img alt="Detaching during a build and reattaching to its live session" src="assets/readme/sessions.gif" width="960">
+<img alt="Keep Awake on the composer edge and Status Strip, then stopping" src="assets/readme/keep-awake.gif" width="960">
+
+</details>
+
+<details>
+<summary><b>Every named screensaver, including Vespyr and raiseCatError</b></summary>
+
+<img alt="Aurora Drift, Deep Space, Warp Starfield and Rain" src="assets/readme/screensavers.gif" width="960">
+<img alt="Sparkles, Night Fireworks, Black Hole, Fireworks and Circletastic" src="assets/readme/screensavers-motion.gif" width="960">
+<img alt="Bouncing Vespyr and raiseCatError" src="assets/readme/screensavers-cats.gif" width="960">
+
+</details>
+
+[Full demo gallery](docs/demos.md) · [Detailed runtime diagram](assets/readme/architecture-detailed.svg) · [20-second motion promo](assets/promo/nmsh-promo.mp4)
 
 ## Install
 

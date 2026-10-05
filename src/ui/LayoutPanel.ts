@@ -13,7 +13,7 @@ import type {Key} from '../terminal/keys.js';
 import {truncateAnsi, repeatToWidth} from '../util/text.js';
 import {DRAFT_PANEL_ACTIONS, renderActionHelp} from './actions.js';
 import {GLYPHS} from './glyphs.js';
-import {foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 
 export interface LayoutChoice {
   composerPosition: ComposerPosition;
@@ -162,7 +162,7 @@ export function renderLayoutPanel(state: LayoutPanelState, columns: number, rows
   const out = [`${PRIMARY}  Layout${RESET}`, ''];
   ROWS.forEach((row, index) => {
     const selected = index === state.selectedIndex;
-    out.push(`${selected ? `${ACCENT}›` : ' '} ${selected ? ACCENT : SECONDARY}${labels[row]}${RESET}`);
+    out.push(`${selected ? `${ACCENT}›` : ' '} ${focusForeground(selected)}${labels[row]}${RESET}`);
   });
   const controls = ['', renderActionHelp(DRAFT_PANEL_ACTIONS)];
   const header = ['', `${PRIMARY}Preview${RESET}  ${layoutDraftChanged(state) ? `${ACCENT}unsaved preview` : `${SUBTLE}matches current`}${RESET}  ${SUBTLE}sample content; nothing runs${RESET}`,

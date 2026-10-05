@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {padCells, truncateAnsi, truncateText} from '../util/text.js';
 import type {SelectableTheme, ThemeRef} from '../appearance/themeRefs.js';
@@ -246,11 +246,11 @@ export function renderThemeBridgePanel(state: ThemeBridgePanelState, context: Br
   lines.push({text: `  ${primary}Theme Bridge${reset}  ${subtle}extend NMSh themes to terminal tools · every tool starts Independent${reset}`}, {text: ''});
   let group: BridgeCapability | undefined;
   items.forEach((item, index) => {
-    if (item.kind === 'switch') lines.push({item: index, text: `${mark(index)} ${isSelected(index) ? primary : secondary}${padCells('Theme Bridge', 16)}${reset}${value(index, context.enabled ? 'On' : 'Off')}  ${subtle}${context.enabled ? '' : 'nothing is applied; saved choices are kept'}${reset}`});
-    else if (item.kind === 'policy') lines.push({item: index, text: `${mark(index)} ${isSelected(index) ? primary : secondary}${padCells('Apply themes', 16)}${reset}${value(index, BRIDGE_POLICY_LABELS[context.policy])}  ${subtle}${context.policy === 'manual' ? 'each tool uses its own setting' : 'every supported tool; their own settings are kept for Manual'}${reset}`});
-    else if (item.kind === 'globalTheme') lines.push({item: index, text: `${mark(index)} ${isSelected(index) ? primary : secondary}${padCells('Theme', 16)}${reset}${value(index, context.globalThemeLabel ?? '—')}`});
+    if (item.kind === 'switch') lines.push({item: index, text: `${mark(index)} ${focusForeground(isSelected(index))}${padCells('Theme Bridge', 16)}${reset}${value(index, context.enabled ? 'On' : 'Off')}  ${subtle}${context.enabled ? '' : 'nothing is applied; saved choices are kept'}${reset}`});
+    else if (item.kind === 'policy') lines.push({item: index, text: `${mark(index)} ${focusForeground(isSelected(index))}${padCells('Apply themes', 16)}${reset}${value(index, BRIDGE_POLICY_LABELS[context.policy])}  ${subtle}${context.policy === 'manual' ? 'each tool uses its own setting' : 'every supported tool; their own settings are kept for Manual'}${reset}`});
+    else if (item.kind === 'globalTheme') lines.push({item: index, text: `${mark(index)} ${focusForeground(isSelected(index))}${padCells('Theme', 16)}${reset}${value(index, context.globalThemeLabel ?? '—')}`});
     else if (item.kind === 'review') {
-      lines.push({item: index, text: `${mark(index)} ${isSelected(index) ? primary : secondary}${padCells('Integrations', 16)}${reset}${isSelected(index) ? accent : subtle}Review all / Apply all ›${reset}`}, {text: ''});
+      lines.push({item: index, text: `${mark(index)} ${focusForeground(isSelected(index))}${padCells('Integrations', 16)}${reset}${isSelected(index) ? accent : subtle}Review all / Apply all ›${reset}`}, {text: ''});
       lines.push({text: `  ${subtle}  ${padCells('Target', 21)}${padCells('Mode', 15)}${padCells('Theme', 20)}Status${reset}`});
     } else if (item.kind === 'target') {
       const report = context.reports.find(entry => entry.target === item.target);
@@ -261,7 +261,7 @@ export function renderThemeBridgePanel(state: ThemeBridgePanelState, context: Br
       const theme = !detected && report && report.mode !== 'independent' ? report.themeLabel ?? '—' : '—';
       const status = [report?.status, report?.readiness, report?.inherited ? 'Inherited' : undefined].filter(Boolean).join(' · ');
       const expander = detected ? ' ' : state.expanded === item.target ? '▾' : '▸';
-      lines.push({item: index, text: `${mark(index)} ${subtle}${expander}${reset} ${isSelected(index) ? primary : secondary}${padCells(report?.label ?? item.target, 19)}${reset}${padCells(mode, 15)}${padCells(truncateText(theme, 18), 20)}${subtle}${status}${reset}`});
+      lines.push({item: index, text: `${mark(index)} ${subtle}${expander}${reset} ${focusForeground(isSelected(index))}${padCells(report?.label ?? item.target, 19)}${reset}${padCells(mode, 15)}${padCells(truncateText(theme, 18), 20)}${subtle}${status}${reset}`});
       if (state.expanded === item.target && report) {
         if (!report.editable) lines.push({text: `      ${subtle}${!context.enabled ? 'Theme Bridge is Off.' : `Apply themes is ${BRIDGE_POLICY_LABELS[context.policy]}; switch it to Manual to edit this tool.`}${reset}`});
         if (report.backend) lines.push({text: `      ${subtle}Backend  ${report.backend}${reset}`});
@@ -272,7 +272,7 @@ export function renderThemeBridgePanel(state: ThemeBridgePanelState, context: Br
       }
     } else {
       const report = context.reports.find(entry => entry.target === item.target);
-      const label = (text: string) => `${mark(index)}     ${isSelected(index) ? primary : secondary}${padCells(text, 18)}${reset}`;
+      const label = (text: string) => `${mark(index)}     ${focusForeground(isSelected(index))}${padCells(text, 18)}${reset}`;
       const act = (text: string) => `${isSelected(index) ? accent : subtle}${text}${reset}`;
       const include = context.managed(item.target)?.include;
       const text = item.row === 'mode' ? `${label('Mode')}${value(index, BRIDGE_MODE_LABELS[report?.mode ?? 'independent'])}`

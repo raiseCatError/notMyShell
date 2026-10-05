@@ -109,3 +109,9 @@ until the user saves.
 
 Arrow keys adjust, Shift moves faster, Tab moves between controls, `#` types a
 hex value, Enter keeps and Esc cancels. Nothing depends on the mouse.
+
+## Syntax selection
+
+`/syntax` uses the same family/variant registry as `/theme` and Settings. Follow prompt uses the saved NMSh palette even when an external provider supplies the prompt. Choose theme selects a family, then its variant; Custom is available when a custom theme exists. Catppuccin uses the shared theme accent. Grayscale and Highlighting Off remain separate simple choices.
+
+Previews use the real Highlighter with fixed example semantics and execute nothing. Palette and accent changes affect NMSh-owned input and new submitted commands, never raw PTY output or external artifacts.

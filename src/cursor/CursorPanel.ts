@@ -9,7 +9,7 @@ import {colorPickerKey, createColorPicker, renderColorPicker, type ColorPickerSt
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {colorEscape} from '../chroma/escape.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {availabilityOf, availableValues, caretColorNote, unavailableReason, type BackendChoice, type CursorFeature, type HostCursorFacts} from './backends.js';
@@ -413,7 +413,7 @@ export function renderCursorPanel(state: CursorPanelState, columns: number, now:
       : !value.editable ? `${subtle}${value.text}${reset}`
       : isSelected ? `${accent}‹ ${value.text} ›${reset}` : `${secondary}${value.text}${reset}`;
     const indent = ['colorFamily', 'colorVariant', 'colorAccent', 'colorCustom', 'trailEdit', 'particleEdit'].includes(row.key) ? '  ' : '';
-    return `${isSelected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${isSelected ? primary : secondary}${padCells(`${indent}${row.label}`, 22)}${reset}${swatch}${text}`;
+    return `${isSelected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${focusForeground(isSelected)}${padCells(`${indent}${row.label}`, 22)}${reset}${swatch}${text}`;
   });
   return [...layout.head, ...layout.preview, ...list, ...layout.tail].map(row => truncateAnsi(row, columns));
 }

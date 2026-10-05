@@ -1,3 +1,4 @@
+import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
 import {dividerAnimated, MIN_CUSTOM_STOPS, TREATMENT_MOTION_LABELS, treatmentFor, treatmentText, paintDivider, PRESET_STOPS, setActiveThemeStops, TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, treatmentAnimated, treatmentSwatch} from '../chroma/treatment.js';
@@ -152,7 +153,7 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type StatsSource, type SystemStats} from '../status/StatusStrip.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
-import {foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {findSourceReferences, parseOpenArgument, resolveHostActions, resolveLocation, runHostAction, type HostAction, type HostActionAdapter} from '../host/HostActions.js';
@@ -987,15 +988,7 @@ export class TerminalApp {
     } catch {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
     }
-    if (!this.presetStartup && !this.promptConfiguration.glyphChoiceComplete) {
-      this.settingsPanelState = {section: 'appearance', selectedIndex: this.promptConfiguration.glyphStyle === 'nerd' ? 0 : 1,
-        glyphStyle: this.promptConfiguration.glyphStyle, onboarding: true};
-    } else if (!this.presetStartup && !this.promptConfiguration.onboardingComplete) {
-      this.promptPanelState = {onboarding: true, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
-        draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
-    } else if (!this.presetStartup && !this.promptConfiguration.toolsSetupComplete) {
-      this.startTools(true);
-    }
+    this.startOnboarding();
     // Restored terminal modes are a visible handoff: keys can arrive at once.
     // Install raw input first so the host cannot echo or translate those keys.
     if (process.stdin.isTTY) {
@@ -2657,7 +2650,7 @@ export class TerminalApp {
       const color = row.state === 'failed' ? ERROR : row.state === 'attention' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
       const who = row.agent ? `${agentColor(row.agent.color)}${safe ? row.agent.safeGlyph : row.agent.glyph} ${row.agent.short}${RESET} ` : '';
       out.push(truncateAnsi(`${selected ? `${ACCENT}›` : ' '} ${marker} ${PRIMARY}${(row.current ? 'this' : `#${row.ordinal}`).padEnd(5)}${RESET}${SECONDARY}${row.shell.padEnd(5)}${RESET} `
-        + `${color}${row.stateLabel.padEnd(16)}${RESET}${who}${selected ? PRIMARY : SECONDARY}${row.summary}${RESET}`, columns));
+        + `${color}${row.stateLabel.padEnd(16)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
     });
     const confirming = browser.live.find(session => session.id === browser.confirmKill);
     if (confirming) out.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
@@ -4614,7 +4607,8 @@ export class TerminalApp {
     const rawPreview = (section0 === 'appearance' || section0 === 'prompt') && !state.previewChroma;
     const draft = rawPreview ? {...state.draft, presentation: {...state.draft.presentation, preset: 'off' as const}} : state.draft;
     const chromaNote = section0 === 'appearance' || section0 === 'prompt'
-      ? [`  ${SUBTLE}Preview Chroma  ${state.previewChroma ? 'On' : 'Off'}  ·  Chroma setting  ${state.draft.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[state.draft.presentation.preset]}  ·  P toggles the preview only${RESET}`] : [];
+      ? [`  ${PRIMARY}\u001b[1mPreview Chroma${RESET}  ${SUBTLE}${state.previewChroma ? 'On' : 'Off'}  ·  Chroma setting  ${state.draft.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[state.draft.presentation.preset]}  ·  P toggles the preview only${RESET}`,
+        `  ${SUBTLE}${chromaPreviewNote(Boolean(state.previewChroma) && state.draft.presentation.preset !== 'off')}${RESET}`] : [];
     const section = SETUP_SECTIONS[state.section]?.id;
     const width = Math.max(10, columns - 4);
     const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
@@ -5030,6 +5024,15 @@ export class TerminalApp {
     if (action.kind === 'apply') state.draft = {...state.draft, cursor: action.settings};
   }
 
+  /** Presets deliberately bypass discovery; completed and legacy onboarding stay completed. */
+  private startOnboarding(): void {
+    if (this.presetStartup) return;
+    if (!this.promptConfiguration.onboardingComplete) {
+      this.startSetup();
+      this.setupState!.onboarding = true;
+    } else if (!this.promptConfiguration.toolsSetupComplete) this.startTools(true);
+  }
+
   private startSetup(entry?: string): void {
     this.setupExternalPrompt = undefined;
     const state = this.setupState = createSetup(this.promptConfiguration, entry);
@@ -5076,8 +5079,9 @@ export class TerminalApp {
 
     if (result.kind === 'cancel') { this.returnFromPanel(); return; }
     const previous = this.promptConfiguration;
-    const next = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
-    if (result.changed && !setupIsIdempotent({...state, draft: next})) {
+    const configured = result.tools !== 'keep' ? {...result.configuration, toolsSetupComplete: true} : result.configuration;
+    const next = state.onboarding ? {...configured, onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true} : configured;
+    if ((result.changed || state.onboarding) && !setupIsIdempotent({...state, draft: next})) {
       if (!this.applySettingsConfiguration(next)) return;
       this.armIdle();
       if (previous.suggestions !== next.suggestions) this.applySuggestionProvider();

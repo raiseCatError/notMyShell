@@ -24,7 +24,9 @@
     "verify:fast": "npm run build && npm run test:fast && git diff --check",
     "verify": "npm run build && npm test && git diff --check",
     "verify:release": "npm run verify && npm run typecheck:bench && npm run bench:smoke",
-    "demos": "node scripts/demos/render.mjs"
+    "demos": "node scripts/demos/render.mjs",
+    "promo": "node scripts/demos/promo.mjs",
+    "demos:check": "node scripts/demos/check.mjs"
   },
   "keywords": [
     "terminal",

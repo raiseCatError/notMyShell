@@ -397,12 +397,14 @@ function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: numb
   const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
   const statusText = columns >= 34 ? badge.text.padEnd(18) : `${badge.text.slice(0, 1)} `;
   const badges = columns >= 60 ? toolBadges(state, tool).join(' · ') : '';
-  if (!selected) return truncateAnsi(`    ${SECONDARY}${label}${RESET}${badge.color}${statusText}${SUBTLE}${badges}${RESET}`, columns);
+  const chosen = state.selection?.has(tool.id) ?? false;
+  const checkbox = state.tab === 'discover' ? `${chosen ? ACCENT : selected ? onSelectedBand() : SUBTLE}[${chosen ? 'x' : ' '}]${RESET} ` : '';
+  if (!selected) return truncateAnsi(`    ${checkbox}${SECONDARY}${label}${RESET}${badge.color}${statusText}${SUBTLE}${badges}${RESET}`, columns);
   // The shared selected band (the active tab's treatment): pointer, bold label, and every quiet part lifted
   // to the band's foreground; Installed and Needs attention keep their meaning colors.
   const quiet = onSelectedBand();
   const statusColor = badge.color === SUBTLE ? quiet : badge.color;
-  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
+  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${checkbox}${BOLD}${ACCENT}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
 }
 
 const BOLD = '\u001b[1m';

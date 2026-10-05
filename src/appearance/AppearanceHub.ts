@@ -1,9 +1,10 @@
+import {chromaPreviewNote} from './chromaNotes.js';
 import type {Key} from '../terminal/keys.js';
 import type {MotionSettings, PromptConfiguration} from '../prompt/configuration.js';
 import {MOTION_ITEMS, MOTION_LABELS, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {padCells, truncateAnsi} from '../util/text.js';
 import {BLUR_MODES, handleAppearanceKey, type AppearanceState} from './AppearancePanel.js';
 import {cursorLabel} from '../cursor/CursorPanel.js';
@@ -122,11 +123,11 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     items.forEach((item, index) => {
       const selected = index === state.selected;
       const value = item.labelOf(item.get(configuration.motion));
-      list.push(`${mark(selected)} ${selected ? primary : secondary}${padCells(item.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
+      list.push(`${mark(selected)} ${focusForeground(selected)}${padCells(item.label, 24)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
     });
     if (!advanced) {
       const selected = state.selected === items.length;
-      list.push(`${mark(selected)} ${selected ? primary : secondary}${padCells('Advanced', 24)}${reset}${selected ? accent : secondary}${rendering} tuning ›${reset}`);
+      list.push(`${mark(selected)} ${focusForeground(selected)}${padCells('Advanced', 24)}${reset}${selected ? accent : secondary}${rendering} tuning ›${reset}`);
     }
     const noteText = items[state.selected]?.note ?? `Intensity and speed for ${rendering} rendering; Enter opens them`;
     const note = ['', `  ${subtle}${noteText}${reset}`];
@@ -154,8 +155,9 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
   const rows = [`${primary}  Appearance${reset}`, `  ${subtle}Everything visual in one place; each row opens its own editor.${reset}`, '', `  ${subtle}NMSh${reset}`];
   NMSH_ROWS.forEach((row, index) => {
     const selected = index === state.selected;
-    rows.push(`${mark(selected)}   ${selected ? primary : secondary}${padCells(row.label, 20)}${reset}${subtle}${summaries[row.id]}${reset}  ${selected ? `${accent}›${reset}` : ''}`);
+    rows.push(`${mark(selected)}   ${focusForeground(selected)}${padCells(row.label, 20)}${reset}${subtle}${summaries[row.id]}${reset}  ${selected ? `${accent}›${reset}` : ''}`);
   });
+  rows.push(`  ${subtle}Chroma ${configuration.presentation.preset === 'off' ? 'OFF' : 'ON'} · ${chromaPreviewNote(configuration.presentation.preset !== 'off')}${reset}`);
   rows.push('', `  ${subtle}Host window${reset}`, `    ${secondary}${padCells('Host', 20)}${reset}${primary}${state.hostName}${reset}`);
   if (state.host) {
     const bar = (fraction: number) => `${'█'.repeat(Math.round(fraction * 10))}${'░'.repeat(10 - Math.round(fraction * 10))}`;
@@ -163,7 +165,7 @@ export function renderAppearanceHub(state: AppearanceHubState, configuration: Pr
     if (BLUR_MODES[state.host.blurModeIndex] === 'Numeric') hostRows.push(['Blur', `${bar(state.host.blurStrength / 50)}  ${state.host.blurStrength}`]);
     hostRows.forEach(([label, value], index) => {
       const selected = NMSH_ROWS.length + index === state.selected;
-      rows.push(`${mark(selected)}   ${selected ? primary : secondary}${padCells(label!, 20)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
+      rows.push(`${mark(selected)}   ${focusForeground(selected)}${padCells(label!, 20)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : `${secondary}${value}${reset}`}`);
     });
     if (state.hostDirty) rows.push(`    ${subtle}Enter saves the host window settings${reset}`);
   } else rows.push(`    ${subtle}${state.hostGuidance ?? `Opacity and blur are controlled by ${state.hostName}.`}${reset}`);

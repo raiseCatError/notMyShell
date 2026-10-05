@@ -264,3 +264,17 @@ test('app: Setup owns a clean screen, previews the drafted panel position, never
   assert.equal(await readFile(path, 'utf8'), before);
   assert.ok(!SETUP_SECTIONS.some(section => JSON.stringify(section.intro).includes('Planned for')), 'no stale roadmap copy');
 }, {onboardingComplete: true}));
+test('first launch opens Setup Cat and Apply completes onboarding even without appearance edits', () => withApp(async (app, path) => {
+  app['loadSetupContext'] = async () => {};
+  app['startOnboarding']();
+  const state = app['setupState']!;
+  assert.ok(state, 'first run opens the shared Setup Cat');
+  state.section = sectionIndex('review');
+  assert.match(renderSetup(state, 120, 40).map(stripAnsi).join('\n'), /completes setup/u);
+  app['handleKey']({kind: 'enter'});
+  assert.equal(app['promptConfiguration'].onboardingComplete, true);
+  assert.equal(app['promptConfiguration'].glyphChoiceComplete, true);
+  assert.equal(app['promptConfiguration'].toolsSetupComplete, true);
+  app['startOnboarding']();
+  assert.equal(app['setupState'], undefined, 'completed setup is not reopened');
+}));

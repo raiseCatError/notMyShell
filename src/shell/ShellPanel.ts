@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
 import {truncateAnsi} from '../util/text.js';
@@ -97,7 +97,7 @@ export function renderShellPanel(state: ShellPanelState, columns: number): strin
   const statusWidth = Math.max(0, ...state.shells.map(item => shellStatus(item).length));
   state.shells.forEach((item, index) => {
     const selected = index === state.selected;
-    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${item.adapter.label.padEnd(6)}${reset} ${subtle}${shellStatus(item).padEnd(statusWidth)}${reset}`
+    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${item.adapter.label.padEnd(6)}${reset} ${subtle}${shellStatus(item).padEnd(statusWidth)}${reset}`
       + `${shellBadges(item.adapter.id, state) ? `  ${primary}${shellBadges(item.adapter.id, state)}${reset}` : ''}`);
     if (selected && !item.executable && item.reason) rows.push(`    ${subtle}${item.reason}${state.installFor?.(item.adapter.id).kind === 'recipe' ? ' · I installs it (previewed first)' : ''}${reset}`);
     if (selected && item.executable && item.adapter.id !== 'zsh') {

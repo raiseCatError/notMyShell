@@ -22,7 +22,7 @@ import {TOOLS} from '../tools/catalog.js';
 import {renderControls} from '../ui/controls.js';
 import {caretColorNote, chooseBackend, currentCursorHost} from '../cursor/backends.js';
 import type {CursorPanelState} from '../cursor/CursorPanel.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS, getCurrentGlyphMode} from '../ui/glyphs.js';
 import {MOTION_ROWS} from '../motion/motionRows.js';
 import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
@@ -440,6 +440,8 @@ function completionFacts(facts: CompletionFacts | undefined): string[] {
 }
 
 export interface SetupState {
+  /** Initial discovery uses the same draft and marks completion only on Apply. */
+  onboarding?: boolean;
   section: number;
   row: number;
   draft: PromptConfiguration;
@@ -708,7 +710,7 @@ export function renderSetup(state: SetupState, columns: number, height: number):
   if (section.intro.length) top.push('');
   if (section.id === 'review') {
     const changes = setupChanges(state);
-    if (!changes.length) top.push(`  ${secondary}No changes. Enter closes Setup Cat and keeps everything as it is.${reset}`);
+    if (!changes.length) top.push(`  ${secondary}${state.onboarding ? 'Your current choices are ready. Enter completes setup; you can return with /setup anytime.' : 'No changes. Enter closes Setup Cat and keeps everything as it is.'}${reset}`);
     else {
       top.push(`  ${primary}Apply these changes?${reset}`, '');
       const labelWidth = Math.min(28, Math.max(...changes.map(change => displayWidth(change.label))) + 2);
@@ -730,14 +732,14 @@ export function renderSetup(state: SetupState, columns: number, height: number):
       const control = item.row.control === 'action' ? `${selected ? accent : secondary}${value}${reset}`
         : unavailable ? `${subtle}${value}${reset}`
         : selected ? `${accent}${nerd ? '‹' : '<'} ${value} ${nerd ? '›' : '>'}${reset}` : `${secondary}${value}${reset}`;
-      top.push(`  ${pointer} ${selected ? `${bold}${primary}` : primary}${padCells(indent(item.row) + item.row.label, labelWidth - 2)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
+      top.push(`  ${pointer} ${focusForeground(selected, UI_COLORS.primary)}${padCells(indent(item.row) + item.row.label, labelWidth - 2)}${reset}${control}${changed ? ` ${subtle}${nerd ? '•' : '*'}${reset}` : ''}`);
       if (selected && state.chooser?.rowId === item.row.id) {
         // Every choice, visible: the highlighted one is previewed live below.
         const options = chooserOptions(item.row, state.chooser.before);
         const savedValue = rowValue(item.row, state.saved);
         options.forEach((option, optionIndex) => {
           const current = optionIndex === state.chooser!.index;
-          top.push(`  ${' '.repeat(labelWidth + 2)}${current ? `${accent}${nerd ? '●' : '*'} ${bold}${primary}` : `${subtle}${nerd ? '○' : 'o'} ${secondary}`}${option}${reset}${option === savedValue ? ` ${subtle}${nerd ? '✓' : '(saved)'}${reset}` : ''}`);
+          top.push(`  ${' '.repeat(labelWidth + 2)}${current ? `${accent}${nerd ? '●' : '*'} ${focusForeground(true)}` : `${subtle}${nerd ? '○' : 'o'} ${secondary}`}${option}${reset}${option === savedValue ? ` ${subtle}${nerd ? '✓' : '(saved)'}${reset}` : ''}`);
         });
       }
     });
@@ -765,8 +767,8 @@ export function renderSetup(state: SetupState, columns: number, height: number):
         ...(['cursor', 'motion'].includes(section.id) ? [['R', 'replay preview'] as [string, string]] : []),
         ['Tab', 'next'], ['Shift+Tab', 'previous section'],
         ['Enter', browsable ? 'choices' : selectedRow && isRouteRow(selectedRow.row) ? 'apply & open' : selectedRow?.row.control === 'action' ? 'open'
-          : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length ? 'apply' : 'close') : 'next'],
-        ['Esc', 'cancel']]);
+          : state.section === SETUP_SECTIONS.length - 1 ? (setupChanges(state).length || state.onboarding ? 'apply' : 'close') : 'next'],
+        ['Esc', state.onboarding ? 'skip for now' : 'cancel']]);
   // Frame line, head, footer and its blank line are fixed; controls come next; the preview gets what is left.
   const budget = Math.max(1, height - 1 - head.length - 2);
   const controls = top.slice(0, budget);

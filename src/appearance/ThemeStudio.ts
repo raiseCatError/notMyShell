@@ -1,3 +1,4 @@
+import {chromaPreviewNote} from './chromaNotes.js';
 import {mkdirSync, readFileSync, renameSync, statSync, writeFileSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {basename, isAbsolute, join, resolve} from 'node:path';
@@ -11,7 +12,7 @@ import {nmshConfigDirectory} from '../configuration/paths.js';
 import {editText} from '../ui/formControls.js';
 import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {colorPickerKey, createColorPicker, renderColorPicker, type ColorPickerState} from '../ui/ColorPicker.js';
 import {padCells, truncateAnsi, truncateText} from '../util/text.js';
@@ -249,7 +250,7 @@ export function renderThemeEditor(state: ThemeEditorState, columns: number, heig
   }
   const lines = STUDIO_ROWS.map((row, index) => {
     const pointer = index === state.selected ? `${accent}${GLYPHS.selection}${RESET}` : ' ';
-    const label = (text: string) => `${index === state.selected ? primary : secondary}${padCells(text, 16)}${RESET}`;
+    const label = (text: string) => `${focusForeground(index === state.selected)}${padCells(text, 16)}${RESET}`;
     switch (row.kind) {
       case 'name': return `${pointer} ${label('Name')}${state.editingName !== undefined ? `${primary}${state.editingName}${accent}_${RESET}` : state.draft.name}`;
       case 'basedOn': return `${pointer} ${label('Based on')}${NATIVE_PROMPT_THEMES[state.base].label}  ${subtle}←→ choose · Enter reset draft to it${RESET}`;
@@ -541,8 +542,9 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
   const subtle = foreground(UI_COLORS.subtle);
   const accent = foreground(UI_COLORS.accent);
   const finish = (rows: string[]) => framePanel(rows.map(row => truncateAnsi(row, columns)), columns).slice(0, Math.max(1, height));
-  const chromaLine = `  ${subtle}Preview Chroma  ${state.previewChroma ? `${accent}On${RESET}${subtle}` : 'Off'}  ·  Global Chroma  ${context.chroma ?? 'Off'}  ·  C toggles the preview only${RESET}`;
-  if (state.editor) return finish(renderThemeEditor(state.editor, columns, height - 1, level, preview.length ? [chromaLine, ...preview] : preview));
+  const chromaNote = `  ${subtle}${chromaPreviewNote(state.previewChroma && (context.chroma ?? 'Off') !== 'Off')}${RESET}`;
+  const chromaLine = `  ${primary}\u001b[1mPreview Chroma${RESET}  ${subtle}${state.previewChroma ? `${accent}On${RESET}${subtle}` : 'Off'}  ·  Global Chroma  ${context.chroma ?? 'Off'}  ·  C toggles the preview only${RESET}`;
+  if (state.editor) return finish(renderThemeEditor(state.editor, columns, height - 2, level, preview.length ? [chromaLine, chromaNote, ...preview] : preview));
   const head = [renderTabStrip(STUDIO_TABS, TAB_IDS.indexOf(state.tab), columns, state.focus === 'tabs'), ''];
   const body: string[] = [];
   const controls: Array<[string, string]> = [];
@@ -565,7 +567,7 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
       const index = start + offset;
       const theme = builtinTheme(palette, context.accent);
       const ref = builtinRef(palette, context.accent);
-      body.push(`${mark(index === state.selected.builtin)} ${index === state.selected.builtin ? primary : secondary}${padCells(theme.name, 26)}${RESET}${swatches(Object.values(theme.prompt).slice(0, 6), level)}${active(ref)}${pinned(ref)}`);
+      body.push(`${mark(index === state.selected.builtin)} ${focusForeground(index === state.selected.builtin)}${padCells(theme.name, 26)}${RESET}${swatches(Object.values(theme.prompt).slice(0, 6), level)}${active(ref)}${pinned(ref)}`);
     });
     controls.push(['Enter', 'set active'], ['D', 'duplicate to Custom'], ['E', 'edit a copy']);
   } else if (state.tab === 'imported' || state.tab === 'custom') {
@@ -579,7 +581,7 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
     const {start, items: shown} = window(rows, selected);
     shown.forEach((row, offset) => {
       const index = start + offset;
-      body.push(`${mark(index === selected)} ${index === selected ? primary : secondary}${padCells(truncateText(row.label, row.ref ? 26 : 60), row.ref ? 26 : 60)}${RESET}${row.colors ? swatches(row.colors, level) : ''}${row.ref ? `${active(row.ref)}${pinned(row.ref)}` : ''}`);
+      body.push(`${mark(index === selected)} ${focusForeground(index === selected)}${padCells(truncateText(row.label, row.ref ? 26 : 60), row.ref ? 26 : 60)}${RESET}${row.colors ? swatches(row.colors, level) : ''}${row.ref ? `${active(row.ref)}${pinned(row.ref)}` : ''}`);
     });
     const asset = selectedAsset(state, context);
     if (asset) body.push('', `  ${subtle}${provenanceLabel(asset)}${RESET}`);
@@ -614,7 +616,7 @@ export function renderThemeStudio(state: ThemeStudioState, context: StudioContex
   }
   if (state.message) body.push('', `  ${secondary}${state.message}${RESET}`);
   if (preview.length && !state.rename && !state.confirmDelete) {
-    body.push('', chromaLine, ...preview);
+    body.push('', chromaLine, chromaNote, ...preview);
   }
   const help = state.focus === 'tabs' ? renderControls([['←→', 'switch'], ['↓', 'select'], ['Esc', 'close']])
     : renderControls([...controls, ['←→', 'tabs'], ...(state.tab === 'import' ? [] : [['Esc', 'close'] as [string, string]])]);

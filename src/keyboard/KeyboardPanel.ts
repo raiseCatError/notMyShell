@@ -1,5 +1,5 @@
 import {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 
 const PRIMARY = lazyForeground(UI_COLORS.primary);
@@ -28,7 +28,7 @@ export function renderKeyboardPanel(state: KeyboardState, columns: number, hostN
   rows.push('');
   
   const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
-  const labelColor = (index: number) => index === state.selectedIndex ? PRIMARY : SECONDARY;
+  const labelColor = (index: number) => focusForeground(index === state.selectedIndex);
 
   rows.push(`  ${sel(0)} ${labelColor(0)}Cmd+A, Cmd+Arrows, Opt+Backspace  Install for ${hostName}${RESET}`);
 

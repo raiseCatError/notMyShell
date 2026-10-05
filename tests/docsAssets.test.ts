@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, readdirSync, readFileSync} from 'node:fs';
 import {dirname, join, resolve} from 'node:path';
+import {IDLE_MODES} from '../src/idle/scenes.js';
 
 /**
  * Lightweight documentation integrity: local links and media resolve, every
@@ -33,6 +34,29 @@ test('every published clip and still has a committed VHS tape that produces it',
   const media = readdirSync(join(root, 'assets/readme')).filter(name => /\.(?:gif|png|webm|mp4)$/u.test(name));
   for (const name of media) assert.ok(produced.has(`assets/readme/${name}`), `assets/readme/${name} has no tape in scripts/demos`);
   assert.ok(read('README.md').includes('assets/readme/nmsh-demo.gif') && produced.has('assets/readme/nmsh-demo.gif'));
+});
+
+test('demo GIFs are complete, wide and tall; every named screensaver has a tape', () => {
+  for (const name of tapes) {
+    const source = read(`scripts/demos/${name}`);
+    const output = /^Output (\S+\.gif)$/mu.exec(source)?.[1];
+    assert.ok(output, name);
+    const bytes = readFileSync(join(root, output));
+    assert.match(bytes.subarray(0, 6).toString(), /^GIF8[79]a$/u, output);
+    assert.ok(bytes.readUInt16LE(6) >= 1300 && bytes.readUInt16LE(8) >= 900, `${output} is cramped`);
+    assert.equal(bytes.at(-1), 0x3b, `${output} is truncated`);
+  }
+  const recorded = new Set(tapes.flatMap(name => [...read(`scripts/demos/${name}`).matchAll(/\/screensaver start (\w+)/gu)].map(match => match[1])));
+  for (const mode of IDLE_MODES.filter(mode => mode !== 'random')) assert.ok(recorded.has(mode), `${mode} needs showcase coverage`);
+  assert.match(read('scripts/demos/render.mjs'), /NMSH_DEMO: '1'/u);
+  assert.ok(!read('scripts/demos/settings.tape').includes('Set WindowBar Colorful'));
+});
+
+test('promo has a reproducible local composition and usable video/poster assets', () => {
+  assert.ok(readFileSync(join(root, 'assets/promo/nmsh-promo.mp4')).length > 10000);
+  assert.ok(readFileSync(join(root, 'assets/promo/nmsh-promo.png')).length > 10000);
+  assert.match(read('scripts/demos/promo.mjs'), /xfade=transition/u);
+  assert.match(read('package.json'), /"promo"/u);
 });
 
 test('docs, tapes and vector art carry no personal paths, hosts or secrets', () => {

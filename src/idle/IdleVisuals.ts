@@ -15,7 +15,7 @@ import {
 } from './scenes.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {truncateAnsi} from '../util/text.js';
 
@@ -159,7 +159,7 @@ export function renderScreensaverPanel(state: ScreensaverPanelState, columns: nu
   const out: string[] = [`  ${primary}Screensaver${reset}  ${subtle}idle visuals inside NMSh only · not an OS screensaver${reset}`, ''];
   const row = (index: number, label: string, value: string) => {
     const selected = state.selected === index;
-    return `  ${selected ? `${accent}${GLYPHS.selection}` : ' '} ${selected ? primary : secondary}${label.padEnd(14)}${reset}${selected && index < 3 ? `${accent}‹ ${value} ›` : `${secondary}${value}`}${reset}`;
+    return `  ${selected ? `${accent}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${label.padEnd(14)}${reset}${selected && index < 3 ? `${accent}‹ ${value} ›` : `${secondary}${value}`}${reset}`;
   };
   out.push(row(0, 'Mode', IDLE_MODE_LABELS[settings.mode]));
   out.push(row(1, 'Colors', `${IDLE_COLOR_LABELS[settings.colorSource]}${settings.colorSource === 'custom' ? ' · Enter edits' : ''}`));

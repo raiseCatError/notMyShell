@@ -1,6 +1,6 @@
 import type {Key} from '../terminal/keys.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {installUnavailableReason, providerInstall, providerRowText, providerUsable, type ProviderDescriptor, type ProviderFamily, type ProviderInstall,
@@ -74,7 +74,7 @@ export function renderProviderPanel(state: ProviderPanelState, columns: number, 
   }
   state.providers.forEach((provider, index) => {
     const active = index === state.selectedIndex;
-    rows.push(`${active ? ACCENT : SECONDARY}${active ? '›' : ' '} ${providerRowText(provider,
+    rows.push(`${focusForeground(active)}${active ? '›' : ' '} ${providerRowText(provider,
       {draft: selected.id, saved: state.saved, status: state.statuses[provider.id]})}${RESET}`);
   });
   const missing = selected.kind === 'external' && state.statuses[selected.id]?.state === 'missing';

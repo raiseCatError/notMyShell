@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
 
 /**
@@ -90,7 +90,7 @@ const INVERSE = '\u001B[7m';
 const RESET = '\u001B[0m';
 
 function tint(text: string, look: ControlLook): string {
-  return look.color === false ? text : `${look.focused ? ACCENT : SECONDARY}${text}${RESET}`;
+  return look.color === false ? text : `${focusForeground(Boolean(look.focused))}${text}${RESET}`;
 }
 
 export function renderToggle(value: boolean, look: ControlLook = {}): string {
@@ -137,7 +137,7 @@ export function renderField(field: FieldFrame, columns: number): string[] {
   const plain = field.color === false;
   const pointer = field.focused ? (plain ? '>' : `${ACCENT}›${RESET}`) : ' ';
   const changed = field.changed ? (plain ? ' (changed)' : ` ${SUBTLE}(changed)${RESET}`) : '';
-  const rows = [`${pointer} ${field.label}  ${field.control}${changed}`];
+  const rows = [`${pointer} ${plain ? field.label : `${focusForeground(Boolean(field.focused))}${field.label}${RESET}`}  ${field.control}${changed}`];
   if (field.description) rows.push(plain ? `  ${field.description}` : `  ${SUBTLE}${field.description}${RESET}`);
   if (field.error) rows.push(plain ? `  Error: ${field.error}` : `  ${ERROR}Error: ${field.error}${RESET}`);
   return rows.map(row => (plain && displayWidth(row) > columns ? [...row].slice(0, columns).join('') : truncateAnsi(row, columns)));

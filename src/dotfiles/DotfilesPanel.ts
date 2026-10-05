@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {editText} from '../ui/formControls.js';
 import {padCells, truncateAnsi} from '../util/text.js';
@@ -121,7 +121,7 @@ export function renderDotfilesPanel(state: DotfilesState, columns: number, heigh
     state.items.forEach((item, index) => {
       const selected = index === state.selected && state.expanded === undefined;
       const glyph = item.kind === 'fields' || item.kind === 'copy' ? `${accent}✓${reset}` : item.kind === 'inspect' ? `${subtle}○${reset}` : `${warning}!${reset}`;
-      lines.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${glyph} ${selected ? primary : secondary}${padCells(item.file.tool.label, 10)}${reset}${padCells(item.file.repoPath, 32)}${selected && item.modes.length > 1 ? `${accent}‹ ${MODE_LABELS[item.mode]} ›${reset}` : MODE_LABELS[item.mode]}`);
+      lines.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${glyph} ${focusForeground(selected)}${padCells(item.file.tool.label, 10)}${reset}${padCells(item.file.repoPath, 32)}${selected && item.modes.length > 1 ? `${accent}‹ ${MODE_LABELS[item.mode]} ›${reset}` : MODE_LABELS[item.mode]}`);
       lines.push(`      ${subtle}${item.note}${item.fields?.length ? ' · Enter reviews each value' : ''}${reset}`);
       if (state.expanded === index && item.fields) {
         lines.push(`      ${subtle}${padCells('Setting', 24)}${padCells('Dotfiles', 16)}${padCells('Current', 16)}Use${reset}`);

@@ -2,13 +2,12 @@
 # environment) to each tape. Keep these consistent across recordings.
 Set Shell "zsh"
 Set FontFamily "JetBrainsMono Nerd Font Mono"
-Set FontSize 15
+Set FontSize 18
 Set LineHeight 1.15
-Set Width 1080
-Set Height 640
+Set Width 1440
+Set Height 960
 Set Padding 18
-Set WindowBar Colorful
-Set BorderRadius 8
+Set BorderRadius 0
 Set Margin 0
 Set Framerate 24
 Set PlaybackSpeed 1

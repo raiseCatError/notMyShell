@@ -346,9 +346,10 @@ test('the syntax panel edits, previews, and persists its rows', () => withApp(as
   app['handleKey']({kind: 'down'});
   app['handleKey']({kind: 'right'});
   assert.equal(state.draft.colors, 'theme');
-  assert.ok(panel().some(row => /Theme\s+‹ Lavender Native ›/u.test(row)));
+  assert.ok(panel().some(row => /Variant\s+‹ Lavender Native ›/u.test(row)));
   assert.ok(panel().some(row => row.includes('Syntax themes')), 'theme gallery shown');
   app['handleKey']({kind: 'down'});
+  app['handleKey']({kind: 'down'}); // Family, then its Variant
   app['handleKey']({kind: 'right'});
   app['handleKey']({kind: 'right'});
   assert.equal(state.draft.theme, 'cool');

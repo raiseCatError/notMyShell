@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import type {PromptConfiguration} from '../prompt/configuration.js';
 import {renderControls} from '../ui/controls.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {COLUMN_GUTTER, labelColumnWidth, padCells, truncateAnsi, truncateText} from '../util/text.js';
 import {familyFacts, providerFamily, PROVIDER_FAMILIES, type SwitchableFamily} from './families.js';
 import {providerInstall, type ProviderStatus} from './providers.js';
@@ -165,12 +165,12 @@ export function renderProvidersOverview(state: ProvidersOverviewState, facts: Ov
         const active = definition.providers.find(provider => provider.id === familyState.active)!;
         const preferred = definition.providers.find(provider => provider.id === familyState.preferred);
         const tag = familyState.notice ? `Selected ${preferred?.label ?? familyState.preferred} · fallback → ${active.label}` : '● Active';
-        lines.push({item: index, text: `${mark(index)} ${subtle}${expander}${reset} ${isSelected ? primary : secondary}${padCells(definition.title, nameWidth)}${reset}${primary}${padCells(truncateText(active.label, activeWidth), activeWidth)}${reset}${subtle}${tag}${reset}`});
+        lines.push({item: index, text: `${mark(index)} ${subtle}${expander}${reset} ${focusForeground(isSelected)}${padCells(definition.title, nameWidth)}${reset}${primary}${padCells(truncateText(active.label, activeWidth), activeWidth)}${reset}${subtle}${tag}${reset}`});
       } else if (item.row === 'understanding') {
-        lines.push({item: index, text: `${mark(index)}   ${isSelected ? primary : secondary}${padCells('Local understanding', nameWidth)}${reset}${primary}${padCells(truncateText(facts.understanding.active, activeWidth), activeWidth)}${reset}${subtle}Enter opens it${reset}`});
+        lines.push({item: index, text: `${mark(index)}   ${focusForeground(isSelected)}${padCells('Local understanding', nameWidth)}${reset}${primary}${padCells(truncateText(facts.understanding.active, activeWidth), activeWidth)}${reset}${subtle}Enter opens it${reset}`});
         if (isSelected) for (const detail of facts.understanding.detail) lines.push({text: `        ${subtle}${detail}${reset}`});
       } else {
-        lines.push({item: index, text: `${mark(index)}   ${isSelected ? primary : secondary}${padCells('Shell', nameWidth)}${reset}${primary}${padCells(`${facts.shell.current} (this session)`, activeWidth)}${reset}${subtle}default ${facts.shell.defaultShell} · Enter opens /shell${reset}`});
+        lines.push({item: index, text: `${mark(index)}   ${focusForeground(isSelected)}${padCells('Shell', nameWidth)}${reset}${primary}${padCells(`${facts.shell.current} (this session)`, activeWidth)}${reset}${subtle}default ${facts.shell.defaultShell} · Enter opens /shell${reset}`});
       }
       return;
     }
@@ -184,7 +184,7 @@ export function renderProvidersOverview(state: ProvidersOverviewState, facts: Ov
     const fallbackLabel = definition.providers.find(provider => provider.id === definition.fallback)?.label ?? definition.fallback;
     const providerWidth = labelColumnWidth(familyState.rows.map(entry => entry.descriptor.label), columns, 6, 16);
     const description = row.descriptor.kind === 'external' && row.status?.binary ? row.status.binary : row.descriptor.description;
-    lines.push({item: index, text: `${mark(index)}     ${isSelected ? primary : secondary}${padCells(row.descriptor.label, providerWidth)}${reset}${row.active ? accent : subtle}${padCells(providerStatusLabel(row, fallbackLabel), 38)}${reset}${subtle}${truncateText(description, 40)}${reset}`});
+    lines.push({item: index, text: `${mark(index)}     ${focusForeground(isSelected)}${padCells(row.descriptor.label, providerWidth)}${reset}${row.active ? accent : subtle}${padCells(providerStatusLabel(row, fallbackLabel), 38)}${reset}${subtle}${truncateText(description, 40)}${reset}`});
     if (state.confirm && state.confirm.family === item.family && state.confirm.id === item.id) {
       const install = providerInstall(row.descriptor)!;
       lines.push({text: `        ${primary}Install with: ${install.label}${reset}`});

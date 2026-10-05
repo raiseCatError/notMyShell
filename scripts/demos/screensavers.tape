@@ -1,45 +1,32 @@
-# Screensavers: a few built-in idle visuals from the /screensaver gallery, including Bouncing Vespyr.
+# Named screensavers, real motion; any key restores the composer.
 Output assets/readme/screensavers.gif
 
 Hide
 Type "cd ~/Projects/demo && clear && nmsh"
 Enter
 Sleep 5s
-Type "ls -la"
-Enter
-Sleep 1s
 Show
 
-Type "/screensaver"
-Sleep 0.5s
+Type "ls src test"
 Enter
-Sleep 3s
-Right
-Sleep 0.35s
-Right
-Sleep 0.35s
-Sleep 2.5s
-Right
-Sleep 0.35s
-Right
-Sleep 0.35s
-Right
-Sleep 0.35s
-Right
-Sleep 0.35s
-Sleep 2.5s
+Sleep 1s
+Type "/screensaver start aurora"
 Enter
-Sleep 5s
+Sleep 4s
 Type "q"
-Sleep 1.2s
-Right
-Sleep 0.35s
-Right
-Sleep 0.35s
-Sleep 1s
+Sleep 0.6s
+Type "/screensaver start deepSpace"
 Enter
-Sleep 6s
+Sleep 4s
 Type "q"
-Sleep 1s
-Escape
-Sleep 1s
+Sleep 0.6s
+Type "/screensaver start warp"
+Enter
+Sleep 4s
+Type "q"
+Sleep 0.6s
+Type "/screensaver start rain"
+Enter
+Sleep 4s
+Type "q"
+Sleep 0.6s

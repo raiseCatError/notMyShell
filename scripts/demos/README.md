@@ -8,10 +8,16 @@ npm run demos -- main keep-awake    # only these
 npx tsx scripts/demos/vespyr-svg.ts # the Vespyr divider (from the real sprite)
 ```
 
+## Capture style
+
+Tapes use an opaque 1440 × 960 terminal, 18 px Nerd Font, and no window bar. The encoded content is slightly smaller after VHS cell rounding. `NMSH_DEMO=1` labels the welcome as **demo** and hides build/version/branch/dirty metadata without freezing motion; `/version` remains factual. The fixture project's neutral branch may still appear in the prompt.
+
+VHS supplies its own clean terminal surface. These assets are reproducible terminal recordings, not Ghostty or Zed desktop captures. Personal host markers are cleared; do not enable transparency or record against a real home.
+
 ## Requirements
 
 - VHS (recorded with 0.12.0), plus `ttyd` and `ffmpeg`, which VHS uses. Install them from your package manager, for example `brew install vhs` (pulls in both) on macOS; see the [VHS installation notes](https://github.com/charmbracelet/vhs#installation) for other systems. Nothing here installs them for you.
-- zsh, git and `lsof`.
+- zsh, git and `lsof`; Fish and Vim for the shell/passthrough clip.
 - The **JetBrainsMono Nerd Font** (`settings.tape` sets it) so Nerd glyphs render; without it VHS falls back to another font and icons show as boxes.
 
 ## What a run does
@@ -30,11 +36,23 @@ npx tsx scripts/demos/vespyr-svg.ts # the Vespyr divider (from the real sprite)
 | `# demo-env: KEY=VALUE` | extra environment for this recording |
 | `# demo-config: {...}` | merged into the demo NMSh config |
 
-Keep clips focused (5–25 s), type at a readable pace and pause after each visible change. Use `NMSH_DETERMINISTIC=1` only where it helps: it also freezes NMSh motion, so screensaver and Chroma clips leave it off.
+Aim for 5–25 seconds per feature clip; grouped screensavers can run longer to give each scene time. Type at a readable pace and pause after each visible change. Use `NMSH_DETERMINISTIC=1` only where it helps: it also freezes NMSh motion, so screensaver and Chroma clips leave it off.
 
 **Keep Awake** is recorded with `NMSH_DETERMINISTIC=1 NMSH_KEEP_AWAKE_BACKEND=inert`: the real slash command, controller, ownership record and presentation run, but the backend is an inert helper, so recording never keeps a machine awake. `NMSH_DEMO_AWAKE_IDLE_MS` shortens the idle-reminder delay for the clip; both are ignored without `NMSH_DETERMINISTIC=1`.
 
 **Sessions** ends the frontend with `SIGHUP`, the signal a closing terminal window sends, then reattaches with `nmsh`; nothing about the detach is simulated.
+
+## Promo and architecture art
+
+```sh
+npm run demos:check                   # decode all media, check sizes and promo format
+npm run promo                         # 20-second 1920 × 1080 silent MP4 + poster
+node --import=tsx scripts/demos/architecture-svg.ts
+```
+
+The promo uses ffmpeg transitions and SVG title cards around the real `main`, `chroma`, `syntax` and `screensavers-cats` clips. Record those first. Title rasterization uses macOS Quick Look (`qlmanage`); no npm dependency or network is required. `assets/promo/nmsh-promo.mp4` is a standalone sharing asset, and `nmsh-promo.png` is its poster. Audio is deliberately omitted for portable, silent playback. The normal GIF tour stays separate.
+
+Architecture SVGs use Vespyr's production sprite and have simple and detailed views. They can be regenerated on any supported Node platform.
 
 ## Tapes
 
@@ -44,9 +62,20 @@ Keep clips focused (5–25 s), type at a readable pace and pause after each visi
 | `composer.tape` | `composer.gif` | `/prompt` one-line + Soft style, `/layout` Top and Flow |
 | `themes.tape` | `themes.gif`, `theme-studio.png` | Theme Studio browsing with live preview, Duplicate → Custom |
 | `sessions.tape` | `sessions.gif` | A build that keeps running while the window is gone; reattach |
-| `screensavers.tape` | `screensavers.gif` | Aurora, Warp, Night Fireworks, Bouncing Vespyr, Black Hole |
+| `screensavers.tape` | `screensavers.gif` | Aurora Drift, Deep Space, Warp Starfield, Rain |
 | `keep-awake.tape` | `keep-awake.gif`, `keep-awake.png` | `/zoomies display`, composer edge + Status Strip, idle reminder, status, stop |
-| `tools.tape` | `tools.gif` | `/providers` and the `/tools` catalog (browsing only) |
+| `tools.tape` | `tools.gif` | `/providers`, `/tools`, persistent Space selections and a cancelled install review |
 | `theme-bridge.tape` | `theme-bridge.gif` | `/theme-bridge` panel and `/integrations` health |
 
 This replaces the earlier asciinema/tmux recorder (`scripts/readme-demo/`), which recorded against the maintainer's real home.
+
+| Additional tape | Asset | Shows |
+| --- | --- | --- |
+| `setup.tape` | `setup.gif` | Setup Cat, diagnostic, cursor, prompt and appearance previews |
+| `syntax.tape` | `syntax.gif` | Shared family and variant choices; real semantic preview |
+| `chroma.tape` | `chroma.gif` | Multiple gradients, animated Travel, draft toggle and base-color help |
+| `motion.tape` | `motion.gif` | Rich animation previews, live activity, success and failure feedback |
+| `ask.tape` | `ask.gif` | Typed local guidance, optional model settings, layout preview |
+| `shell-vim.tape` | `shell-vim.gif` | Real Vim entry/exit, Fish switching, leading shell module, theme carryover |
+| `screensavers-motion.tape` | `screensavers-motion.gif` | Sparkles, Night Fireworks, Black Hole, Fireworks, Circletastic |
+| `screensavers-cats.tape` | `screensavers-cats.gif` | Bouncing Vespyr and raiseCatError with its playful errors |

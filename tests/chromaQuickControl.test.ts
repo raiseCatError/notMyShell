@@ -3,6 +3,17 @@ import assert from 'node:assert/strict';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import {chromaQuickControl, handlePromptPanelKey, renderPromptPanel, type PromptPanelState} from '../src/prompt/PromptPanel.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
+import {createThemeStudio, renderThemeStudio, type StudioContext} from '../src/appearance/ThemeStudio.js';
+
+test('Theme Studio describes base colors when global Chroma is absent or Off', () => {
+  const context: StudioContext = {themes: [], accent: 'mauve', pinnedTo: () => []};
+  const state = createThemeStudio(context);
+  state.previewChroma = true;
+  const render = (chroma?: string) => renderThemeStudio(state, {...context, chroma}, 140, 60, 'truecolor', ['preview']).map(stripAnsi).join('\n');
+  assert.match(render(), /Showing base theme colors/u);
+  assert.match(render('Off'), /Showing base theme colors/u);
+  assert.match(render('Aurora'), /Previews are colorized/u);
+});
 
 function panel(preset: 'off' | 'aurora'): PromptPanelState {
   const draft = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
@@ -21,6 +32,8 @@ test('Chroma On: the gallery says previews are colorized and offers Turn Off; Of
   assert.ok(off.some(row => /Chroma OFF · showing base theme colors\s+\[C\] Turn On/u.test(row)));
   assert.ok(!off.some(row => /Chroma ON/u.test(row)), 'Off removes the On notice');
   assert.match(chromaQuickControl(true, 140), /\u001b\[1m/u, 'On is bold and starred, not only colored');
+  assert.ok(on.some(row => /Turn Chroma Off to view the base theme colors/u.test(row)));
+  assert.ok(on.some(row => /\/chroma/u.test(row)));
 });
 
 test('C toggles the one Chroma setting in the draft and restores the palette it turned Off', () => {

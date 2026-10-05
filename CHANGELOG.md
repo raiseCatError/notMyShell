@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### UI consistency and showcase
+- Shared bold accent focus labels across menus, settings, pickers and setup; `/tools` keeps explicit checked markers when focus moves, including without color.
+- Consistent Chroma preview state and base-color guidance; `/syntax` exposes the shared theme families and variants, with previews and cache updates for custom colors and accents.
+- First launch opens Setup Cat. Apply completes onboarding even without appearance edits; presets and completed onboarding bypass discovery.
+- The current-shell module leads the default Native prompt; the former untouched default migrates, while customized module ordering is preserved.
+- Larger opaque demo recordings with neutral welcome identity, expanded feature/screensaver coverage, two architecture diagrams and a standalone silent motion promo.
+
 ### Themes, Theme Bridge and host cooperation
 - **Prompt provider None**: composer only (no prompt row, modules or right prompt; the input marker stays) while editing, suggestions, syntax colors, history, themes and Theme Bridge keep working; commands submitted under None store no prompt snapshot.
 - **Historical prompt** Full / Compact / Minimal / Off (`/transcript`, Settings, Setup); presentation only over the unchanged stored snapshot.

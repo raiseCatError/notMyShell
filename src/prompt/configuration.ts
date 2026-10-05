@@ -689,6 +689,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   composerDividers: true,
   transcriptPresentation: 'normal',
   modules: [
+    {id: 'shell', visible: true, condition: 'shellDiffers'},
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
     {id: 'gitBranch', visible: true, condition: 'inRepository'},
@@ -697,7 +698,6 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
     {id: 'kubeContext', visible: true, condition: 'onCommand'},
     {id: 'dockerContext', visible: true, condition: 'onCommand'},
-    {id: 'shell', visible: true, condition: 'shellDiffers'},
   ],
   separator: '',
   gap: 1,
@@ -845,6 +845,10 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     if (validColor(item.background)) module.background = item.background;
     modules.push(module);
   }
+  // Upgrade only the former untouched default. Saved custom order, placement,
+  // visibility and module colors remain authoritative.
+  const formerDefault = [...DEFAULT_PROMPT_CONFIGURATION.modules.slice(1), DEFAULT_PROMPT_CONFIGURATION.modules[0]!];
+  if (JSON.stringify(modules) === JSON.stringify(formerDefault)) modules.unshift(modules.pop()!);
   // Modules added in later releases join saved configurations at their
   // default position instead of silently staying absent.
   DEFAULT_PROMPT_CONFIGURATION.modules.forEach((fallback, defaultIndex) => {

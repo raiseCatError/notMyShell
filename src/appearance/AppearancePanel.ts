@@ -1,5 +1,5 @@
 import {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {BlurMode} from './ghostty.js';
 
@@ -63,7 +63,7 @@ export function renderAppearancePanel(state: AppearanceState, columns: number): 
   };
 
   const sel = (index: number) => index === state.selectedIndex ? `${INTERACTIVE}>${RESET}` : ' ';
-  const labelColor = (index: number) => index === state.selectedIndex ? PRIMARY : SECONDARY;
+  const labelColor = (index: number) => focusForeground(index === state.selectedIndex);
 
   // Opacity
   rows.push(`  ${sel(0)} ${labelColor(0)}Opacity      ${INTERACTIVE}${drawBar(state.opacity)}  ${Math.round(state.opacity * 100)}%${RESET}`);

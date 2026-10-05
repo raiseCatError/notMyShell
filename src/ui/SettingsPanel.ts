@@ -41,7 +41,7 @@ import {HISTORY_PROVIDERS} from '../shell/historyProviders.js';
 import {SUGGESTION_PROVIDERS} from '../suggestions/types.js';
 import {foregroundOf, status, theme} from '../chroma/chroma.js';
 import {groupedWindow, groupLines, type GroupedLine} from './groupedList.js';
-import {foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {GLYPHS, getCurrentGlyphMode} from './glyphs.js';
 import {framePanel, renderTabStrip} from './PanelShell.js';
 import {stepIndex, toggleValue} from './formControls.js';
@@ -878,7 +878,7 @@ export function statusLineCount(sections: StatusSections): number {
 
 function renderGlyphPreview(state: SettingsPanelState, columns: number): string[] {
   const item = (selected: boolean, label: string) =>
-    `${MARGIN}${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${selected ? PRIMARY : SECONDARY}${label}${RESET}`;
+    `${MARGIN}${selected ? `${ACCENT}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${label}${RESET}`;
   const rows = framePanel([
     `${BOLD}${PRIMARY}${MARGIN}${state.onboarding ? 'Terminal glyph style' : 'Glyph style'}${RESET}`, '',
     `${SUBTLE}${MARGIN}Choose the preview that renders correctly in this terminal.${RESET}`,

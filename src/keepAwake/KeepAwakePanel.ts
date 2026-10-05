@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import {createConfirm, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {AWAKE_DISPLAY_LABELS, AWAKE_DISPLAYS, AWAKE_IDLE_AFTER, AWAKE_PLACEMENT_LABELS, AWAKE_PLACEMENTS, AWAKE_SAVER_POSITION_LABELS, AWAKE_SAVER_POSITIONS, type KeepAwakePresentation} from './presentation.js';
@@ -133,7 +133,7 @@ export function renderKeepAwakePanel(panel: KeepAwakePanel, controller: KeepAwak
     const supported = controller.supports(mode);
     const pointer = index === panel.selected ? `${accent}›${reset}` : ' ';
     const running = status.state === 'running' && status.record.mode === mode ? `  ${accent}● running${reset}` : '';
-    rows.push(`  ${pointer} ${primary}${MODE_LABELS[mode].padEnd(8)}${reset} ${subtle}${supported ? MODE_DESCRIPTIONS[mode] : `Unavailable on ${controller.backend ? `the ${controller.backend.label}` : 'this system'}`}${reset}${running}`);
+    rows.push(`  ${pointer} ${focusForeground(index === panel.selected)}${MODE_LABELS[mode].padEnd(8)}${reset} ${subtle}${supported ? MODE_DESCRIPTIONS[mode] : `Unavailable on ${controller.backend ? `the ${controller.backend.label}` : 'this system'}`}${reset}${running}`);
   }
   if (settings) {
     const value = (row: PanelSetting): string => {
@@ -151,7 +151,7 @@ export function renderKeepAwakePanel(panel: KeepAwakePanel, controller: KeepAwak
       idleAfterSeconds: 'Idle after', screensaver: 'Show status', screensaverPosition: 'Position'};
     const line = (row: PanelSetting) => {
       const focused = panel.selected === KEEP_AWAKE_MODES.length + PANEL_SETTINGS.indexOf(row);
-      return `  ${focused ? `${accent}›${reset}` : ' '} ${primary}${LABELS[row].padEnd(15)}${reset} ${focused ? accent : subtle}${focused ? `‹ ${value(row)} ›` : value(row)}${reset}`;
+      return `  ${focused ? `${accent}›${reset}` : ' '} ${focusForeground(focused)}${LABELS[row].padEnd(15)}${reset} ${focused ? accent : subtle}${focused ? `‹ ${value(row)} ›` : value(row)}${reset}`;
     };
     rows.push(line('duration'), '', `  ${subtle}Presentation${reset}`, line('placement'), line('display'), line('idleReminder'), line('idleAfterSeconds'),
       '', `  ${subtle}Screensaver${reset}`, line('screensaver'), line('screensaverPosition'),

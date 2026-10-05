@@ -1,4 +1,5 @@
 import {colorEscape} from '../chroma/escape.js';
+import type {ColorLevel} from '../presentation/capabilities.js';
 
 export interface RgbColor {
   red: number;
@@ -35,6 +36,11 @@ export function foreground(color: RgbColor): string {
 
 export function background(color: RgbColor): string {
   return colorEscape(48, color);
+}
+
+/** Keyboard focus is accent + weight; the pointer still identifies it without color. */
+export function focusForeground(focused: boolean, resting: RgbColor = UI_COLORS.secondary, level?: ColorLevel): string {
+  return focused ? `\u001b[1m${colorEscape(38, UI_COLORS.accent, level)}` : colorEscape(38, resting, level);
 }
 
 /**

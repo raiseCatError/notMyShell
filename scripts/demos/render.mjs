@@ -15,14 +15,14 @@
  * stopped and the directory is removed; the run fails if anything survives.
  */
 import {execFileSync, spawnSync} from 'node:child_process';
-import {existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '../..');
-const fail = message => { console.error(`demos: ${message}`); process.exit(1); };
+const fail = message => { throw new Error(`demos: ${message}`); };
 
 // ---- Dependencies ----------------------------------------------------------------------
 const which = name => spawnSync('/usr/bin/env', ['which', name], {encoding: 'utf8'}).stdout.trim();
@@ -87,7 +87,7 @@ function demoEnv({dirs}, extra) {
     XDG_CONFIG_HOME: dirs.config, XDG_DATA_HOME: dirs.data, XDG_STATE_HOME: dirs.state, XDG_CACHE_HOME: dirs.cache,
     NMSH_RUNTIME_DIR: dirs.runtime, TMPDIR: dirs.temp, TMP: dirs.temp, TEMP: dirs.temp,
     GIT_CONFIG_GLOBAL: join(dirs.home, '.gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
-    TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8',
+    NMSH_DEMO: '1', NMSH_DISABLE_UPDATES: '1', TERM: 'xterm-256color', COLORTERM: 'truecolor', LANG: 'en_US.UTF-8', LC_ALL: 'en_US.UTF-8',
     BASH_SILENCE_DEPRECATION_WARNING: '1', NPM_CONFIG_UPDATE_NOTIFIER: 'false', NPM_CONFIG_FUND: 'false', NPM_CONFIG_AUDIT: 'false', NO_UPDATE_NOTIFIER: '1', HISTFILE: join(dirs.home, '.demo_history'),
     // Host markers would describe the recording machine's terminal, not the recorder.
     TERM_PROGRAM: '', GHOSTTY_RESOURCES_DIR: '', KITTY_WINDOW_ID: '', VSCODE_INJECTION: '', ZED_TERM: '',
@@ -108,6 +108,7 @@ const quote = value => `"${String(value).replaceAll('\\', '\\\\').replaceAll('"'
 // ---- Cleanup ---------------------------------------------------------------------------
 function holders(root) {
   const result = spawnSync('lsof', ['-t', '+D', root], {encoding: 'utf8', timeout: 10_000});
+  if (result.error || (result.status !== 0 && result.status !== 1)) fail(`cannot check demo process cleanup: ${result.error?.message ?? result.stderr}`);
   return result.stdout.split('\n').map(Number).filter(pid => pid > 0 && pid !== process.pid);
 }
 
@@ -143,8 +144,13 @@ function encodeGif(frames, output) {
   const base = cursor ? '[0][1]overlay' : '[0]null';
   const filter = `${base},pad=iw+${PAD * 2}:ih+${PAD * 2}:${PAD}:${PAD}:color=${BACKGROUND},split[a][b];[a]palettegen=max_colors=160:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle`;
   mkdirSync(dirname(resolve(repo, output)), {recursive: true});
-  const run = spawnSync('ffmpeg', ['-v', 'error', '-y', ...inputs, '-filter_complex', filter, resolve(repo, output)], {encoding: 'utf8'});
-  if (run.status !== 0) fail(`ffmpeg could not encode ${output}: ${run.stderr}`);
+  const target = resolve(repo, output);
+  const pending = `${target}.${process.pid}.pending.gif`;
+  try {
+    const run = spawnSync('ffmpeg', ['-v', 'error', '-y', ...inputs, '-filter_complex', filter, pending], {encoding: 'utf8'});
+    if (run.status !== 0) fail(`ffmpeg could not encode ${output}: ${run.stderr}`);
+    renameSync(pending, target);
+  } finally { rmSync(pending, {force: true}); }
 }
 function encodeStill(frames, output, seconds) {
   const {text, cursor} = frameLayers(frames);
@@ -181,8 +187,8 @@ for (const name of selected) {
     encodeGif(frames, output);
     for (const still of stills) encodeStill(frames, still.path, still.seconds);
   } finally {
-    await cleanup(home.root);
-    rmSync(home.root, {recursive: true, force: true, maxRetries: 5, retryDelay: 200});
+    try { await cleanup(home.root); }
+    finally { rmSync(home.root, {recursive: true, force: true, maxRetries: 5, retryDelay: 200}); }
   }
   for (const file of [output, ...stills.map(still => still.path)]) results.push(`${file}  ${(statSync(resolve(repo, file)).size / 1024).toFixed(0)} KiB`);
 }

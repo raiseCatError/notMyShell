@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import {MAX_CUSTOM_STOPS, MIN_CUSTOM_STOPS} from '../chroma/treatment.js';
 import {parseHexColor} from '../chroma/color.js';
 import {colorEscape} from '../chroma/escape.js';
-import {foreground, lazyForeground, UI_COLORS} from './palette.js';
+import {focusForeground, foreground, lazyForeground, UI_COLORS} from './palette.js';
 
 /**
  * The one custom-gradient stop editor: Chroma's Custom gradient, idle visuals'
@@ -88,7 +88,7 @@ export function renderGradientEditorRows(gradient: GradientEditorState, title: s
     const selected = index === gradient.index;
     const swatch = `${colorEscape(38, parseHexColor(stop)!)}████${RESET}`;
     const editing = selected && gradient.editing !== undefined
-      ? `${ACCENT}${gradient.editing}${INVERSE} ${RESET}` : `${selected ? PRIMARY : SECONDARY}${stop}`;
+      ? `${ACCENT}${gradient.editing}${INVERSE} ${RESET}` : `${focusForeground(selected)}${stop}`;
     rows.push(`${selected ? `${ACCENT}›` : ' '} ${SECONDARY}${String(index + 1).padStart(2)}${RESET}  ${swatch}  ${editing}${RESET}`);
   });
   if (gradient.error) rows.push(`  ${foreground(UI_COLORS.failure)}${gradient.error}${RESET}`);

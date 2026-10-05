@@ -1,3 +1,4 @@
+import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
 import {DIVIDER_LINES_HELP, dividerLinesLabel, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_DIRECTION_LABELS} from '../chroma/treatment.js';
@@ -42,7 +43,7 @@ import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAda
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
 import {powerlevel10kZshrcPath, type ConfiguratorPreparation} from './Powerlevel10kConfigurator.js';
 import type {Key} from '../terminal/keys.js';
-import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
 import {displayWidth, labelColumnWidth, padCells, stripAnsi, truncateAnsi} from '../util/text.js';
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
@@ -662,7 +663,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   const rows = [`${PRIMARY}  ${title}${RESET}`];
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
   rows.push('');
-  const item = (index: number, text: string) => `${index === state.selectedIndex ? ACCENT : SECONDARY}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
+  const item = (index: number, text: string) => `${focusForeground(index === state.selectedIndex)}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
   if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
     // Prompt providers report detection in their own steps, so the list carries no badge.
@@ -765,7 +766,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
       const side = modulePlacement(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${index === state.selectedIndex ? PRIMARY : SECONDARY}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 6)}${module.visible ? option : 'hidden'}${RESET}`);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${focusForeground(index === state.selectedIndex)}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 6)}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;
@@ -825,7 +826,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     if (themePreviews.length && view === 'main') {
       rows.push('');
       rows.push(`${PRIMARY}Themes${RESET}  ${SUBTLE}● selected  ✓ saved${RESET}`);
-      if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns));
+      if (state.draft.provider === 'nmsh') rows.push(chromaQuickControl(state.draft.presentation.preset !== 'off', columns), `${SUBTLE}${chromaPreviewNote(state.draft.presentation.preset !== 'off')}${RESET}`);
       galleryPalettes(state.draft).forEach((id, index) => {
         const theme = NATIVE_PROMPT_THEMES[id];
         const marker = state.draft.nmsh.palette === id ? `${ACCENT}●` : `${SUBTLE}○`;

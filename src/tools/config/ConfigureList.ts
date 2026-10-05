@@ -1,7 +1,7 @@
 import type {Key} from '../../terminal/keys.js';
 import {framePanel} from '../../ui/PanelShell.js';
 import {renderControls} from '../../ui/controls.js';
-import {foreground, UI_COLORS} from '../../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../../ui/palette.js';
 import {GLYPHS} from '../../ui/glyphs.js';
 import {padCells, truncateAnsi} from '../../util/text.js';
 import {OWNERSHIP_LABELS, type ToolConfigEntry} from './registry.js';
@@ -32,7 +32,7 @@ export function renderConfigureList(state: ConfigureListState, tools: ReadonlyAr
   tools.forEach((tool, index) => {
     const selected = index === state.selected;
     const action = tool.configurable ? 'Configure ›' : tool.ownership === 'theme-bridge' ? 'Theme Bridge ›' : 'Inspect only';
-    lines.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${selected ? primary : secondary}${padCells(tool.label, 12)}${reset}${padCells(tool.installed ? 'Installed' : 'Not installed', 15)}${selected ? accent : subtle}${padCells(action, 16)}${reset}${subtle}${OWNERSHIP_LABELS[tool.ownership]}${reset}`);
+    lines.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${focusForeground(selected)}${padCells(tool.label, 12)}${reset}${padCells(tool.installed ? 'Installed' : 'Not installed', 15)}${selected ? accent : subtle}${padCells(action, 16)}${reset}${subtle}${OWNERSHIP_LABELS[tool.ownership]}${reset}`);
     if (selected) lines.push(`    ${subtle}${tool.summary} · takes effect: ${tool.takesEffect}${reset}`);
   });
   if (state.message) lines.push('', `  ${secondary}${state.message}${reset}`);

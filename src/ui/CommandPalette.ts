@@ -5,7 +5,7 @@ import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {fuzzyMatch} from '../suggestions/NativeSuggestions.js';
 import type {Key} from '../terminal/keys.js';
 import {renderActionHelp, resolveAction, type UiAction} from './actions.js';
-import {foreground, UI_COLORS, lazyForeground} from './palette.js';
+import {focusForeground, foreground, UI_COLORS, lazyForeground} from './palette.js';
 import {SEARCH_MATCH, SETTINGS_ENTRIES, SETTINGS_ROWS, type SettingsDestination} from './SettingsPanel.js';
 import {highlightMatches, truncateAnsi} from '../util/text.js';
 
@@ -157,8 +157,8 @@ export function renderPalette(state: PaletteState, columns: number, rowsAvailabl
   if (visible.length === 0) rows.push(`${SUBTLE}  No matching NMSh action${RESET}`);
   visible.slice(start, start + budget).forEach((item, offset) => {
     const active = start + offset === selected;
-    const label = state.query ? highlightMatches(item.label, state.query, active ? ACCENT : SECONDARY, SEARCH_MATCH) : item.label;
-    rows.push(`${active ? `${ACCENT}›` : ' '} ${active ? ACCENT : SECONDARY}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
+    const label = state.query ? highlightMatches(item.label, state.query, focusForeground(active), SEARCH_MATCH) : item.label;
+    rows.push(`${active ? `${ACCENT}›` : ' '} ${focusForeground(active)}${label}${RESET}  ${SUBTLE}${item.category} · ${item.detail}${RESET}`);
   });
   rows.push('', renderActionHelp(paletteActions(visible.length)));
   return rows.map(row => truncateAnsi(row, columns));

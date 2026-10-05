@@ -1,3 +1,4 @@
+import {focusForeground, UI_COLORS} from './palette.js';
 import type {Key} from '../terminal/keys.js';
 import {colorEscape, rgbTo256, type Rgb} from '../chroma/escape.js';
 import {contrastRatio, hexColor} from '../chroma/color.js';
@@ -168,7 +169,11 @@ export function renderColorPicker(state: ColorPickerState, label: string, column
   const mode = pickerMode(level);
   const nerd = getCurrentGlyphMode() === 'nerd';
   const out: string[] = [];
-  const focused = (focus: PickerFocus, text: string) => state.focus === focus ? `${nerd ? '›' : '>'} ${text}` : `  ${text}`;
+  const focused = (focus: PickerFocus, text: string) => {
+    const active = state.focus === focus;
+    const row = `${active ? nerd ? '›' : '>' : ' '} ${text}`;
+    return mode === 'plain' ? row : `${focusForeground(active, UI_COLORS.secondary, level)}${row}${RESET}`;
+  };
   const fg = (color: Rgb) => colorEscape(38, color, level);
   const bg = (color: Rgb) => colorEscape(48, color, level);
   const swatch = mode === 'plain' ? '' : `${bg(state.color)}      ${RESET} `;

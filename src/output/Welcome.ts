@@ -20,6 +20,8 @@ const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 export interface WelcomeSnapshot {
   identity: BuildIdentity;
+  /** Recording identity is presentation only; version reporting stays factual. */
+  demo?: boolean;
   cwd: string;
   /** The backend NMSh manages for this presentation (never $SHELL). */
   shell: ShellId;
@@ -35,7 +37,7 @@ export interface WelcomeSnapshot {
 }
 
 export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shell: ShellId = 'zsh', understanding?: string): WelcomeSnapshot {
-  return {identity: {...identity}, cwd, shell, ...(understanding ? {understanding} : {})};
+  return {identity: {...identity}, demo: process.env.NMSH_DEMO === '1', cwd, shell, ...(understanding ? {understanding} : {})};
 }
 
 function safe(value: string): string {
@@ -148,12 +150,12 @@ export function renderWelcome(snapshot: WelcomeSnapshot, width: number, frame: W
       {text: 'not', color: UI_COLORS.primary, bold: true},
       {text: 'My', color: BRAND_ACCENT, bold: true},
       {text: 'Shell', color: UI_COLORS.primary, bold: true},
-      {text: ` ${safe(versionLabel(identity.version))}`, color: UI_COLORS.subtle},
+      {text: ` ${snapshot.demo ? 'demo' : safe(versionLabel(identity.version))}`, color: UI_COLORS.subtle},
     ],
     [
-      {text: `build ${safe(identity.commit)}`, color: UI_COLORS.subtle},
-      ...(identity.branch ? [{text: ` · ${safe(identity.branch)}`, color: UI_COLORS.secondary}] : []),
-      ...(identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
+      {text: snapshot.demo ? 'A real shell. A livelier terminal.' : `build ${safe(identity.commit)}`, color: UI_COLORS.subtle},
+      ...(!snapshot.demo && identity.branch ? [{text: ` · ${safe(identity.branch)}`, color: UI_COLORS.secondary}] : []),
+      ...(!snapshot.demo && identity.dirty ? [{text: ' · dirty', color: UI_COLORS.subtle}] : []),
     ],
     [{text: shortCwd(snapshot.cwd), color: UI_COLORS.secondary}],
     [{text: snapshot.shell, color: {red: 104, green: 110, blue: 120}},

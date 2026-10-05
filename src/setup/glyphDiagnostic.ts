@@ -1,5 +1,5 @@
 import {getIconStyle, GLYPHS, moduleIcon, powerlineShapeGlyphs, setIconStyle, type GlyphMode} from '../ui/glyphs.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
+import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {displayWidth} from '../util/text.js';
 
 /** Glyphs from the production registry, drawn in one glyph mode. */
@@ -39,7 +39,7 @@ export function glyphDiagnosticRows(selected: GlyphMode): string[] {
   const reset = '\u001B[0m';
   const cell = (text: string, width: number) => `${text}${' '.repeat(Math.max(0, width - displayWidth(text)))}`;
   const line = (mode: GlyphMode, name: string, items: Array<{text: string}>) =>
-    `${mode === selected ? `${accent}›` : ' '} ${subtle}${cell(name, 11)}${reset}${primary}${items.map((item, index) => cell(item.text, widths[index]!)).join('')}${reset}`;
+    `${mode === selected ? `${accent}›` : ' '} ${focusForeground(mode === selected)}${cell(name, 11)}${reset}${primary}${items.map((item, index) => cell(item.text, widths[index]!)).join('')}${reset}`;
   return [
     `  ${subtle}${cell('', 11)}${nerd.map((item, index) => cell(item.label, widths[index]!)).join('')}${reset}`,
     line('nerd', 'Nerd Font', nerd),
