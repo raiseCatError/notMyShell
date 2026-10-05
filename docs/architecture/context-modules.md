@@ -5,9 +5,9 @@ present useful context about that session and workspace without taking over shel
 execution. The Context Engine is the current engineering direction for sharing
 that context across NMSh's presentation surfaces.
 
-This guide describes the unreleased implementation on `feature/305-context-engine`.
-The stable release remains v0.16.0. Installable Context Packs are a direction,
-not an available public extension API.
+This guide describes the v0.17.0 release candidate on `master`; tagging and
+publication are pending. The latest published stable release remains v0.16.0.
+Installable Context Packs are a direction, not an available public extension API.
 
 ## From capability to presentation
 

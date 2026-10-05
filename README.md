@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Current stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch is the released state; newer work (themes, Theme Bridge, tool configuration, shell frameworks, Keep Awake) is in development and listed under *Unreleased* in the [changelog](CHANGELOG.md). The Context Engine and Context Rail are being developed on `feature/305-context-engine`.
+Latest published stable release: [v0.16.0 — Sessions, Agents & Portability](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0). The `master` branch contains the prepared **v0.17.0 — Context Engine, Themes & Discovery** release candidate; tagging and publication are pending. See the [changelog](CHANGELOG.md#0170---2026-10-06) for its implemented scope.
 
 ## See notMyShell in motion
 
@@ -64,7 +64,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-The development branch implements fact metadata, native module routing and the Context Rail. Installable, declarative Context Packs are upcoming; they are not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+The v0.17.0 release candidate implements fact metadata, native module routing and the Context Rail. Installable, declarative Context Packs are upcoming; they are not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
 Read the [Context Modules guide](docs/architecture/context-modules.md) for the implemented surfaces, discovery boundaries and pack direction, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 

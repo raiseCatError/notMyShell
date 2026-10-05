@@ -21,7 +21,7 @@ Before starting work, check:
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
 - **[v0.16.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.16.0)** — current stable release
-- **[PR #315](https://github.com/raiseCatError/notMyShell/pull/315)** — current development after v0.16.0 (unreleased; see [ROADMAP.md](ROADMAP.md))
+- **[PR #322](https://github.com/raiseCatError/notMyShell/pull/322)** — merged master checkpoint for the v0.17.0 release candidate (tagging and publication pending; see [ROADMAP.md](ROADMAP.md))
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model

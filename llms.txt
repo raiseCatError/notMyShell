@@ -1,6 +1,6 @@
 # notMyShell (NMSh)
 
-Stable release: v0.16.0. Unreleased development continues on feature branches (see CHANGELOG.md).
+Latest published stable release: v0.16.0. Master contains the v0.17.0 release candidate; tagging and publication are pending (see CHANGELOG.md).
 
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 
@@ -57,7 +57,7 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 - nmsh config export/import, nmsh uninstall, nmsh doctor
 - NMSH_DETERMINISTIC=1 for repeatable presentation in tests and VHS demos
 
-## Native modules / Context Engine (unreleased)
+## Native modules / Context Engine (v0.17.0 release candidate)
 
 Current engineering focus: Capability → immutable Fact → Module → Surface Router
 → Main Prompt / Context Rail / Right Context. Core services own bounded collection;
@@ -66,7 +66,7 @@ freshness, trust, sensitivity and persistence policy. The Rail is live frontend
 geometry, separate from transcript snapshots and the right-context anchor.
 
 The first-party module registry, fact adapter and surface routing are implemented
-on feature/305-context-engine. Installable declarative Context Packs, broader
+on master in the v0.17.0 release candidate. Installable declarative Context Packs, broader
 capability scheduling and Status Strip module routing remain upcoming. No finalized
 pack SDK or executable plugin API is available. Repository entry must never execute
 arbitrary repo-controlled code through discovery; metadata is parser-only and
