@@ -216,4 +216,3 @@ export function openUrlProposal(url: string): AskOutcome {
 export function openableUrl(url: string): boolean {
   return /^https?:\/\/[\w.[\]:-]+(?::\d{1,5})?(?:\/[\w./%?=&#~+-]*)?$/u.test(url);
 }
-

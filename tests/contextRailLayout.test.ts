@@ -171,7 +171,7 @@ test('preview/live group projection is identical across placement, rows, directi
       assert.ok(stripAnsi(frame!.rows[inputRegion.top + index]!).includes(row.text), 'Frame preserves every visible wrapped command character');
     }
     assert.equal(frame!.cursorColumn, layout.caretColumn + 1, 'Terminal cursor is one-based');
-    assert.equal(frame!.rows.slice(plan.rail!.start, plan.rail!.end).map(stripAnsi).filter(row => row.includes('zsh')).length, 1, 'Right Context remains on its own Main row'); 
+    assert.equal(frame!.rows.slice(plan.rail!.start, plan.rail!.end).map(stripAnsi).filter(row => row.includes('zsh')).length, 1, 'Right Context remains on its own Main row');
     app['passthrough'] = true;
     assert.equal(app['preparedRail'](100).presentation.rows, 0, 'Raw passthrough removes spacing, frame and horizontal Rail');
   }finally{app['stop'](0);app['session'].kill();}
