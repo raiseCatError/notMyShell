@@ -37,6 +37,7 @@ import {normalizeVibrance, type Vibrance} from '../chroma/color.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import {OPEN_WITH_IDS, type OpenWith} from '../host/HostActions.js';
+import {DEFAULT_KEEP_AWAKE_PRESENTATION, normalizeKeepAwakePresentation, type KeepAwakePresentation} from '../keepAwake/presentation.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
 export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
@@ -546,6 +547,8 @@ export interface PromptConfiguration {
   themeBridge: ThemeBridgeSettings;
   cursor: CursorSettings;
   statusStrip: StatusStripSettings;
+  /** How an active Keep Awake shows in NMSh chrome (placement, display, idle reminder, screensaver). Off shows nothing. */
+  keepAwake: KeepAwakePresentation;
   idleVisuals: IdleVisualSettings;
   liveActivity: LiveActivitySettings;
   /** Where NMSh chrome (frames, rules, tabs, selection, accents) takes its colors from. */
@@ -657,6 +660,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   promptSymbol: 'chevron',
   cursor: {...DEFAULT_CURSOR},
   statusStrip: {...DEFAULT_STATUS_STRIP},
+  keepAwake: {...DEFAULT_KEEP_AWAKE_PRESENTATION},
   agentProfiles: [],
   sessionNotices: true,
   askRecord: true,
@@ -749,7 +753,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     ? [...new Set(value.ignoredInstallSuggestions.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.+-]{0,63}$/u.test(id)))].slice(0, 256)
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
-  const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
+  const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
     sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',

@@ -32,7 +32,7 @@ export interface KeepAwakeCapabilities {idle: boolean; display: boolean; system:
 export interface LaunchPlan {command: string; args: string[]; env?: NodeJS.ProcessEnv}
 
 export interface KeepAwakeBackend {
-  id: 'macos-caffeinate' | 'linux-systemd-inhibit' | 'windows-execution-state';
+  id: 'macos-caffeinate' | 'linux-systemd-inhibit' | 'windows-execution-state' | 'inert';
   label: string;
   capabilities: KeepAwakeCapabilities;
   /** Factual notes shown in the panel (e.g. Apple's -s needs AC power). */
@@ -123,9 +123,27 @@ export function windowsBackend(powershell: string): KeepAwakeBackend {
   };
 }
 
+// ---- Inert (tests and recorded demos only) ----------------------------------------------
+
+/**
+ * A backend that asserts nothing: the same NMSh-owned, detached, bounded wait
+ * helper the Linux backend wraps, without the inhibitor. It exists so the real
+ * slash, controller, ownership and presentation paths can run in tests and
+ * VHS recordings without keeping a machine awake. Honored only together with
+ * NMSH_DETERMINISTIC=1; it never appears in ordinary use.
+ */
+export function inertBackend(node: string = process.execPath): KeepAwakeBackend {
+  return {
+    id: 'inert', label: 'inert demo backend (no assertion)', capabilities: {idle: true, display: true, system: true},
+    notes: ['Deterministic demo/test mode: nothing is kept awake.'],
+    plan: (_mode, token, timeout) => ({command: node, args: ['-e', WAIT_HELPER, '--', String(timeout ?? 0), `nmsh-keep-awake=${token}`]}),
+  };
+}
+
 /** The backend detection decides; the platform alone does not. */
 export function detectBackend(platform: NodeJS.Platform = process.platform, exists: (path: string) => boolean = existsSync,
   env: NodeJS.ProcessEnv = process.env): KeepAwakeBackend | undefined {
+  if (env.NMSH_DETERMINISTIC === '1' && env.NMSH_KEEP_AWAKE_BACKEND === 'inert') return inertBackend();
   if (platform === 'darwin') return exists(CAFFEINATE) ? macBackend() : undefined;
   if (platform === 'linux') {
     const inhibit = SYSTEMD_INHIBIT_PATHS.find(exists);
@@ -209,7 +227,7 @@ function owned(record: KeepAwakeRecord, probe: ProcessProbe): boolean {
   if (!line) return false;
   if (record.backend === 'macos-caffeinate') return line === [record.command, ...record.args].join(' ');
   // Linux carries the token in argv; Windows carries it inside the encoded script (the last argument).
-  return record.backend === 'linux-systemd-inhibit' ? line.includes(`nmsh-keep-awake=${record.token}`) : line.includes(record.args.at(-1)!);
+  return record.backend === 'linux-systemd-inhibit' || record.backend === 'inert' ? line.includes(`nmsh-keep-awake=${record.token}`) : line.includes(record.args.at(-1)!);
 }
 
 export type StartResult =
@@ -240,6 +258,9 @@ export class KeepAwakeController {
   }
 
   private clear(): void { rmSync(this.path, {force: true}); }
+
+  /** The stored record without an ownership check: cheap enough to poll for presentation, never used to stop anything. */
+  peek(): KeepAwakeRecord | undefined { return this.load(); }
 
   /** Verified state. Unprovable records are cleared (never killed). */
   status(): KeepAwakeStatus {

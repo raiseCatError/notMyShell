@@ -153,26 +153,37 @@ export function stripItems(settings: StatusStripSettings, stats: SystemStats, no
   return items;
 }
 
+/** Keep Awake in the strip: present whenever it is active and the strip is on; its forms from widest to narrowest. */
+export interface StripAwake {full: string; short: string; glyph: string}
+
 /**
  * The right-aligned strip row, or '' when nothing fits. Lower-priority items
  * (uptime, CPU, RAM) drop first so the clock survives on narrow terminals.
+ * An active Keep Awake ranks above all of them: it narrows (Awake · Display,
+ * Awake, its glyph) before anything else would have to drop it.
  */
-export function renderStatusStrip(settings: StatusStripSettings, stats: SystemStats, columns: number, now?: Date): string {
+export function renderStatusStrip(settings: StatusStripSettings, stats: SystemStats, columns: number, now?: Date, awake?: StripAwake): string {
   if (!settings.enabled || columns < STRIP_MIN_COLUMNS) return '';
   let items = stripItems(settings, stats, now);
   const subtle = foreground(UI_COLORS.subtle);
   const secondary = foreground(UI_COLORS.secondary);
+  const accent = foreground(UI_COLORS.accent);
   const reset = '\u001B[0m';
-  const plain = (list: StripItem[]) => list.map(item => { const icon = semanticIcon(item.icon); return icon ? `${icon} ${item.text}` : item.text; }).join(' · ');
-  while (items.length && displayWidth(plain(items)) > columns - 2) {
-    const drop = items.reduce((worst, item) => item.priority > worst.priority ? item : worst);
-    items = items.filter(item => item !== drop);
+  const forms = awake ? [...new Set([awake.full, awake.short, awake.glyph])] : [];
+  let form = 0;
+  const awakeText = () => forms[form];
+  const plain = (list: StripItem[]) => [...list.map(item => { const icon = semanticIcon(item.icon); return icon ? `${icon} ${item.text}` : item.text; }), ...(awakeText() ? [awakeText()!] : [])].join(' · ');
+  while (displayWidth(plain(items)) > columns - 2) {
+    // Decorative items drop first, lowest priority first; Keep Awake only narrows, then goes last of all.
+    if (items.length) { const drop = items.reduce((worst, item) => item.priority > worst.priority ? item : worst); items = items.filter(item => item !== drop); }
+    else if (form < forms.length) form += 1;
+    else break;
   }
-  if (!items.length) return '';
-  const body = items.map(item => {
+  if (!items.length && !awakeText()) return '';
+  const body = [...items.map(item => {
     const icon = semanticIcon(item.icon);
     return `${icon ? `${subtle}${icon} ` : ''}${secondary}${item.text}`;
-  }).join(`${subtle} · `);
+  }), ...(awakeText() ? [`${accent}${awakeText()}`] : [])].join(`${subtle} · `);
   const width = displayWidth(plain(items));
   return `${' '.repeat(Math.max(0, columns - width - 1))}${body}${reset}`;
 }

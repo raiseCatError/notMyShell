@@ -9,7 +9,8 @@ import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type Sess
 import {createPresetPanel, presetPanelKey, renderPresetPanel, type PresetPanel} from '../session/PresetPanel.js';
 import {MiseProjectService, detectMiseProject} from '../tools/MiseProject.js';
 import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.js';
-import {detectBackend, KeepAwakeController} from '../keepAwake/keepAwake.js';
+import {detectBackend, keepAwakePath, KeepAwakeController, type KeepAwakeRecord} from '../keepAwake/keepAwake.js';
+import {awakeDuration, awakeLabel, awakeStyle, awakeView, edgeAccessoryColumns, edgeFits, placeOnSaver, renderComposerEdge, resolveAccessorySlot, sliceAnsiCells} from '../keepAwake/presentation.js';
 import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
 import {homedir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
@@ -237,7 +238,7 @@ import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentRepor
 import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
 import {detectAgentCommand} from '../agents/agents.js';
 import {describeNotice, noticeExpiresAt, noticeKey, noticeVisible, selectNotices, sessionLabel, type NoticeView, type SessionNotice} from '../session/SessionNotices.js';
-import {cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {composerEdgeStates, cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
@@ -274,6 +275,10 @@ const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
 const SEPARATOR = lazyForeground(UI_COLORS.separator);
+/** Keep Awake presentation poll: record changes, timeout, idle reminder and its minute counter. */
+const AWAKE_POLL_MS = 5000;
+/** Free cells the input row keeps after typed text before Keep Awake yields it (Input row placement). */
+const AWAKE_INPUT_SLACK = 8;
 const ACCENT = lazyForeground(UI_COLORS.accent);
 /** NMSh ran this install with the user's confirmation; record it so an uninstall can be offered honestly. */
 function recordInstall(toolId: string, install: {label: string; command: string; args: readonly string[]}): void {
@@ -490,21 +495,137 @@ export class TerminalApp {
   /** One controller for /caffeinate, /awake and /zoomies; the backend is detected once. */
   private keepAwake(): KeepAwakeController { return this.keepAwakeController ??= new KeepAwakeController(detectBackend()); }
 
+  /** The verified Keep Awake record presentation shows; undefined (Off) renders nothing anywhere. */
+  private awakeRecord?: KeepAwakeRecord;
+  private awakeTimer?: () => void;
+  /** Last local NMSh input (keys, mouse, paste): the idle reminder's clock. Output and OS idle state never count. */
+  private lastUserInput = Date.now();
+  /** A cheap key for what Keep Awake shows, so the poll repaints only when it changes. */
+  private awakeShown = '';
+
+  /** Full verified refresh (ownership checked): on launch, after every Keep Awake action, and when the stored record changes. */
+  private refreshAwake(): void {
+    if (!this.keepAwakeController && !existsSync(keepAwakePath())) { this.awakeRecord = undefined; return; }
+    const status = this.keepAwake().status();
+    this.awakeRecord = status.state === 'running' ? status.record : undefined;
+  }
+
+  /** Polled while NMSh presents: a file read, plus an ownership check only when the record changed or its timeout passed. */
+  private pollAwake(): void {
+    const stored = this.keepAwakeController || existsSync(keepAwakePath()) ? this.keepAwake().peek() : undefined;
+    const current = this.awakeRecord;
+    const expired = current?.timeoutSeconds !== undefined && Date.now() >= current.startedAt + current.timeoutSeconds * 1000;
+    if (stored?.token !== current?.token || expired) this.refreshAwake();
+    const shown = this.awakeShownKey();
+    if (shown !== this.awakeShown) { this.awakeShown = shown; this.render(); }
+  }
+
+  private awakeShownKey(): string {
+    const record = this.awakeRecord;
+    if (!record) return '';
+    return `${record.token}|${this.awakeIdle()}|${awakeDuration(record, Date.now())}`;
+  }
+
+  /** One timer while Keep Awake is active (or could become active from another window); none once NMSh stops presenting. */
+  private syncAwake(): void {
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended;
+    if (wanted && !this.awakeTimer) this.awakeTimer = presentationClock.subscribe(() => this.pollAwake(), AWAKE_POLL_MS);
+    else if (!wanted && this.awakeTimer) { this.awakeTimer(); this.awakeTimer = undefined; }
+  }
+
+  /** Expanded reminder after no local NMSh input for the configured delay (a deterministic demo may shorten it). */
+  private awakeIdle(now = Date.now()): boolean {
+    const settings = this.promptConfiguration.keepAwake;
+    if (!this.awakeRecord || !settings.idleReminder) return false;
+    const override = isDeterministicPresentation() ? Number(process.env.NMSH_DEMO_AWAKE_IDLE_MS) : Number.NaN;
+    const delay = Number.isFinite(override) && override >= 0 ? override : settings.idleAfterSeconds * 1000;
+    return now - this.lastUserInput >= delay;
+  }
+
+  private awakeViewNow(now = Date.now()) {
+    const record = this.awakeRecord;
+    return record ? awakeView(record, this.promptConfiguration.keepAwake, this.awakeIdle(now), now) : undefined;
+  }
+
+  /**
+   * Input row placement: the width reserved at the end of the first input row,
+   * or 0. Only when completely safe: a single-line edit with room to spare and
+   * no right prompt on that row. Wrapping, the caret, selection and mouse hit
+   * testing all use the narrowed width (inputColumns), so typed text can never
+   * run under it.
+   */
+  private awakeInputReserve(columns: number): number {
+    const view = this.awakeViewNow();
+    if (!view || this.promptConfiguration.keepAwake.placement !== 'input') return 0;
+    if (this.promptConfiguration.composerLayout === 'oneLine' && this.effectivePromptProvider === 'nmsh') return 0;
+    if (this.editor.displayText.includes('\n')) return 0;
+    const reserve = view.compact.width + 2;
+    const prefix = this.inputFirstLinePrefix(columns);
+    const used = displayWidth(prefix ?? `${GLYPHS.prompt} `) + displayWidth(this.editor.displayText) + 1;
+    return used + AWAKE_INPUT_SLACK <= columns - reserve ? reserve : 0;
+  }
+
+  /** The editor's width: the terminal width less any Keep Awake input reservation. */
+  private inputColumns(columns: number): number {
+    return Math.max(1, columns - this.awakeInputReserve(columns));
+  }
+
+  /** Resolves this frame's slot against real composer geometry; the saved preference never changes. */
+  private awakeDecision(plan: ScreenPlan, columns: number): ScreenPlan['awake'] {
+    const view = this.awakeViewNow();
+    if (!view || plan.panelActive) return undefined;
+    const edges = composerEdgeStates(plan, this.promptConfiguration.placement);
+    const fits = edgeFits(columns, view.compact.width);
+    const slot = resolveAccessorySlot(this.promptConfiguration.keepAwake.placement, {
+      topEdge: edges.topEdge === 'available' && fits ? 'available' : edges.topEdge === 'occupied' ? 'occupied' : 'unavailable',
+      bottomEdge: edges.bottomEdge === 'available' && fits ? 'available' : 'unavailable',
+      inputTrailing: this.awakeInputReserve(columns) > 0 ? 'available' : 'unavailable',
+    });
+    return {slot, expandedOnEdge: Boolean(view.expanded && (slot === 'topEdge' || slot === 'bottomEdge') && edgeFits(columns, view.expanded.width))};
+  }
+
+  /** Rows the adjacent slot needs: its own row, or the muted reminder when the idle form does not fit where the label is. */
+  private awakeAdjacentRows(decision: ScreenPlan['awake']): number {
+    if (!decision) return 0;
+    if (decision.slot === 'adjacentRow') return 1;
+    return this.awakeIdle() && !decision.expandedOnEdge ? 1 : 0;
+  }
+
+  private awakeRows(plan: ScreenPlan, columns: number): string[] {
+    const view = this.awakeViewNow();
+    if (!view || !plan.awake) return [];
+    return [plan.awake.slot === 'adjacentRow' ? view.row(columns) : view.reminder.ansi];
+  }
+
+  /** The composer edge (border or separator) through the one shared renderer: the rule, plus the accessory when this edge holds it. */
+  private composerEdgeRow(kind: 'composerBorder' | 'separator', plan: ScreenPlan, columns: number, now: number): string {
+    const rule = `${paintDivider(repeatToWidth(GLYPHS.separator, columns), this.promptConfiguration.presentation, now)}${RESET}`;
+    const accessory = this.edgeAccessory(kind, plan, now);
+    return accessory ? renderComposerEdge({rule, width: columns, accessory}) : rule;
+  }
+
+  private edgeAccessory(kind: 'composerBorder' | 'separator', plan: ScreenPlan, now = Date.now()): {ansi: string; width: number} | undefined {
+    const view = this.awakeViewNow(now);
+    if (!view || plan.awake?.slot !== (kind === 'composerBorder' ? 'topEdge' : 'bottomEdge')) return undefined;
+    return plan.awake.expandedOnEdge && view.expanded ? view.expanded : view.compact;
+  }
+
   private handleKeepAwakeSlash(command: string, slash: Extract<ParsedSlashCommand, {kind: 'keepAwake'}>): void {
     const controller = this.keepAwake();
     if (slash.op === 'panel') {
       this.panelOrigin = undefined;
-      this.keepAwakePanel = createKeepAwakePanel(controller, slash.invalid ? `"${slash.invalid}" is not a Keep Awake mode or duration. Modes: idle, display, system, all; durations like 45s, 30m, 2h.` : undefined);
+      this.keepAwakePanel = {...createKeepAwakePanel(controller, slash.invalid ? `"${slash.invalid}" is not a Keep Awake mode or duration. Modes: idle, display, system, all; durations like 45s, 30m, 2h.` : undefined), command: command.split(/\s+/u)[0]!};
     } else if (slash.op === 'status') this.output.addFrontendInteraction(command, statusLines(controller).join('\n'), INFO);
     else if (slash.op === 'stop') this.output.addFrontendInteraction(command, controller.stop(), INFO);
     else {
       const result = controller.start(slash.mode!, slash.timeoutSeconds);
       if (result.kind === 'needsConfirm') {
         // A different mode is running: the panel asks first (default No).
-        this.keepAwakePanel = createKeepAwakePanel(controller);
+        this.keepAwakePanel = {...createKeepAwakePanel(controller), command: command.split(/\s+/u)[0]!};
         requestStart(this.keepAwakePanel, controller, slash.mode!, slash.timeoutSeconds);
       } else this.output.addFrontendInteraction(command, describeStart(result), result.kind === 'failed' || result.kind === 'unsupported' ? ERROR : INFO);
     }
+    this.refreshAwake();
     this.render();
   }
   private readonly miseService = new MiseProjectService();
@@ -901,6 +1022,7 @@ export class TerminalApp {
       }
     });
     this.presentationStarted = true;
+    this.refreshAwake();
     // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
     this.scheduleThemeBridge(500);
     this.scheduleWelcomeBlink();
@@ -958,7 +1080,11 @@ export class TerminalApp {
       return;
     }
     // Focus reports alone are not user activity (a terminal can report them on its own).
-    if (keys.some(key => key.kind !== 'focusIn' && key.kind !== 'focusOut')) this.noteActivity();
+    if (keys.some(key => key.kind !== 'focusIn' && key.kind !== 'focusOut')) {
+      // Pointer motion alone is not interaction for the Keep Awake reminder; keys, clicks, scroll and paste are.
+      if (keys.some(key => key.kind !== 'focusIn' && key.kind !== 'focusOut' && key.kind !== 'mouseMove')) this.lastUserInput = Date.now();
+      this.noteActivity();
+    }
     for (const key of keys) {
       const before = {text: this.editor.text, index: this.editor.displayCursorIndex};
       this.handleKey(key);
@@ -976,7 +1102,7 @@ export class TerminalApp {
     if (this.editor.text !== before.text || this.editor.displayCursorIndex === before.index || this.settingsPanelActive || this.passthrough) return;
     const columns = this.dimensions().columns;
     const prefix = this.inputFirstLinePrefix(columns);
-    const at = (index: number) => layoutInput(this.editor.displayText, index, columns, Number.POSITIVE_INFINITY, prefix);
+    const at = (index: number) => layoutInput(this.editor.displayText, index, this.inputColumns(columns), Number.POSITIVE_INFINITY, prefix);
     const from = at(before.index), to = at(this.editor.displayCursorIndex);
     if (from.caretRow !== to.caretRow) return;
     this.transitions.travel(from.caretColumn, to.caretColumn, to.caretRow, Date.now());
@@ -1083,7 +1209,17 @@ export class TerminalApp {
       return;
     }
     if (this.keepAwakePanel) {
-      if (keepAwakeKey(this.keepAwakePanel, this.keepAwake(), key) === 'close') { this.keepAwakePanel = undefined; this.returnFromPanel(); }
+      const result = keepAwakeKey(this.keepAwakePanel, this.keepAwake(), key, this.promptConfiguration.keepAwake);
+      if (result && typeof result === 'object' && 'settings' in result) {
+        const next = result.settings;
+        this.updateConfiguration(configuration => { configuration.keepAwake = next; });
+      } else if (result) {
+        const command = this.keepAwakePanel.command;
+        this.keepAwakePanel = undefined;
+        if (typeof result === 'object' && 'done' in result) this.output.addFrontendInteraction(command ?? '/caffeinate', result.done, INFO);
+        this.refreshAwake();
+        this.returnFromPanel();
+      }
       this.render();
       return;
     }
@@ -3351,7 +3487,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3378,7 +3514,7 @@ export class TerminalApp {
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
-    if (this.keepAwakePanel) return renderKeepAwakePanel(this.keepAwakePanel, this.keepAwake(), columns, this.dimensions().rows);
+    if (this.keepAwakePanel) return renderKeepAwakePanel(this.keepAwakePanel, this.keepAwake(), columns, this.dimensions().rows, this.promptConfiguration.keepAwake);
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
@@ -4421,8 +4557,19 @@ export class TerminalApp {
     const time = idle.still ? 20_000 : sceneTime(now - idle.startedAt, idle.frame, idle.mode);
     const frame = idleFrameRows(this.idleGrid, {mode: idle.mode, width: columns, height: rows, time: Math.max(0, time - idle.offset),
       palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(idle.capture ? {capture: idle.capture} : {})});
-    try { this.renderer.render({rows: frame, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
+    const shown = this.saverAwake(frame, columns, now);
+    try { this.renderer.render({rows: shown, columns, cursorRow: 1, cursorColumn: 1, cursorVisible: false}); }
     catch (error) { this.onTerminate(); throw error; }
+  }
+
+  /** The screensaver's positioned Keep Awake status: a small separate element; the saver and mascot are untouched. */
+  private saverAwake(frame: string[], columns: number, now: number): string[] {
+    const record = this.awakeRecord;
+    const settings = this.promptConfiguration.keepAwake;
+    if (!record || !settings.screensaver) return frame;
+    const text = `${awakeLabel(record, settings.display, 'full')} · ${awakeDuration(record, now)}`;
+    return placeOnSaver(frame, columns, {ansi: `${awakeStyle.active()}${text}${awakeStyle.reset}`, width: displayWidth(text)}, settings.screensaverPosition,
+      (row, column, ansi, width) => `${sliceAnsiCells(row, 0, column)}${RESET}${' '.repeat(Math.max(0, column - Math.min(column, displayWidth(stripAnsi(sliceAnsiCells(row, 0, column))))))}${ansi}${sliceAnsiCells(row, column + width, columns)}${RESET}`);
   }
 
   private stopIdleFrames(): void {
@@ -5820,8 +5967,14 @@ export class TerminalApp {
     // Notices never squeeze the composer or transcript out: small screens simply do not show them.
     const notices = count > 0 && rows - find >= 12 + count ? count : 0;
     const plan = this.planComposer(columns, rows - notices - find, fullInput, suggestions, panelRows);
+    // Keep Awake: decided against this geometry; an adjacent row (when needed and the screen has room) sits closest to the composer.
+    const decision = this.awakeDecision(plan, columns);
+    const wanted = this.awakeAdjacentRows(decision);
+    const awakeRows = wanted && rows - notices - find >= 10 + wanted ? wanted : 0;
+    const base = awakeRows ? this.planComposer(columns, rows - notices - find - awakeRows, fullInput, suggestions, panelRows) : plan;
+    const awake = decision && (decision.slot !== 'adjacentRow' || awakeRows) ? decision : undefined;
     // The find bar sits right above the composer, notices above it.
-    return withNoticeRows(withNoticeRows(plan, find, 'find'), notices);
+    return withNoticeRows(withNoticeRows(withNoticeRows({...base, ...(awake ? {awake} : {})}, find, 'find'), notices), awakeRows, 'awake');
   }
 
   /** One compact line per notice (max three, the last may summarize overflow). */
@@ -5978,7 +6131,11 @@ export class TerminalApp {
   }
 
   private statusStripRow(columns: number): string {
-    return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns);
+    // Active Keep Awake is always part of an enabled strip (no per-item switch); the strip itself is never forced on.
+    const record = this.awakeRecord;
+    const display = this.promptConfiguration.keepAwake.display;
+    return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns, undefined,
+      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined);
   }
 
   /** One timer while the strip is on and NMSh owns the screen; none otherwise. */
@@ -7612,13 +7769,18 @@ export class TerminalApp {
       if (this.editor.ghost && !this.editor.hasPasteAtoms && this.editor.cursorIndex === graphemes(this.editor.text).length && row === input.rows[input.rows.length - 1]) {
         suffix = `${SECONDARY}${this.editor.ghost.substring(this.editor.text.length)}${RESET}`;
       }
-      const line = truncateAnsi(`${prefix}${textStyled}${suffix}`, columns);
-      return row.charStart === 0 && row === input.allRows[0] ? `${line}${this.oneLineRightContext(line, columns)}` : line;
+      const editorColumns = this.inputColumns(columns);
+      const line = truncateAnsi(`${prefix}${textStyled}${suffix}`, editorColumns);
+      if (row.charStart !== 0 || row !== input.allRows[0]) return line;
+      // Input row placement: the reserved trailing cells, outside the editor's own width.
+      const accessory = plan.awake?.slot === 'inputTrailing' && editorColumns < columns ? this.awakeViewNow()?.compact : undefined;
+      if (accessory) return `${line}${RESET}${' '.repeat(Math.max(0, columns - displayWidth(line) - accessory.width))}${accessory.ansi}`;
+      return `${line}${this.oneLineRightContext(line, columns)}`;
     });
 
     // The plan decides where each region lives; this only decides what paints into it.
-    // Composer top and bottom divider lines; the prompt row's divider fill uses the same source.
-    const separator = `${paintDivider(repeatToWidth(GLYPHS.separator, columns), this.promptConfiguration.presentation, Date.now())}${RESET}`;
+    // Composer top and bottom edges share one renderer (composerEdgeRow); the prompt row's divider fill uses the same rule source.
+    const now = Date.now();
     const regionRows = (region: Region): string[] => {
       switch (region.kind) {
         // Setup Cat owns a clean screen: the ordinary transcript/welcome is not drawn behind it (presentation only; nothing is cleared).
@@ -7646,10 +7808,11 @@ export class TerminalApp {
           const activity = truncateAnsi(this.currentActivity(), columns);
           return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
         }
-        case 'composerBorder': return [separator];
+        case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
-        case 'separator': return [separator];
+        case 'separator': return [this.composerEdgeRow('separator', plan, columns, now)];
+        case 'awake': return this.awakeRows(plan, columns);
         case 'status': return [this.statusStripRow(columns)];
         case 'notices': return this.noticeRows(columns);
         case 'find': return this.searchChrome(columns);
@@ -7764,7 +7927,7 @@ export class TerminalApp {
         const input = regions('input')[0];
         if (!input) continue;
         const prefix = this.inputFirstLinePrefix(columns);
-        const at = (index: number) => layoutInput(this.editor.displayText, index, columns, Number.POSITIVE_INFINITY, prefix);
+        const at = (index: number) => layoutInput(this.editor.displayText, index, this.inputColumns(columns), Number.POSITIVE_INFINITY, prefix);
         const from = at(transition.from);
         const to = at(transition.to);
         const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
@@ -7774,7 +7937,7 @@ export class TerminalApp {
         const input = regions('input')[0];
         if (!input) continue;
         const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
-        add(input.top + transition.row + (caret.caretRow - layoutInput(this.editor.displayText, this.editor.displayCursorIndex, columns, Number.POSITIVE_INFINITY, this.inputFirstLinePrefix(columns)).caretRow),
+        add(input.top + transition.row + (caret.caretRow - layoutInput(this.editor.displayText, this.editor.displayCursorIndex, this.inputColumns(columns), Number.POSITIVE_INFINITY, this.inputFirstLinePrefix(columns)).caretRow),
           transitionPaint.travel(transition.from, transition.to, t, transition.look));
       } else if (transition.kind === 'seal') {
         const transcript = plan.regions.find(region => region.kind === 'transcript');
@@ -7797,6 +7960,13 @@ export class TerminalApp {
         }
       }
     }
+    // Transition light passes over the rule but not over a Keep Awake accessory: its text stays semantically stable.
+    for (const region of regions('separator', 'composerBorder')) {
+      const accessory = this.edgeAccessory(region.kind as 'separator' | 'composerBorder', plan, now);
+      const span = accessory && edgeAccessoryColumns(columns, accessory.width);
+      const cells = span && paints.get(region.top);
+      if (cells) for (let column = span.start - 1; column <= span.end; column += 1) cells.delete(column);
+    }
     if (paints.size) for (const [row, cells] of paints) rows[row] = overlayRow(rows[row] ?? '', cells, columns);
     // A clock only while a transition is live (~30 fps for their short lifetime); none otherwise.
     const busy = this.transitions.busy;
@@ -7816,6 +7986,7 @@ export class TerminalApp {
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
     this.stripTimer?.(); this.stripTimer = undefined;
+    this.awakeTimer?.(); this.awakeTimer = undefined;
     this.noticeTimer?.(); this.noticeTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
@@ -7840,8 +8011,9 @@ export class TerminalApp {
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
       // Live composer divider lines move with Chroma only when Divider lines follow Chroma.
+      // The composed edge (rule + any Keep Awake accessory) is repainted, never a bare rule over it.
       if ((region.kind === 'separator' || region.kind === 'composerBorder') && dividerAnimated(settings)) {
-        rows[region.top] = paintDivider(repeatToWidth(GLYPHS.separator, frame.columns ?? 80), settings, now) + RESET;
+        rows[region.top] = this.composerEdgeRow(region.kind, plan, frame.columns ?? 80, now);
       }
       // The prompt row is re-rendered from the same semantic modules; only Chroma colors move (its divider fill too).
       if (region.kind === 'prompt' && region.height > 0 && (this.promptChromaAnimated() || dividerAnimated(settings)) && this.decorativeMotionAllowed()) {
@@ -7884,6 +8056,7 @@ export class TerminalApp {
   private syncPresentationClock(): void {
     if (!this.presentationStarted || this.stopped || this.idle) return;
     this.syncStatusStrip();
+    this.syncAwake();
     this.syncNotices();
     this.syncAgents();
     const settings = this.promptConfiguration.presentation;
@@ -7953,7 +8126,7 @@ export class TerminalApp {
     return layoutInput(
       this.editor.displayText,
       this.editor.displayCursorIndex,
-      columns,
+      this.inputColumns(columns),
       maxVisibleRows,
       this.inputFirstLinePrefix(columns),
     );

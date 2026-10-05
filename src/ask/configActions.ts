@@ -103,18 +103,38 @@ function resolveFrameworkRequest(text: string, env: NodeJS.ProcessEnv): AskOutco
   return undefined;
 }
 
-/** Keep Awake: deterministic, typed through the /caffeinate action; starting or stopping waits for Ask's Yes. */
+/**
+ * Keep Awake: deterministic, typed through the /caffeinate action against the
+ * one controller. Status and opening run directly; starting, changing or
+ * stopping waits for Ask's Yes. No model is involved.
+ */
+const AWAKE_NAME = String.raw`(?:zoomies|caffeinate|keep[ -]?awake|awake)`;
+function awakeDuration(text: string): string {
+  const match = /\bfor (?:an? |one )?(\d{1,3})?\s*(hours?|hrs?|h|minutes?|mins?|m)\b/u.exec(text);
+  if (!match) return '';
+  return ` ${match[1] ?? '1'}${match[2]!.startsWith('h') ? 'h' : 'm'}`;
+}
 function resolveKeepAwakeRequest(text: string): AskOutcome | undefined {
   const slash = (command: string, safety: 'navigate' | 'mutate', label: string): AskOutcome | undefined => {
     const parsed = parseSlashCommand(command);
     return parsed ? {kind: 'proposal', capability: 'feature.open', safety, confidence: 0.92, ...(safety === 'navigate' ? {direct: true} : {}), text: label, action: {kind: 'slash', slash: parsed, label: command}} : undefined;
   };
-  if (/\bzoomies\b/u.test(text) && !/\bstop\b|\bstatus\b/u.test(text)) return slash('/zoomies', 'navigate', 'Open Keep Awake (/zoomies)');
-  if (/\b(?:is )?(?:caffeinate|keep[ -]?awake)\b.*\b(?:running|on|active)\b|\bkeep[ -]?awake status\b/u.test(text)) return slash('/caffeinate status', 'navigate', 'Keep Awake status');
-  if (/\bkeep (?:my |the )?(?:screen|display|monitor) (?:awake|on)\b/u.test(text)) return slash('/caffeinate display', 'mutate', 'Keep the display and the machine awake (/caffeinate display) until you stop it');
-  if (/\b(?:don'?t|do not|never) let (?:my |the )?(?:computer|mac|laptop|machine|pc) sleep\b|\bprevent (?:system )?sleep\b/u.test(text)) return slash('/caffeinate system', 'mutate', 'Prevent automatic system sleep (/caffeinate system) until you stop it');
-  if (/\bstop\b.*\b(?:keeping|keep)\b.*\bawake\b|\bstop (?:caffeinate|keep[ -]?awake)\b|\blet my (?:computer|mac|laptop|machine) sleep\b/u.test(text)) return slash('/caffeinate stop', 'mutate', 'Stop Keep Awake (normal sleep returns)');
-  if (/\bkeep (?:my |the )?(?:computer|mac|laptop|machine|pc) awake\b/u.test(text)) return slash('/caffeinate idle', 'mutate', 'Prevent automatic idle sleep (/caffeinate idle) until you stop it');
+  const name = new RegExp(String.raw`\b${AWAKE_NAME}\b`, 'u');
+  // Status: "is zoomies on", "are we keeping the computer awake", "what awake mode is active".
+  if ((/^(?:is|are|what|which|how long)\b/u.test(text) && name.test(text) && /\b(?:on|running|active|mode|keeping|still)\b/u.test(text))
+    || new RegExp(String.raw`\b${AWAKE_NAME} status\b`, 'u').test(text)) return slash('/caffeinate status', 'navigate', 'Keep Awake status');
+  // Stop: "stop zoomies", "turn caffeinate off", "let my mac sleep".
+  if (new RegExp(String.raw`\b(?:stop|end|cancel|disable|turn off|switch off)\b.*\b${AWAKE_NAME}\b|\b${AWAKE_NAME}\b.*\b(?:off|stop)\b`, 'u').test(text)
+    || /\bstop\b.*\b(?:keeping|keep)\b.*\bawake\b|(?<!(?:don'?t|do not|never) )\blet (?:my |the )?(?:computer|mac|laptop|machine|pc) sleep\b/u.test(text)) return slash('/caffeinate stop', 'mutate', 'Stop Keep Awake (normal sleep returns)');
+  const duration = awakeDuration(text);
+  const until = duration ? `for${duration}` : 'until you stop it';
+  // Change mode: "switch zoomies to system".
+  const switched = new RegExp(String.raw`\b(?:switch|change|set|move)\b.*\b${AWAKE_NAME}\b.*\b(idle|display|system|all)\b`, 'u').exec(text);
+  if (switched) return slash(`/zoomies ${switched[1]}${duration}`, 'mutate', `Switch Keep Awake to ${switched[1]![0]!.toUpperCase()}${switched[1]!.slice(1)} ${until}`);
+  if (/\bkeep (?:my |the )?(?:screen|display|monitor) (?:awake|on)\b/u.test(text)) return slash(`/caffeinate display${duration}`, 'mutate', `Keep the display and the machine awake (/caffeinate display${duration}) ${until}`);
+  if (/\b(?:don'?t|do not|never) let (?:my |the )?(?:computer|mac|laptop|machine|pc) sleep\b|\bprevent (?:system )?sleep\b/u.test(text)) return slash(`/caffeinate system${duration}`, 'mutate', `Prevent automatic system sleep (/caffeinate system${duration}) ${until}`);
+  if (/\bkeep (?:my |the )?(?:computer|mac|laptop|machine|pc) awake\b/u.test(text)) return slash(`/caffeinate idle${duration}`, 'mutate', `Prevent automatic idle sleep (/caffeinate idle${duration}) ${until}`);
+  if (/\bzoomies\b/u.test(text)) return slash('/zoomies', 'navigate', 'Open Keep Awake (/zoomies)');
   return undefined;
 }
 

@@ -3,6 +3,7 @@ import {background, foreground, UI_COLORS} from './palette.js';
 import {truncateAnsi, displayWidth} from '../util/text.js';
 import {theme} from '../chroma/chroma.js';
 import {renderSurface} from './surface.js';
+import {colorLevel} from '../presentation/capabilities.js';
 
 const RESET = '\u001B[0m';
 const BOLD = '\u001B[1m';
@@ -49,6 +50,24 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
   }
   if (end < tabs.length - 1) line += `${foreground(UI_COLORS.subtle)} ›${RESET}`;
   return truncateAnsi(line, width);
+}
+
+/**
+ * The strong selected-row treatment, shared with the active tab: one
+ * full-width deep-lavender band with the theme's project foreground. Without
+ * color it is reverse video, so the selection never depends on color alone.
+ * Every reset inside the row re-opens the band, so styled parts stay on it.
+ */
+export function selectedRowBand(row: string, columns: number): string {
+  const none = colorLevel() === 'none';
+  const band = none ? '\u001B[7m' : `${background(UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
+  const body = truncateAnsi(row, columns).replaceAll(RESET, `${RESET}${band}`);
+  return `${band}${body}${band}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}`;
+}
+
+/** Foreground for quiet text on the selected band: readable on it, never the dim muted gray. */
+export function onSelectedBand(): string {
+  return colorLevel() === 'none' ? '' : foreground(UI_COLORS.projectForeground);
 }
 
 /** Framing belongs to the live overlay, never to OutputBuffer or an archive. */

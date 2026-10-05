@@ -32,7 +32,9 @@ export type RegionKind =
   /** Cross-session notices: frontend chrome immediately above the composer, never transcript. */
   | 'notices'
   /** The transcript find bar (query, match count, options); frontend chrome above the composer. */
-  | 'find';
+  | 'find'
+  /** Keep Awake's adjacent row (its own row, or the muted idle reminder): frontend chrome right next to the composer, never transcript. */
+  | 'awake';
 
 export interface Region {
   kind: RegionKind;
@@ -89,6 +91,22 @@ export interface ScreenPlan {
   panelActive: boolean;
   /** Where the active panel is anchored (meaningful while panelActive). */
   panelPosition: 'bottom' | 'top';
+  /** Where this frame's Keep Awake accessory lives, when one is active (decided with the plan so every consumer agrees). */
+  awake?: {slot: 'topEdge' | 'bottomEdge' | 'adjacentRow' | 'inputTrailing'; expandedOnEdge: boolean};
+}
+
+/**
+ * Whether each composer edge can host auxiliary text. A plain composer border
+ * or separator is available; a header prompt row (the prompt drawn into the
+ * top divider) occupies the top edge; no rule at all (dividers Off, a tiny
+ * screen) is unavailable. Width is checked by the caller.
+ */
+export function composerEdgeStates(plan: ScreenPlan, contextPlacement: ContextPlacement): {topEdge: 'available' | 'occupied' | 'unavailable'; bottomEdge: 'available' | 'unavailable'} {
+  const has = (kind: RegionKind) => plan.regions.some(region => region.kind === kind && region.height > 0);
+  return {
+    topEdge: has('composerBorder') ? 'available' : has('prompt') && contextPlacement === 'header' ? 'occupied' : 'unavailable',
+    bottomEdge: has('separator') ? 'available' : 'unavailable',
+  };
 }
 
 export interface RegionHit {
@@ -225,7 +243,7 @@ const COMPOSER_KINDS: ReadonlySet<RegionKind> = new Set(['composerBorder', 'prom
  * moves, so the transcript keeps its geometry. Without a composer (a panel owns
  * the screen) the plan is returned unchanged.
  */
-export function withNoticeRows(plan: ScreenPlan, count: number, kind: 'notices' | 'find' = 'notices'): ScreenPlan {
+export function withNoticeRows(plan: ScreenPlan, count: number, kind: 'notices' | 'find' | 'awake' = 'notices'): ScreenPlan {
   const index = plan.regions.findIndex(region => COMPOSER_KINDS.has(region.kind));
   if (count <= 0 || index === -1 || plan.panelActive) return plan;
   const at = plan.regions[index]!.top;

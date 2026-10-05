@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import {clearProviderDetection, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
 import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
 import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
-import {renderTabStrip, framePanel} from '../ui/PanelShell.js';
+import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {foregroundOf} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
@@ -395,14 +395,14 @@ function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: numb
   const badge = statusBadge(state, tool);
   const labelWidth = columns >= 60 ? 22 : Math.max(8, columns - 18);
   const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
-  const pointer = selected ? `${ACCENT}${GLYPHS.selection}` : ' ';
-  const status = columns >= 34 ? `${badge.color}${badge.text.padEnd(18)}` : `${badge.color}${badge.text.slice(0, 1)} `;
-  const extra = columns >= 60 ? `${selected ? SECONDARY : SUBTLE}${toolBadges(state, tool).join(' · ')}` : '';
-  const row = `  ${pointer} ${selected ? `${BOLD}${PRIMARY}` : SECONDARY}${label}${RESET}${selected ? SELECTED : ''}${status}${extra}`;
-  if (!selected) return truncateAnsi(`${row}${RESET}`, columns);
-  // Fill the whole row so the selection reads as a band, not just colored text.
-  const plain = truncateAnsi(row, columns);
-  return `${SELECTED}${plain}${SELECTED}${' '.repeat(Math.max(0, columns - displayWidth(plain)))}${RESET}`;
+  const statusText = columns >= 34 ? badge.text.padEnd(18) : `${badge.text.slice(0, 1)} `;
+  const badges = columns >= 60 ? toolBadges(state, tool).join(' · ') : '';
+  if (!selected) return truncateAnsi(`    ${SECONDARY}${label}${RESET}${badge.color}${statusText}${SUBTLE}${badges}${RESET}`, columns);
+  // The shared selected band (the active tab's treatment): pointer, bold label, and every quiet part lifted
+  // to the band's foreground; Installed and Needs attention keep their meaning colors.
+  const quiet = onSelectedBand();
+  const statusColor = badge.color === SUBTLE ? quiet : badge.color;
+  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
 }
 
 const BOLD = '\u001b[1m';

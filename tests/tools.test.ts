@@ -324,3 +324,34 @@ test('integration activation: runtime evidence from the shell snapshot, separate
   assert.match(plain, /Shell\s+Active in this shell/u);
   assert.match(plain, /rc files are never read/u);
 });
+
+test('the selected tool row is an unmistakable band that follows the selection, with color and without it', () => {
+  const saved = {NO_COLOR: process.env.NO_COLOR, COLORTERM: process.env.COLORTERM};
+  const selectedRows = (rows: string[]) => rows.filter(row => row.includes('\u001b[48;') || row.includes('\u001b[7m'));
+  try {
+    delete process.env.NO_COLOR; process.env.COLORTERM = 'truecolor';
+    const state = createToolsPanel();
+    for (const tool of TOOLS) state.statuses[tool.id] = {state: 'missing'};
+    const first = renderTools(state, 100, 40);
+    const band = selectedRows(first).filter(row => !/Discover/u.test(stripAnsi(row)));
+    assert.equal(band.length, 1, 'exactly one selected tool row');
+    const label = visibleTools(state)[0]!.label;
+    assert.ok(stripAnsi(band[0]!).includes(label));
+    assert.equal(displayWidth(stripAnsi(band[0]!)), 100, 'a full-width band, not tinted text');
+    assert.ok(!band[0]!.includes('\u001b[38;2;125;133;144m'), 'no dim muted text on the band');
+    toolsKey(state, {kind: 'down'});
+    const moved = selectedRows(renderTools(state, 100, 40)).filter(row => !/Discover/u.test(stripAnsi(row)));
+    assert.equal(moved.length, 1);
+    assert.ok(stripAnsi(moved[0]!).includes(visibleTools(state)[1]!.label), 'the band moves with the selection');
+    state.query = visibleTools(state)[3]!.label;
+    const filtered = selectedRows(renderTools(state, 100, 40)).filter(row => !/Discover/u.test(stripAnsi(row)));
+    assert.equal(filtered.length, 1, 'search keeps one clear selection');
+    process.env.NO_COLOR = '1';
+    const plain = renderTools(createToolsPanel(), 60, 30).filter(row => row.includes('\u001b[7m'));
+    assert.equal(plain.length, 1, 'NO_COLOR: reverse video carries the selection');
+    assert.match(stripAnsi(plain[0]!), /^ {2}› /u);
+  } finally {
+    if (saved.NO_COLOR === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = saved.NO_COLOR;
+    if (saved.COLORTERM === undefined) delete process.env.COLORTERM; else process.env.COLORTERM = saved.COLORTERM;
+  }
+});
