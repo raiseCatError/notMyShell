@@ -98,7 +98,7 @@ test('dotfiles: field-level choices keep current values on conflict; review defa
     assert.equal(tmux.fields!.find(field => field.repo === '10')!.use, true);
     assert.match(tmux.note, /1 dynamic lines never run/u);
     const starship = items.find(item => item.file.tool.id === 'starship')!;
-    assert.equal(starship.mode, 'skip', 'copying a whole file is opt-in');
+    assert.deepEqual([starship.kind, starship.modes], ['inspect', ['skip']], 'parseable is not copyable: no exact-copy authority');
     starship.mode = 'copy';
 
     const panel = createDotfilesPanel(box.repo);
@@ -110,18 +110,22 @@ test('dotfiles: field-level choices keep current values on conflict; review defa
 
     const results = applyPlan(items, box.env, new Date('2026-01-02T03:04:05Z'));
     assert.equal(results.length, 2, results.join('\n'));
-    assert.equal(readFileSync(join(box.home, '.config', 'starship.toml'), 'utf8'), 'add_newline = false\n');
-    assert.ok(readdirSync(join(box.home, '.config')).some(name => name.startsWith('starship.toml.nmsh-backup-')));
+    assert.match(results.join('\n'), /Starship: no exact-copy authority/u, 'a forced copy mode is still refused at apply time');
+    assert.equal(readFileSync(join(box.home, '.config', 'starship.toml'), 'utf8'), 'add_newline = true\n');
+    assert.ok(!readdirSync(join(box.home, '.config')).some(name => name.startsWith('starship.toml.nmsh-backup-')));
     assert.equal(readFileSync(join(box.home, '.tmux.conf'), 'utf8'), 'set -g mouse off\n', 'your tmux.conf is untouched (include is a separate reviewed step)');
     assert.equal(snapshot(box.repo), before, 'the repository is never modified');
   } finally { box.done(); }
 });
 
-test('dotfiles: copy refuses when the destination changed since review; remote sources need a confirmed clone', () => {
+test('dotfiles: an entry declaring exactCopy copies with backup, but refuses when the destination changed since review; remote sources need a confirmed clone', () => {
   const box = sandbox();
   try {
     box.put('.config/starship.toml', 'add_newline = false\n');
-    const items = buildPlan(scan(box.repo), box.env);
+    const result = scan(box.repo);
+    result.found[0]!.tool = {...result.found[0]!.tool, exactCopy: () => ({ok: true})};
+    const items = buildPlan(result, box.env);
+    assert.deepEqual(items[0]!.modes, ['skip', 'copy'], 'only an explicitly declared validator grants copy');
     items[0]!.mode = 'copy';
     mkdirSync(join(box.home, '.config'), {recursive: true});
     writeFileSync(join(box.home, '.config', 'starship.toml'), 'appeared later\n');
@@ -164,4 +168,31 @@ test('palette and help list each new surface once, with human labels and grouped
   for (const group of ['Appearance', 'Composer & transcript', 'Providers', 'Tools & integration']) assert.match(help, new RegExp(`### ${group}`, 'u'));
   for (const command of ['/motion', '/chrome', '/glyphs', '/strip', '/tmux', '/configure', '/integrations', '/dotfiles', '/history-provider']) assert.ok(help.includes(`\`${command}\``), command);
   assert.match(help, /`\/layout` \(also `\/composer`\)/u);
+});
+
+test('dotfiles: parseable but command-capable Starship, bat and Helix configs are inspect-only; nothing is copied or run', async () => {
+  const box = sandbox();
+  try {
+    const canary = join(box.root, 'PWNED');
+    box.put('.config/starship.toml', `format = "$custom"\n[custom.evil]\ncommand = "touch '${canary}'"\nwhen = "true"\nshell = ["sh"]\n`);
+    box.put('.config/bat/config', `--pager="sh -c 'touch ${canary}'"\n--paging=always\n`);
+    box.put('.config/helix/config.toml', `[keys.normal]\nX = ":sh touch ${canary}"\n[keys.normal.space]\nY = [":run-shell-command touch ${canary}"]\n`);
+    const before = snapshot(box.repo);
+    const items = buildPlan(scan(box.repo), box.env);
+    assert.deepEqual(items.map(item => item.file.tool.id).sort(), ['bat', 'helix', 'starship']);
+    for (const item of items) {
+      assert.deepEqual([item.kind, item.mode, item.modes], ['inspect', 'skip', ['skip']], item.file.tool.id);
+      assert.match(item.note, /^Inspect only: .*never copied/u, item.note);
+      assert.equal(item.content, undefined);
+      item.mode = 'copy';
+    }
+    assert.doesNotMatch(reviewLines(items, []).join('\n'), /copy to|1 file/u);
+    const results = applyPlan(items, box.env);
+    assert.ok(results.every(line => /no exact-copy authority/u.test(line)), results.join('\n'));
+    assert.deepEqual(readdirSync(box.home), [], 'no destination was written');
+    assert.equal(readdirSync(box.root).includes('PWNED'), false, 'nothing executed');
+    assert.equal(snapshot(box.repo), before);
+    const {TOOL_CONFIG_REGISTRY} = await import('../src/tools/config/registry.js');
+    assert.deepEqual(TOOL_CONFIG_REGISTRY.filter(entry => entry.exactCopy).map(entry => entry.id), [], 'no registry entry holds exact-copy authority');
+  } finally { box.done(); }
 });

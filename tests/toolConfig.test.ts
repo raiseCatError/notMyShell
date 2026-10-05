@@ -53,7 +53,8 @@ test('tmux frontend: new panes start NMSh by absolute path; inside an NMSh-start
     writeFileSync(fakeNmsh, `#!/bin/sh\necho NMSH-FRONTEND\n[ -n "$TMUX" ] && echo yes > '${marker}'\n`);
     chmodSync(fakeNmsh, 0o755);
     const command = frontendCommand(fakeNmsh)!;
-    assert.equal(frontendCommand("/tmp/it's"), undefined, 'unquotable paths are refused');
+    assert.equal(frontendCommand('/tmp/a\nb'), undefined, 'control characters are refused');
+    assert.equal(frontendCommand('relative/nmsh'), undefined, 'only absolute paths');
     const run = (env: Record<string, string>) => spawnSync('/bin/sh', ['-c', command], {encoding: 'utf8', env: {PATH: '/usr/bin:/bin', SHELL: '/bin/echo', ...env}}).stdout.trim();
     assert.equal(run({}), 'NMSH-FRONTEND');
     assert.equal(run({NMSH_ACTIVE: '1'}), '-l', 'NMSh recursion guard respected: the login shell (here echo) starts instead');
@@ -69,6 +70,41 @@ test('tmux frontend: new panes start NMSh by absolute path; inside an NMSh-start
       {encoding: 'utf8', env: {...process.env, TMUX: '', NMSH_ACTIVE: '', TMUX_TMPDIR: box.root}});
     assert.ok(existsSync(marker), 'a new pane really ran the frontend');
     assert.doesNotMatch(result.stdout, /default-shell .*nmsh/u);
+  } finally { box.done(); }
+});
+
+test('tmux frontend: the NMSh path is argv data through both tmux and /bin/sh parsing; hostile names never execute', () => {
+  const box = sandbox();
+  try {
+    const sentinel = join(box.root, 'PWNED');
+    const names = ['plain', 'with space', 'semi;touch PWNED', 'amp&touch PWNED', 'pipe|touch PWNED', 'paren(touch PWNED)', 'dollar$(touch PWNED)', 'dollar$HOME',
+      'tick`touch PWNED`', "single'quote", 'double"quote', 'back\\slash', 'lt<gt>', 'hash#x', "mix'\";touch PWNED;'"];
+    for (const [index, name] of names.entries()) {
+      const dir = join(box.root, `${index}-${name}`);
+      mkdirSync(dir);
+      const nmsh = join(dir, 'nmsh');
+      const out = join(box.root, `out-${index}`);
+      writeFileSync(nmsh, `#!/bin/sh\necho "$0" > '${out}'\n`);
+      chmodSync(nmsh, 0o755);
+      const command = frontendCommand(nmsh);
+      assert.ok(command, name);
+      const ran = spawnSync('/bin/sh', ['-c', command], {cwd: box.root, encoding: 'utf8', env: {PATH: '/usr/bin:/bin', SHELL: '/bin/echo'}});
+      assert.equal(ran.status, 0, `${name}: ${ran.stderr}`);
+      assert.equal(readFileSync(out, 'utf8').trim(), nmsh, `${name}: exec'd the literal path`);
+      const text = renderTmuxConfig(apply(DEFAULT_TMUX_MODEL(), {kind: 'frontend', value: 'nmsh'}), {self: '/n/s', theme: '/n/t', nmsh});
+      assert.ok(validateTmuxConfig(text), name);
+      rmSync(out);
+      if (!tmux) continue;
+      const conf = join(box.root, `t-${index}.conf`);
+      writeFileSync(conf, text);
+      const socket = `nmsh-adv-${process.pid}-${index}`;
+      spawnSync(tmux, ['-L', socket, '-f', conf, 'new-session', '-d', '-c', box.root, '-x', '80', '-y', '10', ';', 'run-shell', 'sleep 0.3', ';', 'kill-server'],
+        {encoding: 'utf8', env: {...process.env, TMUX: '', NMSH_ACTIVE: '', TMUX_TMPDIR: box.root}});
+      assert.equal(readFileSync(out, 'utf8').trim(), nmsh, `${name}: real tmux pane exec'd the literal path`);
+    }
+    assert.equal(existsSync(sentinel), false, 'no injected command ran');
+    assert.equal(validateTmuxConfig(`set -g default-command "exec /bin/sh -c 'touch /tmp/x' nmsh-frontend /bin/sh"\n`), false);
+    assert.equal(validateTmuxConfig(`set -g default-command ${JSON.stringify(`${frontendCommand('/a/nmsh')!}; touch x`)}\n`), false, 'trailing shell text is rejected');
   } finally { box.done(); }
 });
 

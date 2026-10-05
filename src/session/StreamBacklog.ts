@@ -16,7 +16,12 @@ type SpoolRecord = BacklogEvent
 export interface BacklogLimits {
   /** Unacknowledged bytes kept in memory before spilling to the spool file. */
   memoryBytes: number;
-  /** Spool size after which output payloads are dropped (with a counted marker). */
+  /**
+   * Output bytes in the spool after which output payloads are dropped (with a
+   * counted marker). Command boundaries and prompt metadata are always kept
+   * and do not consume this budget, so a large alias/function list cannot make
+   * in-limit output look truncated.
+   */
   spoolBytes: number;
 }
 
@@ -85,7 +90,7 @@ export class StreamBacklog {
   private memory: BacklogEvent[] = [];
   private memoryBytes = 0;
   private spooled = false;
-  private spoolSize = 0;
+  private spoolOutput = 0;
   private acked = 0;
   private journal?: string;
   private truncated = 0;
@@ -146,18 +151,18 @@ export class StreamBacklog {
       // The runtime directory is private (0700); the spool directory is too.
       mkdirSync(dirname(this.spoolPath), {recursive: true, mode: 0o700});
       this.spooled = true;
-      this.spoolSize = 0;
+      this.spoolOutput = 0;
       if (this.acked > 0) records.push({kind: 'ack', seq: this.acked, journalId: this.journal ?? ''});
     }
     let dropped = 0;
     for (const event of this.memory) {
-      if (event.kind === 'output' && this.spoolSize + event.data.length > this.limits.spoolBytes) {
+      if (event.kind === 'output' && this.spoolOutput + event.data.length > this.limits.spoolBytes) {
         dropped += event.data.length;
         continue;
       }
       if (dropped > 0) { records.push({kind: 'truncated', bytes: dropped}); this.truncated += dropped; dropped = 0; }
       records.push(event);
-      this.spoolSize += eventBytes(event);
+      if (event.kind === 'output') this.spoolOutput += event.data.length;
       this.lastSpooledSeq = event.seq;
     }
     if (dropped > 0) { records.push({kind: 'truncated', bytes: dropped}); this.truncated += dropped; }
@@ -175,7 +180,7 @@ export class StreamBacklog {
   private removeSpool(): void {
     try { unlinkSync(this.spoolPath); } catch { /* already gone */ }
     this.spooled = false;
-    this.spoolSize = 0;
+    this.spoolOutput = 0;
   }
 
   /** Bytes currently on disk; for tests and diagnostics. */

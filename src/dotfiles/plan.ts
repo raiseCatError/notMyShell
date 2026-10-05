@@ -13,9 +13,11 @@ import {destinationFor, readFound, type FoundFile, type ScanResult} from './scan
 /**
  * Turning a scan into reviewed choices. Structured or command-style config
  * goes through its adapter at field level (current vs dotfiles, never
- * silently the repository's value on a conflict); a structured file may be
- * copied exactly, with a backup, after review; executable config is inspect
- * only. The repository itself is never modified.
+ * silently the repository's value on a conflict). A file is copied exactly
+ * only when its registry entry declares an exactCopy validator and the
+ * content passes it (fail-closed: being parseable is not being safe);
+ * everything else, including all executable config, is inspect only. The
+ * repository itself is never modified.
  */
 
 export type ItemKind = 'fields' | 'copy' | 'inspect' | 'templated' | 'unreadable';
@@ -80,8 +82,6 @@ function tmuxFields(text: string, env: NodeJS.ProcessEnv): FieldChoice[] {
   return fields;
 }
 
-const structured = (tool: string) => tool === 'starship' || tool === 'helix' || tool === 'bat';
-
 export function buildPlan(scan: ScanResult, env: NodeJS.ProcessEnv = process.env): DotfilesItem[] {
   const items: DotfilesItem[] = [];
   const seen = new Set<string>();
@@ -100,8 +100,10 @@ export function buildPlan(scan: ScanResult, env: NodeJS.ProcessEnv = process.env
         note: `${fields.length} supported value${fields.length === 1 ? '' : 's'} differ · ${parsed.unsupported.length} other lines stay out · ${parsed.ignored.length} dynamic lines never run`});
       continue;
     }
-    if (structured(file.tool.id)) {
-      if (file.target.endsWith('.toml')) { try { parseToml(content); } catch { items.push({...base, kind: 'unreadable', mode: 'skip', modes: ['skip'], note: 'Not valid TOML; skipped'}); continue; } }
+    if (file.target.endsWith('.toml')) { try { parseToml(content); } catch { items.push({...base, kind: 'unreadable', mode: 'skip', modes: ['skip'], note: 'Not valid TOML; skipped'}); continue; } }
+    const exact = file.tool.exactCopy?.(content);
+    if (exact && !exact.ok) { items.push({...base, kind: 'inspect', mode: 'skip', modes: ['skip'], note: `Inspect only: ${exact.reason}`}); continue; }
+    if (exact?.ok) {
       const destination = destinationFor(file.tool, env);
       let before: string | undefined;
       try { before = readFileSync(destination, 'utf8'); } catch { before = undefined; }
@@ -109,7 +111,7 @@ export function buildPlan(scan: ScanResult, env: NodeJS.ProcessEnv = process.env
         note: `Copy exact file to ${destination}${before === undefined ? '' : ' (the current file is backed up first)'}`});
       continue;
     }
-    items.push({...base, kind: 'inspect', mode: 'skip', modes: ['skip'], note: 'No managed import for this tool'});
+    items.push({...base, kind: 'inspect', mode: 'skip', modes: ['skip'], note: file.tool.dotfilesNote ?? 'Inspect only: no reviewed import for this tool; never copied'});
   }
   return items;
 }
@@ -126,7 +128,7 @@ export function reviewLines(items: readonly DotfilesItem[], include: readonly st
       if (used.length) fragments = 1;
       for (const field of used) lines.push(`  + ${describeTmuxChange(field.change)}`);
       if (!used.length) lines.push('  (no values selected)');
-    } else if (item.mode === 'copy') { copies++; lines.push(`  ~ copy to ${item.destination}`, ...item.diff!.slice(0, 6).map(line => `    ${line}`)); }
+    } else if (item.mode === 'copy' && item.kind === 'copy') { copies++; lines.push(`  ~ copy to ${item.destination}`, ...item.diff!.slice(0, 6).map(line => `    ${line}`)); }
     else lines.push(`  · ${item.kind === 'inspect' || item.kind === 'templated' ? item.note : 'skipped'}`);
   }
   if (include.length) lines.push('', 'tmux.conf gains one include of the NMSh-managed tmux file:', ...include.map(line => `  ${line}`));
@@ -137,6 +139,8 @@ export function reviewLines(items: readonly DotfilesItem[], include: readonly st
 /** Backup then atomic replace, refusing if the destination changed since review or is a symlink. */
 function copyExact(item: DotfilesItem, now: Date): string {
   const destination = item.destination!;
+  const verdict = item.file.tool.exactCopy?.(item.content!);
+  if (!verdict?.ok) return 'no exact-copy authority for this tool; nothing was written.';
   if (existsSync(destination)) {
     if (lstatSync(destination).isSymbolicLink()) return `${destination} is a symlink (to ${realpathSync(destination)}); not replaced.`;
     if (sha256(readFileSync(destination, 'utf8')) !== item.destinationSha) return `${destination} changed since review; nothing was written.`;

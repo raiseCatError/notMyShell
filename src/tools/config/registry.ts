@@ -31,6 +31,16 @@ export interface ToolConfigEntry {
   dotfiles: RegExp;
   /** Whether /configure opens an editor for it. */
   configurable: boolean;
+  /**
+   * Authority to install a dotfiles file byte-for-byte. Absent means never:
+   * parsing as TOML/JSON says nothing about whether the tool later runs
+   * commands from it (Starship custom modules, bat's pager, Helix :sh keys).
+   * An entry may only declare this with a validator that proves the content
+   * cannot cause execution; none does today.
+   */
+  exactCopy?: (content: string) => {ok: true} | {ok: false; reason: string};
+  /** Why dotfiles leaves this tool's config inspect-only, in plain words. */
+  dotfilesNote?: string;
 }
 
 const xdg = (env: NodeJS.ProcessEnv, home: string) => env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(home, '.config');
@@ -44,15 +54,18 @@ export const TOOL_CONFIG_REGISTRY: readonly ToolConfigEntry[] = [
   {id: 'starship', label: 'Starship', executable: 'starship', configClass: 'structured', ownership: 'native-cli', configurable: true,
     locations: (env, home) => [env.STARSHIP_CONFIG ?? join(xdg(env, home), 'starship.toml')],
     takesEffect: 'The next prompt', summary: 'Module visibility through Starship\'s own config CLI, with a backup',
-    dotfiles: /(?:^|\/)(?:starship\.toml|\.config\/starship\.toml)$/u},
+    dotfiles: /(?:^|\/)(?:starship\.toml|\.config\/starship\.toml)$/u,
+    dotfilesNote: 'Inspect only: Starship config can run commands (custom modules); never copied. Use /configure starship for supported modules'},
   {id: 'helix', label: 'Helix', executable: 'hx', configClass: 'structured', ownership: 'theme-bridge', configurable: false,
     locations: (env, home) => [join(xdg(env, home), 'helix', 'config.toml')],
     takesEffect: 'New Helix processes', summary: 'The generated NMSh theme and its one reviewed activation (Theme Bridge)',
-    dotfiles: /(?:^|\/)(?:helix\/config\.toml|\.config\/helix\/config\.toml)$/u},
+    dotfiles: /(?:^|\/)(?:helix\/config\.toml|\.config\/helix\/config\.toml)$/u,
+    dotfilesNote: 'Inspect only: Helix keybindings can run shell commands; never copied. Theme Bridge still manages its own theme'},
   {id: 'bat', label: 'bat', executable: 'bat', configClass: 'structured', ownership: 'theme-bridge', configurable: false,
     locations: (env, home) => [join(env.BAT_CONFIG_DIR ?? join(xdg(env, home), 'bat'), 'config')],
     takesEffect: 'After a reviewed cache build', summary: 'A generated custom theme and BAT_THEME in NMSh shells (Theme Bridge)',
-    dotfiles: /(?:^|\/)(?:bat\/config|\.config\/bat\/config)$/u},
+    dotfiles: /(?:^|\/)(?:bat\/config|\.config\/bat\/config)$/u,
+    dotfilesNote: 'Inspect only: bat config can start other programs (pager); never copied. Theme Bridge still manages its own theme'},
   {id: 'neovim', label: 'Neovim', executable: 'nvim', configClass: 'executable', ownership: 'theme-bridge', configurable: false,
     locations: (env, home) => [join(xdg(env, home), 'nvim', 'init.lua'), join(xdg(env, home), 'nvim', 'init.vim')],
     takesEffect: 'New Neovim processes', summary: 'A generated colorscheme and one reviewed include; Lua config is never rewritten',

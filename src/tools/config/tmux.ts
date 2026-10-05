@@ -2,6 +2,7 @@ import {existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync
 import {homedir} from 'node:os';
 import {dirname, join} from 'node:path';
 import {nmshConfigDirectory} from '../../configuration/paths.js';
+import {shellQuote} from '../../host/terminalHost.js';
 
 /**
  * tmux Tool Configuration: a typed model (option overrides, NMSh-owned key
@@ -172,8 +173,29 @@ export const quotablePath = (path: string): boolean => /^\/[^'"\\\u0000-\u001f\u
  * Run through /bin/sh so it works whatever tmux's default-shell is.
  */
 export function frontendCommand(nmsh: string): string | undefined {
-  if (!quotablePath(nmsh)) return undefined;
-  return `exec /bin/sh -c 'if [ "$NMSH_ACTIVE" = 1 ]; then exec "\${SHELL:-/bin/sh}" -l; else exec ${nmsh}; fi'`;
+  if (!frontendPath(nmsh)) return undefined;
+  // The program text is fixed; the executable path is only ever argv data ("$1").
+  return `${FRONTEND_PROGRAM} ${shellQuote(nmsh)}`;
+}
+
+const FRONTEND_PROGRAM = `exec /bin/sh -c 'if [ "$NMSH_ACTIVE" = 1 ]; then exec "\${SHELL:-/bin/sh}" -l; else exec "$1"; fi' nmsh-frontend`;
+
+/** Any absolute path without control characters (a tmux config line cannot carry them). */
+const frontendPath = (path: string): boolean => /^\/[^\u0000-\u001f\u007f]*$/u.test(path);
+
+/** Inverse of tmuxQuote for the subset it emits; undefined for anything else. */
+function tmuxUnquote(quoted: string): string | undefined {
+  const match = /^"((?:[^"\\$]|\\[\\"$])*)"$/u.exec(quoted);
+  return match ? match[1]!.replace(/\\(.)/gu, '$1') : undefined;
+}
+
+/** True only for exactly FRONTEND_PROGRAM followed by one shellQuote'd absolute path. */
+function validFrontendLine(quoted: string): boolean {
+  const command = tmuxUnquote(quoted);
+  if (!command?.startsWith(`${FRONTEND_PROGRAM} `)) return false;
+  const arg = command.slice(FRONTEND_PROGRAM.length + 1);
+  const path = /^'(?:[^']|'\\'')*'$/u.test(arg) ? arg.slice(1, -1).replace(/'\\''/gu, "'") : /^[\w@%+=:,./-]+$/u.test(arg) ? arg : undefined;
+  return path !== undefined && frontendPath(path) && shellQuote(path) === arg;
 }
 
 function setDirective(option: TmuxOptionDef, value: string): string {
@@ -238,7 +260,7 @@ export function validateTmuxConfig(content: string): boolean {
       const formats = (line.match(/"([^"]*)"/u)?.[1] ?? '');
       return !/#\(/u.test(formats);
     }
-    if (/^set -g default-command "exec \/bin\/sh -c 'if \[ \\"\\\$NMSH_ACTIVE\\" = 1 \]; then exec \\"\\\$\{SHELL:-\/bin\/sh\}\\" -l; else exec \/[^'"\\$`]+; fi'"$/u.test(line)) return true;
+    if (line.startsWith('set -g default-command ')) return validFrontendLine(line.slice('set -g default-command '.length));
     return /^source-file -q '\/[^']+'$/u.test(line);
   });
 }
