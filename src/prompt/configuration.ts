@@ -56,7 +56,7 @@ export const TRANSCRIPT_PRESENTATIONS: readonly TranscriptPresentation[] = ['nor
 export const TRANSCRIPT_PRESENTATION_LABELS: Record<TranscriptPresentation, string> = {normal: 'Normal', chat: 'Chat'};
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext' | 'shell';
+export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext' | 'shell' | 'discoveredTools';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
 /** Every module can sit in either area; narrow widths drop the right area first. */
@@ -83,6 +83,19 @@ export function applyShellModuleVisibility(configuration: Pick<PromptConfigurati
 }
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
+/** Stable module identity, factual inputs, and current field-demand policy. */
+export const CONTEXT_MODULE_REGISTRY = {
+  project: {category: 'identity', fields: ['project', 'root'], demand: 'always'},
+  cwd: {category: 'identity', fields: ['cwd', 'pathAbbreviations'], demand: 'always'},
+  gitBranch: {category: 'vcs', fields: ['branch'], demand: 'repository'},
+  gitStatus: {category: 'vcs', fields: ['git'], demand: 'repository'},
+  toolchain: {category: 'tooling', fields: ['toolchains'], demand: 'project-markers'},
+  exitStatus: {category: 'session', fields: ['exitStatus'], demand: 'always'},
+  kubeContext: {category: 'context', fields: ['kubeContext'], demand: 'command'},
+  dockerContext: {category: 'context', fields: ['dockerContext'], demand: 'command'},
+  shell: {category: 'session', fields: ['shell'], demand: 'always'},
+  discoveredTools: {category: 'tooling', fields: ['discovery'], demand: 'cached-inventory'},
+} as const satisfies Record<ContextModuleId, {category: string; fields: readonly string[]; demand: string}>;
 /** `none` is composer only: no prompt row, modules or right prompt (the input marker stays); everything else in NMSh stays on. */
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none';
 export type NativeEndStyle = PowerlineEdgeStyle;
@@ -698,13 +711,14 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'exitStatus', visible: true, condition: 'nonzeroExit'},
     {id: 'kubeContext', visible: true, condition: 'onCommand'},
     {id: 'dockerContext', visible: true, condition: 'onCommand'},
+    {id: 'discoveredTools', visible: false, condition: 'always'},
   ],
   separator: '',
   gap: 1,
   spacing: 1,
 };
 
-const MODULE_IDS = new Set<ContextModuleId>(['project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'shell']);
+const MODULE_IDS = new Set<ContextModuleId>(Object.keys(CONTEXT_MODULE_REGISTRY) as ContextModuleId[]);
 const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand', 'shellDiffers']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -853,6 +867,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // default position instead of silently staying absent.
   DEFAULT_PROMPT_CONFIGURATION.modules.forEach((fallback, defaultIndex) => {
     if (seen.has(fallback.id)) return;
+    if (fallback.id === 'discoveredTools') { modules.push({...fallback}); seen.add(fallback.id); return; }
     // Git status split from the branch module: it joins right after the
     // branch wherever the user placed it, so v0.3 prompts look the same.
     const branch = fallback.id === 'gitStatus' ? modules.findIndex(module => module.id === 'gitBranch') : -1;

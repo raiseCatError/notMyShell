@@ -340,6 +340,10 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
     case 'kubeContext': return context.kubeContext ? [{text: withIcon('kubernetes', safePromptText(context.kubeContext), icons), role: 'kubernetes'}] : [];
     // The managed backend uses the environment-context color (as the Kubernetes context does), so every theme colors it.
     case 'shell': return context.shell ? [{text: withIcon('shell', safePromptText(context.shell.current), icons), role: 'kubernetes'}] : [];
+    case 'discoveredTools': {
+      const count = context.discovery?.executables.length ?? 0;
+      return count ? [{text: `${count} local tools`, role: 'project'}] : [];
+    }
     case 'dockerContext': return context.dockerContext ? [{text: withIcon('docker', safePromptText(context.dockerContext), icons), role: 'docker'}] : [];
     case 'exitStatus': return [{
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,

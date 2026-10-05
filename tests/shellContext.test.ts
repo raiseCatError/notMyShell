@@ -5,6 +5,13 @@ import {mkdtemp, mkdir, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
+test('prompt context reuses the supplied shared executable inventory without probing PATH', async () => {
+  const discovery = {pathKey: '/only/fixture', discoveredAt: 1, measurements: {directoriesRead: 1, entriesInspected: 1, executableChecks: 1}, executables: []};
+  const probe: GitProbe = {run: async () => { throw new Error('not a repository'); }};
+  const context = await resolvePromptContext('/tmp/project', probe, '/home/test', {discovery});
+  assert.equal(context.discovery, discovery);
+});
+
 test('uses tilde for the home directory', async () => {
   const probe: GitProbe = {run: async () => assert.fail('git should not be called')};
   assert.deepEqual(await resolvePromptContext('/Users/test', probe, '/Users/test'), {

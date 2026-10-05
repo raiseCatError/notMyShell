@@ -4,6 +4,7 @@ import {truncateAnsi, displayWidth} from '../util/text.js';
 import {theme} from '../chroma/chroma.js';
 import {renderSurface} from './surface.js';
 import {colorLevel} from '../presentation/capabilities.js';
+import type {RgbColor} from './palette.js';
 
 const RESET = '\u001B[0m';
 const BOLD = '\u001B[1m';
@@ -58,9 +59,9 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
  * color it is reverse video, so the selection never depends on color alone.
  * Every reset inside the row re-opens the band, so styled parts stay on it.
  */
-export function selectedRowBand(row: string, columns: number): string {
+export function selectedRowBand(row: string, columns: number, chosenColor?: RgbColor): string {
   const none = colorLevel() === 'none';
-  const band = none ? '\u001B[7m' : `${background(UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
+  const band = none ? '\u001B[7m' : `${background(chosenColor ?? UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
   const body = truncateAnsi(row, columns).replaceAll(RESET, `${RESET}${band}`);
   return `${band}${body}${band}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}`;
 }

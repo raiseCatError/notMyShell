@@ -4,10 +4,10 @@ import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
 import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
 import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
-import {foregroundOf} from '../chroma/chroma.js';
+import {foregroundOf, mixRgb} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
 import {displayWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
-import {detectTool, TOOLS, TOOL_CATEGORIES, TOOL_TIER_LABELS, toolInstall, toolInstallUnavailable, type Tool, type ToolTier} from './catalog.js';
+import {detectTool, TOOLS, TOOL_CATEGORIES, TOOL_TIER_LABELS, localExecutableTool, promoteLocalExecutables, toolInstall, toolInstallUnavailable, type Tool, type ToolTier} from './catalog.js';
 import type {PromptProviderId} from '../prompt/configuration.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {previousZshrc} from './frameworks.js';
@@ -21,12 +21,14 @@ import {InstallProvenance, planToolUninstall, type UninstallPlan} from './Instal
 import {elevationNote, planPackageInstall, planUnavailableReason, systemPackageEnvironment, type PackageEnvironment, type PackagePlan} from '../packages/managers.js';
 import {ACTIVATION_LABELS, type ActivationFacts} from './Activation.js';
 import {CONTEXT_LABELS, detectToolContexts, relevantTools, type ToolContext} from './relevance.js';
+import {discoverLocalExecutables, invalidateLocalDiscovery, type LocalExecutable} from './localDiscovery.js';
 
-export type ToolsTab = 'discover' | 'installed' | 'configure' | 'errors';
-const TABS: readonly ToolsTab[] = ['discover', 'installed', 'configure', 'errors'];
+export type ToolsTab = 'discover' | 'installed' | 'local' | 'configure' | 'errors';
+const TABS: readonly ToolsTab[] = ['discover', 'installed', 'local', 'configure', 'errors'];
 export interface ToolsPanel {
   tab: ToolsTab; query: string; selected: number; statuses: Record<string, ProviderStatus>;
   errors: Record<string, string>; configured: ReadonlySet<string>; recommendedOnly: boolean;
+  localExecutables: LocalExecutable[];
   detail?: Tool; recipe?: ProviderInstall; confirm?: ConfirmState; task?: TaskProgress;
   message?: string; onboarding?: number;
   /** Discover filter: only Recommended, or Recommended + Enhanced. */
@@ -94,10 +96,12 @@ export const ONBOARDING_CHOICES = ['Recommended', 'Recommended + Enhanced', 'Cho
 const SKIP = ONBOARDING_CHOICES.length - 1;
 export function createToolsPanel(configured: ReadonlySet<string> = new Set(), onboarding = false): ToolsPanel {
   return {tab: 'discover', query: '', selected: 0, statuses: {}, errors: {}, configured,
-    recommendedOnly: false, ...(onboarding ? {onboarding: SKIP} : {})};
+    recommendedOnly: false, localExecutables: [], ...(onboarding ? {onboarding: SKIP} : {})};
 }
 export async function refreshTools(state: ToolsPanel, changed: () => void): Promise<void> {
   clearProviderDetection();
+  invalidateLocalDiscovery();
+  state.localExecutables = [...(await discoverLocalExecutables()).executables];
   // Bound probes rather than spawning the whole catalog simultaneously.
   for (let index = 0; index < TOOLS.length; index += 3) {
     await Promise.all(TOOLS.slice(index, index + 3).map(async tool => {
@@ -114,12 +118,16 @@ export function relevantHere(state: ToolsPanel): Map<string, ToolContext> {
 }
 export const RELEVANT_GROUP = 'Relevant here';
 export function visibleTools(state: ToolsPanel): Tool[] {
+  const merged = promoteLocalExecutables(state.localExecutables);
+  const all = [...merged.curated, ...merged.local.map(localExecutableTool)];
   const relevant = relevantHere(state);
   const query = state.query.trim().toLowerCase();
   const tier = state.tier ?? (state.recommendedOnly ? 'recommended' : undefined);
-  return TOOLS.filter(tool => (state.tab !== 'discover' || !tier || tool.tier === 'recommended' || (tier === 'enhanced' && tool.tier === 'enhanced'))
-    && (!query || `${tool.label} ${tool.description} ${tool.category}`.toLowerCase().includes(query))
-    && (state.tab !== 'installed' || state.statuses[tool.id]?.state === 'installed')
+  const searching = query.length > 0;
+  return all.filter(tool => (state.tab !== 'discover' || searching || !tool.localDetection && (!tier || tool.tier === 'recommended' || (tier === 'enhanced' && tool.tier === 'enhanced')))
+    && (state.tab !== 'local' || searching || Boolean(tool.localDetection))
+    && (!query || `${tool.label} ${tool.executable ?? ''} ${tool.description} ${tool.category} ${tool.localDetection?.path ?? ''} ${tool.localDetection?.family ?? ''}`.toLowerCase().includes(query))
+    && (state.tab !== 'installed' || state.statuses[tool.id]?.state === 'installed' || Boolean(tool.localDetection))
     && (state.tab !== 'configure' || !!tool.configuration)
     && (state.tab !== 'errors' || !!state.errors[tool.id] || (state.configured.has(tool.id) && state.statuses[tool.id]?.state === 'missing')))
     .sort((a, b) => Number(relevant.has(b.id)) - Number(relevant.has(a.id))
@@ -141,6 +149,7 @@ export function promptRole(state: ToolsPanel, tool: Tool): string | undefined {
 
 /** Factual one-line status: what it is, and scope when the backend differs. */
 export function toolStatusLine(state: ToolsPanel, tool: Tool): string {
+  if (tool.localDetection) return 'Local detected';
   const status = state.statuses[tool.id];
   const kind = tool.capabilities?.includes('shell framework') ? 'Zsh framework' : tool.promptProvider ? promptRole(state, tool) ?? 'Prompt provider' : undefined;
   const zshOnly = tool.shells?.length === 1 && tool.shells[0] === 'zsh';
@@ -228,7 +237,7 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     else if (key.value.toLowerCase() === 'r') return 'refresh';
   } else if (key.kind === 'left' || key.kind === 'right') {
     const index = TABS.indexOf(state.tab);
-    state.tab = TABS[(index + (key.kind === 'left' ? 3 : 1)) % TABS.length]!;
+    state.tab = TABS[(index + (key.kind === 'left' ? TABS.length - 1 : 1)) % TABS.length]!;
     state.selected = 0;
   } else if (key.kind === 'up' || key.kind === 'down') {
     state.selected = Math.max(0, Math.min(visibleTools(state).length - 1, state.selected + (key.kind === 'up' ? -1 : 1)));
@@ -368,6 +377,7 @@ const RESET = '\u001b[0m';
 
 /** Status badge: a glyph plus a word, so meaning never depends on color alone. */
 function statusBadge(state: ToolsPanel, tool: Tool): {text: string; color: string} {
+  if (tool.localDetection) return {text: 'Local detected', color: ACCENT};
   const status = state.statuses[tool.id];
   const nerd = getCurrentGlyphMode() === 'nerd';
   if (!status) return {text: `${nerd ? '…' : '.'} Checking`, color: SUBTLE};
@@ -397,14 +407,20 @@ function toolRow(state: ToolsPanel, tool: Tool, selected: boolean, columns: numb
   const label = truncateText(tool.label, labelWidth - 1).padEnd(labelWidth);
   const statusText = columns >= 34 ? badge.text.padEnd(18) : `${badge.text.slice(0, 1)} `;
   const badges = columns >= 60 ? toolBadges(state, tool).join(' · ') : '';
-  const chosen = state.selection?.has(tool.id) ?? false;
-  const checkbox = state.tab === 'discover' ? `${chosen ? ACCENT : selected ? onSelectedBand() : SUBTLE}[${chosen ? 'x' : ' '}]${RESET} ` : '';
-  if (!selected) return truncateAnsi(`    ${checkbox}${SECONDARY}${label}${RESET}${badge.color}${statusText}${SUBTLE}${badges}${RESET}`, columns);
+  const queued = state.selection?.has(tool.id) === true && state.tab === 'discover';
+  const noColor = colorLevel() === 'none';
+  const chosenBand = noColor ? '\u001b[7m' : background(mixRgb(UI_COLORS.accent, UI_COLORS.projectForeground, 0.78));
+  if (!selected) {
+    const row = `    ${SECONDARY}${label}${RESET}${badge.color}${statusText}${RESET}${SUBTLE}${badges}${RESET}`;
+    const body = truncateAnsi(row, columns);
+    return queued ? `${chosenBand}${body}${chosenBand}${' '.repeat(Math.max(0, columns - displayWidth(body)))}${RESET}` : body;
+  }
   // The shared selected band (the active tab's treatment): pointer, bold label, and every quiet part lifted
   // to the band's foreground; Installed and Needs attention keep their meaning colors.
   const quiet = onSelectedBand();
   const statusColor = badge.color === SUBTLE ? quiet : badge.color;
-  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${checkbox}${BOLD}${ACCENT}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns);
+  const focusedChosenColor = queued ? mixRgb(UI_COLORS.projectBackground, UI_COLORS.accent, 0.22) : undefined;
+  return selectedRowBand(`  ${ACCENT}${GLYPHS.selection}${RESET} ${BOLD}${ACCENT}${label}${RESET}${statusColor}${statusText}${RESET}${quiet}${badges}`, columns, focusedChosenColor);
 }
 
 const BOLD = '\u001b[1m';
@@ -422,7 +438,7 @@ function groupedRows(tools: readonly Tool[], relevant: ReadonlyMap<string, ToolC
 
 export function renderTools(state: ToolsPanel, columns: number, height: number): string[] {
   resolveColors();
-  const tabsRow = renderTabStrip(['Discover', 'Installed', 'Configure', 'Errors'], TABS.indexOf(state.tab), columns);
+  const tabsRow = renderTabStrip(['Discover', 'Installed', 'Local', 'Configure', 'Errors'], TABS.indexOf(state.tab), columns);
   const rows: string[] = [`${PRIMARY}  Tools${RESET}  ${SUBTLE}optional · NMSh is complete without them; switch providers anytime${RESET}`, tabsRow, ''];
   let footer: Array<[string, string]> = [['↑↓', 'select'], ['←→', 'tabs'], ...(state.tab === 'discover' ? [['Space', state.selection?.size ? `select · ${state.selection.size} chosen` : 'select'] as [string, string]] : []), ['Enter', state.selection?.size ? 'review install' : 'details'], ['type', 'search'], ['U', 'check updates'], ['Esc', state.query ? 'clear search' : 'close']];
   if (state.onboarding !== undefined) {
@@ -473,12 +489,13 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
       `  ${SUBTLE}${tool.description}${RESET}`, '',
       field('Category', tool.category), field('Source', tool.source),
       field('Status', toolStatusLine(state, tool)),
+      ...(tool.localDetection ? [field('Detected', 'Local detected'), field('Path', tool.localDetection.path), ...(tool.localDetection.family !== 'path' ? [field('Evidence', tool.localDetection.evidence)] : [])] : []),
       ...(tool.capabilities?.length ? [field('Is', tool.capabilities.join(' · '))] : []),
       ...(tool.detection?.kind === 'filesystem' && state.statuses[tool.id]?.detail ? [field('Found', state.statuses[tool.id]!.detail!)] : []),
-      field('Install', tool.installAdapter && state.statuses[tool.id]?.state === 'missing' ? 'Guided: NMSh keeps your .zshrc and never runs the installer itself (I)'
+      ...(!tool.localDetection ? [field('Install', tool.installAdapter && state.statuses[tool.id]?.state === 'missing' ? 'Guided: NMSh keeps your .zshrc and never runs the installer itself (I)'
         : state.statuses[tool.id]?.state === 'missing'
           ? installPlanFor(state, tool)?.label ?? installUnavailableFor(state, tool)
-          : tool.package ? `Package ${tool.package}` : tool.detection?.kind === 'filesystem' ? 'Installed outside NMSh · not managed by NMSh' : 'Installed outside NMSh'));
+          : tool.package ? `Package ${tool.package}` : tool.detection?.kind === 'filesystem' ? 'Installed outside NMSh · not managed by NMSh' : 'Installed outside NMSh')] : []));
     if (tool.id === 'oh-my-zsh' && previousZshrc()) rows.push(field('Previous', 'Previous zshrc found (.zshrc.pre-oh-my-zsh) · O to compare'));
     const lifecycle = lifecycleNote(tool);
     if (lifecycle) rows.push(field('Lifecycle', lifecycle));
@@ -495,8 +512,8 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     if (activation) rows.push(field('Shell', `${ACTIVATION_LABELS[activation.state]} · ${activation.detail}`));
     rows.push('', `  ${SUBTLE}${activation ? 'Shell state comes from the running session; rc files are never read.' : 'Shell hook state is not inferred; existing hooks stay authoritative.'}${RESET}`);
     footer = [
-      ...(state.statuses[tool.id]?.state === 'missing' && tool.detection?.kind !== 'filesystem' ? [['I', 'install…'] as [string, string]] : []),
-      ...(state.statuses[tool.id]?.state === 'installed' && tool.detection?.kind !== 'filesystem' ? [['X', 'uninstall…'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'missing' && tool.detection?.kind !== 'filesystem' && !tool.localDetection ? [['I', 'install…'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'installed' && tool.detection?.kind !== 'filesystem' && !tool.localDetection ? [['X', 'uninstall…'] as [string, string]] : []),
       ...(toolHasUpdate(state, tool) ? [['U', 'update…'] as [string, string]] : []),
       ...(tool.id === 'mise' ? [['M', 'project awareness'] as [string, string]] : []),
       ...(tool.configuration && state.statuses[tool.id]?.state === 'installed' ? [['C', 'configure'] as [string, string]] : []),

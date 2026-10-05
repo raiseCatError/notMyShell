@@ -3,6 +3,7 @@ import type {PromptProviderId} from '../prompt/configuration.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {detectBackend as detectKeepAwake} from '../keepAwake/keepAwake.js';
 import {detectAntidote, detectOhMyZsh, detectPowerlevel10kTool, detectPrezto, detectZim, detectZinit, type FilesystemFact} from './frameworks.js';
+import {localExecutableId, type LocalExecutable} from './localDiscovery.js';
 
 export const TOOL_CATEGORIES = ['Search & Files', 'Git & Development', 'Navigation & History',
   'Data / Structured Text', 'Environment & Secrets', 'Shell / Workflow', 'Containers / Infrastructure', 'Project / Language Tooling', 'System capabilities'] as const;
@@ -28,6 +29,8 @@ export type ToolCapability = 'executable utility' | 'shell framework' | 'prompt 
   | 'special installer' | 'filesystem-detected' | 'dotfiles inspect-only' | 'Theme Studio import source' | 'executable config';
 
 export interface Tool extends ProviderDescriptor {
+  /** Shared bounded discovery evidence, when the matching executable is locally present. */
+  localDetection?: LocalExecutable;
   category: typeof TOOL_CATEGORIES[number];
   /** Kept for existing callers: true exactly for the Recommended tier. */
   recommended?: boolean;
@@ -171,6 +174,22 @@ export function toolInstallUnavailable(tool: Tool, hasBrew = resolveCommand('bre
 
 export function toolsInTier(tier: ToolTier): Tool[] {
   return TOOLS.filter(tool => tool.tier === tier);
+}
+
+/** Merge local evidence into the curated catalog by executable identity. */
+export function promoteLocalExecutables(local: readonly LocalExecutable[], tools: readonly Tool[] = TOOLS): {curated: Tool[]; local: LocalExecutable[]} {
+  const names = new Set(tools.filter(item => item.detection?.kind !== 'filesystem').flatMap(item => [item.executable ?? item.id, ...(item.commandAliases ?? [])]));
+  return {curated: tools.map(item => {
+    const found = local.find(executable => item.detection?.kind !== 'filesystem' && ((item.executable ?? item.id) === executable.name || item.commandAliases?.includes(executable.name)));
+    return found ? {...item, localDetection: found} : item;
+  }), local: local.filter(item => !names.has(item.name))};
+}
+
+/** Build a display-only local row. It intentionally has no management metadata or actions. */
+export function localExecutableTool(item: LocalExecutable): Tool {
+  return {id: localExecutableId(item.name), label: item.name, category: 'System capabilities', description: 'Local detected', source: item.evidence,
+    package: '', kind: 'external', family: 'tool', executable: item.name, versionArgs: undefined, localDetection: item,
+    capabilities: ['executable utility']};
 }
 
 /**

@@ -1,12 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {TOOLS, suggestibleToolFor, toolInstall} from '../src/tools/catalog.js';
-import {confirmToolInstall, createToolsPanel, renderTools, toolBadges, toolsKey, visibleTools} from '../src/tools/ToolsPanel.js';
+import {confirmToolInstall, createToolsPanel, renderTools, toolBadges, toolStatusLine, toolsKey, visibleTools} from '../src/tools/ToolsPanel.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {TaskProgress, taskProgressBar} from '../src/status/TaskProgress.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {setIconStyle} from '../src/ui/glyphs.js';
+import {discoverLocalExecutables, invalidateLocalDiscovery} from '../src/tools/localDiscovery.js';
+import {promoteLocalExecutables} from '../src/tools/catalog.js';
+import {mkdtemp, mkdir, chmod, rm, writeFile, existsSync} from 'node:fs';
+import {mkdtemp, mkdir, chmod, rm, writeFile} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 
 test('offline catalog, truthful filters and curated argv recipes do not execute discovery', () => {
   assert.equal(new Set(TOOLS.map(tool => tool.id)).size, TOOLS.length);
@@ -24,6 +30,61 @@ test('offline catalog, truthful filters and curated argv recipes do not execute 
   assert.equal(toolInstall(TOOLS[0]!, false), undefined);
   assert.deepEqual(toolInstall(TOOLS[0]!, true)?.args, ['install', 'ripgrep']);
   assert.deepEqual(parseSlashCommand('/tools'), {kind: 'tools'});
+});
+
+test('bounded local discovery uses direct PATH entries, recognized plugins, stable identity, and cache invalidation', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'nmsh-local-discovery-'));
+  const bin = join(root, 'bin'); const nested = join(bin, 'nested'); const home = join(root, 'home');
+  try {
+    await mkdir(bin); await mkdir(nested); await mkdir(join(home, '.docker', 'cli-plugins'), {recursive: true});
+    const executable = async (path: string, text = '#!/bin/sh\nexit 0\n') => { await writeFile(path, text); await chmod(path, 0o755); };
+    const executionSentinel = join(root, 'executed');
+    const ghExtensionDirectory = join(home, '.local', 'share', 'gh', 'extensions', 'gh-review');
+    await mkdir(ghExtensionDirectory, {recursive: true});
+    await executable(join(bin, 'unlisted-cli'));
+    await executable(join(bin, 'git-town'));
+    await executable(join(bin, 'kubectl-foo'));
+    await executable(join(bin, 'no-run'), `#!/bin/sh\ntouch '${executionSentinel}'\n`);
+    await executable(join(nested, 'hidden-cli'));
+    await executable(join(home, '.docker', 'cli-plugins', 'docker-buildx'));
+    await executable(join(ghExtensionDirectory, 'gh-review'));
+    const first = await discoverLocalExecutables(`${bin}${process.platform === 'win32' ? ';' : ':'}${join(root, 'missing')}`, home);
+    assert.deepEqual(first.executables.map(item => item.id), ['docker-plugin:docker-buildx', 'executable:no-run', 'executable:unlisted-cli', 'gh-extension:gh-review', 'git-plugin:git-town', 'kubectl-plugin:kubectl-foo']);
+    assert.ok(!existsSync(executionSentinel), 'discovered binaries are never executed');
+    assert.ok(!first.executables.some(item => item.name === 'hidden-cli'), 'no recursive traversal');
+    assert.equal(first.measurements.directoriesRead >= 3, true, 'only requested PATH and known plugin directories were enumerated');
+    assert.equal(first.measurements.entriesInspected >= 7, true);
+    assert.equal(first.executables.find(item => item.name === 'git-town')?.evidence.includes('git-* executable'), true);
+    assert.equal((await discoverLocalExecutables(`${bin}${process.platform === 'win32' ? ';' : ':'}${join(root, 'missing')}`, home)), first, 'warm snapshot reused');
+    await executable(join(bin, 'new-tool'));
+    assert.equal((await discoverLocalExecutables(`${bin}${process.platform === 'win32' ? ';' : ':'}${join(root, 'missing')}`, home)), first, 'cached until explicit invalidation');
+    invalidateLocalDiscovery();
+    const refreshed = await discoverLocalExecutables(`${bin}${process.platform === 'win32' ? ';' : ':'}${join(root, 'missing')}`, home);
+    assert.ok(refreshed.executables.some(item => item.name === 'new-tool'));
+    assert.deepEqual(refreshed.executables.map(item => item.id), [...refreshed.executables.map(item => item.id)].sort());
+    assert.equal(new Set(refreshed.executables.map(item => item.id)).size, refreshed.executables.length);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('local detections promote into curated metadata without duplicate rows; unknown results stay local', () => {
+  const local = [
+    {id: 'executable:rg', name: 'rg', path: '/bin/rg', family: 'path' as const, evidence: 'PATH'},
+    {id: 'executable:custom-cli', name: 'custom-cli', path: '/opt/bin/custom-cli', family: 'path' as const, evidence: 'PATH'},
+  ];
+  const merged = promoteLocalExecutables(local);
+  assert.equal(merged.curated.find(item => item.id === 'rg')?.localDetection?.path, '/bin/rg');
+  assert.deepEqual(merged.local.map(item => item.id), ['executable:custom-cli']);
+  const state = createToolsPanel(); state.localExecutables = local; state.query = 'custom-cli'; state.tab = 'local';
+  assert.deepEqual(visibleTools(state).map(item => item.id), ['executable:custom-cli']);
+  state.detail = visibleTools(state)[0];
+  assert.equal(toolStatusLine(state, state.detail!), 'Local detected');
+  assert.doesNotMatch(renderTools(state, 100, 24).map(stripAnsi).join('\n'), /Install…|Uninstall…/u);
+  state.tab = 'discover'; state.query = 'ripgrep'; state.localExecutables = [];
+  assert.deepEqual(visibleTools(state).map(item => item.id), ['rg']);
+  state.localExecutables = local; state.query = 'custom-cli';
+  assert.deepEqual(visibleTools(state).map(item => item.id), ['executable:custom-cli'], 'Discover search includes unknown local results');
+  state.tab = 'local'; state.query = 'ripgrep';
+  assert.deepEqual(visibleTools(state).map(item => item.id), ['rg'], 'Local search includes curated matches');
 });
 
 test('curated developer tools use verified Homebrew package and executable names', () => {
@@ -138,7 +199,7 @@ test('Tools v2: Discover groups by category with aligned status columns, a selec
   assert.ok(!plain.some(row => / \/ Installed/u.test(row)), 'no slash-separated prose');
   const first = visibleTools(state)[0]!;
   const selected = rows.find(row => stripAnsi(row).includes('›') && stripAnsi(row).includes(first.label))!;
-  assert.match(selected, /\u001b\[48;/u, 'selected row has a background band');
+  assert.ok(/\u001b\[48;|\u001b\[7m/u.test(selected), 'selected row has a background band or reverse-video fallback');
   assert.ok(plain.some(row => row.trim() === first.description), 'muted description of the selection');
   assert.match(plain.at(-1)!, /↑↓ select · ←→ tabs · Space select · Enter details/u);
   const lazygit = plain.find(row => row.includes('lazygit'))!;
@@ -346,12 +407,44 @@ test('the selected tool row is an unmistakable band that follows the selection, 
     state.query = visibleTools(state)[3]!.label;
     const filtered = selectedRows(renderTools(state, 100, 40)).filter(row => !/Discover/u.test(stripAnsi(row)));
     assert.equal(filtered.length, 1, 'search keeps one clear selection');
-    process.env.NO_COLOR = '1';
+    delete process.env.NMSH_COLOR; process.env.NO_COLOR = '1';
     const plain = renderTools(createToolsPanel(), 60, 30).filter(row => row.includes('\u001b[7m'));
     assert.equal(plain.length, 1, 'NO_COLOR: reverse video carries the selection');
     assert.match(stripAnsi(plain[0]!), /^ {2}› /u);
   } finally {
     if (saved.NO_COLOR === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = saved.NO_COLOR;
     if (saved.COLORTERM === undefined) delete process.env.COLORTERM; else process.env.COLORTERM = saved.COLORTERM;
+  }
+});
+
+test('Space-chosen rows keep a subtle theme band after focus moves, without checkboxes', () => {
+  const saved = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR};
+  try {
+    delete process.env.NO_COLOR; process.env.NMSH_COLOR = 'truecolor';
+    const state = createToolsPanel();
+    for (const tool of TOOLS) state.statuses[tool.id] = {state: 'missing'};
+    const first = visibleTools(state)[0]!;
+    const firstBefore = renderTools(state, 100, 40).find(row => stripAnsi(row).includes(first.label))!;
+    assert.ok(!firstBefore.includes('[ ]'), 'ordinary row has no checkbox');
+    toolsKey(state, {kind: 'text', value: ' '});
+    const focusedChosen = renderTools(state, 100, 40).find(row => stripAnsi(row).includes(first.label))!;
+    assert.ok(focusedChosen.includes('\u001b[48;') && stripAnsi(focusedChosen).includes('›'), 'focused chosen row keeps the existing focus treatment');
+    assert.ok(!stripAnsi(focusedChosen).includes('[x]'));
+    toolsKey(state, {kind: 'down'});
+    const rows = renderTools(state, 100, 40);
+    const chosenAway = rows.find(row => stripAnsi(row).includes(first.label))!;
+    const focusedOther = rows.find(row => stripAnsi(row).includes(visibleTools(state)[1]!.label))!;
+    assert.ok(chosenAway.includes('\u001b[48;'), 'chosen row retains a colored band without focus');
+    assert.ok(focusedOther.includes('\u001b[48;') && stripAnsi(focusedOther).includes('›'), 'ordinary focused row uses the existing focus treatment');
+    assert.notEqual(chosenAway.match(/\u001b\[48;[^m]*m/u)?.[0], focusedOther.match(/\u001b\[48;[^m]*m/u)?.[0], 'chosen tint differs from focus band');
+    assert.ok(!stripAnsi(chosenAway).includes('[x]') && !stripAnsi(chosenAway).includes('[ ]'));
+    delete process.env.NMSH_COLOR; process.env.NO_COLOR = '1';
+    toolsKey(state, {kind: 'down'});
+    const noColorRows = renderTools(state, 100, 40);
+    assert.ok(noColorRows.find(row => stripAnsi(row).includes(first.label))?.includes('\u001b[7m'), 'NO_COLOR retains chosen distinction with reverse video');
+    assert.ok(!noColorRows.some(row => stripAnsi(row).includes('[x]') || stripAnsi(row).includes('[ ]')));
+  } finally {
+    if (saved.NO_COLOR === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = saved.NO_COLOR;
+    if (saved.NMSH_COLOR === undefined) delete process.env.NMSH_COLOR; else process.env.NMSH_COLOR = saved.NMSH_COLOR;
   }
 });

@@ -127,6 +127,7 @@ import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerle
 import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {discoverLocalExecutables} from '../tools/localDiscovery.js';
 import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
@@ -3021,8 +3022,10 @@ export class TerminalApp {
 
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
+    const wantsDiscovery = this.promptConfiguration.modules.some(module => module.id === 'discoveredTools' && module.visible);
     const [context, pathAbbreviations] = await Promise.all([
-      resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled}),
+      resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled,
+        ...(wantsDiscovery ? {discovery: await discoverLocalExecutables()} : {})}),
       resolvePathAbbreviations(cwd, homedir()),
     ]);
     if (generation !== this.contextGeneration || this.stopped) return;

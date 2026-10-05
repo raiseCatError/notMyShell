@@ -272,10 +272,29 @@ test('saved configurations gain new modules at their default position', () => {
     {id: 'project', visible: true, condition: 'always'},
     {id: 'exitStatus', visible: false, condition: 'nonzeroExit'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'project', 'cwd', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'discoveredTools']);
   assert.equal(config.modules.find(module => module.id === 'exitStatus')!.visible, false);
+  assert.equal(config.modules.find(module => module.id === 'discoveredTools')!.visible, false, 'the added module stays opt-in');
+  assert.equal(config.modules.find(module => module.id === 'project')!.visible, true, 'existing settings are preserved');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.palette, 'lavender');
   assert.equal(normalizePromptConfiguration({nmsh: {palette: 'neon', startStyle: 'round'}}).nmsh.startStyle, 'wedge');
+});
+
+test('discovered-tools Native module consumes supplied shared facts and deterministic previews', () => {
+  const context = {cwd: '/tmp/repo', project: 'repo', discovery: {pathKey: '', discoveredAt: 1,
+    measurements: {directoriesRead: 1, entriesInspected: 2, executableChecks: 2}, executables: [
+    {id: 'executable:one', name: 'one', path: '/bin/one', family: 'path' as const, evidence: 'PATH'},
+    {id: 'executable:two', name: 'two', path: '/bin/two', family: 'path' as const, evidence: 'PATH'},
+  ]}};
+  const hidden = normalizePromptConfiguration({});
+  assert.ok(!stripAnsi(buildContextLine(context, 100, hidden, 'composer')).includes('local tools'));
+  const enabled = normalizePromptConfiguration({modules: [{id: 'discoveredTools', visible: true, condition: 'always'}]});
+  const firstRender = stripAnsi(buildContextLine(context, 100, enabled, 'composer'));
+  const secondRender = stripAnsi(buildContextLine(context, 100, enabled, 'composer'));
+  assert.ok(firstRender.includes('2 local tools'));
+  assert.equal(secondRender, firstRender);
+  assert.deepEqual(context.discovery.measurements, {directoriesRead: 1, entriesInspected: 2, executableChecks: 2}, 'rendering consumes facts without repeating discovery');
+  assert.ok(stripAnsi(buildThemePreviewLine(enabled, 'brand', 100)).includes('2 local tools') === false, 'synthetic preview never depends on live PATH facts');
 });
 
 test('toolchains are detected from marker files in cwd and repository root', async () => {
@@ -319,7 +338,7 @@ test('/prompt appearance shows saved values, unsaved changes, and live theme pre
     'Gap             ‹ Compact ›  saved: Normal',
     'End             ‹ Fading flat ›  saved: Fading wedge',
     'Icons           ‹ Off ›  saved: On',
-    'Modules         9 of 9 shown ›',
+    'Modules         9 of 10 shown ›',
     'unsaved preview',
   ]) assert.ok(changed.some(row => row.includes(expected)), expected);
   assert.ok(changed.some(row => /○ Lavender Native +✓ L/u.test(row)) && changed.some(row => /● Brand \/ Semantic +B/u.test(row)));
@@ -341,7 +360,7 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   assert.ok(handlePromptPanelKey({kind: 'text', value: ' '} as Key, state));
   assert.equal(state.draft.modules[1]!.visible, false);
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
-  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'shell', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(state.draft.modules.map(module => module.id), ['cwd', 'project', 'gitBranch', 'gitStatus', 'toolchain', 'exitStatus', 'shell', 'kubeContext', 'dockerContext', 'discoveredTools']);
   assert.equal(state.selectedIndex, 0, 'selection follows the moved module');
   handlePromptPanelKey({kind: 'selectUp'} as Key, state);
   assert.equal(state.selectedIndex, 0, 'moving past the top is a no-op');

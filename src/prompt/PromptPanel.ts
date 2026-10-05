@@ -378,7 +378,7 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
 
 const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
   project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
-  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell',
+  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell', discoveredTools: 'Local tools',
 };
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
@@ -452,6 +452,7 @@ function moduleOption(module: PromptConfiguration['modules'][number]): string {
     case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
     case 'shell': return module.condition === 'always' ? 'always' : 'when different';
+    case 'discoveredTools': return 'when detected';
     default: return 'always';
   }
 }
