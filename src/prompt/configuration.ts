@@ -1,3 +1,5 @@
+import type {FactId, ContextCapabilityId} from '../context/facts.js';
+import {FACT_CAPABILITIES} from '../context/facts.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
@@ -59,6 +61,40 @@ export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext' | 'shell' | 'discoveredTools';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
+/** Status Strip remains a future destination, not a shipped choice. */
+export type ContextSurface = 'mainPrompt' | 'rightContext' | 'contextRail' | 'statusStrip';
+export type ModuleSurface = Exclude<ContextSurface, 'statusStrip'> | 'auto' | 'hidden';
+export const MODULE_SURFACES: readonly ModuleSurface[] = ['auto', 'mainPrompt', 'rightContext', 'contextRail', 'hidden'];
+export const MODULE_SURFACE_LABELS: Record<ModuleSurface, string> = {auto: 'Auto', mainPrompt: 'Main Prompt', rightContext: 'Right Context', contextRail: 'Context Rail', hidden: 'Hidden'};
+export interface ContextRailSettings {
+  mode: 'auto' | 'always' | 'off';
+  rows: 1 | 2;
+  relation?: 'vertical' | 'right';
+  direction?: 'followMain' | 'forward' | 'mirrored';
+  integration?: 'auto' | 'outside' | 'inside';
+  spacing?: 'attached' | 'gap' | 'spacious';
+  dividerAnchor?: 'prompt' | 'rail' | 'above';
+  theme: 'followMain' | 'choose';
+  palette?: NativePaletteId;
+  themeId?: string;
+  style: 'followMain' | 'soft' | 'minimal' | 'compact';
+  overflow: 'priority';
+}
+export const DEFAULT_CONTEXT_RAIL: ContextRailSettings = {mode: 'auto', rows: 1, relation: 'vertical', direction: 'followMain', integration: 'outside', spacing: 'gap', dividerAnchor: 'prompt', theme: 'followMain', style: 'followMain', overflow: 'priority'};
+function normalizeContextRail(value: unknown, themes: readonly ThemeAsset[]): ContextRailSettings {
+  const v = isRecord(value) ? value : {};
+  const theme = v.theme === 'choose' ? 'choose' : 'followMain';
+  const themeId = typeof v.themeId === 'string' && findTheme(themes, v.themeId) ? v.themeId : undefined;
+  const palette = normalizePaletteId(v.palette);
+  return {mode: v.mode === 'always' || v.mode === 'off' ? v.mode : 'auto', rows: v.rows === 2 ? 2 : 1,
+    relation: v.relation === 'right' ? 'right' : 'vertical',
+    direction: v.direction === 'forward' || v.direction === 'mirrored' ? v.direction : 'followMain',
+    integration: v.integration === 'inside' || v.integration === 'auto' ? v.integration : 'outside',
+    spacing: v.spacing === 'attached' || v.spacing === 'gap' || v.spacing === 'spacious' ? v.spacing : isRecord(value) ? 'attached' : 'gap',
+    dividerAnchor: v.dividerAnchor === 'rail' || v.dividerAnchor === 'above' ? v.dividerAnchor : 'prompt',
+    theme, ...(theme === 'choose' || v.palette !== undefined ? {palette: palette === 'custom' && !themeId ? 'lavender' : palette, ...(themeId ? {themeId} : {})} : {}),
+    style: v.style === 'soft' || v.style === 'minimal' || v.style === 'compact' ? v.style : 'followMain', overflow: 'priority'};
+}
 /** Every module can sit in either area; narrow widths drop the right area first. */
 export function modulePlacement(module: {placement?: ModulePlacement}): ModulePlacement {
   return module.placement === 'right' ? 'right' : 'left';
@@ -69,33 +105,58 @@ export type ContextCondition = 'always' | 'inRepository' | 'nonzeroExit' | 'onCo
 /** The current-shell module's visibility, stored as the module's visible flag and condition. */
 export type ShellModuleVisibility = 'whenDifferent' | 'always' | 'never';
 export const SHELL_MODULE_VISIBILITY: readonly ShellModuleVisibility[] = ['whenDifferent', 'always', 'never'];
-export const SHELL_MODULE_VISIBILITY_LABELS: Record<ShellModuleVisibility, string> = {whenDifferent: 'When different', always: 'Always', never: 'Never'};
+export const SHELL_MODULE_VISIBILITY_LABELS: Record<ShellModuleVisibility, string> = {whenDifferent: 'When not default', always: 'Always', never: 'Hidden'};
 export function shellModuleVisibility(configuration: Pick<PromptConfiguration, 'modules'>): ShellModuleVisibility {
   const module = configuration.modules.find(item => item.id === 'shell');
-  if (!module || !module.visible) return module ? 'never' : 'whenDifferent';
+  if (!module || !module.visible || module.surface === 'hidden') return module ? 'never' : 'whenDifferent';
   return module.condition === 'always' ? 'always' : 'whenDifferent';
 }
 export function applyShellModuleVisibility(configuration: Pick<PromptConfiguration, 'modules'>, visibility: ShellModuleVisibility): void {
   let module = configuration.modules.find(item => item.id === 'shell');
   if (!module) { module = {id: 'shell', visible: true, condition: 'shellDiffers'}; configuration.modules.push(module); }
+  if (visibility !== 'never' && module.surface === 'hidden') delete module.surface;
   module.visible = visibility !== 'never';
   module.condition = visibility === 'always' ? 'always' : 'shellDiffers';
+}
+/** Set the prompt side without changing visibility; Hidden retains its surface override. */
+export function applyModulePlacement(module: ContextModuleConfig, side: ModulePlacement): void {
+  if (module.surface !== 'hidden') delete module.surface;
+  if (side === 'right') module.placement = 'right';
+  else delete module.placement;
 }
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
 /** Stable module identity, factual inputs, and current field-demand policy. */
-export const CONTEXT_MODULE_REGISTRY = {
-  project: {category: 'identity', fields: ['project', 'root'], demand: 'always'},
-  cwd: {category: 'identity', fields: ['cwd', 'pathAbbreviations'], demand: 'always'},
-  gitBranch: {category: 'vcs', fields: ['branch'], demand: 'repository'},
-  gitStatus: {category: 'vcs', fields: ['git'], demand: 'repository'},
-  toolchain: {category: 'tooling', fields: ['toolchains'], demand: 'project-markers'},
-  exitStatus: {category: 'session', fields: ['exitStatus'], demand: 'always'},
-  kubeContext: {category: 'context', fields: ['kubeContext'], demand: 'command'},
-  dockerContext: {category: 'context', fields: ['dockerContext'], demand: 'command'},
-  shell: {category: 'session', fields: ['shell'], demand: 'always'},
-  discoveredTools: {category: 'tooling', fields: ['discovery'], demand: 'cached-inventory'},
-} as const satisfies Record<ContextModuleId, {category: string; fields: readonly string[]; demand: string}>;
+export interface ContextModuleDefinition {
+  id: ContextModuleId;
+  category: string;
+  fields: readonly FactId[];
+  capabilities: readonly ContextCapabilityId[];
+  demand: string;
+  priority: number;
+  supportedSurfaces: readonly Exclude<ContextSurface, 'statusStrip'>[];
+  preferredSurface: Exclude<ContextSurface, 'statusStrip'>;
+  icons: 'existing-semantic-glyphs';
+  width: 'compact-then-drop';
+}
+function defineModule(id: ContextModuleId, category: string, fields: readonly FactId[], demand: string,
+  priority: number, preferredSurface: Exclude<ContextSurface, 'statusStrip'> = 'mainPrompt'): ContextModuleDefinition {
+  return {id, category, fields, capabilities: fields.map(field => FACT_CAPABILITIES[field]), demand, priority,
+    supportedSurfaces: ['mainPrompt', 'rightContext', 'contextRail'], preferredSurface,
+    icons: 'existing-semantic-glyphs', width: 'compact-then-drop'};
+}
+export const CONTEXT_MODULE_REGISTRY: Record<ContextModuleId, ContextModuleDefinition> = {
+  project: defineModule('project', 'identity', ['project', 'root'], 'always', 60),
+  cwd: defineModule('cwd', 'identity', ['cwd', 'root', 'pathAbbreviations'], 'always', 70),
+  gitBranch: defineModule('gitBranch', 'vcs', ['branch', 'git'], 'repository', 80),
+  gitStatus: defineModule('gitStatus', 'vcs', ['git'], 'repository', 90),
+  toolchain: defineModule('toolchain', 'tooling', ['toolchains'], 'project-markers', 40),
+  exitStatus: defineModule('exitStatus', 'session', ['exitStatus'], 'always', 100),
+  kubeContext: defineModule('kubeContext', 'context', ['kubeContext'], 'command', 95, 'contextRail'),
+  dockerContext: defineModule('dockerContext', 'context', ['dockerContext'], 'command', 85, 'contextRail'),
+  shell: defineModule('shell', 'session', ['shell'], 'always', 50, 'rightContext'),
+  discoveredTools: defineModule('discoveredTools', 'tooling', ['discovery'], 'cached-inventory', 10, 'rightContext'),
+};
 /** `none` is composer only: no prompt row, modules or right prompt (the input marker stays); everything else in NMSh stays on. */
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none';
 export type NativeEndStyle = PowerlineEdgeStyle;
@@ -168,6 +229,8 @@ export interface ContextModuleConfig {
   condition: ContextCondition;
   /** Missing means left; only right-eligible modules honor `right`. */
   placement?: ModulePlacement;
+  /** Missing preserves legacy left/right; explicit Auto opts into definition preference. */
+  surface?: ModuleSurface;
   foreground?: string;
   background?: string;
 }
@@ -639,6 +702,7 @@ export interface PromptConfiguration {
   /** The decorative horizontal rules around the live composer; Off reclaims their rows. Transcript dividers are separate. */
   composerDividers: boolean;
   modules: ContextModuleConfig[];
+  contextRail: ContextRailSettings;
   separator: string;
   /** Spaces between colored context blocks; use spacing for padding inside each block. */
   gap: number;
@@ -701,6 +765,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   panelPosition: 'bottom',
   composerDividers: true,
   transcriptPresentation: 'normal',
+  contextRail: {...DEFAULT_CONTEXT_RAIL},
   modules: [
     {id: 'shell', visible: true, condition: 'shellDiffers'},
     {id: 'project', visible: true, condition: 'always'},
@@ -794,7 +859,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   // A custom palette without a valid library theme falls back instead of rendering nothing.
   const storedPalette = normalizePaletteId(nativeValue.palette);
   const palette = storedPalette === 'custom' && !customTheme ? 'lavender' : storedPalette;
-  const themed = {...tooling, themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
+  const themed = {...tooling, contextRail: normalizeContextRail(value.contextRail, library.themes), themes: library.themes, themeBridge: normalizeThemeBridge(value.themeBridge), ...(customTheme ? {customTheme: structuredClone(customTheme)} : {})};
   const transcript = normalizeTranscriptAppearance(promptValue.transcript);
   const syntax = normalizeSyntaxAppearance(promptValue.syntax);
   const notifications = normalizeNotificationSettings(value.notifications);
@@ -854,6 +919,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
         ? item.condition as ContextCondition
         : fallback.condition,
     };
+    if (MODULE_SURFACES.includes(item.surface as ModuleSurface)) module.surface = item.surface as ModuleSurface;
     if (item.placement === 'right') module.placement = 'right';
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
@@ -966,6 +1032,8 @@ export function hasVisibleContextModule(
   onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
+    && module.surface !== 'hidden' && module.surface !== 'contextRail'
+    && (module.surface !== 'auto' || CONTEXT_MODULE_REGISTRY[module.id].preferredSurface !== 'contextRail')
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)
     && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? []))

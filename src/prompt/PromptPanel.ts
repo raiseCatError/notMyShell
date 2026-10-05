@@ -1,3 +1,5 @@
+import {routeModule} from '../context/surfaceRouter.js';
+import {railNeedsPromptConversion} from './railLayout.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 export {parseStopInput, type GradientEditorState} from '../ui/GradientEditor.js';
@@ -19,10 +21,11 @@ import {
   type GitColorMode,
   nativeGapChoice,
   type NativeGapChoice,
-  type PromptConfiguration,
+  type PromptConfiguration, type ContextRailSettings, DEFAULT_CONTEXT_RAIL,
   type NativePaletteId,
   type PromptProviderId,
-  modulePlacement,
+  modulePlacement, applyModulePlacement,
+  MODULE_SURFACES, MODULE_SURFACE_LABELS, THEME_PALETTE_IDS,
   ON_COMMAND_MODULES,
 } from './configuration.js';
 import {NATIVE_PROMPT_THEMES, RICH_GIT_SHOWCASE} from './prompt.js';
@@ -48,7 +51,7 @@ import {displayWidth, labelColumnWidth, padCells, stripAnsi, truncateAnsi} from 
 import {renderTaskProgress, type TaskProgress} from '../status/TaskProgress.js';
 import {providerRowText, type ProviderDescriptor} from '../providers/providers.js';
 
-export type PromptPanelStep = 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'gradient' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
+export type PromptPanelStep = 'railInsideConfirm' | 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'gradient' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 
 export interface PromptPanelState {
   onboarding: boolean;
@@ -62,6 +65,7 @@ export interface PromptPanelState {
   p10kPreparation?: ConfiguratorPreparation;
   p10kResult?: string[];
   message?: string;
+  railConfirmReturn?: {step: PromptPanelStep; selectedIndex: number};
   task?: TaskProgress;
   starshipModules?: boolean[];
   starshipProposal?: StarshipConfigProposal;
@@ -76,9 +80,9 @@ export interface PromptPanelState {
   glyphEdit?: {rowId: string; buffer: string; note?: string};
 }
 
-export type PromptView = 'main' | 'git' | 'chroma';
-export const PROMPT_VIEWS = ['Main Prompt', 'Rich Git', 'Chroma'] as const;
-const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma'];
+export type PromptView = 'main' | 'git' | 'chroma' | 'rail';
+export const PROMPT_VIEWS = ['Main Prompt', 'Rich Git', 'Chroma', 'Context Rail'] as const;
+const PROMPT_VIEW_IDS: readonly PromptView[] = ['main', 'git', 'chroma', 'rail'];
 
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
@@ -296,8 +300,56 @@ export function chromaRows(configuration: PromptConfiguration): AppearanceRow[] 
   return rows;
 }
 
+/** Deliberately bounded Rail controls over the existing theme library and style painter. */
+type RailChoice = 'relation' | 'direction' | 'integration' | 'spacing' | 'dividerAnchor';
+function railChoice<K extends RailChoice>(id: string, label: string, field: K,
+  choices: readonly (readonly [NonNullable<ContextRailSettings[K]>, string])[]): AppearanceRow {
+  return {id, label,
+    value: c => choices.find(([value]) => value === (c.contextRail[field] ?? DEFAULT_CONTEXT_RAIL[field]))?.[1] ?? choices[0]![1],
+    change: (c, d) => {
+      const values = choices.map(([value]) => value);
+      c.contextRail[field] = cycle(values, c.contextRail[field] ?? DEFAULT_CONTEXT_RAIL[field]!, d);
+    }};
+}
+
+export function contextRailRows(configuration: PromptConfiguration): AppearanceRow[] {
+  const rows: AppearanceRow[] = [
+    {id: 'railMode', label: 'Mode', value: c => ({auto: 'Auto', always: 'Always', off: 'Off'})[c.contextRail.mode],
+      change: (c, d) => { c.contextRail.mode = cycle(['auto', 'always', 'off'], c.contextRail.mode, d); }},
+    {id: 'railRows', label: 'Rows', value: c => String(c.contextRail.rows), change: c => { c.contextRail.rows = c.contextRail.rows === 1 ? 2 : 1; }},
+    railChoice('railRelation', 'Relation', 'relation', [['vertical','Vertical'],['right','Right of Prompt']]),
+    railChoice('railDirection', 'Direction', 'direction', [['followMain','Follow Main'],['forward','Forward'],['mirrored','Mirrored']]),
+    {...railChoice('railIntegration', 'Integration', 'integration', [['auto','Auto'],['outside','Outside'],['inside','Inside']]),
+      note: c => railNeedsPromptConversion(c) ? 'Requires Main Prompt: Inside; confirm on save' : 'horizontal dividers only'},
+    railChoice('railSpacing', 'Spacing', 'spacing', [['attached','Attached'],['gap','Gap'],['spacious','Spacious']]),
+    {...railChoice('railAnchor', 'Divider Anchor', 'dividerAnchor', [['prompt','Prompt Level'],['rail','Rail Level'],['above','Above Group']]),
+      note: c => !c.composerDividers ? 'no dividers: effective Prompt Level'
+        : c.contextRail.integration === 'outside' ? 'used with Inside integration'
+        : c.composerPosition === 'top' && c.contextRail.relation !== 'right' ? 'horizontal outer boundary faces below the Top group' : 'independent of spacing'},
+    {id: 'railTheme', label: 'Theme', value: c => c.contextRail.theme === 'followMain' ? 'Follow Main' : 'Choose theme',
+      change: c => { c.contextRail.theme = c.contextRail.theme === 'followMain' ? 'choose' : 'followMain'; c.contextRail.palette ??= c.nmsh.palette; c.contextRail.themeId ??= c.nmsh.themeId; }},
+  ];
+  if (configuration.contextRail.theme === 'choose') {
+    const choices = [...THEME_PALETTE_IDS.filter(id => id !== 'custom').map(palette => ({palette, themeId: undefined as string | undefined, label: NATIVE_PROMPT_THEMES[palette].label})),
+      ...configuration.themes.map(asset => ({palette: 'custom' as const, themeId: asset.id, label: asset.theme.name}))];
+    rows.push({id: 'railPalette', label: '  Chosen theme',
+      value: c => choices.find(choice => choice.palette === c.contextRail.palette && (choice.palette !== 'custom' || choice.themeId === c.contextRail.themeId))?.label ?? 'Lavender Native',
+      change: (c, d) => {
+        const current = choices.findIndex(choice => choice.palette === c.contextRail.palette && (choice.palette !== 'custom' || choice.themeId === c.contextRail.themeId));
+        const next = choices[(Math.max(0, current) + d + choices.length) % choices.length]!;
+        c.contextRail.palette = next.palette;
+        if (next.themeId) c.contextRail.themeId = next.themeId; else delete c.contextRail.themeId;
+      }});
+  }
+  rows.push({id: 'railStyle', label: 'Style', value: c => c.contextRail.style === 'followMain' ? 'Follow Main' : PROMPT_STYLE_LABELS[c.contextRail.style],
+    change: (c, d) => { c.contextRail.style = cycle(['followMain', 'soft', 'minimal', 'compact'], c.contextRail.style, d); }},
+  {id: 'railOverflow', label: 'Overflow', value: () => 'Priority', note: () => 'compact, then drop lower-priority context'});
+  if (configuration.provider !== 'nmsh') rows[0]!.note = () => 'available with NMSh Native; settings are retained';
+  return rows;
+}
+
 function viewRows(state: PromptPanelState): AppearanceRow[] {
-  return (state.view ?? 'main') === 'chroma' ? chromaRows(state.draft) : appearanceRows(state.draft);
+  return state.view === 'rail' ? contextRailRows(state.draft) : state.view === 'chroma' ? chromaRows(state.draft) : appearanceRows(state.draft);
 }
 
 /** Rich Git's own settings; each edits inline with ←/→ (Space also toggles Enabled). */
@@ -451,7 +503,7 @@ function moduleOption(module: PromptConfiguration['modules'][number]): string {
     case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
     case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
     case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
-    case 'shell': return module.condition === 'always' ? 'always' : 'when different';
+    case 'shell': return module.condition === 'always' ? 'always' : 'when not default';
     case 'discoveredTools': return 'when detected';
     default: return 'always';
   }
@@ -466,8 +518,11 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
   if (key.kind === 'text' && key.value === ' ') module.visible = !module.visible;
   else if (key.kind === 'text' && (key.value === 'm' || key.value === 'M')) state.draft.nmsh.mirrorRight = !state.draft.nmsh.mirrorRight;
   else if (key.kind === 'text' && (key.value === 'p' || key.value === 'P')) {
-    if (modulePlacement(module) === 'right') delete module.placement;
-    else module.placement = 'right';
+    const side = routeModule({...module, visible: true, ...(module.surface === 'hidden' ? {surface: undefined} : {})});
+    applyModulePlacement(module, side === 'rightContext' ? 'left' : 'right');
+  }
+  else if (key.kind === 'text' && (key.value === 's' || key.value === 'S')) {
+    module.surface = cycle(MODULE_SURFACES, module.surface ?? (modulePlacement(module) === 'right' ? 'rightContext' : 'mainPrompt'), 1);
   }
   else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
     module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
@@ -485,6 +540,7 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
 }
 
 export function promptPanelControls(state: PromptPanelState): Array<[string, string]> {
+  if (state.step === 'railInsideConfirm') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'keep current']];
   if (state.step === 'installProgress') return [['Please wait', 'installation in progress']];
   if (state.step === 'installResult') return [['Enter', state.task?.state.status === 'failed' ? 'details' : 'continue'], ['D', 'details'], ['Esc', 'back']];
   if (state.step === 'installDetails') return [['Enter/Esc', 'back']];
@@ -494,8 +550,8 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
   if (state.step === 'modules') {
-    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'],
-      ['M', `mirror right: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
+    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'], ['S', 'surface'],
+      ['M', `mirror: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
   }
   if (state.step === 'gradient') {
     return state.gradient ? gradientEditorControls(state.gradient) : [['Esc', 'done']];
@@ -515,7 +571,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
     case 'p10kResult': return 1;
     case 'starship': return state.starshipStatus?.installed ? 5 : 3;
     case 'starshipModules': return STARSHIP_MODULES.length;
-    case 'starshipConfirm': return 2;
+    case 'railInsideConfirm': case 'starshipConfirm': return 2;
     case 'layout': return LAYOUT_CHOICES.length;
     case 'appearance': return (state.view ?? 'main') === 'git' ? RICH_GIT_ROWS.length : viewRows(state).length;
     case 'gradient': return state.gradient?.stops.length ?? 1;
@@ -665,7 +721,13 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
   rows.push('');
   const item = (index: number, text: string) => `${focusForeground(index === state.selectedIndex)}${index === state.selectedIndex ? '›' : ' '} ${text}${RESET}`;
-  if (state.step === 'provider') {
+  if (railNeedsPromptConversion(state.draft)) rows.push(`${SECONDARY}  Requires Main Prompt: Inside · preview only${RESET}`, '');
+  if (state.step === 'railInsideConfirm') {
+    rows.push(`${PRIMARY}Context Rail Inside requires Main Prompt Inside geometry.${RESET}`);
+    rows.push(`${SECONDARY}Change Main Prompt to two-line Inside with horizontal dividers?${RESET}`);
+    rows.push(item(0, 'Change & Save'));
+    rows.push(item(1, 'Cancel / Keep Current'));
+  } else if (state.step === 'provider') {
     rows.push(`${PRIMARY}Choose your prompt${RESET}`);
     // Prompt providers report detection in their own steps, so the list carries no badge.
     PROMPT_PROVIDERS.forEach((provider, index) => rows.push(item(index,
@@ -766,8 +828,8 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
       const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      const side = modulePlacement(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${focusForeground(index === state.selectedIndex)}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 6)}${module.visible ? option : 'hidden'}${RESET}`);
+      const side = module.surface ? MODULE_SURFACE_LABELS[module.surface] : modulePlacement(module);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${focusForeground(index === state.selectedIndex)}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 15)}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;
@@ -845,7 +907,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
       : state.draft.composerLayout;
     const status = promptDraftChanged(state) ? `${ACCENT}unsaved preview` : state.saved ? `${SUBTLE}matches current` : '';
     const chromaPreview = state.step === 'gradient' || (state.step === 'appearance' && state.view === 'chroma');
-    rows.push(`${PRIMARY}${chromaPreview ? 'Chroma preview' : selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}${status ? `  ${status}${RESET}` : ''}`);
+    rows.push(`${PRIMARY}${state.view === 'rail' ? 'Context Rail preview' : chromaPreview ? 'Chroma preview' : selectedLayout === 'oneLine' ? 'One-line preview' : 'Two-line preview'}${RESET}${status ? `  ${status}${RESET}` : ''}`);
     rows.push(...preview);
   }
   rows.push('');

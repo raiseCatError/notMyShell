@@ -108,6 +108,8 @@ app['session'].kill();
 
 ## Planning and GitHub tracking
 
+For the #305 Context Engine program, follow [the Context Engine agent protocol](docs/development/context-engine-agent-protocol.md) and its canonical design before editing.
+
 GitHub is the durable source of truth for what NMSh is building, what comes next, and why.
 
 For substantial implementation work:

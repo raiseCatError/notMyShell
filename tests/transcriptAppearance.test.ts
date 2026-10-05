@@ -149,7 +149,7 @@ test('/transcript owns Output folding: the same root setting as Config, drafted,
     app['startTranscriptSettings']();
     const state = app['transcriptPanelState']!;
     const sample = app['transcriptPreviewSample']();
-    state.selectedIndex = 5;
+    state.selectedIndex = 6;
     let rows = render(state, 140, sample).map(stripAnsi);
     assert.ok(rows.some(row => row.includes('Output folding     ‹ Smart ›')));
     assert.ok(rows.some(row => /lines hidden · Ctrl\+O/u.test(row)), 'Smart previews a folded block');

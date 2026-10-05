@@ -131,7 +131,7 @@ Choose providers, review tools, ask for local guidance, and use real interactive
 
 ### Ask and local understanding
 
-`/ask` provides typed local guidance in a conversational surface. `/llm` shows optional local-understanding settings; this recording downloads no model and makes no claim that model inference ran.
+`/btw` provides typed local guidance in a conversational surface. `/llm` shows optional local-understanding settings; this recording downloads no model and makes no claim that model inference ran.
 
 <img alt="Ask and local-understanding settings" src="../assets/readme/ask.gif" width="960">
 

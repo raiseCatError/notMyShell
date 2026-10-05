@@ -86,14 +86,27 @@ export class LiveSandbox {
 
   /** A mux's outer PTY can exit before its frontend finishes journaling. */
   private sandboxProcesses: number[] = [];
+  private ownershipProbes: {elapsedMs: number; status: number | null; error?: string; pids: number[]}[] = [];
 
   private hasSandboxProcesses(): boolean {
     // cwd is an open reference too: this catches detached helpers and writers
     // between writes, unlike checking for only an open journal file.
+    const started = Date.now();
     const result = spawnSync('lsof', ['-t', '+D', this.root], {encoding: 'utf8', timeout: 2000});
-    if (result.error) throw result.error;
+    const errorCode = (result.error as NodeJS.ErrnoException | undefined)?.code;
+    const pids = (result.stdout ?? '').split('\n').map(Number).filter(pid => pid > 0 && pid !== process.pid);
+    this.ownershipProbes.push({elapsedMs: Date.now() - started, status: result.status, error: errorCode, pids});
+    if (this.ownershipProbes.length > 8) this.ownershipProbes.shift();
+    if (result.error) {
+      // A timed-out scan has not established that owners are gone. Keep
+      // polling within disposal's existing ten-second budget; only a completed
+      // scan with no owners may succeed. Other inspection errors still fail.
+      if (errorCode === 'ETIMEDOUT') return true;
+      result.error.message += ` (sandbox ownership probe: ${Date.now() - started}ms; root=${this.root}; status=${result.status}; signal=${result.signal})`;
+      throw result.error;
+    }
     if (result.status !== 0 && result.status !== 1) throw new Error('could not inspect sandbox process ownership');
-    this.sandboxProcesses = result.stdout.split('\n').map(Number).filter(pid => pid > 0 && pid !== process.pid);
+    this.sandboxProcesses = pids;
     return this.sandboxProcesses.length > 0;
   }
 
@@ -108,11 +121,33 @@ export class LiveSandbox {
       // while it is removed. A SIGKILLed service leaves a stale socket file, so
       // the condition is "nothing accepts connections", not "no socket files".
       await until(async () => !(await this.anyServiceListening()), 10000, 'service exit');
-      await until(() => !this.hasSandboxProcesses(), 10000, () => {
+      await until(async () => {
+        if (!this.hasSandboxProcesses()) return true;
+        // A frontend can die while its detached service is still importing.
+        // That service may start listening after the initial socket checks.
+        // Revisit its normal session/socket lifecycle inside the same budget;
+        // do not mistake a newly listening idle service for a finished owner.
+        for (const session of await this.sessions()) { try { process.kill(session.pid, 'SIGKILL'); } catch {} }
+        await this.anyServiceListening();
+        return false;
+      }, 10000, () => {
         const details = spawnSync('ps', ['-o', 'pid=,ppid=,command=', '-p', this.sandboxProcesses.join(',')],
           {encoding: 'utf8', timeout: 2000}).stdout.trim();
         return `sandbox frontends and helpers to finish: ${details}`;
       });
+    } catch (error) {
+      // Preserve the failing assertion/deadline. Inspect only this sandbox's
+      // recorded owners; an empty or failed ps result must not imply cleanup.
+      const pids = [...new Set([...this.sandboxProcesses, ...this.frontends.map(frontend => frontend.pty.pid)])];
+      const state = pids.length ? spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', pids.join(',')],
+        {encoding: 'utf8', timeout: 2000}) : undefined;
+      let sockets: string[] | undefined;
+      try { sockets = readdirSync(this.runtime).filter(name => name.endsWith('.sock')); } catch { /* Preserve the original failure. */ }
+      if (error instanceof Error) error.message += `; ownership probes=${JSON.stringify(this.ownershipProbes)}; process state=${JSON.stringify({
+        pids, alive: pids.filter(processAlive), status: state?.status, error: state?.error?.message, output: state?.stdout?.trim(),
+        sockets,
+      })}`;
+      throw error;
     } finally {
       rmSync(this.root, {recursive: true, force: true, maxRetries: 5, retryDelay: 100});
     }
@@ -132,8 +167,17 @@ export class Frontend {
   get mark(): number { return this.output.length; }
 
   async waitFor(pattern: RegExp, from = 0, timeoutMs = 20000): Promise<void> {
-    await until(() => pattern.test(strip(this.output.slice(from))), timeoutMs,
-      () => `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
+    const started = Date.now();
+    try {
+      await until(() => pattern.test(strip(this.output.slice(from))), timeoutMs,
+        () => `${pattern}; got:\n${strip(this.output.slice(from)).slice(-1500)}`);
+    } catch (error) {
+      const state = spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', String(this.pty.pid)], {encoding: 'utf8', timeout: 2000});
+      if (error instanceof Error) error.message += `; frontend=${JSON.stringify({pid: this.pty.pid, elapsedMs: Date.now() - started,
+        exitCode: this.exitCode, outputBytes: this.output.length, alive: processAlive(this.pty.pid),
+        state: state.stdout?.trim(), stateStatus: state.status, stateError: state.error?.message})}`;
+      throw error;
+    }
   }
 
   async run(command: string, expect: RegExp, {completion = true} = {}): Promise<void> {

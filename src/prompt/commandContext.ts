@@ -1,4 +1,5 @@
-import {readFile} from 'node:fs/promises';
+import {readContextMetadata} from '../context/trustedServices.js';
+import {delimiter, isAbsolute} from 'node:path';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import type {ToolchainId} from '../shell/ShellContext.js';
@@ -56,10 +57,10 @@ export function matchesCommand(triggers: readonly string[], words: readonly stri
 
 /** Current kubectl context from the first kubeconfig that names one. Reads files only. */
 export async function readKubeContext(env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<string | undefined> {
-  const files = env.KUBECONFIG ? env.KUBECONFIG.split(':').filter(Boolean) : [join(home, '.kube', 'config')];
+  const files = env.KUBECONFIG ? env.KUBECONFIG.split(delimiter).filter(isAbsolute).slice(0, 16) : [join(home, '.kube', 'config')];
   for (const file of files) {
     try {
-      const match = /^current-context:[ \t]*(['"]?)(.*?)\1[ \t]*$/mu.exec(await readFile(file, 'utf8'));
+      const match = /^current-context:[ \t]*(['"]?)(.*?)\1[ \t]*$/mu.exec((await readContextMetadata(file) ?? ''));
       if (match?.[2]) return match[2];
     } catch {
       // Missing or unreadable kubeconfig files contribute nothing.
@@ -73,7 +74,7 @@ export async function readDockerContext(env: NodeJS.ProcessEnv = process.env, ho
   if (env.DOCKER_CONTEXT) return env.DOCKER_CONTEXT;
   if (env.DOCKER_HOST) return env.DOCKER_HOST;
   try {
-    const config = JSON.parse(await readFile(join(env.DOCKER_CONFIG ?? join(home, '.docker'), 'config.json'), 'utf8')) as unknown;
+    const config = JSON.parse((await readContextMetadata(join(env.DOCKER_CONFIG ?? join(home, '.docker'), 'config.json')) ?? '')) as unknown;
     const current = typeof config === 'object' && config !== null ? (config as {currentContext?: unknown}).currentContext : undefined;
     if (typeof current === 'string' && current) return current;
   } catch {
@@ -99,6 +100,12 @@ export class CommandContextCache {
     private readonly maxAgeMs = 5000,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** Render-safe access: never refreshes, even after TTL expiry. */
+  peek(id: CommandContextId): string | undefined { return this.values.get(id)?.value; }
+
+  /** Core lifecycle/editor demand, outside the renderer. */
+  request(id: CommandContextId): void { this.get(id); }
 
   get(id: CommandContextId): string | undefined {
     const cached = this.values.get(id);

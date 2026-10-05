@@ -153,4 +153,4 @@ NMSh's core experience requires:
 
 The UI may feel intelligent through deterministic local logic — semantic highlighting, output classification, factual timeline rows — but none of it involves inference or generation.
 
-`/ask` provides local typed guidance and actions. Optional local understanding and agent integrations are separate from command execution. Normal NMSh operation remains fully functional offline.
+`/btw` provides local typed guidance and actions. Optional local understanding and agent integrations are separate from command execution. Normal NMSh operation remains fully functional offline.

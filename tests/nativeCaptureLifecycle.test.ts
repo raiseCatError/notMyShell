@@ -94,10 +94,20 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
   const module = new URL(configured ? '../src/shell/ConfiguredCompletion.ts' : '../src/shell/CompletionService.ts', import.meta.url).href;
   const type = configured ? 'ConfiguredCompletionSource' : 'NativeCompletionSource';
   const prefix = configured ? 'nmsh-completion-' : 'nmsh-capture-';
-  const program = `import {${type}} from ${JSON.stringify(module)}; await new ${type}().query({buffer:'g',cwd:${JSON.stringify(root)}},new AbortController().signal);`;
+  const program = `import {${type}} from ${JSON.stringify(module)};
+    process.stdout.write('OWNER_LOADED\\n');
+    await new ${type}().query({buffer:'g',cwd:${JSON.stringify(root)}},new AbortController().signal);`;
+  const startedAt = Date.now();
   const owner = spawn(process.execPath, ['--import=tsx', '--input-type=module', '-e', program], {
-    env: {...process.env, HOME: root, FPATH: root, TMPDIR: root}, stdio: 'ignore', detached: true,
+    env: {...process.env, HOME: root, FPATH: root, TMPDIR: root}, stdio: ['ignore', 'pipe', 'pipe'], detached: true,
   });
+  let loadedAt: number | undefined;
+  let ownerOutput = '', ownerError = '';
+  owner.stdout!.on('data', data => {
+    ownerOutput = (ownerOutput + String(data)).slice(-4096);
+    if (loadedAt === undefined && ownerOutput.includes('OWNER_LOADED')) loadedAt = Date.now();
+  });
+  owner.stderr!.on('data', data => { ownerError = (ownerError + String(data)).slice(-4096); });
   let inner = 0;
   try {
     let transport = '';
@@ -111,8 +121,28 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
     owner.kill('SIGKILL');
     // With the frontend gone, the helper cleans up on its own startup deadline (1.5 s in capture.zsh and the configured
     // helper); the window is that deadline plus scheduling margin for a loaded machine running the suite in parallel.
-    await until(() => !existsSync(transport) && !processAlive(inner), HELPER_DEADLINE_MS + 6500, 'helper cleanup without frontend timers');
+    const killedAt = Date.now();
+    try {
+      await until(() => !existsSync(transport) && !processAlive(inner), HELPER_DEADLINE_MS + 6500, 'helper cleanup without frontend timers');
+    } catch (error) {
+      // Failure-only diagnostics distinguish an unreaped zombie from a live
+      // helper or a leftover transport, without weakening the cleanup deadline.
+      const state = {elapsedMs: Date.now() - killedAt, transportExists: existsSync(transport), innerAlive: processAlive(inner)};
+      const processState = spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', String(inner)], {encoding: 'utf8', timeout: 2000});
+      if (error instanceof Error) error.message += `; ${JSON.stringify(state)}; inner process: ${processState.stdout?.trim() || 'unavailable'}`;
+      throw error;
+    }
     await until(() => groupEnded(inner), 4000, 'completion descendants after frontend death');
+  } catch (error) {
+    const state = spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', [owner.pid, inner].filter(pid => pid && pid > 0).join(',')],
+      {encoding: 'utf8', timeout: 2000});
+    const transports = readdirSync(root).filter(name => name.startsWith(prefix)).map(name => ({name,
+      pidFile: existsSync(join(root, name, 'pid')), readyFile: existsSync(join(root, name, 'ready'))}));
+    if (error instanceof Error) error.message += `; owner=${JSON.stringify({pid: owner.pid, elapsedMs: Date.now() - startedAt,
+      loadedAfterMs: loadedAt === undefined ? null : loadedAt - startedAt, alive: owner.pid ? processAlive(owner.pid) : false,
+      exitCode: owner.exitCode, signalCode: owner.signalCode, stdout: ownerOutput, stderr: ownerError, transports,
+      processState: state.stdout?.trim(), processStateStatus: state.status, processStateError: state.error?.message})}`;
+    throw error;
   } finally {
     if (owner.pid) { try { process.kill(-owner.pid, 'SIGKILL'); } catch {} }
     if (inner) { try { process.kill(-inner, 'SIGKILL'); } catch {} }

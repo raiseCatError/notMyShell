@@ -1,14 +1,16 @@
-import {execFile} from 'node:child_process';
+import type {ContextFacts} from '../context/facts.js';
+import {runContextGit} from '../context/trustedServices.js';
 import {access, readdir} from 'node:fs/promises';
 import {basename, normalize} from 'node:path';
 import {homedir} from 'node:os';
-import {promisify} from 'node:util';
 import type {LocalDiscoverySnapshot} from '../tools/localDiscovery.js';
 
-const execFileAsync = promisify(execFile);
 
 export interface PromptContext {
   cwd: string;
+  home?: string;
+  /** Policy-bearing resolved facts override legacy fields without collecting on render. */
+  facts?: ContextFacts;
   project: string;
   /** Repository top level when cwd is inside one; the path display keeps its name whole. */
   root?: string;
@@ -69,16 +71,7 @@ export interface GitProbe {
   run(cwd: string, args: string[]): Promise<string>;
 }
 
-const systemGitProbe: GitProbe = {
-  async run(cwd, args) {
-    const {stdout} = await execFileAsync('git', ['-C', cwd, ...args], {
-      encoding: 'utf8',
-      timeout: 2000,
-      maxBuffer: 1024 * 1024,
-    });
-    return stdout.trim();
-  },
-};
+const systemGitProbe: GitProbe = {run: runContextGit};
 
 const CONFLICT_CODES = new Set(['DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU']);
 

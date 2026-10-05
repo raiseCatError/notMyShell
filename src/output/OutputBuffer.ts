@@ -315,17 +315,17 @@ export class OutputBuffer {
    * user's own fold choices apply as for any block. While a shell command is
    * running, the conversation is added as plain rows instead.
    */
-  addAskInteraction(request: string, turns: readonly RecordedAskTurn[]): void {
+  addAskInteraction(request: string, turns: readonly RecordedAskTurn[], command: '/btw' | '/ask' = '/btw'): void {
     const body = turns.length ? turns : [{role: 'ask' as const, text: 'Closed without an answer.'}];
     if (this.active) {
-      this.addFrontendInteraction(`/ask ${request}`, body.map(turn => turn.text.split('\n').map((line, index) => `${index === 0 ? (turn.role === 'you' ? 'You   ' : 'Ask   ') : '      '}${line}`).join('\n')).join('\n'), '');
+      this.addFrontendInteraction(`${command} ${request}`, body.map(turn => turn.text.split('\n').map((line, index) => `${index === 0 ? (turn.role === 'you' ? 'You   ' : 'Ask   ') : '      '}${line}`).join('\n')).join('\n'), '');
       return;
     }
     this.parser.ensureLineBoundary();
     if (this.parser.completedCount() > 0) this.visualGaps.add(this.parser.completedCount());
     const startId = this.parser.completedCount();
     this.lineTypes.set(startId, 'metadata');
-    this.parser.addLine(`${GLYPHS.prompt} /ask ${request}`, foreground(UI_COLORS.command));
+    this.parser.addLine(`${GLYPHS.prompt} ${command} ${request}`, foreground(UI_COLORS.command));
     const outputStartId = this.parser.completedCount();
     const plain: string[] = [];
     // Compact exchanges: a role column, then the turn's own lines; a blank row separates exchanges.
@@ -339,7 +339,7 @@ export class OutputBuffer {
       });
     });
     const endId = this.parser.completedCount();
-    this.completed.unshift({command: `/ask ${request}`, output: plain.join('\n'), lifecycleText: '', exitCode: 0, startId, outputStartId, endId,
+    this.completed.unshift({command: `${command} ${request}`, output: plain.join('\n'), lifecycleText: '', exitCode: 0, startId, outputStartId, endId,
       expanded: !shouldFoldAsk(this.outputFolding, body), frontend: 'ask', ask: {version: 1, turns: body.map(turn => ({role: turn.role, text: turn.text}))}});
   }
 

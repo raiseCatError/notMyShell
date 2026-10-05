@@ -53,7 +53,7 @@ test('normalization: older configs gain the module at its default; invalid condi
 
 test('Settings and Setup Cat share the same Default shell and Show current shell rows', () => {
   const row = SETTINGS_ROWS.find(item => item.id === 'showShell')!;
-  assert.equal(settingsRowValue(row, config()), 'When different');
+  assert.equal(settingsRowValue(row, config()), 'When not default');
   const next = row.control === 'enum' ? row.select(config(), 1) : config();
   assert.equal(shellModuleVisibility(next), 'always');
   const shell = SETUP_SECTIONS.find(section => section.id === 'shell')!;

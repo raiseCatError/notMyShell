@@ -1,3 +1,7 @@
+import {railNeedsPromptConversion, railPreviewConfiguration} from '../prompt/railLayout.js';
+import {prepareRail, paintRailComposition, railCompositionPreview, type PreparedRail} from '../prompt/railComposition.js';
+import {routeModule} from '../context/surfaceRouter.js';
+import {promptFacts, moduleFactContext, updateFact, factAllowed} from '../context/facts.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {presentationClock} from '../motion/PresentationClock.js';
 import {EffectState, applyEffect, effectRegion} from '../motion/effects.js';
@@ -233,7 +237,7 @@ import {CAPABILITIES, modelInventory, resolveModelIntent, resolveWithInterpretat
 import {createProvidersOverview, providersOverviewKey, renderProvidersOverview, type ProvidersOverviewState} from '../providers/ProvidersOverview.js';
 import {InstallProvenance} from '../tools/InstallProvenance.js';
 import {PathClassifier, type CommandClassifier} from '../shell/PathClassifier.js';
-import {createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
+import {applyShellIndicatorAction, createShellPanel, renderShellPanel, shellPanelKey, type ShellPanelState} from '../shell/ShellPanel.js';
 import {detectPlatform, type PlatformInfo} from '../host/platform.js';
 import {createImageOverlay, fitCells, pngSize, selectImageProtocol, type ImageOverlay, type ImageProtocol, type ImageSize} from '../presentation/ImageSurface.js';
 import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentReport} from '../shell/ShellEnvironment.js';
@@ -569,7 +573,9 @@ export class TerminalApp {
 
   /** The editor's width: the terminal width less any Keep Awake input reservation. */
   private inputColumns(columns: number): number {
-    return Math.max(1, columns - this.awakeInputReserve(columns));
+    const rail = this.preparedRail(columns).presentation;
+    const available = rail.rows ? rail.editorColumns : columns;
+    return Math.max(1, available - this.awakeInputReserve(columns));
   }
 
   /** Resolves this frame's slot against real composer geometry; the saved preference never changes. */
@@ -1083,6 +1089,7 @@ export class TerminalApp {
       const before = {text: this.editor.text, index: this.editor.displayCursorIndex};
       this.handleKey(key);
       this.noteCaretTravel(before);
+      this.requestCommandContexts();
     }
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
@@ -1095,7 +1102,7 @@ export class TerminalApp {
   private noteCaretTravel(before: {text: string; index: number}): void {
     if (this.editor.text !== before.text || this.editor.displayCursorIndex === before.index || this.settingsPanelActive || this.passthrough) return;
     const columns = this.dimensions().columns;
-    const prefix = this.inputFirstLinePrefix(columns);
+    const prefix = this.railInputPrefix(columns);
     const at = (index: number) => layoutInput(this.editor.displayText, index, this.inputColumns(columns), Number.POSITIVE_INFINITY, prefix);
     const from = at(before.index), to = at(this.editor.displayCursorIndex);
     if (from.caretRow !== to.caretRow) return;
@@ -1362,6 +1369,14 @@ export class TerminalApp {
         this.render();
         return;
       }
+      if (this.promptPanelState.step === 'railInsideConfirm' && (key.kind === 'escape' || key.kind === 'interrupt')) {
+        const state = this.promptPanelState;
+        state.step = state.railConfirmReturn?.step ?? 'appearance';
+        state.selectedIndex = state.railConfirmReturn?.selectedIndex ?? 0;
+        state.railConfirmReturn = undefined;
+        this.render();
+        return;
+      }
       if (this.promptPanelState.step === 'starshipConfirm' && (key.kind === 'escape' || key.kind === 'interrupt')) {
         this.promptPanelState.step = 'starshipModules';
         this.promptPanelState.starshipProposal = undefined;
@@ -1495,6 +1510,10 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.shellPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'switch') { this.shellPanel = undefined; void this.switchShell(action.shell, '/shell'); }
       else if (action?.kind === 'install') void this.installShell(action.shell, action.install);
+      else if (action?.kind === 'indicatorVisibility' || action?.kind === 'indicatorSide') {
+        this.updateConfiguration(configuration => applyShellIndicatorAction(configuration, action));
+        this.shellPanel.promptConfiguration = this.promptConfiguration;
+      }
       else if (action?.kind === 'default') {
         this.updateConfiguration(configuration => { configuration.shellBackend = action.shell; });
         this.shellPanel.defaultShell = action.shell;
@@ -1822,7 +1841,7 @@ export class TerminalApp {
     } else if (key.kind === 'up' && isSlash && !searchSurface && suggestions.length > 0 && this.leaveSlashMenu()) {
       // Left the slash menu; fall through to history recall below.
       const {columns} = this.dimensions();
-      if (!this.editor.moveUp(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('previous');
+      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'complete') {
       const action = tabCompletionAction(this.shellSuggestions.length, isSlash ? suggestions.length : 0);
       if (action === 'shell-suggestion') {
@@ -1922,18 +1941,18 @@ export class TerminalApp {
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
     else if (key.kind === 'up') {
       const {columns} = this.dimensions();
-      if (!this.editor.moveUp(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('previous');
+      if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
-      this.editor.selectUp(columns, this.inputFirstLinePrefix(columns));
+      this.editor.selectUp(this.inputColumns(columns), this.railInputPrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
       // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (and a second ↓ focuses it).
       if (!this.editor.text && !this.composerHistory.active && this.agents.sessions.length && !this.running) { this.revealShelf(); this.render(); return; }
-      if (!this.editor.moveDown(columns, this.inputFirstLinePrefix(columns)) && !this.running) this.recallHistory('next');
+      if (!this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('next');
     } else if (key.kind === 'selectDown') {
       const {columns} = this.dimensions();
-      this.editor.selectDown(columns, this.inputFirstLinePrefix(columns));
+      this.editor.selectDown(this.inputColumns(columns), this.railInputPrefix(columns));
     }
     else if (key.kind === 'lineHome') this.editor.lineHome();
     else if (key.kind === 'selectLineHome') this.editor.selectLineHome();
@@ -2286,7 +2305,7 @@ export class TerminalApp {
       } else await this.openDirectoryPicker(slash.query);
     }
     else if (slash.kind === 'palette') this.openPalette();
-    else if (slash.kind === 'ask') this.openAsk(slash.request);
+    else if (slash.kind === 'ask') this.openAsk(slash.request, /^\/ask(?:\s|$)/u.test(command) ? '/ask' : '/btw');
     else if (slash.kind === 'providers') this.openProvidersOverview(slash.family);
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else if (slash.kind === 'doctor') void this.openDoctor();
@@ -3022,7 +3041,7 @@ export class TerminalApp {
 
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
-    const wantsDiscovery = this.promptConfiguration.modules.some(module => module.id === 'discoveredTools' && module.visible);
+    const wantsDiscovery = this.promptConfiguration.modules.some(module => module.id === 'discoveredTools' && routeModule(module) !== 'hidden');
     const [context, pathAbbreviations] = await Promise.all([
       resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled,
         ...(wantsDiscovery ? {discovery: await discoverLocalExecutables()} : {})}),
@@ -3031,7 +3050,9 @@ export class TerminalApp {
     if (generation !== this.contextGeneration || this.stopped) return;
     // Semantic Echo when Git conflicts become visible (not on every redraw while they remain).
     if ((context.git?.conflicts ?? 0) > 0 && !(this.context.git?.conflicts ?? 0)) this.transitions.echo('conflict', Date.now());
-    this.context = {...context, pathAbbreviations, exitStatus: this.context.exitStatus ?? 0};
+    this.context = {...context, home: homedir(), pathAbbreviations, exitStatus: this.context.exitStatus ?? 0};
+    this.context.facts = promptFacts(this.context, Date.now());
+    this.requestCommandContexts();
     await this.refreshProviderPrompt();
     this.render();
   }
@@ -3042,27 +3063,65 @@ export class TerminalApp {
    */
   private promptContext(command = this.editor.text): PromptContext {
     const words = commandWords(command);
-    const wanted = (id: CommandContextId) => this.promptConfiguration.modules.some(module => module.id === id && module.visible
+    const wanted = (id: CommandContextId) => this.promptConfiguration.modules.some(module => module.id === id && routeModule(module) !== 'hidden'
       && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
-    const kubeContext = wanted('kubeContext') ? this.commandContexts.get('kubeContext') : undefined;
-    const dockerContext = wanted('dockerContext') ? this.commandContexts.get('dockerContext') : undefined;
+    const kubeContext = wanted('kubeContext') ? this.commandContexts.peek('kubeContext') : undefined;
+    const dockerContext = wanted('dockerContext') ? this.commandContexts.peek('dockerContext') : undefined;
     // Read live, so the current-shell module follows /shell and the default-shell setting immediately.
     const shell = {current: this.shellId, differs: this.shellId !== this.promptConfiguration.shellBackend};
-    return {...this.context, commandWords: words, shell, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
+    const live = {...this.context, commandWords: words, shell, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
+    // Workspace facts retain collection time; cheap live shell/exit and cache values
+    // are adapted in memory, without asking any reader to run.
+    const facts = promptFacts({...live, facts: undefined});
+    return {...live, facts: {...this.context.facts, exitStatus: updateFact(facts.exitStatus, this.context.facts?.exitStatus), shell: updateFact(facts.shell, this.context.facts?.shell),
+      kubeContext: updateFact(facts.kubeContext, this.context.facts?.kubeContext), dockerContext: updateFact(facts.dockerContext, this.context.facts?.dockerContext)}};
+  }
+
+  private requestCommandContexts(): void {
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh') return;
+    const words = commandWords(this.editor.text);
+    for (const id of ['kubeContext', 'dockerContext'] as const) {
+      const wanted = this.promptConfiguration.modules.some(module => module.id === id && routeModule(module) !== 'hidden'
+        && (routeModule(module) !== 'contextRail' || this.promptConfiguration.contextRail.mode !== 'off')
+        && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
+      if (wanted) this.commandContexts.request(id);
+    }
+  }
+
+  private renderRail?: {columns: number; prepared: PreparedRail};
+
+  private preparedRail(columns: number): PreparedRail {
+    if (this.renderRail?.columns === columns) return this.renderRail.prepared;
+    const configuration = this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh'
+      ? {...this.promptConfiguration, contextRail: {...this.promptConfiguration.contextRail, mode: 'off' as const}} : this.promptConfiguration;
+    return prepareRail(this.promptContext(), columns, configuration);
+  }
+
+  private contextRailRows(columns: number): string[] {
+    if (this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh') return [];
+    return this.preparedRail(columns).content;
   }
 
   /** Prompt None submissions genuinely have no prompt snapshot; history never substitutes Native for them. */
-  private historicalContext(cwd: string, context: {project?: string; branch?: string}, command: string): HistoricalContextSnapshot {
+  private historicalContext(cwd: string, context: Pick<PromptContext, 'project' | 'branch' | 'facts'>, command: string): HistoricalContextSnapshot {
     const prompt = this.currentPromptSnapshot(command);
-    return {cwd, project: context.project, branch: context.branch, ...(prompt ? {prompt} : this.effectivePromptProvider === 'none' ? {promptless: true as const} : {})};
+    const legacy = {cwd, project: context.project, branch: context.branch, facts: context.facts};
+    const metadata = moduleFactContext(legacy, promptFacts(legacy), ['cwd', 'project', 'branch'], 'snapshot');
+    return {cwd: metadata.cwd, project: metadata.project, branch: metadata.branch, ...(prompt ? {prompt} : this.effectivePromptProvider === 'none' ? {promptless: true as const} : {})};
   }
 
   private currentPromptSnapshot(command?: string): PromptSnapshot | undefined {
     if (this.effectivePromptProvider === 'none') return undefined;
     if (this.effectivePromptProvider !== 'nmsh' && this.externalPrompt) {
+      const context = this.promptContext(command);
+      const facts = promptFacts(context);
+      const metadata = moduleFactContext(context, facts, ['cwd', 'branch'], 'snapshot');
+      // External output has no fact-to-segment provenance. Retain it only when
+      // all input facts may be persisted; otherwise fail closed on presentation.
+      const persist = Object.values(facts).every(fact => !fact || factAllowed(fact, 'snapshot'));
       return {provider: this.effectivePromptProvider, layout: this.promptConfiguration.composerLayout,
-        segments: structuredClone(this.externalPrompt.segments), cwd: this.context.cwd,
-        ...(this.context.branch ? {branch: this.context.branch} : {})};
+        segments: persist ? structuredClone(this.externalPrompt.segments) : [], cwd: metadata.cwd,
+        ...(metadata.branch ? {branch: metadata.branch} : {})};
     }
     return nativePromptSnapshot(this.promptContext(command), this.promptConfiguration);
   }
@@ -3384,6 +3443,15 @@ export class TerminalApp {
         state.step = 'installResult';
         state.selectedIndex = 0;
       }
+    } else if (state.step === 'railInsideConfirm') {
+      const confirmed = state.selectedIndex === 0;
+      state.step = state.railConfirmReturn?.step ?? 'appearance';
+      state.selectedIndex = state.railConfirmReturn?.selectedIndex ?? 0;
+      state.railConfirmReturn = undefined;
+      if (confirmed) {
+        state.draft = railPreviewConfiguration(state.draft);
+        await this.savePromptSettings();
+      }
     } else if (state.step === 'layout') {
       applyLayoutChoice(state.draft, state.selectedIndex);
       if (state.draft.provider === 'nmsh' || state.draft.provider === 'none') { state.step = 'appearance'; state.selectedIndex = 0; }
@@ -3405,6 +3473,13 @@ export class TerminalApp {
   private async savePromptSettings(): Promise<void> {
     const state = this.promptPanelState;
     if (!state) return;
+    if (railNeedsPromptConversion(state.draft)) {
+      state.railConfirmReturn = {step: state.step, selectedIndex: state.selectedIndex};
+      state.step = 'railInsideConfirm';
+      state.selectedIndex = 1;
+      this.render();
+      return;
+    }
     state.draft.onboardingComplete = true;
     try {
       savePromptConfiguration(state.draft, undefined, this.promptConfiguration);
@@ -3415,6 +3490,7 @@ export class TerminalApp {
       // Turning Rich Git on needs a status probe the last refresh may have skipped.
       if (state.saved?.nmsh.gitEnabled !== state.draft.nmsh.gitEnabled) void this.refreshContext(this.shellCwd);
       await this.refreshProviderPrompt();
+      this.requestCommandContexts();
       // refreshProviderPrompt already fell back to NMSh and saved that truthfully.
       if (this.externalPromptError && state.draft.provider !== 'nmsh') {
         this.output.addHistoryLine(`${ERROR}${providerLabel(state.draft.provider)} prompt failed; NMSh is active. ${this.externalPromptError}${RESET}`);
@@ -3432,7 +3508,22 @@ export class TerminalApp {
     const state = this.promptPanelState;
     if (!state) return [];
     const width = Math.max(1, columns - 4);
-    const previewConfig = structuredClone(state.draft);
+    const previewConfig = railPreviewConfiguration(state.draft);
+    if (state.step === 'railInsideConfirm' || state.step === 'appearance' && state.view === 'rail') {
+      const label = (text: string) => `  ${SECONDARY}${truncateAnsi(text, Math.max(1, width - 2))}${RESET}`;
+      const currentContent = prepareRail(this.promptContext(), width, previewConfig).content;
+      const current = railCompositionPreview(this.promptContext(), width, previewConfig);
+      const showcase = structuredClone(previewConfig);
+      // Synthetic facts exercise configured Rail modules without stealing Main or Right Context.
+      showcase.modules = showcase.modules.map(module => ({...module, visible: true}));
+      const sample = railCompositionPreview(moduleShowcaseContext(), width, showcase);
+      const empty = previewConfig.contextRail.mode === 'off' ? [label('Rail is Off')]
+        : [label('No visible Rail context'), label(previewConfig.contextRail.mode === 'always'
+          ? `Always reserves ${previewConfig.contextRail.rows} row${previewConfig.contextRail.rows === 1 ? '' : 's'}; module visibility still applies`
+          : 'Route modules to Rail in Modules; visibility conditions still apply')];
+      return [label('Current'), ...(currentContent.some(row => stripAnsi(row).trim()) ? current : [...empty, ...current]), label('Showcase'),
+        ...(sample.length ? sample : [label('Rail is Off')])];
+    }
     if (state.step === 'provider') previewConfig.provider = PROVIDER_ORDER[state.selectedIndex] ?? 'nmsh';
     if (state.step === 'starship') previewConfig.provider = 'starship';
     if (state.step === 'powerlevel10k') previewConfig.provider = 'powerlevel10k';
@@ -5531,7 +5622,8 @@ export class TerminalApp {
   private startTranscriptSettings(): void {
     const saved = structuredClone(this.promptConfiguration.transcript);
     const folding = this.promptConfiguration.outputFolding;
-    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved, folding: {draft: folding, saved: folding}};
+    this.transcriptPanelState = {selectedIndex: 0, draft: structuredClone(saved), saved, folding: {draft: folding, saved: folding},
+      presentation: {draft: this.promptConfiguration.transcriptPresentation, saved: this.promptConfiguration.transcriptPresentation}};
   }
 
   /** A representative history header: the live provider's identity over preview-only modules. */
@@ -5547,13 +5639,15 @@ export class TerminalApp {
     const state = this.transcriptPanelState;
     if (!state) return;
     const next = {...structuredClone(this.promptConfiguration), transcript: structuredClone(state.draft),
-      outputFolding: state.folding?.draft ?? this.promptConfiguration.outputFolding};
+      outputFolding: state.folding?.draft ?? this.promptConfiguration.outputFolding,
+      transcriptPresentation: state.presentation?.draft ?? this.promptConfiguration.transcriptPresentation};
     try {
       savePromptConfiguration(next, undefined, this.promptConfiguration);
       this.promptConfiguration = next;
       this.output.setTranscriptAppearance(next.transcript);
       this.output.setOutputFolding(next.outputFolding);
-    this.output.presenter.setTreatment(next.presentation);
+      this.output.presenter.setTreatment(next.presentation);
+      this.output.presenter.setLayout(next.transcriptPresentation);
       this.transcriptPanelState = undefined;
       this.output.addHistoryLine(`${SUCCESS}Transcript settings saved.${RESET}`);
     } catch (error) {
@@ -5700,7 +5794,7 @@ export class TerminalApp {
   /** One preview row per theme: the draft's geometry over synthetic preview-only modules. */
   private promptThemePreviews(columns: number, now = Date.now()): string[] {
     const state = this.promptPanelState;
-    if (!state || state.step !== 'appearance' || state.view === 'git') return [];
+    if (!state || state.step !== 'appearance' || state.view === 'git' || state.view === 'rail') return [];
     if (state.view === 'chroma') {
       // One row per palette: the showcase prompt in the draft style, theme and vibrance.
       const width = Math.max(1, columns - 20);
@@ -6862,7 +6956,7 @@ export class TerminalApp {
   }
 
   /** `/ask` and `/ask <request>` open the same Ask; with a request it is submitted at once. */
-  private openAsk(request: string): void {
+  private openAsk(request: string, command: '/btw' | '/ask' = '/btw'): void {
     this.panelOrigin = undefined;
     const parked = this.parkedAsk;
     this.parkedAsk = undefined;
@@ -6871,6 +6965,7 @@ export class TerminalApp {
     if (parked && !request) { parked.pending = undefined; this.askState = parked; return; }
     if (parked) this.recordAsk(parked);
     this.askState = createAskState();
+    this.askState.command = command;
     if (!request) {
       // Starters from strong facts only (a dirty repository, a recent command); nothing is guessed.
       const git = this.context.git;
@@ -7053,7 +7148,7 @@ export class TerminalApp {
       return;
     }
     if (action.kind === 'openFile') {
-      await this.openLocation('/ask', action.path, this.shellCwd);
+      await this.openLocation('/btw', action.path, this.shellCwd);
       finish(`Opened ${action.path.startsWith(`${homedir()}/`) ? `~${action.path.slice(homedir().length)}` : action.path} in ${this.hostActions().label}.`);
       state.referents = {...state.referents, file: action.path};
       return;
@@ -7162,7 +7257,7 @@ export class TerminalApp {
   /** Visible turns join the transcript only when "Record Ask in transcript" is on; referents and outcomes never do. */
   private recordAsk(state: AskState): void {
     const recorded = this.promptConfiguration.askRecord ? askTranscriptText(state, this.shellId) : undefined;
-    if (recorded) this.output.addAskInteraction(recorded.request, recorded.turns);
+    if (recorded) this.output.addAskInteraction(recorded.request, recorded.turns, state.command);
   }
 
   /** Command knowledge and identity for Ask: the completion catalog's facts and this shell's names; nothing is run. */
@@ -7310,7 +7405,7 @@ export class TerminalApp {
         for (const change of action.changes) { const next = applyTmuxChange(model, change); if (!('error' in next)) model = next; }
         saveTmuxModel(model);
         const written = writeTmuxManaged(model);
-        this.output.addFrontendInteraction('/ask', written.ok ? `tmux: ${action.label}. Saved in NMSh's managed tmux file${recordedHook('tmux') ? '; /tmux → R reloads a running server' : '; your tmux.conf does not load it yet: /tmux → Review & apply adds the one include after you review it'}.` : written.error, written.ok ? SUCCESS : ERROR);
+        this.output.addFrontendInteraction('/btw', written.ok ? `tmux: ${action.label}. Saved in NMSh's managed tmux file${recordedHook('tmux') ? '; /tmux → R reloads a running server' : '; your tmux.conf does not load it yet: /tmux → Review & apply adds the one include after you review it'}.` : written.error, written.ok ? SUCCESS : ERROR);
         return;
       }
       case 'themeBridge': {
@@ -7319,7 +7414,7 @@ export class TerminalApp {
           if (action.policy) bridge.policy = action.policy;
           for (const [target, setting] of Object.entries(action.targets ?? {})) bridge.targets[target as BridgeTargetId] = {mode: setting.mode, ...(setting.theme ? {theme: setting.theme} : {})};
         });
-        this.output.addFrontendInteraction('/ask', `Theme Bridge · ${action.label}. Tools that need a one-time include or cache build show it in /integrations.`, SUCCESS);
+        this.output.addFrontendInteraction('/btw', `Theme Bridge · ${action.label}. Tools that need a one-time include or cache build show it in /integrations.`, SUCCESS);
         return;
       }
       case 'switchShell': await this.switchShell(action.shell, `/shell ${action.shell}`); return;
@@ -7330,7 +7425,7 @@ export class TerminalApp {
         if (recipe.kind === 'recipe') await this.installShell(action.shell, recipe);
         return;
       }
-      case 'openFile': await this.openLocation('/ask', action.path, this.shellCwd); return;
+      case 'openFile': await this.openLocation('/btw', action.path, this.shellCwd); return;
       case 'read': {
         const argv = readArgv(action.command);
         const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
@@ -7514,7 +7609,7 @@ export class TerminalApp {
 
   private openShellPanel(select?: ShellId): void {
     this.panelOrigin = undefined;
-    this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker());
+    this.shellPanel = createShellPanel(shellAvailability(process.env, true), this.shellId, this.promptConfiguration.shellBackend, this.switchBlocker(), this.promptConfiguration);
     this.shellPanel.installFor = shell => shellInstall(shell, resolveCommand('brew'));
     if (select) this.shellPanel.selected = Math.max(0, this.shellPanel.shells.findIndex(item => item.adapter.id === select));
   }
@@ -7663,6 +7758,7 @@ export class TerminalApp {
       composerLayout: this.effectivePromptProvider === 'none' ? 'oneLine' : this.promptConfiguration.composerLayout,
       composerDividers: this.promptConfiguration.composerDividers,
       panelRows,
+      railPresentation: this.preparedRail(columns).presentation,
     };
     if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return planScreen(input);
     // Flow scrolled back: where the view starts decides how much of the composer
@@ -7685,6 +7781,8 @@ export class TerminalApp {
     const availableSuggestions = this.composerSuggestions();
     const panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns) : undefined;
     this.noteSelection(panelRows);
+    this.renderRail = undefined;
+    this.renderRail = {columns, prepared: this.preparedRail(columns)};
     const promptLine = this.currentPromptLine(columns);
     this.editor.ghost = this.suggestionGhost();
     const fullInput = this.layoutEditorInput(columns);
@@ -7819,6 +7917,7 @@ export class TerminalApp {
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
         case 'separator': return [this.composerEdgeRow('separator', plan, columns, now)];
+        case 'contextRail': case 'railGap': case 'railEdge': return [];
         case 'awake': return this.awakeRows(plan, columns);
         case 'status': return [this.statusStripRow(columns)];
         case 'notices': return this.noticeRows(columns);
@@ -7842,6 +7941,7 @@ export class TerminalApp {
     this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
     this.presentationFrame = {frame, plan};
     this.paintPresentation(Date.now());
+    this.renderRail = undefined;
     this.syncPresentationClock();
   }
 
@@ -7933,7 +8033,7 @@ export class TerminalApp {
       } else if (transition.kind === 'materialize') {
         const input = regions('input')[0];
         if (!input) continue;
-        const prefix = this.inputFirstLinePrefix(columns);
+        const prefix = this.railInputPrefix(columns);
         const at = (index: number) => layoutInput(this.editor.displayText, index, this.inputColumns(columns), Number.POSITIVE_INFINITY, prefix);
         const from = at(transition.from);
         const to = at(transition.to);
@@ -7944,7 +8044,7 @@ export class TerminalApp {
         const input = regions('input')[0];
         if (!input) continue;
         const caret = this.layoutEditorInput(columns, Math.max(1, input.height));
-        add(input.top + transition.row + (caret.caretRow - layoutInput(this.editor.displayText, this.editor.displayCursorIndex, this.inputColumns(columns), Number.POSITIVE_INFINITY, this.inputFirstLinePrefix(columns)).caretRow),
+        add(input.top + transition.row + (caret.caretRow - layoutInput(this.editor.displayText, this.editor.displayCursorIndex, this.inputColumns(columns), Number.POSITIVE_INFINITY, this.railInputPrefix(columns)).caretRow),
           transitionPaint.travel(transition.from, transition.to, t, transition.look));
       } else if (transition.kind === 'seal') {
         const transcript = plan.regions.find(region => region.kind === 'transcript');
@@ -8027,6 +8127,7 @@ export class TerminalApp {
         rows[region.top] = this.currentPromptLine(frame.columns ?? 80, now);
       }
     }
+    paintRailComposition(rows, plan, this.preparedRail(frame.columns ?? 80), this.promptContext(), frame.columns ?? 80, this.promptConfiguration, now);
     this.applySweep(rows, plan, frame.columns ?? 80);
     const active = this.effects.active;
     const region = active && effectRegion(plan, active.placement);
@@ -8122,6 +8223,8 @@ export class TerminalApp {
    */
   private oneLineRightContext(line: string, columns: number): string {
     if (this.promptConfiguration.composerLayout !== 'oneLine' || this.effectivePromptProvider !== 'nmsh') return '';
+    const rail = this.preparedRail(columns).presentation;
+    if (rail.rows && rail.relation === 'right') return '';
     const used = displayWidth(line);
     // Two cells of breathing room after the text, plus the caret cell.
     const right = buildRightContext(this.promptContext(), columns - used - 2, this.promptConfiguration);
@@ -8135,8 +8238,12 @@ export class TerminalApp {
       this.editor.displayCursorIndex,
       this.inputColumns(columns),
       maxVisibleRows,
-      this.inputFirstLinePrefix(columns),
+      this.railInputPrefix(columns),
     );
+  }
+
+  private railInputPrefix(columns: number): string | undefined {
+    return this.inputFirstLinePrefix(this.inputColumns(columns));
   }
 
   private dimensions(): {columns: number; rows: number} {

@@ -89,7 +89,7 @@ export const CONCEPTS: readonly Concept[] = [
     where: 'Chroma is in /chroma (or /prompt → Chroma); set Palette to Off there to turn it off.'},
   {id: 'transcript', label: 'Transcript', support: 'actionable', open: '/transcript', covers: ['/transcript', 'settings:Transcript', '/clear'],
     aliases: ['transcript', 'output history', 'command output', 'past output', 'scrollback', 'history divider', 'history dividers', 'dividers', 'prompt snapshots', 'history colors', 'history colours'],
-    description: 'The transcript is this session\'s commands and their raw output. /transcript sets historical prompts, history colors and dividers; /clear archives it and starts a fresh view.'},
+    description: 'The transcript is this session\'s commands and their raw output. /transcript chooses Normal or Chat presentation and sets historical prompts, history colors, dividers and folding; /clear archives it and starts a fresh view.'},
   {id: 'folding', label: 'Output folding', support: 'settings', open: '/setup transcript', where: 'Settings → Transcript → Output folding (Off, Smart or Always), also in /setup transcript',
     aliases: ['folding', 'output folding', 'fold output', 'fold', 'collapse output', 'collapsed output', 'collapsing', 'collapsing output', 'smart fold', 'smart folding',
       'hide noisy output', 'folded output', 'folds'],
@@ -117,7 +117,7 @@ export const CONCEPTS: readonly Concept[] = [
     description: 'Providers are what NMSh uses for prompt, welcome, suggestions, history, picker, directory navigation and local understanding. /providers shows, switches, detects and installs them.'},
   {id: 'shell', label: 'Shell', support: 'actionable', capability: 'shell.switch', open: '/shell', covers: ['/shell'],
     aliases: ['shell', 'shells', 'shell backend', 'backend', 'default shell'],
-    description: 'Each NMSh session runs a real zsh, Fish or Bash. /shell switches this session (NMSh stays open), installs missing shells, and D sets the default for new sessions.'},
+    description: 'Each NMSh session runs a real zsh, Fish or Bash. /shell switches this session (NMSh stays open), installs missing shells, and D sets the default for new sessions. It also controls visibility and Left/Right placement of the prompt shell indicator, shared with /prompt.'},
   {id: 'leave', label: 'Leave NMSh for an ordinary shell', support: 'actionable', capability: 'shell.leave', covers: ['/zsh', '/fish', '/bash', '/exit'],
     aliases: ['leave nmsh', 'exit nmsh', 'quit nmsh', 'ordinary shell', 'plain shell', 'regular shell'],
     description: '/zsh, /fish and /bash leave NMSh for an ordinary shell (the session waits; `nmsh` returns). /exit uses your default shell.'},
@@ -204,7 +204,7 @@ export const CONCEPTS: readonly Concept[] = [
     description: 'The palette (Ctrl+Shift+P or F1) searches every NMSh action.'},
   {id: 'help', label: 'Help and the guide', support: 'actionable', open: '/help', covers: ['/help', '/guide'],
     aliases: ['slash commands', 'nmsh commands', 'nmsh help'],
-    description: '/help lists NMSh commands; /ask what can you do lists what Ask does.'},
+    description: '/help lists NMSh commands; /btw what can you do lists what Ask does.'},
   {id: 'settings', label: 'Settings', support: 'actionable', capability: 'settings.open', open: '/settings', covers: ['/settings', '/config', 'settings:General'],
     aliases: ['settings', 'preferences'],
     description: 'Settings (/settings or /config) holds every NMSh option, grouped by area.'},
@@ -214,9 +214,9 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'welcome', label: 'Welcome', support: 'actionable', open: '/providers', where: 'Settings → Welcome, or /providers', covers: ['settings:Welcome', 'family:welcome'],
     aliases: ['welcome', 'welcome screen', 'startup logo', 'banner', 'fastfetch', 'neofetch', 'vespyr', 'startup screen'],
     description: 'The welcome is what a new session shows first: Vespyr (NMSh\'s own), fastfetch, neofetch, or none.'},
-  {id: 'ask', label: 'Ask', support: 'settings', open: '/settings', where: 'Settings → Ask (Record Ask in transcript, Local understanding)', covers: ['/ask', 'settings:Ask'],
+  {id: 'ask', label: 'Ask', support: 'settings', open: '/settings', where: 'Settings → Ask (Record Ask in transcript, Local understanding)', covers: ['/btw', '/ask', 'settings:Ask'],
     aliases: ['ask', 'record ask', 'ask settings', 'ask transcript'],
-    description: 'Ask answers plain-English questions about NMSh and proposes typed actions; it never runs arbitrary commands. Recording it in the transcript is optional.'},
+    description: '/btw answers plain-English questions about NMSh and proposes typed actions; it never runs arbitrary commands. Recording it in the transcript is optional.'},
   {id: 'understanding', label: 'Local understanding', support: 'actionable', capability: 'understanding.set', open: '/llm', covers: ['/llm'],
     aliases: ['local understanding', 'local model', 'language model', 'llm', 'qwen', 'ai model', 'local intelligence', 'local llm'],
     description: 'Local understanding is an optional small model that runs on this machine to help Ask and Smart Folding with loosely worded input. Auto (the default) asks it only when built-in understanding is unsure and a model is set up; nothing downloads without your Yes. Off never loads one.'},
@@ -315,7 +315,7 @@ export function conceptDestination(concept: Concept) {
 
 /**
  * The NMSh guide: sections over the same concept catalog, so /guide, /ask
- * guide and /ask help explain exactly what Ask knows. Every public concept
+ * guide and /btw help explain exactly what Ask knows. Every public concept
  * belongs to a section (a test enforces it); "Everything" lists them all.
  */
 export interface GuideSection {id: string; title: string; why: string; concepts: string[]; notes?: string[]}

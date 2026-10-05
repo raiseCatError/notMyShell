@@ -59,7 +59,7 @@ test('M toggles Mirror right side and the Modules screen says which', () => {
   assert.ok(handlePromptPanelKey({kind: 'text', value: 'M'} as Key, state));
   assert.equal(state.draft.nmsh.mirrorRight, false);
   assert.match(shown(), /Mirror right side: Off/u);
-  assert.ok(promptPanelControls(state).some(([key, label]) => key === 'M' && label === 'mirror right: Off'));
+  assert.ok(promptPanelControls(state).some(([key, label]) => key === 'M' && label === 'mirror: Off'));
   handlePromptPanelKey({kind: 'text', value: 'm'} as Key, state);
   assert.equal(state.draft.nmsh.mirrorRight, true);
 });

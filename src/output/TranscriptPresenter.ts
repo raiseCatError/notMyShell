@@ -173,7 +173,7 @@ export class TranscriptPresenter {
         if (cmd.frontend === 'ask') {
           // A recorded Ask conversation folds whole: the /ask request line above stays as its identity.
           const turns = cmd.ask?.turns.length ?? hiddenLines;
-          const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/ask\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
+          const label = cmd.ask ? askFoldLabel(cmd.ask.turns, cmd.command.replace(/^\/(?:btw|ask)\s*/u, '')) : `Ask conversation · ${turns} turn${turns === 1 ? '' : 's'} · Ctrl+O`;
           const commandIndex = completed.indexOf(cmd);
           if (!cmd.expanded) {
             const plain = foldHint(label, '›', width);

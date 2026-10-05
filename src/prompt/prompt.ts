@@ -1,3 +1,7 @@
+import {colorLevel} from '../presentation/capabilities.js';
+import {promptFacts, moduleFactContext, safeContextText, factAllowed} from '../context/facts.js';
+import {routeModule} from '../context/surfaceRouter.js';
+import {findTheme} from '../appearance/themeLibrary.js';
 import {accentedVariant, THEME_VARIANTS, type CatppuccinAccent, type ThemeVariant} from '../appearance/themeFamilies.js';
 import type {CustomTheme} from '../appearance/customTheme.js';
 import {paintDivider, treatmentAnimated, treatmentFor, type TreatmentSettings} from '../chroma/treatment.js';
@@ -10,8 +14,9 @@ import {neutralPromptText} from './powerline.js';
 import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
-  modulePlacement,
   type ContextModuleConfig,
+  CONTEXT_MODULE_REGISTRY,
+  type ContextSurface,
   type GitColorMode,
   type NativeIconMode,
   type NativePaletteId,
@@ -20,18 +25,17 @@ import {
 import {homedir} from 'node:os';
 import {COMMAND_CONTEXT_TRIGGERS, matchesCommand, TOOLCHAIN_TRIGGERS} from './commandContext.js';
 import {displayPath, PATH_DISPLAY_LEVELS} from './pathDisplay.js';
-import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape, type PromptChroma, type PromptStyle, type RenderExtras} from './powerline.js';
+import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape, type PromptChroma, type PromptStyle, type RenderExtras, type PowerlineBlock} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
 
 const RESET = '\u001B[0m';
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 /** NMSh brand/project lavender. */
 export const NMSH_BRAND_LAVENDER: RgbColor = {red: 166, green: 124, blue: 243};
 
 export const FADE_TAIL_GLYPHS = GLYPHS.powerlineFade;
 
 function safePromptText(value: string): string {
-  return value.replace(CONTROL_CHARACTERS, '�');
+  return safeContextText(value);
 }
 
 interface RenderedModule {
@@ -281,7 +285,7 @@ function colorFromHex(color: string | undefined, fallback: RgbColor): RgbColor {
 
 /** The cwd module's text at one shortening level of the central path policy. */
 function cwdText(context: PromptContext, level: number): string {
-  return safePromptText(displayPath({cwd: context.cwd, home: homedir(), root: context.root, abbreviations: context.pathAbbreviations}, level));
+  return safePromptText(displayPath({cwd: context.cwd, home: context.home ?? homedir(), root: context.root, abbreviations: context.pathAbbreviations}, level));
 }
 
 const TOOLCHAIN_LABELS: Record<ToolchainId, string> = {node: 'node', go: 'go', python: 'python', docker: 'docker'};
@@ -437,8 +441,15 @@ export function promptRenderExtras(configuration: PromptConfiguration, time = 0)
 }
 
 /** `pathLevel` shortens the cwd module (see PATH_DISPLAY_LEVELS); 0 is the full, width-independent form. */
-export function renderedModules(context: PromptContext, configuration: PromptConfiguration, pathLevel = 0): RenderedModule[] {
-  const eligible = configuration.modules.flatMap(module => moduleSegments(module, context, configuration.nmsh.icons, configuration.nmsh.gitEnabled, pathLevel)
+export function renderedModules(context: PromptContext, configuration: PromptConfiguration, pathLevel = 0,
+  surface: 'prompt' | 'contextRail' = 'prompt', purpose: 'display' | 'snapshot' = 'display'): RenderedModule[] {
+  const facts = promptFacts(context);
+  const eligible = configuration.modules.filter(module => {
+    const primary = facts[CONTEXT_MODULE_REGISTRY[module.id].fields[0]!];
+    if (!primary || !factAllowed(primary, purpose)) return false;
+    const target = routeModule(module);
+    return surface === 'contextRail' ? target === 'contextRail' : target === 'mainPrompt' || target === 'rightContext';
+  }).flatMap(module => moduleSegments(module, moduleFactContext(context, facts, CONTEXT_MODULE_REGISTRY[module.id].fields, purpose), configuration.nmsh.icons, configuration.nmsh.gitEnabled, pathLevel)
     .map(segment => ({...segment, module})));
 
   // The project block owns the brighter live identity when both location
@@ -465,19 +476,20 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
       ...(chroma ? {treatment: presentation} : {}),
       id: segment.module.id,
       role: segment.role,
-      text: segment.text,
+      text: safeContextText(segment.text),
       foreground: neutral ? neutralPromptText(fill) : custom ? colorFromHex(segment.module.foreground, colors.foreground) : colors.foreground,
       background: fill,
       ...(neutral ? {neutralText: true} : {}),
       ...(segment.compact ? {compact: true} : {}),
       ...(isGitStateRole(segment.role) ? richGit : {}),
-      ...(modulePlacement(segment.module) === 'right' ? {placement: 'right' as const} : {}),
+      ...(routeModule(segment.module) === 'rightContext' ? {placement: 'right' as const} : {}),
     };
   });
 }
 
 export function nativePromptSnapshot(context: PromptContext, configuration: PromptConfiguration): PromptSnapshot {
-  const modules = renderedModules(context, configuration);
+  const modules = renderedModules(context, configuration, 0, 'prompt', 'snapshot');
+  const snapshotContext = moduleFactContext(context, promptFacts(context), ['cwd', 'branch'], 'snapshot');
   const segments: PromptSegmentSnapshot[] = modules.map(module => ({
     text: module.text,
     role: module.role,
@@ -509,8 +521,8 @@ export function nativePromptSnapshot(context: PromptContext, configuration: Prom
     gap: configuration.nmsh.gapEnabled ? configuration.gap : 0,
     gapEnabled: configuration.nmsh.gapEnabled,
     spacing: configuration.spacing,
-    cwd: context.cwd,
-    ...(context.branch ? {branch: context.branch} : {}),
+    cwd: snapshotContext.cwd,
+    ...(snapshotContext.branch ? {branch: safeContextText(snapshotContext.branch)} : {}),
   };
 }
 
@@ -538,6 +550,11 @@ export function fitContextRow(modules: readonly RenderedModule[], width: number,
     blocks => renderPowerlineBlocks(blocks, gap, configuration.spacing, nmsh.endStyle, nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
       fade, nmsh.connectorFadeColors, nmsh.mirrorRight ? 'mirrored' : 'normal', extras));
   return {left, right};
+}
+
+/** Resolved Native surface parts for composition; no facts are collected here. */
+export function buildContextParts(context: PromptContext, width: number, configuration: PromptConfiguration, time = 0): ContextRowParts {
+  return fitContextRow(fittedModules(context, configuration, width), width, configuration, time);
 }
 
 /** Right-aligned context alone, for rows whose left side is the editor (one-line composer). */
@@ -595,6 +612,59 @@ export function buildContextLine(
   const fillWidth = Math.max(0, width - displayWidth(left) - displayWidth(rightPart));
   if (placement === 'composer') return rightPart ? `${left}${RESET}${' '.repeat(fillWidth)}${rightPart}` : `${left}${RESET}`;
   return `${left}${RESET}${divider(fillWidth)}${rightPart}`;
+}
+
+/** Resolve appearance through the existing semantic theme context, restoring it after a chosen-theme render. */
+export function buildContextRail(context: PromptContext, width: number, configuration: PromptConfiguration, time = 0): string[] {
+  const rail = configuration.contextRail;
+  if (configuration.provider !== 'nmsh' || rail.mode === 'off') return [];
+  const saved = themeContext();
+  const chosen = rail.theme === 'choose' ? findTheme(configuration.themes, rail.themeId)?.theme : undefined;
+  const draft: PromptConfiguration = {...configuration, nmsh: {...configuration.nmsh,
+    ...(rail.theme === 'choose' ? {palette: rail.palette ?? 'lavender'} : {}),
+    ...(rail.style !== 'followMain' ? {style: rail.style} : {})}};
+  if (rail.theme === 'choose') setThemeContext(draft.nmsh.accent, chosen ?? configuration.customTheme);
+  try {
+    const modules = renderedModules(context, draft, 0, 'contextRail');
+    if (!modules.length) return rail.mode === 'always' ? Array<string>(rail.rows).fill('') : [];
+    const groups = configuration.modules.map(module => modules.filter(segment => segment.id === module.id))
+      .filter(group => group.length).sort((a, b) => CONTEXT_MODULE_REGISTRY[b[0]!.id].priority - CONTEXT_MODULE_REGISTRY[a[0]!.id].priority);
+    const rows: RenderedModule[][] = Array.from({length: rail.rows}, () => []);
+    const compact = Array<boolean>(rail.rows).fill(false);
+    const nmsh = draft.nmsh;
+    const mirrored = rail.direction === 'mirrored';
+    const paintPhysical = (blocks: readonly PowerlineBlock[], tight: boolean) => renderPowerlineBlocks(blocks, tight ? 0 : nmsh.gapEnabled ? draft.gap : 0,
+      tight ? 0 : draft.spacing, nmsh.endStyle, tight ? false : nmsh.gapEnabled, nmsh.startStyle, nmsh.connector,
+      resolveConnectorFade(nmsh.connectorFade, nmsh.connector), nmsh.connectorFadeColors, mirrored ? 'mirrored' : 'normal', promptRenderExtras(draft, time));
+    const paint = (blocks: RenderedModule[], tight: boolean) => paintPhysical(mirrored ? [...blocks].reverse() : blocks, tight);
+    for (const group of groups) {
+      let placed = false;
+      for (let index = 0; index < rows.length; index += 1) {
+        const candidate = [...rows[index]!, ...group];
+        if (displayWidth(paint(candidate, compact[index]!)) <= width) { rows[index] = candidate; placed = true; break; }
+      }
+      if (!placed) for (let index = 0; index < rows.length; index += 1) {
+        const candidate = [...rows[index]!, ...group];
+        if (displayWidth(paint(candidate, true)) <= width) { rows[index] = candidate; compact[index] = true; placed = true; break; }
+      }
+      // Preserve the highest priority group even when its full text cannot fit.
+      if (!placed && rows.every(row => !row.length)) {
+        rows[0] = group;
+        compact[0] = true;
+      }
+    }
+    const paintedRows = rows.map((blocks, index) => {
+      if (!blocks.length || width <= 0) return '';
+      const painted = paint(blocks, compact[index]!);
+      if (displayWidth(painted) <= width) return painted;
+      if (mirrored) return fitRightPowerlineBlocks([...blocks].reverse(), width, fitted => paintPhysical(fitted, true));
+      return fitPowerlineBlocks(blocks, 0, 0, width, nmsh.endStyle, false,
+        nmsh.startStyle, nmsh.connector, resolveConnectorFade('off', nmsh.connector), nmsh.connectorFadeColors, promptRenderExtras(draft, time));
+    });
+    return colorLevel() === 'none' ? paintedRows.map(stripAnsi) : paintedRows;
+  } finally {
+    if (rail.theme === 'choose') setThemeContext(saved.accent, saved.custom);
+  }
 }
 
 /**
@@ -676,7 +746,7 @@ export function buildInlineContextPrefix(
   if (width <= displayWidth(GLYPHS.prompt) + 2) return `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}${RESET}`;
   const moduleWidth = Math.max(0, width - displayWidth(`${GLYPHS.prompt} `) - 1);
   // One-line: the prefix is the left prompt; right context sits at the end of the input row.
-  const leftOnly = {...configuration, modules: configuration.modules.filter(module => modulePlacement(module) === 'left')};
+  const leftOnly = {...configuration, modules: configuration.modules.filter(module => routeModule(module) === 'mainPrompt')};
   const modules = moduleWidth >= 8
     ? buildContextLine(context, moduleWidth, leftOnly, 'composer', time)
     : '';

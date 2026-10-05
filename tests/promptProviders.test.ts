@@ -379,7 +379,7 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
   assert.ok(rows.some(row => /○ Path +left +hidden/u.test(row)));
   assert.ok(rows.some(row => /› ● Exit status +right +‹ always ›/u.test(row)));
-  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · M mirror right: On · Enter/Esc done');
+  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P left/right · S surface · M mirror: On · Enter/Esc done');
   assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
   const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);
   try {

@@ -1,3 +1,4 @@
+import {verticalRailRows, type RailPresentation, type RailRow} from '../prompt/railLayout.js';
 import type {ComposerLayout, ComposerPosition, ContextPlacement} from '../prompt/configuration.js';
 import {calculateScreenLayout} from './layout.js';
 
@@ -34,7 +35,9 @@ export type RegionKind =
   /** The transcript find bar (query, match count, options); frontend chrome above the composer. */
   | 'find'
   /** Keep Awake's adjacent row (its own row, or the muted idle reminder): frontend chrome right next to the composer, never transcript. */
-  | 'awake';
+  | 'awake'
+  /** Live contextual modules attached to the composer, never transcript. */
+  | 'contextRail' | 'railGap' | 'railEdge';
 
 export interface Region {
   kind: RegionKind;
@@ -68,6 +71,9 @@ export interface ScreenPlanInput {
   viewStart?: number;
   /** Decorative rule rows around the composer; Off removes them from the geometry (default On). */
   composerDividers?: boolean;
+  /** Already resolved visible Rail demand; capped to two rows and available view space. */
+  contextRailRows?: number;
+  railPresentation?: RailPresentation;
 }
 
 export interface ScreenPlan {
@@ -92,6 +98,7 @@ export interface ScreenPlan {
   /** Where the active panel is anchored (meaningful while panelActive). */
   panelPosition: 'bottom' | 'top';
   /** Where this frame's Keep Awake accessory lives, when one is active (decided with the plan so every consumer agrees). */
+  rail?: {presentation: RailPresentation; slots: {top: number; index: number}[]; edgeRow: number; start: number; end: number};
   awake?: {slot: 'topEdge' | 'bottomEdge' | 'adjacentRow' | 'inputTrailing'; expandedOnEdge: boolean};
 }
 
@@ -116,6 +123,22 @@ export interface RegionHit {
 }
 
 export function planScreen(input: ScreenPlanInput): ScreenPlan {
+  if (input.railPresentation?.rows && input.panelRows === undefined) {
+    const base = planScreen({...input, railPresentation: undefined, contextRailRows: 0});
+    const composed = withRailPresentation(base, input.railPresentation);
+    if (input.composerPosition === 'flow' && input.detached) {
+      // Measure the complete group independently of viewport clipping. Scrolling
+      // the input offscreen must not resize the hidden shell's terminal.
+      const reference = planScreen({...input, detached: false, transcriptRows: 0, railPresentation: undefined, contextRailRows: 0});
+      const measured = withRailPresentation(reference, input.railPresentation);
+      const reserved = reference.ptyRows - measured.ptyRows;
+      return {...composed, ptyRows: measured.ptyRows, viewportRows: Math.max(1, base.viewportRows - reserved)};
+    }
+    return composed;
+  }
+  if (input.contextRailRows && input.panelRows === undefined) {
+    return withContextRail(planScreen({...input, contextRailRows: 0}), input.contextRailRows);
+  }
   const rows = Math.max(1, input.rows);
   const top = input.composerPosition === 'top';
   if (input.panelRows !== undefined) {
@@ -207,6 +230,98 @@ export function planScreen(input: ScreenPlanInput): ScreenPlan {
   ], {inputHeight: layout.inputHeight, suggestionCount: layout.suggestionCount, panelActive: false, composerPosition: 'bottom'});
 }
 
+/** Compile a declarative group stack while preserving the input's existing anchor. */
+function withRailPresentation(plan: ScreenPlan, presentation: RailPresentation): ScreenPlan {
+  const input = regionOf(plan, 'input');
+  if (!input) return plan.composerPosition === 'flow'
+    ? {...plan, ptyRows: Math.max(1, plan.ptyRows - presentation.rows), viewportRows: Math.max(1, plan.viewportRows - presentation.rows)} : plan;
+  const top = plan.composerPosition === 'top';
+  const members = ['composerBorder', 'prompt', 'input', 'separator', ...(top ? ['inspector', 'suggestions'] : [])];
+  const start = Math.min(...plan.regions.filter(r => members.includes(r.kind)).map(r => r.top));
+  const end = Math.max(...plan.regions.filter(r => members.includes(r.kind) && r.top >= start).map(r => r.top + r.height));
+  type Token = {kind: RegionKind; height: number; row?: RailRow};
+  let tokens: Token[] = plan.regions.filter(r => r.top >= start && r.top < end).map(r => ({kind: r.kind, height: r.height}));
+  const p = {...presentation};
+  // Keep one usable transcript row; optional decoration yields before content.
+  const maximum = Math.max(0, plan.ptyRows - 1);
+  let railRows = verticalRailRows(p, top);
+  while (railRows.length > maximum && railRows.some(r => r.kind === 'gap')) railRows.splice(railRows.findIndex(r => r.kind === 'gap'), 1);
+  if (p.relation === 'vertical' && railRows.length > maximum && railRows.some(r => r.kind === 'edge')) {
+    railRows = railRows.filter(r => r.kind !== 'edge');
+    p.anchor = 'rail';
+  }
+  if (p.relation === 'vertical' && railRows.length > maximum) {
+    railRows = railRows.slice(0, maximum);
+    if (!railRows.length) return plan;
+  }
+  const token = (row: RailRow): Token => ({kind: row.kind === 'content' ? 'contextRail' : row.kind === 'gap' ? 'railGap' : 'railEdge', height: 1, row});
+  if (p.relation === 'vertical') {
+    if (p.inside) tokens = tokens.filter(t => t.kind !== (top ? 'separator' : 'composerBorder'));
+    tokens = top ? [...tokens, ...railRows.map(token)] : [...railRows.map(token), ...tokens];
+  } else {
+    const main = tokens.find(t => t.kind === 'prompt') ?? tokens.find(t => t.kind === 'input')!;
+    const edge = tokens.find(t => t.kind === 'composerBorder');
+    const primary = p.inside && p.anchor === 'rail' && edge ? edge : main;
+    const hasSecondary = primary !== main || main.kind === 'prompt' || input.height > 1;
+    if (p.rows === 2 && !hasSecondary && maximum) {
+      const secondary = token({kind: 'content', index: 1});
+      tokens = top ? [...tokens, secondary] : [secondary, ...tokens];
+    }
+    if (p.inside && p.anchor === 'above') {
+      tokens = tokens.filter(t => t !== edge);
+      tokens.unshift(edge ?? token({kind: 'edge'}));
+    }
+  }
+  const before = tokens.slice(0, tokens.findIndex(t => t.kind === 'input')).reduce((n, t) => n + t.height, 0);
+  const deltaBefore = before - (input.top - start);
+  const total = tokens.reduce((n, t) => n + t.height, 0);
+  const delta = total - (end - start);
+  const removed = top ? 0 : Math.min(deltaBefore, plan.transcript.height);
+  const extra = top ? 0 : deltaBefore - removed;
+  const groupStart = top ? start : start - removed;
+  let row = groupStart;
+  const group: Region[] = tokens.map(t => { const r = {kind: t.kind, top: row, height: t.height}; row += t.height; return r; });
+  const slots = tokens.flatMap((t, i) => t.row?.kind === 'content' ? [{top: group[i]!.top, index: t.row.index}] : []);
+  const main = group.find(r => r.kind === 'prompt') ?? group.find(r => r.kind === 'input')!;
+  const edge = group.find(r => r.kind === 'composerBorder');
+  if (p.relation === 'right') {
+    const primary = p.inside && p.anchor === 'rail' && edge ? edge : main;
+    slots.push({top: primary.top, index: 0});
+    if (p.rows === 2 && !slots.some(slot => slot.index === 1)) slots.push({top: primary !== main ? main.top : main.kind === 'prompt' ? group.find(r => r.kind === 'input')!.top : main.top + 1, index: 1});
+  }
+  const boundary = group.find(r => r.kind === 'railEdge');
+  const edgeRow = boundary ? boundary.top : p.anchor === 'above' ? (edge ?? main).top
+    : p.anchor === 'rail' ? (top && p.relation === 'vertical' ? slots.at(-1)!.top : slots[0]!.top) : (edge ?? main).top;
+  const transcript = {...plan.transcript, top: top ? plan.transcript.top + delta : plan.transcript.top,
+    height: Math.max(0, plan.transcript.height - (top ? Math.max(0, delta - (plan.ptyRows - plan.transcript.height)) : removed))};
+  const outside = plan.regions.filter(r => r.top < start || r.top >= end).map(r => r.kind === 'transcript' ? transcript
+    : top ? (r.top >= end ? {...r, top: r.top + delta} : r)
+      : r.top >= end ? {...r, top: r.top + extra + delta - deltaBefore} : {...r, top: r.top - removed});
+  const regions = [...outside, ...group].filter(r => r.height > 0 && r.top >= 0 && r.top < plan.rows)
+    .map(r => ({...r, height: Math.min(r.height, plan.rows - r.top)})).sort((a,b) => a.top-b.top);
+  return {...plan, regions, transcript, ptyRows: Math.max(1, plan.ptyRows - delta),
+    viewportRows: Math.max(1, plan.composerPosition === 'flow' ? transcript.height : plan.viewportRows - delta),
+    rail: {presentation: p, slots: slots.filter(slot => slot.top >= 0 && slot.top < plan.rows), edgeRow,
+      start: groupStart, end: Math.min(plan.rows, row)}};
+}
+
+/** Compatibility input for older callers; all Rail geometry uses one compiler. */
+function withContextRail(plan: ScreenPlan, requested: number): ScreenPlan {
+  const count = Math.min(2, Math.max(0, Math.floor(requested)));
+  const result = withRailPresentation(plan, {relation: 'vertical', inside: false,
+    anchor: 'prompt', mirrored: false, rows: count, gap: 0, between: 0,
+    width: 0, column: 0, editorColumns: 0});
+  // Historical callers address a contiguous Rail region by local row.
+  const regions: Region[] = [];
+  for (const region of result.regions) {
+    const previous = regions.at(-1);
+    if (region.kind === 'contextRail' && previous?.kind === 'contextRail' && previous.top + previous.height === region.top)
+      previous.height += region.height;
+    else regions.push({...region});
+  }
+  return {...result, regions};
+}
+
 function build(
   rows: number,
   stack: Array<[RegionKind, number]>,
@@ -235,7 +350,7 @@ export function withStatusRow(plan: ScreenPlan): ScreenPlan {
   return {...plan, rows: plan.rows + 1, regions: [{kind: 'status', top: 0, height: 1}, ...plan.regions.map(shift)], transcript: shift(plan.transcript)};
 }
 
-const COMPOSER_KINDS: ReadonlySet<RegionKind> = new Set(['composerBorder', 'prompt', 'input']);
+const COMPOSER_KINDS: ReadonlySet<RegionKind> = new Set(['composerBorder', 'prompt', 'input', 'contextRail', 'railGap', 'railEdge']);
 
 /**
  * A plan (built for `plan.rows`) with `count` notice rows inserted immediately

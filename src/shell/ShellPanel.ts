@@ -1,8 +1,12 @@
+import {colorLevel} from '../presentation/capabilities.js';
+import {fullWidthRowBand} from '../ui/PanelShell.js';
+import {routeModule} from '../context/surfaceRouter.js';
+import {applyModulePlacement, applyShellModuleVisibility, shellModuleVisibility, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, type PromptConfiguration, type ShellModuleVisibility, type ModulePlacement} from '../prompt/configuration.js';
 import type {Key} from '../terminal/keys.js';
-import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
+import {background, focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {renderControls} from '../ui/controls.js';
-import {truncateAnsi} from '../util/text.js';
+import {truncateAnsi, displayWidth} from '../util/text.js';
 import type {ShellAvailability, ShellInstall} from './adapters/registry.js';
 import type {ShellId} from './adapters/ShellAdapter.js';
 
@@ -16,6 +20,8 @@ export interface ShellPanelState {
   current: ShellId;
   defaultShell: ShellId;
   selected: number;
+  /** Current shared prompt config; display edits are applied immediately by the caller. */
+  promptConfiguration?: Pick<PromptConfiguration, 'modules'>;
   /** Why the current session cannot switch right now (running command, jobs), if known up front. */
   blocked?: string;
   message?: string;
@@ -28,10 +34,11 @@ export interface ShellPanelState {
 }
 
 export type ShellPanelAction = {kind: 'close'} | {kind: 'switch'; shell: ShellId} | {kind: 'default'; shell: ShellId}
+  | {kind: 'indicatorVisibility'; visibility: ShellModuleVisibility} | {kind: 'indicatorSide'; side: ModulePlacement}
   | {kind: 'install'; shell: ShellId; install: Extract<ShellInstall, {kind: 'recipe'}>};
 
-export function createShellPanel(shells: ShellAvailability[], current: ShellId, defaultShell: ShellId, blocked?: string): ShellPanelState {
-  return {shells, current, defaultShell, selected: Math.max(0, shells.findIndex(item => item.adapter.id === current)), ...(blocked ? {blocked} : {})};
+export function createShellPanel(shells: ShellAvailability[], current: ShellId, defaultShell: ShellId, blocked?: string, promptConfiguration?: Pick<PromptConfiguration, 'modules'>): ShellPanelState {
+  return {shells, current, defaultShell, promptConfiguration, selected: Math.max(0, shells.findIndex(item => item.adapter.id === current)), ...(blocked ? {blocked} : {})};
 }
 
 export function shellPanelKey(state: ShellPanelState, key: Key): ShellPanelAction | undefined {
@@ -49,9 +56,19 @@ export function shellPanelKey(state: ShellPanelState, key: Key): ShellPanelActio
   }
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (key.kind === 'up' || key.kind === 'down') {
-    state.selected = (state.selected + (key.kind === 'up' ? state.shells.length - 1 : 1)) % state.shells.length;
+    const count = state.shells.length + (state.promptConfiguration ? 2 : 0);
+    state.selected = (state.selected + (key.kind === 'up' ? count - 1 : 1)) % count;
     state.message = undefined;
     return undefined;
+  }
+  if (state.promptConfiguration && state.selected >= state.shells.length) {
+    if (key.kind !== 'left' && key.kind !== 'right') return undefined;
+    if (state.selected === state.shells.length) {
+      const current = SHELL_MODULE_VISIBILITY.indexOf(shellModuleVisibility(state.promptConfiguration));
+      const delta = key.kind === 'right' ? 1 : -1;
+      return {kind: 'indicatorVisibility', visibility: SHELL_MODULE_VISIBILITY[(current + delta + SHELL_MODULE_VISIBILITY.length) % SHELL_MODULE_VISIBILITY.length]!};
+    }
+    return {kind: 'indicatorSide', side: shellIndicatorSide(state.promptConfiguration) === 'Right' ? 'left' : 'right'};
   }
   const choice = state.shells[state.selected];
   if (!choice) return undefined;
@@ -97,14 +114,36 @@ export function renderShellPanel(state: ShellPanelState, columns: number): strin
   const statusWidth = Math.max(0, ...state.shells.map(item => shellStatus(item).length));
   state.shells.forEach((item, index) => {
     const selected = index === state.selected;
-    rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${item.adapter.label.padEnd(6)}${reset} ${subtle}${shellStatus(item).padEnd(statusWidth)}${reset}`
-      + `${shellBadges(item.adapter.id, state) ? `  ${primary}${shellBadges(item.adapter.id, state)}${reset}` : ''}`);
+    const current = item.adapter.id === state.current;
+    const badges = shellBadges(item.adapter.id, state).replace('[default]', '\u001b[1m[default]\u001b[22m');
+    const detailWidth = Math.max(0, Math.min(statusWidth, columns - 13 - displayWidth(badges) - (badges ? 2 : 0)));
+    const detail = truncateAnsi(shellStatus(item), detailWidth).padEnd(detailWidth);
+    let row = `${selected ? `${accent}${GLYPHS.selection}` : ' '} ${current ? '✓' : ' '} ${focusForeground(selected)}${item.adapter.label.padEnd(6)}${reset} ${subtle}${detail}${reset}`
+      + (badges ? `  ${primary}${badges}${reset}` : '');
+    row = truncateAnsi(row, columns);
+    if (current) {
+      const band = colorLevel() === 'none' ? '\u001b[7m' : background(UI_COLORS.cwdBackground);
+      row = fullWidthRowBand(row, columns, band);
+    }
+    rows.push(row);
     if (selected && !item.executable && item.reason) rows.push(`    ${subtle}${item.reason}${state.installFor?.(item.adapter.id).kind === 'recipe' ? ' · I installs it (previewed first)' : ''}${reset}`);
     if (selected && item.executable && item.adapter.id !== 'zsh') {
       const caps = item.adapter.capabilities;
       rows.push(`    ${subtle}completion ${caps.completion}${caps.completionDescriptions ? ' with descriptions' : ', names only'} · history: ${caps.privateHistory}${reset}`);
     }
   });
+  if (state.promptConfiguration) {
+    rows.push('', `  ${primary}Prompt shell indicator${reset}`);
+    const controls = [
+      `Visibility      ‹ ${SHELL_MODULE_VISIBILITY_LABELS[shellModuleVisibility(state.promptConfiguration)]} ›`,
+      `Side            ‹ ${shellIndicatorSide(state.promptConfiguration)} ›`,
+    ];
+    controls.forEach((text, index) => {
+      const selected = state.selected === state.shells.length + index;
+      rows.push(`${selected ? `${accent}${GLYPHS.selection}` : ' '} ${focusForeground(selected)}${text}${reset}`);
+    });
+    rows.push(`  ${subtle}←→ changes and saves display settings · /prompt shares this module${reset}`);
+  }
   rows.push('', `  ${subtle}[current] runs under this session · [default] starts new sessions · ${GLYPHS.selection} is the selected row${reset}`,
     '', `  ${subtle}Switching keeps this session and its directory, archives this view to /resume and starts a fresh one. Shell-local${reset}`,
     `  ${subtle}state (aliases, functions, variables, jobs) belongs to the old shell and does not carry over. NMSh history and settings do.${reset}`);
@@ -121,4 +160,26 @@ function shellStatus(item: ShellPanelState['shells'][number]): string {
 /** Plain-text badges, so current and default read without color. */
 export function shellBadges(id: ShellId, state: Pick<ShellPanelState, 'current' | 'defaultShell'>): string {
   return [id === state.current ? '[current]' : '', id === state.defaultShell ? '[default]' : ''].filter(Boolean).join(' ');
+}
+
+/** Explicit routing wins over legacy placement, just as it does in the prompt. */
+function shellIndicatorSide(configuration: Pick<PromptConfiguration, 'modules'>): string {
+  const module = configuration.modules.find(item => item.id === 'shell');
+  if (!module) return 'Left';
+  const surface = routeModule({...module, visible: true, ...(module.surface === 'hidden' ? {surface: undefined} : {})});
+  return surface === 'rightContext' ? 'Right' : surface === 'contextRail' ? 'Context Rail (/prompt)' : 'Left';
+}
+
+/** Only the shared shell module changes; actual shell selection is independent. */
+export function applyShellIndicatorAction(configuration: Pick<PromptConfiguration, 'modules'>,
+  action: Extract<ShellPanelAction, {kind: 'indicatorVisibility' | 'indicatorSide'}>): void {
+  if (action.kind === 'indicatorVisibility') applyShellModuleVisibility(configuration, action.visibility);
+  else {
+    let module = configuration.modules.find(item => item.id === 'shell');
+    if (!module) {
+      applyShellModuleVisibility(configuration, 'whenDifferent');
+      module = configuration.modules.find(item => item.id === 'shell')!;
+    }
+    applyModulePlacement(module, action.side);
+  }
 }

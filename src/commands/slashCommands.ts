@@ -30,6 +30,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/tools': {group: 'Tools & integration', title: 'Open Tools'}, '/configure': {group: 'Tools & integration', title: 'Open Tool Configuration'},
   '/tmux': {group: 'Tools & integration', title: 'Configure tmux'}, '/integrations': {group: 'Tools & integration', title: 'Check Integrations'},
   '/dotfiles': {group: 'Tools & integration', title: 'Import Dotfiles'},
+  '/btw': {title: 'Open local intelligence'}, '/ask': {alias: '/btw'},
   '/caffeinate': {group: 'Tools & integration', title: 'Open Keep Awake'}, '/awake': {alias: '/caffeinate'}, '/zoomies': {alias: '/caffeinate'},
 };
 
@@ -72,7 +73,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/tmux', insertion: '/tmux', description: 'Configure tmux: settings, keys, Status Studio, new panes start NMSh, theme'},
   {name: '/integrations', insertion: '/integrations', description: 'Integrations health: review and update every managed integration'},
   {name: '/dotfiles', insertion: '/dotfiles ', description: 'Import supported settings from a dotfiles repository (reviewed, nothing executed)'},
-  {name: '/transcript', insertion: '/transcript', description: 'Configure historical prompts and dividers'},
+  {name: '/transcript', insertion: '/transcript', description: 'Choose Normal/Chat presentation, historical prompts, dividers and folding'},
   {name: '/keyboard', insertion: '/keyboard', description: 'Configure keyboard integration'},
   {name: '/shell', insertion: '/shell', description: 'Managed backend switcher: NMSh stays open; install missing shells; D sets the default'},
   {name: '/shell zsh', insertion: '/shell zsh', description: 'Switch this NMSh session to zsh (NMSh stays open)'},
@@ -86,7 +87,8 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/update', insertion: '/update', description: 'Check for a newer NMSh release'},
   {name: '/update apply', insertion: '/update apply', description: 'Install the release that /update offered'},
   {name: '/clear', insertion: '/clear', description: 'Archive this transcript and start a fresh view'},
-  {name: '/ask', insertion: '/ask ', description: 'Ask NMSh what it can do in plain English'},
+  {name: '/btw', insertion: '/btw ', description: 'Local intelligence: ask NMSh in plain English'},
+  {name: '/ask', insertion: '/ask ', description: 'Compatibility alias for /btw'},
   {name: '/ai', insertion: '/ai', description: 'Agent sessions: Claude Code and other harnesses running in the background; /ai claude starts one'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
@@ -257,7 +259,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/guide\s*$/u.test(input)) return {kind: 'ask', request: 'guide'};
   const ai = /^\/ai(?:\s+([\w.-]{1,40}))?\s*$/u.exec(input);
   if (ai) return ai[1] ? {kind: 'ai', target: ai[1]} : {kind: 'ai'};
-  const ask = /^\/ask(?:\s+([\s\S]*))?$/u.exec(input);
+  const ask = /^\/(?:btw|ask)(?:\s+([\s\S]*))?$/u.exec(input);
   if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
   if (/^\/providers\s*$/u.test(input)) return {kind: 'providers'};
   // Family shortcuts are aliases of one action: /providers focused on that family.
@@ -283,7 +285,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
 
 export function slashSuggestions(input: string): SlashCommand[] {
   if (!input.startsWith('/') || input.includes('\n')) return [];
-  return slashCommands.filter(command => command.name.startsWith(input) || command.insertion.startsWith(input));
+  return slashCommands.filter(command => !(command.name === '/ask' && input === '/') && (command.name.startsWith(input) || command.insertion.startsWith(input)));
 }
 
 export function suggestionWindow<T>(values: readonly T[], selected: number, height: number): {items: T[]; start: number} {

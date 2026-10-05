@@ -22,6 +22,8 @@ export interface AskTurn {role: 'you' | 'ask'; text: string; block?: CommandBloc
 
 export interface AskState {
   /** The request being typed: a real editor (caret, selection, word movement), shared with the shell composer. */
+  /** The invoked spelling is retained for a recorded/parked conversation. */
+  command?: '/btw' | '/ask';
   editor: CommandEditor;
   /** The editor's text; assigning replaces it with the caret at the end. */
   input: string;

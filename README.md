@@ -38,7 +38,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 - **Not a shell.** It does not reimplement zsh, Bash or Fish; it runs them.
 - **Not a terminal emulator.** Keep Ghostty, Terminal.app, VS Code, Zed or whatever you use.
 - **Not a prompt theme.** The Native prompt is optional; Starship, Oh My Posh or Powerlevel10k can supply the prompt instead, or none at all.
-- **Not an AI terminal.** `/ask` maps plain requests onto typed NMSh actions locally, with an optional local model; nothing needs an account.
+- **Not an AI terminal.** `/btw` (legacy alias `/ask`) maps plain requests onto typed NMSh actions locally, with an optional local model; nothing needs an account.
 
 ## Highlights
 
@@ -119,7 +119,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
-| Everyday extras | `/ask`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
+| Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
 
 ### Keep Awake
 

@@ -363,7 +363,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('updateFrequency')},
   ]},
   // The same rows as Settings; nothing here implies NMSh needs a model.
-  {id: 'ask', title: 'Ask & local understanding', intro: ['/ask: ask NMSh what it can do in plain English. Ask works without a language model,',
+  {id: 'ask', title: 'Ask & local understanding', intro: ['/btw: ask NMSh what it can do in plain English. Ask works without a language model,',
     'and so does NMSh\'s normal Smart Folding. Local understanding defaults to Auto: built-in understanding answers first, and a local model is only consulted when it is unsure and one is set up.'], rows: [
     {row: configRow('askPresentation')},
     {row: configRow('askRecord'), note: draft => draft.askRecord ? 'Keep Ask conversations in transcripts' : 'Ask conversations are not saved; approved commands still are'},

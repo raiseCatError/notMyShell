@@ -114,6 +114,7 @@ export function renderLayoutPreview(choice: LayoutChoice, columns: number, rows:
     notices: [],
     find: [],
     awake: [],
+    contextRail: [], railGap: [], railEdge: [],
   };
   const frame = new Array<string>(plan.rows).fill('');
   for (const region of plan.regions) {

@@ -7,11 +7,11 @@ Enter
 Sleep 5s
 Show
 
-Type "/ask what can you do"
+Type "/btw what can you do"
 Enter
 Sleep 4s
 Escape
-Type "/ask how do sessions work"
+Type "/btw how do sessions work"
 Enter
 Sleep 4s
 Escape
