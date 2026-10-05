@@ -35,7 +35,7 @@ test('placement defaults left, every module may move right, and it persists', ()
     {id: 'dockerContext', visible: true, condition: 'onCommand', placement: 'right'},
     {id: 'shell', visible: true, condition: 'shellDiffers', placement: 'right'},
   ]});
-  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['right', 'right', 'right', 'right', 'right', 'left', 'right', 'right', 'right']);
+  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['right', 'right', 'right', 'right', 'right', 'left', 'right', 'right', 'right', 'left']);
   assert.deepEqual(normalizePromptConfiguration(JSON.parse(JSON.stringify(config))).modules, config.modules);
 });
 
@@ -45,7 +45,7 @@ test('v0.3 configs gain Git status right after the branch, wherever it was moved
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext']);
+  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'discoveredTools']);
   assert.equal(config.modules[1]!.visible, false);
 });
 

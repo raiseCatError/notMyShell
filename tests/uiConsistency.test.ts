@@ -2,10 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import {createRowPanel, renderRowPanel} from '../src/ui/RowPanel.js';
-import {foreground, UI_COLORS} from '../src/ui/palette.js';
+import {background, foreground, UI_COLORS} from '../src/ui/palette.js';
 import {createToolsPanel, renderTools, visibleTools} from '../src/tools/ToolsPanel.js';
 import {handleSyntaxPanelKey, renderSyntaxPanel} from '../src/input/SyntaxPanel.js';
-import {stripAnsi} from '../src/util/text.js';
+import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {createWelcomeSnapshot, renderWelcome} from '../src/output/Welcome.js';
 import {cloneFromPalette} from '../src/appearance/themeSelection.js';
 import {setThemeContext, themeContext} from '../src/prompt/prompt.js';
@@ -23,7 +23,7 @@ test('syntax cache follows custom theme edits even when chrome is unchanged', ()
   } finally { setThemeContext(previous.accent, previous.custom); }
 });
 
-test('chosen tool checkboxes remain visible with NO_COLOR and focus elsewhere', () => {
+test('chosen tools retain reverse-video selection with NO_COLOR and focus elsewhere', () => {
   const previous = process.env.NO_COLOR;
   process.env.NO_COLOR = '1';
   try {
@@ -31,7 +31,14 @@ test('chosen tool checkboxes remain visible with NO_COLOR and focus elsewhere', 
     const items = visibleTools(state);
     state.selection = new Set([items[0]!.id]); state.selected = 1;
     const row = renderTools(state, 120, 50).find(line => line.includes(items[0]!.label))!;
-    assert.match(stripAnsi(row), /\[x\]/u);
+    assert.ok(row.startsWith('\u001b[7m'), 'chosen row remains distinguishable without color');
+    assert.equal(displayWidth(row), 120, 'selection fills the row');
+    assert.doesNotMatch(stripAnsi(row), /\[[x ]\]|›/u, 'chosen row has no checkbox or focus pointer');
+    const focused = renderTools(state, 120, 50).find(line => line.includes(items[1]!.label))!;
+    assert.match(stripAnsi(focused), /›/u, 'keyboard focus is separately identifiable');
+    state.selection.clear();
+    const unchosen = renderTools(state, 120, 50).find(line => line.includes(items[0]!.label))!;
+    assert.doesNotMatch(unchosen, /\u001b\[7m/u, 'reverse video tracks chosen state');
     assert.doesNotMatch(row, /\u001b\[(?:38|48);/u);
   } finally { if (previous === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = previous; }
 });
@@ -52,13 +59,19 @@ test('focused canonical settings label uses the accent, not ordinary text', () =
   assert.ok(line.includes(`\u001b[1m${foreground(UI_COLORS.accent)}Syntax highlighting`));
 });
 
-test('chosen tools retain an explicit checkbox when keyboard focus moves away', () => {
+test('chosen tools retain the semantic selection band when keyboard focus moves away', () => {
   const state = createToolsPanel();
   const items = visibleTools(state);
   state.selection = new Set([items[0]!.id]);
   state.selected = 1;
-  const line = renderTools(state, 120, 50).map(stripAnsi).find(row => row.includes(items[0]!.label))!;
-  assert.match(line, /\[x\]/u);
+  const rows = renderTools(state, 120, 50);
+  const line = rows.find(row => stripAnsi(row).includes(items[0]!.label))!;
+  assert.ok(line.startsWith(background(UI_COLORS.selection)), 'chosen band persists away from focus');
+  assert.equal(displayWidth(line), 120, 'selection fills the row');
+  assert.doesNotMatch(stripAnsi(line), /\[[x ]\]|›/u, 'chosen row has no checkbox or focus pointer');
+  const focused = rows.find(row => stripAnsi(row).includes(items[1]!.label))!;
+  assert.match(stripAnsi(focused), /›/u, 'keyboard focus moved to the other row');
+  assert.ok(!focused.startsWith(background(UI_COLORS.selection)), 'focus and chosen state use distinct bands');
 });
 
 test('syntax theme family can move from NMSh to Catppuccin with a real preview', () => {
