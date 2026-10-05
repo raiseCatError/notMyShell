@@ -83,7 +83,7 @@ export function applyShellModuleVisibility(configuration: Pick<PromptConfigurati
 /** Modules whose condition can be switched to show-on-command. */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
 /** `none` is composer only: no prompt row, modules, right prompt or marker; everything else in NMSh stays on. */
-export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'none';
+export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none';
 export type NativeEndStyle = PowerlineEdgeStyle;
 export type NativeStartStyle = PowerlineEdgeStyle;
 export type NativeConnectorStyle = PowerlineConnectorStyle;
@@ -607,6 +607,8 @@ export interface PromptConfiguration {
   starship: {configPath: string | null};
   /** Optional overrides; null uses detection and the default ~/.p10k.zsh. Never written to. */
   powerlevel10k: {themePath: string | null; configPath: string | null};
+  /** Optional local config path; null uses POSH_CONFIG, else Oh My Posh's built-in default. Never written to. */
+  ohMyPosh: {configPath: string | null};
   notifications: NotificationSettings;
   transcript: TranscriptAppearance;
   syntax: SyntaxAppearance;
@@ -673,6 +675,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     mirrorRight: true, vibrance: 'standard', textColors: 'theme', accent: 'mauve', styleProfiles: normalizeStyleProfiles(undefined)},
   starship: {configPath: null},
   powerlevel10k: {themePath: null, configPath: null},
+  ohMyPosh: {configPath: null},
   transcript: {...DEFAULT_TRANSCRIPT_APPEARANCE},
   syntax: {...DEFAULT_SYNTAX_APPEARANCE},
   placement: 'header',
@@ -752,12 +755,14 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
-  const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k' || promptValue.provider === 'none'
+  const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k' || promptValue.provider === 'ohMyPosh' || promptValue.provider === 'none'
     ? promptValue.provider
     : 'nmsh';
   const p10kValue = isRecord(promptValue.powerlevel10k) ? promptValue.powerlevel10k : {};
   const optionalPath = (value: unknown) => typeof value === 'string' && value.trim() ? value : null;
   const powerlevel10k = {themePath: optionalPath(p10kValue.themePath), configPath: optionalPath(p10kValue.configPath)};
+  const ompValue = isRecord(promptValue.ohMyPosh) ? promptValue.ohMyPosh : {};
+  const ohMyPosh = {configPath: optionalPath(ompValue.configPath)};
   const nativeValue = isRecord(promptValue.nmsh) ? promptValue.nmsh : promptValue;
   const starshipValue = isRecord(promptValue.starship) ? promptValue.starship : {};
   const endStyle = normalizeEdgeStyle(nativeValue.endStyle, 'fadeWedge');
@@ -811,7 +816,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
   if (!Array.isArray(value.modules)) {
     return {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider, onboardingComplete: value.onboardingComplete === true,
       toolsSetupComplete, glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty,
-      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
+      presentation, nmsh, starship: {configPath: starshipConfigPath}, powerlevel10k, ohMyPosh, transcript, syntax, notifications, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, spacing, gap, separator, ...themed};
   }
 
   const modules: ContextModuleConfig[] = [];
@@ -854,7 +859,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   return {provider, onboardingComplete: value.onboardingComplete === true,
     toolsSetupComplete,
-    glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k,
+    glyphStyle, glyphChoiceComplete, sessionRetention, updateMode, updateFrequency, liveSessionStartup, liveSessionMultiple, outputFolding, welcome, suggestions, history, picker, navigation, suggestionsOnEmpty, presentation, nmsh, transcript, syntax, notifications, powerlevel10k, ohMyPosh,
     starship: {configPath: starshipConfigPath}, placement, composerLayout, composerPosition, panelPosition, transcriptPresentation, composerDividers: value.composerDividers !== false, modules, separator, spacing, gap, ...themed};
 }
 

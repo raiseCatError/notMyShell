@@ -149,9 +149,10 @@ test('Tools v2: long lists scroll with a factual "more" cue; narrow widths keep 
   const state = createToolsPanel();
   const rows = renderTools(state, 90, 18).map(stripAnsi);
   assert.ok(rows.some(row => /↓ \d+ more/u.test(row)));
-  for (let index = 0; index < 40; index += 1) toolsKey(state, {kind: 'down'});
+  for (let index = 0; index < TOOLS.length + 5; index += 1) toolsKey(state, {kind: 'down'});
   const end = renderTools(state, 90, 18).map(stripAnsi);
-  assert.ok(end.some(row => row.includes('›') && row.includes('Python')), 'selection stays visible at the end');
+  const last = visibleTools(state).at(-1)!.label;
+  assert.ok(end.some(row => row.includes('›') && row.includes(last)), 'selection stays visible at the end');
   for (const width of [20, 33, 45, 59, 61]) {
     const narrow = renderTools(state, width, 18);
     assert.ok(narrow.every(row => displayWidth(row) <= width), `@${width}`);

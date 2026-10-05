@@ -9,6 +9,8 @@ import {SessionPresetStore, PresetStartup, presetNeedsAcknowledgement, type Sess
 import {createPresetPanel, presetPanelKey, renderPresetPanel, type PresetPanel} from '../session/PresetPanel.js';
 import {MiseProjectService, detectMiseProject} from '../tools/MiseProject.js';
 import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.js';
+import {detectBackend, KeepAwakeController} from '../keepAwake/keepAwake.js';
+import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
 import {homedir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
@@ -29,7 +31,7 @@ import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePa
 import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
 import {makeRng} from '../idle/screenEffects.js';
 import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
-import {createThemeStudio, previewTheme, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type StudioContext, type StudioTab, type ThemeStudioState} from '../appearance/ThemeStudio.js';
+import {createThemeStudio, readThemeImport, previewTheme, renderThemeStudio, STUDIO_MIN_SIZE, studioKey, writeThemeExport, type StudioContext, type StudioTab, type ThemeStudioState} from '../appearance/ThemeStudio.js';
 import {addTheme, deleteTheme, duplicateBuiltin, duplicateCurrentToCustom, duplicateRefToCustom, duplicateTheme, renameTheme, saveTheme, setActiveTheme, type ActionResult} from '../appearance/themeLibraryActions.js';
 import {findTheme} from '../appearance/themeLibrary.js';
 import {activeThemeRef, assetRef, selectableThemes, themeRefLabel} from '../appearance/themeRefs.js';
@@ -54,7 +56,8 @@ import {parseHexColor} from '../chroma/color.js';
 import type {CustomTheme} from '../appearance/customTheme.js';
 import {commandWord, createInstallPrompt, ignoreInstallSuggestion, installCandidate, installPromptKey, renderInstallPrompt, shouldOfferInstall,
   type InstallPromptState} from '../tools/InstallSuggestion.js';
-import {knownToolForExecutable, suggestibleToolFor, toolInstall, TOOLS, type Tool} from '../tools/catalog.js';
+import {detectTool, knownToolForExecutable, suggestibleToolFor, toolInstall, TOOLS, type Tool} from '../tools/catalog.js';
+import {openGuidedInstall, openPrevious} from '../tools/OhMyZshView.js';
 import {planPackageInstall} from '../packages/managers.js';
 import {loadToolUpdateState, runToolUpdateCheck, toolUpdateCheckDue, type ToolUpdateState} from '../tools/ToolUpdates.js';
 import type {CommandSource} from '../shell/SemanticService.js';
@@ -117,11 +120,12 @@ import {hasVisibleContextModule, loadPromptConfiguration, NATIVE_PALETTE_IDS, sa
 import {detectStarship, renderStarshipPrompt, type StarshipPromptResult, type StarshipStatus} from '../prompt/starship.js';
 import {STARSHIP_MODULES, StarshipConfigAdapter} from '../prompt/StarshipConfigAdapter.js';
 import {detectPowerlevel10k, renderPowerlevel10kPrompt, type Powerlevel10kStatus} from '../prompt/powerlevel10k.js';
+import {detectOhMyPosh, renderOhMyPoshPrompt} from '../prompt/ohMyPosh.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
 import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
-import {applyUpdate, checkForUpdate, compareVersions, detectInstall, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
+import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
 import {resolvePromptContext, type PromptContext} from '../shell/ShellContext.js';
 import type {AttachedSession, SessionClient, SessionConnection, StreamStamp} from '../session/SessionClient.js';
@@ -130,7 +134,7 @@ import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRendere
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
-import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow} from '../commands/slashCommands.js';
+import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
@@ -399,6 +403,8 @@ export class TerminalApp {
   /** /prompt preview rendering; never shown as the live prompt. */
   private panelExternalPrompt?: {provider: PromptProviderId; result: StarshipPromptResult};
   private p10kStatus?: Powerlevel10kStatus;
+  /** Cancels a superseded Oh My Posh render, so at most one child runs. */
+  private ohMyPoshRender?: AbortController;
   private promptPanelState?: PromptPanelState;
   private transcriptPanelState?: TranscriptPanelState;
   /** The shared provider gallery for families without a bespoke panel (Welcome, Suggestions). */
@@ -479,6 +485,28 @@ export class TerminalApp {
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
   private misePanel?: MisePanel;
+  private keepAwakePanel?: KeepAwakePanel;
+  private keepAwakeController?: KeepAwakeController;
+  /** One controller for /caffeinate, /awake and /zoomies; the backend is detected once. */
+  private keepAwake(): KeepAwakeController { return this.keepAwakeController ??= new KeepAwakeController(detectBackend()); }
+
+  private handleKeepAwakeSlash(command: string, slash: Extract<ParsedSlashCommand, {kind: 'keepAwake'}>): void {
+    const controller = this.keepAwake();
+    if (slash.op === 'panel') {
+      this.panelOrigin = undefined;
+      this.keepAwakePanel = createKeepAwakePanel(controller, slash.invalid ? `"${slash.invalid}" is not a Keep Awake mode or duration. Modes: idle, display, system, all; durations like 45s, 30m, 2h.` : undefined);
+    } else if (slash.op === 'status') this.output.addFrontendInteraction(command, statusLines(controller).join('\n'), INFO);
+    else if (slash.op === 'stop') this.output.addFrontendInteraction(command, controller.stop(), INFO);
+    else {
+      const result = controller.start(slash.mode!, slash.timeoutSeconds);
+      if (result.kind === 'needsConfirm') {
+        // A different mode is running: the panel asks first (default No).
+        this.keepAwakePanel = createKeepAwakePanel(controller);
+        requestStart(this.keepAwakePanel, controller, slash.mode!, slash.timeoutSeconds);
+      } else this.output.addFrontendInteraction(command, describeStart(result), result.kind === 'failed' || result.kind === 'unsupported' ? ERROR : INFO);
+    }
+    this.render();
+  }
   private readonly miseService = new MiseProjectService();
   private toolConfigurationLoading = false;
   private toolConfigurationGeneration = 0;
@@ -1052,6 +1080,11 @@ export class TerminalApp {
     }
     if (this.misePanel) {
       void this.handleMiseKey(key, this.misePanel);
+      return;
+    }
+    if (this.keepAwakePanel) {
+      if (keepAwakeKey(this.keepAwakePanel, this.keepAwake(), key) === 'close') { this.keepAwakePanel = undefined; this.returnFromPanel(); }
+      this.render();
       return;
     }
     if (this.installPrompt) {
@@ -2083,13 +2116,14 @@ export class TerminalApp {
     else if (slash.kind === 'dotfiles') { this.panelOrigin = undefined; this.dotfiles = createDotfilesPanel(slash.source ?? '~/dotfiles'); if (slash.source) await this.handleDotfilesAction({kind: 'scan', source: slash.source}, this.dotfiles); this.render(); }
     else if (slash.kind === 'settings') this.openSettingsPanel(slash.view);
     else if (slash.kind === 'tools') { this.panelOrigin = undefined; this.startTools(); }
+    else if (slash.kind === 'keepAwake') this.handleKeepAwakeSlash(command, slash);
     else if (slash.kind === 'setup') { this.panelOrigin = undefined; this.startSetup(slash.entry); }
     else if (slash.kind === 'transcript') { this.panelOrigin = undefined; this.startTranscriptSettings(); }
     else if (slash.kind === 'syntax') { this.panelOrigin = undefined; this.startSyntaxSettings(); }
     else if (slash.kind === 'layout') { this.panelOrigin = undefined; this.startLayoutSettings(); }
     else if (slash.kind === 'keyboard') { this.panelOrigin = undefined; await this.startKeyboard(); }
     else if (slash.kind === 'handoff') this.leaveForOrdinaryShell(slash.shell ?? this.promptConfiguration.shellBackend, command);
-    else if (slash.kind === 'version') this.output.addFrontendInteraction(command, formatBuildIdentity(this.buildIdentity), INFO);
+    else if (slash.kind === 'version') this.output.addFrontendInteraction(command, `${formatBuildIdentity(this.buildIdentity)}\nInstalled  ${installProvenanceLabel()}`, INFO);
     else if (slash.kind === 'update') void this.runUpdateCommand(command, slash.apply);
     else if (slash.kind === 'clear') await this.startFreshPresentation();
     else if (slash.kind === 'presets') this.startPresets();
@@ -2919,6 +2953,14 @@ export class TerminalApp {
       this.p10kStatus = this.detectPowerlevel10k(configuration);
       return renderPowerlevel10kPrompt(this.context, this.p10kStatus);
     }
+    if (configuration.provider === 'ohMyPosh') {
+      const status = await detectOhMyPosh(configuration.ohMyPosh.configPath ?? undefined);
+      this.ohMyPoshRender?.abort();
+      const controller = new AbortController();
+      this.ohMyPoshRender = controller;
+      try { return await renderOhMyPoshPrompt(this.context, status, process.env, {signal: controller.signal}); }
+      finally { if (this.ohMyPoshRender === controller) this.ohMyPoshRender = undefined; }
+    }
     const env = this.starshipEnvironment(configuration);
     this.starshipStatus ??= await detectStarship(env);
     if (!this.starshipStatus.installed) throw new Error('Starship is not installed or not available on PATH.');
@@ -3052,6 +3094,10 @@ export class TerminalApp {
         state.step = 'powerlevel10k';
         state.selectedIndex = 0;
         if (state.p10kStatus.installed) await this.refreshPanelPreview(state);
+      } else if (state.draft.provider === 'ohMyPosh' && !(await detectOhMyPosh(state.draft.ohMyPosh.configPath ?? undefined)).installed) {
+        // Nothing to render with: stay on the provider list and say why.
+        state.draft.provider = state.saved?.provider ?? this.promptConfiguration.provider;
+        state.message = 'Oh My Posh is not installed. Install it from /tools (Shell / Workflow) and choose it again.';
       } else if (state.draft.provider === 'none') {
         // Composer only: no layout applies; the appearance step keeps the theme and the input marker.
         state.step = 'appearance';
@@ -3059,6 +3105,7 @@ export class TerminalApp {
       } else {
         state.step = 'layout';
         state.selectedIndex = layoutChoiceIndex(state.draft);
+        if (state.draft.provider === 'ohMyPosh') await this.refreshPanelPreview(state);
       }
     } else if (state.step === 'powerlevel10k') {
       const installed = Boolean(state.p10kStatus?.installed);
@@ -3331,6 +3378,7 @@ export class TerminalApp {
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
     if (this.presetPanel) return renderPresetPanel(this.presetPanel, columns, this.dimensions().rows);
     if (this.misePanel) return renderMisePanel(this.misePanel, columns, this.dimensions().rows);
+    if (this.keepAwakePanel) return renderKeepAwakePanel(this.keepAwakePanel, this.keepAwake(), columns, this.dimensions().rows);
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
@@ -3682,7 +3730,22 @@ export class TerminalApp {
     const state = this.toolsPanel = createToolsPanel(new Set([config.history, config.picker, config.navigation, config.welcome, config.provider]), onboarding);
     state.updates = this.toolUpdates;
     state.activation = toolId => integrationActivation(toolId, this.shellId, this.shellNames, this.shellNamesComplete);
+    state.prompt = {selected: config.provider, effective: this.effectivePromptProvider};
+    state.shellBackend = this.shellId;
     void refreshTools(state, () => { if (!this.stopped && this.toolsPanel === state) this.render(); });
+  }
+
+  /** /tools → Use as prompt: the one canonical provider setting, then a truthful render (fallback to Native if it fails). */
+  private async useToolAsPrompt(state: ToolsPanel, provider: NonNullable<Tool['promptProvider']>): Promise<void> {
+    const saved = structuredClone(this.promptConfiguration);
+    this.promptConfiguration.provider = provider;
+    try { savePromptConfiguration(this.promptConfiguration, undefined, saved); } catch { /* applies to this window */ }
+    this.starshipStatus = undefined;
+    await this.refreshProviderPrompt();
+    state.prompt = {selected: this.promptConfiguration.provider, effective: this.effectivePromptProvider};
+    state.message = this.effectivePromptProvider === provider
+      ? `${providerLabel(provider)} is now the prompt provider. No shell rc file was changed.`
+      : `${providerLabel(provider)} could not render (${this.externalPromptError ?? 'unknown error'}); NMSh Native stays active.`;
   }
 
   private async handleToolsKey(key: Key, state: ToolsPanel): Promise<void> {
@@ -3705,6 +3768,36 @@ export class TerminalApp {
       this.misePanel = {project, selected: 0, result: this.miseService.cached(project)};
     }
     else if (action === 'configure' && state.detail?.configuration) { this.toolsPanel = undefined; await this.openConfigure(state.detail.configuration, '/tools'); }
+    else if (action === 'usePrompt' && state.detail?.promptProvider) await this.useToolAsPrompt(state, state.detail.promptProvider);
+    else if (action === 'promptSettings') { this.toolsPanel = undefined; await this.startPromptSettings(false); }
+    else if (action === 'p10kConfigure') {
+      // The existing configurator flow: backups of ~/.p10k.zsh and .zshrc, then the official wizard.
+      this.toolsPanel = undefined;
+      await this.startPromptSettings(false);
+      if (this.promptPanelState) {
+        this.promptPanelState.draft.provider = 'powerlevel10k';
+        this.promptPanelState.p10kStatus = this.detectPowerlevel10k(this.promptPanelState.draft);
+        this.promptPanelState.step = 'p10kConfirm';
+        this.promptPanelState.selectedIndex = 0;
+      }
+    } else if (action === 'importAppearance') {
+      const status = await detectOhMyPosh(this.promptConfiguration.ohMyPosh.configPath ?? undefined);
+      if (!status.configPath) state.message = 'Oh My Posh is using its built-in default config, so there is no local file to import. Choose a config in /prompt, or import a file in /theme → Import.';
+      else if (!status.configExists) state.message = `Oh My Posh config not found: ${status.configPath}`;
+      else {
+        // The existing Theme Studio import (static colors only); the provider is not switched.
+        this.toolsPanel = undefined;
+        this.openThemeStudio('import');
+        if (this.themeStudio) {
+          this.themeStudio.importPath = status.configPath;
+          const result = readThemeImport(status.configPath, this.shellCwd, 'auto');
+          if ('errors' in result) this.themeStudio.message = result.errors.join(' ');
+          else this.themeStudio.importPreview = result;
+        }
+      }
+    } else if (action === 'openFiles' && state.openPaths?.length === 2) {
+      await this.performHostAction(this.hostActions().openDiff(state.openPaths[0]!, state.openPaths[1]!), message => { state.message = message; this.render(); });
+    }
     else if (action === 'provider') {
       const family = state.detail?.providerFamily;
       if (family === 'welcome' || family === 'history' || family === 'picker' || family === 'navigation') {
@@ -5000,6 +5093,7 @@ export class TerminalApp {
     return [
       statusSection('Build & Platform', [
         {label: 'Version', value: build.version},
+        {label: 'Installed', value: installProvenanceLabel()},
         {label: 'Build', value: `${build.commit}${build.branch ? ` (${build.branch}${build.dirty ? ', dirty' : ''})` : ''}`, tone: build.commit === 'unknown' ? 'muted' : undefined},
         {label: 'Platform', value: `${process.platform} ${process.arch}`},
         {label: 'Platform support', value: this.platformInfo.support, tone: this.platformInfo.wsl?.version === 1 ? 'warning' as const : undefined},
@@ -7093,6 +7187,18 @@ export class TerminalApp {
       }
       case 'resumeTranscript': await this.restoreTranscriptById(action.id); return;
       case 'attachSession': this.switchToLiveSession(action.id, 'detached'); return;
+      case 'toolView': {
+        const tool = TOOLS.find(item => item.id === action.tool);
+        if (!tool) return;
+        this.startTools();
+        const panel = this.toolsPanel!;
+        panel.detail = tool;
+        panel.statuses[tool.id] = await detectTool(tool);
+        if (action.view === 'guided') panel.framework = openGuidedInstall();
+        else if (action.view === 'previous') panel.framework = openPrevious();
+        else if (action.view === 'p10kConfigure' || action.view === 'importAppearance') await this.handleToolsKey({kind: 'text', value: action.view === 'p10kConfigure' ? 'c' : 't'} as Key, panel);
+        return;
+      }
       case 'setting': {
         if (action.setting === 'shellBackend') {
           if (isShellId(action.value)) this.updateConfiguration(configuration => { configuration.shellBackend = action.value as ShellId; });

@@ -64,6 +64,10 @@ export function paletteItems(): PaletteItem[] {
       action: {kind: 'cycleOutputFolding'}},
     {id: 'transcript:details', label: 'Expand or collapse output', detail: 'Same as Ctrl+O on the latest block', category: 'Transcript',
       action: {kind: 'toggleDetails'}},
+    {id: 'awake:idle', label: 'Keep computer awake', detail: '/caffeinate idle · Keep Awake (awake, zoomies): prevent idle sleep', category: 'Command', action: {kind: 'slash', command: '/caffeinate idle'}},
+    {id: 'awake:display', label: 'Keep display awake', detail: '/caffeinate display · Keep Awake: display and machine stay awake (sleep)', category: 'Command', action: {kind: 'slash', command: '/caffeinate display'}},
+    {id: 'awake:status', label: 'Keep-awake status', detail: '/caffeinate status · caffeinate, awake, zoomies', category: 'Command', action: {kind: 'slash', command: '/caffeinate status'}},
+    {id: 'awake:stop', label: 'Stop keep-awake', detail: '/caffeinate stop · normal sleep returns', category: 'Command', action: {kind: 'slash', command: '/caffeinate stop'}},
     {id: 'transcript:latest', label: 'Jump to latest output', detail: 'Same as Ctrl+End', category: 'Transcript', action: {kind: 'latest'}},
   );
   for (const palette of NATIVE_PALETTE_IDS) {

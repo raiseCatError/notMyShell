@@ -70,6 +70,8 @@ export type AskAction =
   | {kind: 'tmux'; changes: TmuxChange[]; label: string}
   /** Theme Bridge settings: switch, policy and per-target Manual pins (stable theme references only). */
   | {kind: 'themeBridge'; enabled?: boolean; policy?: BridgePolicy; targets?: Partial<Record<BridgeTargetId, {mode: 'independent' | 'follow' | 'choose'; theme?: string}>>; label: string}
+  /** Open /tools at one curated tool, optionally at its guided install, previous-zshrc comparison, p10k configurator or appearance import (navigation only). */
+  | {kind: 'toolView'; tool: string; view: 'detail' | 'guided' | 'previous' | 'p10kConfigure' | 'importAppearance'; label: string}
   | {kind: 'setting'; setting: 'suggestions' | 'history' | 'welcome' | 'picker' | 'navigation' | 'prompt' | 'localUnderstanding' | 'shellBackend' | 'composerDividers'; value: string; label: string};
 
 /**

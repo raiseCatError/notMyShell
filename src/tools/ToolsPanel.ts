@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {clearProviderDetection, detectProvider, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
+import {clearProviderDetection, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
 import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
 import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
 import {renderTabStrip, framePanel} from '../ui/PanelShell.js';
@@ -7,7 +7,11 @@ import {colorLevel} from '../presentation/capabilities.js';
 import {foregroundOf} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
 import {displayWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
-import {TOOLS, TOOL_CATEGORIES, TOOL_TIER_LABELS, toolInstall, toolInstallUnavailable, type Tool, type ToolTier} from './catalog.js';
+import {detectTool, TOOLS, TOOL_CATEGORIES, TOOL_TIER_LABELS, toolInstall, toolInstallUnavailable, type Tool, type ToolTier} from './catalog.js';
+import type {PromptProviderId} from '../prompt/configuration.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import {previousZshrc} from './frameworks.js';
+import {ohMyZshKey, openGuidedInstall, openPrevious, renderOhMyZshView, type OhMyZshView} from './OhMyZshView.js';
 import {lifecycleNote, providerLifecycle} from '../providers/providers.js';
 import {toolOwner, toolUpgrade, UNKNOWN_OWNER_UPDATE, type ToolUpdateState} from './ToolUpdates.js';
 import {background, foreground, UI_COLORS} from '../ui/palette.js';
@@ -49,6 +53,14 @@ export interface ToolsPanel {
   selection?: Set<string>;
   /** A combined plan under review; installs nothing until its own confirmation. */
   bulk?: BulkReview;
+  /** Canonical prompt provider state (selected in settings vs. effective now); supplied by the app, never duplicated. */
+  prompt?: {selected: PromptProviderId; effective: PromptProviderId};
+  /** The session's current shell backend, for factual "Zsh only" labels. */
+  shellBackend?: ShellId;
+  /** Oh My Zsh guided install or previous-zshrc comparison, over the detail view. */
+  framework?: OhMyZshView;
+  /** Files the app should open (set with the 'openFiles' action). */
+  openPaths?: string[];
 }
 export interface BulkReview {
   items: Array<{tool: Tool; plan: PackagePlan}>;
@@ -89,7 +101,7 @@ export async function refreshTools(state: ToolsPanel, changed: () => void): Prom
   // Bound probes rather than spawning the whole catalog simultaneously.
   for (let index = 0; index < TOOLS.length; index += 3) {
     await Promise.all(TOOLS.slice(index, index + 3).map(async tool => {
-      state.statuses[tool.id] = await detectProvider(tool);
+      state.statuses[tool.id] = await detectTool(tool);
     }));
     changed();
   }
@@ -116,7 +128,29 @@ export function visibleTools(state: ToolsPanel): Tool[] {
       || Number(state.statuses[a.id]?.state === 'installed') - Number(state.statuses[b.id]?.state === 'installed') || a.label.localeCompare(b.label));
 }
 const relevantRank = (tool: Tool) => tool.tier === 'recommended' ? 0 : tool.tier === 'enhanced' ? 1 : 2;
-export type ToolsAction = 'close' | 'configure' | 'provider' | 'refresh' | 'finishOnboarding' | 'mise' | 'checkUpdates';
+export type ToolsAction = 'close' | 'configure' | 'provider' | 'refresh' | 'finishOnboarding' | 'mise' | 'checkUpdates'
+  | 'usePrompt' | 'promptSettings' | 'p10kConfigure' | 'importAppearance' | 'openFiles';
+
+/** The prompt-provider word for a tool, from the one canonical state. */
+export function promptRole(state: ToolsPanel, tool: Tool): string | undefined {
+  if (!tool.promptProvider || !state.prompt) return undefined;
+  if (state.prompt.effective === tool.promptProvider) return 'Active prompt provider';
+  if (state.prompt.selected === tool.promptProvider) return 'Selected prompt provider · not active (NMSh Native in use)';
+  return 'Prompt provider';
+}
+
+/** Factual one-line status: what it is, and scope when the backend differs. */
+export function toolStatusLine(state: ToolsPanel, tool: Tool): string {
+  const status = state.statuses[tool.id];
+  const kind = tool.capabilities?.includes('shell framework') ? 'Zsh framework' : tool.promptProvider ? promptRole(state, tool) ?? 'Prompt provider' : undefined;
+  const zshOnly = tool.shells?.length === 1 && tool.shells[0] === 'zsh';
+  if (!status) return 'Checking';
+  if (status.state === 'installed') {
+    const scope = zshOnly && state.shellBackend && state.shellBackend !== 'zsh' ? 'used by Zsh only' : undefined;
+    return ['Installed', kind, scope].filter(Boolean).join(' · ');
+  }
+  return status.state === 'missing' ? ['Not installed', zshOnly ? 'Zsh only' : undefined].filter(Boolean).join(' · ') : 'Needs attention';
+}
 
 /** Whether an installed tool has an update according to the last check. */
 export function toolHasUpdate(state: ToolsPanel, tool: Tool): boolean {
@@ -139,6 +173,12 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     return undefined;
   }
   if (state.confirm) return undefined; // Async install owner handles confirmation.
+  if (state.framework) {
+    const result = ohMyZshKey(state.framework, key);
+    if (result === 'back') state.framework = undefined;
+    else if (result) { state.openPaths = result.open; return 'openFiles'; }
+    return undefined;
+  }
   if (key.kind === 'escape' || key.kind === 'interrupt') {
     if (state.selection?.size && !state.detail) { state.selection.clear(); state.message = 'Selection cleared. Nothing was installed.'; }
     else if (state.detail) { state.detail = undefined; state.message = undefined; }
@@ -147,10 +187,26 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
   } else if (state.detail) {
     if (key.kind !== 'text') return undefined;
     if (key.value.toLowerCase() === 'm' && state.detail.id === 'mise') return 'mise';
+    const installed = state.statuses[state.detail.id]?.state === 'installed';
+    const lower = key.value.toLowerCase();
+    if (state.detail.promptProvider && installed && lower === 'a') return 'usePrompt';
+    if (state.detail.promptProvider && lower === 's') return 'promptSettings';
+    if (state.detail.id === 'powerlevel10k' && installed && lower === 'c') return 'p10kConfigure';
+    if (state.detail.capabilities?.includes('Theme Studio import source') && installed && lower === 't') return 'importAppearance';
+    if (state.detail.installAdapter && !installed && lower === 'i') { state.framework = openGuidedInstall(); return undefined; }
+    if (state.detail.id === 'oh-my-zsh' && lower === 'o') {
+      const view = openPrevious();
+      if (view) state.framework = view; else state.message = 'No .zshrc.pre-oh-my-zsh was found.';
+      return undefined;
+    }
     if (key.value.toLowerCase() === 'u' && toolHasUpdate(state, state.detail)) {
       const upgrade = toolUpgrade(state.detail, toolOwner(state.statuses[state.detail.id]?.binary), state.updates!);
       if (upgrade) { state.recipe = upgrade; state.upgrading = true; state.confirm = createConfirm(); }
       else state.message = `${UNKNOWN_OWNER_UPDATE} NMSh did not install ${state.detail.label} and does not guess its package manager.`;
+      return undefined;
+    }
+    if (state.detail.detection?.kind === 'filesystem' && (lower === 'x' || lower === 'i')) {
+      state.message = `NMSh does not install or remove ${state.detail.label}; it is detected only.`;
       return undefined;
     }
     if (key.value.toLowerCase() === 'x' && state.statuses[state.detail.id]?.state === 'installed') {
@@ -219,7 +275,7 @@ export async function confirmToolInstall(state: ToolsPanel, key: Key, changed: (
   if (run) await run(task, recipe);
   else await task.run(recipe.command, [...recipe.args]);
   clearProviderDetection();
-  state.statuses[tool.id] = await detectProvider(tool);
+  state.statuses[tool.id] = await detectTool(tool);
   if (task.state.status === 'succeeded' && state.statuses[tool.id]?.state === 'installed') {
     delete state.errors[tool.id];
     if (!upgrading) try { (state.provenance ?? new InstallProvenance()).record(tool, recipe); } catch { /* provenance is best effort */ }
@@ -253,7 +309,7 @@ async function confirmBulk(state: ToolsPanel, key: Key, changed: () => void,
       continue;
     }
     clearProviderDetection();
-    state.statuses[tool.id] = await detectProvider(tool);
+    state.statuses[tool.id] = await detectTool(tool);
     if (task.state.status === 'succeeded' && state.statuses[tool.id]?.state === 'installed') {
       delete state.errors[tool.id];
       try { (state.provenance ?? new InstallProvenance()).record(tool, plan); } catch { /* provenance is best effort */ }
@@ -280,7 +336,7 @@ async function runUninstall(state: ToolsPanel, changed: () => void, run?: (task:
   if (run) await run(task, recipe);
   else await task.run(recipe.command, [...recipe.args]);
   clearProviderDetection();
-  state.statuses[tool.id] = await detectProvider(tool);
+  state.statuses[tool.id] = await detectTool(tool);
   if (task.state.status === 'succeeded') {
     try { (state.provenance ?? new InstallProvenance()).forget(tool.id); } catch { /* record cleanup is best effort */ }
     state.message = state.statuses[tool.id]?.state === 'missing'
@@ -322,7 +378,10 @@ function statusBadge(state: ToolsPanel, tool: Tool): {text: string; color: strin
 
 export function toolBadges(state: ToolsPanel, tool: Tool): string[] {
   const lifecycle = providerLifecycle(tool);
-  return [...(tool.integration ? [`Integrated · ${tool.integration[0]!.toUpperCase()}${tool.integration.slice(1)}`] : []),
+  const role = promptRole(state, tool);
+  const zshOnly = tool.shells?.length === 1 && tool.shells[0] === 'zsh' && state.shellBackend !== undefined && state.shellBackend !== 'zsh';
+  return [...(tool.capabilities?.includes('shell framework') ? ['Zsh framework'] : []), ...(role ? [role] : []), ...(zshOnly ? ['Zsh only'] : []),
+    ...(tool.integration ? [`Integrated · ${tool.integration[0]!.toUpperCase()}${tool.integration.slice(1)}`] : []),
     ...(tool.discoveryKind === 'environment' ? ['Detected environment'] : tool.tier ? [TOOL_TIER_LABELS[tool.tier]] : []),
     ...(providerLifecycle(tool) === 'legacy' ? [`${tool.successor ?? 'Maintained alternative'} recommended`] : []),
     ...(state.configured.has(tool.id) ? ['Configured in NMSh'] : []),
@@ -399,6 +458,11 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
   } else if (state.task?.state.status === 'running') {
     rows.push(...renderTaskProgress(state.task.state));
     footer = [['Please wait', 'installation in progress']];
+  } else if (state.framework) {
+    const view = renderOhMyZshView(state.framework);
+    rows.push(`  ${PRIMARY}${BOLD}${state.framework.kind === 'guided' ? 'Oh My Zsh · guided install' : 'Oh My Zsh · previous zshrc'}${RESET}`, '',
+      ...view.rows.map(row => row.startsWith('! ') ? `  ${FAILURE}${row}${RESET}` : `  ${SECONDARY}${row}${RESET}`));
+    footer = view.footer;
   } else if (state.detail) {
     const tool = state.detail;
     const badge = statusBadge(state, tool);
@@ -406,8 +470,14 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     rows.push(`  ${PRIMARY}${BOLD}${tool.label}${RESET}  ${badge.color}${badge.text}${RESET}${toolBadges(state, tool).length ? `  ${SUBTLE}${toolBadges(state, tool).join(' · ')}${RESET}` : ''}`,
       `  ${SUBTLE}${tool.description}${RESET}`, '',
       field('Category', tool.category), field('Source', tool.source),
-      field('Install', state.statuses[tool.id]?.state === 'missing'
-        ? installPlanFor(state, tool)?.label ?? installUnavailableFor(state, tool) : tool.package ? `Package ${tool.package}` : 'Installed outside NMSh'));
+      field('Status', toolStatusLine(state, tool)),
+      ...(tool.capabilities?.length ? [field('Is', tool.capabilities.join(' · '))] : []),
+      ...(tool.detection?.kind === 'filesystem' && state.statuses[tool.id]?.detail ? [field('Found', state.statuses[tool.id]!.detail!)] : []),
+      field('Install', tool.installAdapter && state.statuses[tool.id]?.state === 'missing' ? 'Guided: NMSh keeps your .zshrc and never runs the installer itself (I)'
+        : state.statuses[tool.id]?.state === 'missing'
+          ? installPlanFor(state, tool)?.label ?? installUnavailableFor(state, tool)
+          : tool.package ? `Package ${tool.package}` : tool.detection?.kind === 'filesystem' ? 'Installed outside NMSh · not managed by NMSh' : 'Installed outside NMSh'));
+    if (tool.id === 'oh-my-zsh' && previousZshrc()) rows.push(field('Previous', 'Previous zshrc found (.zshrc.pre-oh-my-zsh) · O to compare'));
     const lifecycle = lifecycleNote(tool);
     if (lifecycle) rows.push(field('Lifecycle', lifecycle));
     const outdated = tool.package ? state.updates?.outdated[tool.package] : undefined;
@@ -423,12 +493,18 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
     if (activation) rows.push(field('Shell', `${ACTIVATION_LABELS[activation.state]} · ${activation.detail}`));
     rows.push('', `  ${SUBTLE}${activation ? 'Shell state comes from the running session; rc files are never read.' : 'Shell hook state is not inferred; existing hooks stay authoritative.'}${RESET}`);
     footer = [
-      ...(state.statuses[tool.id]?.state === 'missing' ? [['I', 'install…'] as [string, string]] : []),
-      ...(state.statuses[tool.id]?.state === 'installed' ? [['X', 'uninstall…'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'missing' && tool.detection?.kind !== 'filesystem' ? [['I', 'install…'] as [string, string]] : []),
+      ...(state.statuses[tool.id]?.state === 'installed' && tool.detection?.kind !== 'filesystem' ? [['X', 'uninstall…'] as [string, string]] : []),
       ...(toolHasUpdate(state, tool) ? [['U', 'update…'] as [string, string]] : []),
       ...(tool.id === 'mise' ? [['M', 'project awareness'] as [string, string]] : []),
       ...(tool.configuration && state.statuses[tool.id]?.state === 'installed' ? [['C', 'configure'] as [string, string]] : []),
       ...(tool.providerFamily ? [['P', 'provider'] as [string, string]] : []),
+      ...(tool.promptProvider && state.statuses[tool.id]?.state === 'installed' ? [['A', 'use as prompt'] as [string, string]] : []),
+      ...(tool.promptProvider ? [['S', 'prompt settings'] as [string, string]] : []),
+      ...(tool.id === 'powerlevel10k' && state.statuses[tool.id]?.state === 'installed' ? [['C', 'configure (p10k configure)'] as [string, string]] : []),
+      ...(tool.capabilities?.includes('Theme Studio import source') && state.statuses[tool.id]?.state === 'installed' ? [['T', 'import appearance into NMSh Native'] as [string, string]] : []),
+      ...(tool.installAdapter && state.statuses[tool.id]?.state === 'missing' ? [['I', 'guided install…'] as [string, string]] : []),
+      ...(tool.id === 'oh-my-zsh' && previousZshrc() ? [['O', 'previous zshrc'] as [string, string]] : []),
       ['R', 'refresh'], ['Esc', 'back']];
   } else {
     const tierLabel = state.tier === 'enhanced' ? 'Recommended + Enhanced' : state.tier === 'recommended' || state.recommendedOnly ? 'Recommended only' : '';

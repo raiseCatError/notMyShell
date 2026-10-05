@@ -4,6 +4,10 @@ import {describeTmuxChange, type TmuxChange} from '../tools/config/tmux.js';
 import {BRIDGE_TARGET_LABELS, type BridgeTargetId} from '../themeBridge/model.js';
 import {THEME_PALETTE_IDS} from '../prompt/configuration.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
+import {detectOhMyZsh, previousZshrc} from '../tools/frameworks.js';
+import {TOOLS, toolInstall} from '../tools/catalog.js';
+import {resolveCommand} from '../providers/providers.js';
+import {installProposal} from './commands.js';
 
 /**
  * Deterministic Ask routing for NMSh surfaces and supported configuration.
@@ -57,7 +61,68 @@ function tmuxChanges(text: string): TmuxChange[] {
   return changes;
 }
 
-export function resolveConfigRequest(text: string): AskOutcome | undefined {
+const OMZ = /\boh[ -]?my[ -]?zsh\b|\bomz\b/u;
+const OMP = /\boh[ -]?my[ -]?posh\b|\bomp\b/u;
+const P10K = /\bpowerlevel ?10k\b|\bp10k\b/u;
+const view = (tool: string, which: 'detail' | 'guided' | 'previous' | 'p10kConfigure' | 'importAppearance', text: string): AskOutcome =>
+  ({kind: 'proposal', capability: 'tools.open', safety: 'navigate', confidence: 0.92, direct: true, text, action: {kind: 'toolView', tool, view: which, label: text}});
+const promptSwitch = (value: 'ohMyPosh' | 'powerlevel10k', label: string): AskOutcome =>
+  ({kind: 'proposal', capability: 'provider.switch', safety: 'mutate', confidence: 0.92, text: `Use ${label} as the prompt? NMSh renders it directly; no shell rc file changes.`,
+    action: {kind: 'setting', setting: 'prompt', value, label: `Prompt: ${label}`}});
+
+/** Shell frameworks and prompt engines: facts, navigation to the exact /tools view, or a typed provider switch. Never a shell command or rc edit. */
+function resolveFrameworkRequest(text: string, env: NodeJS.ProcessEnv): AskOutcome | undefined {
+  if (/\bpre[ -]?oh[ -]?my[ -]?zsh\b|\b(?:old|previous)\b.*\bzshrc\b|\bzshrc\b.*\b(?:old|previous|before oh my zsh)\b|\bwhat happened to my\b.*\bzshrc\b/u.test(text)) {
+    const pair = previousZshrc(env);
+    if (!pair) return {kind: 'answer', capability: 'tools.open', text: 'There is no .zshrc.pre-oh-my-zsh here, so the Oh My Zsh installer did not save an earlier .zshrc in this home (or ZDOTDIR).'};
+    return view('oh-my-zsh', 'previous', `Compare ${pair.current} with ${pair.previous} in /tools (restoring there backs up the current file and asks first)`);
+  }
+  if (OMZ.test(text)) {
+    if (/\binstalled\b|\bdo i have\b|\bis there\b/u.test(text)) {
+      const found = detectOhMyZsh(env);
+      return {kind: 'answer', capability: 'tools.open', text: found ? `Yes. Oh My Zsh is installed at ${found.path}${found.source ? ` (from ${found.source})` : ''}. It is a Zsh framework, used by Zsh only.` : 'No. No Oh My Zsh installation was found at $ZSH or ~/.oh-my-zsh.'};
+    }
+    if (/\binstall\b/u.test(text)) return view('oh-my-zsh', 'guided', 'Open the Oh My Zsh guided install (keeps your .zshrc; you run the official installer yourself)');
+    return view('oh-my-zsh', 'detail', 'Open Oh My Zsh in /tools');
+  }
+  if (OMP.test(text)) {
+    if (/\bimport\b|\btheme studio\b|\binto nmsh\b/u.test(text)) return view('oh-my-posh', 'importAppearance', 'Import your Oh My Posh appearance into an NMSh Native theme (static colors only; the provider is not switched)');
+    if (/\binstall\b/u.test(text)) {
+      const tool = TOOLS.find(item => item.id === 'oh-my-posh')!;
+      if (resolveCommand('oh-my-posh', env.PATH ?? '')) return {kind: 'answer', capability: 'tools.open', text: 'Oh My Posh is already installed.'};
+      const recipe = toolInstall(tool);
+      return recipe ? installProposal('oh-my-posh', {tool: tool.id, label: recipe.label}) : view('oh-my-posh', 'detail', 'Open Oh My Posh in /tools (no curated install here)');
+    }
+    if (/\b(?:use|switch to|set)\b.*\bprompt\b|\bas (?:my )?prompt\b/u.test(text)) return promptSwitch('ohMyPosh', 'Oh My Posh');
+    return view('oh-my-posh', 'detail', 'Open Oh My Posh in /tools');
+  }
+  if (P10K.test(text)) {
+    if (/\bconfigure\b|\bwizard\b|\bset up\b/u.test(text)) return view('powerlevel10k', 'p10kConfigure', 'Configure Powerlevel10k (backs up ~/.p10k.zsh and .zshrc, then runs p10k configure)');
+    if (/\buse\b|\bswitch to\b/u.test(text)) return promptSwitch('powerlevel10k', 'Powerlevel10k');
+  }
+  return undefined;
+}
+
+/** Keep Awake: deterministic, typed through the /caffeinate action; starting or stopping waits for Ask's Yes. */
+function resolveKeepAwakeRequest(text: string): AskOutcome | undefined {
+  const slash = (command: string, safety: 'navigate' | 'mutate', label: string): AskOutcome | undefined => {
+    const parsed = parseSlashCommand(command);
+    return parsed ? {kind: 'proposal', capability: 'feature.open', safety, confidence: 0.92, ...(safety === 'navigate' ? {direct: true} : {}), text: label, action: {kind: 'slash', slash: parsed, label: command}} : undefined;
+  };
+  if (/\bzoomies\b/u.test(text) && !/\bstop\b|\bstatus\b/u.test(text)) return slash('/zoomies', 'navigate', 'Open Keep Awake (/zoomies)');
+  if (/\b(?:is )?(?:caffeinate|keep[ -]?awake)\b.*\b(?:running|on|active)\b|\bkeep[ -]?awake status\b/u.test(text)) return slash('/caffeinate status', 'navigate', 'Keep Awake status');
+  if (/\bkeep (?:my |the )?(?:screen|display|monitor) (?:awake|on)\b/u.test(text)) return slash('/caffeinate display', 'mutate', 'Keep the display and the machine awake (/caffeinate display) until you stop it');
+  if (/\b(?:don'?t|do not|never) let (?:my |the )?(?:computer|mac|laptop|machine|pc) sleep\b|\bprevent (?:system )?sleep\b/u.test(text)) return slash('/caffeinate system', 'mutate', 'Prevent automatic system sleep (/caffeinate system) until you stop it');
+  if (/\bstop\b.*\b(?:keeping|keep)\b.*\bawake\b|\bstop (?:caffeinate|keep[ -]?awake)\b|\blet my (?:computer|mac|laptop|machine) sleep\b/u.test(text)) return slash('/caffeinate stop', 'mutate', 'Stop Keep Awake (normal sleep returns)');
+  if (/\bkeep (?:my |the )?(?:computer|mac|laptop|machine|pc) awake\b/u.test(text)) return slash('/caffeinate idle', 'mutate', 'Prevent automatic idle sleep (/caffeinate idle) until you stop it');
+  return undefined;
+}
+
+export function resolveConfigRequest(text: string, env: NodeJS.ProcessEnv = process.env): AskOutcome | undefined {
+  const awake = resolveKeepAwakeRequest(text);
+  if (awake) return awake;
+  const framework = resolveFrameworkRequest(text, env);
+  if (framework) return framework;
   // Provider choices map onto the same typed provider setting /providers uses.
   const picker = /\b(?:use|switch to|pick)\s+(fzf|television|tv|native|nmsh native|nmsh)\b.*\bpickers?\b|\bpickers?\b.*\b(?:use|to)\s+(fzf|television|tv|native|nmsh)\b/u.exec(text);
   if (picker) {

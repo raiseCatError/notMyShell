@@ -21,11 +21,12 @@ export function powerlevel10kZshrcPath(env: NodeJS.ProcessEnv = process.env): st
   return resolve(join(env.ZDOTDIR || env.HOME || homedir(), '.zshrc'));
 }
 
-function fingerprint(content: Buffer): string {
+export function fingerprint(content: Buffer): string {
   return createHash('sha256').update(content).digest('hex');
 }
 
-async function snapshot(path: string): Promise<ConfiguratorFile> {
+/** Fingerprint and back up one config file before a handoff that may change it (absent files are recorded as absent). */
+export async function snapshot(path: string): Promise<ConfiguratorFile> {
   try {
     const info = await lstat(path);
     if (!info.isFile() || info.isSymbolicLink()) throw new Error(`${path} is not a regular file; open the wizard manually from /zsh.`);

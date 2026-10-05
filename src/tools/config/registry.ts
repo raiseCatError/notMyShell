@@ -1,6 +1,7 @@
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {resolveCommand} from '../../providers/providers.js';
+import {detectOhMyZsh, detectPowerlevel10kTool} from '../frameworks.js';
 
 /**
  * First-party registry of reviewed tool configuration adapters. It is not a
@@ -41,6 +42,8 @@ export interface ToolConfigEntry {
   exactCopy?: (content: string) => {ok: true} | {ok: false; reason: string};
   /** Why dotfiles leaves this tool's config inspect-only, in plain words. */
   dotfilesNote?: string;
+  /** Installed fact for tools that are not an executable (registered filesystem detector). */
+  present?: (env: NodeJS.ProcessEnv) => boolean;
 }
 
 const xdg = (env: NodeJS.ProcessEnv, home: string) => env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(home, '.config');
@@ -74,6 +77,21 @@ export const TOOL_CONFIG_REGISTRY: readonly ToolConfigEntry[] = [
     locations: (_env, home) => [join(home, '.vimrc'), join(home, '.vim', 'vimrc')],
     takesEffect: 'New Vim processes', summary: 'A generated colorscheme and one reviewed include; Vimscript is never rewritten',
     dotfiles: /(?:^|\/)(?:\.vimrc|\.vim\/vimrc|vimrc)$/u},
+  {id: 'powerlevel10k', label: 'Powerlevel10k', executable: 'zsh', configClass: 'executable', ownership: 'read-only', configurable: false,
+    present: env => Boolean(detectPowerlevel10kTool(env)),
+    locations: (env, home) => [env.POWERLEVEL9K_CONFIG_FILE ?? join(home, '.p10k.zsh')], takesEffect: '—',
+    summary: 'Prompt provider; its own wizard (p10k configure, after backups) owns ~/.p10k.zsh, which is Zsh code',
+    dotfiles: /(?:^|\/)\.p10k\.zsh$/u},
+  {id: 'oh-my-zsh', label: 'Oh My Zsh', executable: 'zsh', configClass: 'executable', ownership: 'read-only', configurable: false,
+    present: env => Boolean(detectOhMyZsh(env)),
+    locations: (env, home) => [join(env.ZSH ?? join(home, '.oh-my-zsh'), 'custom')], takesEffect: '—',
+    summary: 'Inspect only; themes, plugins and custom files are Zsh code, never sourced, copied or rewritten',
+    dotfiles: /(?:^|\/)(?:\.zshrc\.pre-oh-my-zsh|[^/]+\.zsh-theme|\.oh-my-zsh\/custom\/.+\.zsh|oh-my-zsh\/custom\/.+\.zsh)$/u},
+  {id: 'oh-my-posh', label: 'Oh My Posh', executable: 'oh-my-posh', configClass: 'structured', ownership: 'read-only', configurable: false,
+    locations: (env, _home) => (env.POSH_CONFIG ? [env.POSH_CONFIG] : []), takesEffect: 'The next prompt (as the NMSh Prompt provider)',
+    summary: 'Prompt provider rendered directly; import its static colors in /theme → Import',
+    dotfiles: /(?:^|\/)[^/]+\.omp\.(?:json|ya?ml|toml)$/u,
+    dotfilesNote: 'Inspect only: Oh My Posh segments and templates can run tools; never copied. Import its static colors in /theme → Import'},
   {id: 'zsh', label: 'zsh', executable: 'zsh', configClass: 'executable', ownership: 'read-only', configurable: false,
     locations: (_env, home) => [join(home, '.zshrc')], takesEffect: '—', summary: 'Inspect only; shell code is never sourced or rewritten (NMSh owns its composer)',
     dotfiles: /(?:^|\/)(?:\.zshrc|\.zshenv|\.zprofile|zshrc)$/u},
@@ -86,7 +104,7 @@ export const TOOL_CONFIG_REGISTRY: readonly ToolConfigEntry[] = [
 ];
 
 export function toolConfigEntry(id: string): ToolConfigEntry | undefined {
-  return TOOL_CONFIG_REGISTRY.find(entry => entry.id === id || entry.executable === id);
+  return TOOL_CONFIG_REGISTRY.find(entry => entry.id === id) ?? TOOL_CONFIG_REGISTRY.find(entry => entry.executable === id);
 }
 
 export const OWNERSHIP_LABELS: Record<Ownership, string> = {
@@ -96,7 +114,7 @@ export const OWNERSHIP_LABELS: Record<Ownership, string> = {
 
 /** Installed facts for the registry (PATH lookups only; nothing is run). */
 export function registryFacts(env: NodeJS.ProcessEnv = process.env): Array<ToolConfigEntry & {installed: boolean}> {
-  return TOOL_CONFIG_REGISTRY.map(entry => ({...entry, installed: Boolean(resolveCommand(entry.executable, env.PATH ?? ''))}));
+  return TOOL_CONFIG_REGISTRY.map(entry => ({...entry, installed: entry.present ? entry.present(env) : Boolean(resolveCommand(entry.executable, env.PATH ?? ''))}));
 }
 
 export const configLocations = (entry: ToolConfigEntry, env: NodeJS.ProcessEnv = process.env) => entry.locations(env, env.HOME || homedir());

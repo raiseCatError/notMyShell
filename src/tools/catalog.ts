@@ -1,7 +1,11 @@
-import {installUnavailableReason, providerInstall, resolveCommand, type ProviderDescriptor, type ProviderInstall, type ProviderFamily} from '../providers/providers.js';
+import {detectProvider, installUnavailableReason, providerInstall, resolveCommand, type ProviderDescriptor, type ProviderInstall, type ProviderFamily, type ProviderStatus} from '../providers/providers.js';
+import type {PromptProviderId} from '../prompt/configuration.js';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
+import {detectBackend as detectKeepAwake} from '../keepAwake/keepAwake.js';
+import {detectAntidote, detectOhMyZsh, detectPowerlevel10kTool, detectPrezto, detectZim, detectZinit, type FilesystemFact} from './frameworks.js';
 
 export const TOOL_CATEGORIES = ['Search & Files', 'Git & Development', 'Navigation & History',
-  'Data / Structured Text', 'Environment & Secrets', 'Shell / Workflow', 'Containers / Infrastructure', 'Project / Language Tooling'] as const;
+  'Data / Structured Text', 'Environment & Secrets', 'Shell / Workflow', 'Containers / Infrastructure', 'Project / Language Tooling', 'System capabilities'] as const;
 /**
  * Optional tiers. Recommended is a small, conservative toolkit; Enhanced is a
  * separate set some people like. Neither is "better for everyone", and NMSh
@@ -10,6 +14,18 @@ export const TOOL_CATEGORIES = ['Search & Files', 'Git & Development', 'Navigati
 export type ToolTier = 'recommended' | 'enhanced';
 export const TOOL_TIER_LABELS: Record<ToolTier, string> = {recommended: 'Recommended', enhanced: 'Enhanced'};
 export type ToolDiscoveryKind = 'utility' | 'environment';
+
+/**
+ * How a curated tool is detected, registered explicitly. `executable` is a
+ * PATH lookup; `filesystem` is a registered structural detector for
+ * frameworks and themes that are not commands. Detection never grants
+ * install, uninstall, configuration or provider authority.
+ */
+export type ToolDetection = {kind: 'executable'} | {kind: 'filesystem'; detect: (env: NodeJS.ProcessEnv) => FilesystemFact | undefined};
+
+/** What a tool is, stated explicitly (never inferred from being installed). A tool may have several. */
+export type ToolCapability = 'executable utility' | 'shell framework' | 'prompt engine' | 'Prompt provider' | 'configurable'
+  | 'special installer' | 'filesystem-detected' | 'dotfiles inspect-only' | 'Theme Studio import source' | 'executable config';
 
 export interface Tool extends ProviderDescriptor {
   category: typeof TOOL_CATEGORIES[number];
@@ -37,6 +53,15 @@ export interface Tool extends ProviderDescriptor {
   /** A registered Tool Configuration adapter (src/tools/config/registry.ts); only these get Configure. */
   configuration?: 'starship' | 'tmux';
   language?: string;
+  /** Default: the executable on PATH. */
+  detection?: ToolDetection;
+  capabilities?: readonly ToolCapability[];
+  /** Shells the tool belongs to; absent means any. Shown factually, never hidden for another backend. */
+  shells?: readonly ShellId[];
+  /** The canonical Prompt provider this tool is (one identity with /providers and /prompt). */
+  promptProvider?: Exclude<PromptProviderId, 'nmsh' | 'none'>;
+  /** A first-party guided installer adapter (src/tools/frameworks.ts) instead of a package recipe. */
+  installAdapter?: 'oh-my-zsh';
 }
 
 function tool(id: string, label: string, category: Tool['category'], description: string,
@@ -47,6 +72,10 @@ function tool(id: string, label: string, category: Tool['category'], description
 }
 const ENHANCED = {tier: 'enhanced'} as const;
 const ENVIRONMENT = {discoveryKind: 'environment', commandNotFound: false} as const;
+/** Not a command: no executable, no package recipe, never identified by command-not-found. */
+const filesystem = (detect: (env: NodeJS.ProcessEnv) => FilesystemFact | undefined) =>
+  ({detection: {kind: 'filesystem', detect}, executable: undefined, package: '', versionArgs: undefined, commandNotFound: false} as const);
+const ZSH_FRAMEWORK = {shells: ['zsh'], capabilities: ['shell framework', 'filesystem-detected', 'dotfiles inspect-only']} as const;
 
 /** Curated offline metadata. No third-party submissions, update checks or marketplace. */
 export const TOOLS: readonly Tool[] = [
@@ -67,7 +96,22 @@ export const TOOLS: readonly Tool[] = [
   tool('xh', 'xh', 'Data / Structured Text', 'Friendly and fast HTTP client.', 'https://github.com/ducaale/xh', {package: 'xh', ...ENHANCED}),
   tool('direnv', 'direnv', 'Environment & Secrets', 'Project environment tooling; approval/hooks remain yours.', 'https://direnv.net/', ENHANCED),
   tool('pass', 'pass', 'Environment & Secrets', 'Password tooling; NMSh does not read its secret store.', 'https://www.passwordstore.org/', {versionArgs: undefined}),
-  tool('starship', 'Starship', 'Shell / Workflow', 'Optional prompt with supported module configuration.', 'https://starship.rs/', {configuration: 'starship'}),
+  tool('starship', 'Starship', 'Shell / Workflow', 'Cross-shell prompt engine; an NMSh Prompt provider with supported module configuration.', 'https://starship.rs/',
+    {configuration: 'starship', promptProvider: 'starship', capabilities: ['executable utility', 'prompt engine', 'Prompt provider', 'configurable']}),
+  tool('oh-my-posh', 'Oh My Posh', 'Shell / Workflow', 'Cross-shell prompt engine; an NMSh Prompt provider rendered directly, with no shell rc change.', 'https://ohmyposh.dev/',
+    {versionArgs: ['version'], promptProvider: 'ohMyPosh', capabilities: ['executable utility', 'prompt engine', 'Prompt provider', 'Theme Studio import source', 'dotfiles inspect-only']}),
+  tool('powerlevel10k', 'Powerlevel10k', 'Shell / Workflow', 'Zsh prompt theme; an NMSh Prompt provider rendered in an isolated helper. Its config is Zsh code.', 'https://github.com/romkatv/powerlevel10k',
+    {...filesystem(detectPowerlevel10kTool), shells: ['zsh'], promptProvider: 'powerlevel10k', capabilities: ['prompt engine', 'Prompt provider', 'filesystem-detected', 'configurable', 'executable config']}),
+  tool('oh-my-zsh', 'Oh My Zsh', 'Shell / Workflow', 'Zsh framework (not a command). Guided install keeps your .zshrc; its themes and plugins are Zsh code, inspect only.', 'https://ohmyz.sh/',
+    {...filesystem(detectOhMyZsh), ...ZSH_FRAMEWORK, installAdapter: 'oh-my-zsh', capabilities: [...ZSH_FRAMEWORK.capabilities, 'special installer']}),
+  tool('prezto', 'Prezto', 'Shell / Workflow', 'Zsh framework, detected only. Inspect only; NMSh does not install or configure it.', 'https://github.com/sorin-ionescu/prezto',
+    {...filesystem(detectPrezto), ...ZSH_FRAMEWORK}),
+  tool('zim', 'Zim (zimfw)', 'Shell / Workflow', 'Zsh framework, detected only. Inspect only; NMSh does not install or configure it.', 'https://zimfw.sh/',
+    {...filesystem(detectZim), ...ZSH_FRAMEWORK}),
+  tool('zinit', 'zinit', 'Shell / Workflow', 'Zsh plugin manager, detected only. Inspect only; NMSh does not install or configure it.', 'https://github.com/zdharma-continuum/zinit',
+    {...filesystem(detectZinit), ...ZSH_FRAMEWORK}),
+  tool('antidote', 'Antidote', 'Shell / Workflow', 'Zsh plugin manager, detected only. Inspect only; NMSh does not install or configure it.', 'https://antidote.sh/',
+    {...filesystem(detectAntidote), ...ZSH_FRAMEWORK}),
   tool('shellcheck', 'ShellCheck', 'Shell / Workflow', 'Find common shell script mistakes.', 'https://github.com/koalaman/shellcheck', {package: 'shellcheck', ...ENHANCED, relevantTo: ['shell-scripts']}),
   tool('shfmt', 'shfmt', 'Shell / Workflow', 'Format shell scripts consistently.', 'https://github.com/mvdan/sh', {package: 'shfmt', ...ENHANCED, relevantTo: ['shell-scripts']}),
   tool('just', 'just', 'Shell / Workflow', 'A command runner for project-specific tasks.', 'https://github.com/casey/just', {package: 'just', ...ENHANCED, relevantTo: ['project', 'javascript', 'python', 'go', 'rust']}),
@@ -89,6 +133,10 @@ export const TOOLS: readonly Tool[] = [
   tool('tealdeer', 'TLDR (tealdeer)', 'Shell / Workflow', 'Practical local command examples (command tldr, package tealdeer). Optional; Ask uses its local cache and never updates it.', 'https://github.com/tealdeer-rs/tealdeer',
     {executable: 'tldr', package: 'tealdeer', recommended: true}),
   tool('tmux', 'tmux', 'Shell / Workflow', 'Independent terminal multiplexer.', 'https://github.com/tmux/tmux', {versionArgs: ['-V'], configuration: 'tmux'}),
+  tool('keep-awake', process.platform === 'darwin' ? 'Apple caffeinate' : process.platform === 'win32' ? 'Windows execution-state API' : 'systemd inhibitor', 'System capabilities',
+    `${process.platform === 'darwin' ? 'Built into macOS' : process.platform === 'win32' ? 'Built into Windows' : 'System capability, detected'}; used by Keep Awake (/caffeinate, /awake, /zoomies). Nothing to install, upgrade or remove here.`,
+    process.platform === 'darwin' ? 'https://ss64.com/mac/caffeinate.html' : process.platform === 'win32' ? 'https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-setthreadexecutionstate' : 'https://www.freedesktop.org/software/systemd/man/latest/systemd-inhibit.html',
+    {...filesystem(() => { const backend = detectKeepAwake(); return backend ? {path: backend.label} : undefined; }), discoveryKind: 'environment'}),
   tool('docker', 'Docker CLI', 'Containers / Infrastructure', 'Container client; daemon availability is not inferred.', 'https://docs.docker.com/', {package: 'docker', ...ENVIRONMENT, relevantTo: ['containers']}),
   tool('kubectl', 'kubectl', 'Containers / Infrastructure', 'Kubernetes client; credentials/cluster are not inspected.', 'https://kubernetes.io/docs/reference/kubectl/', {versionArgs: undefined, package: 'kubernetes-cli', ...ENVIRONMENT, relevantTo: ['kubernetes']}),
   tool('mise', 'mise', 'Project / Language Tooling', 'Optional project tooling; metadata evaluation needs consent.', 'https://mise.jdx.dev/', {versionArgs: undefined, ...ENHANCED}),
@@ -96,6 +144,15 @@ export const TOOLS: readonly Tool[] = [
   tool('go', 'Go', 'Project / Language Tooling', 'Go language toolchain.', 'https://go.dev/', {language: 'Go', versionArgs: ['version'], ...ENVIRONMENT, relevantTo: ['go']}),
   tool('python3', 'Python', 'Project / Language Tooling', 'Python runtime.', 'https://www.python.org/', {language: 'Python', package: 'python', ...ENVIRONMENT, relevantTo: ['python']}),
 ];
+
+/** One detection entry point: the tool's registered strategy, never a guess. */
+export function detectTool(tool: Tool, env: NodeJS.ProcessEnv = process.env): Promise<ProviderStatus> {
+  if (tool.detection?.kind === 'filesystem') {
+    const fact = tool.detection.detect(env);
+    return Promise.resolve(fact ? {state: 'installed', detail: fact.source ? `${fact.path} · ${fact.source}` : fact.path} : {state: 'missing'});
+  }
+  return detectProvider(tool, env.PATH ?? '');
+}
 
 /** Legacy tools and tools without a curated package keep no recipe. */
 function withRecipe(tool: Tool): Tool {
@@ -123,7 +180,7 @@ export function toolsInTier(tier: ToolTier): Tool[] {
  */
 export function knownToolForExecutable(word: string, tools: readonly Tool[] = TOOLS): Tool | undefined {
   if (!/^[A-Za-z0-9][A-Za-z0-9_.+-]*$/u.test(word)) return undefined;
-  return tools.find(tool => tool.commandNotFound !== false && ((tool.executable ?? tool.id) === word || tool.commandAliases?.includes(word)));
+  return tools.find(tool => tool.commandNotFound !== false && tool.detection?.kind !== 'filesystem' && ((tool.executable ?? tool.id) === word || tool.commandAliases?.includes(word)));
 }
 
 /**

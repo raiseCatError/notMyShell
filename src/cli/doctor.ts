@@ -1,3 +1,4 @@
+import {installProvenanceLabel} from '../update/update.js';
 import {homedir} from 'node:os';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {detectPlatform} from '../host/platform.js';
@@ -23,6 +24,7 @@ export function doctorReport(env: NodeJS.ProcessEnv = process.env, extra: Array<
   const activeShell = {id: config.shellBackend, ...(resolved ? {path: resolved} : {})};
   const rows: Array<[string, string]> = [
     ['NMSh', formatBuildIdentity(readBuildIdentity())],
+    ['Installed', installProvenanceLabel()],
     ['Node', process.version],
     ['Platform', `${process.platform} ${process.arch} · kernel ${platform.kernel}`],
     ['Support', platform.support],

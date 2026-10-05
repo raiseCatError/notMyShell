@@ -39,7 +39,7 @@ export interface DotfilesItem {
   diff?: string[];
 }
 
-function shortDiff(before: string | undefined, after: string): string[] {
+export function shortDiff(before: string | undefined, after: string): string[] {
   if (before === undefined) return [`+ new file (${after.split('\n').length} lines)`];
   const a = before.split('\n');
   const b = after.split('\n');

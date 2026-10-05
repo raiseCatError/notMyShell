@@ -30,6 +30,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/tools': {group: 'Tools & integration', title: 'Open Tools'}, '/configure': {group: 'Tools & integration', title: 'Open Tool Configuration'},
   '/tmux': {group: 'Tools & integration', title: 'Configure tmux'}, '/integrations': {group: 'Tools & integration', title: 'Check Integrations'},
   '/dotfiles': {group: 'Tools & integration', title: 'Import Dotfiles'},
+  '/caffeinate': {group: 'Tools & integration', title: 'Open Keep Awake'}, '/awake': {alias: '/caffeinate'}, '/zoomies': {alias: '/caffeinate'},
 };
 
 const RAW_COMMANDS: readonly SlashCommand[] = [
@@ -54,6 +55,9 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/setup cursor', insertion: '/setup cursor', description: 'Setup Cat: cursor shape, effects and colors, with a live preview'},
   {name: '/setup syntax', insertion: '/setup syntax', description: 'Setup Cat: editor, syntax colors and suggestions'},
   {name: '/setup tools', insertion: '/setup tools', description: 'Setup Cat: optional tools, update checks and install suggestions'},
+  {name: '/caffeinate', insertion: '/caffeinate', description: 'Keep Awake: keep the computer or display awake (idle, display, system, all; optional 30m/2h; status, stop). Uses the OS mechanism'},
+  {name: '/awake', insertion: '/awake', description: 'Same as /caffeinate (Keep Awake)'},
+  {name: '/zoomies', insertion: '/zoomies', description: 'Same as /caffeinate (Keep Awake)'},
   {name: '/tools', insertion: '/tools', description: 'Browse optional tools, installation previews and supported configuration'},
   {name: '/config', insertion: '/config', description: 'Open NMSh settings (Config view)'},
   {name: '/status', insertion: '/status', description: 'Show NMSh status'},
@@ -128,6 +132,8 @@ export type ParsedSlashCommand =
   | {kind: 'activity'}
   | {kind: 'screensaver'; start: boolean; mode?: IdleMode}
   | {kind: 'tools'}
+  /** /caffeinate, /awake and /zoomies: one Keep Awake action. A timeout is a validated number of seconds; `invalid` names bad input. */
+  | {kind: 'keepAwake'; op: 'panel' | 'status' | 'stop' | 'start'; mode?: 'idle' | 'display' | 'system' | 'all'; timeoutSeconds?: number; invalid?: string}
   | {kind: 'setup'; entry?: string}
   | {kind: 'settings'; view: 'config' | 'status'}
   | {kind: 'transcript'}
@@ -189,6 +195,21 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     return {kind: 'screensaver', start: screensaver[1] === 'start', ...(screensaver[2] ? {mode: screensaver[2] as IdleMode} : {})};
   }
   if (/^\/tools\s*$/u.test(input)) return {kind: 'tools'};
+  // Unlisted compatibility spelling; /caffeinate stop is the documented form.
+  if (/^\/caffeinate-stop\s*$/u.test(input)) return {kind: 'keepAwake', op: 'stop'};
+  const awake = /^\/(?:caffeinate|awake|zoomies)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/u.exec(input);
+  if (awake) {
+    const [, word, duration] = awake;
+    if (!word) return {kind: 'keepAwake', op: 'panel'};
+    if ((word === 'status' || word === 'stop') && !duration) return {kind: 'keepAwake', op: word};
+    if (word === 'idle' || word === 'display' || word === 'system' || word === 'all') {
+      if (!duration) return {kind: 'keepAwake', op: 'start', mode: word};
+      const match = /^([1-9]\d{0,5})([smh])$/u.exec(duration);
+      const seconds = match ? Number(match[1]) * (match[2] === 'h' ? 3600 : match[2] === 'm' ? 60 : 1) : 0;
+      return seconds && seconds <= 7 * 24 * 3600 ? {kind: 'keepAwake', op: 'start', mode: word, timeoutSeconds: seconds} : {kind: 'keepAwake', op: 'panel', invalid: duration};
+    }
+    return {kind: 'keepAwake', op: 'panel', invalid: word};
+  }
   const setup = /^\/setup(?:\s+(prompt|appearance|chroma|tools|editor|transcript|cursor|syntax|motion|sessions|shell|ask))?\s*$/u.exec(input);
   if (setup) return setup[1] ? {kind: 'setup', entry: setup[1]} : {kind: 'setup'};
   if (/^\/(?:settings|config)\s*$/u.test(input)) return {kind: 'settings', view: 'config'};
