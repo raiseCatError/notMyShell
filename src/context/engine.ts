@@ -92,12 +92,22 @@ interface Entry {
 const DEFAULT_FAMILY_LIMITS: Record<CapabilityFamily, number> = {metadata: 4, probe: 2, system: 2, agent: 1};
 const COST_ORDER = {cheap: 0, 'bounded-async': 1, probe: 2} as const;
 const BACKOFF_MS = [5_000, 15_000, 60_000];
+/**
+ * A capability's first resolution in an engine may include loading its
+ * parsers, a cold filesystem cache and every other capability's first reads
+ * competing for the same I/O threads. Timeouts exist to stop hung reads, not to
+ * fail a slow cold start, so that first resolution gets this multiple of its
+ * timeout; later ones keep the declared limit.
+ */
+const COLD_START_FACTOR = 3;
 
 export class ContextEngine {
   readonly stats: EngineStats = {started: 0, completed: 0, cancelled: 0, timedOut: 0, failed: 0, cacheHits: 0, coalesced: 0};
   private readonly definitions = new Map<string, CapabilityDefinition<unknown>>();
   private readonly entries = new Map<string, Entry>();
   private readonly familyRunning = new Map<CapabilityFamily, number>();
+  /** Capabilities that completed a resolution here: they no longer get the cold-start allowance. */
+  private readonly warmed = new Set<string>();
   private readonly now: () => number;
   private readonly concurrency: number;
   private readonly familyLimits: Record<CapabilityFamily, number>;
@@ -354,7 +364,8 @@ export class ContextEngine {
     this.familyRunning.set(definition.family, (this.familyRunning.get(definition.family) ?? 0) + 1);
     this.stats.started += 1;
     const started = this.now();
-    const timer = setTimeout(() => { task.timedOut = true; task.controller.abort(new Error('timeout')); }, definition.timeoutMs);
+    const limit = this.warmed.has(definition.id) ? definition.timeoutMs : definition.timeoutMs * COLD_START_FACTOR;
+    const timer = setTimeout(() => { task.timedOut = true; task.controller.abort(new Error('timeout')); }, limit);
     timer.unref?.();
     let result: Awaited<ReturnType<CapabilityDefinition<unknown>['resolve']>>;
     let failure: unknown;
@@ -379,12 +390,13 @@ export class ContextEngine {
       if (task.timedOut || failure) {
         if (task.timedOut) this.stats.timedOut += 1; else this.stats.failed += 1;
         entry.status = task.timedOut ? 'timeout' : 'failed';
-        entry.error = task.timedOut ? `timed out after ${definition.timeoutMs} ms`
+        entry.error = task.timedOut ? `timed out after ${limit} ms`
           : safeContextText(failure instanceof Error ? failure.message : String(failure), 160);
         entry.failures += 1;
         entry.retryAt = now + BACKOFF_MS[Math.min(BACKOFF_MS.length - 1, entry.failures - 1)]!;
       } else {
         this.stats.completed += 1;
+        this.warmed.add(definition.id);
         entry.present = Boolean(result);
         entry.value = result ? sanitizeFactValue(result.value) : undefined;
         entry.evidence = result ? safeContextText(result.evidence, 200) : undefined;

@@ -126,6 +126,25 @@ test('timeouts are failures with backoff; refresh retries; a previous value stay
   assert.equal(engine.status('slow.one').state, 'fresh');
 });
 
+test('a capability\'s first resolution gets a cold-start allowance; later ones keep the declared timeout', async () => {
+  let delay = 60;
+  const engine = new ContextEngine({capabilities: [capability('cold.one', {timeoutMs: 30, ttlMs: 1}, async () => {
+    await new Promise(resolve => setTimeout(resolve, delay));
+    return {value: {ok: true}, evidence: 'x'};
+  })]});
+  engine.stage(scope('/w')); engine.commit();
+  engine.demand(demand('cold.one')); await engine.settle(2000);
+  assert.equal(engine.status('cold.one').state, 'fresh', 'a slow cold start (parsers, cold caches, contention) still lands');
+  engine.stage(scope('/other')); engine.commit();
+  engine.demand(demand('cold.one')); await engine.settle(2000);
+  assert.equal(engine.status('cold.one').state, 'timeout', 'once warm, the declared limit applies');
+  assert.match(engine.status('cold.one').error!, /timed out after 30 ms/u);
+  delay = 0;
+  engine.refresh(); await engine.settle(2000);
+  assert.equal(engine.status('cold.one').state, 'fresh');
+  engine.dispose();
+});
+
 test('scope change cancels superseded work; late results never appear; staging keeps the old scope visible until commit', async () => {
   const gates = new Map<string, Deferred<{value: unknown; evidence: string}>>();
   let aborted = 0;
