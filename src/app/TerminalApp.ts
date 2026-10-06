@@ -43,7 +43,7 @@ import {findTheme} from '../appearance/themeLibrary.js';
 import {activeThemeRef, assetRef, selectableThemes, themeRefLabel} from '../appearance/themeRefs.js';
 import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
-import {applyThemeBridge, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
+import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -139,7 +139,9 @@ import {firstPartyPacks, installedPacks, setInstalledPacks} from '../context/mod
 import {activeInstalledPacks, installedPackStatuses, removePack, setPackEnabled} from '../context/packs/store.js';
 import type {ParsedPack} from '../context/packs/schema.js';
 import {recommendModules, type Recommendation} from '../context/packs/recommend.js';
-import {listNames} from '../context/services.js';
+import {listNames, workspaceRoots} from '../context/services.js';
+import {choosePager, pagerDocument, pagerProcessEnvironment, runPager} from '../output/BlockPager.js';
+import {pagerEnvironment as bridgePagerColors} from '../themeBridge/targets.js';
 import type {ModulesContext, PackListing} from '../prompt/ModulesPanel.js';
 import {applyClaudeBridge, applyClaudeBridgeRemoval, inspectClaudeBridge, planClaudeBridge, planClaudeBridgeRemoval} from '../agents/claudeStatusLine.js';
 import {currentLauncher} from '../cli/agentStatus.js';
@@ -382,7 +384,7 @@ export class TerminalApp {
   private directoryQueryAbort?: AbortController;
   private directoryResults: DirectoryCandidate[] = [];
   private pickerOpening = false;
-  private pickerAbort?: AbortController;
+  private hostProgramAbort?: AbortController;
   private historyQuery?: string;
   private historyQueryAbort?: AbortController;
   private historyResults: HistoryEntry[] = [];
@@ -2189,13 +2191,22 @@ export class TerminalApp {
     } finally { this.pickerOpening = false; }
   }
 
-  /** External pickers temporarily own the host terminal, never the managed shell PTY. */
-  private readonly pickerHandoff: PickerHandoff = async run => {
-    if (!process.stdin.isTTY || !process.stdout.isTTY || this.running || this.passthrough || this.externalPassthrough)
-      return {kind: 'fallback', reason: 'A free interactive terminal is required; using Native'};
+  /** Whether a program may take the host terminal now: a real TTY, and nothing else owns it. */
+  private hostTerminalFree(): boolean {
+    return Boolean(process.stdin.isTTY && process.stdout.isTTY) && !this.running && !this.passthrough && !this.externalPassthrough;
+  }
+
+  /**
+   * A child program (picker, pager, wizard) temporarily owns the host
+   * terminal, never the managed shell PTY: NMSh detaches input, leaves raw
+   * mode and its screen, lets the program handle Ctrl+C, and restores itself
+   * afterwards whatever happened. The signal aborts on stop (and on resize
+   * for programs that cannot follow one).
+   */
+  private async withHostTerminal<T>(run: (signal: AbortSignal) => Promise<T>, options: {abortOnResize?: boolean} = {}): Promise<T> {
     const controller = new AbortController();
     const abort = () => controller.abort();
-    const ignoreInterrupt = () => { /* The foreground picker handles Ctrl+C. */ };
+    const ignoreInterrupt = () => { /* The foreground program handles Ctrl+C. */ };
     this.cancelPresentation();
     this.externalPassthrough = true;
     let detached = false;
@@ -2207,13 +2218,12 @@ export class TerminalApp {
       this.terminalFocus = 'unknown';
       this.renderer.leave(); left = true;
       process.on('SIGINT', ignoreInterrupt);
-      process.on('SIGWINCH', abort);
-      this.pickerAbort = controller;
+      if (options.abortOnResize) process.on('SIGWINCH', abort);
+      this.hostProgramAbort = controller;
       return await run(controller.signal);
-    } catch (error) { return {kind: 'fallback', reason: `Picker failed: ${String(error)}; using Native`}; }
-    finally {
+    } finally {
       process.off('SIGINT', ignoreInterrupt); process.off('SIGWINCH', abort);
-      this.pickerAbort = undefined;
+      this.hostProgramAbort = undefined;
       if (!this.stopped) {
         if (left) this.renderer.enter();
         if (released) process.stdin.setRawMode(true);
@@ -2224,7 +2234,25 @@ export class TerminalApp {
       this.externalPassthrough = false;
       this.render();
     }
+  }
+
+  /** External pickers temporarily own the host terminal; a resize cancels them (they cannot follow it). */
+  private readonly pickerHandoff: PickerHandoff = async run => {
+    if (!this.hostTerminalFree()) return {kind: 'fallback', reason: 'A free interactive terminal is required; using Native'};
+    try { return await this.withHostTerminal(run, {abortOnResize: true}); }
+    catch (error) { return {kind: 'fallback', reason: `Picker failed: ${String(error)}; using Native`}; }
   };
+
+  /** "Open in pager": the block's command and complete stored output reach the pager only through its stdin. */
+  private async openBlockInPager(record: CompletedCommand): Promise<void> {
+    const say = (text: string, kind = INFO) => this.output.addFrontendInteraction('Open in pager', text, kind);
+    if (!this.hostTerminalFree()) { say('Opening a pager needs a free interactive terminal.'); return; }
+    const pager = await choosePager(process.env, workspaceRoots(this.context.cwd, this.context.root, homedir()));
+    if (!pager) { say('No pager was found: less or more on PATH, or a PAGER that names a program directly.'); return; }
+    const bridge = this.themeBridgePagerEnvironment();
+    const result = await this.withHostTerminal(signal => runPager(pager, pagerDocument(record.command, record.output), pagerProcessEnvironment(process.env, bridge), signal));
+    if (!result.ok && result.reason !== 'cancelled') say(`${result.reason}.`, ERROR);
+  }
 
   /** An accepted ghost suggestion became real text: it materializes like a completion. */
   private acceptingGhost(move: () => void): void {
@@ -2384,6 +2412,7 @@ export class TerminalApp {
       try { await writeClipboard(payload); }
       catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
+    else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
     else if (action === 'edit' || action === 'rerun') {
       this.clearBlockFocus();
@@ -3405,41 +3434,8 @@ export class TerminalApp {
 
   private async runPowerlevel10kWizard(status: Powerlevel10kStatus): Promise<number> {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
-    if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
-    const ignoreInterrupt = (): void => { /* The foreground wizard handles Ctrl+C. */ };
-    this.cancelPresentation();
-    this.externalPassthrough = true;
-    let inputDetached = false;
-    let rawModeReleased = false;
-    let rendererLeft = false;
-    let interruptAttached = false;
-    try {
-      process.stdin.off('data', this.onInput);
-      process.stdin.pause();
-      inputDetached = true;
-      process.stdin.setRawMode(false);
-      rawModeReleased = true;
-      this.terminalFocus = 'unknown';
-      this.renderer.leave();
-      rendererLeft = true;
-      process.on('SIGINT', ignoreInterrupt);
-      interruptAttached = true;
-      return await launchPowerlevel10kConfigurator(status);
-    } finally {
-      if (interruptAttached) process.off('SIGINT', ignoreInterrupt);
-      if (!this.stopped) {
-        if (rendererLeft) this.renderer.enter();
-        if (rawModeReleased) process.stdin.setRawMode(true);
-        this.keyDecoder.reset();
-        if (inputDetached) {
-          process.stdin.on('data', this.onInput);
-          process.stdin.resume();
-        }
-        this.renderer.invalidate();
-      }
-      this.externalPassthrough = false;
-      this.render();
-    }
+    if (!this.hostTerminalFree()) throw new Error('The terminal is busy.');
+    return this.withHostTerminal(() => launchPowerlevel10kConfigurator(status));
   }
 
   private async advancePromptPanel(): Promise<void> {
@@ -4727,6 +4723,16 @@ export class TerminalApp {
     // The effective mode: Apply themes (Follow NMSh / Choose theme) decides over fzf's own Manual setting.
     if (config.picker !== 'fzf' || bridgeMode(config.themeBridge, 'fzf') === 'independent') return [];
     return fzfBridgeArgs(await this.themeBridgeContext());
+  }
+
+  /** less/man colors for a pager NMSh launches: the values NMSh shells get, only while that target is active. */
+  private themeBridgePagerEnvironment(): Record<string, string> {
+    const config = this.promptConfiguration;
+    if (bridgeMode(config.themeBridge, 'pager') === 'independent') return {};
+    const palette = targetPalette(config.themeBridge, 'pager', config).palette;
+    if (!palette) return {};
+    return Object.fromEntries(Object.entries(bridgePagerColors(palette, bridgeColorLevel(colorLevel(), process.env)))
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
   }
 
   // ---- Idle visuals ---------------------------------------------------------------
@@ -8600,7 +8606,7 @@ export class TerminalApp {
     this.historyQueryAbort?.abort();
     this.clearCorrection();
     this.directoryQueryAbort?.abort();
-    this.pickerAbort?.abort();
+    this.hostProgramAbort?.abort();
     this.historyService.dispose();
     this.semanticService.kill();
     this.finish(exitCode);

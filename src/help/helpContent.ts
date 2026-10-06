@@ -75,6 +75,7 @@ After an unambiguous simple command-not-found typo, NMSh may show a local execut
 
 - A large multiline paste is **one editable atom**; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.
 - Portable Select-All is Alt+A.
+- Shift+Tab focuses a past command; Enter opens its actions. **Open in pager** shows the command and its complete stored output in less (or your PAGER) and returns to NMSh when you quit; the text goes to the pager only on its stdin, never through the shell.
 - VS Code Cmd+A keybinding JSON:
 
 \`\`\`

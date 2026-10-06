@@ -71,7 +71,8 @@ or network knowledge lookup in the inspector.
 
 `BlockActions` is the shared registry consumed by pointer-opened and
 keyboard-opened palettes. Actions are copy command, copy output, copy both,
-rerun, edit & rerun and fold/unfold. Shift+Tab traverses completed block focus;
+open in pager, rerun, edit & rerun, fold/unfold and (on failed blocks) explain
+failure. Shift+Tab traverses completed block focus;
 Enter opens its actions. The global palette includes the focused/latest
 block's actions. Typing clears block focus; Escape closes the palette, and
 Escape at the composer clears focus.
@@ -91,6 +92,21 @@ record state as Ctrl+O. Rerun explicitly uses normal visible submission in
 **the current shell cwd**, not the historical cwd. Edit replaces the composer
 with stored command text and waits for a separate Enter. Actions apply only
 to completed records while idle. Clearing a transcript invalidates its actions.
+
+Open in pager shows the same text as copy both (the stored command, then the
+complete stored output including folded lines) in a pager on the host
+terminal, the way the fzf picker borrows it: NMSh releases raw mode and its
+screen, and restores both when the pager exits. The text reaches the pager
+only on its stdin through an owned pipe; it is never written into shell
+source, a command line, an argument or history, and the managed shell never
+sees it. Control characters left in stored text are shown in caret notation
+first. The pager is `PAGER` when it names a plain program with plain options
+(typed argv, no shell; `PAGER=cat`, which NMSh shells use for their own
+transcript, does not count), else `less`, else `more`, resolved under the
+same rules as other NMSh tools (absolute PATH entries, nothing inside the
+current workspace, nothing writable by others). `LESSOPEN`/`LESSCLOSE` are
+dropped for it, since an input preprocessor would run on the block's text;
+the Theme Bridge less colors apply when that target is active.
 
 Shift mouse reports remain discarded before hit-testing: Shift click/drag
 cannot reveal, focus or dispatch controls. Raw shell output, journal content
