@@ -273,4 +273,3 @@ export const javaRuntime = runtimeCapability('runtime.java', 'Java runtime and b
 });
 
 export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime] as CapabilityDefinition<unknown>[];
-

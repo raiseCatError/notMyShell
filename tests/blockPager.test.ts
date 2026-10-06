@@ -183,4 +183,3 @@ test('app: Open in pager hands the host terminal over and back, with the stored 
     box.done();
   }
 });
-
