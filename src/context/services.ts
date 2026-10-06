@@ -1,4 +1,4 @@
-import {constants} from 'node:fs';
+import {constants, realpathSync} from 'node:fs';
 import {lstat, open, readdir, realpath, stat} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {basename, delimiter, dirname, isAbsolute, join, normalize, sep} from 'node:path';
@@ -132,15 +132,23 @@ export function within(child: string, parent: string): boolean {
   return a === b || a.startsWith(b.endsWith(sep) ? b : `${b}${sep}`);
 }
 
+/** The resolved path, or the normalized one when it cannot be resolved. */
+function realOrSelf(path: string): string {
+  try { return realpathSync(path); } catch { return normalize(path); }
+}
+
 /**
  * The directories whose executables count as workspace-controlled: the cwd and
- * repository root, except a directory that is the filesystem root or contains
- * the home directory. Those hold the user's own tools (~/.cargo/bin,
- * ~/.local/bin, /usr/bin), not a project's.
+ * repository root, each as given and as resolved (a workspace reached through
+ * a symlink is the same workspace), except a directory that is the filesystem
+ * root or contains the home directory. Those hold the user's own tools
+ * (~/.cargo/bin, ~/.local/bin, /usr/bin), not a project's; a repository below
+ * home is always a workspace.
  */
 export function workspaceRoots(cwd: string, root: string | undefined, home: string): string[] {
-  return [...new Set([cwd, ...(root ? [root] : [])].map(directory => normalize(directory)))]
-    .filter(directory => isAbsolute(directory) && dirname(directory) !== directory && !(home && within(home, directory)));
+  const homes = home && isAbsolute(home) ? [normalize(home), realOrSelf(home)] : [];
+  const roots = [cwd, ...(root ? [root] : [])].filter(directory => isAbsolute(directory)).flatMap(directory => [normalize(directory), realOrSelf(directory)]);
+  return [...new Set(roots)].filter(directory => dirname(directory) !== directory && !homes.some(path => within(path, directory)));
 }
 
 export interface SearchBoundary {

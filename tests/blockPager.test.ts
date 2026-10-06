@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {choosePager, pagerArgv, pagerDocument, pagerProcessEnvironment, pagerText, runPager} from '../src/output/BlockPager.js';
@@ -58,13 +58,39 @@ test('pager choice: a plain PAGER as typed argv, never through a shell; else les
 });
 
 test('workspace roots: the cwd and repository, never a directory holding the home directory', () => {
-  const home = '/home/me';
-  assert.deepEqual(workspaceRoots('/home/me/src/app/lib', '/home/me/src/app', home), ['/home/me/src/app/lib', '/home/me/src/app']);
-  assert.deepEqual(workspaceRoots('/home/me', undefined, home), [], 'the home directory holds the user\'s own tools (~/.cargo/bin, ~/.local/bin)');
-  assert.deepEqual(workspaceRoots('/', undefined, home), [], 'the filesystem root is not a workspace');
-  assert.deepEqual(workspaceRoots('/home', undefined, home), []);
-  assert.deepEqual(workspaceRoots('/srv/checkout', '/srv/checkout', home), ['/srv/checkout']);
-  assert.deepEqual(workspaceRoots('relative', undefined, home), []);
+  const box = sandbox();
+  try {
+    const home = join(box.root, 'home');
+    const app = join(home, 'src', 'app');
+    mkdirSync(join(app, 'lib'), {recursive: true});
+    assert.deepEqual(workspaceRoots(join(app, 'lib'), app, home), [join(app, 'lib'), app]);
+    assert.deepEqual(workspaceRoots(home, undefined, home), [], 'the home directory holds the user\'s own tools (~/.cargo/bin, ~/.local/bin)');
+    assert.deepEqual(workspaceRoots(box.root, undefined, home), [], 'nor does any directory above it');
+    assert.deepEqual(workspaceRoots('/', undefined, home), [], 'the filesystem root is not a workspace');
+    const outside = join(box.root, 'checkout');
+    mkdirSync(outside);
+    assert.deepEqual(workspaceRoots(outside, outside, home), [outside], 'a checkout outside home is a workspace too');
+    assert.deepEqual(workspaceRoots('relative', undefined, home), []);
+  } finally { box.done(); }
+});
+
+test('workspace roots follow symlinks: a workspace reached through a link still refuses its own executables', async () => {
+  const box = sandbox();
+  try {
+    const home = join(box.root, 'home');
+    const repo = join(home, 'evil');
+    mkdirSync(join(repo, 'bin'), {recursive: true});
+    fakePager(join(repo, 'bin'), 'less', join(box.root, 'ran.json'));
+    const link = join(box.root, 'link');
+    symlinkSync(repo, link);
+    const roots = workspaceRoots(link, link, home);
+    assert.deepEqual(roots, [link, repo]);
+    assert.equal(await choosePager({PATH: join(repo, 'bin')}, roots), undefined, 'the real path of the linked workspace is refused');
+    assert.deepEqual(workspaceRoots(home, undefined, home), []);
+    const homeLink = join(box.root, 'home-link');
+    symlinkSync(home, homeLink);
+    assert.deepEqual(workspaceRoots(join(homeLink, 'evil'), undefined, homeLink), [join(homeLink, 'evil'), repo], 'a linked home is the same home');
+  } finally { box.done(); }
 });
 
 test('pager text: control characters become visible, tabs and lines stay, the command comes first', () => {
