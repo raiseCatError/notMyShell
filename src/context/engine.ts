@@ -202,13 +202,18 @@ export class ContextEngine {
     this.demand(this.current);
   }
 
-  /** Resolves when demanded work for the staged (or visible) scope finished, or after `timeoutMs`. */
+  /**
+   * Resolves when demanded work for the staged (or visible) scope finished, or
+   * after `timeoutMs`. Its deadline keeps the process alive for that bounded
+   * time (resolution timers do not), so an awaited settle always resolves even
+   * when the only pending work is a hung read waiting for its own timeout.
+   */
   async settle(timeoutMs: number): Promise<void> {
     const pending = [...this.queue, ...[...this.entries.values()].map(entry => entry.task).filter((task): task is Task => Boolean(task))]
       .filter(task => this.targets.has(task.key)).map(task => task.done);
     if (!pending.length) return;
     let timer: NodeJS.Timeout | undefined;
-    await Promise.race([Promise.allSettled(pending), new Promise<void>(resolve => { timer = setTimeout(resolve, Math.max(0, timeoutMs)); timer.unref?.(); })]);
+    await Promise.race([Promise.allSettled(pending), new Promise<void>(resolve => { timer = setTimeout(resolve, Math.max(0, timeoutMs)); })]);
     if (timer) clearTimeout(timer);
   }
 
