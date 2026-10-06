@@ -49,7 +49,13 @@ const args = process.argv.slice(2);
 const attachIndex = args.indexOf('--attach');
 const presetIndex = args.indexOf('--preset');
 
-if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
+if (args[0] === 'agent-status') {
+  // Non-interactive; Claude Code runs the bridge from inside the NMSh-managed shell, so it is allowed there.
+  const {runAgentStatusCommand} = await import('./cli/agentStatus.js');
+  const {ttyConfirm} = await import('./cli/configCommand.js');
+  process.exitCode = await runAgentStatusCommand(args.slice(1), {out: text => process.stdout.write(text), err: text => process.stderr.write(text),
+    confirm: process.stdin.isTTY && process.stderr.isTTY && args[1] !== 'claude' ? ttyConfirm : undefined});
+} else if (args[0] === 'config' || args[0] === 'uninstall' || args[0] === 'doctor') {
   // Non-interactive maintenance commands: allowed from inside an NMSh-managed shell too.
   process.exitCode = await runMaintenanceCommand(args);
 } else if (isVersionInvocation(args)) {
