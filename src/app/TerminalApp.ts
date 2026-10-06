@@ -4724,7 +4724,8 @@ export class TerminalApp {
   /** fzf `--color` for an NMSh-owned launch; empty unless fzf is the picker and its bridge mode is active. */
   private async fzfThemeArgs(): Promise<string[]> {
     const config = this.promptConfiguration;
-    if (config.picker !== 'fzf' || config.themeBridge.targets.fzf.mode === 'independent') return [];
+    // The effective mode: Apply themes (Follow NMSh / Choose theme) decides over fzf's own Manual setting.
+    if (config.picker !== 'fzf' || bridgeMode(config.themeBridge, 'fzf') === 'independent') return [];
     return fzfBridgeArgs(await this.themeBridgeContext());
   }
 
