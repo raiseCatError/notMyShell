@@ -69,6 +69,29 @@ const sgr = (hex: string, extra = '') => `${ESC}[${extra}38;2;${sgrRgb(hex)}m`;
 const sgr256 = (hex: string, extra = '') => `${ESC}[${extra}38;5;${rgbTo256(parseHexColor(hex)!)}m`;
 
 /**
+ * The theme's own ANSI slot nearest to a color, for 16-color hosts: the SGR
+ * names the slot and the host draws it from its own palette (256-color or RGB
+ * sequences would be misdrawn or dropped there). Foregrounds skip slot 0, the
+ * terminal's black, so text never vanishes into the background.
+ */
+export function nearestAnsiSlot(palette: SemanticPalette, hex: string, from = 1, slots = 16): number {
+  const target = parseHexColor(hex)!;
+  let best = from;
+  let distance = Infinity;
+  palette.ansi.slice(0, slots).forEach((candidate, index) => {
+    if (index < from) return;
+    const color = parseHexColor(candidate);
+    if (!color) return;
+    const d = (color.red - target.red) ** 2 + (color.green - target.green) ** 2 + (color.blue - target.blue) ** 2;
+    if (d < distance) { distance = d; best = index; }
+  });
+  return best;
+}
+
+/** SGR parameter for an ANSI slot: 30-37/90-97 foreground, 40-47/100-107 background. */
+const slotParameter = (slot: number, layer: 38 | 48): string => String((layer === 38 ? 30 : 40) + (slot < 8 ? slot : 60 + slot - 8));
+
+/**
  * less's documented termcap overrides (bold, underline, standout, blink),
  * which color man pages and less's own prompt/search highlight. GROFF_NO_SGR
  * makes GNU groff emit the overstrike formatting those overrides recolor;
@@ -76,10 +99,15 @@ const sgr256 = (hex: string, extra = '') => `${ESC}[${extra}38;5;${rgbTo256(pars
  */
 export function pagerEnvironment(palette: SemanticPalette, level: ColorLevel): BridgeEnvironment {
   if (level === 'none') return {};
-  const color = level === 'truecolor' ? sgr : sgr256;
+  const color = level === 'truecolor' ? sgr : level === 'ansi256' ? sgr256
+    : (hex: string, extra = '') => `${ESC}[${extra}${slotParameter(nearestAnsiSlot(palette, hex), 38)}m`;
+  const selection = [nearestAnsiSlot(palette, palette.selectionForeground, 0), nearestAnsiSlot(palette, palette.selection, 0)] as const;
   const reverse = level === 'truecolor'
     ? `${ESC}[38;2;${sgrRgb(palette.selectionForeground)};48;2;${sgrRgb(palette.selection)}m`
-    : `${ESC}[38;5;${rgbTo256(parseHexColor(palette.selectionForeground)!)};48;5;${rgbTo256(parseHexColor(palette.selection)!)}m`;
+    : level === 'ansi256'
+      ? `${ESC}[38;5;${rgbTo256(parseHexColor(palette.selectionForeground)!)};48;5;${rgbTo256(parseHexColor(palette.selection)!)}m`
+      // Two slots that coincide would hide the text: plain reverse video then.
+      : selection[0] === selection[1] ? `${ESC}[7m` : `${ESC}[${slotParameter(selection[0], 38)};${slotParameter(selection[1], 48)}m`;
   return {
     LESS_TERMCAP_md: color(palette.accent, '1;'), LESS_TERMCAP_mb: color(palette.failure, '1;'), LESS_TERMCAP_me: `${ESC}[0m`,
     LESS_TERMCAP_us: color(palette.success, '4;'), LESS_TERMCAP_ue: `${ESC}[0m`,
@@ -102,7 +130,7 @@ const lsColor = (hex: string, level: ColorLevel, extra = '') => {
  */
 export function lsColorsFallback(palette: SemanticPalette, level: ColorLevel): string | undefined {
   if (level === 'none') return undefined;
-  const c = (hex: string, extra = '') => lsColor(hex, level, extra);
+  const c = (hex: string, extra = '') => level === 'ansi16' ? `${extra}${slotParameter(nearestAnsiSlot(palette, hex), 38)}` : lsColor(hex, level, extra);
   const entries: Array<[string, string]> = [
     ['di', c(palette.ansi[4]!, '1;')], ['ln', c(palette.ansi[6]!)], ['so', c(palette.ansi[5]!)], ['pi', c(palette.warning)],
     ['ex', c(palette.success, '1;')], ['bd', c(palette.warning, '1;')], ['cd', c(palette.warning)], ['or', c(palette.failure, '1;')],
@@ -320,23 +348,47 @@ export function neovimColorscheme(palette: SemanticPalette): string {
   ].join('\n');
 }
 
+/** Vim's own tests for its color depth: a GUI, 24-bit colors or 256 colors; else 16; else 8. */
+const VIM_RICH_COLORS = "if has('gui_running') || (exists('+termguicolors') && &termguicolors) || &t_Co >= 256";
+const VIM_16_COLORS = 'elseif &t_Co >= 16';
+
 export function vimColorscheme(palette: SemanticPalette): string {
-  const line = (name: string, highlight: Highlight) => {
+  /**
+   * One group at a depth. With 256 colors cterm values are the nearest xterm
+   * entries; with 16 or 8 (where Vim would emit invalid SGR for those) they are
+   * the theme's nearest ANSI slots among the ones that depth has, Normal keeps
+   * the terminal's own text and background, and a group whose two slots
+   * coincide uses reverse video instead of hiding text.
+   */
+  const line = (name: string, highlight: Highlight, depth: 256 | 16 | 8) => {
     const attrs = (['bold', 'italic', 'underline', 'undercurl', 'reverse'] as const).filter(key => highlight[key]);
-    const cterm = attrs.filter(key => key !== 'undercurl' && key !== 'italic');
+    const cterm: string[] = attrs.filter(key => key !== 'undercurl' && key !== 'italic');
+    const rich = depth === 256;
+    // Below 256 colors Normal is the terminal's own default text and background: always legible, and the slots then color everything else.
+    const own = rich || name !== 'Normal';
+    let fg: number | undefined = highlight.fg && own ? (rich ? rgbTo256(parseHexColor(highlight.fg)!) : nearestAnsiSlot(palette, highlight.fg, 1, depth)) : undefined;
+    let bg: number | undefined = highlight.bg && own ? (rich ? rgbTo256(parseHexColor(highlight.bg)!) : nearestAnsiSlot(palette, highlight.bg, 0, depth)) : undefined;
+    if (!rich && fg !== undefined && fg === bg) { bg = undefined; fg = undefined; if (!cterm.includes('reverse')) cterm.push('reverse'); }
     const parts = [`hi ${name}`,
       `guifg=${highlight.fg ?? 'NONE'}`, `guibg=${highlight.bg ?? 'NONE'}`, ...(highlight.sp ? [`guisp=${highlight.sp}`] : []),
-      `ctermfg=${highlight.fg ? rgbTo256(parseHexColor(highlight.fg)!) : 'NONE'}`, `ctermbg=${highlight.bg ? rgbTo256(parseHexColor(highlight.bg)!) : 'NONE'}`,
+      `ctermfg=${fg ?? 'NONE'}`, `ctermbg=${bg ?? 'NONE'}`,
       `gui=${attrs.length ? attrs.join(',') : 'NONE'}`, `cterm=${cterm.length ? cterm.join(',') : 'NONE'}`];
     return parts.join(' ');
   };
+  const groups = Object.entries(classicGroups(palette));
   return [
     `" Generated by NMSh Theme Bridge from ${JSON.stringify(palette.name).replace(/"/gu, "'")}. NMSh replaces this file; it contains highlight data only.`,
     `set background=${palette.dark ? 'dark' : 'light'}`,
     'hi clear',
     "if exists('syntax_on') | syntax reset | endif",
     `let g:colors_name = '${COLORSCHEME_NAME}'`,
-    ...Object.entries(classicGroups(palette)).map(([name, highlight]) => line(name, highlight)),
+    VIM_RICH_COLORS,
+    ...groups.map(([name, highlight]) => line(name, highlight, 256)),
+    VIM_16_COLORS,
+    ...groups.map(([name, highlight]) => line(name, highlight, 16)),
+    'else',
+    ...groups.map(([name, highlight]) => line(name, highlight, 8)),
+    'endif',
     '',
   ].join('\n');
 }
@@ -350,7 +402,8 @@ export function validateNeovimColorscheme(content: string): boolean {
 }
 
 export function validateVimColorscheme(content: string): boolean {
-  const fixed = new Set(['set background=dark', 'set background=light', 'hi clear', "if exists('syntax_on') | syntax reset | endif", `let g:colors_name = '${COLORSCHEME_NAME}'`, '']);
+  const fixed = new Set(['set background=dark', 'set background=light', 'hi clear', "if exists('syntax_on') | syntax reset | endif", `let g:colors_name = '${COLORSCHEME_NAME}'`,
+    VIM_RICH_COLORS, VIM_16_COLORS, 'else', 'endif', '']);
   const hi = /^hi [A-Z][A-Za-z]* guifg=(?:#[0-9a-f]{6}|NONE) guibg=(?:#[0-9a-f]{6}|NONE)(?: guisp=#[0-9a-f]{6})? ctermfg=(?:\d{1,3}|NONE) ctermbg=(?:\d{1,3}|NONE) gui=(?:NONE|[a-z,]+) cterm=(?:NONE|[a-z,]+)$/u;
   return content.split('\n').every((line, index) => (index === 0 && line.startsWith('" Generated by NMSh Theme Bridge')) || fixed.has(line) || hi.test(line));
 }

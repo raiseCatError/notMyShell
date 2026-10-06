@@ -368,7 +368,8 @@ const vividCache = new Map<string, string>();
 /** vivid output for the listing palette when vivid is installed; undefined falls back to the small built-in mapping. */
 async function vividColors(palette: SemanticPalette, level: ColorLevel, env: NodeJS.ProcessEnv, mode: BridgeMode, ref: string): Promise<string | undefined> {
   const binary = resolveCommand('vivid', env.PATH ?? '');
-  if (!binary || level === 'none') return undefined;
+  // vivid writes 8-bit or 24-bit colors only; 16-color hosts get the small slot mapping instead.
+  if (!binary || level === 'none' || level === 'ansi16') return undefined;
   const theme = vividTheme(palette);
   const key = `${sha256(theme)}:${level}`;
   if (vividCache.has(key)) return vividCache.get(key);

@@ -13,7 +13,7 @@ import {
   BRIDGE_ENV_VARIABLES, bridgeBootstrap, bridgeEnvPath, fishLiteral, posixAnsiQuote, renderEnvironmentFile, validateEnvironmentFile, writeEnvironmentFiles,
 } from '../src/themeBridge/environment.js';
 import {
-  fzfColorArgs, lsColorsFallback, neovimColorscheme, pagerEnvironment, tmuxFragment, validateNeovimColorscheme, validateTmuxFragment,
+  fzfColorArgs, lsColorsFallback, neovimColorscheme, pagerEnvironment, tmuxFragment, validateNeovimColorscheme, validateTmuxFragment, validLsColors,
   validateVimColorscheme, vimColorscheme, withFzfTheme, TMUX_STYLE_OPTIONS,
 } from '../src/themeBridge/targets.js';
 import {
@@ -327,6 +327,15 @@ test('Neovim and Vim colorschemes: broad native coverage, separate dialects, rea
   assert.doesNotMatch(vim, /@|nvim_|Diagnostic|NormalFloat|WinSeparator/u, 'no Neovim-only groups or APIs in the Vim file');
   assert.match(vim, /^hi Comment guifg=#[0-9a-f]{6} guibg=NONE ctermfg=\d{1,3} ctermbg=NONE/mu, 'truecolor plus a 256-color fallback');
   assert.equal(validateVimColorscheme(`${vim}!rm -rf ~\n`), false);
+  // 8- and 16-color terminals: Vim would turn 256-color numbers into invalid SGR, so each depth has its own branch of ANSI slots.
+  const branch = (from: string, to: string) => vim.slice(vim.indexOf(from), vim.indexOf(to, vim.indexOf(from)));
+  const sixteen = branch('elseif &t_Co >= 16', '\nelse\n'), eight = branch('\nelse\n', '\nendif');
+  assert.ok(sixteen && eight);
+  for (const [text, limit] of [[sixteen, 15], [eight, 7]] as const) {
+    for (const value of text.match(/cterm(?:fg|bg)=(\d+)/gu) ?? []) assert.ok(Number(value.split('=')[1]) <= limit, `${value} within ${limit + 1} colors`);
+    assert.match(text, /^hi Normal guifg=#[0-9a-f]{6} guibg=(?:#[0-9a-f]{6}|NONE) ctermfg=NONE ctermbg=NONE/mu, 'Normal keeps the terminal\'s own text and background');
+    assert.doesNotMatch(text, /ctermfg=0 /u, 'text never uses slot 0, the terminal\'s black');
+  }
   const vimBinary = ['/usr/bin/vim', '/opt/homebrew/bin/vim', '/usr/local/bin/vim'].find(existsSync);
   if (!vimBinary) return;
   const box = sandbox();
@@ -361,6 +370,25 @@ test('applyThemeBridge: isolated per target; independent targets get nothing; fa
     assert.doesNotMatch(readFileSync(bridgeEnvPath('bash', box.env), 'utf8'), /nmsh_bridge_apply/u);
     assert.equal((await reloadTmux(box.env)).ok, false, 'no reload without an owned fragment (and no tmux on this PATH)');
   } finally { box.done(); }
+});
+
+test('16-color hosts: pager and listing colors name the theme\'s own ANSI slots, never 256-color or RGB sequences', () => {
+  for (const theme of [builtinTheme('nord'), builtinTheme('solarizedLight'), builtinTheme('dracula')]) {
+    const palette = paletteFromTheme(theme, 'x');
+    const pager = pagerEnvironment(palette, 'ansi16');
+    for (const [name, value] of Object.entries(pager)) {
+      if (typeof value !== 'string' || name === 'GROFF_NO_SGR') continue;
+      assert.match(value, /^\u001b\[[0-9;]*m$/u, name);
+      assert.doesNotMatch(value, /[34]8;[25];/u, `${name}: only 16-color parameters`);
+    }
+    assert.match(pager.LESS_TERMCAP_md!, /^\u001b\[1;(?:3[1-7]|9[0-7])m$/u, 'text never uses slot 0, the terminal\'s black');
+    assert.match(pager.LESS_TERMCAP_so!, /^\u001b\[(?:7|(?:3[0-7]|9[0-7]);(?:4[0-7]|10[0-7]))m$/u);
+    const ls = lsColorsFallback(palette, 'ansi16')!;
+    assert.ok(validLsColors(ls));
+    for (const entry of ls.split(':')) assert.match(entry.split('=')[1]!, /^(?:[0-9];)?(?:3[1-7]|9[0-7])$/u, entry);
+    assert.match(pagerEnvironment(palette, 'ansi256').LESS_TERMCAP_md!, /38;5;/u, '256-color hosts keep the nearest 256 entry');
+    assert.match(pagerEnvironment(palette, 'truecolor').LESS_TERMCAP_md!, /38;2;/u);
+  }
 });
 
 test('delta: never managed; its status says whether git config pins the syntax theme or it follows bat in NMSh shells', () => {
