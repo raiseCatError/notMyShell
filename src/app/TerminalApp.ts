@@ -134,6 +134,8 @@ import {commandWords, type CommandContextId} from '../prompt/commandContext.js';
 import {ContextEngine} from '../context/engine.js';
 import {CORE_CAPABILITIES} from '../context/registry.js';
 import {contextDemand} from '../context/demand.js';
+import {setInstalledPacks} from '../context/modules.js';
+import {activeInstalledPacks} from '../context/packs/store.js';
 import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
 import type {CapabilityScopeInput} from '../context/capability.js';
 import type {ContextFact} from '../context/facts.js';
@@ -778,6 +780,7 @@ export class TerminalApp {
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     this.beginStartupWatch(connection?.attached);
     this.session.start();
+    void this.loadInstalledPacks();
   }
 
   /** The shell has not reached its first prompt; set for a new session, or a reattached one still starting. */
@@ -3254,7 +3257,16 @@ export class TerminalApp {
     }
   }
 
+  /** Installed Context Packs (verified, enabled) join the module catalog: read at startup and whenever /prompt opens. */
+  private async loadInstalledPacks(): Promise<void> {
+    try { setInstalledPacks(await activeInstalledPacks(undefined, this.buildIdentity.version)); } catch { /* bundled modules remain available */ }
+    if (this.stopped) return;
+    this.requestContextDemand();
+    this.render();
+  }
+
   private async startPromptSettings(onboarding: boolean): Promise<void> {
+    await this.loadInstalledPacks();
     this.promptPanelState = {onboarding, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
       draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
     this.panelExternalPrompt = undefined;

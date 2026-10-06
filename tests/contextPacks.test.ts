@@ -258,3 +258,40 @@ test('the reserved first-party namespace cannot be shadowed by an installed pack
     assert.equal(await readFile(join(root, 'context-packs', 'installed.json'), 'utf8'), '{broken');
   } finally { await rm(root, {recursive: true, force: true}); }
 });
+
+test('`nmsh packs`: list, inspect with disclosure, confirmed install adds hidden modules, enable/disable, remove cleans up', async () => {
+  const {runPacksCommand} = await import('../src/cli/packsCommand.js');
+  const {loadPromptConfiguration} = await import('../src/prompt/configuration.js');
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nmsh-packs-cli-')));
+  const env = {XDG_CONFIG_HOME: join(root, 'config'), HOME: root};
+  let out = '', err = '';
+  const io = (confirm?: boolean) => ({out: (text: string) => { out += text; }, err: (text: string) => { err += text; }, env, version: '0.18.0',
+    ...(confirm === undefined ? {} : {confirm: async () => confirm})});
+  try {
+    assert.equal(await runPacksCommand([], io()), 0);
+    assert.match(out, /nmsh\.cloud +1\.0\.0 +Cloud/u);
+    assert.match(out, /Installed: none/u);
+    const file = join(root, 'acme.json');
+    await writeFile(file, bytes(pack()));
+    out = '';
+    assert.equal(await runPacksCommand(['inspect', file], io()), 0);
+    assert.match(out, /infra\.terraform: \*\.tf, \*\.tofu file names/u, 'inspection discloses exactly what core will read');
+    assert.match(out, /acme\.infra:tf — Acme TF/u);
+    assert.equal(await runPacksCommand(['install', file], io(false)), 1, 'declining installs nothing');
+    assert.equal(await runPacksCommand(['install', file], io()), 2, 'non-interactive install needs --yes');
+    assert.equal(await runPacksCommand(['install', file, '--yes'], io()), 0);
+    const configPath = join(root, 'config', 'nmsh', 'config.json');
+    const installed = loadPromptConfiguration(configPath).modules.find(module => module.id === 'acme.infra:tf');
+    assert.deepEqual(installed, {id: 'acme.infra:tf', visible: false, condition: 'onCommand', surface: 'auto'}, 'modules arrive hidden');
+    out = '';
+    await runPacksCommand(['disable', 'acme.infra'], io());
+    await runPacksCommand([], io());
+    assert.match(out, /acme\.infra +1\.0\.0 +disabled/u);
+    assert.equal(await runPacksCommand(['remove', 'acme.infra', '--yes'], io()), 0);
+    assert.equal(loadPromptConfiguration(configPath).modules.some(module => module.id.startsWith('acme.infra:')), false);
+    await writeFile(file, '{"schema": "nmsh.context-pack/v1", "id": "x.y", "exec": "rm -rf /"}');
+    err = '';
+    assert.equal(await runPacksCommand(['install', file, '--yes'], io()), 1);
+    assert.match(err, /Invalid Context Pack/u);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});

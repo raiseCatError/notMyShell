@@ -330,7 +330,8 @@ function depth(value: unknown, level = 0): number {
 
 /** Compare `version` against an `nmsh` range like ">=0.18.0" or ">=0.18.0 <1.0.0". */
 export function satisfiesRange(version: string, range: string | undefined): boolean {
-  if (!range) return true;
+  // A development build without a release version cannot be judged; it does not block a pack.
+  if (!range || !/^\d+\.\d+\.\d+/u.test(version)) return true;
   const parse = (value: string) => value.split(/[.-]/u).slice(0, 3).map(item => Number.parseInt(item, 10) || 0);
   const compare = (a: number[], b: number[]) => { for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i]! - b[i]!; return 0; };
   const current = parse(version);
