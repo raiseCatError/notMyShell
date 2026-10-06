@@ -1,5 +1,6 @@
 import {appendFileSync, mkdirSync, readFileSync, statSync, unlinkSync} from 'node:fs';
 import {dirname} from 'node:path';
+import {MAX_SHELL_KNOWLEDGE_BYTES} from '../shell/ShellKnowledge.js';
 
 /** One shell stream event as retained for replay. */
 export type BacklogEvent =
@@ -39,7 +40,8 @@ function validEvent(value: unknown): value is SpoolRecord {
     case 'output': return int('seq') && int('at') && typeof record.data === 'string';
     case 'exec': return int('seq') && int('at') && typeof record.command === 'string';
     case 'prompt': return int('seq') && int('at') && int('exitCode') && typeof record.cwd === 'string'
-      && (record.knowledge === undefined || typeof record.knowledge === 'string' && Buffer.byteLength(record.knowledge) <= 65536);
+      // The same bound the shell side reads with: a spooled prompt is never dropped for knowledge the live path accepted.
+      && (record.knowledge === undefined || typeof record.knowledge === 'string' && Buffer.byteLength(record.knowledge) <= MAX_SHELL_KNOWLEDGE_BYTES);
     case 'ack': return int('seq') && typeof record.journalId === 'string';
     case 'truncated': return int('bytes');
     case 'exit': return int('exitCode') && int('at');
