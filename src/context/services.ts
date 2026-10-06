@@ -132,6 +132,17 @@ export function within(child: string, parent: string): boolean {
   return a === b || a.startsWith(b.endsWith(sep) ? b : `${b}${sep}`);
 }
 
+/**
+ * The directories whose executables count as workspace-controlled: the cwd and
+ * repository root, except a directory that is the filesystem root or contains
+ * the home directory. Those hold the user's own tools (~/.cargo/bin,
+ * ~/.local/bin, /usr/bin), not a project's.
+ */
+export function workspaceRoots(cwd: string, root: string | undefined, home: string): string[] {
+  return [...new Set([cwd, ...(root ? [root] : [])].map(directory => normalize(directory)))]
+    .filter(directory => isAbsolute(directory) && dirname(directory) !== directory && !(home && within(home, directory)));
+}
+
 export interface SearchBoundary {
   cwd: string;
   /** Repository top level: the search climbs to it and no further. Outside a repository only `cwd` is searched. */

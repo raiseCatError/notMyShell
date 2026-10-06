@@ -1,7 +1,7 @@
 import {homedir} from 'node:os';
 import {basename, dirname, isAbsolute, join, normalize} from 'node:path';
 import {defineCapability, type CapabilityContext, type CapabilityDefinition} from '../capability.js';
-import {findNearest, LARGE_METADATA_BYTES, listNames, parseIniData, parseJsonData, parseTomlData, parseToolVersions,
+import {findNearest, workspaceRoots, LARGE_METADATA_BYTES, listNames, parseIniData, parseJsonData, parseTomlData, parseToolVersions,
   readMetadataText, readVersionFile, record, resolveTrustedExecutable, text, versionFromInstallPath, within,
   type ExecutableIdentity} from '../services.js';
 
@@ -57,7 +57,7 @@ async function versionFile(context: CapabilityContext, files: readonly string[])
 type Active = {active?: string; manager?: string; note?: string};
 
 async function trustedBinary(context: CapabilityContext, names: readonly string[]): Promise<ExecutableIdentity | {refused: string} | undefined> {
-  const roots = [context.cwd, ...(context.root ? [context.root] : [])];
+  const roots = workspaceRoots(context.cwd, context.root, context.home);
   for (const name of names) {
     const result = await resolveTrustedExecutable(name, context.env.values.PATH, roots);
     if (result === 'not-found') continue;

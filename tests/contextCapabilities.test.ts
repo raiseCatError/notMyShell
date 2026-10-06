@@ -111,9 +111,12 @@ test('runtime.node: requested pins, install-layout versions, shims and workspace
     await mkdir(bin, {recursive: true});
     await sentinelExecutable(join(bin, 'node'), join(root, 'WORKSPACE_RAN'), 'v1.0.0');
     resetServiceCaches();
-    fact = await resolve(nodeRuntime, {cwd: root, root, env: {PATH: `${bin}:${cellar}`}});
+    fact = await resolve(nodeRuntime, {cwd: root, root, home: tools, env: {PATH: `${bin}:${cellar}`}});
     assert.equal(fact?.active, undefined);
     assert.match(fact?.note ?? '', /inside this workspace/u);
+    // The home directory is not a workspace: tools under it (~/.local/bin, ~/.cargo/bin) are the user's own.
+    resetServiceCaches();
+    assert.notEqual((await resolve(nodeRuntime, {cwd: root, root, home: root, env: {PATH: `${bin}:${cellar}`}}))?.note?.includes('inside this workspace'), true);
     assert.equal(await exists(join(root, 'WORKSPACE_RAN')), false);
     // A version-manager shim selects versions itself: reported, never executed.
     const shims = join(tools, '.asdf', 'shims');
