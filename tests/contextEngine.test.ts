@@ -10,7 +10,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {resolvePromptContext} from '../src/shell/ShellContext.js';
-import {readKubeContext, readDockerContext, CommandContextCache} from '../src/prompt/commandContext.js';
+import {readKubeContext, readDockerContext} from '../src/prompt/commandContext.js';
+import {ContextEngine} from '../src/context/engine.js';
+import {docker, kubernetes} from '../src/context/capabilities/infrastructure.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {promptFacts, type ContextFact} from '../src/context/facts.js';
 import {routeModule} from '../src/context/surfaceRouter.js';
@@ -150,7 +152,9 @@ test('render and geometry never initiate command-context reads', () => {
   const app = new TerminalApp();
   try {
     let reads = 0;
-    app['commandContexts'] = new CommandContextCache(() => {}, {kubeContext: async () => { reads++; return 'safe'; }, dockerContext: async () => { reads++; return 'safe'; }});
+    app['contextEngine'] = new ContextEngine({capabilities: [{...kubernetes, resolve: async () => { reads++; return {value: {context: 'safe'}, evidence: 'fixture'}; }},
+      {...docker, resolve: async () => { reads++; return {value: {context: 'safe'}, evidence: 'fixture'}; }}]});
+    app['contextEngine'].stage(app['contextScope']('/workspace', undefined)); app['contextEngine'].commit();
     app['editor'].insert('kubectl get pods');
     app['promptConfiguration'] = railConfig();
     Object.defineProperty(app, 'fetchSuggestions', {value: async () => {}});
@@ -294,16 +298,18 @@ test('editor demand requests cached facts outside render and late results obey c
     app['promptConfiguration'] = railConfig();
     let reads = 0;
     let finish: (value: string) => void = () => {};
-    app['commandContexts'] = new CommandContextCache(() => {}, {kubeContext: () => { reads++; return new Promise(resolve => { finish = resolve; }); }, dockerContext: async () => 'unused'});
+    app['contextEngine'] = new ContextEngine({capabilities: [{...kubernetes, resolve: () => { reads++; return new Promise(resolve => { finish = context => resolve({value: {context}, evidence: 'fixture'}); }); }},
+      {...docker, resolve: async () => ({value: {context: 'unused'}, evidence: 'fixture'})}]});
+    app['contextEngine'].stage(app['contextScope']('/workspace', undefined)); app['contextEngine'].commit();
     app['editor'].insert('kubectl');
-    app['requestCommandContexts'](); app['requestCommandContexts']();
+    app['requestContextDemand'](); app['requestContextDemand']();
     assert.equal(reads, 1, 'demand coalesces');
     app['editor'].clear(); app['editor'].insert('echo');
     finish('production'); await new Promise(resolve => setImmediate(resolve));
     assert.deepEqual(app['contextRailRows'](80), []);
     app['editor'].clear(); app['editor'].insert('kubectl get pods');
     assert.match(app['contextRailRows'](80).map(stripAnsi).join(''), /production/);
-    app['promptConfiguration'].modules[0]!.surface = 'hidden'; app['requestCommandContexts']();
+    app['promptConfiguration'].modules[0]!.surface = 'hidden'; app['requestContextDemand']();
     assert.deepEqual(app['contextRailRows'](80), []);
   } finally { app['stop'](0); app['session'].kill(); }
 });

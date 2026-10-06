@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import {mkdtemp, mkdir, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {CommandContextCache, commandWords, readDockerContext, readKubeContext} from '../src/prompt/commandContext.js';
+import {commandWords, readDockerContext, readKubeContext} from '../src/prompt/commandContext.js';
+import {ContextEngine} from '../src/context/engine.js';
+import {kubernetes} from '../src/context/capabilities/infrastructure.js';
+import {EMPTY_SHELL_ENVIRONMENT} from '../src/context/shellEnvironment.js';
 import {buildContextLine, isOnCommandRelevant, nativePromptSnapshot, renderedModules} from '../src/prompt/prompt.js';
 import {DEFAULT_PROMPT_CONFIGURATION, hasVisibleContextModule, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {handlePromptPanelKey, renderPromptPanel} from '../src/prompt/PromptPanel.js';
@@ -118,20 +121,23 @@ test('the lookup cache answers immediately and refreshes in the background', asy
   let reads = 0;
   let updates = 0;
   let value = 'a';
-  const cache = new CommandContextCache(() => { updates += 1; }, {
-    kubeContext: async () => { reads += 1; return value; },
-    dockerContext: async () => undefined,
-  }, 1000, () => clock);
-  assert.equal(cache.get('kubeContext'), undefined, 'first access never waits');
+  const engine = new ContextEngine({now: () => clock, onUpdate: () => { updates += 1; },
+    capabilities: [{...kubernetes, ttlMs: 1000, resolve: async () => { reads += 1; return {value: {context: value}, evidence: 'fixture'}; }}]});
+  engine.stage({cwd: '/w', home: '/h', session: 's', env: EMPTY_SHELL_ENVIRONMENT}); engine.commit();
+  const demand = () => engine.demand(new Map([['infra.kubernetes', new Set(['context'])]]));
+  const current = () => (engine.facts()['infra.kubernetes']?.value as {context?: string} | undefined)?.context;
+  demand();
+  assert.equal(current(), undefined, 'first access never waits');
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(cache.get('kubeContext'), 'a');
+  assert.equal(current(), 'a');
   assert.equal(updates, 1);
-  cache.get('kubeContext');
+  demand();
   assert.equal(reads, 1, 'fresh values are not re-read');
   value = 'b';
   clock = 2000;
-  assert.equal(cache.get('kubeContext'), 'a', 'stale values still answer immediately');
+  demand();
+  assert.equal(current(), 'a', 'stale values still answer immediately');
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(cache.get('kubeContext'), 'b');
+  assert.equal(current(), 'b');
   assert.equal(updates, 2);
 });

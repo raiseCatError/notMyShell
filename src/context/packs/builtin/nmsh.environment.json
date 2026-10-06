@@ -1,0 +1,35 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.environment",
+  "version": "1.0.0",
+  "name": "Environment managers",
+  "description": "Version-manager tool requests and direnv state, read from declarative files and the shell's own bookkeeping. Nothing is activated, trusted or sourced.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["env.toolVersions", "env.direnv"],
+  "modules": [
+    {
+      "id": "tools", "label": "mise / asdf", "description": "Tools the nearest mise.toml or .tool-versions requests (never runs mise or asdf).",
+      "category": "environment", "priority": 35, "role": "system", "icon": "tools", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"parts": [
+        {"fact": "env.toolVersions", "field": "manager"},
+        {"fact": "env.toolVersions", "field": "summary", "prefix": " ", "optional": true}
+      ]}]
+    },
+    {
+      "id": "direnv", "label": "direnv", "description": "Whether direnv loaded this workspace's .envrc (never reads or sources it).",
+      "category": "environment", "priority": 38, "role": "system", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"icon": false, "parts": [
+        {"text": "direnv "},
+        {"fact": "env.direnv", "field": "state"}
+      ]}]
+    }
+  ],
+  "recommend": [
+    {"module": "tools", "evidence": [{"kind": "workspaceFile", "names": ["mise.toml", ".mise.toml", ".tool-versions"]}]},
+    {"module": "direnv", "evidence": [{"kind": "workspaceFile", "names": [".envrc"]}]}
+  ]
+}

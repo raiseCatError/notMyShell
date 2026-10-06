@@ -1,0 +1,25 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.vcs",
+  "version": "1.0.0",
+  "name": "Git extras",
+  "description": "Stash depth and configured upstream, read from the repository's Git files alongside Rich Git.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["vcs.git"],
+  "modules": [
+    {
+      "id": "stash", "label": "Git stash", "description": "Number of stashed changes.",
+      "category": "vcs", "priority": 30, "role": "vcs", "icon": "archive", "condition": "inRepository",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "stash", "parts": [{"fact": "vcs.git", "field": "stash", "format": "count"}]}]
+    },
+    {
+      "id": "upstream", "label": "Git upstream", "description": "The branch's configured upstream.",
+      "category": "vcs", "priority": 28, "role": "vcs", "icon": "upstream", "condition": "inRepository",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "up", "parts": [{"fact": "vcs.git", "field": "upstream"}]}]
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import {execFileSync} from 'node:child_process';
-import {copyFile, mkdir, readFile, writeFile} from 'node:fs/promises';
+import {copyFile, mkdir, readdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -24,6 +24,12 @@ await mkdir(outputDirectory, {recursive: true});
 await mkdir(join(outputDirectory, 'shell'), {recursive: true});
 for (const name of ['capture.zsh', 'configured-completion.zsh', 'configured-widget.zsh']) {
   await copyFile(join(root, 'src/shell', name), join(outputDirectory, 'shell', name));
+}
+// First-party Context Packs ship as data: the same JSON manifests the validator reads in development.
+const packs = join(root, 'src/context/packs/builtin');
+await mkdir(join(outputDirectory, 'context/packs/builtin'), {recursive: true});
+for (const name of (await readdir(packs)).filter(name => name.endsWith('.json'))) {
+  await copyFile(join(packs, name), join(outputDirectory, 'context/packs/builtin', name));
 }
 await writeFile(join(outputDirectory, 'build-info.json'), `${JSON.stringify({
   version: typeof packageJson.version === 'string' ? packageJson.version : 'unknown',

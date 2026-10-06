@@ -1,3 +1,4 @@
+import {moduleDefinition} from '../context/modules.js';
 import {routeModule} from '../context/surfaceRouter.js';
 import {railNeedsPromptConversion} from './railLayout.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
@@ -428,10 +429,10 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
   }
 }
 
-const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
-  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
-  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell', discoveredTools: 'Local tools',
-};
+/** Catalog label; a module whose pack is not installed keeps its row (and settings) and says so. */
+export function moduleLabel(id: PromptConfiguration['modules'][number]['id']): string {
+  return moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`;
+}
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
   const index = Math.max(0, values.indexOf(current));
@@ -497,7 +498,11 @@ export function promptDraftChanged(state: PromptPanelState): boolean {
   return comparable(state.draft) !== comparable(state.saved);
 }
 
+const CONDITION_LABELS: Record<PromptConfiguration['modules'][number]['condition'], string> = {
+  always: 'always', inRepository: 'in repositories', nonzeroExit: 'on failure', onCommand: 'on command', shellDiffers: 'when not default'};
+
 function moduleOption(module: PromptConfiguration['modules'][number]): string {
+  if (module.id.includes(':')) return moduleDefinition(module.id) ? CONDITION_LABELS[module.condition] : 'pack not installed';
   switch (module.id) {
     case 'gitBranch': case 'gitStatus': return 'in repositories';
     case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
@@ -530,6 +535,8 @@ function handleModulesKey(key: Key, state: PromptPanelState): boolean {
     module.condition = module.condition === 'always' ? 'shellDiffers' : 'always';
   } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
     module.condition = module.condition === 'onCommand' ? 'always' : 'onCommand';
+  } else if ((key.kind === 'left' || key.kind === 'right') && module.id.includes(':') && (moduleDefinition(module.id)?.conditions.length ?? 0) > 1) {
+    module.condition = cycle(moduleDefinition(module.id)!.conditions, module.condition, key.kind === 'right' ? 1 : -1);
   } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
     const target = index + (key.kind === 'selectUp' ? -1 : 1);
     if (target < 0 || target >= modules.length) return true;
@@ -827,9 +834,10 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · Mirror right side: ${RESET}${state.draft.nmsh.mirrorRight ? `${ACCENT}On` : `${SECONDARY}Off`}${RESET}`);
     state.draft.modules.forEach((module, index) => {
       const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
-      const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
+      const choosable = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) || (module.id.includes(':') && (moduleDefinition(module.id)?.conditions.length ?? 0) > 1);
+      const option = choosable ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
       const side = module.surface ? MODULE_SURFACE_LABELS[module.surface] : modulePlacement(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${focusForeground(index === state.selectedIndex)}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 15)}${module.visible ? option : 'hidden'}${RESET}`);
+      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${focusForeground(index === state.selectedIndex)}${padCells(moduleLabel(module.id), labelColumnWidth(state.draft.modules.map(item => moduleLabel(item.id)), columns, 4))}${SUBTLE}${padCells(side, 15)}${module.visible ? option : 'hidden'}${RESET}`);
     });
   } else {
     const saved = state.saved?.nmsh;

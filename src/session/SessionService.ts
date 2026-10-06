@@ -7,7 +7,7 @@ import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/Shel
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SessionEvidence} from './SessionEvidence.js';
 import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, type ServerMessage, type SessionInfo, type SessionState} from './SessionProtocol.js';
-import {SESSION_MODE_ENV} from './SessionClient.js';
+import {SESSION_ID_ENV, SESSION_MODE_ENV} from './SessionClient.js';
 import {ensurePrivateRuntimeDir, socketPathFor, spoolPathFor} from './runtimeDir.js';
 import {EndedNotices, SessionNoticeTracker} from './SessionNotices.js';
 import {StreamBacklog, type BacklogEvent, type BacklogLimits} from './StreamBacklog.js';
@@ -350,8 +350,8 @@ export class SessionService {
   private create(cwd: string, env: Record<string, string>, columns: number, rows: number, send: Send, backend: ShellId = 'zsh'): ManagedSession {
     // The shell gets the launching frontend's environment and cwd, never the
     // service's own startup state. The env is opaque: it is not stored or logged.
-    const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service'}, backend);
     const id = randomUUID();
+    const shell = new ShellSession(cwd, columns, rows, env.HOME || '', {...env, [SESSION_MODE_ENV]: 'service', [SESSION_ID_ENV]: id}, backend);
     // A familiar signature unique among live sessions, assigned once; reattaching never changes it.
     const signature = assignSignature(id, [...this.sessions.values()].flatMap(item => item.record.signature ? [item.record.signature] : []));
     const record: SessionRecord = {id, pid: shell.pid, cwd, createdAt: new Date().toISOString(),
@@ -436,7 +436,8 @@ export class SessionService {
    * the session; the new one starts in cwd with the original environment.
    */
   private switchShell(session: ManagedSession, target: ShellId, cwd: string): void {
-    const next = new ShellSession(cwd, session.size.columns, session.size.rows, session.env.HOME || '', {...session.env, [SESSION_MODE_ENV]: 'service'}, target);
+    const next = new ShellSession(cwd, session.size.columns, session.size.rows, session.env.HOME || '', {...session.env, [SESSION_MODE_ENV]: 'service',
+      [SESSION_ID_ENV]: session.record.id}, target);
     const previous = session.shell;
     previous.removeAllListeners();
     previous.kill();

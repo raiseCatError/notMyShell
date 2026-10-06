@@ -68,10 +68,17 @@ test('P moves every module, including Project, Path and Git branch, right and ba
   const saved = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   const state = {onboarding: false, step: 'modules' as const, selectedIndex: 0, draft: structuredClone(saved), saved};
   state.draft.modules.forEach((module, index) => {
+    if (module.surface === 'auto') return;
     state.selectedIndex = index;
     handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
     assert.equal(state.draft.modules[index]!.placement, 'right', module.id);
   });
+  // An Auto-routed pack module toggles away from the side its definition prefers, then becomes an explicit placement.
+  const auto = state.draft.modules.findIndex(module => module.id === 'nmsh.project:package');
+  state.selectedIndex = auto;
+  handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
+  assert.equal(state.draft.modules[auto]!.surface, undefined);
+  assert.equal(state.draft.modules[auto]!.placement, undefined, 'preferred Right Context → explicit left');
   const rows = stripAnsi(renderPromptPanel(state, 140, []).join('\n'));
   for (const label of ['Project', 'Path', 'Git branch', 'Git status', 'Toolchains', 'Exit status', 'Kubernetes', 'Docker context']) {
     assert.match(rows, new RegExp(`${label} +right`, 'u'), label);

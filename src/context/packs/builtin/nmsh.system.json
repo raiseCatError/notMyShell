@@ -1,0 +1,78 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.system",
+  "version": "1.0.0",
+  "name": "System & session",
+  "description": "Operating system, user and remote session, jobs, session time, clock, battery and memory from local OS facts.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh; shares the Status Strip's OS readers."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["system.os", "session.user", "session.jobs", "session.duration", "system.time", "system.battery", "system.memory"],
+  "modules": [
+    {
+      "id": "os", "label": "Operating system", "description": "Operating system name and version.",
+      "category": "system", "priority": 12, "role": "system", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [
+        {"icon": "apple", "label": "os", "parts": [
+          {"fact": "system.os", "field": "name", "when": {"field": "platform", "equals": "darwin"}},
+          {"fact": "system.os", "field": "version", "prefix": " ", "optional": true}
+        ]},
+        {"icon": "linux", "label": "os", "parts": [
+          {"fact": "system.os", "field": "name", "when": {"field": "platform", "equals": "linux"}},
+          {"fact": "system.os", "field": "version", "prefix": " ", "optional": true}
+        ]}
+      ]
+    },
+    {
+      "id": "user", "label": "User & host", "description": "user@host during SSH sessions, and a warning while NMSh runs as root.",
+      "category": "system", "priority": 65, "role": "system", "condition": "always",
+      "surfaces": {"preferred": "mainPrompt"},
+      "segments": [
+        {"icon": "remote", "parts": [
+          {"fact": "session.user", "field": "user", "when": {"field": "ssh", "equals": true}},
+          {"text": "@"},
+          {"fact": "session.user", "field": "host"}
+        ]},
+        {"icon": false, "role": "failure", "parts": [
+          {"text": "root", "when": {"fact": "session.user", "field": "root", "equals": true}}
+        ]}
+      ]
+    },
+    {
+      "id": "jobs", "label": "Jobs", "description": "Background and stopped jobs in this shell.",
+      "category": "session", "priority": 75, "role": "system", "icon": "settings", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "jobs", "parts": [{"fact": "session.jobs", "field": "count", "format": "count"}]}]
+    },
+    {
+      "id": "duration", "label": "Session time", "description": "How long this NMSh session has been running.",
+      "category": "session", "priority": 20, "role": "system", "icon": "hourglass", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "up", "parts": [{"fact": "session.duration", "field": "startedAt", "format": "since"}]}]
+    },
+    {
+      "id": "time", "label": "Clock", "description": "Local time.",
+      "category": "system", "priority": 15, "role": "system", "icon": "clock", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"parts": [{"fact": "system.time", "field": "now", "format": "clock"}]}]
+    },
+    {
+      "id": "battery", "label": "Battery", "description": "Battery charge; machines without a battery show nothing.",
+      "category": "system", "priority": 25, "role": "system", "icon": "battery", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "bat", "emphasis": {"fact": "system.battery", "field": "percent", "atMost": 15}, "parts": [
+        {"fact": "system.battery", "field": "percent", "format": "percent"},
+        {"text": " charging", "optional": true, "when": {"fact": "system.battery", "field": "charging", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "memory", "label": "Memory", "description": "Memory in use.",
+      "category": "system", "priority": 22, "role": "system", "icon": "memory", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "mem", "emphasis": {"fact": "system.memory", "field": "usedPercent", "atLeast": 90}, "parts": [
+        {"fact": "system.memory", "field": "usedPercent", "format": "percent"}
+      ]}]
+    }
+  ]
+}

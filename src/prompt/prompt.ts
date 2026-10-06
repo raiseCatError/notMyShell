@@ -1,6 +1,10 @@
 import {colorLevel} from '../presentation/capabilities.js';
 import {promptFacts, moduleFactContext, safeContextText, factAllowed} from '../context/facts.js';
 import {routeModule} from '../context/surfaceRouter.js';
+import {moduleDefinition} from '../context/modules.js';
+import {declarativeSegments} from '../context/declarative.js';
+import {moduleRelevantToCommand} from '../context/demand.js';
+import {presentationNow} from '../presentation/environment.js';
 import {findTheme} from '../appearance/themeLibrary.js';
 import {accentedVariant, THEME_VARIANTS, type CatppuccinAccent, type ThemeVariant} from '../appearance/themeFamilies.js';
 import type {CustomTheme} from '../appearance/customTheme.js';
@@ -11,11 +15,10 @@ import {displayWidth, repeatToWidth, stripAnsi} from '../util/text.js';
 import type {PromptContext, ToolchainId} from '../shell/ShellContext.js';
 import {foreground, UI_COLORS, type RgbColor, lazyForeground} from '../ui/palette.js';
 import {neutralPromptText} from './powerline.js';
-import {GLYPHS, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
+import {GLYPHS, getCurrentGlyphMode, moduleIcon, type ModuleIconId} from '../ui/glyphs.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION,
   type ContextModuleConfig,
-  CONTEXT_MODULE_REGISTRY,
   type ContextSurface,
   type GitColorMode,
   type NativeIconMode,
@@ -23,7 +26,7 @@ import {
   type PromptConfiguration,
 } from './configuration.js';
 import {homedir} from 'node:os';
-import {COMMAND_CONTEXT_TRIGGERS, matchesCommand, TOOLCHAIN_TRIGGERS} from './commandContext.js';
+import {matchesCommand, TOOLCHAIN_TRIGGERS} from './commandContext.js';
 import {displayPath, PATH_DISPLAY_LEVELS} from './pathDisplay.js';
 import {fitPowerlineBlocks, fitRightPowerlineBlocks, renderPowerlineBlocks, resolveConnectorFade, resolveFadeColors, type PowerlineShape, type PromptChroma, type PromptStyle, type RenderExtras, type PowerlineBlock} from './powerline.js';
 import {desaturatePromptColor, type PromptSnapshot, type PromptSegmentSnapshot} from './snapshot.js';
@@ -341,7 +344,9 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
     case 'toolchain': return (context.toolchains ?? [])
       .filter(id => config.condition !== 'onCommand' || matchesCommand(TOOLCHAIN_TRIGGERS[id], context.commandWords))
       .map(id => ({text: withIcon(id, TOOLCHAIN_LABELS[id], icons), role: id}));
-    case 'kubeContext': return context.kubeContext ? [{text: withIcon('kubernetes', safePromptText(context.kubeContext), icons), role: 'kubernetes'}] : [];
+    // A namespace other than the default is part of "where commands go"; the context alone stays the familiar form.
+    case 'kubeContext': return context.kubeContext ? [{text: withIcon('kubernetes', safePromptText(context.kubeNamespace && context.kubeNamespace !== 'default'
+      ? `${context.kubeContext} (${context.kubeNamespace})` : context.kubeContext), icons), role: 'kubernetes'}] : [];
     // The managed backend uses the environment-context color (as the Kubernetes context does), so every theme colors it.
     case 'shell': return context.shell ? [{text: withIcon('shell', safePromptText(context.shell.current), icons), role: 'kubernetes'}] : [];
     case 'discoveredTools': {
@@ -353,14 +358,23 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
       text: `${status === 0 ? GLYPHS.success : GLYPHS.failure} ${status}`,
       role: status === 0 ? 'success' : 'failure',
     }];
+    default: return [];
   }
+}
+
+/** A pack module's segments: visibility conditions here, presentation in the shared declarative renderer. */
+function packModuleSegments(config: ContextModuleConfig, context: PromptContext, facts: ReturnType<typeof promptFacts>, icons: NativeIconMode,
+  purpose: 'display' | 'snapshot'): Array<{text: string; role: PromptRole; compact?: boolean}> {
+  const definition = moduleDefinition(config.id);
+  if (!definition?.pack || !config.visible) return [];
+  if (config.condition === 'inRepository' && !context.branch) return [];
+  if (config.condition === 'onCommand' && !matchesCommand(definition.triggers ?? [], context.commandWords)) return [];
+  return declarativeSegments(definition, facts, {icons, glyphs: getCurrentGlyphMode(), now: context.now ?? presentationNow().getTime(), purpose});
 }
 
 /** Whether an on-command module is relevant to the command words being typed. */
 export function isOnCommandRelevant(id: ContextModuleConfig['id'], words: readonly string[]): boolean {
-  if (id === 'kubeContext' || id === 'dockerContext') return matchesCommand(COMMAND_CONTEXT_TRIGGERS[id], words);
-  if (id === 'toolchain') return Object.values(TOOLCHAIN_TRIGGERS).some(triggers => matchesCommand(triggers, words));
-  return false;
+  return moduleRelevantToCommand(id, words);
 }
 
 /**
@@ -445,12 +459,21 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
   surface: 'prompt' | 'contextRail' = 'prompt', purpose: 'display' | 'snapshot' = 'display'): RenderedModule[] {
   const facts = promptFacts(context);
   const eligible = configuration.modules.filter(module => {
-    const primary = facts[CONTEXT_MODULE_REGISTRY[module.id].fields[0]!];
-    if (!primary || !factAllowed(primary, purpose)) return false;
+    const definition = moduleDefinition(module.id);
+    if (!definition) return false;
+    // Built-in modules need their primary legacy fact; pack modules apply fact and field policy per part.
+    if (!definition.pack) {
+      const primary = facts[definition.fields[0]!];
+      if (!primary || !factAllowed(primary, purpose)) return false;
+    }
     const target = routeModule(module);
     return surface === 'contextRail' ? target === 'contextRail' : target === 'mainPrompt' || target === 'rightContext';
-  }).flatMap(module => moduleSegments(module, moduleFactContext(context, facts, CONTEXT_MODULE_REGISTRY[module.id].fields, purpose), configuration.nmsh.icons, configuration.nmsh.gitEnabled, pathLevel)
-    .map(segment => ({...segment, module})));
+  }).flatMap(module => {
+    const definition = moduleDefinition(module.id)!;
+    const segments = definition.pack ? packModuleSegments(module, context, facts, configuration.nmsh.icons, purpose)
+      : moduleSegments(module, moduleFactContext(context, facts, definition.fields, purpose), configuration.nmsh.icons, configuration.nmsh.gitEnabled, pathLevel);
+    return segments.map(segment => ({...segment, module}));
+  });
 
   // The project block owns the brighter live identity when both location
   // modules say the same thing (notably "~" at HOME).
@@ -628,7 +651,7 @@ export function buildContextRail(context: PromptContext, width: number, configur
     const modules = renderedModules(context, draft, 0, 'contextRail');
     if (!modules.length) return rail.mode === 'always' ? Array<string>(rail.rows).fill('') : [];
     const groups = configuration.modules.map(module => modules.filter(segment => segment.id === module.id))
-      .filter(group => group.length).sort((a, b) => CONTEXT_MODULE_REGISTRY[b[0]!.id].priority - CONTEXT_MODULE_REGISTRY[a[0]!.id].priority);
+      .filter(group => group.length).sort((a, b) => (moduleDefinition(b[0]!.id)?.priority ?? 0) - (moduleDefinition(a[0]!.id)?.priority ?? 0));
     const rows: RenderedModule[][] = Array.from({length: rail.rows}, () => []);
     const compact = Array<boolean>(rail.rows).fill(false);
     const nmsh = draft.nmsh;

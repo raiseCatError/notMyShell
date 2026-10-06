@@ -130,7 +130,13 @@ import {detectOhMyPosh, renderOhMyPoshPrompt} from '../prompt/ohMyPosh.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
-import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {ContextEngine} from '../context/engine.js';
+import {CORE_CAPABILITIES} from '../context/registry.js';
+import {contextDemand} from '../context/demand.js';
+import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
+import type {CapabilityScopeInput} from '../context/capability.js';
+import type {ContextFact} from '../context/facts.js';
 import {discoverLocalExecutables} from '../tools/localDiscovery.js';
 import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
@@ -309,6 +315,9 @@ const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
 const INVERSE = '\u001B[7m';
 /** The Settings row the glyph preview returns to. */
 const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(entry => entry.id === 'glyphPreview'));
+/** How long a directory change waits for demanded context facts before showing what has resolved (the rest arrives later). */
+const CONTEXT_SETTLE_MS = 150;
+
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
@@ -369,7 +378,12 @@ export class TerminalApp {
   private historyQueryAbort?: AbortController;
   private historyResults: HistoryEntry[] = [];
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
-  private readonly commandContexts = new CommandContextCache(() => this.render());
+  /** Context Engine: demand-driven, cached, bounded capability resolution. Rendering only reads its facts. */
+  private contextEngine = new ContextEngine({capabilities: CORE_CAPABILITIES, onUpdate: () => { this.scheduleContextRefresh(); this.render(); }});
+  /** The live shell's allowlisted context environment; NMSh's own launch environment until the shell reports one. */
+  private contextEnvironment: ShellEnvironment = frontendEnvironment();
+  private readonly contextStartedAt = Date.now();
+  private contextRefreshTimer?: NodeJS.Timeout;
   private configuration: PromptConfiguration = loadPromptConfiguration();
   /** Decorative surfaces without prompt context follow the active Native theme for Current Theme Chroma. */
   private themeStopsKey = '';
@@ -728,6 +742,8 @@ export class TerminalApp {
       if (this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
+          // An older bootstrap reports no snapshot: keep the documented launch-environment fallback.
+          this.contextEnvironment = parseShellEnvironment(marker.knowledge) ?? this.contextEnvironment;
           this.semanticService.applyShellKnowledge(marker.knowledge);
           this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
@@ -845,6 +861,7 @@ export class TerminalApp {
     this.streamSeq = attached.ackedSeq;
     if (attached.knowledge !== undefined) {
       this.shellJobs = knowledgeJobCount(attached.knowledge) ?? 0;
+      this.contextEnvironment = parseShellEnvironment(attached.knowledge) ?? this.contextEnvironment;
       this.semanticService.applyShellKnowledge(attached.knowledge);
       this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
       this.rememberShellNames(attached.knowledge);
@@ -1089,7 +1106,7 @@ export class TerminalApp {
       const before = {text: this.editor.text, index: this.editor.displayCursorIndex};
       this.handleKey(key);
       this.noteCaretTravel(before);
-      this.requestCommandContexts();
+      this.requestContextDemand();
     }
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
@@ -3033,26 +3050,50 @@ export class TerminalApp {
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;
     }
+    // A command may have changed what workspace facts say (npm version, terraform workspace select, aws configure).
+    this.contextEngine.invalidate('command');
     void this.refreshContext(cwd);
     this.render();
     this.advancePresetStartup(exitCode, cwd);
   }
 
 
+  /** Rich Git status is computed only while a visible Git module can show it (field demand for the legacy collector). */
+  private gitStatusDemanded(configuration = this.promptConfiguration): boolean {
+    return configuration.nmsh.gitEnabled && configuration.modules.some(module => (module.id === 'gitStatus' || module.id === 'gitBranch') && routeModule(module) !== 'hidden');
+  }
+
+  private contextScope(cwd: string, root: string | undefined): CapabilityScopeInput {
+    return {cwd, home: homedir(), ...(root ? {root} : {}), session: this.agentScope, env: this.contextEnvironment,
+      live: {jobs: this.shellJobs, startedAt: this.contextStartedAt}};
+  }
+
+  /** The NMSh session agents running inside this shell report to (NMSH_SESSION_ID in the managed shell). */
+  private get agentScope(): string {
+    return this.sessionId ?? (this.session as {contextId?: string}).contextId ?? 'external';
+  }
+
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
     const wantsDiscovery = this.promptConfiguration.modules.some(module => module.id === 'discoveredTools' && routeModule(module) !== 'hidden');
     const [context, pathAbbreviations] = await Promise.all([
-      resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled,
+      resolvePromptContext(cwd, undefined, undefined, {status: this.gitStatusDemanded(),
         ...(wantsDiscovery ? {discovery: await discoverLocalExecutables()} : {})}),
       resolvePathAbbreviations(cwd, homedir()),
     ]);
     if (generation !== this.contextGeneration || this.stopped) return;
+    // Stage the engine for this directory and shell environment; demanded facts resolve (bounded wait)
+    // while the previous ones stay visible, then both change together.
+    const staged = this.contextEngine.stage(this.contextScope(cwd, context.root));
+    this.requestContextDemand(context);
+    await this.contextEngine.settle(CONTEXT_SETTLE_MS);
+    if (generation !== this.contextGeneration || this.stopped) return;
+    this.contextEngine.commit(staged);
     // Semantic Echo when Git conflicts become visible (not on every redraw while they remain).
     if ((context.git?.conflicts ?? 0) > 0 && !(this.context.git?.conflicts ?? 0)) this.transitions.echo('conflict', Date.now());
     this.context = {...context, home: homedir(), pathAbbreviations, exitStatus: this.context.exitStatus ?? 0};
     this.context.facts = promptFacts(this.context, Date.now());
-    this.requestCommandContexts();
+    this.requestContextDemand();
     await this.refreshProviderPrompt();
     this.render();
   }
@@ -3065,27 +3106,50 @@ export class TerminalApp {
     const words = commandWords(command);
     const wanted = (id: CommandContextId) => this.promptConfiguration.modules.some(module => module.id === id && routeModule(module) !== 'hidden'
       && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
-    const kubeContext = wanted('kubeContext') ? this.commandContexts.peek('kubeContext') : undefined;
-    const dockerContext = wanted('dockerContext') ? this.commandContexts.peek('dockerContext') : undefined;
+    // Render-safe reads of resolved engine facts: nothing here asks a capability to run.
+    const engine = this.contextEngine.facts();
+    const kubeFact = wanted('kubeContext') ? engine['infra.kubernetes'] : undefined;
+    const dockerFact = wanted('dockerContext') ? engine['infra.docker'] : undefined;
+    const kube = kubeFact?.value as {context?: string; namespace?: string} | undefined;
+    const docker = dockerFact?.value as {context?: string} | undefined;
     // Read live, so the current-shell module follows /shell and the default-shell setting immediately.
     const shell = {current: this.shellId, differs: this.shellId !== this.promptConfiguration.shellBackend};
-    const live = {...this.context, commandWords: words, shell, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
-    // Workspace facts retain collection time; cheap live shell/exit and cache values
-    // are adapted in memory, without asking any reader to run.
+    const live = {...this.context, commandWords: words, shell, now: presentationNow().getTime(),
+      ...(kube?.context ? {kubeContext: kube.context, ...(kube.namespace ? {kubeNamespace: kube.namespace} : {})} : {}),
+      ...(docker?.context ? {dockerContext: docker.context} : {})};
+    // Workspace facts retain collection time; cheap live shell/exit values are adapted in memory.
     const facts = promptFacts({...live, facts: undefined});
-    return {...live, facts: {...this.context.facts, exitStatus: updateFact(facts.exitStatus, this.context.facts?.exitStatus), shell: updateFact(facts.shell, this.context.facts?.shell),
-      kubeContext: updateFact(facts.kubeContext, this.context.facts?.kubeContext), dockerContext: updateFact(facts.dockerContext, this.context.facts?.dockerContext)}};
+    // Engine-backed legacy fields keep the engine's provenance, freshness and policy.
+    const engineBacked = (fact: ContextFact<unknown> | undefined, value: string | undefined) => fact && value ? {...fact, value} as ContextFact<string> : undefined;
+    return {...live, facts: {...this.context.facts, ...engine, exitStatus: updateFact(facts.exitStatus, this.context.facts?.exitStatus),
+      shell: updateFact(facts.shell, this.context.facts?.shell),
+      // A refreshed value never weakens a privacy policy established earlier.
+      kubeContext: updateFact(engineBacked(kubeFact, kube?.context) ?? facts.kubeContext, this.context.facts?.kubeContext),
+      dockerContext: updateFact(engineBacked(dockerFact, docker?.context) ?? facts.dockerContext, this.context.facts?.dockerContext)}};
   }
 
-  private requestCommandContexts(): void {
-    if (this.stopped || this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh') return;
-    const words = commandWords(this.editor.text);
-    for (const id of ['kubeContext', 'dockerContext'] as const) {
-      const wanted = this.promptConfiguration.modules.some(module => module.id === id && routeModule(module) !== 'hidden'
-        && (routeModule(module) !== 'contextRail' || this.promptConfiguration.contextRail.mode !== 'off')
-        && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
-      if (wanted) this.commandContexts.request(id);
-    }
+  /**
+   * Context demand from lifecycle, editor and settings changes, never from
+   * rendering. Passthrough and handoff demand nothing (their screen is not ours).
+   */
+  private requestContextDemand(context: Pick<PromptContext, 'branch'> = this.context): void {
+    if (this.stopped) return;
+    const configuration = this.promptConfiguration;
+    const native = this.effectivePromptProvider === 'nmsh';
+    const suspended = this.passthrough || this.externalPassthrough || this.frontendSuspended;
+    this.contextEngine.demand(suspended ? new Map() : contextDemand(configuration, {commandWords: commandWords(this.editor.text), nativePrompt: native,
+      railVisible: native && configuration.contextRail.mode !== 'off', statusStripVisible: false, inRepository: Boolean(context.branch)}));
+    this.scheduleContextRefresh();
+  }
+
+  /** One timer, only while a visible module shows a time-based fact (clock, memory, battery, agent status). */
+  private scheduleContextRefresh(): void {
+    if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
+    const delay = this.contextEngine.refreshDelay();
+    if (delay === undefined) return;
+    this.contextRefreshTimer = setTimeout(() => { this.contextRefreshTimer = undefined; this.requestContextDemand(); }, delay);
+    this.contextRefreshTimer.unref?.();
   }
 
   private renderRail?: {columns: number; prepared: PreparedRail};
@@ -3488,9 +3552,9 @@ export class TerminalApp {
       if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
       this.panelExternalPrompt = undefined;
       // Turning Rich Git on needs a status probe the last refresh may have skipped.
-      if (state.saved?.nmsh.gitEnabled !== state.draft.nmsh.gitEnabled) void this.refreshContext(this.shellCwd);
+      if (state.saved && this.gitStatusDemanded(state.saved) !== this.gitStatusDemanded(state.draft)) void this.refreshContext(this.shellCwd);
       await this.refreshProviderPrompt();
-      this.requestCommandContexts();
+      this.requestContextDemand();
       // refreshProviderPrompt already fell back to NMSh and saved that truthfully.
       if (this.externalPromptError && state.draft.provider !== 'nmsh') {
         this.output.addHistoryLine(`${ERROR}${providerLabel(state.draft.provider)} prompt failed; NMSh is active. ${this.externalPromptError}${RESET}`);
@@ -8350,6 +8414,8 @@ export class TerminalApp {
   private stop(exitCode: number): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.contextEngine.dispose();
+    if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
     setCursorHostProvider(undefined);
     this.setupCursorClock?.(); this.setupCursorClock = undefined;
