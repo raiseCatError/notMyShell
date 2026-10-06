@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+Not yet released; the package version stays 0.17.0 until a release is prepared.
+
+### Context Engine and modules
+- **Capability scheduler:** typed capabilities declare what they read, their environment, cost, timeout, cache lifetime and per-field privacy. Only facts that visible, routed modules demand are resolved, off the typing path, with bounded concurrency, coalescing, timeouts with backoff (and a cold-start allowance), cancellation on directory change, staged scopes that keep the old context visible until the new one settles, stale-while-revalidate caching and command-completion invalidation. Hidden modules cost nothing.
+- **Shell-reported environment:** each zsh, Bash and Fish prompt reports an allowlisted set of non-secret environment values (and only the presence of credential variables), so context follows the live shell, not NMSh's launch environment.
+- **First-party catalog** as bundled declarative packs: project package; Node, Python, Go, Rust and Java versions from pins and install layouts (never by running them); mise/asdf tool requests and direnv state (never reading `.envrc`); Terraform/OpenTofu, Helm, Pulumi; AWS, Google Cloud and Azure from local non-secret configuration (no API calls, no credentials); OS, user/host/SSH, jobs, session duration, time, memory and battery; Git stash and upstream. Every module has a deterministic preview, Safe-glyph labels and Theme/Neutral roles.
+- **Declarative Context Packs** (`nmsh.context-pack/v1`): bounded strict data naming core capabilities, with license, provenance, compatibility and recommendations. `nmsh packs` lists, inspects, installs (optionally pinned by `--sha256`), enables, disables and removes packs atomically; tampered packs report integrity failure. Packs cannot run commands or code and gain no authority by being installed; recommendations explain local evidence and never install or enable anything.
+- **Claude Code agent context** through Claude Code's official status line: `nmsh agent-status setup` shows and applies one reviewed settings change (and `remove` undoes exactly it); the bridge keeps an allowlisted, private record per NMSh session, and modules show model, effort, context-window use and 5-hour/7-day limits. No terminal scraping; prompts and transcripts are never read.
+- **Status Strip routing:** modules can join the Status Strip at a lower priority than its own items.
+- `/prompt` → Modules gains **Catalog** (every module by category, with local recommendations) and **Packs** tabs, and a details view saying what a module reads, how fresh each fact is and whether it may enter command history.
+
+### Theme Bridge, terminal and shell assistance
+- **Terminal title** (Settings → Sessions, Off by default): Project, or Project and session, written only while NMSh owns the screen; programs keep their own titles, hostile names cannot inject escapes, and hosts with a title stack get their previous title back on exit.
+- Host semantics: command start (OSC 133 `C`) is written at once even ahead of a fullscreen program, the directory is reported again after a program owned the screen, and a reattach replays no history to the host.
+- **Open in pager** block action: a command and its complete stored output in your pager on the host terminal, through stdin only (never shell source), with escape sequences shown inert.
+- delta's status says whether its syntax highlighting follows bat's NMSh theme or your git config pins it (read as data); diff colors stay in git config.
+- Theme Bridge colors are valid on 16- and 8-color terminals (theme ANSI slots instead of 256-color codes for less/man, listings and Vim).
+- Fixed: Apply themes Follow NMSh / Choose theme now themes NMSh's own fzf launches even when fzf's Manual setting is Independent.
+- Typo correction works in Bash and Fish, and Bash/Fish command recognition, correction and install offers use the live shell's `PATH`.
+
+### Security and performance
+- Context discovery never runs a discovered executable; one inside the current workspace (followed through symlinks) is not even inspected. Pack metadata, workspace names and settings text cannot inject terminal escapes into `/prompt`, `nmsh packs` or `nmsh agent-status`.
+- Hostile-workspace coverage for control/bidi/OSC payloads, huge, malformed and symlinked files, fake executables, malicious PATH entries, `.envrc`, kubeconfig `exec`, hostile Git metadata and malicious packs.
+- Context Engine benchmarks (cold/warm collection, rapid directory changes, every module on every surface, hidden modules, a large repository) with budgets enforced by the timing smoke.
+- Fixed: a detached session's spooled prompt events are no longer dropped on replay when the shell's knowledge exceeds 64 KiB.
+
 ## [0.17.0] - 2026-10-06
 
 Context Engine, Themes & Discovery: native context routing and Rail foundations, Theme Studio and Theme Bridge, shell/transcript refinements, contextual tools and portability hardening.

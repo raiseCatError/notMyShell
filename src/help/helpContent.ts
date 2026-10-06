@@ -37,6 +37,14 @@ Settings → Theme (and /setup appearance) picks a Built-in theme (NMSh themes a
 
 /prompt → None keeps only the composer and its input marker: no prompt row, modules or right prompt. Editing, suggestions, syntax colors, history, themes and Theme Bridge keep working, and commands submitted under None store no prompt snapshot. /transcript → Historical prompt shows past prompts Full, Compact (place, branch, marker), Minimal (marker) or Off; stored snapshots are never changed.
 
+## Context modules
+
+/prompt → Modules has three tabs. Modules lists what is in use (Space shows or hides, Shift+arrows reorder, S picks a surface: Main Prompt, Right Context, Context Rail, Status Strip or Hidden). Catalog lists every module by category and what is recommended here, with the local evidence. Packs lists bundled and installed Context Packs. Enter on a module shows what it reads, how fresh its facts are and whether its value may be kept in history. Modules read local files and allowlisted environment values only while visible; nothing in a project is executed and no cloud API is called.
+
+Context Packs are data: \`nmsh packs inspect FILE\` shows what a pack would read and add, \`nmsh packs install FILE\` asks first (optionally pinned with --sha256), and installed modules start hidden. Claude Code can report its model, effort, context window and limits through its own status line: \`nmsh agent-status setup\` shows the one settings change and applies it on Yes; \`nmsh agent-status remove\` undoes exactly that.
+
+Settings → Sessions → Terminal title (Off by default) lets NMSh set the window title to the project (and session) while it owns the screen; running programs keep their own titles.
+
 ## Theme Bridge
 
 /theme-bridge (also /appearance, Settings and Setup) extends NMSh themes to terminal tools. It is Off by default: one switch plus Apply themes Manual, Follow NMSh or Choose theme. Under Manual each tool is Independent (NMSh injects and changes nothing for it), Follow NMSh or Choose theme (a pinned Built-in, Imported or Custom theme). fzf colors apply only to fzf launched by NMSh (FZF_DEFAULT_OPTS and rc files are untouched). less/man colors and File listing colors (GNU ls/gls through LS_COLORS, macOS/BSD ls through CLICOLOR and LSCOLORS) reach NMSh shells (zsh, Bash, Fish) at their next prompt through an NMSh-owned environment file; Independent restores what was there. tmux, Neovim, Vim, Helix and bat get NMSh-generated themes (bat after a reviewed cache build, selected with BAT_THEME in NMSh shells); loading them in new instances needs one include line (for Helix, a theme = "nmsh-bridge" assignment) that NMSh shows exactly and adds only after you confirm, and removes exactly. Running editors are not recolored live; tmux can reload on request. delta is never managed (NMSh does not change git config); its syntax highlighting follows bat's NMSh theme through BAT_THEME unless your git config pins delta's syntax-theme, and its status says which. Details: [Theme Bridge](https://github.com/raiseCatError/notMyShell/blob/dev/docs/design/theme-bridge.md).
@@ -69,7 +77,7 @@ Config offers optional zoxide ranking and optional fzf/Television pickers. zoxid
 
 ## Command correction
 
-After an unambiguous simple command-not-found typo, NMSh may show a local executable correction below the composer. Tab places it in the editor; review and press Enter separately. Esc dismisses it. Complex expressions, ambiguous matches and destructive targets are suppressed. The suggestion is frontend UI and stays out of command output, copy and history.
+After an unambiguous simple command-not-found typo in zsh, Bash or Fish, NMSh may show a local executable correction (from the commands on your shell's PATH) below the composer. Tab places it in the editor; review and press Enter separately. Esc dismisses it. Complex expressions, ambiguous matches and destructive targets are suppressed. The suggestion is frontend UI and stays out of command output, copy and history.
 
 ## Tips
 
