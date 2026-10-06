@@ -1,4 +1,4 @@
-import type {ContextFacts} from '../facts.js';
+import {safeContextText, type ContextFacts} from '../facts.js';
 import {packModuleId, type PackModuleId} from '../modules.js';
 import type {PromptConfiguration} from '../../prompt/configuration.js';
 import type {ParsedPack} from './schema.js';
@@ -46,7 +46,8 @@ export function recommendModules(configuration: Pick<PromptConfiguration, 'modul
         }
       }
       const module = parsed.pack.modules.find(item => item.id === rule.module);
-      if (reasons.length && module) recommendations.push({module: id, pack: parsed.pack.name, label: module.label, reasons: [...new Set(reasons)]});
+      // Workspace file names are hostile data: reasons pass the same display boundary as facts.
+      if (reasons.length && module) recommendations.push({module: id, pack: parsed.pack.name, label: module.label, reasons: [...new Set(reasons.map(reason => safeContextText(reason, 120)))]});
     }
   }
   return recommendations;

@@ -4,6 +4,7 @@ import {CORE_CAPABILITIES} from '../context/registry.js';
 import {inspectPack, installedPackStatuses, installPack, packsDirectory, removePack, setPackEnabled, type InstalledPackStatus} from '../context/packs/store.js';
 import type {ParsedPack} from '../context/packs/schema.js';
 import {loadPromptConfiguration, savePromptConfiguration} from '../prompt/configuration.js';
+import {safeContextText} from '../context/facts.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 
 /**
@@ -52,7 +53,10 @@ function stateLabel(status: InstalledPackStatus): string {
   return status.state === 'enabled' ? 'enabled' : status.state === 'disabled' ? 'disabled' : `${status.state}${status.message ? `: ${status.message}` : ''}`;
 }
 
-export async function runPacksCommand(args: string[], io: CliIo): Promise<number> {
+export async function runPacksCommand(args: string[], rawIo: CliIo): Promise<number> {
+  // Pack text and validation messages can carry attacker-chosen strings: one display boundary for everything printed.
+  const inert = (text: string) => text.split('\n').map(line => safeContextText(line, 400)).join('\n');
+  const io = {...rawIo, out: (text: string) => rawIo.out(inert(text)), err: (text: string) => rawIo.err(inert(text))};
   const env = io.env ?? process.env;
   const version = io.version ?? '0.0.0';
   const directory = packsDirectory(env);

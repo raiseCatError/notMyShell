@@ -5,6 +5,7 @@ import {basename, join} from 'node:path';
 import {nmshConfigDirectory} from '../../configuration/paths.js';
 import {CORE_CAPABILITIES} from '../registry.js';
 import {MAX_PACK_BYTES, parsePack, satisfiesRange, type ParsedPack, type PackProblem} from './schema.js';
+import {safeContextText} from '../facts.js';
 
 /**
  * Local Context Pack lifecycle: explicit install from a file, verify, enable,
@@ -90,10 +91,12 @@ async function readRegistry(directory: string): Promise<PackRegistry> {
   const packs = typeof data === 'object' && data !== null && Array.isArray((data as {packs?: unknown}).packs) ? (data as {packs: unknown[]}).packs : [];
   return {schema: 1, packs: packs.flatMap(item => {
     const record = item as Partial<InstalledPackRecord>;
-    return typeof record.id === 'string' && typeof record.version === 'string' && typeof record.sha256 === 'string' && /^[a-f0-9]{64}$/u.test(record.sha256)
+    return typeof record.id === 'string' && /^[a-z][a-z0-9-]{0,31}(?:\.[a-z][a-z0-9-]{0,31}){1,3}$/u.test(record.id)
+      && typeof record.version === 'string' && /^[0-9A-Za-z.+-]{1,48}$/u.test(record.version)
+      && typeof record.sha256 === 'string' && /^[a-f0-9]{64}$/u.test(record.sha256)
       && typeof record.file === 'string' && RECORD_FILE.test(record.file) && typeof record.enabled === 'boolean'
       ? [{id: record.id, version: record.version, sha256: record.sha256, file: record.file, enabled: record.enabled,
-        source: typeof record.source === 'string' ? record.source.slice(0, 256) : '', installedAt: typeof record.installedAt === 'string' ? record.installedAt.slice(0, 40) : ''}]
+        source: typeof record.source === 'string' ? safeContextText(record.source, 120) : '', installedAt: typeof record.installedAt === 'string' ? safeContextText(record.installedAt, 40) : ''}]
       : [];
   }).slice(0, 64)};
 }

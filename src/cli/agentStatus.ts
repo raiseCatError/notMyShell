@@ -65,6 +65,11 @@ export async function renderAgentStatusLine(record: AgentStatusRecord, options: 
 }
 
 export async function runAgentStatusCommand(args: string[], io: AgentStatusIo): Promise<number> {
+  // Settings paths, commands and plan previews are displayed, never trusted as terminal text (the bridge line itself is NMSh-rendered).
+  const {safeContextText} = await import('../context/facts.js');
+  const inert = (text: string) => text.split('\n').map(line => safeContextText(line, 400)).join('\n');
+  const raw = io;
+  if (args[0] !== 'claude') io = {...raw, out: text => raw.out(inert(text)), err: text => raw.err(inert(text))};
   const env = io.env ?? process.env;
   const now = io.now ?? Date.now;
   const [action, ...rest] = args;

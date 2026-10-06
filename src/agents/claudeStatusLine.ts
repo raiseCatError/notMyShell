@@ -4,6 +4,7 @@ import {dirname, isAbsolute, join} from 'node:path';
 import {applyPlan, inspectFile, planCreate, planJsonSet, planReplace, sha256, type FileEditPlan} from '../ask/fileEdit.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {posixQuote} from '../shell/adapters/ShellAdapter.js';
+import {safeContextText} from '../context/facts.js';
 
 /**
  * Explicit, reviewed activation of NMSh's Claude Code status-line bridge.
@@ -93,7 +94,7 @@ export function inspectClaudeBridge(env: NodeJS.ProcessEnv = process.env): Claud
   if (current.value === undefined) return {state: 'not-configured', settingsPath, missingFile: false};
   if (isBridgeValue(current.value)) return {state: 'configured', settingsPath};
   const command = (current.value as {command?: unknown}).command;
-  return {state: 'conflict', settingsPath, command: typeof command === 'string' ? command.slice(0, 200) : '(not a command status line)'};
+  return {state: 'conflict', settingsPath, command: typeof command === 'string' ? safeContextText(command, 120) : '(not a command status line)'};
 }
 
 export type BridgePlan = {plan: FileEditPlan} | {noop: string} | {refuse: string};

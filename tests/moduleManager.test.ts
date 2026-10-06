@@ -143,3 +143,30 @@ test('the showcase previews every enabled pack module from synthetic facts, dete
   assert.match(stripAnsi(first), /22\.11\.0/u);
   assert.equal(buildContextLine(moduleShowcaseContext('/home/cat'), 200, config), first);
 });
+
+test('hostile workspace names, pack text, registry entries and settings never reach the terminal as escapes', async () => {
+  const {recommendModules} = await import('../src/context/packs/recommend.js');
+  const {parsePack} = await import('../src/context/packs/schema.js');
+  const {CORE_CAPABILITIES} = await import('../src/context/registry.js');
+  const ESCAPES = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/u;
+  const hostile = 'evil\u001b]52;c;Y3VybCBldmlsIHwgc2g=\u0007‮gnp';
+  const s = state();
+  s.draft.modules = s.draft.modules.map(module => module.id === 'nmsh.infrastructure:terraform' ? {...module, visible: false} : module);
+  const recommendations = recommendModules(s.draft, {workspaceNames: new Set([`${hostile}.tf`]), executables: new Set(), facts: {}}, firstPartyPacks());
+  assert.ok(recommendations.every(item => item.reasons.every(reason => !ESCAPES.test(reason))), 'file names are neutralized at the source');
+  const invalid = parsePack(JSON.stringify({schema: 'nmsh.context-pack/v1', [hostile]: 1}), new Map(CORE_CAPABILITIES.map(capability => [capability.id, capability])));
+  assert.ok(!invalid.ok && !ESCAPES.test(invalid.problem.message), 'validation errors never echo raw attacker keys');
+  s.context = {recommendations: [{module: 'nmsh.infrastructure:terraform', pack: hostile, label: hostile, reasons: [hostile]}],
+    packs: [{...packs()[0]!, id: 'acme.x', builtIn: false, state: 'invalid', name: hostile, description: hostile, message: hostile, license: hostile, author: hostile,
+      modules: [{id: 'm', label: hostile}], requires: [hostile]}], claudeBridge: {state: 'conflict', detail: hostile}};
+  s.modulesTab = 'packs';
+  const visible = () => renderPromptPanel(s, 160, []).map(row => row.replace(/\u001b\[[0-9;]*m/gu, ''));
+  assert.ok(visible().every(row => !ESCAPES.test(row)), 'Packs tab');
+  s.detail = {kind: 'pack', id: 'acme.x'};
+  assert.ok(visible().every(row => !ESCAPES.test(row)), 'pack details');
+  s.detail = {kind: 'module', id: 'nmsh.agents:claude'};
+  assert.ok(visible().every(row => !ESCAPES.test(row)), 'Claude bridge conflict detail');
+  s.detail = undefined;
+  s.confirm = {request: {kind: 'claudeBridgeApply'}, title: hostile, lines: [hostile]};
+  assert.ok(visible().every(row => !ESCAPES.test(row)), 'confirmation');
+});

@@ -1,5 +1,6 @@
 import {allModuleDefinitions, moduleDefinition, type ContextModuleDefinition} from '../context/modules.js';
 import {coreCapability} from '../context/registry.js';
+import {safeContextText} from '../context/facts.js';
 import {routeModule} from '../context/surfaceRouter.js';
 import type {Recommendation} from '../context/packs/recommend.js';
 import type {ModuleCategory} from '../context/packs/schema.js';
@@ -97,6 +98,8 @@ const CONDITION_TEXT: Record<ContextModuleConfig['condition'], string> = {always
   onCommand: 'on command', shellDiffers: 'when not default'};
 
 const isPack = (id: string) => id.includes(':');
+/** The display boundary for text that did not come from NMSh itself (pack manifests, registry, workspace names, settings files). */
+const clean = (value: string | undefined, cells = 120) => safeContextText(value ?? '', cells);
 
 /** Modules tab: every built-in, every pack module in use, and pack modules touched during this visit; in prompt order. */
 export function listedModules(state: ModulesState): ContextModuleConfig[] {
@@ -267,12 +270,13 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
       `${SECONDARY}The settings are kept and return with the pack; nothing is shown or collected meanwhile.${RESET}`);
     return rows;
   }
-  const origin = definition.pack ? `${definition.pack.name} · ${definition.pack.builtIn ? 'bundled' : `installed ${definition.pack.id}@${definition.pack.version}`}` : 'built in';
-  rows.push(`${PRIMARY}${definition.label}${RESET}  ${SUBTLE}${CATEGORY_LABELS[definition.category]} · ${origin}${RESET}`, `${SECONDARY}${definition.description}${RESET}`, '');
+  const origin = definition.pack ? `${clean(definition.pack.name, 48)} · ${definition.pack.builtIn ? 'bundled' : `installed ${clean(definition.pack.id, 64)}@${clean(definition.pack.version, 48)}`}` : 'built in';
+  rows.push(truncateAnsi(`${PRIMARY}${clean(definition.label, 48)}${RESET}  ${SUBTLE}${CATEGORY_LABELS[definition.category]} · ${origin}${RESET}`, columns),
+    truncateAnsi(`${SECONDARY}${clean(definition.description, 240)}${RESET}`, columns), '');
   const surface = routeModule({...module, visible: true});
   rows.push(line('Shown', `${module.visible ? 'yes' : 'no'} · ${CONDITION_TEXT[module.condition]} · ${surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface]}`
     + `${module.surface === 'auto' || module.surface === undefined ? '' : ` (prefers ${MODULE_SURFACE_LABELS[definition.preferredSurface as ModuleSurface]})`}`));
-  if (definition.triggers?.length) rows.push(line('On commands', definition.triggers.slice(0, 12).join(', ') + (definition.triggers.length > 12 ? ', …' : '')));
+  if (definition.triggers?.length) rows.push(line('On commands', clean(definition.triggers.slice(0, 12).join(', ') + (definition.triggers.length > 12 ? ', …' : ''), 200)));
   rows.push(line('Priority', `${definition.priority} (higher stays when space runs out)`));
   const reads = definition.capabilities.flatMap(id => {
     const capability = coreCapability(id);
@@ -291,24 +295,25 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
     const age = status.collectedAt !== undefined && context.now !== undefined ? ` · ${Math.max(0, Math.round((context.now - status.collectedAt) / 1000))}s ago` : '';
     const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refreshing` : status.state === 'absent' ? 'nothing to show here'
       : status.state === 'pending' ? 'checking…' : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.error ?? status.state})` : 'not checked (module not in use)';
-    rows.push(line(capability!.title.slice(0, 11), `${text}${status.evidence ? ` · ${status.evidence}` : ''}`));
+    rows.push(line(capability!.title.slice(0, 11), clean(`${text}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
   }
   if (definition.facts.has('agent.claude')) {
     const bridge = context.claudeBridge;
     rows.push('', line('Claude Code', bridge?.state === 'configured' ? 'reports to NMSh through its status line · B to review removal'
-      : bridge?.state === 'conflict' ? `has its own status line (${bridge.detail ?? 'custom'}); NMSh does not replace it`
-        : bridge?.state === 'unreadable' ? `settings not readable (${bridge.detail ?? ''})` : 'not reporting yet · B to review the one settings change'));
+      : bridge?.state === 'conflict' ? `has its own status line (${clean(bridge.detail ?? 'custom', 80)}); NMSh does not replace it`
+        : bridge?.state === 'unreadable' ? `settings not readable (${clean(bridge.detail, 80)})` : 'not reporting yet · B to review the one settings change'));
   }
   return rows;
 }
 
 function packDetailRows(pack: PackListing, columns: number): string[] {
-  const rows = [`${PRIMARY}${pack.name}${RESET}  ${SUBTLE}${pack.id} ${pack.version} · ${pack.builtIn ? 'bundled with NMSh' : pack.state}${RESET}`, `${SECONDARY}${pack.description}${RESET}`, ''];
-  if (pack.message) rows.push(`${WARNING}${pack.message}${RESET}`);
-  rows.push(truncateAnsi(`${SUBTLE}License ${SECONDARY}${pack.license}${SUBTLE} · Author ${SECONDARY}${pack.author}${RESET}`, columns));
-  if (pack.sha256) rows.push(truncateAnsi(`${SUBTLE}sha256 ${SECONDARY}${pack.sha256}${RESET}`, columns));
-  rows.push(`${SUBTLE}Modules${RESET}`, ...pack.modules.map(module => `${SECONDARY}  · ${module.label}${RESET}`));
-  rows.push(`${SUBTLE}Capabilities${RESET}`, ...pack.requires.map(id => truncateAnsi(`${SECONDARY}  · ${coreCapability(id)?.title ?? `${id} (not provided by this NMSh)`}${RESET}`, columns)));
+  const rows = [truncateAnsi(`${PRIMARY}${clean(pack.name, 48)}${RESET}  ${SUBTLE}${clean(pack.id, 64)} ${clean(pack.version, 48)} · ${pack.builtIn ? 'bundled with NMSh' : clean(pack.state, 24)}${RESET}`, columns),
+    truncateAnsi(`${SECONDARY}${clean(pack.description, 240)}${RESET}`, columns), ''];
+  if (pack.message) rows.push(truncateAnsi(`${WARNING}${clean(pack.message, 240)}${RESET}`, columns));
+  rows.push(truncateAnsi(`${SUBTLE}License ${SECONDARY}${clean(pack.license, 64)}${SUBTLE} · Author ${SECONDARY}${clean(pack.author, 96)}${RESET}`, columns));
+  if (pack.sha256) rows.push(truncateAnsi(`${SUBTLE}sha256 ${SECONDARY}${clean(pack.sha256, 64)}${RESET}`, columns));
+  rows.push(`${SUBTLE}Modules${RESET}`, ...pack.modules.map(module => truncateAnsi(`${SECONDARY}  · ${clean(module.label, 48)}${RESET}`, columns)));
+  rows.push(`${SUBTLE}Capabilities${RESET}`, ...pack.requires.map(id => truncateAnsi(`${SECONDARY}  · ${coreCapability(id)?.title ?? `${clean(id, 64)} (not provided by this NMSh)`}${RESET}`, columns)));
   rows.push('', `${SUBTLE}A Context Pack is data: it cannot run commands, read arbitrary files or use the network.${RESET}`);
   return rows;
 }
@@ -321,7 +326,7 @@ function optionText(module: ContextModuleConfig): string {
   return choosable ? `‹ ${text} ›` : text;
 }
 
-const label = (id: string) => moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`;
+const label = (id: string) => clean(moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`, 64);
 
 /** A window of list rows around the selection, with counts of what is above and below. */
 function windowed(rows: string[], selectedRow: number, budget: number): string[] {
@@ -343,7 +348,7 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
   const rows: string[] = [renderTabStrip(MODULES_TABS, TAB_IDS.indexOf(tab), columns, false), ''];
   let selectedRow = 0;
   if (state.confirm) {
-    rows.push(`${PRIMARY}${state.confirm.title}${RESET}`, ...state.confirm.lines.map(line => truncateAnsi(`${SECONDARY}  ${line}${RESET}`, columns)), '',
+    rows.push(truncateAnsi(`${PRIMARY}${clean(state.confirm.title, 120)}${RESET}`, columns), ...state.confirm.lines.map(line => truncateAnsi(`${SECONDARY}  ${clean(line, 400)}${RESET}`, columns)), '',
       `${ACCENT}Enter${RESET}${SECONDARY} apply · ${ACCENT}Esc${RESET}${SECONDARY} keep everything as it is${RESET}`);
     return {rows, head: rows.length, selectedRow: 0};
   }
@@ -393,10 +398,10 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
       if (entry.kind === 'header') { rows.push(`${SUBTLE}${entry.text}${RESET}`); continue; }
       if (entry.kind === 'recommendation') {
         const on = state.draft.modules.find(module => module.id === entry.item.module)?.visible ?? false;
-        rows.push(item(index, truncateAnsi(`${shown(on)} ${entry.item.label}  ${SUBTLE}${entry.item.reasons.join('; ')}`, columns - 2)));
+        rows.push(item(index, truncateAnsi(`${shown(on)} ${clean(entry.item.label, 48)}  ${SUBTLE}${clean(entry.item.reasons.join('; '), 200)}`, columns - 2)));
       } else {
         const state_ = entry.pack.builtIn ? 'bundled' : entry.pack.state;
-        rows.push(item(index, truncateAnsi(`${entry.pack.name}  ${SUBTLE}${entry.pack.id} ${entry.pack.version} · ${state_} · ${entry.pack.modules.length} modules`, columns - 2)));
+        rows.push(item(index, truncateAnsi(`${clean(entry.pack.name, 48)}  ${SUBTLE}${clean(entry.pack.id, 64)} ${clean(entry.pack.version, 48)} · ${clean(state_, 24)} · ${entry.pack.modules.length} modules`, columns - 2)));
       }
       index += 1;
     }

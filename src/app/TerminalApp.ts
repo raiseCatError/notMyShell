@@ -144,7 +144,7 @@ import {applyClaudeBridge, applyClaudeBridgeRemoval, inspectClaudeBridge, planCl
 import {currentLauncher} from '../cli/agentStatus.js';
 import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
 import type {CapabilityScopeInput} from '../context/capability.js';
-import type {ContextFact} from '../context/facts.js';
+import {safeContextText, type ContextFact} from '../context/facts.js';
 import {discoverLocalExecutables} from '../tools/localDiscovery.js';
 import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
@@ -3339,6 +3339,8 @@ export class TerminalApp {
     } catch (error) {
       state.message = error instanceof Error ? error.message : String(error);
     }
+    // Results can quote settings paths and file content: displayed, never trusted as terminal text.
+    if (state.message) state.message = safeContextText(state.message, 400);
     await this.refreshModulesContext();
   }
 

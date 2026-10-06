@@ -140,10 +140,16 @@ class Invalid extends Error {}
 
 function fail(path: string, message: string): never { throw new Invalid(`${path}: ${message}`); }
 
+/** A key as it may appear in an error message: printable ASCII only, bounded (keys are attacker-chosen). */
+const printableKey = (key: string) => {
+  const printable = key.slice(0, 48).replace(/[^\x20-\x7e]/gu, '?');
+  return key.length > 48 ? `${printable}…` : printable;
+};
+
 function obj(value: unknown, path: string, required: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) fail(path, 'must be an object');
   const record = value as Record<string, unknown>;
-  for (const key of Object.keys(record)) if (!required.includes(key) && !optional.includes(key)) fail(`${path}.${key}`, 'is not part of the pack format');
+  for (const key of Object.keys(record)) if (!required.includes(key) && !optional.includes(key)) fail(`${path}.${printableKey(key)}`, 'is not part of the pack format');
   for (const key of required) if (!(key in record)) fail(`${path}.${key}`, 'is required');
   return record;
 }
