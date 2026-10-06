@@ -80,6 +80,26 @@ test('records are private files; this session wins, otherwise the latest report;
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
+test('agent records are never written to or read from a shared, foreign or symlinked directory', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'nmsh-agent-')));
+  try {
+    const shared = join(root, 'shared');
+    await mkdir(shared, {mode: 0o777});
+    await chmod(shared, 0o777);
+    const directory = join(shared, 'agent-context');
+    await assert.rejects(writeAgentStatus(directory, 'mine', parseClaudeStatus(DOCUMENTED, 1)!), /permissions are not private/u);
+    assert.equal(await readAgentStatus(directory, 'mine'), undefined);
+    const privateRoot = join(root, 'private');
+    await mkdir(privateRoot, {mode: 0o700});
+    const elsewhere = join(root, 'elsewhere');
+    await mkdir(elsewhere, {mode: 0o700});
+    const {symlink} = await import('node:fs/promises');
+    await symlink(elsewhere, join(privateRoot, 'agent-context'));
+    await assert.rejects(writeAgentStatus(join(privateRoot, 'agent-context'), 'mine', parseClaudeStatus(DOCUMENTED, 1)!), /not a directory/u);
+    assert.equal(await readAgentStatus(join(privateRoot, 'agent-context'), 'mine'), undefined);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
 test('`nmsh agent-status claude` records and prints; bad input prints nothing and never throws', async () => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'nmsh-agent-')));
   const config = join(root, 'config');

@@ -3,7 +3,6 @@ import {lstat, open, readdir, realpath, stat} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {basename, delimiter, dirname, isAbsolute, join, normalize, sep} from 'node:path';
 import {parse as parseToml} from 'smol-toml';
-import {runExternal} from '../providers/providers.js';
 
 /**
  * Trusted core services shared by every capability resolver. They are the
@@ -15,10 +14,10 @@ import {runExternal} from '../providers/providers.js';
  *   outside a repository) instead of wandering through unrelated parents;
  * - executable identity is resolved from the live shell's PATH but refuses
  *   anything inside the workspace, world-writable, foreign-owned or a version
- *   manager shim, so `cd` into a hostile repository can never cause NMSh to run
- *   its code; versions come from install layouts and runtime metadata files
- *   before any process is considered, and probes are fixed argv with a
- *   scrubbed environment, a neutral working directory and hard bounds.
+ *   manager shim; and context collection never executes what it resolves.
+ *   Versions come only from install layouts and the runtime's own metadata
+ *   files (a directory outside the lexical workspace can still be project-
+ *   controlled, so running a discovered binary is not made "safe" by checks).
  *
  * Resolvers receive these functions, not `fs`/`child_process`/`process.env`.
  */
@@ -209,7 +208,7 @@ export interface ExecutableIdentity {
   realpath: string;
   /** Identity for caches: a replaced binary is a different executable. */
   key: string;
-  /** Version manager shims and rustup proxies select versions by running their own logic: never probed. */
+  /** Version manager shims and rustup proxies select versions by running their own logic; reported as the manager. */
   shim?: string;
 }
 
@@ -296,36 +295,9 @@ export function versionFromInstallPath(realpathValue: string): {version: string;
   return undefined;
 }
 
-const probeCache = new Map<string, string | undefined>();
-
-/** Environment for probes: nothing inherited that could load code (NODE_OPTIONS, PYTHONSTARTUP, RUBYOPT, JAVA_TOOL_OPTIONS...). */
-export function probeEnvironment(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
-  return {PATH: '/usr/bin:/bin', HOME: homedir(), LANG: 'C', LC_ALL: 'C', NO_COLOR: '1', ...(process.env.TMPDIR ? {TMPDIR: process.env.TMPDIR} : {}), ...extra};
-}
-
-/**
- * Run a trusted, non-shim executable with fixed arguments to learn its version.
- * Cached per binary identity, so it runs once per installed binary rather
- * than per prompt. Returns the first version-looking token, or undefined.
- */
-export async function probeVersion(identity: ExecutableIdentity, args: readonly string[], options: {signal?: AbortSignal; timeoutMs?: number;
-  env?: Record<string, string>} = {}): Promise<string | undefined> {
-  if (identity.shim) return undefined;
-  const key = `${identity.key}\u0000${args.join('\u0001')}`;
-  if (probeCache.has(key)) return probeCache.get(key);
-  const result = await runExternal(identity.realpath, args, {timeoutMs: options.timeoutMs ?? 1500, maxBytes: 4096, cwd: '/',
-    env: probeEnvironment(options.env), ...(options.signal ? {signal: options.signal} : {})});
-  if (options.signal?.aborted) return undefined;
-  const version = result.ok ? /\bv?(\d+\.\d+(?:\.\d+)?(?:[-+][0-9A-Za-z.-]{1,32})?)\b/u.exec(result.stdout)?.[1] : undefined;
-  if (probeCache.size >= 64) probeCache.delete(probeCache.keys().next().value!);
-  probeCache.set(key, version);
-  return version;
-}
-
 /** Reset caches (tests and explicit refresh). */
 export function resetServiceCaches(): void {
   resolutionCache.clear();
-  probeCache.clear();
 }
 
 export const leaf = (path: string): string => basename(path.replace(/[/\\]+$/u, '')) || path;

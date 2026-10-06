@@ -1,18 +1,18 @@
 import {homedir} from 'node:os';
 import {basename, dirname, isAbsolute, join, normalize} from 'node:path';
 import {defineCapability, type CapabilityContext, type CapabilityDefinition} from '../capability.js';
-import {findNearest, LARGE_METADATA_BYTES, listNames, parseIniData, parseJsonData, parseTomlData, parseToolVersions, probeVersion,
+import {findNearest, LARGE_METADATA_BYTES, listNames, parseIniData, parseJsonData, parseTomlData, parseToolVersions,
   readMetadataText, readVersionFile, record, resolveTrustedExecutable, text, versionFromInstallPath, within,
   type ExecutableIdentity} from '../services.js';
 
 /**
  * Runtime facts distinguish what the project asks for (`requested`, from its
  * own declarative files) from what the live shell would run (`active`, from
- * the executable the shell's PATH resolves to). Active versions come from the
- * install location or the runtime's own metadata file (Go's VERSION, a JDK's
- * `release`, a virtualenv's pyvenv.cfg, rustup settings); only Node and
- * Python fall back to a bounded `--version` probe of a trusted, non-shim
- * binary, and only when a visible module asks for the active field.
+ * the executable the shell's PATH resolves to). Nothing is executed to learn
+ * a version: active versions come from the install location or the runtime's
+ * own metadata (Go's VERSION, a JDK's `release`, a virtualenv's pyvenv.cfg,
+ * Node's node_version.h, Python's versioned interpreter, rustup settings).
+ * When none of that exists the active version is honestly unknown.
  */
 export interface RuntimeFact {
   requested?: string;
@@ -68,7 +68,23 @@ async function trustedBinary(context: CapabilityContext, names: readonly string[
   return undefined;
 }
 
-async function activeVersion(context: CapabilityContext, names: readonly string[], probe?: readonly string[]): Promise<Active> {
+/** Node's own header, installed beside the binary by official builds, nvm, n and most packages: `<prefix>/include/node/node_version.h`. */
+async function nodeHeaderVersion(binary: ExecutableIdentity): Promise<string | undefined> {
+  const header = await readMetadataText(join(dirname(dirname(binary.realpath)), 'include', 'node', 'node_version.h'));
+  const part = (name: string) => new RegExp(`^#define NODE_${name}_VERSION (\\d{1,4})\\s*$`, 'mu').exec(header ?? '')?.[1];
+  const [major, minor, patch] = [part('MAJOR'), part('MINOR'), part('PATCH')];
+  return major && minor && patch ? `${major}.${minor}.${patch}` : undefined;
+}
+
+/** A versioned interpreter (python3.12) or the single `lib/pythonX.Y` beside it. */
+async function pythonInstallVersion(binary: ExecutableIdentity): Promise<string | undefined> {
+  const named = /python(\d+\.\d+)$/u.exec(binary.realpath)?.[1];
+  if (named) return named;
+  const libraries = (await listNames(join(dirname(dirname(binary.realpath)), 'lib'), 256)).flatMap(name => /^python(\d+\.\d+)$/u.exec(name)?.[1] ?? []);
+  return libraries.length === 1 ? libraries[0] : undefined;
+}
+
+async function activeVersion(context: CapabilityContext, names: readonly string[], metadata?: (binary: ExecutableIdentity) => Promise<string | undefined>): Promise<Active> {
   if (!context.fields.has('active') && !context.fields.has('manager')) return {};
   const binary = await trustedBinary(context, names);
   if (!binary) return {};
@@ -76,14 +92,13 @@ async function activeVersion(context: CapabilityContext, names: readonly string[
   if (binary.shim) return {manager: binary.shim};
   const layout = versionFromInstallPath(binary.realpath);
   if (layout) return {active: layout.version, manager: layout.manager};
-  if (!probe || !context.fields.has('active')) return {};
-  const probed = await probeVersion(binary, probe, {signal: context.signal});
-  return probed ? {active: probed} : {};
+  const declared = metadata && context.fields.has('active') ? await metadata(binary) : undefined;
+  return declared ? {active: declared} : {};
 }
 
 function runtimeCapability(id: string, title: string, reads: readonly string[], env: readonly string[], preview: RuntimeFact,
-  resolve: (context: CapabilityContext) => Promise<{value: RuntimeFact; evidence: string} | undefined>, cost: 'bounded-async' | 'probe' = 'bounded-async'): CapabilityDefinition<RuntimeFact> {
-  return defineCapability<RuntimeFact>({id, title, reads, scope: 'workspace', family: cost === 'probe' ? 'probe' : 'metadata', cost, trust: 'workspace',
+  resolve: (context: CapabilityContext) => Promise<{value: RuntimeFact; evidence: string} | undefined>): CapabilityDefinition<RuntimeFact> {
+  return defineCapability<RuntimeFact>({id, title, reads, scope: 'workspace', family: 'metadata', cost: 'bounded-async', trust: 'workspace',
     sensitivity: 'public', persistence: 'snapshot-safe', fields: ['requested', 'requestedFrom', 'active', 'manager', 'environment', 'environmentKind', 'buildTool', 'note', 'mismatch'],
     env: ['PATH', ...env], ttlMs: 30_000, timeoutMs: 2500, invalidateOn: ['command'], preview, resolve});
 }
@@ -104,7 +119,7 @@ const compact = (value: RuntimeFact): RuntimeFact | undefined => {
 };
 
 export const nodeRuntime = runtimeCapability('runtime.node', 'Node.js version', ['.nvmrc', '.node-version', 'package.json (volta, engines)', '.tool-versions', 'mise.toml',
-  'the node executable the shell resolves (install location; a bounded --version probe only for a trusted non-shim binary)'], [],
+  'the node executable the shell resolves: its install location and node_version.h (never run)'], [],
 {requested: '22', requestedFrom: '.nvmrc', active: '22.11.0', manager: 'Homebrew'}, async context => {
   let requested = await versionFile(context, ['.nvmrc', '.node-version']);
   const manifest = await findNearest(context, ['package.json']);
@@ -112,14 +127,14 @@ export const nodeRuntime = runtimeCapability('runtime.node', 'Node.js version', 
   requested ??= record(pkg) && record(pkg.volta) && text(pkg.volta.node, 64) ? {version: text((pkg.volta as Record<string, unknown>).node, 64)!, from: 'package.json volta'} : undefined;
   requested ??= await toolRequest(context, ['node', 'nodejs']);
   requested ??= record(pkg) && record(pkg.engines) && text(pkg.engines.node, 64) ? {version: text((pkg.engines as Record<string, unknown>).node, 64)!, from: 'package.json engines'} : undefined;
-  const active = await activeVersion(context, ['node'], ['--version']);
+  const active = await activeVersion(context, ['node'], nodeHeaderVersion);
   const value = compact({requested: requested?.version.replace(/^v(?=\d)/u, ''), requestedFrom: requested?.from, ...active,
     active: active.active?.replace(/^v(?=\d)/u, '')});
   return value ? {value, evidence: [requested?.from, active.active ? 'node on PATH' : undefined].filter(Boolean).join(', ') || 'node on PATH'} : undefined;
-}, 'probe');
+});
 
 export const pythonRuntime = runtimeCapability('runtime.python', 'Python version and environment', ['VIRTUAL_ENV and its pyvenv.cfg', 'CONDA_DEFAULT_ENV/CONDA_PREFIX conda-meta',
-  '.python-version', 'pyproject.toml requires-python', '.tool-versions', 'mise.toml', 'the python executable the shell resolves'],
+  '.python-version', 'pyproject.toml requires-python', '.tool-versions', 'mise.toml', 'the python executable the shell resolves: its install location (never run)'],
 ['VIRTUAL_ENV', 'VIRTUAL_ENV_PROMPT', 'CONDA_DEFAULT_ENV', 'CONDA_PREFIX', 'POETRY_ACTIVE', 'PIPENV_ACTIVE', 'PYENV_VERSION'],
 {requested: '3.12', requestedFrom: '.python-version', active: '3.12.7', environment: '.venv', environmentKind: 'uv'}, async context => {
   const env = context.env.values;
@@ -145,10 +160,10 @@ export const pythonRuntime = runtimeCapability('runtime.python', 'Python version
     const constraint = record(project) ? text(project['requires-python'], 64) : undefined;
     if (constraint) requested = {version: constraint, from: 'pyproject.toml'};
   }
-  const resolved = active ? {} : await activeVersion(context, ['python3', 'python'], ['--version']);
+  const resolved = active ? {} : await activeVersion(context, ['python3', 'python'], pythonInstallVersion);
   const value = compact({requested: requested?.version, requestedFrom: requested?.from, environment, environmentKind, ...resolved, active: active ?? resolved.active});
   return value ? {value, evidence: [environment ? `${environmentKind} environment` : undefined, requested?.from].filter(Boolean).join(', ') || 'python on PATH'} : undefined;
-}, 'probe');
+});
 
 export const goRuntime = runtimeCapability('runtime.go', 'Go toolchain', ['go.mod / go.work (go, toolchain)', '.go-version', '.tool-versions', 'mise.toml',
   'the go executable the shell resolves and its GOROOT VERSION file'], [],

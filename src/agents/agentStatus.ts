@@ -1,8 +1,8 @@
 import {createHash, randomBytes} from 'node:crypto';
 import {constants} from 'node:fs';
-import {chmod, lstat, mkdir, open, readdir, rename, rm} from 'node:fs/promises';
-import {join} from 'node:path';
-import {defaultRuntimeDir} from '../session/runtimeDir.js';
+import {lstat, open, readdir, rename, rm} from 'node:fs/promises';
+import {dirname, join} from 'node:path';
+import {defaultRuntimeDir, ensurePrivateRuntimeDir} from '../session/runtimeDir.js';
 import {SESSION_ID_ENV} from '../session/SessionClient.js';
 
 /**
@@ -137,10 +137,24 @@ export function agentStatusPath(directory: string, harness: 'claude', scope: str
   return join(directory, `${harness}-${scope}.json`);
 }
 
+/**
+ * Both the runtime directory and agent-context must be real directories owned by
+ * this user with no group/other permissions (the session service's policy). A
+ * pre-created, foreign-owned, symlinked or shared directory (for example in a
+ * shared /tmp) is refused, never repaired or written into.
+ */
+async function privateDirectory(path: string): Promise<boolean> {
+  try {
+    const info = await lstat(path);
+    const uid = process.getuid?.();
+    return info.isDirectory() && !info.isSymbolicLink() && (uid === undefined || info.uid === uid) && (info.mode & 0o077) === 0;
+  } catch { return false; }
+}
+
 /** Atomic private write: a reader sees the previous or the next record, never half of one. */
 export async function writeAgentStatus(directory: string, scope: string, record: AgentStatusRecord): Promise<void> {
-  await mkdir(directory, {recursive: true, mode: 0o700});
-  await chmod(directory, 0o700).catch(() => {});
+  ensurePrivateRuntimeDir(dirname(directory));
+  ensurePrivateRuntimeDir(directory);
   const target = agentStatusPath(directory, record.harness, scope);
   const temporary = `${target}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -162,14 +176,11 @@ async function readRecord(path: string): Promise<AgentStatusRecord | undefined> 
 
 /** This session's record, else the most recent one from any session (account-level limits stay meaningful). */
 export async function readAgentStatus(directory: string, scope: string): Promise<{record: AgentStatusRecord; own: boolean} | undefined> {
+  if (!await privateDirectory(dirname(directory)) || !await privateDirectory(directory)) return undefined;
   const own = await readRecord(agentStatusPath(directory, 'claude', scope));
   if (own) return {record: own, own: true};
   let names: string[] = [];
-  try {
-    const info = await lstat(directory);
-    if (!info.isDirectory()) return undefined;
-    names = (await readdir(directory)).filter(name => /^claude-[A-Za-z0-9-]{1,64}\.json$/u.test(name)).slice(0, 64);
-  } catch { return undefined; }
+  try { names = (await readdir(directory)).filter(name => /^claude-[A-Za-z0-9-]{1,64}\.json$/u.test(name)).slice(0, 64); } catch { return undefined; }
   let latest: AgentStatusRecord | undefined;
   for (const name of names) {
     const item = await readRecord(join(directory, name));
@@ -180,6 +191,7 @@ export async function readAgentStatus(directory: string, scope: string): Promise
 
 /** Remove records older than `maxAgeMs` (bounded; best effort). */
 export async function pruneAgentStatus(directory: string, now = Date.now(), maxAgeMs = 7 * 86_400_000): Promise<void> {
+  if (!await privateDirectory(dirname(directory)) || !await privateDirectory(directory)) return;
   let names: string[] = [];
   try { names = (await readdir(directory)).filter(name => /^claude-[A-Za-z0-9-]{1,64}\.json$/u.test(name)).slice(0, 256); } catch { return; }
   for (const name of names) {

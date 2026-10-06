@@ -94,7 +94,7 @@ test('project.package refuses malformed, oversized and symlinked manifests', asy
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
-test('runtime.node: requested pins, install-layout versions, shims, workspace refusal and a scrubbed probe', async () => {
+test('runtime.node: requested pins, install-layout versions, shims and workspace refusal; nothing is ever executed', async () => {
   resetServiceCaches();
   const root = await workspace();
   const tools = await workspace();
@@ -124,22 +124,30 @@ test('runtime.node: requested pins, install-layout versions, shims, workspace re
     assert.equal(fact?.manager, 'asdf');
     assert.equal(fact?.active, undefined);
     assert.equal(await exists(join(tools, 'SHIM_RAN')), false);
-    // A plain trusted binary outside any known layout may be probed once, with fixed argv, a neutral cwd and a scrubbed environment.
-    const plain = join(tools, 'plain');
-    await mkdir(plain);
-    await writeFile(join(plain, 'node'), `#!/bin/sh\nprintf '%s|%s|%s\\n' "$PWD" "\${NODE_OPTIONS:-none}" "$*" > '${join(tools, 'PROBE')}'\nprintf 'v23.1.0\\n'\n`);
-    await chmod(join(plain, 'node'), 0o755);
+    // A binary outside every known layout is still never run: its own installed header says the version, or it stays unknown.
+    const prefix = join(tools, 'plain');
+    await mkdir(join(prefix, 'bin'), {recursive: true});
+    await sentinelExecutable(join(prefix, 'bin', 'node'), join(tools, 'PLAIN_RAN'), 'v23.1.0');
     resetServiceCaches();
-    const previous = process.env.NODE_OPTIONS;
-    process.env.NODE_OPTIONS = '--require /tmp/evil.js';
-    try { fact = await resolve(nodeRuntime, {cwd: root, root, env: {PATH: plain}}); }
-    finally { if (previous === undefined) delete process.env.NODE_OPTIONS; else process.env.NODE_OPTIONS = previous; }
+    fact = await resolve(nodeRuntime, {cwd: root, root, env: {PATH: join(prefix, 'bin')}});
+    assert.equal(fact?.active, undefined, 'no metadata, no guess');
+    await mkdir(join(prefix, 'include', 'node'), {recursive: true});
+    await writeFile(join(prefix, 'include', 'node', 'node_version.h'), '#define NODE_MAJOR_VERSION 23\n#define NODE_MINOR_VERSION 1\n#define NODE_PATCH_VERSION 0\n');
+    resetServiceCaches();
+    fact = await resolve(nodeRuntime, {cwd: root, root, env: {PATH: join(prefix, 'bin')}});
     assert.equal(fact?.active, '23.1.0');
     assert.equal(fact?.mismatch, true, '.nvmrc 22 is not satisfied by 23.1.0');
-    const {readFile} = await import('node:fs/promises');
-    assert.equal((await readFile(join(tools, 'PROBE'), 'utf8')).trim(), '/|none|--version');
-    fact = await resolve(nodeRuntime, {cwd: root, root, env: {PATH: plain}, fields: ['requested']});
-    assert.equal(fact?.active, undefined, 'no probe unless the active field is demanded');
+    assert.equal(await exists(join(tools, 'PLAIN_RAN')), false, 'context collection never executes a discovered binary');
+    fact = await resolve(nodeRuntime, {cwd: root, root, env: {PATH: join(prefix, 'bin')}, fields: ['requested']});
+    assert.equal(fact?.active, undefined, 'the active field is only collected when demanded');
+    // Python: a versioned interpreter name is metadata too.
+    const pythonPrefix = join(tools, 'py');
+    await mkdir(join(pythonPrefix, 'bin'), {recursive: true});
+    await sentinelExecutable(join(pythonPrefix, 'bin', 'python3.12'), join(tools, 'PY_RAN'), 'Python 3.12.7');
+    await symlink(join(pythonPrefix, 'bin', 'python3.12'), join(pythonPrefix, 'bin', 'python3'));
+    resetServiceCaches();
+    assert.equal((await resolve(pythonRuntime, {cwd: root, root, env: {PATH: join(pythonPrefix, 'bin')}}))?.active, '3.12');
+    assert.equal(await exists(join(tools, 'PY_RAN')), false);
   } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
 
