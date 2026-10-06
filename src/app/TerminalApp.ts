@@ -519,7 +519,7 @@ export class TerminalApp {
   private cachedEnvironment?: ShellEnvironmentReport;
   private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
-  private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
+  private installProbe = {onPath: (name: string) => resolveCommand(name, this.shellPath()) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
   private misePanel?: MisePanel;
   private keepAwakePanel?: KeepAwakePanel;
   private keepAwakeController?: KeepAwakeController;
@@ -755,6 +755,7 @@ export class TerminalApp {
           this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
           // An older bootstrap reports no snapshot: keep the documented launch-environment fallback.
           this.contextEnvironment = parseShellEnvironment(marker.knowledge) ?? this.contextEnvironment;
+          this.correctionService.usePath(this.shellPath());
           this.semanticService.applyShellKnowledge(marker.knowledge);
           this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
@@ -874,6 +875,7 @@ export class TerminalApp {
     if (attached.knowledge !== undefined) {
       this.shellJobs = knowledgeJobCount(attached.knowledge) ?? 0;
       this.contextEnvironment = parseShellEnvironment(attached.knowledge) ?? this.contextEnvironment;
+      this.correctionService.usePath(this.shellPath());
       this.semanticService.applyShellKnowledge(attached.knowledge);
       this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
       this.rememberShellNames(attached.knowledge);
@@ -3112,6 +3114,11 @@ export class TerminalApp {
   private contextScope(cwd: string, root: string | undefined): CapabilityScopeInput {
     return {cwd, home: homedir(), ...(root ? {root} : {}), session: this.agentScope, env: this.contextEnvironment,
       live: {jobs: this.shellJobs, startedAt: this.contextStartedAt}};
+  }
+
+  /** The live shell's PATH once it has reported one; NMSh's own launch PATH until then. */
+  private shellPath(): string {
+    return (this.contextEnvironment.source === 'shell' ? this.contextEnvironment.values.PATH : undefined) ?? process.env.PATH ?? '';
   }
 
   /** The NMSh session agents running inside this shell report to (NMSH_SESSION_ID in the managed shell). */
