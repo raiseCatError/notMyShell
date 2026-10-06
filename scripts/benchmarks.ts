@@ -26,6 +26,8 @@ import {contextDemand} from '../src/context/demand.js';
 import {allModuleDefinitions} from '../src/context/modules.js';
 import {normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {moduleShowcaseContext, renderedModules} from '../src/prompt/prompt.js';
+import {resolvePromptContext} from '../src/shell/ShellContext.js';
+import {spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import type {CommandEntry, SuggestionContext} from '../src/suggestions/types.js';
@@ -171,6 +173,26 @@ async function collectContext(engine: ContextEngine, scope: CapabilityScopeInput
   return facts;
 }
 
+/** A large repository: ~3,000 tracked files in nested directories, a few edits and untracked files. Informational: setup takes seconds. */
+let largeRepo: string | undefined;
+function largeRepository(): string {
+  if (largeRepo) return largeRepo;
+  largeRepo = join(mkdtempSync(join(tmpdir(), 'nmsh-bench-git-')), 'repo');
+  for (let directory = 0; directory < 60; directory += 1) {
+    const path = join(largeRepo, `pkg${directory}`, 'src', 'lib');
+    mkdirSync(path, {recursive: true});
+    for (let file = 0; file < 50; file += 1) writeFileSync(join(path, `module${file}.ts`), `export const value${file} = ${directory * 50 + file};\n`);
+  }
+  const git = (...args: string[]) => {
+    const result = spawnSync('git', ['-c', 'user.name=bench', '-c', 'user.email=bench@example.invalid', '-c', 'commit.gpgsign=false', ...args], {cwd: largeRepo, encoding: 'utf8'});
+    if (result.status !== 0) throw new Error(`git ${args[0]} failed: ${result.stderr}`);
+  };
+  git('init', '-q', '-b', 'main'); git('add', '-A'); git('commit', '-q', '-m', 'bench');
+  for (let file = 0; file < 20; file += 1) writeFileSync(join(largeRepo, `pkg${file}`, 'src', 'lib', 'module0.ts'), `export const edited = ${file};\n`);
+  for (let file = 0; file < 10; file += 1) writeFileSync(join(largeRepo, `untracked${file}.txt`), 'new\n');
+  return largeRepo;
+}
+
 const everyModule = () => normalizePromptConfiguration({modules: allModuleDefinitions().map(definition => ({id: definition.id, visible: true}))});
 const noModule = () => normalizePromptConfiguration({modules: allModuleDefinitions().map(definition => ({id: definition.id, visible: false}))});
 const showcase = moduleShowcaseContext('/home/bench');
@@ -219,6 +241,11 @@ const benchmarks: Benchmark[] = [
     const demand = contextDemand(noModule(), {commandWords: ['kubectl', 'terraform', 'aws'], nativePrompt: true, railVisible: true, statusStripVisible: true, inRepository: true});
     if (demand.size !== 0) throw new Error('Hidden modules demanded facts');
   }},
+  // Git context in a large repository, deep inside it: branch plus porcelain status (the prompt's Rich Git), off the typing path.
+  {name: 'context/git-status-large-repo', samples: 10, warmup: 2, budgetP95Ms: 2000, prepare: () => { largeRepository(); }, run: async () => {
+    const context = await resolvePromptContext(join(largeRepository(), 'pkg42', 'src', 'lib'), undefined, tmpdir(), {status: true});
+    if (context.branch !== 'main' || !context.git) throw new Error('Large repository benchmark found no Git status');
+  }, units: 3000, unitName: 'tracked files'},
   {name: 'shell/name-snapshot-4096', run: () => parseShellKnowledge(shellNamesFixture), units: 4096, unitName: 'names'},
   {name: 'hyperlinks/recognize-1000', run: () => {
     const presenter = new HyperlinkPresenter();
@@ -404,6 +431,7 @@ process.on('exit', () => {
   configuredSource?.dispose(); contextEngine?.dispose();
   if (completionHome) rmSync(completionHome, {recursive: true, force: true});
   if (contextRoot) rmSync(contextRoot, {recursive: true, force: true});
+  if (largeRepo) rmSync(join(largeRepo, '..'), {recursive: true, force: true});
 });
 const runnable = benchmarks.filter(benchmark => selected.length === 0 || selected.some(name => benchmark.name.includes(name)));
 if (runnable.length === 0) {
