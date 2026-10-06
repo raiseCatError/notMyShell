@@ -175,6 +175,8 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   }
 
   kill(): void {
+    // node-pty reports the exit later; nothing may be written to a PTY NMSh already closed (a late Fish query reply would fail with EIO).
+    this.exited = true;
     this.pendingInput = '';
     if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
     try { this.pty.kill(); } finally { this.cleanup(); }
