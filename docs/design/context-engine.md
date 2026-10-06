@@ -1,174 +1,168 @@
 # Context Engine
 
-Canonical architecture for the [#305 program](https://github.com/raiseCatError/notMyShell/issues/305).
-Status: first architectural proof, awaiting review; no packs or executable extension system shipped.
-Audited base: `6adfe8524da79f071de886f5a3f97bd49074bc60` on
-`feature/305-shared-discovery-foundation` (2026-10-05).
+Canonical architecture for the [#305 program](https://github.com/raiseCatError/notMyShell/issues/305)
+and its focused issues (#316 kernel and fact model, #317 Surface Router and Rail,
+#318 Context Packs, #319 project/runtime catalog, #320 DevOps/cloud/system/agent
+context, #321 security, performance and QA). User-facing guide:
+[Context Modules](../architecture/context-modules.md).
+
+Status: v0.17.0 shipped the foundation (fact metadata, module routing, Context
+Rail). The capability scheduler, first-party catalog, declarative packs, Status
+Strip routing and agent context described here are on the development line
+after v0.17.0 and unreleased.
 
 ## Vocabulary and ownership
 
 | Concept | Responsibility |
 | --- | --- |
-| Capability | A named trusted operation NMSh knows how to perform safely |
-| Fact | One resolved contextual value with provenance, collection time, freshness, trust, sensitivity and persistence policy |
-| Module | Presentation and visibility behavior built from facts |
-| Context Pack | An installable **declarative** collection of modules |
-| Context Engine | Capability resolution, facts, cache, policy and provenance |
-| Surface Router | Determines where a module's contextual presentation appears |
-| Context Rail | Contextual frontend surface attached to the composer |
-| Main Prompt | Stable identity/navigation context |
-| Right Context | Low-attention prompt-adjacent state |
-| Status Strip | Persistent low-attention state; module routing is deferred |
+| Capability | A named trusted operation NMSh core implements and audits (`src/context/capabilities/`) |
+| Fact | One resolved value with provenance, collection time, freshness, trust, sensitivity, persistence policy and cost (`src/context/facts.ts`) |
+| Context Engine | Demand, scheduling, cache, cancellation, timeouts and policy (`src/context/engine.ts`) |
+| Module | Presentation and visibility behavior built from facts: native built-ins and pack modules (`src/context/modules.ts`, `declarative.ts`) |
+| Context Pack | Installable **declarative** module data (`src/context/packs/`) |
+| Surface Router | Where a module appears (`src/context/surfaceRouter.ts`) |
+| Main Prompt / Right Context / Context Rail / Status Strip | Presentation surfaces |
 
 ```text
-shell lifecycle / editor demand / explicit refresh
-  → trusted core capability services → resolved facts
-  → existing ContextModule definitions + user config
-  → Surface Router → Main Prompt / Right Context / Context Rail
+shell prompt marker (cwd, exit, job count, allowlisted environment)
+  / editor demand (show-on-command words) / explicit refresh / command completion
+  → ContextEngine.stage(scope) + demand(capability → fields)
+  → scheduled capability resolution (core I/O only) → sanitized facts
+  → commit (the new scope becomes visible together)
+  → modules (native + declarative) → Surface Router
   → shared semantic segment painter → ScreenPlan regions
 ```
 
-A pack requests `runtime.node.version`, never `execute: node --version`.
-Core owns executable identity, filesystem access, permitted environment fields,
-timeouts, output limits, cancellation, concurrency, cache, sanitization and network policy.
-Declarative packs contain no shell, JavaScript, templates that evaluate code,
-includes, executable paths, hooks or arbitrary argv. A future executable extension
-tier would be separate and require a real sandbox/capability model. It is not part
-of this implementation or implicitly authorized by installing a pack.
+A module requests `runtime.node.active`, never `execute: node --version`. Core
+owns executable identity, filesystem access, permitted environment fields,
+timeouts, output limits, cancellation, concurrency, cache, sanitization and
+network policy (there is none: no capability uses the network). Declarative packs
+contain no shell, JavaScript, code-evaluating templates, includes, executable
+paths, hooks or argv. An executable extension tier would need a real sandbox and
+capability model; it is not part of this design and installing a pack never
+implies it.
 
-## Audit of the accepted foundation
+## Capabilities and facts
 
-- `ShellContext.ts` supplies `PromptContext`, Git, marker-based toolchains and
-  root information asynchronously. `TerminalApp.refreshContext` rejects old cwd
-  generations and resolves path abbreviations outside rendering.
-- `configuration.ts` has a fixed, sound `ContextModuleId` registry with fields,
-  demand, visibility, conditions, order, left/right placement and explicit colors.
-  Evolve this registry; do not introduce an unrelated module framework.
-- `prompt.ts` turns context into semantic segments; `powerline.ts` paints all
-  Native styles and fits widths. Rich Git already has state roles, protected
-  semantic colors, geometry, previews and archival fidelity. Keep those intact.
-- `commandContext.ts` reads Kubernetes/Docker metadata and caches it. The accepted
-  base's `get()` initiates work from `promptContext()` on render. This proof must
-  split explicit demand refresh from read-only access. Readers use a 256 KiB limit, at most 16 explicit kubeconfig paths,
-  non-symlink regular files (leaf symlinks and special files are refused); Kubernetes authentication `exec` entries are never run.
-- `localDiscovery.ts` is the shared inventory: normalized PATH/home cache,
-  coalesced requests, TTL, key cap, direct directories and bounded entry counts.
-  `discoveredTools` is opt-in. Rendering consumes its snapshot, never scans.
-  Detection is evidence, not permission to execute a discovered binary.
-- The accepted base invokes `git` by PATH. This proof uses fixed OS Git, with a
-  validated Homebrew Cellar installation preferred on macOS (Apple's Git is an
-  xcrun shim). It supplies a narrow environment, disables global/system config,
-  fsmonitor and hooks, and fails status closed on local filters, includes or
-  worktree config. Root/branch are still available; unsafe/unknown status is
-  omitted rather than fabricated as clean. Repositories using those config
-  features lose Rich Git status until a safe capability policy is implemented.
-  No project filter or hook is run merely to learn status.
-- `/prompt` has Main Prompt, Rich Git and Chroma views, module ordering,
-  visibility, placement and deterministic showcases. Extend it with a Rail view.
-- Semantic themes, custom theme library, family accents, vibrance, Neutral text,
-  Chroma, UI chrome and safe glyphs are existing systems. Reuse them.
-- `ScreenPlan` owns render, hit test, viewport, cursor and PTY geometry. Status,
-  notices, find and Keep Awake are frontend regions. Rail is another region,
-  never a transcript line. Top/Bottom/Flow already have distinct geometry.
-- Native submission snapshots store left/right semantic segments; session
-  journals and `/copy` consume transcript state. Do not snapshot the live Rail.
-- ShellSession and service sessions preserve real shell state across zsh, Bash
-  and Fish. Raw/fullscreen passthrough suspends frontend drawing and receives
-  the full terminal size. Rail follows that existing suspension.
-- #304 owns appearance import, Theme Bridge and host cooperation. Its latest
-  implementation comment reports #315 unmerged/unreleased, with physical QA
-  pending. This program consumes the appearance/discovery foundation; it does
-  not redo #304 or make a host enhancement mandatory.
+A capability (`defineCapability`) declares: id and title; what it **reads**
+(shown verbatim in `/prompt` details and `nmsh packs inspect`); scope
+(session, workspace, user, machine); family (metadata, probe, system, agent) and
+cost; trust; sensitivity and persistence, with optional per-field policies; the
+fields it can resolve; the environment variables it may see; cache lifetime,
+optional refresh interval for time-based values, timeout and invalidation
+events; and a deterministic synthetic preview (`PREVIEW_NOW`). `resolve()`
+receives only its scope, the demanded fields, its declared environment and an
+abort signal.
 
-## Security and privacy invariants
-
-Entering an untrusted directory must never itself execute repository-controlled
-code through NMSh context discovery. The real shell's explicitly user-configured
-startup/hooks remain a separate trust boundary; NMSh must not add automatic trust.
-
-Ordinary discovery never sources `.envrc`, startup files, themes or plugins;
-executes project scripts, configuration-selected binaries or arbitrary PATH
-discoveries; contacts the network; broadly inspects secrets; or interprets project
-strings as terminal controls. Metadata is hostile even when Git returned it.
-
-Modules receive values, not filesystem traversal, `child_process`, `process.env`
-or network objects. Only trusted core services may perform I/O. Native rendering
-and routing are synchronous, pure consumers. Background capability failure means
-unknown/unavailable context, never permission to try arbitrary executables.
-
-Every final fact-derived segment passes one display boundary that bounds input length before processing, neutralizes terminal
-controls and bidi formatting controls, and limits terminal-cell width. Keep raw
-identity/path data separate from display text; never use sanitized display text
-as a filesystem path and never interpolate fact text into shell commands.
-
-Facts carry `value`, `source`, `collectedAt`, `freshness`, `trust`, `sensitivity`,
-`persistence`, and resolution cost (`cheap` or `bounded-async`). Unknown collection
-time is represented as unknown freshness, not falsely labelled fresh.
+Facts carry `value`, `source` (capability and evidence), `collectedAt`,
+`freshness`, `trust`, `sensitivity`, `persistence`, `resolution` (cost) and an
+optional `fieldPolicy`. `sanitizeFactValue` is the single value boundary
+(controls, bidi, prototype keys, functions and size); `projectFactValue` removes
+fields a purpose may not see (`display` versus `snapshot`); `safeContextText` is
+the single display boundary. Unknown collection time is unknown freshness, never
+"fresh".
 
 Persistence classes:
 
-- `snapshot-safe`: permitted in a future semantic command snapshot.
-- `display-only`: permitted on live surfaces but excluded from snapshots.
-- `never-store`: excluded from all snapshot/journal paths. Secret-class facts are
+- `snapshot-safe`: may enter a command's prompt snapshot.
+- `display-only`: live surfaces only; excluded from snapshots, journals and exports.
+- `never-store`: excluded from every snapshot/journal path. Secret-class facts are
   excluded from presentation too, regardless of a contradictory persistence flag.
 
-The trusted Git status service accepts only the existing contextual operations,
-never PATH discoveries. It disables fsmonitor/hooks, ignores submodules, refuses
-filter/include/worktree-config/partial-clone/promisor repositories for status,
-and disables lazy fetching. This deliberately sacrifices status detail for those
-repositories; branch/root may remain available. It never traverses submodules to
-validate their executable settings. Broader Git support needs a separate audited
-collector design.
+The legacy `PromptContext` (cwd, project, root, branch, Rich Git, marker-based
+toolchains, Kubernetes, Docker, discovery inventory) is adapted into typed facts
+(`promptFacts`) so providers, history and Rich Git keep working; engine facts win
+where both exist (Kubernetes and Docker are engine-backed with the legacy readers
+as fallback), and explicit metadata — including suppression — always wins.
 
-Live value refresh preserves previously established sensitivity/persistence.
-External-provider segments lack fact provenance: if any fact cannot be
-snapshotted, external snapshot presentation fails closed; policy-filtered
-metadata may remain. Native segments are filtered individually.
+### Shell-reported environment
 
-No live Rail aggregate is persisted. Existing prompt snapshots keep their current
-shape and behavior for ordinary legacy context, with policy filtering before new
-fact-backed segments enter snapshots. Future metadata captures only relevant,
-policy-allowed facts. Live context is not automatically persisted presentation.
+Capabilities see the **live shell's** environment, not NMSh's launch
+environment: each zsh, Bash and Fish prompt writes an `envsnapshot 1` block into
+the private per-session knowledge file, ahead of the name list, with an allowlist
+of non-secret values bounded per variable (`CONTEXT_ENV_VALUES`: `PATH`, AWS
+profile/region/config paths, gcloud and Azure configuration, `KUBECONFIG`, Docker,
+Terraform, Pulumi, Python environments, rustup, `JAVA_HOME`, version managers,
+direnv) and presence-only entries for credential variables
+(`CONTEXT_ENV_PRESENCE`). An older bootstrap without a snapshot falls back to
+NMSh's launch environment through the same allowlist. The cache key includes
+exactly the variables a capability declared (`environmentKey`), so switching
+`AWS_PROFILE` re-resolves AWS and nothing else. Bash and Fish command
+classification, typo correction and the install offer use the reported `PATH`
+too.
 
-## First proof and evolution path
+### No execution for context
 
-Adapt existing `PromptContext` into typed facts. Retain the legacy fields for
-provider and history compatibility. Fact-backed modules read a restricted
-projection of their declared inputs; no renderer resolves a fact. Explicit fact
-metadata wins over legacy values, including a fact that must be suppressed.
-The adapter is an evolution seam, not a second filesystem cache.
+Versions come from install layouts and metadata, never from running a binary:
+`node_version.h`, `GOROOT/VERSION`, the JDK `release` file, `pyvenv.cfg` and
+versioned interpreter paths, rustup `settings.toml`. `resolveTrustedExecutable`
+takes the first PATH match (absolute entries only) and refuses one inside the
+current workspace (cwd and repository root, as given and as resolved, but never
+the home directory or `/`), writable by others, or owned by another user; it
+recognizes version-manager shims. Only fixed system tools at absolute paths are
+spawned (`/usr/bin/vm_stat`, `/usr/bin/pmset`), and trusted Git for Git context.
 
-Extend each existing definition with stable id, required fact/capability ids,
-priority, supported/preferred surfaces, icon semantics and a bounded width policy.
-Visibility conditions, user order and explicit colors remain in current config.
-Do not invent a general-purpose expression language or field SDK in this proof.
+## Scheduling, cache and performance
 
-The first named capabilities describe existing collectors only. A registry entry
-does not confer authority to run anything; future capability implementations must
-declare exact policy and be audited in core. A general async scheduler, dynamic
-capability installation and complete legacy fact migration are later work.
+`ContextEngine`:
 
-Rich Git remains the existing semantic renderer. It can eventually consume
-`workspace.git.status` facts with field demand and provenance. Its state segments
-stay grouped as one module for Rail priority fitting. Do not rewrite its glyphs,
-colors or historical representation in this slice.
+- `stage(scope)` → generation; `demand(map)` schedules missing, expired or
+  invalidated values for the staged scope (work for the still-visible scope is
+  kept while a stage is pending); `settle(ms)`; `commit(generation)` makes the
+  new scope visible at once. The frontend settles for at most 150 ms, so a
+  directory change never flashes an empty prompt.
+- Entries are keyed by capability, scope base and environment key; demand
+  narrows fields; an extra field triggers a follow-up resolution.
+- Concurrency: four global, per family metadata 4, probe 2, system 2, agent 1;
+  cheap work first; identical requests coalesce (never onto a cancelled task).
+- Timeouts per capability; failures back off 5 s / 15 s / 60 s and keep the last
+  value visible as stale. A capability's first resolution in an engine gets three
+  times its timeout: cold module loading and every capability's first reads
+  compete for the same I/O threads, and a timeout should stop a hung read, not a
+  cold start.
+- Cancellation on scope change; late results never commit; a disposed engine
+  ignores everything.
+- Freshness: TTL per capability with stale-while-revalidate; `invalidate('command')`
+  after each command; refresh timers only for visible time-based facts.
+- An LRU bound (256 entries) that never evicts current targets, visible keys or
+  in-flight work.
+- `facts()` is memoized until the earliest expiry.
 
-## Placement and migration
+Rendering never initiates collection. Hidden modules, surfaces that are not
+shown and show-on-command modules without their command produce no demand
+(`contextDemand`).
 
-Choices: Auto, Main Prompt, Right Context, Context Rail, Hidden. Status Strip is
-an architectural destination only; expose it after real module presentation exists.
+Benchmarks (`scripts/benchmarks.ts`, `context/*`) measure cold and warm
+collection against a realistic workspace, twenty rapid directory changes,
+rendering every module on every surface, hidden-module demand and Git context in
+a ~3,000-file repository. `bench:smoke` (CI timing job) enforces generous p95
+budgets: they catch gross regressions such as a synchronous probe, not noise.
+Functional tests assert behavior (no I/O in render, no work for hidden modules,
+caps, cancellation), not elapsed time.
 
-Keep legacy `placement: left | right`. An absent new surface preserves that
-placement exactly (absent placement still means left). Explicit surface overrides
-legacy placement; explicit Auto uses the definition's preference. Hidden suppresses
-presentation and resolution demand, without discarding the visibility condition.
-No migration turns an existing module into Auto or Rail. Existing saved order,
-conditions, colors and left/right segments remain authoritative.
+## Modules and surfaces
 
-Auto preferences are core definition data: identity and Git stay Main Prompt,
-low-attention shell/inventory prefer Right Context, command contexts prefer Rail.
-Auto does not bounce modules between surfaces under width pressure in this proof.
-Each surface applies bounded fitting independently.
+Module definitions carry id, label, description, category, facts and fields,
+priority, semantic role, icon (with provenance in `icons.ts`), condition
+(`always`, `onCommand` with trigger words, `inRepository`), preferred and
+supported surfaces and stale handling. Pack modules are `<packId>:<moduleId>`;
+pack role names map onto existing prompt roles. Rendering of pack modules
+(`declarativeSegments`) supports literal text, field values through a fixed
+formatter set, joins, conditions over declared fields, age gates (`minAgeMs`,
+`until`), emphasis thresholds and icon-or-label by glyph mode.
+
+Choices: Auto, Main Prompt, Right Context, Context Rail, Status Strip (where a
+module supports it) and Hidden. Saved `placement: left | right` is preserved; an
+absent surface keeps it exactly. Explicit surface overrides legacy placement;
+explicit Auto uses the definition's preference. Hidden suppresses presentation
+**and** demand. No migration moves an existing module; first-party pack modules
+are appended (only show-on-command cloud, infrastructure and agent modules start
+visible).
+
+**Status Strip routing** is implemented because it fits without changing the
+strip's semantics: routed modules render through the same painter and join the
+strip's existing items at a lower priority than every native strip item, so
+CPU/memory/battery/branch items keep their room and modules drop first.
 
 ## Context Rail
 
@@ -180,122 +174,112 @@ content; Always reserves the configured one or two rows even when empty. Auto
 reserves the configured row count once content exists, so fitting does not cause
 height jitter. On tiny screens the transcript/input win and the Rail may be clipped.
 
-Vertical Rail attaches immediately above Bottom/Flow, and below the Top
-composer group (after suggestions). Presentation controls can instead place a
-separate Rail rectangle Right of Prompt; this never reroutes facts to Right
-Context. Right Context retains its far-edge anchor and independent module routing.
-The composer remains anchored in docked layouts. Horizontal composition
-reserves editor cells through the same measured layout used by cursor and hit testing.
+Vertical Rail attaches immediately above Bottom/Flow, and below the Top composer
+group (after suggestions). Presentation controls can instead place a separate
+Rail rectangle Right of Prompt; this never reroutes facts to Right Context. Right
+Context retains its far-edge anchor and independent module routing. Flow, FOLLOW
+and detached clipping rules are in
+[context-rail-composition.md](context-rail-composition.md), which also defines
+Relation, Direction, Integration, Spacing and Divider Anchor.
 
-Flow ordinarily consumes view space above its composer. Empty/short Flow may
-shift downward only by missing visible composition height. This includes actual
-content rows, explicitly configured spacing and a relocated horizontal outer edge; Rows
-still means one/two content rows. Off and empty Auto add no height. Growing
-transcript restores the normal anchor. Vertical Flow never falls below the input.
-FOLLOW uses actual visible transcript capacity, preserving newest output.
-Detached clipping never changes reserved PTY capacity or resets to FOLLOW.
+The Rail is Native module presentation. External providers and Prompt None
+suppress it with settings retained. Fullscreen/raw passthrough, panels and idle
+screens hide it with the rest of the frontend chrome. Fitting groups all segments
+of a module; higher priority enters first; normal, then compact geometry, then
+dropping lower-priority groups; at most the configured rows, never wrapping.
 
-The canonical presentation refinement is [context-rail-composition.md](context-rail-composition.md).
-It defines independent Relation, Direction, Integration, Spacing and Divider
-Anchor settings, deterministic constraints, shared live/preview projection and
-config defaults preserving earlier geometry. Facts, demand, collection, routing,
-provenance and transcript policy are unchanged by this refinement.
+## Declarative Context Packs
 
-The Rail is Native module presentation. External providers and Prompt None do not
-gain a second prompt; their Rail is suppressed, with settings retained for returning
-to Native. Fullscreen/raw passthrough, panels and idle screens own their screens
-normally and hide Rail along with other frontend chrome.
+Format `nmsh.context-pack/v1` (`schema.ts`): `id`, `version`, `name`,
+`description`, `license`, `provenance` (author, source, notes), `compatibility`
+(`contextApi`, NMSh range), `requires` (capability ids), `modules`, optional
+`recommend`. The parser is strict (unknown keys are errors) and bounded: 64 KiB,
+depth, counts and string lengths. Ids are validated; `nmsh.*` is reserved for
+bundled packs. Every field reference must name a capability in `requires` and a
+field that capability declares. Missing capabilities make a pack **unsupported**
+as a whole; an incompatible context API or NMSh range makes it **incompatible**.
 
-`/prompt` Rail controls: Mode, Rows, Relation, Direction, Integration, Spacing,
-Divider Anchor, Theme (Follow Main / Choose theme), Style
-(Follow Main / Soft / Minimal / Compact), Overflow (Priority). Choosing theme uses
-the existing bundled/theme-library palette resolution, including custom theme ids.
-Theme/style changes are pure mappings; never trigger probes. Explicit module
-colors, semantic Git states, NO_COLOR and safe glyph modes remain authoritative.
-Share the segment painter and existing style profiles. Arbitrary content row
-counts, second Chroma settings and dashboard widgets remain deferred.
+Lifecycle (`store.ts`): packs live under NMSh's config directory
+(`context-packs/`), recorded in a manifest with their sha256. Install validates,
+shows what the pack reads and adds, optionally checks `--sha256`, then stages and
+renames atomically; reinstalling repairs a tampered copy. Load verifies the hash
+(**integrity failed** otherwise), the parse and compatibility. States: enabled,
+disabled, missing file, integrity failed, invalid, unsupported, incompatible.
+Removal deletes the manifest entry and file and the pack's module entries.
+Installed modules start hidden. A checksum proves pinned bytes, not author
+trust; there is no registry, download or signature model yet — packs are local
+files the user chooses.
 
-Fitting groups all segments of a module. Higher-priority modules enter first;
-ties use saved order. Try normal then existing compact padding/gap geometry before
-dropping lower-priority modules. At extreme widths compact/truncate the highest
-priority group through the existing fitter. At most configured rows; never arbitrary
-wrapping. This proof uses static priorities, not a new priority configuration UI.
+Recommendations (`recommend.ts`) are deterministic: workspace file names and
+extensions, executable presence, or an available fact, each producing a
+sanitized reason. They never install, enable or select anything, and entering a
+repository never does either.
 
-Show-on-command remains deterministic token matching over editor text. Lifecycle
-and editor updates request needed cached metadata outside rendering; rendering
-applies visibility again, so a late result cannot display after its trigger vanishes.
-No periodic Rail timer or extra inventory scan is introduced.
+First-party packs (`packs/builtin/*.json`, GPL-3.0-only, independent
+implementations of documented formats) are loaded through the same parser:
+project, environment, infrastructure, cloud, system, vcs and agents.
 
-## Declarative pack direction
+## Agent context
 
-A future bounded local pack manifest contains schema version, stable pack id and
-version, provenance/license, required named capabilities and declarative module
-records. Records reference registered facts, bounded literal labels, existing
-semantic roles/icons, supported conditions, surface preferences and width policy.
-They contain no code, user-selected executable path, arbitrary argv, templates,
-includes or network URLs evaluated during rendering. Schema evolution and unknown
-capabilities fail gracefully rather than falling through to shell evaluation.
+The Claude Code status-line interface is the only agent integration, because it
+is an official structured interface. `nmsh agent-status setup|remove` edits
+Claude Code's `settings.json` through the verified config-edit planner (exact
+preview, sha256 precondition, ownership record of the exact inserted text,
+exact removal; an existing custom status line is never replaced). The bridge
+(`nmsh agent-status claude`) reads at most a bounded stdin, keeps an allowlisted
+record (`agentStatus.ts`) in a private 0700 directory as a 0600 file written with
+an exclusive temporary file and rename, tagged by `NMSH_SESSION_ID` (set by the
+session service; in-process sessions use a private id), and prints a compact line
+rendered by the same declarative modules. `agent.claude` reads only the current
+session's record; values are display-only, private fields (session name, cost)
+stay out of every snapshot. Absent or old reports show nothing or their age.
 
-Registry/recommendation is separate from rendering and resolution. Recommendations
-explain proven local evidence and never install, enable a module or select a
-provider automatically. Built-in packs ship their runtime data with NMSh. A future
-explicit download flow pins pack id/version and exact content hash, verifies
-integrity before activation, records source and license, and stages atomic installs
-and removal. A checksum proves pinned bytes, not author trust; publisher/signature
-and trust-root decisions still require review under #318. No registry transport or
-networking is implemented in the first proof, and ordinary context rendering never
-needs upstream availability. Preserve GPL-3.0-only and file-level provenance/notices
-for any adapted implementation, test, generated data or icon.
+## Security and privacy invariants
 
-## First-proof implementation sequence
+Entering an untrusted directory must never itself execute repository-controlled
+code through NMSh context discovery, contact the network, or expose secrets. The
+real shell's explicitly user-configured startup/hooks remain a separate trust
+boundary; NMSh adds no automatic trust.
 
-1. Preserve the standalone approved Tools checkpoint and branch from its exact head.
-2. Establish the canonical design, continuation protocol and #316–#321 dependencies.
-3. Test old configs, surface choices and ordinary prompt/snapshot fidelity; extend
-   existing configuration and definitions without default relocation.
-4. Test hostile displays and persistence; add resolved-fact adapters and pure routing.
-5. Test Rail modes, geometry and overflow; share the semantic painter and ScreenPlan.
-6. Test collector isolation, fake executables, unsafe Git config, bounded/symlink
-   metadata and late command results; move demand outside rendering.
-7. Extend `/prompt`, test theme/glyph/color behavior, run focused/canonical checks,
-   reproduce base failures and measure pure rendering. Keep the review tree uncommitted.
+Ordinary discovery never sources `.envrc`, startup files, themes or plugins;
+executes project scripts, configuration-selected binaries or PATH discoveries;
+runs kubeconfig `exec` plugins; calls cloud APIs or authenticates; reads
+credential values; dumps the environment; or interprets project strings as
+terminal controls. Metadata is hostile even when Git returned it.
 
-## Cache and performance direction
+Modules receive values, not filesystem traversal, `child_process`, `process.env`
+or network objects. Only capabilities perform I/O. Native rendering and routing
+are synchronous, pure consumers. A failure means unknown/unavailable context,
+never permission to try another executable.
 
-Keep the shared local discovery cache; do not clone it. Cwd generation prevents
-old asynchronous completion from replacing current workspace facts. Command
-metadata keeps a five-second cache refreshed on explicit demand events. Cheap
-shell/editor facts are projected from memory. Disabled/hidden command modules do
-not request readers. Renderer work is bounded by the small fixed registry and
-sanitized values; Rail fitting is bounded by ten modules and two rows.
+The trusted Git status service accepts only the existing contextual operations,
+never PATH discoveries. It disables fsmonitor/hooks, ignores submodules, refuses
+filter/include/worktree-config/partial-clone/promisor repositories for status,
+and disables lazy fetching; branch/root may remain available and missing status
+is never shown as clean.
 
-Future capability cache keys include session, canonical workspace, selected
-non-secret environment fields, trusted executable identity and requested fields.
-Invalidation: cwd/session change, command completion, settings change, explicit
-refresh and capability TTL. Core must cap concurrency, coalesce requests, cancel
-stale generations, bound every read/probe and disclose stale/unknown states.
-Network capabilities, if approved later, always resolve asynchronously with visible
-policy and never enter the ordinary synchronous render path.
-
-Measure pure warm rendering separately from cold collection and shared-discovery
-cost. Do not enforce flaky elapsed-time assertions in functional tests. A budget for
-expanded catalogs requires evidence on slower machines before setting a hard limit.
+External-provider segments lack fact provenance: if any fact cannot be
+snapshotted, external snapshot presentation fails closed. Native segments are
+filtered individually. No live Rail or Status Strip aggregate is persisted.
 
 ## Test and delivery gates
 
-Use hostile temporary workspaces containing fake executables, executable-looking
-`.envrc`/theme/scripts, Git hooks/fsmonitor configuration, huge/malformed metadata,
-symlinks and kubeconfig `exec`. Assert no sentinel execution, no network and no
-secret presentation/persistence during collection plus repeated rendering. Expand
-these fixtures as each new parser/capability ships; do not write future pack parsers now.
+- Kernel: demand-only resolution, field demand, coalescing, caps, timeouts and
+  the cold-start allowance, backoff, cancellation, staging, bounded cache,
+  sanitization, environment keys, field projection (`contextKernel.test.ts`).
+- Capabilities: every parser against real-shaped fixtures and refusal cases,
+  sentinel executables that must never run (`contextCapabilities.test.ts`).
+- Hostile workspace: a repository with fake executables on PATH, `.envrc`,
+  hooks/fsmonitor, kubeconfig `exec`, malformed/huge/symlinked metadata,
+  control/bidi/OSC payloads, hostile Git refs and malicious pack metadata:
+  collection plus repeated rendering execute nothing, contact nothing and leak
+  nothing (`contextHostileWorkspace.test.ts`).
+- Packs: schema, integrity, lifecycle, CLI and recommendations
+  (`contextPacks.test.ts`); agent context end to end (`agentContext.test.ts`);
+  `/prompt` module management (`moduleManager.test.ts`).
+- Real zsh, Bash and Fish report the environment snapshot
+  (`shellContextEnvironment.test.ts`).
+- Performance: `npm run bench:smoke` budgets; render-purity tests.
 
-Validate migration/default fidelity, both legacy placements, all Rail modes/rows,
-Top/Bottom/Flow, width/priority, NO_COLOR/safe glyphs, follow/chosen themes,
-show-on-command, pure render reads, inventory reuse, Rich Git and `/tools` regressions.
-Run focused checks, build/typecheck, verify:fast and the canonical suite. Reproduce
-failures against an untouched accepted base before classifying them as base/environment.
-Automated tests never constitute physical Ghostty or terminal/mux QA.
-
-This branch stays uncommitted for the requested review. Do not merge, publish,
-release, bump version, regenerate media or touch the separate showreel worktree.
+Automated tests never constitute physical terminal or multiplexer QA.
 Continuation follows [the agent protocol](../development/context-engine-agent-protocol.md).

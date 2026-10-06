@@ -1,9 +1,10 @@
+import {randomUUID} from 'node:crypto';
 import {EventEmitter} from 'node:events';
 import {ShellSession} from '../shell/ShellSession.js';
 import {knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SERVICE_FEATURES, type ServiceFeature} from './SessionProtocol.js';
-import {SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
+import {SESSION_ID_ENV, SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
 
 type ShellLike = Pick<ShellSession, 'submit' | 'write' | 'interrupt' | 'endInput' | 'resize' | 'kill' | 'on'>
   & Partial<Pick<ShellSession, 'removeAllListeners' | 'isReady' | 'pid'>>;
@@ -18,12 +19,14 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
   private size: {columns: number; rows: number};
   private running = false;
   private knowledge?: string;
+  /** This in-process session's NMSH_SESSION_ID (there is no service session id). */
+  readonly contextId = `local-${randomUUID()}`;
 
   constructor(options: SessionOptions, private readonly factory: (options: SessionOptions) => ShellLike = defaultShell) {
     super();
     this.shellId = options.shell ?? 'zsh';
     this.size = {columns: options.columns, rows: options.rows};
-    this.shell = factory(options);
+    this.shell = factory({...options, contextId: this.contextId});
     this.wire(this.shell);
   }
 
@@ -55,7 +58,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     if (this.running) throw new Error('A command is still running; switching would end it.');
     const jobs = knowledgeJobCount(this.knowledge);
     if (jobs) throw new Error(`${jobs} background or stopped job${jobs === 1 ? '' : 's'} would end with the current shell. Finish them first.`);
-    const next = this.factory({cwd, ...this.size, shell});
+    const next = this.factory({cwd, ...this.size, shell, contextId: this.contextId});
     const previous = this.shell;
     previous.removeAllListeners?.();
     previous.kill();
@@ -69,5 +72,5 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
 
 function defaultShell(options: SessionOptions): ShellSession {
   return new ShellSession(options.cwd, options.columns, options.rows, process.env.HOME || '',
-    {...process.env, [SESSION_MODE_ENV]: 'in-process'}, options.shell ?? 'zsh');
+    {...process.env, [SESSION_MODE_ENV]: 'in-process', ...(options.contextId ? {[SESSION_ID_ENV]: options.contextId} : {})}, options.shell ?? 'zsh');
 }

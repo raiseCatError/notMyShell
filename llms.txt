@@ -45,7 +45,7 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 - prompt providers: NMSh Native (default), Starship, Oh My Posh, Powerlevel10k, None
 - Theme Studio (/theme): built-in, imported (data-only parsers) and custom themes
 - Theme Bridge (/theme-bridge, opt-in): fzf, less/man, file listing colors, bat,
-  tmux, Vim, Neovim, Helix; delta detected only; ownership ledger, reviewed includes
+  tmux, Vim, Neovim, Helix; delta never managed (syntax follows bat via BAT_THEME unless git config pins it); ownership ledger, reviewed includes
 - curated tools and providers (/tools, /providers), tool configuration (/configure,
   /tmux), integration health (/integrations), safe dotfiles import (/dotfiles)
 - shell frameworks detected (Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit, Antidote);
@@ -57,20 +57,27 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 - nmsh config export/import, nmsh uninstall, nmsh doctor
 - NMSH_DETERMINISTIC=1 for repeatable presentation in tests and VHS demos
 
-## Native modules / Context Engine (v0.17.0 release)
+## Native modules / Context Engine
 
-Current engineering focus: Capability → immutable Fact → Module → Surface Router
-→ Main Prompt / Context Rail / Right Context. Core services own bounded collection;
+Capability → immutable Fact → Module → Surface Router → Main Prompt / Right
+Context / Context Rail / Status Strip. Core capabilities own bounded collection;
 modules and renderers consume resolved facts without I/O. Facts carry provenance,
 freshness, trust, sensitivity and persistence policy. The Rail is live frontend
 geometry, separate from transcript snapshots and the right-context anchor.
 
-The first-party module registry, fact adapter and surface routing are implemented
-on master in the v0.17.0 release. Installable declarative Context Packs, broader
-capability scheduling and Status Strip module routing remain upcoming. No finalized
-pack SDK or executable plugin API is available. Repository entry must never execute
-arbitrary repo-controlled code through discovery; metadata is parser-only and
-probes are curated core operations, not commands supplied by packs or repositories.
+Released in v0.17.0: fact metadata, the module registry, surface routing and the
+Context Rail. On the development line (unreleased): a demand-driven capability
+scheduler (caps, timeouts, cancellation, stale-while-revalidate) fed by the live
+shell's allowlisted environment; a first-party catalog (project, Node/Python/Go/
+Rust/Java, mise/asdf, direnv, Terraform/Helm/Pulumi, AWS/GCP/Azure from local
+non-secret config, OS/user/jobs/time/memory/battery, Git stash/upstream);
+declarative Context Packs (nmsh.context-pack/v1; `nmsh packs` install/remove/
+enable/disable with sha256 integrity; recommendations never auto-install);
+Claude Code agent context through its official status line (`nmsh agent-status`);
+Status Strip routing. Packs are data: no commands, code, paths, templates or
+hooks. Repository entry never executes repo-controlled code; versions come from
+install layouts, never from running discovered binaries.
+Guide: docs/architecture/context-modules.md; design: docs/design/context-engine.md.
 
 Reel: https://youtu.be/zIzq_88R5OI (preview: assets/promo/nmsh-promo.png)
 

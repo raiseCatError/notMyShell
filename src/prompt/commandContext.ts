@@ -1,8 +1,7 @@
-import {readContextMetadata} from '../context/trustedServices.js';
-import {delimiter, isAbsolute} from 'node:path';
 import {homedir} from 'node:os';
-import {join} from 'node:path';
 import type {ToolchainId} from '../shell/ShellContext.js';
+import {docker, kubernetes} from '../context/capabilities/infrastructure.js';
+import {frontendEnvironment} from '../context/shellEnvironment.js';
 
 /**
  * Show-on-command: modules that appear while the command being typed makes
@@ -55,76 +54,17 @@ export function matchesCommand(triggers: readonly string[], words: readonly stri
   return Boolean(words?.some(word => triggers.includes(word)));
 }
 
-/** Current kubectl context from the first kubeconfig that names one. Reads files only. */
+/** One-off reads through the Context Engine capabilities (the engine itself caches and schedules these for the prompt). */
+function capabilityContext(env: NodeJS.ProcessEnv, home: string, fields: string[]) {
+  return {cwd: home, home, session: 'standalone', env: frontendEnvironment(env), fields: new Set(fields), signal: new AbortController().signal, now: Date.now()};
+}
+
+/** Current kubectl context from the first kubeconfig that names one. Reads files only; exec credential plugins are never run. */
 export async function readKubeContext(env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<string | undefined> {
-  const files = env.KUBECONFIG ? env.KUBECONFIG.split(delimiter).filter(isAbsolute).slice(0, 16) : [join(home, '.kube', 'config')];
-  for (const file of files) {
-    try {
-      const match = /^current-context:[ \t]*(['"]?)(.*?)\1[ \t]*$/mu.exec((await readContextMetadata(file) ?? ''));
-      if (match?.[2]) return match[2];
-    } catch {
-      // Missing or unreadable kubeconfig files contribute nothing.
-    }
-  }
-  return undefined;
+  return (await kubernetes.resolve(capabilityContext(env, home, ['context'])))?.value.context;
 }
 
 /** Current Docker context: DOCKER_CONTEXT, then DOCKER_HOST, then the CLI config, else `default`. */
 export async function readDockerContext(env: NodeJS.ProcessEnv = process.env, home = homedir()): Promise<string> {
-  if (env.DOCKER_CONTEXT) return env.DOCKER_CONTEXT;
-  if (env.DOCKER_HOST) return env.DOCKER_HOST;
-  try {
-    const config = JSON.parse((await readContextMetadata(join(env.DOCKER_CONFIG ?? join(home, '.docker'), 'config.json')) ?? '')) as unknown;
-    const current = typeof config === 'object' && config !== null ? (config as {currentContext?: unknown}).currentContext : undefined;
-    if (typeof current === 'string' && current) return current;
-  } catch {
-    // No Docker CLI config means the default context.
-  }
-  return 'default';
-}
-
-/**
- * Non-blocking lookups: `get` answers from cache immediately and refreshes
- * stale values in the background, calling `onUpdate` when one changes.
- */
-export class CommandContextCache {
-  private readonly values = new Map<CommandContextId, {value: string | undefined; at: number}>();
-  private readonly inFlight = new Set<CommandContextId>();
-
-  constructor(
-    private readonly onUpdate: () => void,
-    private readonly readers: Record<CommandContextId, () => Promise<string | undefined>> = {
-      kubeContext: () => readKubeContext(),
-      dockerContext: () => readDockerContext(),
-    },
-    private readonly maxAgeMs = 5000,
-    private readonly now: () => number = Date.now,
-  ) {}
-
-  /** Render-safe access: never refreshes, even after TTL expiry. */
-  peek(id: CommandContextId): string | undefined { return this.values.get(id)?.value; }
-
-  /** Core lifecycle/editor demand, outside the renderer. */
-  request(id: CommandContextId): void { this.get(id); }
-
-  get(id: CommandContextId): string | undefined {
-    const cached = this.values.get(id);
-    if ((!cached || this.now() - cached.at > this.maxAgeMs) && !this.inFlight.has(id)) void this.refresh(id);
-    return cached?.value;
-  }
-
-  private async refresh(id: CommandContextId): Promise<void> {
-    this.inFlight.add(id);
-    let value: string | undefined;
-    try {
-      value = await this.readers[id]();
-    } catch {
-      value = undefined;
-    } finally {
-      this.inFlight.delete(id);
-    }
-    const previous = this.values.get(id);
-    this.values.set(id, {value, at: this.now()});
-    if (previous?.value !== value) this.onUpdate();
-  }
+  return (await docker.resolve(capabilityContext(env, home, ['context'])))?.value.context ?? 'default';
 }

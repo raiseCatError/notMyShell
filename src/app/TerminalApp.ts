@@ -43,7 +43,7 @@ import {findTheme} from '../appearance/themeLibrary.js';
 import {activeThemeRef, assetRef, selectableThemes, themeRefLabel} from '../appearance/themeRefs.js';
 import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
-import {applyThemeBridge, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
+import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -110,6 +110,7 @@ import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../s
 import {CommandEditor} from '../input/CommandEditor.js';
 import {authoredLink, closeAuthoredLinks} from '../output/Hyperlinks.js';
 import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
+import {HostTitle, titleSupport} from '../host/terminalTitle.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
@@ -118,7 +119,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, statusStripModules, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -130,7 +131,23 @@ import {detectOhMyPosh, renderOhMyPoshPrompt} from '../prompt/ohMyPosh.js';
 import {configuratorFileChanged, launchPowerlevel10kConfigurator, preparePowerlevel10kConfigurator} from '../prompt/Powerlevel10kConfigurator.js';
 import {galleryPalettes, promptPanelOwnsKey, appearanceModulesRow, closeGradientEditor, onGradientRow, openGradientEditor, applyLayoutChoice, onModulesRow, layoutLabel, describePromptConfiguration, PROVIDER_ORDER, providerLabel, handlePromptPanelKey, layoutChoiceIndex, renderPromptPanel, type PromptPanelState} from '../prompt/PromptPanel.js';
 import type {PromptSnapshot} from '../prompt/snapshot.js';
-import {CommandContextCache, commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {commandWords, type CommandContextId} from '../prompt/commandContext.js';
+import {ContextEngine} from '../context/engine.js';
+import {CORE_CAPABILITIES} from '../context/registry.js';
+import {contextDemand} from '../context/demand.js';
+import {firstPartyPacks, installedPacks, setInstalledPacks} from '../context/modules.js';
+import {activeInstalledPacks, installedPackStatuses, removePack, setPackEnabled} from '../context/packs/store.js';
+import type {ParsedPack} from '../context/packs/schema.js';
+import {recommendModules, type Recommendation} from '../context/packs/recommend.js';
+import {listNames, workspaceRoots} from '../context/services.js';
+import {choosePager, pagerDocument, pagerProcessEnvironment, runPager} from '../output/BlockPager.js';
+import {pagerEnvironment as bridgePagerColors} from '../themeBridge/targets.js';
+import type {ModulesContext, PackListing} from '../prompt/ModulesPanel.js';
+import {applyClaudeBridge, applyClaudeBridgeRemoval, inspectClaudeBridge, planClaudeBridge, planClaudeBridgeRemoval} from '../agents/claudeStatusLine.js';
+import {currentLauncher} from '../cli/agentStatus.js';
+import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
+import type {CapabilityScopeInput} from '../context/capability.js';
+import {safeContextText, type ContextFact} from '../context/facts.js';
 import {discoverLocalExecutables} from '../tools/localDiscovery.js';
 import {applyUpdate, checkForUpdate, compareVersions, detectInstall, installProvenanceLabel, fetchLatestRelease, installRoot, loadUpdateState, planUpdate, prepareAutomaticUpdate, readyVersion, recordInstalled, systemRunner, updatesDisabledByEnvironment, type ReleaseInfo, type UpdateCheckFrequency} from '../update/update.js';
 import {resolvePathAbbreviations} from '../prompt/pathDisplay.js';
@@ -309,6 +326,9 @@ const PASTE_ATOM_BACKGROUND = background({red: 63, green: 65, blue: 82});
 const INVERSE = '\u001B[7m';
 /** The Settings row the glyph preview returns to. */
 const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(entry => entry.id === 'glyphPreview'));
+/** How long a directory change waits for demanded context facts before showing what has resolved (the rest arrives later). */
+const CONTEXT_SETTLE_MS = 150;
+
 export class TerminalApp {
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
@@ -364,12 +384,17 @@ export class TerminalApp {
   private directoryQueryAbort?: AbortController;
   private directoryResults: DirectoryCandidate[] = [];
   private pickerOpening = false;
-  private pickerAbort?: AbortController;
+  private hostProgramAbort?: AbortController;
   private historyQuery?: string;
   private historyQueryAbort?: AbortController;
   private historyResults: HistoryEntry[] = [];
   private context: PromptContext = {cwd: process.cwd(), project: '…', exitStatus: 0};
-  private readonly commandContexts = new CommandContextCache(() => this.render());
+  /** Context Engine: demand-driven, cached, bounded capability resolution. Rendering only reads its facts. */
+  private contextEngine = new ContextEngine({capabilities: CORE_CAPABILITIES, onUpdate: () => { this.scheduleContextRefresh(); this.render(); }});
+  /** The live shell's allowlisted context environment; NMSh's own launch environment until the shell reports one. */
+  private contextEnvironment: ShellEnvironment = frontendEnvironment();
+  private readonly contextStartedAt = Date.now();
+  private contextRefreshTimer?: NodeJS.Timeout;
   private configuration: PromptConfiguration = loadPromptConfiguration();
   /** Decorative surfaces without prompt context follow the active Native theme for Current Theme Chroma. */
   private themeStopsKey = '';
@@ -494,7 +519,7 @@ export class TerminalApp {
   private cachedEnvironment?: ShellEnvironmentReport;
   private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
-  private installProbe = {onPath: (name: string) => resolveCommand(name) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
+  private installProbe = {onPath: (name: string) => resolveCommand(name, this.shellPath()) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
   private misePanel?: MisePanel;
   private keepAwakePanel?: KeepAwakePanel;
   private keepAwakeController?: KeepAwakeController;
@@ -728,6 +753,9 @@ export class TerminalApp {
       if (this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
+          // An older bootstrap reports no snapshot: keep the documented launch-environment fallback.
+          this.contextEnvironment = parseShellEnvironment(marker.knowledge) ?? this.contextEnvironment;
+          this.correctionService.usePath(this.shellPath());
           this.semanticService.applyShellKnowledge(marker.knowledge);
           this.commandSources.clear();
           this.completionService.setShellKnowledge(parseShellKnowledge(marker.knowledge));
@@ -762,6 +790,7 @@ export class TerminalApp {
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
     this.beginStartupWatch(connection?.attached);
     this.session.start();
+    void this.loadInstalledPacks();
   }
 
   /** The shell has not reached its first prompt; set for a new session, or a reattached one still starting. */
@@ -845,6 +874,8 @@ export class TerminalApp {
     this.streamSeq = attached.ackedSeq;
     if (attached.knowledge !== undefined) {
       this.shellJobs = knowledgeJobCount(attached.knowledge) ?? 0;
+      this.contextEnvironment = parseShellEnvironment(attached.knowledge) ?? this.contextEnvironment;
+      this.correctionService.usePath(this.shellPath());
       this.semanticService.applyShellKnowledge(attached.knowledge);
       this.completionService.setShellKnowledge(parseShellKnowledge(attached.knowledge));
       this.rememberShellNames(attached.knowledge);
@@ -885,6 +916,7 @@ export class TerminalApp {
     if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.cancelPresentation();
       this.passthrough = true;
+      this.noteForeignScreen();
       this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
     }
@@ -911,6 +943,7 @@ export class TerminalApp {
     if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
       this.cancelPresentation();
       this.passthrough = true;
+      this.noteForeignScreen();
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
       this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
@@ -933,6 +966,7 @@ export class TerminalApp {
         this.cancelPresentation();
         this.terminalFocus = 'unknown';
         this.passthrough = true;
+        this.noteForeignScreen();
         this.renderer.suspendForPassthrough();
         const dimensions = this.dimensions();
         this.session.resize(dimensions.columns, dimensions.rows);
@@ -1089,7 +1123,7 @@ export class TerminalApp {
       const before = {text: this.editor.text, index: this.editor.displayCursorIndex};
       this.handleKey(key);
       this.noteCaretTravel(before);
-      this.requestCommandContexts();
+      this.requestContextDemand();
     }
     // Passive motion renders only when hover changes; skip the generic frame.
     if (keys.length === 0 || keys.some(key => key.kind !== 'mouseMove')) this.render();
@@ -1138,6 +1172,7 @@ export class TerminalApp {
     if (this.stopped || this.externalPassthrough) return;
     this.cancelPresentation();
     this.frontendSuspended = true;
+    this.noteForeignScreen();
     this.terminalFocus = 'unknown';
     this.renderer.leave();
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
@@ -1396,7 +1431,8 @@ export class TerminalApp {
         this.render();
         return;
       }
-      if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
+      if (this.promptPanelState.step === 'modules') this.promptPanelState.context = this.modulesContext();
+      if (key.kind === 'escape' && this.promptPanelState.step === 'modules' && !promptPanelOwnsKey(this.promptPanelState, key)) {
         // Esc leaves the module manager, keeping its draft edits for the final save.
         this.promptPanelState.step = 'appearance';
         this.promptPanelState.selectedIndex = appearanceModulesRow(this.promptPanelState.draft);
@@ -1417,6 +1453,7 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
+      if (this.promptPanelState?.request) void this.handleModulesRequest(this.promptPanelState);
       return;
     }
     if (this.findState?.editing && !this.settingsPanelActive && this.handleFindKey(key)) return;
@@ -2156,13 +2193,22 @@ export class TerminalApp {
     } finally { this.pickerOpening = false; }
   }
 
-  /** External pickers temporarily own the host terminal, never the managed shell PTY. */
-  private readonly pickerHandoff: PickerHandoff = async run => {
-    if (!process.stdin.isTTY || !process.stdout.isTTY || this.running || this.passthrough || this.externalPassthrough)
-      return {kind: 'fallback', reason: 'A free interactive terminal is required; using Native'};
+  /** Whether a program may take the host terminal now: a real TTY, and nothing else owns it. */
+  private hostTerminalFree(): boolean {
+    return Boolean(process.stdin.isTTY && process.stdout.isTTY) && !this.running && !this.passthrough && !this.externalPassthrough;
+  }
+
+  /**
+   * A child program (picker, pager, wizard) temporarily owns the host
+   * terminal, never the managed shell PTY: NMSh detaches input, leaves raw
+   * mode and its screen, lets the program handle Ctrl+C, and restores itself
+   * afterwards whatever happened. The signal aborts on stop (and on resize
+   * for programs that cannot follow one).
+   */
+  private async withHostTerminal<T>(run: (signal: AbortSignal) => Promise<T>, options: {abortOnResize?: boolean} = {}): Promise<T> {
     const controller = new AbortController();
     const abort = () => controller.abort();
-    const ignoreInterrupt = () => { /* The foreground picker handles Ctrl+C. */ };
+    const ignoreInterrupt = () => { /* The foreground program handles Ctrl+C. */ };
     this.cancelPresentation();
     this.externalPassthrough = true;
     let detached = false;
@@ -2174,13 +2220,12 @@ export class TerminalApp {
       this.terminalFocus = 'unknown';
       this.renderer.leave(); left = true;
       process.on('SIGINT', ignoreInterrupt);
-      process.on('SIGWINCH', abort);
-      this.pickerAbort = controller;
+      if (options.abortOnResize) process.on('SIGWINCH', abort);
+      this.hostProgramAbort = controller;
       return await run(controller.signal);
-    } catch (error) { return {kind: 'fallback', reason: `Picker failed: ${String(error)}; using Native`}; }
-    finally {
+    } finally {
       process.off('SIGINT', ignoreInterrupt); process.off('SIGWINCH', abort);
-      this.pickerAbort = undefined;
+      this.hostProgramAbort = undefined;
       if (!this.stopped) {
         if (left) this.renderer.enter();
         if (released) process.stdin.setRawMode(true);
@@ -2191,7 +2236,25 @@ export class TerminalApp {
       this.externalPassthrough = false;
       this.render();
     }
+  }
+
+  /** External pickers temporarily own the host terminal; a resize cancels them (they cannot follow it). */
+  private readonly pickerHandoff: PickerHandoff = async run => {
+    if (!this.hostTerminalFree()) return {kind: 'fallback', reason: 'A free interactive terminal is required; using Native'};
+    try { return await this.withHostTerminal(run, {abortOnResize: true}); }
+    catch (error) { return {kind: 'fallback', reason: `Picker failed: ${String(error)}; using Native`}; }
   };
+
+  /** "Open in pager": the block's command and complete stored output reach the pager only through its stdin. */
+  private async openBlockInPager(record: CompletedCommand): Promise<void> {
+    const say = (text: string, kind = INFO) => this.output.addFrontendInteraction('Open in pager', text, kind);
+    if (!this.hostTerminalFree()) { say('Opening a pager needs a free interactive terminal.'); return; }
+    const pager = await choosePager(process.env, workspaceRoots(this.context.cwd, this.context.root, homedir()));
+    if (!pager) { say('No pager was found: less or more on PATH, or a PAGER that names a program directly.'); return; }
+    const bridge = this.themeBridgePagerEnvironment();
+    const result = await this.withHostTerminal(signal => runPager(pager, pagerDocument(record.command, record.output), pagerProcessEnvironment(process.env, bridge), signal));
+    if (!result.ok && result.reason !== 'cancelled') say(`${result.reason}.`, ERROR);
+  }
 
   /** An accepted ghost suggestion became real text: it materializes like a completion. */
   private acceptingGhost(move: () => void): void {
@@ -2351,6 +2414,7 @@ export class TerminalApp {
       try { await writeClipboard(payload); }
       catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
+    else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
     else if (action === 'edit' || action === 'rerun') {
       this.clearBlockFocus();
@@ -2447,6 +2511,7 @@ export class TerminalApp {
       if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
         this.passthrough = true;
+        this.noteForeignScreen();
         this.terminalFocus = 'unknown';
         this.renderer.suspendForPassthrough();
         const dimensions = this.dimensions();
@@ -3033,26 +3098,55 @@ export class TerminalApp {
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;
     }
+    // A command may have changed what workspace facts say (npm version, terraform workspace select, aws configure).
+    this.contextEngine.invalidate('command');
     void this.refreshContext(cwd);
     this.render();
     this.advancePresetStartup(exitCode, cwd);
   }
 
 
+  /** Rich Git status is computed only while a visible Git module can show it (field demand for the legacy collector). */
+  private gitStatusDemanded(configuration = this.promptConfiguration): boolean {
+    return configuration.nmsh.gitEnabled && configuration.modules.some(module => (module.id === 'gitStatus' || module.id === 'gitBranch') && routeModule(module) !== 'hidden');
+  }
+
+  private contextScope(cwd: string, root: string | undefined): CapabilityScopeInput {
+    return {cwd, home: homedir(), ...(root ? {root} : {}), session: this.agentScope, env: this.contextEnvironment,
+      live: {jobs: this.shellJobs, startedAt: this.contextStartedAt}};
+  }
+
+  /** The live shell's PATH once it has reported one; NMSh's own launch PATH until then. */
+  private shellPath(): string {
+    return (this.contextEnvironment.source === 'shell' ? this.contextEnvironment.values.PATH : undefined) ?? process.env.PATH ?? '';
+  }
+
+  /** The NMSh session agents running inside this shell report to (NMSH_SESSION_ID in the managed shell). */
+  private get agentScope(): string {
+    return this.sessionId ?? (this.session as {contextId?: string}).contextId ?? 'external';
+  }
+
   private async refreshContext(cwd: string): Promise<void> {
     const generation = ++this.contextGeneration;
     const wantsDiscovery = this.promptConfiguration.modules.some(module => module.id === 'discoveredTools' && routeModule(module) !== 'hidden');
     const [context, pathAbbreviations] = await Promise.all([
-      resolvePromptContext(cwd, undefined, undefined, {status: this.promptConfiguration.nmsh.gitEnabled,
+      resolvePromptContext(cwd, undefined, undefined, {status: this.gitStatusDemanded(),
         ...(wantsDiscovery ? {discovery: await discoverLocalExecutables()} : {})}),
       resolvePathAbbreviations(cwd, homedir()),
     ]);
     if (generation !== this.contextGeneration || this.stopped) return;
+    // Stage the engine for this directory and shell environment; demanded facts resolve (bounded wait)
+    // while the previous ones stay visible, then both change together.
+    const staged = this.contextEngine.stage(this.contextScope(cwd, context.root));
+    this.requestContextDemand(context);
+    await this.contextEngine.settle(CONTEXT_SETTLE_MS);
+    if (generation !== this.contextGeneration || this.stopped) return;
+    this.contextEngine.commit(staged);
     // Semantic Echo when Git conflicts become visible (not on every redraw while they remain).
     if ((context.git?.conflicts ?? 0) > 0 && !(this.context.git?.conflicts ?? 0)) this.transitions.echo('conflict', Date.now());
     this.context = {...context, home: homedir(), pathAbbreviations, exitStatus: this.context.exitStatus ?? 0};
     this.context.facts = promptFacts(this.context, Date.now());
-    this.requestCommandContexts();
+    this.requestContextDemand();
     await this.refreshProviderPrompt();
     this.render();
   }
@@ -3065,27 +3159,51 @@ export class TerminalApp {
     const words = commandWords(command);
     const wanted = (id: CommandContextId) => this.promptConfiguration.modules.some(module => module.id === id && routeModule(module) !== 'hidden'
       && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
-    const kubeContext = wanted('kubeContext') ? this.commandContexts.peek('kubeContext') : undefined;
-    const dockerContext = wanted('dockerContext') ? this.commandContexts.peek('dockerContext') : undefined;
+    // Render-safe reads of resolved engine facts: nothing here asks a capability to run.
+    const engine = this.contextEngine.facts();
+    const kubeFact = wanted('kubeContext') ? engine['infra.kubernetes'] : undefined;
+    const dockerFact = wanted('dockerContext') ? engine['infra.docker'] : undefined;
+    const kube = kubeFact?.value as {context?: string; namespace?: string} | undefined;
+    const docker = dockerFact?.value as {context?: string} | undefined;
     // Read live, so the current-shell module follows /shell and the default-shell setting immediately.
     const shell = {current: this.shellId, differs: this.shellId !== this.promptConfiguration.shellBackend};
-    const live = {...this.context, commandWords: words, shell, ...(kubeContext ? {kubeContext} : {}), ...(dockerContext ? {dockerContext} : {})};
-    // Workspace facts retain collection time; cheap live shell/exit and cache values
-    // are adapted in memory, without asking any reader to run.
+    const live = {...this.context, commandWords: words, shell, now: presentationNow().getTime(),
+      ...(kube?.context ? {kubeContext: kube.context, ...(kube.namespace ? {kubeNamespace: kube.namespace} : {})} : {}),
+      ...(docker?.context ? {dockerContext: docker.context} : {})};
+    // Workspace facts retain collection time; cheap live shell/exit values are adapted in memory.
     const facts = promptFacts({...live, facts: undefined});
-    return {...live, facts: {...this.context.facts, exitStatus: updateFact(facts.exitStatus, this.context.facts?.exitStatus), shell: updateFact(facts.shell, this.context.facts?.shell),
-      kubeContext: updateFact(facts.kubeContext, this.context.facts?.kubeContext), dockerContext: updateFact(facts.dockerContext, this.context.facts?.dockerContext)}};
+    // Engine-backed legacy fields keep the engine's provenance, freshness and policy.
+    const engineBacked = (fact: ContextFact<unknown> | undefined, value: string | undefined) => fact && value ? {...fact, value} as ContextFact<string> : undefined;
+    return {...live, facts: {...this.context.facts, ...engine, exitStatus: updateFact(facts.exitStatus, this.context.facts?.exitStatus),
+      shell: updateFact(facts.shell, this.context.facts?.shell),
+      // A refreshed value never weakens a privacy policy established earlier.
+      kubeContext: updateFact(engineBacked(kubeFact, kube?.context) ?? facts.kubeContext, this.context.facts?.kubeContext),
+      dockerContext: updateFact(engineBacked(dockerFact, docker?.context) ?? facts.dockerContext, this.context.facts?.dockerContext)}};
   }
 
-  private requestCommandContexts(): void {
-    if (this.stopped || this.passthrough || this.externalPassthrough || this.effectivePromptProvider !== 'nmsh') return;
-    const words = commandWords(this.editor.text);
-    for (const id of ['kubeContext', 'dockerContext'] as const) {
-      const wanted = this.promptConfiguration.modules.some(module => module.id === id && routeModule(module) !== 'hidden'
-        && (routeModule(module) !== 'contextRail' || this.promptConfiguration.contextRail.mode !== 'off')
-        && (module.condition !== 'onCommand' || isOnCommandRelevant(id, words)));
-      if (wanted) this.commandContexts.request(id);
-    }
+  /**
+   * Context demand from lifecycle, editor and settings changes, never from
+   * rendering. Passthrough and handoff demand nothing (their screen is not ours).
+   */
+  private requestContextDemand(context: Pick<PromptContext, 'branch'> = this.context): void {
+    if (this.stopped) return;
+    const configuration = this.promptConfiguration;
+    const native = this.effectivePromptProvider === 'nmsh';
+    const suspended = this.passthrough || this.externalPassthrough || this.frontendSuspended;
+    const {columns, rows} = this.dimensions();
+    this.contextEngine.demand(suspended ? new Map() : contextDemand(configuration, {commandWords: commandWords(this.editor.text), nativePrompt: native,
+      railVisible: native && configuration.contextRail.mode !== 'off', statusStripVisible: this.stripActive(columns, rows), inRepository: Boolean(context.branch)}));
+    this.scheduleContextRefresh();
+  }
+
+  /** One timer, only while a visible module shows a time-based fact (clock, memory, battery, agent status). */
+  private scheduleContextRefresh(): void {
+    if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
+    if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) return;
+    const delay = this.contextEngine.refreshDelay();
+    if (delay === undefined) return;
+    this.contextRefreshTimer = setTimeout(() => { this.contextRefreshTimer = undefined; this.requestContextDemand(); }, delay);
+    this.contextRefreshTimer.unref?.();
   }
 
   private renderRail?: {columns: number; prepared: PreparedRail};
@@ -3190,9 +3308,101 @@ export class TerminalApp {
     }
   }
 
+  private modulesListings: PackListing[] = [];
+  private moduleRecommendations: Recommendation[] = [];
+  private claudeBridgeState?: {state: string; detail?: string};
+  private pendingBridgePlan?: {plan: import('../ask/fileEdit.js').FileEditPlan; launcher?: string};
+
+  /** What /prompt's module manager shows beside the draft: live capability status, packs, recommendations, the Claude Code bridge. */
+  private modulesContext(): ModulesContext {
+    return {status: id => this.contextEngine.status(id), packs: this.modulesListings, recommendations: this.moduleRecommendations,
+      ...(this.claudeBridgeState ? {claudeBridge: this.claudeBridgeState} : {}), now: Date.now()};
+  }
+
+  /** Gathered explicitly when the module manager opens: pack states, the bridge state and local evidence for recommendations. */
+  private async refreshModulesContext(): Promise<void> {
+    const statuses = await installedPackStatuses(undefined, this.buildIdentity.version).catch(() => []);
+    const listing = (parsed: ParsedPack, builtIn: boolean, state: string, message?: string): PackListing => ({id: parsed.pack.id, version: parsed.pack.version,
+      name: parsed.pack.name, description: parsed.pack.description, builtIn, state, ...(message ? {message} : {}), license: parsed.pack.license,
+      author: parsed.pack.provenance.author, sha256: parsed.sha256, requires: parsed.pack.requires, modules: parsed.pack.modules.map(module => ({id: module.id, label: module.label}))});
+    this.modulesListings = [...firstPartyPacks().map(parsed => listing(parsed, true, 'bundled')),
+      ...statuses.map(status => status.parsed ? listing(status.parsed, false, status.state, status.message)
+        : {id: status.record.id, version: status.record.version, name: status.record.id, description: 'The installed manifest could not be verified.', builtIn: false,
+          state: status.state, ...(status.message ? {message: status.message} : {}), license: 'unknown', author: 'unknown', sha256: status.record.sha256, requires: [], modules: []})];
+    const bridge = inspectClaudeBridge();
+    this.claudeBridgeState = {state: bridge.state, ...(bridge.state === 'conflict' ? {detail: bridge.command} : bridge.state === 'unreadable' ? {detail: bridge.reason} : {})};
+    // Recommendation evidence: one bounded listing of this directory and the repository root, the shared inventory, resolved facts.
+    const names = new Set([...await listNames(this.shellCwd), ...(this.context.root ? await listNames(this.context.root) : [])]);
+    const inventory = await discoverLocalExecutables().catch(() => undefined);
+    this.moduleRecommendations = recommendModules(this.promptPanelState?.draft ?? this.promptConfiguration, {workspaceNames: names,
+      executables: new Set(inventory?.executables.map(item => item.name) ?? []), facts: this.contextEngine.facts()}, [...firstPartyPacks(), ...installedPacks()]);
+    if (this.promptPanelState) this.promptPanelState.context = this.modulesContext();
+    this.render();
+  }
+
+  /** Side effects the module manager asked for; every settings change is shown first and applied only on Enter. */
+  private async handleModulesRequest(state: PromptPanelState): Promise<void> {
+    const request = state.request;
+    state.request = undefined;
+    if (!request) return;
+    try {
+      if (request.kind === 'claudeBridgeReview' || request.kind === 'claudeBridgeRemoveReview') {
+        const launcher = currentLauncher();
+        const planned = request.kind === 'claudeBridgeRemoveReview' ? planClaudeBridgeRemoval()
+          : launcher ? planClaudeBridge(launcher) : {refuse: 'Start NMSh through the installed `nmsh` command so Claude Code can run its bridge.'};
+        if ('noop' in planned) state.message = planned.noop;
+        else if ('refuse' in planned) state.message = planned.refuse;
+        else {
+          this.pendingBridgePlan = {plan: planned.plan, ...(launcher ? {launcher} : {})};
+          state.confirm = {request: {kind: request.kind === 'claudeBridgeReview' ? 'claudeBridgeApply' : 'claudeBridgeRemove'},
+            title: request.kind === 'claudeBridgeReview' ? 'Let Claude Code report to NMSh?' : 'Stop Claude Code reporting to NMSh?',
+            lines: [`${planned.plan.path} — ${planned.plan.reason}`, ...planned.plan.preview]};
+        }
+      } else if (request.kind === 'claudeBridgeApply' || request.kind === 'claudeBridgeRemove') {
+        const pending = this.pendingBridgePlan;
+        this.pendingBridgePlan = undefined;
+        const result = !pending ? {ok: false as const, reason: 'Review the change again first.'}
+          : request.kind === 'claudeBridgeApply' ? applyClaudeBridge(pending.plan, pending.launcher ?? '') : applyClaudeBridgeRemoval(pending.plan);
+        state.message = result.ok ? (request.kind === 'claudeBridgeApply' ? 'Claude Code reports to NMSh from its next update.' : 'Removed the NMSh status line from Claude Code settings.')
+          : result.reason;
+      } else if (request.kind === 'packEnabled') {
+        const result = await setPackEnabled(request.id, request.enabled);
+        state.message = result.ok ? `${request.id} ${request.enabled ? 'enabled' : 'disabled'}.` : result.reason;
+        await this.loadInstalledPacks();
+      } else if (request.kind === 'packRemove') {
+        const result = await removePack(request.id);
+        if (result.ok) {
+          state.draft.modules = state.draft.modules.filter(module => !module.id.startsWith(`${request.id}:`));
+          state.detail = undefined;
+        }
+        state.message = result.ok ? `Removed ${request.id}. Save to update your prompt settings.` : result.reason;
+        await this.loadInstalledPacks();
+      }
+    } catch (error) {
+      state.message = error instanceof Error ? error.message : String(error);
+    }
+    // Results can quote settings paths and file content: displayed, never trusted as terminal text.
+    if (state.message) state.message = safeContextText(state.message, 400);
+    await this.refreshModulesContext();
+  }
+
+  /** Installed Context Packs (verified, enabled) join the module catalog: read at startup and whenever /prompt opens. */
+  private async loadInstalledPacks(): Promise<void> {
+    let packs: ParsedPack[];
+    try { packs = await activeInstalledPacks(undefined, this.buildIdentity.version); } catch { return; /* bundled modules remain available */ }
+    // Most sessions have no installed packs: nothing changes, so nothing repaints.
+    const key = (list: readonly ParsedPack[]) => list.map(pack => pack.sha256).sort().join(',');
+    if (this.stopped || key(packs) === key(installedPacks())) return;
+    setInstalledPacks(packs);
+    this.requestContextDemand();
+    this.render();
+  }
+
   private async startPromptSettings(onboarding: boolean): Promise<void> {
     this.promptPanelState = {onboarding, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
       draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    // Packs installed since startup join the catalog; the panel opens at once and repaints when they arrive.
+    void this.loadInstalledPacks();
     this.panelExternalPrompt = undefined;
     if (this.promptConfiguration.provider === 'starship') {
       this.starshipStatus = await detectStarship(this.starshipEnvironment(this.promptConfiguration));
@@ -3231,41 +3441,8 @@ export class TerminalApp {
 
   private async runPowerlevel10kWizard(status: Powerlevel10kStatus): Promise<number> {
     if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('The Powerlevel10k wizard requires a real terminal.');
-    if (this.running || this.passthrough || this.externalPassthrough) throw new Error('The terminal is busy.');
-    const ignoreInterrupt = (): void => { /* The foreground wizard handles Ctrl+C. */ };
-    this.cancelPresentation();
-    this.externalPassthrough = true;
-    let inputDetached = false;
-    let rawModeReleased = false;
-    let rendererLeft = false;
-    let interruptAttached = false;
-    try {
-      process.stdin.off('data', this.onInput);
-      process.stdin.pause();
-      inputDetached = true;
-      process.stdin.setRawMode(false);
-      rawModeReleased = true;
-      this.terminalFocus = 'unknown';
-      this.renderer.leave();
-      rendererLeft = true;
-      process.on('SIGINT', ignoreInterrupt);
-      interruptAttached = true;
-      return await launchPowerlevel10kConfigurator(status);
-    } finally {
-      if (interruptAttached) process.off('SIGINT', ignoreInterrupt);
-      if (!this.stopped) {
-        if (rendererLeft) this.renderer.enter();
-        if (rawModeReleased) process.stdin.setRawMode(true);
-        this.keyDecoder.reset();
-        if (inputDetached) {
-          process.stdin.on('data', this.onInput);
-          process.stdin.resume();
-        }
-        this.renderer.invalidate();
-      }
-      this.externalPassthrough = false;
-      this.render();
-    }
+    if (!this.hostTerminalFree()) throw new Error('The terminal is busy.');
+    return this.withHostTerminal(() => launchPowerlevel10kConfigurator(status));
   }
 
   private async advancePromptPanel(): Promise<void> {
@@ -3459,6 +3636,7 @@ export class TerminalApp {
     } else if (onModulesRow(state)) {
       state.step = 'modules';
       state.selectedIndex = 0;
+      void this.refreshModulesContext();
     } else if (onGradientRow(state)) {
       openGradientEditor(state);
     } else if (state.step === 'modules') {
@@ -3488,9 +3666,9 @@ export class TerminalApp {
       if (state.onboarding && !this.promptConfiguration.toolsSetupComplete) this.startTools(true);
       this.panelExternalPrompt = undefined;
       // Turning Rich Git on needs a status probe the last refresh may have skipped.
-      if (state.saved?.nmsh.gitEnabled !== state.draft.nmsh.gitEnabled) void this.refreshContext(this.shellCwd);
+      if (state.saved && this.gitStatusDemanded(state.saved) !== this.gitStatusDemanded(state.draft)) void this.refreshContext(this.shellCwd);
       await this.refreshProviderPrompt();
-      this.requestCommandContexts();
+      this.requestContextDemand();
       // refreshProviderPrompt already fell back to NMSh and saved that truthfully.
       if (this.externalPromptError && state.draft.provider !== 'nmsh') {
         this.output.addHistoryLine(`${ERROR}${providerLabel(state.draft.provider)} prompt failed; NMSh is active. ${this.externalPromptError}${RESET}`);
@@ -4182,7 +4360,28 @@ export class TerminalApp {
 
   /** OSC 7 / OSC 133 for capable hosts, held while a fullscreen program owns the terminal. */
   private readonly hostSemantics = new HostSemantics(semanticSupport(), data => { process.stdout.write(data); },
-    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended);
+    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended, undefined,
+    {attached: () => this.presentationStarted && !this.stopped && !this.frontendSuspended, replaying: () => this.replaying});
+  /** Opt-in OSC 2 title: written only while NMSh owns the screen, re-asserted after programs that set their own. */
+  private readonly hostTitle = new HostTitle(titleSupport(), data => { process.stdout.write(data); },
+    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended && !this.replaying);
+
+  /** A program, a nested shell or another frontend owned the terminal: cwd and title are re-asserted when NMSh has it back. */
+  private noteForeignScreen(): void {
+    this.hostSemantics.foreignScreen();
+    this.hostTitle.foreign();
+  }
+
+  /** NMSh's title for this moment: Off returns undefined (the terminal keeps its own). Names are hostile data; HostTitle sanitizes. */
+  private desiredTitle(): string | undefined {
+    const mode = this.promptConfiguration.terminalTitle;
+    if (mode === 'off') return undefined;
+    const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
+    const session = mode === 'session' && this.sessionId ? this.noticeLabels.get(this.sessionId) : undefined;
+    const identity = session ? `${project} — ${session}` : project;
+    const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
+    return running ? `${running} · ${identity}` : identity;
+  }
   private themeBridgePanel?: ThemeBridgePanelState;
   private bridgeReports: TargetReport[] = [];
   /** A plan shown for confirmation, kept with what it came from; confirming applies exactly this plan. */
@@ -4528,8 +4727,19 @@ export class TerminalApp {
   /** fzf `--color` for an NMSh-owned launch; empty unless fzf is the picker and its bridge mode is active. */
   private async fzfThemeArgs(): Promise<string[]> {
     const config = this.promptConfiguration;
-    if (config.picker !== 'fzf' || config.themeBridge.targets.fzf.mode === 'independent') return [];
+    // The effective mode: Apply themes (Follow NMSh / Choose theme) decides over fzf's own Manual setting.
+    if (config.picker !== 'fzf' || bridgeMode(config.themeBridge, 'fzf') === 'independent') return [];
     return fzfBridgeArgs(await this.themeBridgeContext());
+  }
+
+  /** less/man colors for a pager NMSh launches: the values NMSh shells get, only while that target is active. */
+  private themeBridgePagerEnvironment(): Record<string, string> {
+    const config = this.promptConfiguration;
+    if (bridgeMode(config.themeBridge, 'pager') === 'independent') return {};
+    const palette = targetPalette(config.themeBridge, 'pager', config).palette;
+    if (!palette) return {};
+    return Object.fromEntries(Object.entries(bridgePagerColors(palette, bridgeColorLevel(colorLevel(), process.env)))
+      .filter((entry): entry is [string, string] => typeof entry[1] === 'string'));
   }
 
   // ---- Idle visuals ---------------------------------------------------------------
@@ -5709,6 +5919,7 @@ export class TerminalApp {
 
   private renderPromptPanelRows(state: PromptPanelState, columns: number): string[] {
     const now = Date.now();
+    if (state.step === 'modules') state.context = this.modulesContext();
     const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
     const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
     const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
@@ -6235,8 +6446,10 @@ export class TerminalApp {
     // Active Keep Awake is always part of an enabled strip (no per-item switch); the strip itself is never forced on.
     const record = this.awakeRecord;
     const display = this.promptConfiguration.keepAwake.display;
+    // Modules routed to the strip are resolved facts like every other surface; the strip never collects anything itself.
+    const modules = statusStripModules(this.promptContext(), this.promptConfiguration).map(module => ({text: module.text, failure: module.role === 'failure', priority: module.priority}));
     return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns, undefined,
-      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined);
+      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined, modules);
   }
 
   /** One timer while the strip is on and NMSh owns the screen; none otherwise. */
@@ -7771,6 +7984,7 @@ export class TerminalApp {
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
+    this.hostTitle.set(this.desiredTitle());
     if (this.idle) { this.paintIdle(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
@@ -8349,7 +8563,10 @@ export class TerminalApp {
 
   private stop(exitCode: number): void {
     if (this.stopped) return;
+    this.hostTitle.end();
     this.stopped = true;
+    this.contextEngine.dispose();
+    if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
     setCursorHostProvider(undefined);
     this.setupCursorClock?.(); this.setupCursorClock = undefined;
@@ -8396,7 +8613,7 @@ export class TerminalApp {
     this.historyQueryAbort?.abort();
     this.clearCorrection();
     this.directoryQueryAbort?.abort();
-    this.pickerAbort?.abort();
+    this.hostProgramAbort?.abort();
     this.historyService.dispose();
     this.semanticService.kill();
     this.finish(exitCode);

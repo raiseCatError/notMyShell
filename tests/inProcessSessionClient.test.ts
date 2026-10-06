@@ -24,7 +24,8 @@ test('InProcessSessionClient forwards operations and events', () => {
   const fake = new FakeShell();
   let seen;
   const client = new InProcessSessionClient({cwd: '/w', columns: 10, rows: 5}, options => { seen = options; return fake as never; });
-  assert.deepEqual(seen, {cwd: '/w', columns: 10, rows: 5});
+  assert.deepEqual(seen, {cwd: '/w', columns: 10, rows: 5, contextId: client.contextId});
+  assert.match(client.contextId, /^local-[0-9a-f-]{36}$/u, 'the in-process shell gets its own NMSH_SESSION_ID');
   const events: unknown[] = [];
   client.on('data', d => events.push(['data', d]));
   client.on('prompt', m => events.push(['prompt', m]));

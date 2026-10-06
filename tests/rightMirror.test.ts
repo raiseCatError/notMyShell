@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {catalogEntries} from '../src/prompt/ModulesPanel.js';
 import assert from 'node:assert/strict';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {homedir, tmpdir} from 'node:os';
@@ -68,10 +69,20 @@ test('P moves every module, including Project, Path and Git branch, right and ba
   const saved = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
   const state = {onboarding: false, step: 'modules' as const, selectedIndex: 0, draft: structuredClone(saved), saved};
   state.draft.modules.forEach((module, index) => {
+    if (module.surface === 'auto') return;
     state.selectedIndex = index;
     handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
     assert.equal(state.draft.modules[index]!.placement, 'right', module.id);
   });
+  // A hidden pack module lives in Catalog; P there toggles it away from the side its definition prefers, as an explicit placement.
+  (state as {modulesTab?: string}).modulesTab = 'catalog';
+  const catalog = catalogEntries(state).filter(entry => entry.kind === 'module');
+  state.selectedIndex = catalog.findIndex(entry => entry.kind === 'module' && entry.module.id === 'nmsh.project:package');
+  handlePromptPanelKey({kind: 'text', value: 'p'} as Key, state);
+  const auto = state.draft.modules.find(module => module.id === 'nmsh.project:package')!;
+  assert.equal(auto.surface, undefined);
+  assert.equal(auto.placement, undefined, 'preferred Right Context → explicit left');
+  (state as {modulesTab?: string}).modulesTab = 'modules';
   const rows = stripAnsi(renderPromptPanel(state, 140, []).join('\n'));
   for (const label of ['Project', 'Path', 'Git branch', 'Git status', 'Toolchains', 'Exit status', 'Kubernetes', 'Docker context']) {
     assert.match(rows, new RegExp(`${label} +right`, 'u'), label);

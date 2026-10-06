@@ -13,13 +13,13 @@ import {
   BRIDGE_ENV_VARIABLES, bridgeBootstrap, bridgeEnvPath, fishLiteral, posixAnsiQuote, renderEnvironmentFile, validateEnvironmentFile, writeEnvironmentFiles,
 } from '../src/themeBridge/environment.js';
 import {
-  fzfColorArgs, lsColorsFallback, neovimColorscheme, pagerEnvironment, tmuxFragment, validateNeovimColorscheme, validateTmuxFragment,
+  fzfColorArgs, lsColorsFallback, neovimColorscheme, pagerEnvironment, tmuxFragment, validateNeovimColorscheme, validateTmuxFragment, validLsColors,
   validateVimColorscheme, vimColorscheme, withFzfTheme, TMUX_STYLE_OPTIONS,
 } from '../src/themeBridge/targets.js';
 import {
-  applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, writeArtifact,
+  applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, saveLedger, writeArtifact,
 } from '../src/themeBridge/artifacts.js';
-import {applyThemeBridge, bridgeColorLevel, bridgeEnvironment, fzfBridgeArgs, reloadTmux, reportTargets, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
+import {applyThemeBridge, bridgeColorLevel, bridgeEnvironment, deltaSyntaxTheme, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
 import {themeBridgeKey} from '../src/themeBridge/runtime.js';
 import {writeTmuxManaged} from '../src/tools/config/tmuxManaged.js';
 import {DEFAULT_TMUX_MODEL} from '../src/tools/config/tmux.js';
@@ -327,6 +327,15 @@ test('Neovim and Vim colorschemes: broad native coverage, separate dialects, rea
   assert.doesNotMatch(vim, /@|nvim_|Diagnostic|NormalFloat|WinSeparator/u, 'no Neovim-only groups or APIs in the Vim file');
   assert.match(vim, /^hi Comment guifg=#[0-9a-f]{6} guibg=NONE ctermfg=\d{1,3} ctermbg=NONE/mu, 'truecolor plus a 256-color fallback');
   assert.equal(validateVimColorscheme(`${vim}!rm -rf ~\n`), false);
+  // 8- and 16-color terminals: Vim would turn 256-color numbers into invalid SGR, so each depth has its own branch of ANSI slots.
+  const branch = (from: string, to: string) => vim.slice(vim.indexOf(from), vim.indexOf(to, vim.indexOf(from)));
+  const sixteen = branch('elseif &t_Co >= 16', '\nelse\n'), eight = branch('\nelse\n', '\nendif');
+  assert.ok(sixteen && eight);
+  for (const [text, limit] of [[sixteen, 15], [eight, 7]] as const) {
+    for (const value of text.match(/cterm(?:fg|bg)=(\d+)/gu) ?? []) assert.ok(Number(value.split('=')[1]) <= limit, `${value} within ${limit + 1} colors`);
+    assert.match(text, /^hi Normal guifg=#[0-9a-f]{6} guibg=(?:#[0-9a-f]{6}|NONE) ctermfg=NONE ctermbg=NONE/mu, 'Normal keeps the terminal\'s own text and background');
+    assert.doesNotMatch(text, /ctermfg=0 /u, 'text never uses slot 0, the terminal\'s black');
+  }
   const vimBinary = ['/usr/bin/vim', '/opt/homebrew/bin/vim', '/usr/local/bin/vim'].find(existsSync);
   if (!vimBinary) return;
   const box = sandbox();
@@ -360,6 +369,81 @@ test('applyThemeBridge: isolated per target; independent targets get nothing; fa
     assert.equal(existsSync(artifactPath('vim', box.env)), false);
     assert.doesNotMatch(readFileSync(bridgeEnvPath('bash', box.env), 'utf8'), /nmsh_bridge_apply/u);
     assert.equal((await reloadTmux(box.env)).ok, false, 'no reload without an owned fragment (and no tmux on this PATH)');
+  } finally { box.done(); }
+});
+
+test('16-color hosts: pager and listing colors name the theme\'s own ANSI slots, never 256-color or RGB sequences', () => {
+  for (const theme of [builtinTheme('nord'), builtinTheme('solarizedLight'), builtinTheme('dracula')]) {
+    const palette = paletteFromTheme(theme, 'x');
+    const pager = pagerEnvironment(palette, 'ansi16');
+    for (const [name, value] of Object.entries(pager)) {
+      if (typeof value !== 'string' || name === 'GROFF_NO_SGR') continue;
+      assert.match(value, /^\u001b\[[0-9;]*m$/u, name);
+      assert.doesNotMatch(value, /[34]8;[25];/u, `${name}: only 16-color parameters`);
+    }
+    assert.match(pager.LESS_TERMCAP_md!, /^\u001b\[1;(?:3[1-7]|9[0-7])m$/u, 'text never uses slot 0, the terminal\'s black');
+    assert.match(pager.LESS_TERMCAP_so!, /^\u001b\[(?:7|(?:3[0-7]|9[0-7]);(?:4[0-7]|10[0-7]))m$/u);
+    const ls = lsColorsFallback(palette, 'ansi16')!;
+    assert.ok(validLsColors(ls));
+    for (const entry of ls.split(':')) assert.match(entry.split('=')[1]!, /^(?:[0-9];)?(?:3[1-7]|9[0-7])$/u, entry);
+    assert.match(pagerEnvironment(palette, 'ansi256').LESS_TERMCAP_md!, /38;5;/u, '256-color hosts keep the nearest 256 entry');
+    assert.match(pagerEnvironment(palette, 'truecolor').LESS_TERMCAP_md!, /38;2;/u);
+  }
+});
+
+test('delta: never managed; its status says whether git config pins the syntax theme or it follows bat in NMSh shells', () => {
+  const box = sandbox();
+  try {
+    const delta = (config: PromptConfiguration, env = box.env) => reportTargets(context(config, env, installed('bat', 'delta'))).find(report => report.target === 'delta')!;
+    const follow = configWith({bat: {mode: 'follow'}});
+    let report = delta(follow);
+    assert.equal(report.status, 'Not managed');
+    assert.equal(report.readiness, undefined);
+    assert.match(report.notes[0]!, /set bat to Follow NMSh[\s\S]*git config, which NMSh never changes/u, 'bat not set up yet: how delta could follow');
+    const written = writeArtifact('bat', '<plist/>', () => true, {mode: 'follow', themeRef: 'builtin:lavender', format: 'bat-tmtheme', formatVersion: 1}, box.env);
+    assert.ok(written.ok);
+    const ledger = loadLedger(box.env);
+    ledger.entries.bat = {...ledger.entries.bat!, cacheBuiltFor: ledger.entries.bat!.sha256};
+    saveLedger(ledger, box.env);
+    report = delta(follow);
+    assert.equal(report.readiness, 'Syntax via bat', 'BAT_THEME=nmsh-bridge reaches NMSh shells, and delta reads it');
+    assert.match(report.notes.join(' '), /BAT_THEME[\s\S]*bat's theme cache[\s\S]*different bat version/u);
+    assert.equal(integrationHealth(context(follow, box.env, installed('bat', 'delta'))).find(item => item.target === 'delta')!.detail, 'Not managed · Syntax via bat');
+    assert.equal(delta(follow, {...box.env, NO_COLOR: '1'}).readiness, undefined, 'nothing is injected without color, so nothing follows');
+    assert.equal(delta(configWith({})).readiness, undefined, 'bat Independent: delta keeps its own default');
+    writeFileSync(join(box.home, '.gitconfig'), '[core]\n\tpager = delta\n[delta]\n\tsyntax-theme = "Monokai Extended" # mine\n');
+    report = delta(follow);
+    assert.equal(report.readiness, 'Own syntax theme');
+    assert.match(report.notes[0]!, /selects delta's syntax theme \(Monokai Extended\); NMSh leaves it/u);
+    assert.equal(report.mode, 'independent');
+    assert.deepEqual(readdirSync(box.home), ['.gitconfig'], 'git config is only read');
+  } finally { box.done(); }
+});
+
+test('delta syntax theme: global git config read as data; features, pager flags, no includes, no other files', () => {
+  const box = sandbox();
+  try {
+    const config = join(box.home, '.gitconfig');
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: false});
+    writeFileSync(config, '[include]\n\tpath = other\n[delta]\n\tfeatures = calm\n[delta "calm"]\n\tsyntax-theme = Nord\n[delta "loud"]\n\tsyntax-theme = Dracula\n');
+    writeFileSync(join(box.home, 'other'), '[delta]\n\tsyntax-theme = Included\n');
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: true, theme: 'Nord'}, 'only enabled features count; includes are never followed');
+    writeFileSync(config, "[pager]\n\tdiff = /opt/homebrew/bin/delta --syntax-theme 'GitHub'\n[delta]\n\tsyntax-theme = Nord\n");
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: true}, 'pins disagree: the status names none rather than guess precedence');
+    writeFileSync(config, '[core]\n\tpager = less -R\n; [delta]\n# syntax-theme = Nord\n');
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: false}, 'comments and other pagers are not pins');
+    writeFileSync(config, '[DELTA]\n\tSyntax-Theme = evil\u001b]0;pwned\u0007‮' + 'x'.repeat(80) + '\n');
+    const hostile = deltaSyntaxTheme(box.env, box.home);
+    assert.equal(hostile.pinned, true, 'section and key names are case-insensitive');
+    assert.ok(hostile.theme && !/[\u0000-\u001f\u007f-\u009f‪-‮]/u.test(hostile.theme) && hostile.theme.length <= 41, 'displayed names are inert and bounded');
+    mkdirSync(join(box.env.XDG_CONFIG_HOME!, 'git'), {recursive: true});
+    writeFileSync(join(box.env.XDG_CONFIG_HOME!, 'git', 'config'), '[delta]\n\tsyntax-theme = Xdg\n');
+    rmSync(config);
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: true, theme: 'Xdg'});
+    assert.deepEqual(deltaSyntaxTheme({...box.env, GIT_CONFIG_GLOBAL: 'relative'}, box.home), {pinned: false}, 'GIT_CONFIG_GLOBAL replaces the defaults; a relative one is not resolved against anything');
+    writeFileSync(join(box.root, 'global'), '[delta]\n\tsyntax-theme = Global\n');
+    assert.deepEqual(deltaSyntaxTheme({...box.env, GIT_CONFIG_GLOBAL: join(box.root, 'global')}, box.home), {pinned: true, theme: 'Global'});
+    assert.deepEqual(deltaSyntaxTheme({...box.env, GIT_CONFIG_GLOBAL: '/dev/zero'}, box.home), {pinned: false}, 'devices and FIFOs are never read');
   } finally { box.done(); }
 });
 

@@ -4,7 +4,7 @@ Security is critical for NMSh, as it executes and presents shell commands and ha
 
 ## Supported Versions
 
-Security fixes target the latest stable release (currently v0.16.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
+Security fixes target the latest stable release (currently v0.17.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
 
 ## Scope
 
@@ -29,6 +29,9 @@ Reports that break any of these are in scope:
 - **Ownership.** Generated files are tracked in an ownership ledger and replaced or removed only while their content still matches; Keep Awake signals only a process whose token and exact command line match its record.
 - **Installers.** Tool installs are typed package-manager argv shown before confirmation; nothing elevates silently. Special installers (Oh My Zsh) are never run by NMSh.
 - **External prompt providers** (Starship, Oh My Posh, Powerlevel10k) run as bounded, non-interactive helpers with argv only; their output is treated as untrusted display text.
+- **Context discovery is not execution.** Entering a directory never runs repository-controlled code, sources `.envrc`, runs kubeconfig `exec` plugins, calls the network or reads credential values. Versions come from install layouts and metadata; executables on PATH are never run for context, and one inside the current workspace is not even inspected.
+- **Context Packs are data.** A pack names capabilities NMSh core implements and describes presentation; it cannot contain commands, code, paths, templates, includes or hooks, gains no authority by being installed, and is never installed or enabled because a repository was opened.
+- **Terminal text is hostile.** Directory names, Git metadata, pack metadata and agent reports pass one display boundary before reaching the screen or a terminal title: no control characters, escape sequences or bidi formatting.
 
 ## Reporting a Vulnerability
 

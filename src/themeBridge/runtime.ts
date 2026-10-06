@@ -1,10 +1,11 @@
 import {existsSync, readFileSync, statSync} from 'node:fs';
 import {homedir} from 'node:os';
-import {join} from 'node:path';
+import {isAbsolute, join} from 'node:path';
 import {XMLValidator} from 'fast-xml-parser';
 import {resolveCommand, runExternal} from '../providers/providers.js';
 import {parse as parseToml} from 'smol-toml';
 import type {ColorLevel} from '../presentation/capabilities.js';
+import {safeContextText} from '../context/facts.js';
 import {resolveSemanticPalette, type SemanticPalette} from '../appearance/semanticPalette.js';
 import {activeThemeRef, themeRefLabel, type ThemeSource} from '../appearance/themeRefs.js';
 import {
@@ -71,7 +72,6 @@ export interface TargetReport {
 const BINARIES: Record<BridgeTargetId, string> = {fzf: 'fzf', pager: 'less', lsColors: 'ls', bat: 'bat', delta: 'delta', tmux: 'tmux', neovim: 'nvim', vim: 'vim', helix: 'hx'};
 const VERSION_ARGS: Partial<Record<BridgeTargetId, string[]>> = {fzf: ['--version'], tmux: ['-V']};
 
-const DELTA_NOTE = 'delta is shown for status only: its syntax themes come from bat\'s cache and its diff styles from git config, which NMSh does not manage.';
 
 export function supportedModes(target: BridgeTargetId): readonly BridgeMode[] {
   return BRIDGE_CAPABILITY[target] === 'detected' ? ['independent'] : ['independent', 'follow', 'choose'];
@@ -110,7 +110,9 @@ export function resetDetectionCache(): void { factsCache = undefined; }
 /** Bounded read of a user config for conflict facts; never parsed beyond simple line matching, never executed. */
 function readSmall(path: string): string | undefined {
   try {
-    if (statSync(path).size > 256 * 1024) return undefined;
+    // Regular files only: a FIFO or device named by a config path would block or never end.
+    const stat = statSync(path);
+    if (!stat.isFile() || stat.size > 256 * 1024) return undefined;
     return readFileSync(path, 'utf8');
   } catch { return undefined; }
 }
@@ -149,6 +151,81 @@ export function targetConflicts(target: BridgeTargetId, env: NodeJS.ProcessEnv =
   if (target === 'lsColors' && (env.LS_COLORS || env.LSCOLORS)) return ['Listing colors are already set; NMSh replaces them in NMSh shells while active and restores them when Independent.'];
   if (target === 'fzf' && /--color/u.test(env.FZF_DEFAULT_OPTS ?? '')) return ['FZF_DEFAULT_OPTS sets colors; NMSh-owned fzf launches never read FZF_DEFAULT_OPTS, your own fzf use keeps it.'];
   return [];
+}
+
+/** One git config value: inline comments dropped, quotes and escapes resolved (data only). */
+function gitConfigValue(raw: string): string {
+  let out = '';
+  let quoted = false;
+  for (let index = 0; index < raw.length; index++) {
+    const char = raw[index]!;
+    if (char === '\\' && index + 1 < raw.length) { const next = raw[++index]!; out += next === 'n' ? ' ' : next === 't' ? ' ' : next; continue; }
+    if (char === '"') { quoted = !quoted; continue; }
+    if (!quoted && (char === '#' || char === ';')) break;
+    out += char;
+  }
+  return out.trim();
+}
+
+/**
+ * Where delta's syntax theme is pinned in the global git config. Read as data
+ * only: GIT_CONFIG_GLOBAL, else $XDG_CONFIG_HOME/git/config and ~/.gitconfig,
+ * bounded, includes not followed, git never run. A repository's own config is
+ * not consulted (the bridge is not per-directory). `theme` is named only when
+ * every pin agrees, so the status never names the wrong one.
+ */
+export function deltaSyntaxTheme(env: NodeJS.ProcessEnv = process.env, home = env.HOME || homedir()): {pinned: boolean; theme?: string} {
+  const xdg = env.XDG_CONFIG_HOME && env.XDG_CONFIG_HOME.startsWith('/') ? env.XDG_CONFIG_HOME : join(home, '.config');
+  const global = env.GIT_CONFIG_GLOBAL;
+  const paths = global !== undefined ? (isAbsolute(global) ? [global] : []) : [join(xdg, 'git', 'config'), join(home, '.gitconfig')];
+  let main: string | undefined;
+  let features: string[] = [];
+  const byFeature = new Map<string, string>();
+  const flags: string[] = [];
+  for (const path of paths) {
+    const text = readSmall(path);
+    if (text === undefined) continue;
+    let section = '';
+    let subsection: string | undefined;
+    for (const raw of text.split('\n')) {
+      let line = raw.trim();
+      const header = /^\[\s*([A-Za-z0-9.-]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*\](.*)$/u.exec(line);
+      if (header) { section = header[1]!.toLowerCase(); subsection = header[2]; line = header[3]!.trim(); }
+      const pair = /^([A-Za-z][A-Za-z0-9-]*)\s*=\s*(.*)$/u.exec(line);
+      if (!pair) continue;
+      const key = pair[1]!.toLowerCase();
+      const value = gitConfigValue(pair[2]!);
+      if (section === 'delta' && key === 'syntax-theme') {
+        if (subsection === undefined) main = value; else byFeature.set(subsection, value);
+      } else if (section === 'delta' && subsection === undefined && key === 'features') features = value.split(/\s+/u).filter(Boolean);
+      else if ((section === 'core' && key === 'pager') || (section === 'pager' && subsection === undefined) || (section === 'interactive' && key === 'difffilter')) {
+        const flag = /(?:^|[\s/])delta\b.*--syntax-theme(?:=|\s+)(?:'([^']*)'|"([^"]*)"|(\S+))/u.exec(value);
+        if (flag) flags.push(flag[1] ?? flag[2] ?? flag[3]!);
+      }
+    }
+  }
+  const pins = [...flags, ...(main !== undefined ? [main] : []), ...features.flatMap(feature => byFeature.has(feature) ? [byFeature.get(feature)!] : [])].filter(Boolean);
+  if (!pins.length) return {pinned: false};
+  const unique = [...new Set(pins)];
+  return {pinned: true, ...(unique.length === 1 ? {theme: safeContextText(unique[0]!, 40)} : {})};
+}
+
+/**
+ * delta is never managed: NMSh does not change git config. Its syntax
+ * highlighting follows BAT_THEME and bat's theme cache when git config pins no
+ * syntax theme, so the status says exactly which of those holds. Diff colors
+ * come only from git config, which stays the user's.
+ */
+function deltaStatus(source: BridgeContext['source'], facts: Record<BridgeTargetId, TargetFacts>, level: ColorLevel, env: NodeJS.ProcessEnv, home: string): {readiness?: string; notes: string[]} {
+  const diff = 'Diff colors come from your git config, which NMSh never changes.';
+  const pin = deltaSyntaxTheme(env, home);
+  if (pin.pinned) return {readiness: 'Own syntax theme', notes: [`Your git config selects delta's syntax theme${pin.theme ? ` (${pin.theme})` : ''}; NMSh leaves it. ${diff}`]};
+  const batThemed = Boolean(facts.bat?.installed && targetPalette(source.themeBridge, 'bat', source).palette && batReady(env) && bridgeColorLevel(level, env) !== 'none');
+  if (batThemed) {
+    return {readiness: 'Syntax via bat', notes: [`In NMSh shells delta highlights syntax with ${BAT_THEME_NAME}: it reads BAT_THEME and bat's theme cache. ${diff}`,
+      'A delta built with a different bat version may not read that cache; it then uses its own default theme.']};
+  }
+  return {notes: [`delta takes its syntax theme from BAT_THEME and bat's theme cache: set bat to Follow NMSh (with its reviewed cache build) and delta follows in NMSh shells. ${diff}`]};
 }
 
 /** The theme a target uses right now, or why it has none. Never another theme. */
@@ -219,7 +296,12 @@ export function reportTargets({source, facts, level, env = process.env}: BridgeC
     let status: BridgeStatus;
     let readiness: string | undefined;
     if (!facts[target]?.installed) status = 'Not installed';
-    else if (capability === 'detected') { status = 'Not managed'; notes.push(DELTA_NOTE); }
+    else if (capability === 'detected') {
+      status = 'Not managed';
+      const delta = deltaStatus(source, facts, level, env, home);
+      readiness = delta.readiness;
+      notes.push(...delta.notes);
+    }
     else if (setting.mode === 'independent') status = 'Detected';
     else if (missing) status = 'Missing theme';
     else status = setting.mode === 'follow' ? 'Following NMSh' : 'Pinned theme';
@@ -286,7 +368,8 @@ const vividCache = new Map<string, string>();
 /** vivid output for the listing palette when vivid is installed; undefined falls back to the small built-in mapping. */
 async function vividColors(palette: SemanticPalette, level: ColorLevel, env: NodeJS.ProcessEnv, mode: BridgeMode, ref: string): Promise<string | undefined> {
   const binary = resolveCommand('vivid', env.PATH ?? '');
-  if (!binary || level === 'none') return undefined;
+  // vivid writes 8-bit or 24-bit colors only; 16-color hosts get the small slot mapping instead.
+  if (!binary || level === 'none' || level === 'ansi16') return undefined;
   const theme = vividTheme(palette);
   const key = `${sha256(theme)}:${level}`;
   if (vividCache.has(key)) return vividCache.get(key);
@@ -453,7 +536,10 @@ export function integrationHealth(context: BridgeContext): HealthItem[] {
     const label = BRIDGE_TARGET_LABELS[target];
     const item = (state: HealthState, action?: HealthItem['action'], detail = HEALTH_LABELS[state]): HealthItem => ({target, label, state, detail, ...(action ? {action} : {})});
     if (!context.facts[target]?.installed) return item('not-installed');
-    if (BRIDGE_CAPABILITY[target] === 'detected') return item('not-managed');
+    if (BRIDGE_CAPABILITY[target] === 'detected') {
+      const readiness = deltaStatus(context.source, context.facts, context.level, env, home).readiness;
+      return item('not-managed', undefined, readiness ? `Not managed · ${readiness}` : HEALTH_LABELS['not-managed']);
+    }
     // tmux settings from /tmux need the same one include even while Theme Bridge leaves tmux Independent.
     const tmuxConfigured = target === 'tmux' && !modelIsEmpty(loadTmuxModel(env));
     if (effectiveSetting(context.source.themeBridge, target).mode === 'independent' && !tmuxConfigured) return item('independent');

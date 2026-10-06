@@ -6,7 +6,7 @@
 |---|---|
 | **Current release** | [v0.17.0 — Context Engine, Themes & Discovery](https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0) — released |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
-| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305); foundation and Context Rail implemented on `master` in the v0.17.0 release |
+| **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305) and [#304 — Theme Bridge / semantic terminal](https://github.com/raiseCatError/notMyShell/issues/304); foundation released in v0.17.0, the module platform and remaining Theme Bridge work on the development line (unreleased) |
 | **Included in v0.17.0** | Theme Studio, Theme Bridge, tool configuration, shell frameworks, Keep Awake and Context Engine foundation; merged through [PR #322](https://github.com/raiseCatError/notMyShell/pull/322), see CHANGELOG → 0.17.0 |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
@@ -16,16 +16,16 @@ GitHub issues define actionable remaining work. Closed issues represent complete
 
 ## Current engineering focus — native modules and Context Engine
 
-The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model. The foundation is in the v0.17.0 release on `master`; the broader module ecosystem remains ongoing.
+The primary current direction is [#305](https://github.com/raiseCatError/notMyShell/issues/305): a native module ecosystem built around **Capability → Fact → Module → Surface Router → presentation surfaces**. The [Context Modules guide](docs/architecture/context-modules.md) explains the public model and the [Context Engine design](docs/design/context-engine.md) its architecture. The foundation is in the v0.17.0 release; the module platform below is implemented on the development line and not yet released.
 
 | State | Scope |
 |---|---|
 | Implemented in the v0.17.0 release | Typed fact metadata and privacy filtering; trusted bounded metadata/Git collection; the first-party module registry; Main Prompt / Right Context / Context Rail routing; Rail geometry, priority fitting and shared previews |
 | Preserved | Existing Native module order, visibility and left/right placement; real zsh/Bash/Fish sessions; prompt snapshots and fullscreen passthrough |
-| Upcoming | General capability scheduling and fuller fact migration; a bounded expansion of useful first-party modules; installable declarative Context Packs with validation and policy |
-| Deferred | Status Strip module routing and any executable extension tier; no finalized public pack API |
+| Implemented, unreleased | Demand-driven capability scheduling (concurrency caps, timeouts and backoff, cancellation, staged scopes, stale-while-revalidate); shell-reported allowlisted environment; the first-party catalog (project, runtimes, environment managers, infrastructure, cloud, system, Git extras) as bundled declarative packs; `nmsh.context-pack/v1` with `nmsh packs` install/remove/enable/disable, integrity and recommendations; Claude Code agent context through its status line; Status Strip routing; `/prompt` Catalog, Packs and module details; hostile-workspace coverage and Context Engine budgets |
+| Deferred | Remote pack registry, download and signature trust; any executable extension tier (it would need a real sandbox); agents without a stable structured interface |
 
-Repository entry must never grant authority to execute arbitrary repository-controlled code. Discovery remains parser-only or uses curated core probes with explicit bounds and policy.
+Repository entry must never grant authority to execute arbitrary repository-controlled code. Discovery is parser-only; executables found on PATH are never run for context, and only fixed system tools and trusted Git are spawned.
 
 ## Released — v0.2.0 Structured Execution
 
@@ -160,8 +160,8 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 
 | Release | Theme | Tracker |
 |---|---|---|
-| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), core Theme Bridge and host semantics are included in the v0.17.0 release; remaining refinements follow in focused slices. Still deferred: terminal title ownership (OSC 0/2), delta custom styles, terminal emulator and editor base-theme takeover. |
-| v0.19.0 | NMSh Native module ecosystem: capability scheduling beyond the v0.17.0 Context Engine foundation and Rail, a bounded first-party module expansion and declarative packs | [#305](https://github.com/raiseCatError/notMyShell/issues/305) |
+| v0.18.0 | Theme Bridge and semantic terminal integration | [#304](https://github.com/raiseCatError/notMyShell/issues/304), core Theme Bridge and host semantics are included in the v0.17.0 release. Implemented on the development line: terminal title ownership (OSC 0/2), host-marker lifecycle refinements, Open in pager, truthful delta status, 16/8-color correctness, Bash/Fish typo correction. Still deferred: delta diff styles (git config), terminal emulator and editor base-theme takeover; physical host QA. |
+| v0.19.0 | NMSh Native module ecosystem: capability scheduling, the first-party catalog, declarative Context Packs and agent context (implemented on the development line, unreleased) | [#305](https://github.com/raiseCatError/notMyShell/issues/305), [#316](https://github.com/raiseCatError/notMyShell/issues/316)–[#321](https://github.com/raiseCatError/notMyShell/issues/321) |
 
 ## Backlog — future, unscheduled
 

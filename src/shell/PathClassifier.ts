@@ -1,6 +1,7 @@
 import {accessSync, constants, statSync} from 'node:fs';
 import {delimiter, isAbsolute, join} from 'node:path';
 import {parseShellKnowledge} from './ShellKnowledge.js';
+import {parseShellEnvironment} from '../context/shellEnvironment.js';
 import type {CommandSource, CommandType, CompletionFacts} from './SemanticService.js';
 import type {ShellAdapter} from './adapters/ShellAdapter.js';
 
@@ -17,17 +18,22 @@ export interface CommandClassifier {
 /**
  * Classification for backends without an isolated introspection helper
  * (Fish, Bash): the live session's own name snapshot (functions, aliases,
- * abbreviations, builtins), the adapter's builtin list, then PATH. No shell is
- * spawned and nothing is evaluated; unknown stays unknown.
+ * abbreviations, builtins), the adapter's builtin list, then PATH — the PATH
+ * the live shell reports once it has, since rc files often extend it beyond
+ * NMSh's own launch environment. No shell is spawned and nothing is
+ * evaluated; unknown stays unknown.
  */
 export class PathClassifier implements CommandClassifier {
   cache = new Map<string, CommandType>();
   private names = new Map<string, CommandType>();
+  private shellPath?: string;
 
   constructor(private readonly adapter: ShellAdapter, private readonly env: NodeJS.ProcessEnv = process.env) {}
 
   applyShellKnowledge(text: string): void {
     this.names = parseShellKnowledge(text);
+    const reported = parseShellEnvironment(text);
+    if (reported?.source === 'shell') this.shellPath = reported.values.PATH;
     this.cache.clear();
     for (const [name, type] of this.names) this.cache.set(name, type);
   }
@@ -37,7 +43,7 @@ export class PathClassifier implements CommandClassifier {
       try { if (statSync(word).isFile()) { accessSync(word, constants.X_OK); return word; } } catch { /* not runnable */ }
       return undefined;
     }
-    for (const directory of (this.env.PATH ?? '').split(delimiter)) {
+    for (const directory of (this.shellPath ?? this.env.PATH ?? '').split(delimiter)) {
       if (!isAbsolute(directory)) continue;
       const candidate = join(directory, word);
       try { if (statSync(candidate).isFile()) { accessSync(candidate, constants.X_OK); return candidate; } } catch { /* next */ }

@@ -8,6 +8,7 @@ import type {CommandEntry} from '../../suggestions/types.js';
 import {fishQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
+import {fishEnvironmentSnapshot} from '../../context/shellEnvironment.js';
 
 /**
  * Fish backend.
@@ -50,6 +51,7 @@ function fish_title; end
 function __nmsh_knowledge
   begin
     printf 'jobs %d\\n' (count (jobs -p 2>/dev/null))
+    # The allowlisted context environment (context/shellEnvironment.ts), before names.${fishEnvironmentSnapshot()}
     set -l nmsh_count 0
     for nmsh_name in (functions -n) (abbr --list 2>/dev/null) (builtin -n)
       set nmsh_count (math $nmsh_count + 1)

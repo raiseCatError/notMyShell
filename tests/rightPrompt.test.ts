@@ -35,7 +35,10 @@ test('placement defaults left, every module may move right, and it persists', ()
     {id: 'dockerContext', visible: true, condition: 'onCommand', placement: 'right'},
     {id: 'shell', visible: true, condition: 'shellDiffers', placement: 'right'},
   ]});
-  assert.deepEqual(config.modules.map(module => modulePlacement(module)), ['right', 'right', 'right', 'right', 'right', 'left', 'right', 'right', 'right', 'left']);
+  const builtin = config.modules.filter(module => !module.id.includes(':'));
+  assert.deepEqual(builtin.map(module => modulePlacement(module)), ['right', 'right', 'right', 'right', 'right', 'left', 'right', 'right', 'right', 'left']);
+  // First-party pack modules join after the built-ins on the left, routed Auto; saved placements are untouched.
+  assert.ok(config.modules.slice(builtin.length).every(module => module.id.includes(':') && modulePlacement(module) === 'left' && module.surface === 'auto'));
   assert.deepEqual(normalizePromptConfiguration(JSON.parse(JSON.stringify(config))).modules, config.modules);
 });
 
@@ -45,7 +48,10 @@ test('v0.3 configs gain Git status right after the branch, wherever it was moved
     {id: 'project', visible: true, condition: 'always'},
     {id: 'cwd', visible: true, condition: 'always'},
   ]});
-  assert.deepEqual(config.modules.map(module => module.id), ['shell', 'gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'discoveredTools']);
+  assert.deepEqual(config.modules.filter(module => !module.id.includes(':')).map(module => module.id),
+    ['shell', 'gitBranch', 'gitStatus', 'project', 'cwd', 'toolchain', 'exitStatus', 'kubeContext', 'dockerContext', 'discoveredTools']);
+  assert.deepEqual(config.modules.slice(10).map(module => module.id), DEFAULT_PROMPT_CONFIGURATION.modules.slice(10).map(module => module.id),
+    'first-party modules join after the built-ins in their default order');
   assert.equal(config.modules[1]!.visible, false);
 });
 

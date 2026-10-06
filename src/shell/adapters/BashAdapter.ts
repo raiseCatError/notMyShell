@@ -9,6 +9,7 @@ import type {CommandEntry} from '../../suggestions/types.js';
 import {posixQuote, type LaunchContext, type ShellAdapter, type ShellLaunch} from './ShellAdapter.js';
 import {findShellExecutables} from './shellExecutable.js';
 import {bridgeBootstrap} from '../../themeBridge/environment.js';
+import {bashEnvironmentSnapshot} from '../../context/shellEnvironment.js';
 
 /**
  * Bash backend.
@@ -80,6 +81,7 @@ __nmsh_knowledge() {
     local -a nmsh_jobs=()
     builtin mapfile -t nmsh_jobs < ${posixQuote(knowledgePath)}.jobs
     builtin printf 'jobs %d\\n' "\${#nmsh_jobs[@]}"
+    # The allowlisted context environment (context/shellEnvironment.ts), before names.${bashEnvironmentSnapshot()}
     while IFS= read -r nmsh_name; do
       ((++nmsh_count > 4096)) && { builtin printf 'partial\\n'; return; }
       [[ $nmsh_name =~ ^[A-Za-z0-9_.+-]{1,128}$ ]] && builtin printf 'alias %s\\n' "$nmsh_name"

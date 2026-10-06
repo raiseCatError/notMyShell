@@ -3,12 +3,13 @@ import type {PaletteItem} from './CommandPalette.js';
 import type {WrappedRow} from '../output/viewport.js';
 import {displayWidth} from '../util/text.js';
 
-export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'rerun' | 'edit' | 'fold' | 'explain';
+export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain';
 /** One registry for both pointer-opened and keyboard-opened block palettes. */
 export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: string}[] = [
   {id: 'copyCommand', label: 'Copy command', detail: 'Stored plain command'},
   {id: 'copyOutput', label: 'Copy output', detail: 'Full stored output, including folded lines'},
   {id: 'copyBoth', label: 'Copy command + output', detail: 'Stored plain command and full output'},
+  {id: 'pager', label: 'Open in pager', detail: 'Command and full stored output in your pager (less), read-only'},
   {id: 'rerun', label: 'Rerun command', detail: 'Explicitly submit a visible command in the current shell directory'},
   {id: 'edit', label: 'Edit & rerun', detail: 'Put command in composer; Enter executes it'},
   {id: 'fold', label: 'Fold / unfold output', detail: 'Same stored disclosure state as Ctrl+O'},

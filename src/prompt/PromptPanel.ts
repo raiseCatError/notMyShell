@@ -1,4 +1,5 @@
-import {routeModule} from '../context/surfaceRouter.js';
+import {moduleDefinition} from '../context/modules.js';
+import {handleModulesManagerKey, modulesItemCount, modulesManagerControls, renderModulesManager, type ModulesManagerState} from './ModulesPanel.js';
 import {railNeedsPromptConversion} from './railLayout.js';
 import {chromaPreviewNote} from '../appearance/chromaNotes.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
@@ -53,7 +54,7 @@ import {providerRowText, type ProviderDescriptor} from '../providers/providers.j
 
 export type PromptPanelStep = 'railInsideConfirm' | 'provider' | 'starship' | 'starshipModules' | 'starshipConfirm' | 'powerlevel10k' | 'p10kConfirm' | 'p10kReady' | 'p10kResult' | 'layout' | 'appearance' | 'modules' | 'gradient' | 'installConfirm' | 'installProgress' | 'installResult' | 'installDetails';
 
-export interface PromptPanelState {
+export interface PromptPanelState extends ModulesManagerState {
   onboarding: boolean;
   step: PromptPanelStep;
   selectedIndex: number;
@@ -428,10 +429,10 @@ export function edgeStyleLabel(value: PowerlineEdgeStyle): string {
   }
 }
 
-const MODULE_LABELS: Record<PromptConfiguration['modules'][number]['id'], string> = {
-  project: 'Project', cwd: 'Path', gitBranch: 'Git branch', gitStatus: 'Git status', toolchain: 'Toolchains', exitStatus: 'Exit status',
-  kubeContext: 'Kubernetes', dockerContext: 'Docker context', shell: 'Current shell', discoveredTools: 'Local tools',
-};
+/** Catalog label; a module whose pack is not installed keeps its row (and settings) and says so. */
+export function moduleLabel(id: PromptConfiguration['modules'][number]['id']): string {
+  return moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`;
+}
 
 function cycle<T>(values: readonly T[], current: T, delta: number): T {
   const index = Math.max(0, values.indexOf(current));
@@ -497,48 +498,6 @@ export function promptDraftChanged(state: PromptPanelState): boolean {
   return comparable(state.draft) !== comparable(state.saved);
 }
 
-function moduleOption(module: PromptConfiguration['modules'][number]): string {
-  switch (module.id) {
-    case 'gitBranch': case 'gitStatus': return 'in repositories';
-    case 'toolchain': return module.condition === 'onCommand' ? 'on command' : 'when detected';
-    case 'kubeContext': case 'dockerContext': return module.condition === 'onCommand' ? 'on command' : 'always';
-    case 'exitStatus': return module.condition === 'always' ? 'always' : 'on failure';
-    case 'shell': return module.condition === 'always' ? 'always' : 'when not default';
-    case 'discoveredTools': return 'when detected';
-    default: return 'always';
-  }
-}
-
-/** Space toggles, ←→ changes the module's option, Shift+↑↓ reorders. */
-function handleModulesKey(key: Key, state: PromptPanelState): boolean {
-  const modules = state.draft.modules;
-  const index = state.selectedIndex;
-  const module = modules[index];
-  if (!module) return false;
-  if (key.kind === 'text' && key.value === ' ') module.visible = !module.visible;
-  else if (key.kind === 'text' && (key.value === 'm' || key.value === 'M')) state.draft.nmsh.mirrorRight = !state.draft.nmsh.mirrorRight;
-  else if (key.kind === 'text' && (key.value === 'p' || key.value === 'P')) {
-    const side = routeModule({...module, visible: true, ...(module.surface === 'hidden' ? {surface: undefined} : {})});
-    applyModulePlacement(module, side === 'rightContext' ? 'left' : 'right');
-  }
-  else if (key.kind === 'text' && (key.value === 's' || key.value === 'S')) {
-    module.surface = cycle(MODULE_SURFACES, module.surface ?? (modulePlacement(module) === 'right' ? 'rightContext' : 'mainPrompt'), 1);
-  }
-  else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'exitStatus') {
-    module.condition = module.condition === 'always' ? 'nonzeroExit' : 'always';
-  } else if ((key.kind === 'left' || key.kind === 'right') && module.id === 'shell') {
-    module.condition = module.condition === 'always' ? 'shellDiffers' : 'always';
-  } else if ((key.kind === 'left' || key.kind === 'right') && ON_COMMAND_MODULES.has(module.id)) {
-    module.condition = module.condition === 'onCommand' ? 'always' : 'onCommand';
-  } else if (key.kind === 'selectUp' || key.kind === 'selectDown') {
-    const target = index + (key.kind === 'selectUp' ? -1 : 1);
-    if (target < 0 || target >= modules.length) return true;
-    [modules[index], modules[target]] = [modules[target]!, modules[index]!];
-    state.selectedIndex = target;
-  } else return false;
-  return true;
-}
-
 export function promptPanelControls(state: PromptPanelState): Array<[string, string]> {
   if (state.step === 'railInsideConfirm') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'keep current']];
   if (state.step === 'installProgress') return [['Please wait', 'installation in progress']];
@@ -549,10 +508,7 @@ export function promptPanelControls(state: PromptPanelState): Array<[string, str
   if (state.step === 'p10kResult') return [['Enter/Esc', 'back']];
   if (state.step === 'p10kConfirm' || state.step === 'p10kReady') return [['↑↓', 'move'], ['Enter', 'choose'], ['Esc', 'cancel']];
   const escape: [string, string] = ['Esc', state.onboarding ? 'skip' : 'cancel'];
-  if (state.step === 'modules') {
-    return [['↑↓', 'move'], ['Space', 'show/hide'], ['Shift+↑↓', 'reorder'], ['←→', 'option'], ['P', 'left/right'], ['S', 'surface'],
-      ['M', `mirror: ${state.draft.nmsh.mirrorRight ? 'On' : 'Off'}`], ['Enter/Esc', 'done']];
-  }
+  if (state.step === 'modules') return modulesManagerControls(state);
   if (state.step === 'gradient') {
     return state.gradient ? gradientEditorControls(state.gradient) : [['Esc', 'done']];
   }
@@ -575,7 +531,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
     case 'layout': return LAYOUT_CHOICES.length;
     case 'appearance': return (state.view ?? 'main') === 'git' ? RICH_GIT_ROWS.length : viewRows(state).length;
     case 'gradient': return state.gradient?.stops.length ?? 1;
-    case 'modules': return state.draft.modules.length;
+    case 'modules': return modulesItemCount(state);
     case 'installConfirm': return 2;
     case 'installProgress': case 'installResult': case 'installDetails': return 1;
   }
@@ -585,6 +541,8 @@ export function promptPanelItemCount(state: PromptPanelState): number {
 /** Whether the panel itself handles this key (glyph typing owns Enter and Esc). */
 export function promptPanelOwnsKey(state: PromptPanelState, key: Key): boolean {
   if (state.glyphEdit) return true;
+  // The module manager owns Enter (details, confirmations) and Esc while a detail or confirmation is open.
+  if (state.step === 'modules') return key.kind === 'enter' || ((key.kind === 'escape' || key.kind === 'interrupt') && Boolean(state.detail || state.confirm));
   return key.kind === 'enter' && state.step === 'appearance' && state.focus !== 'tabs' && Boolean(viewRows(state)[state.selectedIndex]?.edit);
 }
 
@@ -650,7 +608,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     toggleChromaPreview(state);
     return true;
   }
-  if (key.kind === 'enter' && promptPanelOwnsKey(state, key)) {
+  if (key.kind === 'enter' && state.step === 'appearance' && promptPanelOwnsKey(state, key)) {
     const row = viewRows(state)[state.selectedIndex]!;
     state.glyphEdit = {rowId: row.id, buffer: row.edit!.get(state.draft) ?? ''};
     return true;
@@ -666,9 +624,11 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     if (handled) state.message = undefined;
     return handled;
   }
-  if (state.step === 'modules' && handleModulesKey(key, state)) {
-    state.message = undefined;
-    return true;
+  if (state.step === 'modules') {
+    const before = state.message;
+    const handled = handleModulesManagerKey(key, state);
+    if (handled && state.message === before) state.message = undefined;
+    if (handled || key.kind === 'enter') return handled;
   }
   if (state.step === 'appearance' && state.focus === 'tabs') {
     if (key.kind === 'left' || key.kind === 'right') {
@@ -824,13 +784,7 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     const stops = gradient.stops.length >= MIN_CUSTOM_STOPS ? gradient.stops : state.draft.presentation.customStops;
     rows.push(`  ${SUBTLE}Gradient  ${RESET}${treatmentSwatch({...state.draft.presentation, preset: 'custom', customStops: stops}, Math.max(8, Math.min(40, columns - 14)))}${RESET}`);
   } else if (state.step === 'modules') {
-    rows.push(`${PRIMARY}Prompt modules${RESET}  ${SUBTLE}in prompt order · Mirror right side: ${RESET}${state.draft.nmsh.mirrorRight ? `${ACCENT}On` : `${SECONDARY}Off`}${RESET}`);
-    state.draft.modules.forEach((module, index) => {
-      const shown = module.visible ? `${ACCENT}●` : `${SUBTLE}○`;
-      const option = module.id === 'exitStatus' || ON_COMMAND_MODULES.has(module.id) ? `‹ ${moduleOption(module)} ›` : moduleOption(module);
-      const side = module.surface ? MODULE_SURFACE_LABELS[module.surface] : modulePlacement(module);
-      rows.push(`${index === state.selectedIndex ? `${ACCENT}›` : ' '} ${shown} ${focusForeground(index === state.selectedIndex)}${padCells(MODULE_LABELS[module.id], labelColumnWidth(Object.values(MODULE_LABELS), columns, 4))}${SUBTLE}${padCells(side, 15)}${module.visible ? option : 'hidden'}${RESET}`);
-    });
+    rows.push(...renderModulesManager(state, columns, undefined, Math.max(8, rowsAvailable - rows.length - preview.length - 6)));
   } else {
     const saved = state.saved?.nmsh;
     const value = (text: string, savedText: string | undefined) => savedText === undefined || savedText === text

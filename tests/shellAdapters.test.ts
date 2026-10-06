@@ -72,6 +72,16 @@ test('history, completion and knowledge parsers for Fish and Bash', async () => 
   assert.equal(await classifier.classifyCommand('string'), 'builtin');
   assert.equal(await classifier.classifyCommand('ls'), 'executable');
   assert.equal(await classifier.classifyCommand('definitely-not-a-command-xyz'), 'unknown');
+  // Once the live shell reports its PATH (rc files often extend NMSh's own), classification uses it.
+  const shellBin = scratch('nmsh-classifier-path-');
+  writeFileSync(join(shellBin, 'only-on-shell-path'), '#!/bin/sh\n', {mode: 0o755});
+  const bash = new PathClassifier(shellAdapter('bash'), {PATH: '/usr/bin:/bin'});
+  bash.applyShellKnowledge('jobs 0\ncomplete\n');
+  assert.equal(await bash.classifyCommand('only-on-shell-path'), 'unknown');
+  bash.applyShellKnowledge(`jobs 0\nenvsnapshot 1\nenv PATH=${shellBin}:/usr/bin:/bin\ncomplete\n`);
+  assert.equal(await bash.classifyCommand('only-on-shell-path'), 'executable');
+  assert.deepEqual(await bash.resolveSource('only-on-shell-path'), {kind: 'executable', path: join(shellBin, 'only-on-shell-path')});
+  assert.equal(await bash.classifyCommand('ls'), 'executable');
 });
 
 interface Lifecycle { markers: ShellMarker[]; execs: Array<[string, number | undefined]>; output: string; shell: ShellSession; home: string }

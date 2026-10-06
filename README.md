@@ -70,9 +70,9 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-v0.17.0 implements fact metadata, native module routing and the Context Rail. Installable, declarative Context Packs are upcoming; they are not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+v0.17.0 implements fact metadata, native module routing and the Context Rail. The development line (not yet released) adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context and Status Strip routing. Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
-Read the [Context Modules guide](docs/architecture/context-modules.md) for the implemented surfaces, discovery boundaries and pack direction, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
+Read the [Context Modules guide](docs/architecture/context-modules.md) for the surfaces, capabilities, Context Pack format and discovery boundaries, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
 ## Visual tour
 
@@ -215,7 +215,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - The completion bridge is close to, but not full parity with, a configured interactive zsh.
 - Highlighting covers common command structure, not the entire zsh grammar.
 - Powerlevel10k's right prompt, instant prompt and gitstatus daemon are not reproduced by the provider.
-- Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is shown but not managed (it reads bat's cache and git config, which NMSh leaves alone). Terminal title ownership (OSC 0/2) is not implemented.
+- Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is never managed (NMSh leaves git config alone); its syntax highlighting follows bat's NMSh theme through `BAT_THEME` unless your git config pins it, and its diff colors stay yours.
 - Hosts without mouse reporting scroll the transcript with PageUp/PageDown.
 
 ## Documentation

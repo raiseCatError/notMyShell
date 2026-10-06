@@ -1,0 +1,50 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.cloud",
+  "version": "1.0.0",
+  "name": "Cloud",
+  "description": "AWS profile and region, Google Cloud project and Azure subscription from local non-secret configuration. No cloud API calls, no authentication, no secret values.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation of documented local configuration formats."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["cloud.aws", "cloud.gcp", "cloud.azure"],
+  "modules": [
+    {
+      "id": "aws", "label": "AWS", "description": "Active AWS profile, region and locally recorded credential expiry.",
+      "category": "cloud", "priority": 92, "role": "context", "icon": "cloud", "condition": "onCommand",
+      "triggers": ["aws", "sam", "cdk", "cdktf", "eksctl", "aws-vault", "granted", "assume", "copilot", "serverless", "sls", "terraform", "tofu", "terragrunt", "pulumi"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "aws", "emphasis": {"fact": "cloud.aws", "field": "expiresAt", "past": true}, "parts": [
+        {"fact": "cloud.aws", "field": "profile", "optional": true},
+        {"fact": "cloud.aws", "field": "credentials", "optional": true, "when": {"field": "profile", "present": false}},
+        {"fact": "cloud.aws", "field": "region", "prefix": " (", "suffix": ")", "optional": true},
+        {"fact": "cloud.aws", "field": "expiresAt", "format": "until", "join": " · ", "optional": true}
+      ]}]
+    },
+    {
+      "id": "gcp", "label": "Google Cloud", "description": "Active gcloud project (or configuration) and region.",
+      "category": "cloud", "priority": 91, "role": "context", "icon": "cloud", "condition": "onCommand",
+      "triggers": ["gcloud", "gsutil", "bq", "terraform", "tofu", "terragrunt", "pulumi"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "gcp", "parts": [
+        {"fact": "cloud.gcp", "field": "project", "optional": true},
+        {"fact": "cloud.gcp", "field": "configuration", "optional": true, "when": {"field": "project", "present": false}},
+        {"fact": "cloud.gcp", "field": "region", "prefix": " (", "suffix": ")", "optional": true}
+      ]}]
+    },
+    {
+      "id": "azure", "label": "Azure", "description": "Default Azure CLI subscription.",
+      "category": "cloud", "priority": 90, "role": "context", "icon": "cloud", "condition": "onCommand",
+      "triggers": ["az", "azd", "func", "bicep", "terraform", "tofu", "terragrunt", "pulumi"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "az", "parts": [
+        {"fact": "cloud.azure", "field": "subscription"}
+      ]}]
+    }
+  ],
+  "recommend": [
+    {"module": "aws", "evidence": [{"kind": "fact", "fact": "cloud.aws"}, {"kind": "executable", "names": ["aws"]}]},
+    {"module": "gcp", "evidence": [{"kind": "fact", "fact": "cloud.gcp"}, {"kind": "executable", "names": ["gcloud"]}]},
+    {"module": "azure", "evidence": [{"kind": "fact", "fact": "cloud.azure"}, {"kind": "executable", "names": ["az"]}]}
+  ]
+}

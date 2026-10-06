@@ -105,16 +105,18 @@ These helpers have time/output limits and use pipes rather than attaching their 
 Native context follows a shared pipeline:
 
 ```text
-trusted core capabilities → immutable facts → native modules
-    → Surface Router → Main Prompt / Context Rail / Right Context
+shell prompt / editor demand / refresh / command end
+    → Context Engine: trusted core capabilities, scheduled on demand
+    → immutable facts → native and declarative (pack) modules
+    → Surface Router → Main Prompt / Right Context / Context Rail / Status Strip
     → semantic segment painter → shared screen plan
 ```
 
-Capabilities own collection and its safety policy. Facts describe values with provenance, freshness, trust and privacy metadata. Modules consume resolved values; rendering and routing do not perform discovery or launch probes. The current implementation adapts the existing shell-context snapshot into this fact model rather than replacing shell collection with a separate system.
+Capabilities own collection and its safety policy: what they read, which allowlisted environment variables they may see (as the live shell reports them each prompt), cost, timeout, cache lifetime and the privacy class of each field. The engine resolves only what visible modules demand, off the typing path, with bounded concurrency, timeouts and backoff, cancellation on directory change, staged scopes and stale-while-revalidate caching. Facts describe values with provenance, freshness, trust and privacy metadata. Modules consume resolved values; rendering and routing do not perform discovery or launch probes. The legacy shell-context snapshot is adapted into the same fact model, so providers, history and Rich Git keep working.
 
 The Main Prompt carries identity and navigation context. Right Context is a separately anchored prompt area. The Context Rail is live native context attached to the composer, vertically or Right of Prompt; its position does not turn it into Right Context. Width fitting preserves the independent right-context anchor and drops Rail content by priority when space is scarce. Rail rows are frontend geometry, not transcript output, and the live Rail is not archived into command history.
 
-This is the current development implementation, not a released pack platform. Context Packs are planned as declarative data requesting known capabilities; arbitrary code, commands and repository hooks are outside that model. See [Context Modules](docs/architecture/context-modules.md) for the current module set, surface behavior and discovery boundaries.
+**Context Packs are data.** A pack (`nmsh.context-pack/v1`, bounded and strictly parsed) names capabilities core implements and describes modules over them; it cannot carry commands, code, paths, templates or hooks, and gains no authority by being installed. First-party modules (project, runtimes, environment managers, infrastructure, cloud, system, Git extras, Claude Code agent context) ship as bundled packs; `nmsh packs` installs local ones atomically with integrity checks. Recommendations explain local evidence and never install or enable anything. These are on the development line after v0.17.0. See [Context Modules](docs/architecture/context-modules.md) and the [Context Engine design](docs/design/context-engine.md).
 
 **Prompt None can still show a composer marker.** The marker identifies where input starts and belongs to NMSh's editor presentation. Removing context does not remove the editor's own marker or accessories.
 
@@ -209,7 +211,7 @@ Its global policy can **Follow NMSh**, **Choose theme** to pin a theme, or **Man
 | tmux | Generated managed configuration/colors and reviewed activation |
 | Neovim / Vim | Generated colorschemes and reviewed activation hooks |
 | Helix | Generated theme in its themes directory and reviewed selection |
-| delta | Detected only; NMSh does not manage its Git configuration |
+| delta | Never managed (NMSh does not change git config); its syntax highlighting follows bat's theme through `BAT_THEME` unless git config pins it |
 
 Environment changes reach a persistent shell through one **environment sink**: generated files for zsh, Bash, and Fish, applied by the adapter's prompt hook. Their grammar permits allowlisted variables and quoted literals. Values take effect at the next prompt. Clearing a value restores what NMSh replaced only while the shell still contains NMSh's value.
 
@@ -263,7 +265,9 @@ Terminal integration uses optional escape-sequence protocols. **OSC** means Oper
 - **OSC 133** marks prompt, input, command-start, and command-end zones for cooperating terminals or multiplexers.
 - **Private OSC 777 NMSh messages** carry shell readiness and execution events with a per-session token. NMSh validates that token before treating output as lifecycle evidence.
 
-Public host markers are derived from NMSh's authenticated lifecycle. NMSh does not depend on receiving them back, and holds them while a fullscreen program owns the screen.
+- **OSC 0/2** sets the window title (opt-in: Off, Project, Project and session) only while NMSh owns the screen; programs own the title while they run.
+
+Public host markers are derived from NMSh's authenticated lifecycle. NMSh does not depend on receiving them back. It writes command start (`C`) at once, holds prompt-time markers while a fullscreen program owns the screen, re-reports the directory after one did, and replays no history on reattach.
 
 Capability detection combines passive host profiles and active probes. Ghostty, Kitty, WezTerm, iTerm2, and Windows Terminal have specific hints; Terminal.app receives conservative baseline behavior plus directory signaling. Windows Terminal detection can describe a WSL host without implying native Windows execution support.
 
@@ -315,7 +319,7 @@ Configuration loading normalizes data, supplies defaults, and migrates older sha
 
 The central distinction is between **data NMSh can validate** and **code an external system executes**. Normal interactive shell startup and explicitly selected providers execute trusted user-installed code. Import and discovery workflows do not receive that same authority.
 
-Entering a repository must never itself execute arbitrary repository-controlled code through NMSh context discovery. Context metadata is read as bounded data; curated core probes own executable selection and policy. Normal user-configured shell startup and explicitly chosen external providers remain separate trust boundaries.
+Entering a repository must never itself execute arbitrary repository-controlled code through NMSh context discovery. Context metadata is read as bounded data; executables found on PATH are never run for context (versions come from install layouts), and only fixed system tools and trusted Git are spawned. Context Packs are declarative and grant no authority. Normal user-configured shell startup and explicitly chosen external providers remain separate trust boundaries.
 
 Theme imports use bounded parsers without templates, includes, or code execution. Arbitrary configuration is not generically rewritten. Supported installs and helper operations use fixed executables and structured argument arrays rather than interpolating requests into shell strings. Helpers have time/output bounds appropriate to their role.
 
@@ -334,7 +338,7 @@ These boundaries do not make arbitrary shell commands or providers harmless. The
 | Live service, sockets, replay and attachment | `src/session/` |
 | Saved transcripts and resume UI | `src/sessions/` |
 | Output parsing, folding, selection and presentation | `src/output/` |
-| Context facts, trusted collection and surface routing | `src/context/`, `src/prompt/configuration.ts`, `src/prompt/railLayout.ts` |
+| Context Engine, capabilities, facts, packs and surface routing | `src/context/` (`engine.ts`, `capabilities/`, `packs/`), `src/prompt/configuration.ts`, `src/prompt/ModulesPanel.ts`, `src/prompt/railLayout.ts` |
 | Native/external prompts and shared settings | `src/prompt/`, `src/configuration/` |
 | Panels and shared UI primitives | `src/ui/` plus feature-specific panel modules |
 | Theme Studio, palettes and decoration | `src/appearance/`, `src/chroma/`, `src/motion/`, `src/cursor/`, `src/idle/` |
@@ -343,7 +347,7 @@ These boundaries do not make arbitrary shell commands or providers harmless. The
 | Dotfiles and Keep Awake | `src/dotfiles/`, `src/keepAwake/` |
 | Slash actions, Ask and optional local models | `src/commands/`, `src/ask/`, `src/understanding/` |
 | Host capabilities and passthrough policy | `src/host/`, `src/presentation/`, `src/passthrough/` |
-| Agent-session integration and managed tasks | `src/agents/`, `src/tasks/` |
+| Agent-session integration, the Claude Code status-line bridge and managed tasks | `src/agents/`, `src/cli/agentStatus.ts`, `src/tasks/` |
 | Automated behavior evidence | `tests/`, verification scripts in `scripts/` |
 
 ## 23. A few end-to-end examples
@@ -386,7 +390,7 @@ These documents expand particular areas. Older design and research records expla
 - [Terminal stack](docs/architecture/terminal-stack.md): layer terminology; its zsh-only and bottom-editor wording predates the current adapters/layouts.
 - [Terminal hosts](docs/architecture/terminal-host.md) and [multiplexer interoperability](docs/architecture/multiplexer-interop.md): capability boundaries and nested-terminal behavior.
 - [notMyUI](docs/architecture/notmyui.md) and [TUI primitives](docs/architecture/tui-primitives-v012.md): common controls, surfaces, and focus.
-- [Context Modules](docs/architecture/context-modules.md): capabilities, facts, native routing, Context Rail and pack direction.
+- [Context Modules](docs/architecture/context-modules.md): capabilities, facts, modules, surfaces, Context Packs and agent context; [Context Engine design](docs/design/context-engine.md): scheduler, invariants and test gates.
 - [Prompt customization](docs/architecture/prompt-customization.md): Native context, shape, and appearance choices.
 - [Supported tool configuration](docs/architecture/supported-tool-configuration.md): configuration classes, adapters, and ownership.
 - [Theme Bridge design](docs/design/theme-bridge.md): imports, target behavior, environment sink, and generated-file safety.

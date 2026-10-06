@@ -1,5 +1,5 @@
-import type {FactId, ContextCapabilityId} from '../context/facts.js';
-import {FACT_CAPABILITIES} from '../context/facts.js';
+import {CONTEXT_MODULE_REGISTRY, firstPartyDefaultModules, isPackModuleId, moduleDefinition, type ContextModuleId} from '../context/modules.js';
+export {CONTEXT_MODULE_REGISTRY, moduleDefinition, type ContextModuleDefinition, type ContextModuleId} from '../context/modules.js';
 import {normalizeTreatmentSettings, DEFAULT_TREATMENT_SETTINGS, validCustomStops, type TreatmentSettings} from '../chroma/treatment.js';
 import {mkdirSync, readFileSync, renameSync, writeFileSync} from 'node:fs';
 import {dirname} from 'node:path';
@@ -40,6 +40,7 @@ import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import {OPEN_WITH_IDS, type OpenWith} from '../host/HostActions.js';
 import {DEFAULT_KEEP_AWAKE_PRESENTATION, normalizeKeepAwakePresentation, type KeepAwakePresentation} from '../keepAwake/presentation.js';
+import {TERMINAL_TITLE_MODES, type TerminalTitleMode} from '../host/terminalTitle.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
 export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
@@ -58,14 +59,14 @@ export const TRANSCRIPT_PRESENTATIONS: readonly TranscriptPresentation[] = ['nor
 export const TRANSCRIPT_PRESENTATION_LABELS: Record<TranscriptPresentation, string> = {normal: 'Normal', chat: 'Chat'};
 export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
-export type ContextModuleId = 'project' | 'cwd' | 'gitBranch' | 'gitStatus' | 'toolchain' | 'exitStatus' | 'kubeContext' | 'dockerContext' | 'shell' | 'discoveredTools';
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
-/** Status Strip remains a future destination, not a shipped choice. */
+/** Where a module presents. The Status Strip shows routed modules as plain low-attention items while the strip is on. */
 export type ContextSurface = 'mainPrompt' | 'rightContext' | 'contextRail' | 'statusStrip';
-export type ModuleSurface = Exclude<ContextSurface, 'statusStrip'> | 'auto' | 'hidden';
-export const MODULE_SURFACES: readonly ModuleSurface[] = ['auto', 'mainPrompt', 'rightContext', 'contextRail', 'hidden'];
-export const MODULE_SURFACE_LABELS: Record<ModuleSurface, string> = {auto: 'Auto', mainPrompt: 'Main Prompt', rightContext: 'Right Context', contextRail: 'Context Rail', hidden: 'Hidden'};
+export type ModuleSurface = ContextSurface | 'auto' | 'hidden';
+export const MODULE_SURFACES: readonly ModuleSurface[] = ['auto', 'mainPrompt', 'rightContext', 'contextRail', 'statusStrip', 'hidden'];
+export const MODULE_SURFACE_LABELS: Record<ModuleSurface, string> = {auto: 'Auto', mainPrompt: 'Main Prompt', rightContext: 'Right Context', contextRail: 'Context Rail',
+  statusStrip: 'Status Strip', hidden: 'Hidden'};
 export interface ContextRailSettings {
   mode: 'auto' | 'always' | 'off';
   rows: 1 | 2;
@@ -124,39 +125,12 @@ export function applyModulePlacement(module: ContextModuleConfig, side: ModulePl
   if (side === 'right') module.placement = 'right';
   else delete module.placement;
 }
-/** Modules whose condition can be switched to show-on-command. */
+/** Built-in modules whose condition can be switched to show-on-command (pack modules declare their own triggers). */
 export const ON_COMMAND_MODULES: ReadonlySet<ContextModuleId> = new Set(['toolchain', 'kubeContext', 'dockerContext']);
-/** Stable module identity, factual inputs, and current field-demand policy. */
-export interface ContextModuleDefinition {
-  id: ContextModuleId;
-  category: string;
-  fields: readonly FactId[];
-  capabilities: readonly ContextCapabilityId[];
-  demand: string;
-  priority: number;
-  supportedSurfaces: readonly Exclude<ContextSurface, 'statusStrip'>[];
-  preferredSurface: Exclude<ContextSurface, 'statusStrip'>;
-  icons: 'existing-semantic-glyphs';
-  width: 'compact-then-drop';
+/** Whether a module offers show-on-command: a built-in with command triggers, or a pack module that declares trigger words. */
+export function supportsOnCommand(id: ContextModuleId): boolean {
+  return ON_COMMAND_MODULES.has(id) || Boolean(moduleDefinition(id)?.triggers?.length);
 }
-function defineModule(id: ContextModuleId, category: string, fields: readonly FactId[], demand: string,
-  priority: number, preferredSurface: Exclude<ContextSurface, 'statusStrip'> = 'mainPrompt'): ContextModuleDefinition {
-  return {id, category, fields, capabilities: fields.map(field => FACT_CAPABILITIES[field]), demand, priority,
-    supportedSurfaces: ['mainPrompt', 'rightContext', 'contextRail'], preferredSurface,
-    icons: 'existing-semantic-glyphs', width: 'compact-then-drop'};
-}
-export const CONTEXT_MODULE_REGISTRY: Record<ContextModuleId, ContextModuleDefinition> = {
-  project: defineModule('project', 'identity', ['project', 'root'], 'always', 60),
-  cwd: defineModule('cwd', 'identity', ['cwd', 'root', 'pathAbbreviations'], 'always', 70),
-  gitBranch: defineModule('gitBranch', 'vcs', ['branch', 'git'], 'repository', 80),
-  gitStatus: defineModule('gitStatus', 'vcs', ['git'], 'repository', 90),
-  toolchain: defineModule('toolchain', 'tooling', ['toolchains'], 'project-markers', 40),
-  exitStatus: defineModule('exitStatus', 'session', ['exitStatus'], 'always', 100),
-  kubeContext: defineModule('kubeContext', 'context', ['kubeContext'], 'command', 95, 'contextRail'),
-  dockerContext: defineModule('dockerContext', 'context', ['dockerContext'], 'command', 85, 'contextRail'),
-  shell: defineModule('shell', 'session', ['shell'], 'always', 50, 'rightContext'),
-  discoveredTools: defineModule('discoveredTools', 'tooling', ['discovery'], 'cached-inventory', 10, 'rightContext'),
-};
 /** `none` is composer only: no prompt row, modules or right prompt (the input marker stays); everything else in NMSh stays on. */
 export type PromptProviderId = 'nmsh' | 'starship' | 'powerlevel10k' | 'ohMyPosh' | 'none';
 export type NativeEndStyle = PowerlineEdgeStyle;
@@ -645,6 +619,8 @@ export interface PromptConfiguration {
   shellBackend: ShellId;
   /** Where /open and /open-diff delegate: the surrounding editor (auto), Zed, VS Code, or $VISUAL/$EDITOR. */
   openWith: OpenWith;
+  /** The terminal window/tab title while NMSh owns the screen: Off (default, the terminal keeps its own), project, or project and session. */
+  terminalTitle: TerminalTitleMode;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -746,6 +722,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   agentActivity: true,
   shellBackend: 'zsh',
   openWith: 'auto',
+  terminalTitle: 'off',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
@@ -777,6 +754,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
     {id: 'kubeContext', visible: true, condition: 'onCommand'},
     {id: 'dockerContext', visible: true, condition: 'onCommand'},
     {id: 'discoveredTools', visible: false, condition: 'always'},
+    ...firstPartyDefaultModules(),
   ],
   separator: '',
   gap: 1,
@@ -784,6 +762,10 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
 };
 
 const MODULE_IDS = new Set<ContextModuleId>(Object.keys(CONTEXT_MODULE_REGISTRY) as ContextModuleId[]);
+/** Built-in ids, and syntactically valid pack module ids whether or not that pack is installed right now (kept, shown as missing). */
+const knownModuleId = (id: string): id is ContextModuleId => MODULE_IDS.has(id as ContextModuleId) || isPackModuleId(id);
+/** At most this many module entries are kept, so a hostile or corrupt config cannot grow the prompt pipeline without bound. */
+const MAX_MODULE_ENTRIES = 96;
 const CONDITIONS = new Set<ContextCondition>(['always', 'inRepository', 'nonzeroExit', 'onCommand', 'shellDiffers']);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -836,7 +818,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
-    openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+    openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',
+    terminalTitle: TERMINAL_TITLE_MODES.includes(value.terminalTitle as TerminalTitleMode) ? value.terminalTitle as TerminalTitleMode : 'off' as TerminalTitleMode, toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k' || promptValue.provider === 'ohMyPosh' || promptValue.provider === 'none'
     ? promptValue.provider
@@ -904,22 +887,31 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
 
   const modules: ContextModuleConfig[] = [];
   const seen = new Set<ContextModuleId>();
-  for (const item of value.modules) {
-    if (!isRecord(item) || typeof item.id !== 'string' || !MODULE_IDS.has(item.id as ContextModuleId)) continue;
-    const id = item.id as ContextModuleId;
+  for (const item of value.modules.slice(0, MAX_MODULE_ENTRIES)) {
+    if (!isRecord(item) || typeof item.id !== 'string' || !knownModuleId(item.id)) continue;
+    const id = item.id;
     if (seen.has(id)) continue;
     seen.add(id);
-    const fallback = DEFAULT_PROMPT_CONFIGURATION.modules.find(module => module.id === id)!;
+    const fallback = DEFAULT_PROMPT_CONFIGURATION.modules.find(module => module.id === id)
+      ?? {id, visible: true, condition: moduleDefinition(id)?.conditions[0] ?? 'always'};
+    const definition = MODULE_IDS.has(id) ? undefined : moduleDefinition(id);
+    const builtinCondition = (condition: ContextCondition) => (condition !== 'onCommand' || ON_COMMAND_MODULES.has(id))
+      && ((condition === 'shellDiffers') === (id === 'shell') || (id === 'shell' && condition === 'always'));
+    // Pack modules accept the conditions their definition offers; a missing pack keeps any pack-valid condition until it returns.
+    const packCondition = (condition: ContextCondition) => definition ? definition.conditions.includes(condition)
+      : condition === 'always' || condition === 'onCommand' || condition === 'inRepository';
     const module: ContextModuleConfig = {
       id,
       visible: typeof item.visible === 'boolean' ? item.visible : fallback.visible,
       condition: typeof item.condition === 'string' && CONDITIONS.has(item.condition as ContextCondition)
-        && (item.condition !== 'onCommand' || ON_COMMAND_MODULES.has(id))
-        && ((item.condition === 'shellDiffers') === (id === 'shell') || (id === 'shell' && item.condition === 'always'))
+        && (MODULE_IDS.has(id) ? builtinCondition(item.condition as ContextCondition) : packCondition(item.condition as ContextCondition))
         ? item.condition as ContextCondition
         : fallback.condition,
     };
-    if (MODULE_SURFACES.includes(item.surface as ModuleSurface)) module.surface = item.surface as ModuleSurface;
+    // A concrete surface the module cannot present on would be a dead choice; a missing pack's choice is kept for its return.
+    const surfaceDefinition = moduleDefinition(id);
+    if (MODULE_SURFACES.includes(item.surface as ModuleSurface) && (item.surface === 'auto' || item.surface === 'hidden' || !surfaceDefinition
+      || surfaceDefinition.supportedSurfaces.includes(item.surface as ContextSurface))) module.surface = item.surface as ModuleSurface;
     if (item.placement === 'right') module.placement = 'right';
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
@@ -1032,8 +1024,9 @@ export function hasVisibleContextModule(
   onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
-    && module.surface !== 'hidden' && module.surface !== 'contextRail'
-    && (module.surface !== 'auto' || CONTEXT_MODULE_REGISTRY[module.id].preferredSurface !== 'contextRail')
+    && module.surface !== 'hidden' && module.surface !== 'contextRail' && module.surface !== 'statusStrip'
+    && (module.surface !== 'auto' || !['contextRail', 'statusStrip'].includes(moduleDefinition(module.id)?.preferredSurface ?? 'contextRail'))
+    && Boolean(moduleDefinition(module.id))
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)
     && (module.condition !== 'onCommand' || onCommand(module.id, context?.commandWords ?? []))

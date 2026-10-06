@@ -94,10 +94,18 @@ export interface SessionOptions {
   rows: number;
   /** Shell backend for a new session; zsh when absent. */
   shell?: ShellId;
+  /** NMSH_SESSION_ID for an in-process shell (service sessions use their session id). */
+  contextId?: string;
 }
 
 /** Exported into the managed shell so users can see which mode owns it. */
 export const SESSION_MODE_ENV = 'NMSH_SESSION_MODE';
+/**
+ * Exported into the managed shell: which NMSh session a program runs in, so
+ * NMSh-owned helpers (the agent status bridge) can report to the right
+ * session. A non-secret identifier, never a credential.
+ */
+export const SESSION_ID_ENV = 'NMSH_SESSION_ID';
 
 export interface SessionConnection {
   client: SessionClient;

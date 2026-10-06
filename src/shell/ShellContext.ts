@@ -27,6 +27,10 @@ export interface PromptContext {
   commandWords?: readonly string[];
   /** Show-on-command lookups, present once resolved. */
   kubeContext?: string;
+  /** The kubeconfig context's namespace, when it sets one. */
+  kubeNamespace?: string;
+  /** Presentation clock for time-based module text; absent means now (deterministic presentation pins it). */
+  now?: number;
   dockerContext?: string;
   /** The backend under this session (never $SHELL), and whether it differs from the default for new sessions. */
   shell?: {current: string; differs: boolean};

@@ -1,0 +1,88 @@
+{
+  "schema": "nmsh.context-pack/v1",
+  "id": "nmsh.project",
+  "version": "1.0.0",
+  "name": "Project & runtimes",
+  "description": "Package identity, and the language runtimes a project asks for versus what the shell would run, from declarative project files and trusted local metadata.",
+  "license": "GPL-3.0-only",
+  "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation; tool behavior studied from public documentation only."},
+  "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
+  "requires": ["project.package", "runtime.node", "runtime.python", "runtime.go", "runtime.rust", "runtime.java"],
+  "modules": [
+    {
+      "id": "package", "label": "Package", "description": "Version and package manager from the nearest declarative manifest.",
+      "category": "project", "priority": 42, "role": "identity", "icon": "package", "condition": "always",
+      "surfaces": {"preferred": "rightContext"},
+      "segments": [{"label": "pkg", "parts": [
+        {"fact": "project.package", "field": "version", "format": "version"},
+        {"fact": "project.package", "field": "manager", "join": " · ", "optional": true}
+      ]}]
+    },
+    {
+      "id": "node", "label": "Node.js", "description": "Node.js the shell would run; the project's pin when it differs.",
+      "category": "runtime", "priority": 45, "role": "javascript", "icon": "node", "condition": "onCommand",
+      "triggers": ["node", "npm", "npx", "pnpm", "pnpx", "yarn", "bun", "bunx", "corepack", "tsx", "tsc", "vite", "next", "nvm", "fnm", "volta"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "node", "parts": [
+        {"fact": "runtime.node", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.node", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.node", "field": "requested", "format": "version", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.node", "field": "requested", "format": "version", "optional": true, "when": {"field": "active", "present": false}}
+      ]}]
+    },
+    {
+      "id": "python", "label": "Python", "description": "Active virtual environment and Python version; the project's pin when it differs.",
+      "category": "runtime", "priority": 45, "role": "python", "icon": "python", "condition": "onCommand",
+      "triggers": ["python", "python3", "pip", "pip3", "pipx", "uv", "uvx", "poetry", "pytest", "pipenv", "pdm", "hatch", "tox", "nox", "jupyter", "ipython", "ruff", "mypy"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "py", "parts": [
+        {"fact": "runtime.python", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.python", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.python", "field": "environment", "prefix": " (", "suffix": ")", "optional": true},
+        {"fact": "runtime.python", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.python", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "go", "label": "Go", "description": "Go toolchain from GOROOT metadata; go.mod's requirement when it differs.",
+      "category": "runtime", "priority": 44, "role": "go", "icon": "go", "condition": "onCommand",
+      "triggers": ["go", "gofmt", "gopls", "golangci-lint", "air"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "go", "parts": [
+        {"fact": "runtime.go", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.go", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.go", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.go", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "rust", "label": "Rust", "description": "The rustup toolchain this directory selects, or the installed rustc.",
+      "category": "runtime", "priority": 44, "role": "runtime", "icon": "rust", "condition": "onCommand",
+      "triggers": ["cargo", "rustc", "rustup", "rustfmt", "cross", "clippy-driver"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "rust", "parts": [
+        {"fact": "runtime.rust", "field": "active", "format": "toolchain", "optional": true},
+        {"fact": "runtime.rust", "field": "requested", "format": "toolchain", "optional": true, "when": {"field": "active", "present": false}}
+      ]}]
+    },
+    {
+      "id": "java", "label": "Java", "description": "JDK version from its release file, and the project's build tool.",
+      "category": "runtime", "priority": 43, "role": "runtime", "icon": "java", "condition": "onCommand",
+      "triggers": ["java", "javac", "jar", "jshell", "mvn", "mvnw", "gradle", "gradlew", "kotlin", "kotlinc", "sbt"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "java", "parts": [
+        {"fact": "runtime.java", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.java", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.java", "field": "buildTool", "join": " · ", "optional": true}
+      ]}]
+    }
+  ],
+  "recommend": [
+    {"module": "package", "evidence": [{"kind": "fact", "fact": "project.package"}]},
+    {"module": "node", "evidence": [{"kind": "workspaceFile", "names": ["package.json", ".nvmrc", ".node-version"]}]},
+    {"module": "python", "evidence": [{"kind": "workspaceFile", "names": ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile", ".python-version", "uv.lock"]}]},
+    {"module": "go", "evidence": [{"kind": "workspaceFile", "names": ["go.mod", "go.work"]}]},
+    {"module": "rust", "evidence": [{"kind": "workspaceFile", "names": ["Cargo.toml", "rust-toolchain.toml", "rust-toolchain"]}]},
+    {"module": "java", "evidence": [{"kind": "workspaceFile", "names": ["pom.xml", "build.gradle", "build.gradle.kts", ".java-version", ".sdkmanrc"]}]}
+  ]
+}
