@@ -36,6 +36,12 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
   <picture>
     <img alt="Terminal host → NMSh frontend → ShellAdapter → your real shell" src="assets/readme/architecture.svg" width="640">
   </picture>
+  <p><em>The short version.</em></p>
+</div>
+
+<div align="center">
+  <img alt="NMSh runtime: input, rendering, ShellAdapter and the persistent shell session" src="assets/readme/architecture-detailed.svg" width="960">
+  <p><em>The runtime path in more detail.</em></p>
 </div>
 
 - **Not a shell.** It does not reimplement zsh, Bash or Fish; it runs them.
@@ -95,7 +101,7 @@ A workspace that stays readable. A palette that feels like yours. Explore the fu
 | [Tools and shells](docs/demos.md#tools-and-shells) | Ask, provider choices, checked tools, Theme Bridge, Fish and real Vim |
 | [Sessions](docs/demos.md#sessions) | Detach, reattach and Keep Awake |
 
-[Full demo gallery](docs/demos.md) · [Detailed runtime diagram](assets/readme/architecture-detailed.svg)
+[Full demo gallery](docs/demos.md)
 
 The gallery uses wide, opaque recordings from the real NMSh build, with a disposable home and neutral demo identity. [Committed tapes](scripts/demos/README.md) reproduce every clip.
 
@@ -109,6 +115,8 @@ Homebrew is the recommended install method on macOS.
 brew install raiseCatError/tap/nmsh
 nmsh
 ```
+
+The [Homebrew tap](https://github.com/raiseCatError/homebrew-tap) maintains formula updates through its native autobump and test-bot workflows. To update an installed package, use `brew upgrade raiseCatError/tap/nmsh`.
 
 To uninstall the Homebrew package:
 
