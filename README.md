@@ -207,7 +207,7 @@ See [SECURITY.md](SECURITY.md) to report a vulnerability.
 - The completion bridge is close to, but not full parity with, a configured interactive zsh.
 - Highlighting covers common command structure, not the entire zsh grammar.
 - Powerlevel10k's right prompt, instant prompt and gitstatus daemon are not reproduced by the provider.
-- Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is shown but not managed (it reads bat's cache and git config, which NMSh leaves alone). Terminal title ownership (OSC 0/2) is not implemented.
+- Theme Bridge recolors new tool instances; editors and shells already running outside NMSh are not recolored live. delta is never managed (NMSh leaves git config alone); its syntax highlighting follows bat's NMSh theme through `BAT_THEME` unless your git config pins it, and its diff colors stay yours. Terminal title ownership (OSC 0/2) is not implemented.
 - Hosts without mouse reporting scroll the transcript with PageUp/PageDown.
 
 ## Documentation

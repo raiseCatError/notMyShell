@@ -17,9 +17,9 @@ import {
   validateVimColorscheme, vimColorscheme, withFzfTheme, TMUX_STYLE_OPTIONS,
 } from '../src/themeBridge/targets.js';
 import {
-  applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, writeArtifact,
+  applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, saveLedger, writeArtifact,
 } from '../src/themeBridge/artifacts.js';
-import {applyThemeBridge, bridgeColorLevel, bridgeEnvironment, fzfBridgeArgs, reloadTmux, reportTargets, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
+import {applyThemeBridge, bridgeColorLevel, bridgeEnvironment, deltaSyntaxTheme, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
 import {themeBridgeKey} from '../src/themeBridge/runtime.js';
 import {writeTmuxManaged} from '../src/tools/config/tmuxManaged.js';
 import {DEFAULT_TMUX_MODEL} from '../src/tools/config/tmux.js';
@@ -360,6 +360,62 @@ test('applyThemeBridge: isolated per target; independent targets get nothing; fa
     assert.equal(existsSync(artifactPath('vim', box.env)), false);
     assert.doesNotMatch(readFileSync(bridgeEnvPath('bash', box.env), 'utf8'), /nmsh_bridge_apply/u);
     assert.equal((await reloadTmux(box.env)).ok, false, 'no reload without an owned fragment (and no tmux on this PATH)');
+  } finally { box.done(); }
+});
+
+test('delta: never managed; its status says whether git config pins the syntax theme or it follows bat in NMSh shells', () => {
+  const box = sandbox();
+  try {
+    const delta = (config: PromptConfiguration, env = box.env) => reportTargets(context(config, env, installed('bat', 'delta'))).find(report => report.target === 'delta')!;
+    const follow = configWith({bat: {mode: 'follow'}});
+    let report = delta(follow);
+    assert.equal(report.status, 'Not managed');
+    assert.equal(report.readiness, undefined);
+    assert.match(report.notes[0]!, /set bat to Follow NMSh[\s\S]*git config, which NMSh never changes/u, 'bat not set up yet: how delta could follow');
+    const written = writeArtifact('bat', '<plist/>', () => true, {mode: 'follow', themeRef: 'builtin:lavender', format: 'bat-tmtheme', formatVersion: 1}, box.env);
+    assert.ok(written.ok);
+    const ledger = loadLedger(box.env);
+    ledger.entries.bat = {...ledger.entries.bat!, cacheBuiltFor: ledger.entries.bat!.sha256};
+    saveLedger(ledger, box.env);
+    report = delta(follow);
+    assert.equal(report.readiness, 'Syntax via bat', 'BAT_THEME=nmsh-bridge reaches NMSh shells, and delta reads it');
+    assert.match(report.notes.join(' '), /BAT_THEME[\s\S]*bat's theme cache[\s\S]*different bat version/u);
+    assert.equal(integrationHealth(context(follow, box.env, installed('bat', 'delta'))).find(item => item.target === 'delta')!.detail, 'Not managed · Syntax via bat');
+    assert.equal(delta(follow, {...box.env, NO_COLOR: '1'}).readiness, undefined, 'nothing is injected without color, so nothing follows');
+    assert.equal(delta(configWith({})).readiness, undefined, 'bat Independent: delta keeps its own default');
+    writeFileSync(join(box.home, '.gitconfig'), '[core]\n\tpager = delta\n[delta]\n\tsyntax-theme = "Monokai Extended" # mine\n');
+    report = delta(follow);
+    assert.equal(report.readiness, 'Own syntax theme');
+    assert.match(report.notes[0]!, /selects delta's syntax theme \(Monokai Extended\); NMSh leaves it/u);
+    assert.equal(report.mode, 'independent');
+    assert.deepEqual(readdirSync(box.home), ['.gitconfig'], 'git config is only read');
+  } finally { box.done(); }
+});
+
+test('delta syntax theme: global git config read as data; features, pager flags, no includes, no other files', () => {
+  const box = sandbox();
+  try {
+    const config = join(box.home, '.gitconfig');
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: false});
+    writeFileSync(config, '[include]\n\tpath = other\n[delta]\n\tfeatures = calm\n[delta "calm"]\n\tsyntax-theme = Nord\n[delta "loud"]\n\tsyntax-theme = Dracula\n');
+    writeFileSync(join(box.home, 'other'), '[delta]\n\tsyntax-theme = Included\n');
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: true, theme: 'Nord'}, 'only enabled features count; includes are never followed');
+    writeFileSync(config, "[pager]\n\tdiff = /opt/homebrew/bin/delta --syntax-theme 'GitHub'\n[delta]\n\tsyntax-theme = Nord\n");
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: true}, 'pins disagree: the status names none rather than guess precedence');
+    writeFileSync(config, '[core]\n\tpager = less -R\n; [delta]\n# syntax-theme = Nord\n');
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: false}, 'comments and other pagers are not pins');
+    writeFileSync(config, '[DELTA]\n\tSyntax-Theme = evil\u001b]0;pwned\u0007‮' + 'x'.repeat(80) + '\n');
+    const hostile = deltaSyntaxTheme(box.env, box.home);
+    assert.equal(hostile.pinned, true, 'section and key names are case-insensitive');
+    assert.ok(hostile.theme && !/[\u0000-\u001f\u007f-\u009f‪-‮]/u.test(hostile.theme) && hostile.theme.length <= 41, 'displayed names are inert and bounded');
+    mkdirSync(join(box.env.XDG_CONFIG_HOME!, 'git'), {recursive: true});
+    writeFileSync(join(box.env.XDG_CONFIG_HOME!, 'git', 'config'), '[delta]\n\tsyntax-theme = Xdg\n');
+    rmSync(config);
+    assert.deepEqual(deltaSyntaxTheme(box.env, box.home), {pinned: true, theme: 'Xdg'});
+    assert.deepEqual(deltaSyntaxTheme({...box.env, GIT_CONFIG_GLOBAL: 'relative'}, box.home), {pinned: false}, 'GIT_CONFIG_GLOBAL replaces the defaults; a relative one is not resolved against anything');
+    writeFileSync(join(box.root, 'global'), '[delta]\n\tsyntax-theme = Global\n');
+    assert.deepEqual(deltaSyntaxTheme({...box.env, GIT_CONFIG_GLOBAL: join(box.root, 'global')}, box.home), {pinned: true, theme: 'Global'});
+    assert.deepEqual(deltaSyntaxTheme({...box.env, GIT_CONFIG_GLOBAL: '/dev/zero'}, box.home), {pinned: false}, 'devices and FIFOs are never read');
   } finally { box.done(); }
 });
 

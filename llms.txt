@@ -45,7 +45,7 @@ navigation. NMSh bridges to it (/open, /open-diff) and does not clone it.
 - prompt providers: NMSh Native (default), Starship, Oh My Posh, Powerlevel10k, None
 - Theme Studio (/theme): built-in, imported (data-only parsers) and custom themes
 - Theme Bridge (/theme-bridge, opt-in): fzf, less/man, file listing colors, bat,
-  tmux, Vim, Neovim, Helix; delta detected only; ownership ledger, reviewed includes
+  tmux, Vim, Neovim, Helix; delta never managed (syntax follows bat via BAT_THEME unless git config pins it); ownership ledger, reviewed includes
 - curated tools and providers (/tools, /providers), tool configuration (/configure,
   /tmux), integration health (/integrations), safe dotfiles import (/dotfiles)
 - shell frameworks detected (Oh My Zsh, Powerlevel10k, Prezto, Zim, zinit, Antidote);
