@@ -40,6 +40,7 @@ import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import {OPEN_WITH_IDS, type OpenWith} from '../host/HostActions.js';
 import {DEFAULT_KEEP_AWAKE_PRESENTATION, normalizeKeepAwakePresentation, type KeepAwakePresentation} from '../keepAwake/presentation.js';
+import {TERMINAL_TITLE_MODES, type TerminalTitleMode} from '../host/terminalTitle.js';
 
 export type WelcomeProviderId = 'vespyr' | 'fastfetch' | 'neofetch' | 'macchina' | 'zigfetch' | 'none';
 export const WELCOME_PROVIDER_IDS: readonly WelcomeProviderId[] = ['vespyr', 'fastfetch', 'neofetch', 'macchina', 'zigfetch', 'none'];
@@ -618,6 +619,8 @@ export interface PromptConfiguration {
   shellBackend: ShellId;
   /** Where /open and /open-diff delegate: the surrounding editor (auto), Zed, VS Code, or $VISUAL/$EDITOR. */
   openWith: OpenWith;
+  /** The terminal window/tab title while NMSh owns the screen: Off (default, the terminal keeps its own), project, or project and session. */
+  terminalTitle: TerminalTitleMode;
   nmsh: {
     gapEnabled: boolean;
     startStyle: NativeStartStyle;
@@ -719,6 +722,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   agentActivity: true,
   shellBackend: 'zsh',
   openWith: 'auto',
+  terminalTitle: 'off',
   idleVisuals: {...DEFAULT_IDLE_VISUALS, customStops: []},
   liveActivity: {...DEFAULT_LIVE_ACTIVITY, customStops: []},
   uiChrome: {...DEFAULT_UI_CHROME},
@@ -814,7 +818,8 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
-    openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto', toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
+    openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',
+    terminalTitle: TERMINAL_TITLE_MODES.includes(value.terminalTitle as TerminalTitleMode) ? value.terminalTitle as TerminalTitleMode : 'off' as TerminalTitleMode, toolUpdateChecks, installSuggestions, ignoredInstallSuggestions, promptSymbol: normalizePromptSymbol(value.promptSymbol),
     ...(promptSymbolCustom ? {promptSymbolCustom} : {})};
   const provider: PromptProviderId = promptValue.provider === 'starship' || promptValue.provider === 'powerlevel10k' || promptValue.provider === 'ohMyPosh' || promptValue.provider === 'none'
     ? promptValue.provider

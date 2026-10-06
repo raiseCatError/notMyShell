@@ -110,6 +110,7 @@ import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../s
 import {CommandEditor} from '../input/CommandEditor.js';
 import {authoredLink, closeAuthoredLinks} from '../output/Hyperlinks.js';
 import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
+import {HostTitle, titleSupport} from '../host/terminalTitle.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
@@ -911,6 +912,7 @@ export class TerminalApp {
     if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.cancelPresentation();
       this.passthrough = true;
+      this.noteForeignScreen();
       this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
     }
@@ -937,6 +939,7 @@ export class TerminalApp {
     if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
       this.cancelPresentation();
       this.passthrough = true;
+      this.noteForeignScreen();
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
       this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
@@ -959,6 +962,7 @@ export class TerminalApp {
         this.cancelPresentation();
         this.terminalFocus = 'unknown';
         this.passthrough = true;
+        this.noteForeignScreen();
         this.renderer.suspendForPassthrough();
         const dimensions = this.dimensions();
         this.session.resize(dimensions.columns, dimensions.rows);
@@ -1164,6 +1168,7 @@ export class TerminalApp {
     if (this.stopped || this.externalPassthrough) return;
     this.cancelPresentation();
     this.frontendSuspended = true;
+    this.noteForeignScreen();
     this.terminalFocus = 'unknown';
     this.renderer.leave();
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
@@ -2475,6 +2480,7 @@ export class TerminalApp {
       if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
         this.passthrough = true;
+        this.noteForeignScreen();
         this.terminalFocus = 'unknown';
         this.renderer.suspendForPassthrough();
         const dimensions = this.dimensions();
@@ -4351,7 +4357,28 @@ export class TerminalApp {
 
   /** OSC 7 / OSC 133 for capable hosts, held while a fullscreen program owns the terminal. */
   private readonly hostSemantics = new HostSemantics(semanticSupport(), data => { process.stdout.write(data); },
-    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended);
+    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended, undefined,
+    {attached: () => this.presentationStarted && !this.stopped && !this.frontendSuspended, replaying: () => this.replaying});
+  /** Opt-in OSC 2 title: written only while NMSh owns the screen, re-asserted after programs that set their own. */
+  private readonly hostTitle = new HostTitle(titleSupport(), data => { process.stdout.write(data); },
+    () => this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended && !this.replaying);
+
+  /** A program, a nested shell or another frontend owned the terminal: cwd and title are re-asserted when NMSh has it back. */
+  private noteForeignScreen(): void {
+    this.hostSemantics.foreignScreen();
+    this.hostTitle.foreign();
+  }
+
+  /** NMSh's title for this moment: Off returns undefined (the terminal keeps its own). Names are hostile data; HostTitle sanitizes. */
+  private desiredTitle(): string | undefined {
+    const mode = this.promptConfiguration.terminalTitle;
+    if (mode === 'off') return undefined;
+    const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
+    const session = mode === 'session' && this.sessionId ? this.noticeLabels.get(this.sessionId) : undefined;
+    const identity = session ? `${project} — ${session}` : project;
+    const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
+    return running ? `${running} · ${identity}` : identity;
+  }
   private themeBridgePanel?: ThemeBridgePanelState;
   private bridgeReports: TargetReport[] = [];
   /** A plan shown for confirmation, kept with what it came from; confirming applies exactly this plan. */
@@ -7943,6 +7970,7 @@ export class TerminalApp {
   private render(): void {
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
+    this.hostTitle.set(this.desiredTitle());
     if (this.idle) { this.paintIdle(); return; }
     for (const task of [this.promptPanelState?.task, this.toolsPanel?.task, this.providerPanelState?.task]) task?.setReducedMotion(!this.decorativeMotionAllowed());
     if (!this.decorativeMotionAllowed()) this.effects.cancel();
@@ -8521,6 +8549,7 @@ export class TerminalApp {
 
   private stop(exitCode: number): void {
     if (this.stopped) return;
+    this.hostTitle.end();
     this.stopped = true;
     this.contextEngine.dispose();
     if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }

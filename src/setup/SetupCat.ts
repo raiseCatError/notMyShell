@@ -352,6 +352,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('liveSessionStartup')},
     {row: configRow('liveSessionMultiple')},
     {row: configRow('sessionNotices'), note: draft => draft.sessionNotices ? 'Brief: a success fades in seconds, a failure lingers a little, a request for attention stays until you look' : 'Off: other sessions never add lines above the composer'},
+    {row: configRow('terminalTitle'), note: draft => draft.terminalTitle === 'off' ? 'Off: the terminal keeps its own window title'
+      : 'NMSh titles the window while it owns the screen; programs keep their own title while they run'},
     {row: configRow('agentActivity')},
     {row: configRow('openWith')},
     {row: configRow('notifications')},

@@ -16,7 +16,7 @@ export const PORTABLE_VERSION = 1;
 
 /** Category id → dotted configuration paths it owns. Order is the export order. */
 export const PORTABLE_CATEGORIES = {
-  prompt: ['provider', 'promptSymbol', 'promptSymbolCustom', 'modules', 'separator', 'gap', 'spacing', 'placement',
+  prompt: ['provider', 'promptSymbol', 'promptSymbolCustom', 'modules', 'contextRail', 'separator', 'gap', 'spacing', 'placement',
     'nmsh.gapEnabled', 'nmsh.startStyle', 'nmsh.connector', 'nmsh.endStyle', 'nmsh.icons', 'nmsh.style', 'nmsh.connectorFade',
     'nmsh.connectorFadeColors', 'nmsh.gitEnabled', 'nmsh.gitColors', 'nmsh.gitGeometry', 'nmsh.gitConnectorFade', 'nmsh.mirrorRight', 'nmsh.styleProfiles'],
   theme: ['nmsh.palette', 'nmsh.vibrance', 'nmsh.accent', 'nmsh.themeId', 'themes', 'customTheme'],
@@ -32,7 +32,7 @@ export const PORTABLE_CATEGORIES = {
   idle: ['idleVisuals', 'liveActivity'],
   notifications: ['notifications', 'sessionNotices'],
   tools: ['toolUpdateChecks', 'installSuggestions', 'ignoredInstallSuggestions', 'updateMode', 'updateFrequency'],
-  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention'],
+  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention', 'terminalTitle'],
   agents: ['agentActivity'],
   shell: ['shellBackend'],
   editor: ['openWith'],
