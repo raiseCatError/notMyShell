@@ -70,9 +70,9 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-v0.17.0 implements fact metadata, native module routing and the Context Rail. The development line (not yet released) adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`) and Claude Code agent context. Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+v0.17.0 implements fact metadata, native module routing and the Context Rail. The development line (not yet released) adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context and Status Strip routing. Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
-Read the [Context Modules guide](docs/architecture/context-modules.md) for the implemented surfaces, discovery boundaries and pack direction, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
+Read the [Context Modules guide](docs/architecture/context-modules.md) for the surfaces, capabilities, Context Pack format and discovery boundaries, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
 ## Visual tour
 
