@@ -17,9 +17,10 @@ const withStyle = (style: PromptStyle, extra: Partial<PromptConfiguration['nmsh'
   config.nmsh = {...config.nmsh, style, ...extra};
   return config;
 };
+/** Every built-in module type visible (pack modules keep their defaults; they have their own declarative-rendering tests). */
 const showcase = (config: PromptConfiguration) => {
   const copy = structuredClone(config);
-  copy.modules = copy.modules.map(module => ({...module, visible: true}));
+  copy.modules = copy.modules.map(module => module.id.includes(':') ? module : {...module, visible: true});
   return copy;
 };
 const BG = /\u001B\[48;2;(\d+);(\d+);(\d+)m/gu;

@@ -1,5 +1,5 @@
 import {arch, freemem, hostname, platform, release, totalmem, userInfo} from 'node:os';
-import {defineCapability, type CapabilityDefinition} from '../capability.js';
+import {defineCapability, PREVIEW_NOW, type CapabilityDefinition} from '../capability.js';
 import {parseXmlData, readMetadataText, record} from '../services.js';
 import {runExternal} from '../../providers/providers.js';
 import {linuxBattery, parseMeminfo, parsePmset, parseVmStat} from '../../status/systemStats.js';
@@ -78,7 +78,7 @@ export const sessionDuration = defineCapability<DurationFact>({
   reads: ['when this NMSh session started'],
   scope: 'session', family: 'system', cost: 'cheap', trust: 'session', sensitivity: 'public', persistence: 'display-only',
   fields: ['startedAt'], env: [], ttlMs: 3_600_000, refreshMs: 60_000, timeoutMs: 200, invalidateOn: [],
-  preview: {startedAt: 0},
+  preview: {startedAt: PREVIEW_NOW - (2 * 60 + 15) * 60_000},
   async resolve(context) {
     const startedAt = context.live?.startedAt;
     return startedAt ? {value: {startedAt}, evidence: 'session start'} : undefined;
@@ -92,7 +92,7 @@ export const clock = defineCapability<TimeFact>({
   reads: ['the local clock'],
   scope: 'machine', family: 'system', cost: 'cheap', trust: 'session', sensitivity: 'public', persistence: 'snapshot-safe',
   fields: ['now'], env: [], ttlMs: 10_000, refreshMs: 10_000, timeoutMs: 200, invalidateOn: [],
-  preview: {now: Date.UTC(2026, 9, 6, 9, 41)},
+  preview: {now: PREVIEW_NOW},
   async resolve(context) { return {value: {now: context.now}, evidence: 'local clock'}; },
 });
 

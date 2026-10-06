@@ -118,7 +118,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, statusStripModules, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -134,8 +134,14 @@ import {commandWords, type CommandContextId} from '../prompt/commandContext.js';
 import {ContextEngine} from '../context/engine.js';
 import {CORE_CAPABILITIES} from '../context/registry.js';
 import {contextDemand} from '../context/demand.js';
-import {setInstalledPacks} from '../context/modules.js';
-import {activeInstalledPacks} from '../context/packs/store.js';
+import {firstPartyPacks, installedPacks, setInstalledPacks} from '../context/modules.js';
+import {activeInstalledPacks, installedPackStatuses, removePack, setPackEnabled} from '../context/packs/store.js';
+import type {ParsedPack} from '../context/packs/schema.js';
+import {recommendModules, type Recommendation} from '../context/packs/recommend.js';
+import {listNames} from '../context/services.js';
+import type {ModulesContext, PackListing} from '../prompt/ModulesPanel.js';
+import {applyClaudeBridge, applyClaudeBridgeRemoval, inspectClaudeBridge, planClaudeBridge, planClaudeBridgeRemoval} from '../agents/claudeStatusLine.js';
+import {currentLauncher} from '../cli/agentStatus.js';
 import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
 import type {CapabilityScopeInput} from '../context/capability.js';
 import type {ContextFact} from '../context/facts.js';
@@ -1416,7 +1422,8 @@ export class TerminalApp {
         this.render();
         return;
       }
-      if (key.kind === 'escape' && this.promptPanelState.step === 'modules') {
+      if (this.promptPanelState.step === 'modules') this.promptPanelState.context = this.modulesContext();
+      if (key.kind === 'escape' && this.promptPanelState.step === 'modules' && !promptPanelOwnsKey(this.promptPanelState, key)) {
         // Esc leaves the module manager, keeping its draft edits for the final save.
         this.promptPanelState.step = 'appearance';
         this.promptPanelState.selectedIndex = appearanceModulesRow(this.promptPanelState.draft);
@@ -1437,6 +1444,7 @@ export class TerminalApp {
       } else if (key.kind === 'enter') {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
+      if (this.promptPanelState?.request) void this.handleModulesRequest(this.promptPanelState);
       return;
     }
     if (this.findState?.editing && !this.settingsPanelActive && this.handleFindKey(key)) return;
@@ -3140,8 +3148,9 @@ export class TerminalApp {
     const configuration = this.promptConfiguration;
     const native = this.effectivePromptProvider === 'nmsh';
     const suspended = this.passthrough || this.externalPassthrough || this.frontendSuspended;
+    const {columns, rows} = this.dimensions();
     this.contextEngine.demand(suspended ? new Map() : contextDemand(configuration, {commandWords: commandWords(this.editor.text), nativePrompt: native,
-      railVisible: native && configuration.contextRail.mode !== 'off', statusStripVisible: false, inRepository: Boolean(context.branch)}));
+      railVisible: native && configuration.contextRail.mode !== 'off', statusStripVisible: this.stripActive(columns, rows), inRepository: Boolean(context.branch)}));
     this.scheduleContextRefresh();
   }
 
@@ -3257,18 +3266,99 @@ export class TerminalApp {
     }
   }
 
+  private modulesListings: PackListing[] = [];
+  private moduleRecommendations: Recommendation[] = [];
+  private claudeBridgeState?: {state: string; detail?: string};
+  private pendingBridgePlan?: {plan: import('../ask/fileEdit.js').FileEditPlan; launcher?: string};
+
+  /** What /prompt's module manager shows beside the draft: live capability status, packs, recommendations, the Claude Code bridge. */
+  private modulesContext(): ModulesContext {
+    return {status: id => this.contextEngine.status(id), packs: this.modulesListings, recommendations: this.moduleRecommendations,
+      ...(this.claudeBridgeState ? {claudeBridge: this.claudeBridgeState} : {}), now: Date.now()};
+  }
+
+  /** Gathered explicitly when the module manager opens: pack states, the bridge state and local evidence for recommendations. */
+  private async refreshModulesContext(): Promise<void> {
+    const statuses = await installedPackStatuses(undefined, this.buildIdentity.version).catch(() => []);
+    const listing = (parsed: ParsedPack, builtIn: boolean, state: string, message?: string): PackListing => ({id: parsed.pack.id, version: parsed.pack.version,
+      name: parsed.pack.name, description: parsed.pack.description, builtIn, state, ...(message ? {message} : {}), license: parsed.pack.license,
+      author: parsed.pack.provenance.author, sha256: parsed.sha256, requires: parsed.pack.requires, modules: parsed.pack.modules.map(module => ({id: module.id, label: module.label}))});
+    this.modulesListings = [...firstPartyPacks().map(parsed => listing(parsed, true, 'bundled')),
+      ...statuses.map(status => status.parsed ? listing(status.parsed, false, status.state, status.message)
+        : {id: status.record.id, version: status.record.version, name: status.record.id, description: 'The installed manifest could not be verified.', builtIn: false,
+          state: status.state, ...(status.message ? {message: status.message} : {}), license: 'unknown', author: 'unknown', sha256: status.record.sha256, requires: [], modules: []})];
+    const bridge = inspectClaudeBridge();
+    this.claudeBridgeState = {state: bridge.state, ...(bridge.state === 'conflict' ? {detail: bridge.command} : bridge.state === 'unreadable' ? {detail: bridge.reason} : {})};
+    // Recommendation evidence: one bounded listing of this directory and the repository root, the shared inventory, resolved facts.
+    const names = new Set([...await listNames(this.shellCwd), ...(this.context.root ? await listNames(this.context.root) : [])]);
+    const inventory = await discoverLocalExecutables().catch(() => undefined);
+    this.moduleRecommendations = recommendModules(this.promptPanelState?.draft ?? this.promptConfiguration, {workspaceNames: names,
+      executables: new Set(inventory?.executables.map(item => item.name) ?? []), facts: this.contextEngine.facts()}, [...firstPartyPacks(), ...installedPacks()]);
+    if (this.promptPanelState) this.promptPanelState.context = this.modulesContext();
+    this.render();
+  }
+
+  /** Side effects the module manager asked for; every settings change is shown first and applied only on Enter. */
+  private async handleModulesRequest(state: PromptPanelState): Promise<void> {
+    const request = state.request;
+    state.request = undefined;
+    if (!request) return;
+    try {
+      if (request.kind === 'claudeBridgeReview' || request.kind === 'claudeBridgeRemoveReview') {
+        const launcher = currentLauncher();
+        const planned = request.kind === 'claudeBridgeRemoveReview' ? planClaudeBridgeRemoval()
+          : launcher ? planClaudeBridge(launcher) : {refuse: 'Start NMSh through the installed `nmsh` command so Claude Code can run its bridge.'};
+        if ('noop' in planned) state.message = planned.noop;
+        else if ('refuse' in planned) state.message = planned.refuse;
+        else {
+          this.pendingBridgePlan = {plan: planned.plan, ...(launcher ? {launcher} : {})};
+          state.confirm = {request: {kind: request.kind === 'claudeBridgeReview' ? 'claudeBridgeApply' : 'claudeBridgeRemove'},
+            title: request.kind === 'claudeBridgeReview' ? 'Let Claude Code report to NMSh?' : 'Stop Claude Code reporting to NMSh?',
+            lines: [`${planned.plan.path} — ${planned.plan.reason}`, ...planned.plan.preview]};
+        }
+      } else if (request.kind === 'claudeBridgeApply' || request.kind === 'claudeBridgeRemove') {
+        const pending = this.pendingBridgePlan;
+        this.pendingBridgePlan = undefined;
+        const result = !pending ? {ok: false as const, reason: 'Review the change again first.'}
+          : request.kind === 'claudeBridgeApply' ? applyClaudeBridge(pending.plan, pending.launcher ?? '') : applyClaudeBridgeRemoval(pending.plan);
+        state.message = result.ok ? (request.kind === 'claudeBridgeApply' ? 'Claude Code reports to NMSh from its next update.' : 'Removed the NMSh status line from Claude Code settings.')
+          : result.reason;
+      } else if (request.kind === 'packEnabled') {
+        const result = await setPackEnabled(request.id, request.enabled);
+        state.message = result.ok ? `${request.id} ${request.enabled ? 'enabled' : 'disabled'}.` : result.reason;
+        await this.loadInstalledPacks();
+      } else if (request.kind === 'packRemove') {
+        const result = await removePack(request.id);
+        if (result.ok) {
+          state.draft.modules = state.draft.modules.filter(module => !module.id.startsWith(`${request.id}:`));
+          state.detail = undefined;
+        }
+        state.message = result.ok ? `Removed ${request.id}. Save to update your prompt settings.` : result.reason;
+        await this.loadInstalledPacks();
+      }
+    } catch (error) {
+      state.message = error instanceof Error ? error.message : String(error);
+    }
+    await this.refreshModulesContext();
+  }
+
   /** Installed Context Packs (verified, enabled) join the module catalog: read at startup and whenever /prompt opens. */
   private async loadInstalledPacks(): Promise<void> {
-    try { setInstalledPacks(await activeInstalledPacks(undefined, this.buildIdentity.version)); } catch { /* bundled modules remain available */ }
-    if (this.stopped) return;
+    let packs: ParsedPack[];
+    try { packs = await activeInstalledPacks(undefined, this.buildIdentity.version); } catch { return; /* bundled modules remain available */ }
+    // Most sessions have no installed packs: nothing changes, so nothing repaints.
+    const key = (list: readonly ParsedPack[]) => list.map(pack => pack.sha256).sort().join(',');
+    if (this.stopped || key(packs) === key(installedPacks())) return;
+    setInstalledPacks(packs);
     this.requestContextDemand();
     this.render();
   }
 
   private async startPromptSettings(onboarding: boolean): Promise<void> {
-    await this.loadInstalledPacks();
     this.promptPanelState = {onboarding, step: 'provider', selectedIndex: PROVIDER_ORDER.indexOf(this.promptConfiguration.provider),
       draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    // Packs installed since startup join the catalog; the panel opens at once and repaints when they arrive.
+    void this.loadInstalledPacks();
     this.panelExternalPrompt = undefined;
     if (this.promptConfiguration.provider === 'starship') {
       this.starshipStatus = await detectStarship(this.starshipEnvironment(this.promptConfiguration));
@@ -3535,6 +3625,7 @@ export class TerminalApp {
     } else if (onModulesRow(state)) {
       state.step = 'modules';
       state.selectedIndex = 0;
+      void this.refreshModulesContext();
     } else if (onGradientRow(state)) {
       openGradientEditor(state);
     } else if (state.step === 'modules') {
@@ -5785,6 +5876,7 @@ export class TerminalApp {
 
   private renderPromptPanelRows(state: PromptPanelState, columns: number): string[] {
     const now = Date.now();
+    if (state.step === 'modules') state.context = this.modulesContext();
     const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
     const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
     const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
@@ -6311,8 +6403,10 @@ export class TerminalApp {
     // Active Keep Awake is always part of an enabled strip (no per-item switch); the strip itself is never forced on.
     const record = this.awakeRecord;
     const display = this.promptConfiguration.keepAwake.display;
+    // Modules routed to the strip are resolved facts like every other surface; the strip never collects anything itself.
+    const modules = statusStripModules(this.promptContext(), this.promptConfiguration).map(module => ({text: module.text, failure: module.role === 'failure', priority: module.priority}));
     return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns, undefined,
-      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined);
+      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined, modules);
   }
 
   /** One timer while the strip is on and NMSh owns the screen; none otherwise. */

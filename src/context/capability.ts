@@ -81,6 +81,9 @@ export interface CapabilityDefinition<V = unknown> {
   resolve(context: CapabilityContext): Promise<CapabilityResult<V> | undefined>;
 }
 
+/** The fixed clock synthetic previews use, so showcases and their time-based text are deterministic. */
+export const PREVIEW_NOW = Date.UTC(2026, 9, 6, 9, 41);
+
 export function defineCapability<V>(definition: CapabilityDefinition<V>): CapabilityDefinition<V> {
   return definition;
 }

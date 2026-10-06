@@ -1,4 +1,4 @@
-import {defineCapability, type CapabilityDefinition} from '../capability.js';
+import {defineCapability, PREVIEW_NOW, type CapabilityDefinition} from '../capability.js';
 import {agentStatusDirectory, readAgentStatus, type AgentStatusRecord} from '../../agents/agentStatus.js';
 
 /**
@@ -25,8 +25,8 @@ export const claudeAgent = defineCapability<AgentFact>({
     'cacheWriteTokens', 'fiveHourPercent', 'fiveHourResetsAt', 'sevenDayPercent', 'sevenDayResetsAt', 'spendPercent', 'spendResetsAt', 'durationMs', 'costUsd',
     'linesAdded', 'linesRemoved', 'repo', 'worktree', 'pr', 'prReview', 'sessionName', 'agentName', 'version', 'session'],
   env: [], ttlMs: 5_000, refreshMs: 15_000, timeoutMs: 1000, invalidateOn: ['command'],
-  preview: {harness: 'claude', updatedAt: Date.UTC(2026, 9, 6, 9, 41), own: true, model: 'Opus', effort: 'max', contextPercent: 43, contextWindow: 200_000,
-    fiveHourPercent: 61, fiveHourResetsAt: Date.UTC(2026, 9, 6, 12, 0), sevenDayPercent: 18, sevenDayResetsAt: Date.UTC(2026, 9, 10), repo: 'raiseCatError/notMyShell', pr: 325, prReview: 'pending'},
+  preview: {harness: 'claude', updatedAt: PREVIEW_NOW, own: true, model: 'Opus', effort: 'max', contextPercent: 43, contextWindow: 200_000,
+    fiveHourPercent: 61, fiveHourResetsAt: PREVIEW_NOW + 2 * 3_600_000, sevenDayPercent: 18, sevenDayResetsAt: PREVIEW_NOW + 4 * 86_400_000, repo: 'raiseCatError/notMyShell', pr: 325, prReview: 'pending'},
   async resolve(context) {
     const found = await readAgentStatus(agentStatusDirectory(), context.session);
     if (!found) return undefined;

@@ -60,11 +60,12 @@ export type GlyphStyle = 'nerd' | 'safe';
 export type SessionRetention = 100 | 500 | 1000 | 5000 | null;
 /** Where a module's segments render: appended to the left prompt, or the right-aligned context area. */
 export type ModulePlacement = 'left' | 'right';
-/** Status Strip remains a future destination, not a shipped choice. */
+/** Where a module presents. The Status Strip shows routed modules as plain low-attention items while the strip is on. */
 export type ContextSurface = 'mainPrompt' | 'rightContext' | 'contextRail' | 'statusStrip';
-export type ModuleSurface = Exclude<ContextSurface, 'statusStrip'> | 'auto' | 'hidden';
-export const MODULE_SURFACES: readonly ModuleSurface[] = ['auto', 'mainPrompt', 'rightContext', 'contextRail', 'hidden'];
-export const MODULE_SURFACE_LABELS: Record<ModuleSurface, string> = {auto: 'Auto', mainPrompt: 'Main Prompt', rightContext: 'Right Context', contextRail: 'Context Rail', hidden: 'Hidden'};
+export type ModuleSurface = ContextSurface | 'auto' | 'hidden';
+export const MODULE_SURFACES: readonly ModuleSurface[] = ['auto', 'mainPrompt', 'rightContext', 'contextRail', 'statusStrip', 'hidden'];
+export const MODULE_SURFACE_LABELS: Record<ModuleSurface, string> = {auto: 'Auto', mainPrompt: 'Main Prompt', rightContext: 'Right Context', contextRail: 'Context Rail',
+  statusStrip: 'Status Strip', hidden: 'Hidden'};
 export interface ContextRailSettings {
   mode: 'auto' | 'always' | 'off';
   rows: 1 | 2;
@@ -902,7 +903,10 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
         ? item.condition as ContextCondition
         : fallback.condition,
     };
-    if (MODULE_SURFACES.includes(item.surface as ModuleSurface)) module.surface = item.surface as ModuleSurface;
+    // A concrete surface the module cannot present on would be a dead choice; a missing pack's choice is kept for its return.
+    const surfaceDefinition = moduleDefinition(id);
+    if (MODULE_SURFACES.includes(item.surface as ModuleSurface) && (item.surface === 'auto' || item.surface === 'hidden' || !surfaceDefinition
+      || surfaceDefinition.supportedSurfaces.includes(item.surface as ContextSurface))) module.surface = item.surface as ModuleSurface;
     if (item.placement === 'right') module.placement = 'right';
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
@@ -1015,8 +1019,8 @@ export function hasVisibleContextModule(
   onCommand: (id: ContextModuleId, words: readonly string[]) => boolean = () => false,
 ): boolean {
   return configuration.modules.some(module => module.visible
-    && module.surface !== 'hidden' && module.surface !== 'contextRail'
-    && (module.surface !== 'auto' || (moduleDefinition(module.id)?.preferredSurface ?? 'contextRail') !== 'contextRail')
+    && module.surface !== 'hidden' && module.surface !== 'contextRail' && module.surface !== 'statusStrip'
+    && (module.surface !== 'auto' || !['contextRail', 'statusStrip'].includes(moduleDefinition(module.id)?.preferredSurface ?? 'contextRail'))
     && Boolean(moduleDefinition(module.id))
     && (module.condition !== 'inRepository' || Boolean(context?.branch))
     && (module.condition !== 'nonzeroExit' || (context?.exitStatus ?? 0) !== 0)

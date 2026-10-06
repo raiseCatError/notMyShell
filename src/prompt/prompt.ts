@@ -5,6 +5,7 @@ import {moduleDefinition} from '../context/modules.js';
 import {declarativeSegments} from '../context/declarative.js';
 import {moduleRelevantToCommand} from '../context/demand.js';
 import {presentationNow} from '../presentation/environment.js';
+import {capabilityPreviewFacts, previewCommandWords, PREVIEW_NOW} from '../context/preview.js';
 import {findTheme} from '../appearance/themeLibrary.js';
 import {accentedVariant, THEME_VARIANTS, type CatppuccinAccent, type ThemeVariant} from '../appearance/themeFamilies.js';
 import type {CustomTheme} from '../appearance/customTheme.js';
@@ -456,7 +457,7 @@ export function promptRenderExtras(configuration: PromptConfiguration, time = 0)
 
 /** `pathLevel` shortens the cwd module (see PATH_DISPLAY_LEVELS); 0 is the full, width-independent form. */
 export function renderedModules(context: PromptContext, configuration: PromptConfiguration, pathLevel = 0,
-  surface: 'prompt' | 'contextRail' = 'prompt', purpose: 'display' | 'snapshot' = 'display'): RenderedModule[] {
+  surface: 'prompt' | 'contextRail' | 'statusStrip' = 'prompt', purpose: 'display' | 'snapshot' = 'display'): RenderedModule[] {
   const facts = promptFacts(context);
   const eligible = configuration.modules.filter(module => {
     const definition = moduleDefinition(module.id);
@@ -467,7 +468,7 @@ export function renderedModules(context: PromptContext, configuration: PromptCon
       if (!primary || !factAllowed(primary, purpose)) return false;
     }
     const target = routeModule(module);
-    return surface === 'contextRail' ? target === 'contextRail' : target === 'mainPrompt' || target === 'rightContext';
+    return surface === 'prompt' ? target === 'mainPrompt' || target === 'rightContext' : target === surface;
   }).flatMap(module => {
     const definition = moduleDefinition(module.id)!;
     const segments = definition.pack ? packModuleSegments(module, context, facts, configuration.nmsh.icons, purpose)
@@ -707,13 +708,26 @@ export function themePreviewContext(home = homedir()): PromptContext {
 }
 
 /**
+ * Status Strip items for modules routed there: plain text with a semantic role
+ * and the module's priority (the strip keeps higher priorities longest).
+ */
+export function statusStripModules(context: PromptContext, configuration: PromptConfiguration): Array<{id: string; text: string; role: PromptRole; priority: number}> {
+  if (!configuration.statusStrip.enabled) return [];
+  return renderedModules(context, configuration, 0, 'statusStrip').map(module => ({id: module.id, text: stripAnsi(module.text), role: module.role,
+    priority: moduleDefinition(module.id)?.priority ?? 0}));
+}
+
+/**
  * Preview-only context for the module showcase: every module type with a
  * representative value, independent of the real cwd, repository, tools, and
- * typed command. Built from literals only; nothing is probed or executed.
+ * typed command. Built from literals and capability preview values only;
+ * nothing is probed or executed.
  */
 export function moduleShowcaseContext(home = homedir()): PromptContext {
   const root = `${home.replace(/\/$/u, '')}/Projects/notMyShell`;
   return {
+    facts: capabilityPreviewFacts(),
+    now: PREVIEW_NOW,
     cwd: `${root}/src`,
     project: 'notMyShell',
     root,
@@ -722,7 +736,7 @@ export function moduleShowcaseContext(home = homedir()): PromptContext {
     toolchains: ['node'],
     exitStatus: 1,
     // Show-on-command modules appear as if their commands were being typed.
-    commandWords: ['kubectl', 'docker', 'npm'],
+    commandWords: ['kubectl', 'docker', 'npm', ...previewCommandWords()],
     kubeContext: 'dev-cluster',
     dockerContext: 'colima',
     shell: {current: 'fish', differs: true},
