@@ -68,7 +68,7 @@ export class AnsiOutputParser {
         const parsed = this.consumeEscape(input, index);
         if (!parsed.complete) {
           this.pending = input.slice(index);
-          if (input[index + 1] === ']' && this.pending.length > 8192) {
+          if (']PX^_'.includes(input[index + 1] ?? '\u0000') && this.pending.length > 8192) {
             this.discardingOsc = true;
             this.hyperlink = undefined;
             this.pending = input.endsWith('\u001B') ? '\u001B' : '';

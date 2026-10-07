@@ -285,3 +285,14 @@ test('the transcript parser never prints the bytes of sequences it does not draw
   assert.ok(!ansi.includes('NaN'), 'no NaN style');
   assert.match(ansi, /38;2;0;10;0/u, 'a zero colour component keeps the colour instead of resetting it');
 });
+
+test('an unterminated DCS or APC string is discarded past the bound instead of growing without limit', () => {
+  for (const opener of ['\u001BP', '\u001B_']) {
+    const output = new OutputBuffer();
+    output.beginCommand('x', ['❯ x']);
+    output.write(`a${opener}`);
+    for (let i = 0; i < 100; i += 1) output.write('x'.repeat(1000));
+    output.write('\u001B\\b\n');
+    assert.equal(output.complete(0)?.output, 'ab');
+  }
+});
