@@ -12,8 +12,8 @@ Lists use Up/Down, Enter, `/`, Esc. Actual top tabs use Tab/Shift+Tab. Search ty
 
 Mouse work is limited to correctness of existing scrolling/input and passthrough ownership. Hover, drag and pointer polish are deferred. Enable/disable is shown unavailable unless a supported, reviewed provider action exists; passive inventory does not imply activation authority.
 
-Worktree: `/private/tmp/notMyShell-claude-ui`  
-Branch: `feature/claude-agent-ui`  
+Worktree: `/private/tmp/notMyShell-claude-ui`
+Branch: `feature/claude-agent-ui`
 Audited base and initial HEAD: `fd08406d10efe4c76d01e1a0228525d859b31940`
 
 ## Intent and branch boundaries
