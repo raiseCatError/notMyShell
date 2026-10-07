@@ -57,7 +57,8 @@ test('Zed: wheel/click reporting with Shift selection, no movement tracking; col
   assert.equal(resolveHostCapabilities(zedEnv).truecolor, true);
   assert.equal(resolveHostCapabilities({TERM_PROGRAM: 'zed', TERM: 'xterm-256color'}).truecolor, false);
   assert.equal(resolveHostCapabilities({...zedEnv, NMSH_HYPERLINKS: '1'}).hyperlinks, true);
-  assert.deepEqual(resolveHostCapabilities({...zedEnv, TMUX: 'socket'}), {...BASELINE_CAPABILITIES, truecolor: true}, 'nested: baseline');
+  assert.deepEqual(resolveHostCapabilities({...zedEnv, TMUX: 'socket'}), {...BASELINE_CAPABILITIES, truecolor: true,
+    mouseReporting: true, clickSupport: true, textSelectionInteraction: 'shift'}, 'nested in tmux: outer hints hidden, only tmux\'s own mouse reporting');
   const host = detectTerminalHost(zedEnv, 'darwin');
   assert.equal(host.name, 'Zed');
   assert.equal(host.newWindow, undefined, 'no documented Zed command opens a new integrated terminal');
@@ -82,8 +83,11 @@ test('explicit host evidence overrides stale variables; nested and dumb attachme
   assert.equal(resolveHostCapabilities({TERM_PROGRAM: 'iTerm.app', KITTY_WINDOW_ID: '1'}).kittyKeyboard, false);
   assert.equal(resolveHostCapabilities({TERM: 'xterm-kitty'}).kittyKeyboard, true);
   for (const TERM_PROGRAM of profiles) {
-    for (const nested of [{TMUX: 'socket'}, {STY: 'screen'}, {ZELLIJ: '1'}, {TERM: 'screen-256color'}, {TERM: 'dumb'}])
+    for (const nested of [{STY: 'screen'}, {ZELLIJ: '1'}, {TERM: 'screen-256color'}, {TERM: 'dumb'}, {TMUX: 'socket', TERM: 'dumb'}])
       assert.deepEqual(resolveHostCapabilities({TERM_PROGRAM, ...nested}), BASELINE_CAPABILITIES);
+    // tmux hides every outer hint; only its own pane mouse protocol remains.
+    assert.deepEqual(resolveHostCapabilities({TERM_PROGRAM, TMUX: 'socket'}),
+      {...BASELINE_CAPABILITIES, mouseReporting: true, clickSupport: true, textSelectionInteraction: 'shift'});
     assert.equal(resolveHostCapabilities({TERM_PROGRAM, NMSH_HYPERLINKS: '0'}).hyperlinks, false);
   }
 });
@@ -130,7 +134,8 @@ test('Windows Terminal (via WSL WT_SESSION): conservative capabilities, no graph
   assert.equal(host.name, 'Windows Terminal');
   assert.equal(host.newWindow, undefined);
   assert.equal(terminalProfile({...env, TERM_PROGRAM: 'vscode'}), 'baseline', 'an explicit program wins over a forwarded variable');
-  assert.equal(resolveHostCapabilities({...env, TMUX: '/tmp/x'}).mouseReporting, false, 'multiplexers hide the outer host');
+  assert.equal(resolveHostCapabilities({...env, STY: '1.pts'}).mouseReporting, false, 'multiplexers hide the outer host');
+  assert.equal(resolveHostCapabilities({...env, TMUX: '/tmp/x'}).hyperlinks, false, 'tmux hides the outer host\'s hints');
 });
 
 test('new-window launchers are typed argv per host and never interpolate command words into scripts', () => {
@@ -152,7 +157,8 @@ test('every host profile degrades inside a multiplexer and when TERM is dumb, fr
       const capabilities = resolveHostCapabilities({...env, ...nested});
       assert.equal(capabilities.graphicsProtocol, 'none', JSON.stringify({env, nested}));
       assert.equal(capabilities.kittyKeyboard, false);
-      assert.equal(capabilities.mouseReporting, false);
+      assert.equal(capabilities.mouseReporting, 'TMUX' in nested && !('STY' in nested), 'only tmux forwards pane mouse reports');
+      assert.equal(capabilities.mouseMovement, false);
     }
     assert.equal(resolveHostCapabilities({...env, TERM: 'dumb'}).hyperlinks, false);
   }
