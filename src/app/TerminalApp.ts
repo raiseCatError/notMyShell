@@ -72,7 +72,7 @@ import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
 import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
-import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
+import {framePanel, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
 import {providerExplanation} from '../setup/providerExplanations.js';
 import {liveActivityPaint} from '../status/liveActivityColors.js';
 import {renderControls} from '../ui/controls.js';
@@ -142,7 +142,7 @@ import {recommendModules, type Recommendation} from '../context/packs/recommend.
 import {listNames, workspaceRoots} from '../context/services.js';
 import {choosePager, pagerDocument, pagerProcessEnvironment, runPager} from '../output/BlockPager.js';
 import {pagerEnvironment as bridgePagerColors} from '../themeBridge/targets.js';
-import type {ModulesContext, PackListing} from '../prompt/ModulesPanel.js';
+import {moduleSettingsSignature, type ModulesContext, type PackListing} from '../prompt/ModulesPanel.js';
 import {applyClaudeBridge, applyClaudeBridgeRemoval, inspectClaudeBridge, planClaudeBridge, planClaudeBridgeRemoval} from '../agents/claudeStatusLine.js';
 import {currentLauncher} from '../cli/agentStatus.js';
 import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
@@ -1433,8 +1433,15 @@ export class TerminalApp {
         return;
       }
       if (this.promptPanelState.step === 'modules') this.promptPanelState.context = this.modulesContext();
+      if ((key.kind === 'escape' || key.kind === 'interrupt') && this.promptPanelState.standalone && !promptPanelOwnsKey(this.promptPanelState, key)) {
+        // /modules saved each change as it was made: Esc only closes.
+        this.promptPanelState = undefined;
+        this.returnFromPanel();
+        this.render();
+        return;
+      }
       if (key.kind === 'escape' && this.promptPanelState.step === 'modules' && !promptPanelOwnsKey(this.promptPanelState, key)) {
-        // Esc leaves the module manager, keeping its draft edits for the final save.
+        // Esc leaves the module manager, keeping its draft edits for the final save (or A saved them already).
         this.promptPanelState.step = 'appearance';
         this.promptPanelState.selectedIndex = appearanceModulesRow(this.promptPanelState.draft);
         this.render();
@@ -1455,6 +1462,7 @@ export class TerminalApp {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
       if (this.promptPanelState?.request) void this.handleModulesRequest(this.promptPanelState);
+      else if (this.promptPanelState?.standalone) { this.persistModuleSettings(this.promptPanelState); this.render(); }
       return;
     }
     if (this.findState?.editing && !this.settingsPanelActive && this.handleFindKey(key)) return;
@@ -2305,6 +2313,7 @@ export class TerminalApp {
       if (this.appearanceHub) { this.appearanceHub.view = 'motion'; this.appearanceHub.selected = 0; this.appearanceHub.previewStart = Date.now(); }
     }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'modules') { this.panelOrigin = undefined; this.openModulesManager(); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'screensaver') {
       this.panelOrigin = undefined;
@@ -3378,19 +3387,22 @@ export class TerminalApp {
         const result = await setPackEnabled(request.id, request.enabled);
         state.message = result.ok ? `${request.id} ${request.enabled ? 'enabled' : 'disabled'}.` : result.reason;
         await this.loadInstalledPacks();
+      } else if (request.kind === 'saveModules') {
+        this.persistModuleSettings(state);
       } else if (request.kind === 'packRemove') {
         const result = await removePack(request.id);
         if (result.ok) {
           state.draft.modules = state.draft.modules.filter(module => !module.id.startsWith(`${request.id}:`));
           state.detail = undefined;
         }
-        state.message = result.ok ? `Removed ${request.id}. Save to update your prompt settings.` : result.reason;
+        state.message = result.ok ? `Removed ${request.id}.${state.standalone ? '' : ' Save to update your prompt settings.'}` : result.reason;
         await this.loadInstalledPacks();
       }
     } catch (error) {
       state.message = error instanceof Error ? error.message : String(error);
     }
     // Results can quote settings paths and file content: displayed, never trusted as terminal text.
+    if (state.standalone) this.persistModuleSettings(state);
     if (state.message) state.message = safeContextText(state.message, 400);
     await this.refreshModulesContext();
   }
@@ -3421,6 +3433,41 @@ export class TerminalApp {
     }
     if (this.promptConfiguration.provider !== 'nmsh') await this.refreshPanelPreview(this.promptPanelState);
     this.render();
+  }
+
+  /** /modules: the same module manager /prompt embeds, opened directly; each change is saved as it is made. */
+  private openModulesManager(): void {
+    this.promptPanelState = {onboarding: false, step: 'modules', selectedIndex: 0, standalone: true,
+      draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    this.panelExternalPrompt = undefined;
+    void this.loadInstalledPacks();
+    void this.refreshModulesContext();
+    this.render();
+  }
+
+  /**
+   * Persists only the module settings (order, visibility, surfaces, conditions,
+   * mirroring) from a module-manager draft onto the saved configuration. /modules
+   * calls it after every change; inside /prompt, A calls it and leaves the rest
+   * of the /prompt draft unsaved.
+   */
+  private persistModuleSettings(state: PromptPanelState): void {
+    if (moduleSettingsSignature(state.draft) === moduleSettingsSignature(this.promptConfiguration)) return;
+    const previous = this.promptConfiguration;
+    const next = structuredClone(previous);
+    next.modules = structuredClone(state.draft.modules);
+    next.nmsh.mirrorRight = state.draft.nmsh.mirrorRight;
+    try {
+      savePromptConfiguration(next, undefined, previous);
+    } catch (error) {
+      state.message = `Could not save module settings: ${error instanceof Error ? error.message : String(error)}`;
+      return;
+    }
+    this.promptConfiguration = next;
+    if (state.saved) { state.saved.modules = structuredClone(next.modules); state.saved.nmsh.mirrorRight = next.nmsh.mirrorRight; }
+    state.message = state.message ? `${state.message} Saved.` : 'Saved.';
+    if (this.gitStatusDemanded(previous) !== this.gitStatusDemanded(next)) void this.refreshContext(this.shellCwd);
+    this.requestContextDemand();
   }
 
   /** /chroma: the /prompt Chroma view directly, editing the same presentation settings. */
@@ -4001,6 +4048,8 @@ export class TerminalApp {
       state.contentIndex = 0;
     } else if (key.kind === 'text' && view === 'config' && state.focus !== 'tabs' && !state.searchFocused && key.value.toLowerCase() === 'r' && row) {
       if (settingsRowChanged(row, this.promptConfiguration)) this.applySettingsConfiguration(resetSettingsRow(row, this.promptConfiguration));
+    } else if (tabCycleDelta(key) && !state.searchFocused) {
+      switchSettingsView(state, tabCycleDelta(key)!);
     } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
       state.searchFocused = true;
       state.focus = 'rows';
@@ -5946,7 +5995,9 @@ export class TerminalApp {
   private renderPromptPanelRows(state: PromptPanelState, columns: number): string[] {
     const now = Date.now();
     if (state.step === 'modules') state.context = this.modulesContext();
-    const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
+    // Module facts win over the prompt preview: details, confirmations and narrow panels drop it first.
+    const modulesWithoutPreview = state.step === 'modules' && (Boolean(state.detail || state.confirm) || columns < 72 || this.dimensions().rows < 30);
+    const preview = state.step.startsWith('install') || modulesWithoutPreview ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
     const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
     const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
       this.promptGitShowcase(columns), stops);

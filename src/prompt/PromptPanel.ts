@@ -40,8 +40,8 @@ import {
 } from '../chroma/treatment.js';
 import {isReducedMotion} from '../presentation/environment.js';
 import {colorEscape} from '../chroma/escape.js';
-import {renderControls} from '../ui/controls.js';
-import {renderTabStrip} from '../ui/PanelShell.js';
+import {renderControlRows} from '../ui/controls.js';
+import {cycleTab, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
 import type {StarshipStatus} from './starship.js';
 import {STARSHIP_MODULES, type StarshipConfigProposal} from './StarshipConfigAdapter.js';
 import type {Powerlevel10kStatus} from './powerlevel10k.js';
@@ -542,7 +542,7 @@ export function promptPanelItemCount(state: PromptPanelState): number {
 export function promptPanelOwnsKey(state: PromptPanelState, key: Key): boolean {
   if (state.glyphEdit) return true;
   // The module manager owns Enter (details, confirmations) and Esc while a detail or confirmation is open.
-  if (state.step === 'modules') return key.kind === 'enter' || ((key.kind === 'escape' || key.kind === 'interrupt') && Boolean(state.detail || state.confirm));
+  if (state.step === 'modules') return key.kind === 'enter' || ((key.kind === 'escape' || key.kind === 'interrupt') && Boolean(state.detail || state.confirm || state.search));
   return key.kind === 'enter' && state.step === 'appearance' && state.focus !== 'tabs' && Boolean(viewRows(state)[state.selectedIndex]?.edit);
 }
 
@@ -630,10 +630,16 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
     if (handled && state.message === before) state.message = undefined;
     if (handled || key.kind === 'enter') return handled;
   }
+  // Tab / Shift+Tab switch the Main · Git · Chroma · Rail views from anywhere in them (a glyph being typed returned above).
+  if (state.step === 'appearance' && tabCycleDelta(key)) {
+    state.view = cycleTab(PROMPT_VIEW_IDS, state.view ?? 'main', tabCycleDelta(key)!);
+    state.selectedIndex = 0;
+    state.message = undefined;
+    return true;
+  }
   if (state.step === 'appearance' && state.focus === 'tabs') {
     if (key.kind === 'left' || key.kind === 'right') {
-      const index = PROMPT_VIEW_IDS.indexOf(state.view ?? 'main');
-      state.view = PROMPT_VIEW_IDS[(index + (key.kind === 'left' ? -1 : 1) + PROMPT_VIEW_IDS.length) % PROMPT_VIEW_IDS.length];
+      state.view = cycleTab(PROMPT_VIEW_IDS, state.view ?? 'main', key.kind === 'left' ? -1 : 1);
       state.selectedIndex = 0;
     } else if (key.kind === 'down') state.focus = 'rows';
     else return false;
@@ -676,7 +682,7 @@ export function handlePromptPanelKey(key: Key, state: PromptPanelState): boolean
  */
 export function renderPromptPanel(state: PromptPanelState, columns: number, preview: string[], themePreviews: string[] = [], rowsAvailable = Infinity,
   gitShowcase: string[] = [], chromaThemeStops?: readonly RgbColor[]): string[] {
-  const title = state.onboarding ? 'Prompt setup' : 'Prompt settings';
+  const title = state.standalone ? 'Modules' : state.onboarding ? 'Prompt setup' : 'Prompt settings';
   const rows = [`${PRIMARY}  ${title}${RESET}`];
   if (state.saved) rows.push(`${SUBTLE}  Current  ${SECONDARY}${describePromptConfiguration(state.saved)}${RESET}`);
   rows.push('');
@@ -865,6 +871,6 @@ export function renderPromptPanel(state: PromptPanelState, columns: number, prev
     rows.push(...preview);
   }
   rows.push('');
-  rows.push(renderControls(promptPanelControls(state)));
+  rows.push(...renderControlRows(promptPanelControls(state), columns));
   return rows.map(row => truncateAnsi(row, columns));
 }

@@ -202,7 +202,7 @@ test('Tools v2: Discover groups by category with aligned status columns, a selec
   const selected = rows.find(row => stripAnsi(row).includes('›') && stripAnsi(row).includes(first.label))!;
   assert.ok(/\u001b\[48;|\u001b\[7m/u.test(selected), 'selected row has a background band or reverse-video fallback');
   assert.ok(plain.some(row => row.trim() === first.description), 'muted description of the selection');
-  assert.match(plain.at(-1)!, /↑↓ select · ←→ tabs · Space select · Enter details/u);
+  assert.match(plain.at(-1)!, /↑↓ select · Tab\/←→ tabs · Space select · Enter details/u);
   const lazygit = plain.find(row => row.includes('lazygit'))!;
   assert.match(lazygit, /Missing/u);
 });
