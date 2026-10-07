@@ -206,3 +206,16 @@ test('live cursor frames never paint a background behind text; only the travelli
   assert.equal(withBackground, 0, 'a Bar caret and every effect draw with foreground colors only');
   presenter.dispose();
 });
+
+test('idle repaints (animated Chroma rules, clock) with an unchanged logical caret never start trail movement', () => {
+  const presenter = new CursorPresenter(() => settings({motion: 'smear', effect: 'fire'}), () => {}, seededRandom(9));
+  const caret = {row: 1, column: 4};
+  presenter.apply(['── a', '> ls', '── a'], caret, bounds, 'jump', true, 0);
+  presenter.apply(['── a', '> ls', '── a'], {row: 1, column: 5}, bounds, 'typing', true, 10);
+  for (let now = 1000; now < 3000; now += 100) presenter.apply([`── ${now}`, '> ls', `── ${now}`], {row: 1, column: 5}, bounds, 'jump', true, now);
+  assert.equal(presenter.engine.phase, 'idle', 'the trail settled and stays settled while only other rows repaint');
+  assert.ok(!presenter.scheduled, 'no animation clock keeps running for an idle caret');
+  presenter.apply(['── x', '> lsx', '── x'], {row: 1, column: 6}, bounds, 'typing', true, 3100);
+  assert.equal(presenter.engine.phase, 'movement', 'a real caret move still animates');
+  presenter.dispose();
+});

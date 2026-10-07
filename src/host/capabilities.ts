@@ -12,6 +12,13 @@ export interface TerminalCapabilities {
   synchronizedOutput: boolean;
   hyperlinks: boolean;
   truecolor: boolean;
+  /**
+   * The host is a multiplexer that already draws to the real terminal in its own synchronized
+   * updates (tmux). NMSh then never wraps frames in DEC 2026 itself, whatever the probe says: measured
+   * with tmux 3.7, an application's own 2026 block made tmux emit intermediate cursor positions after
+   * its sync block, visibly, which cursor shaders and trails on the outer terminal animate.
+   */
+  hostSynchronizes?: true;
 }
 
 export const BASELINE_CAPABILITIES: Readonly<TerminalCapabilities> = Object.freeze({
@@ -90,7 +97,7 @@ export function shouldProbeGraphics(env: NodeJS.ProcessEnv): boolean {
  * No movement tracking; Shift keeps the terminal's own selection.
  */
 const TMUX_PROFILE = {
-  mouseReporting: true, mouseMovement: false, clickSupport: true, textSelectionInteraction: 'shift' as const,
+  mouseReporting: true, mouseMovement: false, clickSupport: true, textSelectionInteraction: 'shift' as const, hostSynchronizes: true as const,
 };
 
 /** Adapter hints are subordinate to protocol evidence. Multiplexers hide outer hints. */

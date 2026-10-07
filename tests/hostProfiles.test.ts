@@ -58,7 +58,7 @@ test('Zed: wheel/click reporting with Shift selection, no movement tracking; col
   assert.equal(resolveHostCapabilities({TERM_PROGRAM: 'zed', TERM: 'xterm-256color'}).truecolor, false);
   assert.equal(resolveHostCapabilities({...zedEnv, NMSH_HYPERLINKS: '1'}).hyperlinks, true);
   assert.deepEqual(resolveHostCapabilities({...zedEnv, TMUX: 'socket'}), {...BASELINE_CAPABILITIES, truecolor: true,
-    mouseReporting: true, clickSupport: true, textSelectionInteraction: 'shift'}, 'nested in tmux: outer hints hidden, only tmux\'s own mouse reporting');
+    mouseReporting: true, clickSupport: true, textSelectionInteraction: 'shift', hostSynchronizes: true}, 'nested in tmux: outer hints hidden, only tmux\'s own mouse reporting and synchronized drawing');
   const host = detectTerminalHost(zedEnv, 'darwin');
   assert.equal(host.name, 'Zed');
   assert.equal(host.newWindow, undefined, 'no documented Zed command opens a new integrated terminal');
@@ -87,7 +87,7 @@ test('explicit host evidence overrides stale variables; nested and dumb attachme
       assert.deepEqual(resolveHostCapabilities({TERM_PROGRAM, ...nested}), BASELINE_CAPABILITIES);
     // tmux hides every outer hint; only its own pane mouse protocol remains.
     assert.deepEqual(resolveHostCapabilities({TERM_PROGRAM, TMUX: 'socket'}),
-      {...BASELINE_CAPABILITIES, mouseReporting: true, clickSupport: true, textSelectionInteraction: 'shift'});
+      {...BASELINE_CAPABILITIES, mouseReporting: true, clickSupport: true, textSelectionInteraction: 'shift', hostSynchronizes: true});
     assert.equal(resolveHostCapabilities({TERM_PROGRAM, NMSH_HYPERLINKS: '0'}).hyperlinks, false);
   }
 });
