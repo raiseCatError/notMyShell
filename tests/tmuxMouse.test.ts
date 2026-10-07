@@ -79,3 +79,15 @@ test('while a fullscreen program owns the pane, wheel reports are its input, not
 test('F1 opens the palette in legacy (SS3 P, CSI 11~) and kitty-protocol (CSI P) encodings', () => {
   for (const sequence of ['\u001bOP', '\u001b[11~', '\u001b[P']) assert.deepEqual(decodeKeys(sequence), [{kind: 'palette'}], JSON.stringify(sequence));
 });
+
+test('multiplexer clients get the real terminal from the start; their listing and control commands stay in the transcript', async () => {
+  const {shouldPassthrough} = await import('../src/passthrough/PassthroughPolicy.js');
+  for (const command of ['tmux', 'tmux new -s qa', 'tmux new-session -s qa', 'tmux attach -t qa', 'tmux attach-session -t qa', 'tmux a', 'tmux -L work new',
+    '/opt/homebrew/bin/tmux -f /dev/null new -s qa', 'TERM=xterm tmux new', 'screen', 'screen -r work', 'zellij', 'zellij attach main']) {
+    assert.equal(shouldPassthrough(command), true, command);
+  }
+  for (const command of ['tmux ls', 'tmux list-sessions', 'tmux kill-server', 'tmux -V', 'tmux -c "echo hi"', 'tmux source-file ~/.tmux.conf', 'tmux show -gv mouse',
+    'screen -ls', 'zellij list-sessions', 'echo tmux new', 'git status']) {
+    assert.equal(shouldPassthrough(command), false, command);
+  }
+});

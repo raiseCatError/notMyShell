@@ -115,6 +115,13 @@ autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
 
+# Startup is over: this shell has read its files. A zsh started from it (a tmux
+# pane, a nested shell) must be an ordinary zsh, not a second copy of this
+# bootstrap, which blanks the prompt and turns off ZLE and echo. Give children
+# the person's own ZDOTDIR back and stop exporting the prompt override.
+${env.ZDOTDIR ? `export ZDOTDIR=${shellQuote(env.ZDOTDIR)}` : 'unset ZDOTDIR'}
+typeset +x POWERLEVEL9K_DISABLE_PROMPT
+
 # Background cleanup handled by Node.js
 `);
 
