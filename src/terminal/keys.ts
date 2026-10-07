@@ -228,7 +228,8 @@ export class KeyDecoder {
         if (escape !== -1) {
           const suffix = remaining.slice(escape);
           const known = [...SEQUENCES.map(([sequence]) => sequence), '\u001B[200~'];
-          if ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix)) {
+          // Held only while it can still become a key; an endless parameter run is not held (bounded memory).
+          if (suffix.length <= 256 && ((known.some(sequence => sequence.startsWith(suffix)) && !known.includes(suffix)) || /^\u001B\[[0-?]*[ -/]*$/.test(suffix) || /^\u001BO$/.test(suffix))) {
             this.keyBuffer = suffix;
             remaining = remaining.slice(0, escape);
           }

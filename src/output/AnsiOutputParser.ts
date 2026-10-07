@@ -36,6 +36,18 @@ export type StyledLine = Array<StyledCell | null | undefined>;
 export type SerializedCell = StyledCell | null | {empty: true};
 export type SerializedLine = SerializedCell[];
 
+/**
+ * Bound on the bytes of one unfinished control sequence the parser retains
+ * across reads. OSC, DCS, SOS, PM and APC strings longer than this switch to
+ * discarding: only a trailing ESC is kept (a split ST), memory stays at the
+ * bound however long the string runs, its content never becomes text, and
+ * parsing resumes after its terminator (BEL or ST for OSC, ST only for the
+ * others). Any other unfinished sequence that reaches it (CSI, nF escapes) is
+ * abandoned at that point, as a terminal would. C1 forms (U+0080–U+009F) are
+ * not interpreted as introducers and are dropped as characters.
+ */
+export const MAX_CONTROL_SEQUENCE = 8192;
+
 export class AnsiOutputParser {
   readonly lines: StyledLine[] = [];
   private current: StyledLine = [];
@@ -45,7 +57,16 @@ export class AnsiOutputParser {
   private hyperlink?: string;
   /** While writing an NMSh-authored line: OSC 8 becomes an authored link only for allowed targets. */
   private authoring = false;
-  private discardingOsc = false;
+  /**
+   * Inside an oversized sequence: 'osc' ends at BEL or ST, 'string' (DCS/SOS/PM/APC) at ST; 'csi' and 'nf'
+   * skip their parameter/intermediate bytes and swallow the final byte, so no parameter becomes text.
+   */
+  private discarding: false | 'osc' | 'string' | 'csi' | 'nf' = false;
+
+  /** Bytes retained for an unfinished sequence; never above MAX_CONTROL_SEQUENCE. */
+  get retainedControlBytes(): number {
+    return this.pending.length;
+  }
 
   constructor(private readonly onClear?: () => void) {}
 
@@ -53,13 +74,19 @@ export class AnsiOutputParser {
     const input = this.pending + chunk;
     this.pending = '';
     let index = 0;
-    if (this.discardingOsc) {
-      const bell = input.indexOf('\u0007');
+    if (this.discarding === 'csi' || this.discarding === 'nf') {
+      const body = this.discarding === 'csi' ? /^[0-?\x20-/]*/u : /^[\x20-/]*/u;
+      index = body.exec(input)![0].length;
+      if (index >= input.length) return;
+      if (/[@-~]/u.test(input[index]!) || (this.discarding === 'nf' && /[0-~]/u.test(input[index]!))) index += 1;
+      this.discarding = false;
+    } else if (this.discarding) {
+      const bell = this.discarding === 'osc' ? input.indexOf('\u0007') : -1;
       const st = input.indexOf('\u001B\\');
       const end = bell < 0 ? st : st < 0 ? bell : Math.min(bell, st);
       if (end < 0) { this.pending = input.endsWith('\u001B') ? '\u001B' : ''; return; }
       index = end + (input[end] === '\u0007' ? 1 : 2);
-      this.discardingOsc = false;
+      this.discarding = false;
     }
 
     while (index < input.length) {
@@ -67,12 +94,18 @@ export class AnsiOutputParser {
       if (character === '\u001B') {
         const parsed = this.consumeEscape(input, index);
         if (!parsed.complete) {
-          this.pending = input.slice(index);
-          if (']PX^_'.includes(input[index + 1] ?? '\u0000') && this.pending.length > 8192) {
-            this.discardingOsc = true;
-            this.hyperlink = undefined;
-            this.pending = input.endsWith('\u001B') ? '\u001B' : '';
+          if (input.length - index < MAX_CONTROL_SEQUENCE) { this.pending = input.slice(index); break; }
+          const kind = input[index + 1]!;
+          if (kind === '[' || (kind >= ' ' && kind <= '/')) {
+            // Oversized CSI or nF: drop what was seen and skip the rest of its body, then its final byte.
+            this.discarding = kind === '[' ? 'csi' : 'nf';
+            const rest = input.slice(index + 2);
+            this.write(rest);
+            return;
           }
+          this.discarding = kind === ']' ? 'osc' : 'string';
+          if (kind === ']') this.hyperlink = undefined;
+          this.pending = input.endsWith('\u001B') ? '\u001B' : '';
           break;
         }
         index = parsed.next;
@@ -105,7 +138,7 @@ export class AnsiOutputParser {
       if (codePoint === undefined) break;
       const value = String.fromCodePoint(codePoint);
       index += value.length;
-      if (codePoint < 0x20 || codePoint === 0x7f) continue;
+      if (codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f)) continue;
       const width = stringWidth(value);
       if (width === 0) {
         const previous = this.findPreviousCell();
@@ -149,13 +182,13 @@ export class AnsiOutputParser {
     const oldStyle = this.style;
     const oldPending = this.pending;
     const oldHyperlink = this.hyperlink;
-    const oldDiscardingOsc = this.discardingOsc;
+    const oldDiscarding = this.discarding;
 
     this.current = [];
     this.column = 0;
     this.style = '';
     this.pending = '';
-    this.discardingOsc = false;
+    this.discarding = false;
     this.hyperlink = undefined;
     
     this.write(text);
@@ -170,7 +203,7 @@ export class AnsiOutputParser {
     this.style = oldStyle;
     this.pending = oldPending;
     this.hyperlink = oldHyperlink;
-    this.discardingOsc = oldDiscardingOsc;
+    this.discarding = oldDiscarding;
   }
 
   completedCount(): number {
@@ -217,7 +250,7 @@ export class AnsiOutputParser {
     this.column = 0;
     this.style = '';
     this.pending = '';
-    this.discardingOsc = false;
+    this.discarding = false;
     this.hyperlink = undefined;
     for (const line of lines) {
       const restored: StyledLine = line.map(cell => cell === null ? null : 'empty' in cell ? undefined : {...cell});
@@ -236,10 +269,10 @@ export class AnsiOutputParser {
     const kind = input[start + 1];
     if (kind === undefined) return {complete: false, next: start};
     if (kind === '[') {
-      const match = /^\u001B\[([0-?]*)([ -/]*)([@-~])?/u.exec(input.slice(start, start + 4096))!;
+      const match = /^\u001B\[([0-?]*)([ -/]*)([@-~])?/u.exec(input.slice(start, start + MAX_CONTROL_SEQUENCE))!;
       if (match[3] === undefined) {
-        // Incomplete at the end of the chunk; a byte that cannot continue a CSI aborts it, as terminals do.
-        if (start + match[0].length >= input.length && match[0].length < 4096) return {complete: false, next: start};
+        // Incomplete at the end of the chunk (oversized ones are discarded by write); a byte that cannot continue a CSI aborts it, as terminals do.
+        if (start + match[0].length >= input.length || match[0].length >= MAX_CONTROL_SEQUENCE) return {complete: false, next: start};
         return {complete: true, next: start + match[0].length};
       }
       const params = match[1] ?? '';
@@ -271,9 +304,11 @@ export class AnsiOutputParser {
     }
     if (kind >= ' ' && kind <= '/') {
       // nF escapes with intermediates: charset designations (ESC ( B), DECALN (ESC # 8), ESC % G. Their final byte is not text.
-      const match = /^\u001B[ -/]+[0-~]/u.exec(input.slice(start, start + 8));
+      const match = /^\u001B[ -/]+[0-~]/u.exec(input.slice(start, start + MAX_CONTROL_SEQUENCE));
       if (match) return {complete: true, next: start + match[0].length};
-      return /^\u001B[ -/]*$/u.test(input.slice(start)) ? {complete: false, next: start} : {complete: true, next: start + 2};
+      const intermediates = /^\u001B[ -/]*/u.exec(input.slice(start, start + MAX_CONTROL_SEQUENCE))![0].length - 1;
+      if (start + 1 + intermediates >= input.length || intermediates >= MAX_CONTROL_SEQUENCE - 1) return {complete: false, next: start};
+      return {complete: true, next: start + 1 + intermediates};
     }
     return {complete: true, next: Math.min(input.length, start + 2)};
   }
