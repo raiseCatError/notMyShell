@@ -122,11 +122,6 @@ const NORMAL: Row[] = [
   {key: 'renderer', label: 'Renderer', scene: 'jump', options: () => plain(CURSOR_RENDERERS), get: d => d.renderer, set: (d, v) => { d.renderer = v as CursorSettings['renderer']; },
     detail: (_d, env) => env.choice.reason},
   featureRow('motion', 'Motion', 'motion', 'jump', d => d.motion, (d, v) => { d.motion = v as CursorSettings['motion']; }),
-  {key: 'ghosttyTrail', label: 'Across rows', scene: 'jump', options: () => [{value: 'tmuxSafe', label: 'Tmux-safe'}, {value: 'full', label: 'Full'}],
-    get: d => d.ghosttyTrail, set: (d, v) => { d.ghosttyTrail = v as CursorSettings['ghosttyTrail']; },
-    unavailable: (d, env) => env.choice.native?.id !== 'ghostty' ? 'Only for NMSh\'s Ghostty cursor shader.' : d.motion === 'off' && d.effect === 'none' ? 'No trail or effect is on.' : undefined,
-    detail: d => d.ghosttyTrail === 'full' ? 'Every move trails. Inside tmux, redraws (animated Chroma, the clock) can make the trail jump to a neighbouring row.'
-      : 'Moves across rows do not trail: inside tmux, redraws briefly move Ghostty\'s cursor to a neighbouring row, and a shader cannot tell that from a real move. One shader serves every Ghostty window.'},
   featureRow('effect', 'Effect', 'effect', 'jump', d => d.effect, (d, v) => { d.effect = v as CursorSettings['effect']; }),
   featureRow('idle', 'Idle effect', 'idleEffect', 'idle', d => d.idleEffect, (d, v) => { d.idleEffect = v as CursorSettings['idleEffect']; }),
   {key: 'color', label: 'Color', scene: 'jump', options: () => plain(COLOR_SOURCE_ORDER, value => COLOR_SOURCE_LABELS[value]!), get: d => d.color.source,

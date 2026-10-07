@@ -235,7 +235,7 @@ import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanc
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, setCursorHostProvider, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
-import {includeLine, nativeCursorIntegrated, nativeHostLabel, refreshManagedCursor, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
+import {includeLine, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
 import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelEnv, type CursorPanelOptions, type CursorPanelState} from '../cursor/CursorPanel.js';
 import {contextFor, resolveCursorSettings} from '../cursor/colors.js';
 import {renderCursorPreview} from '../cursor/CursorPreview.js';
@@ -1057,7 +1057,6 @@ export class TerminalApp {
     });
     this.presentationStarted = true;
     void this.loadSessionIdentity();
-    this.refreshManagedCursorShader();
     this.refreshAwake();
     // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
     this.scheduleThemeBridge(500);
@@ -4459,14 +4458,6 @@ export class TerminalApp {
     if (this.sessionIdentity?.name === next.name && this.sessionIdentity?.signature === next.signature) return;
     this.sessionIdentity = next;
     this.render();
-  }
-
-  /** Once per launch: bring NMSh's own managed native cursor files up to date (see refreshManagedCursor). */
-  private refreshManagedCursorShader(): void {
-    try {
-      const message = refreshManagedCursor(resolveCursorSettings(this.promptConfiguration.cursor, contextFor(this.promptConfiguration)));
-      if (message) this.output.addFrontendInteraction('/cursor', message, INFO);
-    } catch { /* best effort; /cursor reports problems when used */ }
   }
 
   /** One request at launch/reattach (never polled): the title and notices know who this session is without waiting for a refresh. */

@@ -441,22 +441,13 @@ export interface CursorSettings {
   particles: {source: typeof CURSOR_PARTICLE_COLORS[number]; colors: string[]};
   speed: CursorLevel; intensity: CursorLevel; trailLength: CursorLevel; particleAmount: CursorLevel;
   advanced: CursorAdvanced;
-  /**
-   * NMSh's Ghostty cursor shader, for moves across rows. Tmux-safe (default) draws no trail when the cursor
-   * changes row: inside tmux, redraws briefly park Ghostty's cursor at column 1 of a neighbouring row, and a
-   * shader cannot tell that from a real move (it sees only the current and previous position). Full trails
-   * every move. One shader serves every Ghostty window, so this is a single choice, not per pane.
-   */
-  ghosttyTrail: GhosttyTrail;
 }
-export const GHOSTTY_TRAILS = ['tmuxSafe', 'full'] as const;
-export type GhosttyTrail = typeof GHOSTTY_TRAILS[number];
 export const DEFAULT_CURSOR_ADVANCED: CursorAdvanced = {shortMoveMs: 40, longMoveMs: 150, easing: 'out-cubic', stiffness: 0.6, tailStiffness: 0.35, damping: 0.85,
   trailExponent: 1.6, maxTrail: 24, moveThreshold: 1, dwellMs: 600, particleDensity: 1, particleLifetimeMs: 520, spread: 0.6, particleSpeed: 1, drag: 0.9, gravity: 1, fps: 60};
 /** Factory defaults: no motion, no effect, no idle effect. Existing users see no surprise animation. */
 export const DEFAULT_CURSOR: CursorSettings = {shape: 'host', blink: 'host', renderer: 'auto', motion: 'off', effect: 'none', idleEffect: 'off',
   color: {source: 'host'}, trail: {source: 'cursor', colors: []}, particles: {source: 'trail', colors: []},
-  speed: 'medium', intensity: 'medium', trailLength: 'medium', particleAmount: 'medium', advanced: DEFAULT_CURSOR_ADVANCED, ghosttyTrail: 'tmuxSafe'};
+  speed: 'medium', intensity: 'medium', trailLength: 'medium', particleAmount: 'medium', advanced: DEFAULT_CURSOR_ADVANCED};
 
 const HEX = /^#[0-9a-f]{6}$/iu;
 const pick = <T extends string>(list: readonly T[], value: unknown, fallback: T): T => list.includes(value as T) ? value as T : fallback;
@@ -479,7 +470,7 @@ export function normalizeCursor(value: unknown): CursorSettings {
     trail: {source: pick(CURSOR_TRAIL_COLORS, trail.source, 'cursor'), colors: colors(trail.colors)},
     particles: {source: pick(CURSOR_PARTICLE_COLORS, particles.source, 'trail'), colors: colors(particles.colors)},
     speed: pick(CURSOR_LEVELS, v.speed, 'medium'), intensity: pick(CURSOR_LEVELS, v.intensity, 'medium'), trailLength: pick(CURSOR_LEVELS, v.trailLength, 'medium'),
-    particleAmount: pick(CURSOR_LEVELS, v.particleAmount, 'medium'), ghosttyTrail: pick(GHOSTTY_TRAILS, v.ghosttyTrail, 'tmuxSafe'),
+    particleAmount: pick(CURSOR_LEVELS, v.particleAmount, 'medium'),
     advanced: {shortMoveMs: clampNumber(advanced.shortMoveMs, 0, 200, a.shortMoveMs), longMoveMs: clampNumber(advanced.longMoveMs, 40, 600, a.longMoveMs),
       easing: pick(CURSOR_EASINGS, advanced.easing, a.easing), stiffness: clampNumber(advanced.stiffness, 0.05, 1, a.stiffness),
       tailStiffness: clampNumber(advanced.tailStiffness, 0.05, 1, a.tailStiffness), damping: clampNumber(advanced.damping, 0.1, 1, a.damping),
