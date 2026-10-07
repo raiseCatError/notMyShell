@@ -95,6 +95,8 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   // Command palette: Ctrl+Shift+P and Cmd+Shift+P need CSI-u reporting (plain Ctrl+Shift+P is Ctrl+P); F1 is the legacy fallback.
   ['\u001B[112;6u', 'palette'], ['\u001B[80;6u', 'palette'], ['\u001B[112;10u', 'palette'], ['\u001B[80;10u', 'palette'],
   ['\u001BOP', 'palette'], ['\u001B[11~', 'palette'],
+  // Kitty keyboard protocol functional-key form (`CSI 1 P`, the 1 omitted when unmodified); NMSh enables that protocol where supported.
+  ['\u001B[P', 'palette'],
   ['\u001B[110;5u', 'suggestNext'], // Kitty Ctrl+N
   ['\u001B[112;5u', 'suggestPrevious'], // Kitty Ctrl+P
   ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)

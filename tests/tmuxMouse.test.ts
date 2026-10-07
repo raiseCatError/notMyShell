@@ -75,3 +75,7 @@ test('while a fullscreen program owns the pane, wheel reports are its input, not
     assert.equal(forwarded.join(''), TMUX_WHEEL_UP, 'the program received the report unchanged');
   } finally { instance['passthrough'] = false; instance['stop'](0); instance['session'].kill(); }
 });
+
+test('F1 opens the palette in legacy (SS3 P, CSI 11~) and kitty-protocol (CSI P) encodings', () => {
+  for (const sequence of ['\u001bOP', '\u001b[11~', '\u001b[P']) assert.deepEqual(decodeKeys(sequence), [{kind: 'palette'}], JSON.stringify(sequence));
+});
