@@ -56,7 +56,17 @@ export interface CursorPanelEnv {
   /** Decorative motion is not allowed right now. */
   still: boolean;
   level: ColorLevel;
+  /** NMSh runs inside tmux: the outer terminal (and its native cursor shader) is hidden from NMSh. */
+  multiplexed?: boolean;
 }
+
+/**
+ * A host-native trail (Ghostty's shader) follows the terminal's real cursor, which tmux moves while it draws
+ * (animated Chroma, its own status line), so it can jump even at a plain shell prompt. Portable is drawn by
+ * NMSh from its own caret. Said once, on the Renderer row, only inside tmux.
+ */
+export const TMUX_NATIVE_TRAIL_NOTE = 'Inside tmux, a terminal\'s native cursor trail follows the cursor tmux moves while it draws, so it can jump. '
+  + 'For a steady trail in tmux choose Portable (NMSh draws it from its caret and turns its native shader off; reload the terminal\'s config).';
 
 interface Option {value: string; label: string}
 interface Row {
@@ -120,7 +130,7 @@ const NORMAL: Row[] = [
     unavailable: d => d.shape === 'host' ? 'Blink needs an explicit shape; Host default keeps your terminal\'s own cursor.' : undefined,
     detail: d => d.blink === 'host' ? 'Host default blink: the terminal\'s own, at its own speed.' : undefined},
   {key: 'renderer', label: 'Renderer', scene: 'jump', options: () => plain(CURSOR_RENDERERS), get: d => d.renderer, set: (d, v) => { d.renderer = v as CursorSettings['renderer']; },
-    detail: (_d, env) => env.choice.reason},
+    detail: (_d, env) => env.multiplexed ? `${env.choice.reason} · ${TMUX_NATIVE_TRAIL_NOTE}` : env.choice.reason},
   featureRow('motion', 'Motion', 'motion', 'jump', d => d.motion, (d, v) => { d.motion = v as CursorSettings['motion']; }),
   featureRow('effect', 'Effect', 'effect', 'jump', d => d.effect, (d, v) => { d.effect = v as CursorSettings['effect']; }),
   featureRow('idle', 'Idle effect', 'idleEffect', 'idle', d => d.idleEffect, (d, v) => { d.idleEffect = v as CursorSettings['idleEffect']; }),

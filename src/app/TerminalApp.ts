@@ -235,7 +235,7 @@ import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanc
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, setCursorHostProvider, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
-import {includeLine, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
+import {includeLine, installedNativeHost, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
 import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelEnv, type CursorPanelOptions, type CursorPanelState} from '../cursor/CursorPanel.js';
 import {contextFor, resolveCursorSettings} from '../cursor/colors.js';
 import {renderCursorPreview} from '../cursor/CursorPreview.js';
@@ -6835,7 +6835,7 @@ export class TerminalApp {
   private cursorEnv(draft: PromptConfiguration['cursor'], config: PromptConfiguration): CursorPanelEnv {
     const facts = this.cursorFacts();
     return {choice: chooseBackend(draft, facts), facts, context: {...contextFor(config), chrome: UI_COLORS.accent},
-      still: !this.decorativeMotionAllowed() || colorLevel() === 'none', level: colorLevel()};
+      still: !this.decorativeMotionAllowed() || colorLevel() === 'none', level: colorLevel(), ...(process.env.TMUX ? {multiplexed: true} : {})};
   }
 
   private cursorFacts(): HostCursorFacts {
@@ -6914,10 +6914,13 @@ export class TerminalApp {
    */
   private syncCursorNative(next: PromptConfiguration): void {
     const facts = this.cursorFacts();
-    if (facts.host === 'other' || !facts.integrated) { this.cursorReload = undefined; return; }
+    // Inside a multiplexer the outer terminal is hidden, but NMSh's own managed files may still be installed there.
+    const host = facts.host !== 'other' ? (facts.integrated ? facts.host : undefined)
+      : installedNativeHost();
+    if (!host) { this.cursorReload = undefined; return; }
     try {
-      const written = writeManagedFiles(facts.host, resolveCursorSettings(next.cursor, contextFor(next)));
-      this.cursorReload = reloadInstruction(facts.host, written);
+      const written = writeManagedFiles(host, resolveCursorSettings(next.cursor, contextFor(next)));
+      this.cursorReload = reloadInstruction(host, written);
     } catch { this.cursorReload = 'Could not update the managed cursor files.'; }
   }
   private understandingPanel?: UnderstandingPanelState;
