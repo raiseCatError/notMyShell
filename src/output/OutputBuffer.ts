@@ -5,6 +5,7 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
+import {TranscriptCut} from '../session/TerminalModes.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
 import {shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
@@ -90,6 +91,8 @@ export class OutputBuffer {
     activities: SecondaryActivity[];
   };
   private classifier?: CommandClassifier;
+  /** What of the active command's output is transcript text (see TranscriptCut). */
+  private cut?: TranscriptCut;
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
@@ -137,6 +140,7 @@ export class OutputBuffer {
     }
     this.active = undefined;
     this.classifier = undefined;
+    this.cut = undefined;
   }
 
   clearPresentation(): void {
@@ -148,6 +152,7 @@ export class OutputBuffer {
     this.historicalContexts.clear();
     this.active = undefined;
     this.classifier = undefined;
+    this.cut = undefined;
   }
 
   /** Applies to commands that finish from now on; existing blocks keep their state. */
@@ -190,6 +195,7 @@ export class OutputBuffer {
     this.active = {command, start: startId, outputStart: startId + formattedLines.length,
       historicalContext: historicalContext ? structuredClone(historicalContext) : undefined, activities: []};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
+    this.cut = new TranscriptCut();
     return startId;
   }
 
@@ -202,6 +208,7 @@ export class OutputBuffer {
     this.active = {command, start: startId, outputStart: outputStartId,
       historicalContext: this.historicalContexts.get(startId), activities: []};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
+    this.cut = new TranscriptCut();
   }
 
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
@@ -230,7 +237,8 @@ export class OutputBuffer {
 
   write(data: string): void {
     this.classifier?.pushChunk(data);
-    this.parser.write(data);
+    const text = this.cut ? this.cut.push(data) : data;
+    if (text) this.parser.write(text);
   }
 
   tickActiveCommand(): void {
@@ -238,6 +246,8 @@ export class OutputBuffer {
   }
 
   complete(exitCode: number): CompletedCommand | undefined {
+    const held = this.cut?.flush();
+    if (held) this.parser.write(held);
     this.parser.ensureLineBoundary();
     if (!this.active) return undefined;
     const endId = this.parser.completedCount();
@@ -270,6 +280,7 @@ export class OutputBuffer {
     this.completed.unshift(record);
     this.active = undefined;
     this.classifier = undefined;
+    this.cut = undefined;
     return record;
   }
 

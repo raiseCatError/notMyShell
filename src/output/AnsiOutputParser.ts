@@ -236,8 +236,12 @@ export class AnsiOutputParser {
     const kind = input[start + 1];
     if (kind === undefined) return {complete: false, next: start};
     if (kind === '[') {
-      const match = /^\u001B\[([0-?]*)([ -/]*)([@-~])/u.exec(input.slice(start));
-      if (!match) return {complete: false, next: start};
+      const match = /^\u001B\[([0-?]*)([ -/]*)([@-~])?/u.exec(input.slice(start, start + 4096))!;
+      if (match[3] === undefined) {
+        // Incomplete at the end of the chunk; a byte that cannot continue a CSI aborts it, as terminals do.
+        if (start + match[0].length >= input.length && match[0].length < 4096) return {complete: false, next: start};
+        return {complete: true, next: start + match[0].length};
+      }
       const params = match[1] ?? '';
       const final = match[3] ?? '';
       this.applyCsi(params, final);
@@ -260,7 +264,45 @@ export class AnsiOutputParser {
       }
       return {complete: true, next: end + (input[end] === '\u0007' ? 1 : 2)};
     }
+    if (kind === 'P' || kind === 'X' || kind === '^' || kind === '_') {
+      // DCS, SOS, PM and APC strings (tmux passthrough, XTGETTCAP, kitty graphics) run to ST and are never text.
+      const end = input.indexOf('\u001B\\', start + 2);
+      return end === -1 ? {complete: false, next: start} : {complete: true, next: end + 2};
+    }
+    if (kind >= ' ' && kind <= '/') {
+      // nF escapes with intermediates: charset designations (ESC ( B), DECALN (ESC # 8), ESC % G. Their final byte is not text.
+      const match = /^\u001B[ -/]+[0-~]/u.exec(input.slice(start, start + 8));
+      if (match) return {complete: true, next: start + match[0].length};
+      return /^\u001B[ -/]*$/u.test(input.slice(start)) ? {complete: false, next: start} : {complete: true, next: start + 2};
+    }
     return {complete: true, next: Math.min(input.length, start + 2)};
+  }
+
+  /**
+   * SGR in order: 0 resets where it appears, and the arguments of extended
+   * colours (38/48/58 with 5;n or 2;r;g;b) are never read as attributes, so a
+   * zero colour component does not reset the style. Unreadable parameters are dropped.
+   */
+  private applySgr(params: string): void {
+    if (params === '') { this.style = ''; return; }
+    const values = params.split(';');
+    let kept: string[] = [];
+    for (let index = 0; index < values.length; index += 1) {
+      const value = values[index]!;
+      if (!/^\d{1,3}(?::[\d:]*)?$/u.test(value || '0')) return;
+      const code = Number((value || '0').split(':')[0]);
+      if (code === 0) { this.style = ''; kept = []; continue; }
+      if ((code === 38 || code === 48 || code === 58) && !value.includes(':')) {
+        const width = values[index + 1] === '5' ? 2 : values[index + 1] === '2' ? 4 : 0;
+        const args = values.slice(index + 1, index + 1 + width);
+        if (width === 0 || args.length < width || !args.every(arg => /^\d{1,3}$/u.test(arg))) return;
+        kept.push([value, ...args].join(';'));
+        index += width;
+        continue;
+      }
+      kept.push(value);
+    }
+    if (kept.length > 0) this.style += `\u001B[${kept.join(';')}m`;
   }
 
   private applyCsi(params: string, final: string): void {
@@ -268,9 +310,9 @@ export class AnsiOutputParser {
     const values = params.replace(/^\?/u, '').split(';').map(value => Number(value || '0'));
     const amount = values[0] || 1;
     if (final === 'm') {
-      if (params === '' || values.includes(0)) this.style = '';
-      const nonReset = values.filter(value => value !== 0);
-      if (nonReset.length > 0) this.style += `\u001B[${nonReset.join(';')}m`;
+      // A private marker makes it another request (`CSI > 4 ; 2 m` is xterm's modifyOtherKeys), not SGR.
+      if (/^[<=>?]/u.test(params)) return;
+      this.applySgr(params);
     } else if (final === 'K') {
       if ((values[0] ?? 0) === 2) this.current = [];
       else this.current.splice(this.column);

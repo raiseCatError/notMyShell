@@ -170,3 +170,46 @@ test('an ordinary long-running command with progress output stays in NMSh and ke
     await sandbox.dispose();
   }
 });
+
+test('a fullscreen program found from its output owns the terminal outright: NMSh writes nothing over it and keeps none of its paint', async () => {
+  // Shaped on agy's real stream: ordinary text, then (in the same write) the alternate screen, modifyOtherKeys,
+  // truecolor paint, and a spinner that returns to column 1 until a key arrives.
+  const sandbox = new LiveSandbox();
+  const script = join(sandbox.home, 'paint.mjs');
+  writeFileSync(script, `
+process.stdin.setRawMode(true);
+process.stdout.write('BEFORE_OWN\\r\\n\\u001b[?1049h\\u001b[?25l\\u001b[>4;2m\\u001b[>1u\\u001b[H\\u001b[2J\\u001b[38;2;0;1;2mPAINT_MARK\\u001b[m\\r\\n');
+const frames = ['\\r-', '\\r|', '\\r/'];
+let frame = 0;
+const timer = setInterval(() => process.stdout.write(frames[frame++ % frames.length]), 40);
+process.stdin.on('data', data => {
+  if (!String(data).includes('q')) return;
+  clearInterval(timer);
+  process.stdout.write('\\u001b[>4m\\u001b[<1u\\u001b[?1049l\\u001b[?25h');
+  process.exit(0);
+});
+`);
+  try {
+    const app = sandbox.launch();
+    await app.waitFor(/❯/);
+    const mark = app.mark;
+    app.pty.write(`node ${script}\r`);
+    await until(() => app.output.includes('PAINT_MARK', mark), 15000, 'the program painted');
+    const handover = app.output.lastIndexOf('\u001b[2J\u001b[H', app.output.indexOf('PAINT_MARK', mark));
+    assert.ok(handover > mark, 'NMSh handed the terminal over before the paint reached it');
+    await new Promise(resolve => setTimeout(resolve, 600));
+    const owned = app.output.slice(app.output.indexOf('PAINT_MARK', mark) + 'PAINT_MARK'.length);
+    // Everything written while the program owns the terminal is the program's own spinner.
+    assert.equal(owned.replace(/^\u001b\[m/u, '').replace(/[\r\n|/-]/gu, ''), '', 'NMSh wrote nothing while the program owned the terminal');
+    const back = app.mark;
+    app.pty.write('q');
+    await app.waitFor(/❯/, back);
+    await app.run('echo BACK_IN_NMSH', /BACK_IN_NMSH/);
+    const reclaimed = strip(app.output.slice(back));
+    assert.match(reclaimed, /BEFORE_OWN/u, 'ordinary output before the takeover stays in the transcript');
+    assert.doesNotMatch(reclaimed, /PAINT_MARK|NaN|;2m|\[>/u, 'none of the program\'s paint or controls come back as transcript text');
+    assert.doesNotMatch(app.output.slice(back), /NaN/u, 'no unreadable style is written');
+  } finally {
+    await sandbox.dispose();
+  }
+});

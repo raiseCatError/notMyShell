@@ -930,9 +930,20 @@ export class TerminalApp {
   private enterAttachedPassthrough(): void {
     // Reattached into a fullscreen app: hand it the whole terminal again,
     // including the mouse/paste/cursor-key modes it set before the detach.
-    this.terminalFocus = 'unknown';
-    this.renderer.suspendForPassthrough(this.attachedModes);
+    this.handOverTerminal(this.attachedModes);
     this.attachedModes = '';
+  }
+
+  /**
+   * The foreground program takes the terminal: NMSh stops drawing, and nothing half-decoded on NMSh's side
+   * (an Escape awaiting its flush, part of a sequence) can later turn into composer input; from here every
+   * byte goes to the program. Reclaimed in onShellPrompt.
+   */
+  private handOverTerminal(restore = ''): void {
+    if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
+    this.keyDecoder.reset();
+    this.terminalFocus = 'unknown';
+    this.renderer.suspendForPassthrough(restore);
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
   }
@@ -945,10 +956,7 @@ export class TerminalApp {
       this.passthrough = true;
       this.noteForeignScreen();
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
-      this.terminalFocus = 'unknown';
-      this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
-      const dimensions = this.dimensions();
-      this.session.resize(dimensions.columns, dimensions.rows);
+      this.handOverTerminal(this.commandModes.restoreSequence());
     }
     this.render();
   }
@@ -964,12 +972,9 @@ export class TerminalApp {
       this.running.historyAllowed = historyAllowed;
       if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
         this.cancelPresentation();
-        this.terminalFocus = 'unknown';
         this.passthrough = true;
         this.noteForeignScreen();
-        this.renderer.suspendForPassthrough();
-        const dimensions = this.dimensions();
-        this.session.resize(dimensions.columns, dimensions.rows);
+        this.handOverTerminal();
       }
       return;
     }
@@ -2534,10 +2539,7 @@ export class TerminalApp {
         this.cancelPresentation();
         this.passthrough = true;
         this.noteForeignScreen();
-        this.terminalFocus = 'unknown';
-        this.renderer.suspendForPassthrough();
-        const dimensions = this.dimensions();
-        this.session.resize(dimensions.columns, dimensions.rows);
+        this.handOverTerminal();
       }
       this.render();
     }, this.historicalContext(this.shellCwd, contextAtSubmission, command));
@@ -2557,10 +2559,7 @@ export class TerminalApp {
     this.passthrough = !this.startupPending && shouldPassthrough(command);
     if (this.passthrough) {
       this.noteForeignScreen();
-      this.terminalFocus = 'unknown';
-      this.renderer.suspendForPassthrough();
-      const dimensions = this.dimensions();
-      this.session.resize(dimensions.columns, dimensions.rows);
+      this.handOverTerminal();
     }
     if (command.includes('\n')) {
       this.session.submit(`{ ${command}\n}`);
@@ -3119,6 +3118,8 @@ export class TerminalApp {
       // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
       this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
+      // Bytes the program owned (its keys, the terminal's replies to it) never continue as NMSh input.
+      if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
       this.keyDecoder.reset();
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;

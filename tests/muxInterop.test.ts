@@ -333,6 +333,9 @@ test('tmux launched from the NMSh composer is an ordinary tmux client; detaching
       app.pty.write('\u0002d'); // Ctrl-b d: detach
       await app.waitFor(/❯/, back);
       await app.run('echo BACK_IN_NMSH', /BACK_IN_NMSH/);
+      // Nothing of tmux's output or the detach keys comes back as text (ESC ( B used to print a lone "B").
+      const reclaimed = app.output.slice(app.output.indexOf('\u001b[?2004h', back));
+      assert.doesNotMatch(strip(reclaimed).replace(/\u001b./gu, ''), /(?<![A-Za-z])B(?![A-Za-z])|\u0002|(?<![A-Za-z])d(?![A-Za-z])/u, 'no stray bytes after detach');
       assert.equal(tmux('has-session', '-t', 'qa').status, 0, 'the detached tmux session keeps running');
       const again = app.mark;
       app.pty.write(`tmux -L ${socket} -f /dev/null attach -t qa\r`);

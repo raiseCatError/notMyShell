@@ -68,3 +68,11 @@ Not for baseline coexistence. Everything in the matrix works with no multiplexer
 4. **Physical Zellij pass.** Run the matrix in Zellij and record results; add Zellij to the `muxInterop` tests if it can be installed where tests run. (P2)
 5. **Document recommended tmux settings** (`mouse on`, `extended-keys always`) in the README once 2 is decided. (P3)
 6. **Done (development line):** `tmux` (no command, `new`, `new-session`, `attach`, `attach-session`), `screen` and `zellij` client invocations get the terminal from launch; listing and control commands (`tmux ls`, `screen -ls`, …) stay in the transcript. A tmux started from the composer also gets an ordinary zsh in its panes: NMSh's zsh bootstrap no longer exports its private `ZDOTDIR` or prompt override to child shells (they made the panes blank).
+
+## Terminal ownership handoff
+
+Whatever triggers it (a known command at submit, or evidence in the output: the alternate screen, an input mode, a kitty keyboard push), handing the terminal to a foreground program is one transaction:
+
+- **To the program.** NMSh stops rendering and drops any half-decoded input (a pending Escape, part of a sequence), so nothing typed for the program can become composer text. From the evidence byte on, output is the program's screen paint: it goes to the terminal and never into the transcript, even when it arrives in the same read as earlier ordinary output. Text before it stays transcript output.
+- **While it owns the terminal.** NMSh writes nothing: no frames, caret moves, cursor visibility, Chroma or motion, title or semantic marks. Measured in real PTYs with an agy-shaped program and with agy itself.
+- **Back to NMSh** (at the shell's next prompt). Mode reconciliation, input decoder reset, and an authoritative full redraw. The transcript parser also never prints bytes of sequences it does not draw: charset designations such as tmux's `ESC ( B` (once a stray `B`), DCS/APC strings, and `CSI > … m` requests, which were mis-read as colour and re-emitted as `ESC[NaN;2m`.
