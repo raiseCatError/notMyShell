@@ -110,7 +110,7 @@ import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../s
 import {CommandEditor} from '../input/CommandEditor.js';
 import {authoredLink, closeAuthoredLinks} from '../output/Hyperlinks.js';
 import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
-import {HostTitle, titleSupport} from '../host/terminalTitle.js';
+import {HostTitle, composeTitle, sessionTitleName, titleSupport} from '../host/terminalTitle.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
@@ -1056,6 +1056,7 @@ export class TerminalApp {
       }
     });
     this.presentationStarted = true;
+    void this.loadSessionIdentity();
     this.refreshAwake();
     // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
     this.scheduleThemeBridge(500);
@@ -2234,6 +2235,7 @@ export class TerminalApp {
         this.renderer.invalidate();
       }
       this.externalPassthrough = false;
+      this.noteForeignScreen();
       this.render();
     }
   }
@@ -2378,6 +2380,10 @@ export class TerminalApp {
       else {
         try {
           const info = await renameSession(socketPathFor(defaultRuntimeDir(process.env)), this.sessionId, slash.name);
+          if (info) {
+            this.noticeLabels.set(this.sessionId, info.name || info.signature || this.noticeLabels.get(this.sessionId) || '');
+            this.noteSessionIdentity(info);
+          }
           this.output.addFrontendInteraction(command, info ? `This session is ${info.name || info.signature || 'unnamed'}${info.name && info.signature ? ` (signature ${info.signature})` : ''}.` : 'The session service did not answer.', INFO);
         } catch { this.output.addFrontendInteraction(command, 'The session service did not answer; nothing changed.', ERROR); }
       }
@@ -2534,6 +2540,7 @@ export class TerminalApp {
     // Initial static heuristic, but dynamic can override
     this.passthrough = !this.startupPending && shouldPassthrough(command);
     if (this.passthrough) {
+      this.noteForeignScreen();
       this.terminalFocus = 'unknown';
       this.renderer.suspendForPassthrough();
       const dimensions = this.dimensions();
@@ -3093,6 +3100,8 @@ export class TerminalApp {
     });
     if (this.passthrough) {
       this.passthrough = false;
+      // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
+      this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
       this.keyDecoder.reset();
       this.lastPtyRows = 0;
@@ -4377,10 +4386,27 @@ export class TerminalApp {
     const mode = this.promptConfiguration.terminalTitle;
     if (mode === 'off') return undefined;
     const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
-    const session = mode === 'session' && this.sessionId ? this.noticeLabels.get(this.sessionId) : undefined;
-    const identity = session ? `${project} — ${session}` : project;
+    const session = this.sessionId ? sessionTitleName(this.sessionIdentity, this.noticeLabels.get(this.sessionId)) : undefined;
     const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
-    return running ? `${running} · ${identity}` : identity;
+    return composeTitle(mode, project, session, running);
+  }
+
+  /** This session's own name and signature, as the service last reported them (attach, /rename, notice refresh). */
+  private sessionIdentity?: {name?: string; signature?: string};
+
+  private noteSessionIdentity(info: {name?: string; signature?: string} | undefined): void {
+    if (!info) return;
+    const next = {name: info.name, signature: info.signature};
+    if (this.sessionIdentity?.name === next.name && this.sessionIdentity?.signature === next.signature) return;
+    this.sessionIdentity = next;
+    this.render();
+  }
+
+  /** One request at launch/reattach (never polled): the title and notices know who this session is without waiting for a refresh. */
+  private async loadSessionIdentity(): Promise<void> {
+    if (this.sessionMode !== 'service' || !this.sessionId) return;
+    const sessions = await listLiveSessions().catch(() => []);
+    if (!this.stopped) this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
   }
   private themeBridgePanel?: ThemeBridgePanelState;
   private bridgeReports: TargetReport[] = [];
@@ -6409,6 +6435,7 @@ export class TerminalApp {
       const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
       // The person's own name, else the familiar signature, else the old ordinal label.
       this.noticeLabels = new Map(ordered.map((session, index) => [session.id, session.name || session.signature || sessionLabel(session.id, index + 1)]));
+      this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
       this.noticeSource = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
       this.applyNotices();
     } catch { /* notices are best effort */ } finally { this.noticePolling = false; }

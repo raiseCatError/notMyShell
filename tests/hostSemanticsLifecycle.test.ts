@@ -118,3 +118,63 @@ test('settings export carries the Context Rail and the terminal title with the p
   assert.match(document, /"contextRail":\{[^}]*"rows":2/u);
   assert.match(document, /"terminalTitle":"session"/u);
 });
+
+test('hostile titles lose whole control sequences, not just their introducers', async () => {
+  const {stripTerminalControls} = await import('../src/util/terminalControls.js');
+  assert.equal(sanitizeTitle('evil\u001b]0;PWNED\u0007'), 'evil', 'OSC to BEL leaves no ]0;PWNED debris');
+  assert.equal(sanitizeTitle('evil\u001b]0;PWNED\u001b\\tail'), 'eviltail', 'OSC to 7-bit ST');
+  assert.equal(sanitizeTitle('evil\u009d0;PWNED\u009ctail'), 'eviltail', 'C1 OSC to C1 ST');
+  assert.equal(sanitizeTitle('evil\u001b]0;PWNED'), 'evil', 'an unterminated OSC swallows the rest');
+  assert.equal(sanitizeTitle('a\u001b[31mred\u001b[0m\u009b2Jb'), 'aredb', 'CSI and C1 CSI');
+  assert.equal(sanitizeTitle('a\u001bPq#0;2\u001b\\b\u001b_apc\u0007c'), 'abc', 'DCS and APC strings');
+  assert.equal(sanitizeTitle('a\u001b[38;2;1'), 'a', 'an incomplete CSI');
+  assert.equal(sanitizeTitle('a\u001b7b\u001bc'), 'ab', 'two-character escapes');
+  assert.equal(sanitizeTitle('pay\u202eexe.\u2066x\u2069\u200f'), 'payexe.x', 'bidi overrides and isolates are dropped');
+  assert.equal(sanitizeTitle('a\u0000b\u007fc\u0085d'), 'abcd', 'C0, DEL and C1 controls');
+  assert.equal(sanitizeTitle('café — 東京 🚀 notMyShell'), 'café — 東京 🚀 notMyShell', 'ordinary Unicode survives');
+  assert.equal(sanitizeTitle('  multi\nline\tname  '), 'multi line name');
+  assert.equal(stripTerminalControls('\u001b]'.repeat(5000)).length, 0, 'bounded and linear on adversarial input');
+  const t0 = performance.now(); stripTerminalControls('\u001b['.repeat(100_000) + 'x'); assert.ok(performance.now() - t0 < 50);
+});
+
+test('Project and session: /rename and a restored signature reach the title at once', async () => {
+  const {composeTitle, sessionTitleName} = await import('../src/host/terminalTitle.js');
+  assert.equal(composeTitle('project', 'notMyShell', 'QA'), 'notMyShell', 'Project shows the project only');
+  assert.equal(composeTitle('session', 'notMyShell', 'QA'), 'notMyShell — QA');
+  assert.equal(composeTitle('session', 'notMyShell', undefined), 'notMyShell');
+  assert.equal(sessionTitleName({signature: 'Mango'}), 'Mango');
+  assert.equal(sessionTitleName({name: 'QA', signature: 'Mango'}), 'QA');
+  const app = new TerminalApp();
+  try {
+    const writes: string[] = [];
+    app['hostTitle'] = new (app['hostTitle'].constructor as typeof HostTitle)({enabled: true, stack: false}, data => { writes.push(data); }, () => true);
+    app['promptConfiguration'].terminalTitle = 'session';
+    app['context'] = {cwd: '/work/notMyShell', project: 'notMyShell'};
+    (app as unknown as {sessionId: string}).sessionId = 's1';
+    app['noteSessionIdentity']({signature: 'Mango'});
+    assert.equal(app['desiredTitle'](), 'notMyShell — Mango', 'attach/reattach identity without notices enabled');
+    app['noteSessionIdentity']({name: 'QA', signature: 'Mango'});
+    assert.equal(writes.at(-1), osc2('notMyShell — QA'), '/rename QA is written immediately, without waiting for a cd or notice poll');
+    app['noteSessionIdentity']({signature: 'Mango'});
+    assert.equal(writes.at(-1), osc2('notMyShell — Mango'), '/rename back to the signature is written immediately');
+  } finally { app['stop'](0); app['session'].kill(); }
+});
+
+test('a passthrough program that sets its own title on exit (Vim) is overwritten as soon as NMSh has the screen back', () => {
+  const app = new TerminalApp();
+  try {
+    const writes: string[] = [];
+    app['hostTitle'] = new (app['hostTitle'].constructor as typeof HostTitle)({enabled: true, stack: false}, data => { writes.push(data); },
+      () => !app['passthrough']);
+    app['promptConfiguration'].terminalTitle = 'project';
+    app['context'] = {cwd: '/work/web', project: 'web'};
+    app['hostTitle'].set(app['desiredTitle']());
+    assert.deepEqual(writes, [osc2('web')]);
+    // Submitting vim enters passthrough at once; the program sets "Thanks for flying Vim" as it exits.
+    app['passthrough'] = true;
+    app['noteForeignScreen']();
+    app['passthrough'] = false;
+    app['hostTitle'].set(app['desiredTitle']());
+    assert.deepEqual(writes, [osc2('web'), osc2('web')], 'the unchanged title is still re-asserted after the foreign screen');
+  } finally { app['stop'](0); app['session'].kill(); }
+});
