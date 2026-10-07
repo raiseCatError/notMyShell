@@ -291,6 +291,12 @@ import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {AgentSessions} from '../agents/sessions/manager.js';
 import type {AgentSession} from '../agents/sessions/model.js';
+import {AgentInputController} from '../agents/input/controller.js';
+import {handleAgentInput} from '../agents/input/surface.js';
+import {providerRoute} from '../agents/targets/commandRouting.js';
+import {ModsController, modsKeyAction} from '../agents/mods/controller.js';
+import {renderMods} from '../agents/mods/view.js';
+import {loadModInventory} from '../agents/mods/inventory.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
@@ -1563,6 +1569,13 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.modsPanel) {
+      const action = modsKeyAction(key, this.modsPanel.owner);
+      const result = action ? this.modsPanel.dispatch(action) : undefined;
+      if (result === 'close') {this.modsPanel = undefined; this.returnFromPanel();}
+      else if (result === 'refresh') void this.refreshMods();
+      this.render(); return;
+    }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
@@ -2391,6 +2404,12 @@ export class TerminalApp {
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'sessions') await this.openSessionsView();
     else if (slash.kind === 'ai') this.openAi(command, slash.target);
+    else if (slash.kind === 'mods') this.openMods(slash.provider);
+    else if (slash.kind === 'managedTarget') this.openManagedTarget(command, slash.provider, slash.action);
+    else if (slash.kind === 'rawProvider') {
+      if (slash.command) {this.editor.replaceText(slash.command); await this.submit(true);}
+      else this.output.addFrontendInteraction(command, 'Native provider TUI: /nmsh raw claude [CLI args] or /nmsh raw codex [CLI args]. The command runs through your real shell.', INFO);
+    }
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
@@ -3848,7 +3867,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.modsPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3922,6 +3941,7 @@ export class TerminalApp {
       const session = this.agents.get(this.agentView.sessionId);
       if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - 4, Date.now()), columns);
     }
+    if (this.modsPanel) return framePanel(renderMods(this.modsPanel, columns, this.dimensions().rows - 4), columns);
     if (this.agentPanel) return framePanel(renderAgentPanel(this.agentPanel, this.agentPanelRows(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.askState) {
       const activity = this.askActivityLine();
@@ -7256,6 +7276,8 @@ export class TerminalApp {
     this.syncTaskClock(); this.render();
   });
   private taskClock?: () => void;
+  private modsPanel?: ModsController;
+  private readonly agentDrafts = new Map<string, AgentViewState>();
   private agentPanel?: AgentPanelState;
   private agentView?: AgentViewState;
   /** The transient activity shelf above the composer: hidden at rest, revealed by ↓, pinned while something needs attention. */
@@ -7845,7 +7867,9 @@ export class TerminalApp {
   }
 
   private agentPanelRows() {
-    return agentPanelRows(this.agents.sessions, this.agents.harnesses());
+    const panel = this.agentPanel;
+    const rows = panel?.profiles ? panel.profiles.map(profile => ({kind: 'profile' as const, profile})) : agentPanelRows(this.agents.sessions, this.agents.harnesses());
+    return rows.filter(row => (!panel?.targetIds || (row.kind === 'session' && panel.targetIds.includes(row.session.id))) && (!panel?.query || (row.kind === 'session' ? row.session.title : row.kind === 'profile' ? row.profile.name : row.harness.name).toLowerCase().includes(panel.query.toLowerCase())));
   }
 
   /** /ai: the agent session list; /ai <harness|profile>: start a managed session in the background. */
@@ -7865,9 +7889,16 @@ export class TerminalApp {
   }
 
   private openAgentView(id: string): void {
+    const target = this.agents.get(id);
+    if (target?.reconnectable && ['exited', 'failed'].includes(target.state)) {
+      const result = this.agents.resume(id);
+      if (!result.ok) {if (this.agentPanel) this.agentPanel.message = result.reason; return;}
+    }
     this.agentPanel = undefined;
     this.resumeBrowser = undefined;
-    this.agentView = {sessionId: id, input: '', expanded: new Set(), scroll: 0};
+    this.agentView = this.agentDrafts.get(id) ?? {sessionId: id, input: '', expanded: new Set(), scroll: 0, controller: new AgentInputController()};
+    this.agentView.controller!.owner = 'AGENT_MESSAGE';
+    this.agentDrafts.set(id, this.agentView);
     this.agents.acknowledge(id);
     this.shelf.visible = false;
   }
@@ -7875,6 +7906,14 @@ export class TerminalApp {
   private handleAgentPanelKey(key: Key): void {
     const panel = this.agentPanel!;
     const rows = this.agentPanelRows();
+    if (panel.searching) {
+      if (key.kind === 'escape') {panel.searching = false; panel.query = ''; panel.selected = 0;}
+      else if (key.kind === 'text' || key.kind === 'paste') {panel.query = ((panel.query ?? '') + key.value).slice(0, 256); panel.selected = 0;}
+      else if (key.kind === 'backspace') {panel.query = [...(panel.query ?? '')].slice(0, -1).join(''); panel.selected = 0;}
+      else if (key.kind === 'enter') panel.searching = false;
+      this.render(); return;
+    }
+    if (key.kind === 'text' && key.value === '/') {panel.searching = true; panel.query = ''; this.render(); return;}
     if (panel.rename !== undefined) {
       const row = rows[panel.selected];
       if (key.kind === 'escape' || key.kind === 'interrupt') panel.rename = undefined;
@@ -7891,6 +7930,7 @@ export class TerminalApp {
     else if (key.kind === 'enter') {
       const row = rows[panel.selected];
       if (row?.kind === 'session') this.openAgentView(row.session.id);
+      else if (row?.kind === 'profile') this.openAi(`/ai ${row.profile.name}`, row.profile.name);
       else if (row?.kind === 'harness') {
         const result = this.agents.launch(row.harness.id, this.shellCwd);
         if (result.ok) this.openAgentView(result.session.id); else panel.message = result.reason;
@@ -7902,32 +7942,47 @@ export class TerminalApp {
   private handleAgentViewKey(key: Key): void {
     const view = this.agentView!;
     const session = this.agents.get(view.sessionId);
-    if (!session || key.kind === 'escape') { this.agentView = undefined; this.returnFromPanel(); this.render(); return; }
-    view.message = undefined;
-    // Approvals are explicit: A allows once, D denies; nothing else answers them.
-    if (session.pendingApproval && !view.input && key.kind === 'text' && /^[aAdD]$/u.test(key.value)) {
-      this.agents.answer(session.id, /^[aA]$/u.test(key.value));
-    } else if (key.kind === 'interrupt') {
-      if (session.state === 'working' || session.state === 'approval') this.agents.cancel(session.id); else { this.agentView = undefined; this.returnFromPanel(); }
-    } else if (key.kind === 'toggleDetails') {
-      const tools = agentBlocks(session).filter(block => block.kind === 'tool' && block.detail);
-      const last = tools.at(-1);
-      if (last?.id) { if (view.expanded.has(last.id)) view.expanded.delete(last.id); else view.expanded.add(last.id); }
-    } else if (key.kind === 'pageUp' || key.kind === 'wheelUp') view.scroll += key.kind === 'pageUp' ? 10 : 3;
-    else if (key.kind === 'pageDown' || key.kind === 'wheelDown') view.scroll = Math.max(0, view.scroll - (key.kind === 'pageDown' ? 10 : 3));
-    else if (session.level === 'observed') { /* metadata only: no input */ }
-    else if (key.kind === 'text' || key.kind === 'paste') view.input += key.value.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/gu, '');
-    else if (key.kind === 'newline') view.input += '\n';
-    else if (key.kind === 'backspace') view.input = [...view.input].slice(0, -1).join('');
-    else if (key.kind === 'enter' && view.input.trim()) {
-      const text = view.input;
-      view.input = '';
-      const copy = /^\/copy(?:\s+(\d+))?\s*$/u.exec(text.trim());
-      if (copy) void this.copyAgentBlock(session, Number(copy[1] ?? 1));
-      else if (!this.agents.send(session.id, text)) view.message = 'This session is not accepting input.';
-      view.scroll = 0;
-    }
+    const close = !session || handleAgentInput(view, session, key, {
+      shellEmpty: !this.editor.text,
+      send: (id, text) => this.agents.send(id, text),
+      answer: (id, requestId, allow) => this.agents.get(id)?.pendingApproval?.requestId === requestId && this.agents.answer(id, allow),
+      cancel: id => {this.agents.cancel(id);},
+      choose: (id, requestId, answers) => this.agents.choose(id, requestId, answers),
+      copy: text => {void writeClipboard(text).then(() => {view.message = 'Copied.'; this.render();}).catch(() => {view.message = 'Clipboard unavailable.'; this.render();});},
+      copyReply: (target, index) => {void this.copyAgentBlock(target, index);},
+    });
+    if (close) {this.agentView = undefined; this.returnFromPanel();}
     this.render();
+  }
+
+  private openManagedTarget(command: string, provider: string, action: 'open' | 'new'): void {
+    this.panelOrigin = undefined;
+    const route = providerRoute(provider, action, this.shellCwd, this.agents.sessions);
+    if (route.kind === 'focus') {
+      const resumed = this.agents.resume(route.targetId);
+      if (!resumed.ok && this.agents.get(route.targetId)?.reconnectable) this.output.addFrontendInteraction(command, resumed.reason, ERROR);
+      else this.openAgentView(route.targetId);
+    }
+    else if (route.kind === 'picker') this.agentPanel = {selected: 0, targetIds: route.targetIds};
+    else if (route.kind === 'launch') {
+      const profiles = this.promptConfiguration.agentProfiles.filter(p => p.harness === provider);
+      if (profiles.length > 1) this.agentPanel = {selected: 0, profiles};
+      else this.openAi(command, profiles[0]?.name ?? provider);
+    }
+  }
+
+  private openMods(provider?: string): void {
+    this.panelOrigin = undefined;
+    this.modsPanel ??= new ModsController();
+    this.modsPanel.setProvider(provider);
+    void this.refreshMods();
+  }
+
+  private async refreshMods(): Promise<void> {
+    const panel = this.modsPanel;
+    if (!panel) return;
+    await panel.refresh(() => loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles));
+    if (this.modsPanel === panel) this.render();
   }
 
   /** /copy inside an agent view: the Nth newest reply's visible text, never protocol data. */
