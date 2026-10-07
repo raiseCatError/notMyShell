@@ -711,9 +711,9 @@ export function themePreviewContext(home = homedir()): PromptContext {
  * Status Strip items for modules routed there: plain text with a semantic role
  * and the module's priority (the strip keeps higher priorities longest).
  */
-export function statusStripModules(context: PromptContext, configuration: PromptConfiguration): Array<{id: string; text: string; role: PromptRole; priority: number}> {
+export function statusStripModules(context: PromptContext, configuration: PromptConfiguration, pathLevel = 0): Array<{id: string; text: string; role: PromptRole; priority: number}> {
   if (!configuration.statusStrip.enabled) return [];
-  return renderedModules(context, configuration, 0, 'statusStrip').map(module => ({id: module.id, text: stripAnsi(module.text), role: module.role,
+  return renderedModules(context, configuration, pathLevel, 'statusStrip').map(module => ({id: module.id, text: stripAnsi(module.text), role: module.role,
     priority: moduleDefinition(module.id)?.priority ?? 0}));
 }
 

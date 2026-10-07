@@ -45,7 +45,8 @@ import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
 import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
-import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
 import {createTmuxPanel, describeTmuxChange, pendingChanges, renderTmuxPanel, tmuxPanelKey, type TmuxPanelState} from '../tools/config/TmuxPanel.js';
@@ -172,7 +173,8 @@ import {mixRgb} from '../chroma/chroma.js';
 import type {Rgb} from '../chroma/escape.js';
 import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
-import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type StatsSource, type SystemStats} from '../status/StatusStrip.js';
+import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
+import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
@@ -484,9 +486,8 @@ export class TerminalApp {
   /** What command words resolve to in the configured zsh, filled off the keypress path for the inspector. */
   private readonly commandSources = new Map<string, CommandSource | null>();
   /** Status strip data: sampled from local OS counters on its own modest timer, only while enabled. */
-  private statsSource: StatsSource = new LocalStats();
-  private stripStats: SystemStats = {};
-  private stripTimer?: () => void;
+  /** Whether the strip's own facts were last demanded; a change re-derives Context Engine demand. */
+  private stripDemanded = false;
   /** Cross-session notices from the session service; frontend chrome only. */
   private noticeView: NoticeView = {notices: [], hidden: 0};
   /** Every notice the service reported at the last poll; visibility (TTL) is applied on top, never stored. */
@@ -517,7 +518,6 @@ export class TerminalApp {
   private cachedPlatform?: PlatformInfo;
   private get shellEnvironment(): ShellEnvironmentReport { return this.cachedEnvironment ??= detectShellEnvironment(); }
   private cachedEnvironment?: ShellEnvironmentReport;
-  private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name, this.shellPath()) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
   private misePanel?: MisePanel;
@@ -1280,6 +1280,13 @@ export class TerminalApp {
       const action = rowPanelKey(this.rowPanel, key, this.promptConfiguration);
       if (action?.kind === 'close') { this.rowPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') { this.applySettingsConfiguration(action.configuration); this.syncStatusStrip(); }
+      this.render();
+      return;
+    }
+    if (this.stripStudio) {
+      const action = stripStudioKey(this.stripStudio, key, this.promptConfiguration);
+      if (action?.kind === 'close') { this.stripStudio = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'change') { this.applySettingsConfiguration(action.configuration); this.syncStatusStrip(); this.requestContextDemand(); }
       this.render();
       return;
     }
@@ -3807,7 +3814,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -3839,6 +3846,8 @@ export class TerminalApp {
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
+    if (this.stripStudio) return renderStripStudio(this.stripStudio, this.promptConfiguration, columns, this.dimensions().rows,
+      (configuration, width) => this.statusStripRow(width, configuration));
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
     if (this.tmuxPanel) return renderTmuxPanel(this.tmuxPanel, columns, this.dimensions().rows);
@@ -4672,9 +4681,12 @@ export class TerminalApp {
   /** The include plan shown in the tmux review, applied exactly if confirmed. */
   private tmuxIncludePlan?: {plan: FileEditPlan; spec: HookSpec};
 
-  /** /strip and /status-strip: the canonical Status strip rows, with a live strip preview. */
+  private stripStudio?: StripStudioState;
+
+  /** /strip and /status-strip: the Status Strip Studio over the canonical strip settings, previewed by the real strip renderer. */
   private openStatusStrip(): void {
-    this.rowPanel = createRowPanel('Status strip', 'compact NMSh status row, top right · same settings as Config', ['statusStrip', 'stripClock', 'stripBattery', 'stripCpu', 'stripRam', 'stripRamDisplay', 'stripUptime']);
+    this.stripStudio = createStripStudio();
+    this.requestContextDemand();
   }
 
   /** /configure [tool] and /tmux: the registered adapter's editor, or a factual answer. */
@@ -4960,7 +4972,6 @@ export class TerminalApp {
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
-    this.stripTimer?.(); this.stripTimer = undefined;
     this.noticeTimer?.(); this.noticeTimer = undefined;
   }
 
@@ -5103,7 +5114,7 @@ export class TerminalApp {
       case 'welcomeScreen': {
         rows.push(`  ${SUBTLE}${providerExplanation('welcome', draft.welcome)}${RESET}`);
         if (draft.welcome === 'vespyr') rows.push(...vespyrSprite().map(line => `  ${line}${RESET}`));
-        if (draft.statusStrip.enabled) rows.push(`${label('Strip')}${stripAnsi(renderStatusStrip(draft.statusStrip, this.stripStats, Math.min(60, width - 12))).trim()}`);
+        if (draft.statusStrip.enabled) rows.push(`${label('Strip')}${stripAnsi(renderStatusStrip(draft.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), Math.min(60, width - 12))).trim()}`);
         break;
       }
       case 'idle': {
@@ -6345,7 +6356,7 @@ export class TerminalApp {
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
     // The status strip owns one top row only when it is on, fits, and no panel owns the screen.
-    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planWithNotices(columns, rows - 1, fullInput, suggestions, panelRows));
+    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planWithNotices(columns, rows - 1, fullInput, suggestions, panelRows), this.promptConfiguration.statusStrip.edge);
     return this.planWithNotices(columns, rows, fullInput, suggestions, panelRows);
   }
 
@@ -6520,39 +6531,33 @@ export class TerminalApp {
     return stripVisible(this.promptConfiguration.statusStrip, columns, rows);
   }
 
-  private statusStripRow(columns: number): string {
+  /** The live strip row, from resolved facts only (the same function paints the /strip preview). */
+  private statusStripRow(columns: number, configuration = this.promptConfiguration): string {
     // Active Keep Awake is always part of an enabled strip (no per-item switch); the strip itself is never forced on.
     const record = this.awakeRecord;
-    const display = this.promptConfiguration.keepAwake.display;
+    const display = configuration.keepAwake.display;
     // Modules routed to the strip are resolved facts like every other surface; the strip never collects anything itself.
-    const modules = statusStripModules(this.promptContext(), this.promptConfiguration).map(module => ({text: module.text, failure: module.role === 'failure', priority: module.priority}));
-    return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns, undefined,
-      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined, modules);
+    return renderStatusStrip(configuration.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), columns, undefined,
+      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined,
+      this.statusStripModuleItems(configuration));
   }
 
-  /** One timer while the strip is on and NMSh owns the screen; none otherwise. */
+  /** Strip-routed modules with their group and, for the path, a shorter form the fitter may use first. */
+  private statusStripModuleItems(configuration = this.promptConfiguration): StripModuleItem[] {
+    const context = this.promptContext();
+    const compact = new Map(statusStripModules(context, configuration, PATH_DISPLAY_LEVELS - 1).map(module => [module.id, module.text]));
+    return statusStripModules(context, configuration).map(module => ({id: module.id, text: module.text, failure: module.role === 'failure', priority: module.priority,
+      zone: configuration.modules.find(item => item.id === module.id)?.stripZone ?? 'right',
+      ...(compact.get(module.id) && compact.get(module.id) !== module.text ? {compact: [compact.get(module.id)!]} : {})}));
+  }
+
+  /** The strip's own facts are Context Engine demand: re-derive it when the row appears or goes (passthrough, resize, Off). */
   private syncStatusStrip(): void {
-    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && this.promptConfiguration.statusStrip.enabled;
-    if (wanted && !this.stripTimer) {
-      this.stripTimer = presentationClock.subscribe(() => void this.sampleStrip(), STRIP_REFRESH_MS);
-      void this.sampleStrip();
-    } else if (!wanted && this.stripTimer) {
-      this.stripTimer(); this.stripTimer = undefined;
-    }
-  }
-
-  private async sampleStrip(): Promise<void> {
-    if (this.stripSampling) return;
-    this.stripSampling = true;
-    try {
-      const {columns} = this.dimensions();
-      const before = this.statusStripRow(columns);
-      this.stripStats = await this.statsSource.sample();
-      // The clock also moves without new stats; repaint only when the row text changes.
-      if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
-    } catch { /* A failed sample keeps the previous values. */ }
-    finally { this.stripSampling = false; }
+    const {columns, rows} = this.dimensions();
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended && this.stripActive(columns, rows);
+    if (wanted === this.stripDemanded) return;
+    this.stripDemanded = wanted;
+    this.requestContextDemand();
   }
 
   private openPanel?: OpenPanelState;
@@ -8384,7 +8389,6 @@ export class TerminalApp {
     this.stopIdleFrames();
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
-    this.stripTimer?.(); this.stripTimer = undefined;
     this.awakeTimer?.(); this.awakeTimer = undefined;
     this.noticeTimer?.(); this.noticeTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;

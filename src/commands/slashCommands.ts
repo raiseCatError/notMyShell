@@ -68,7 +68,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/composer', insertion: '/composer', description: 'Composer position and transcript presentation (same as /layout)'},
   {name: '/chrome', insertion: '/chrome', description: 'UI chrome: NMSh frames, rules, tabs, selection and accents (not Chroma)'},
   {name: '/glyphs', insertion: '/glyphs', description: 'Glyph style: compare Nerd Font and Safe / ASCII symbols and icons'},
-  {name: '/strip', insertion: '/strip', description: 'Status strip: clock, battery, CPU, RAM and uptime, with a live preview'},
+  {name: '/strip', insertion: '/strip', description: 'Status Strip Studio: top or bottom row, left/center/right groups, style, presets and system items, with a live preview'},
   {name: '/status-strip', insertion: '/status-strip', description: 'Same as /strip'},
   {name: '/configure', insertion: '/configure ', description: 'Tool Configuration: supported settings for tmux, Starship and other registered tools'},
   {name: '/tmux', insertion: '/tmux', description: 'Configure tmux: settings, keys, Status Studio, new panes start NMSh, theme'},

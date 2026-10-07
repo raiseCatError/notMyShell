@@ -1,4 +1,4 @@
-import {arch, freemem, hostname, platform, release, totalmem, userInfo} from 'node:os';
+import {arch, cpus, freemem, hostname, platform, release, totalmem, uptime as osUptime, userInfo} from 'node:os';
 import {defineCapability, PREVIEW_NOW, type CapabilityDefinition} from '../capability.js';
 import {parseXmlData, readMetadataText, record} from '../services.js';
 import {runExternal} from '../../providers/providers.js';
@@ -136,4 +136,57 @@ export const battery = defineCapability<BatteryFact>({
   },
 });
 
-export const SYSTEM_CAPABILITIES = [operatingSystem, sessionUser, sessionJobs, sessionDuration, clock, memory, battery] as CapabilityDefinition<unknown>[];
+export interface CpuFact {percent: number}
+
+type CpuTimes = {idle: number; total: number};
+function cpuTimes(): CpuTimes {
+  let idle = 0, total = 0;
+  for (const cpu of cpus()) {
+    const t = cpu.times;
+    idle += t.idle;
+    total += t.user + t.nice + t.sys + t.idle + t.irq;
+  }
+  return {idle, total};
+}
+/** The previous sample, so each refresh measures the interval since the last one. One per process: CPU is machine scope. */
+let previousCpu: CpuTimes | undefined;
+
+/** CPU busy share between two samples of the kernel's own counters (Node's os.cpus); never spawns anything. */
+export function cpuPercent(previous: CpuTimes, current: CpuTimes): number | undefined {
+  return current.total > previous.total ? Math.max(0, Math.min(100, 100 * (1 - (current.idle - previous.idle) / (current.total - previous.total)))) : undefined;
+}
+
+export const cpu = defineCapability<CpuFact>({
+  id: 'system.cpu', title: 'CPU use',
+  reads: ['the kernel CPU time counters Node.js exposes (os.cpus); no process is started'],
+  scope: 'machine', family: 'system', cost: 'bounded-async', trust: 'session', sensitivity: 'public', persistence: 'display-only',
+  fields: ['percent'], env: [], ttlMs: 5000, refreshMs: 5000, timeoutMs: 1000, invalidateOn: [],
+  preview: {percent: 34},
+  async resolve(context) {
+    // The first sample has nothing to compare with: measure a short, abortable window instead of reporting nothing.
+    if (!previousCpu) {
+      previousCpu = cpuTimes();
+      await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 250);
+        context.signal.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, {once: true});
+      });
+    }
+    const current = cpuTimes();
+    const percent = cpuPercent(previousCpu, current);
+    previousCpu = current;
+    return percent === undefined ? undefined : {value: {percent: Math.round(percent)}, evidence: 'kernel CPU counters'};
+  },
+});
+
+export interface UptimeFact {seconds: number}
+
+export const uptime = defineCapability<UptimeFact>({
+  id: 'system.uptime', title: 'Uptime',
+  reads: ['time since this machine booted (os.uptime)'],
+  scope: 'machine', family: 'system', cost: 'cheap', trust: 'session', sensitivity: 'public', persistence: 'display-only',
+  fields: ['seconds'], env: [], ttlMs: 60_000, refreshMs: 60_000, timeoutMs: 200, invalidateOn: [],
+  preview: {seconds: 3 * 86_400 + 4 * 3600},
+  async resolve() { return {value: {seconds: Math.floor(osUptime())}, evidence: 'system uptime'}; },
+});
+
+export const SYSTEM_CAPABILITIES = [operatingSystem, sessionUser, sessionJobs, sessionDuration, clock, memory, battery, cpu, uptime] as CapabilityDefinition<unknown>[];

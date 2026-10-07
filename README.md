@@ -70,7 +70,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-v0.17.0 implements fact metadata, native module routing and the Context Rail. The development line (not yet released) adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context and Status Strip routing. Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+v0.17.0 implements fact metadata, native module routing and the Context Rail. The development line (not yet released) adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
 Read the [Context Modules guide](docs/architecture/context-modules.md) for the surfaces, capabilities, Context Pack format and discovery boundaries, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
@@ -160,7 +160,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Area | Commands |
 | --- | --- |
 | Settings and setup | `/settings` (`/config`), `/setup`, `/palette` (F1), `/help`, `/status` |
-| Composer and prompt | `/prompt`, `/layout` (`/composer`), `/transcript`, `/syntax`, `/cursor` |
+| Composer and prompt | `/prompt`, `/modules`, `/layout` (`/composer`), `/transcript`, `/syntax`, `/cursor` |
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |

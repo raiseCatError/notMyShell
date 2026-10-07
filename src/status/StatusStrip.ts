@@ -1,80 +1,47 @@
-import {cpus, freemem, totalmem, uptime} from 'node:os';
-import {readFileSync} from 'node:fs';
 import {linuxBattery, parseMeminfo, parsePmset, parseVmStat, type SystemStats} from './systemStats.js';
-import type {StatusStripSettings} from '../prompt/configuration.js';
-import {runExternal, resolveCommand} from '../providers/providers.js';
+import type {StatusStripSettings, StripZone} from '../prompt/configuration.js';
+import type {ContextFacts} from '../context/facts.js';
+import {safeContextText} from '../context/facts.js';
 import {presentationNow} from '../presentation/environment.js';
 import {semanticIcon, type SemanticIconId} from '../prompt/glyphChoices.js';
-import {foreground, UI_COLORS} from '../ui/palette.js';
-import {displayWidth} from '../util/text.js';
+import {renderPowerlineBlocks, type PowerlineBlock} from '../prompt/powerline.js';
+import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
+import {getCurrentGlyphMode} from '../ui/glyphs.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
+import {displayWidth, stripAnsi} from '../util/text.js';
 
 export {linuxBattery, parseMeminfo, parsePmset, parseVmStat, type SystemStats};
 
 /**
- * The optional NMSh-owned status strip: one compact right-aligned row of
- * local facts. It is presentation only (never in the transcript, /copy or
- * the session journal), hidden during passthrough and on narrow terminals,
- * and refreshed on a modest timer only while enabled. Nothing is networked.
+ * The optional NMSh-owned Status Strip: one row of live facts at the top or
+ * bottom edge of the NMSh pane, in independent left, center and right groups.
+ * It is presentation only (never in the transcript, /copy, prompt snapshots,
+ * the session journal or history), hidden during passthrough and on tiny
+ * terminals, and it collects nothing itself: its clock, CPU, RAM, battery and
+ * uptime are Context Engine facts demanded only while the row is showing, and
+ * routed modules are the same resolved facts every surface uses. Rendering is
+ * pure: no filesystem, subprocess or network access happens here.
  */
 
-export interface StatsSource {
-  sample(): Promise<SystemStats>;
-}
-
-type CpuTimes = {idle: number; total: number};
-
-function cpuTimes(): CpuTimes {
-  let idle = 0, total = 0;
-  for (const cpu of cpus()) {
-    const t = cpu.times;
-    idle += t.idle;
-    total += t.user + t.nice + t.sys + t.idle + t.irq;
-  }
-  return {idle, total};
-}
-
-/**
- * Local OS sources only. Subprocesses (`pmset`, `vm_stat` on macOS) run from
- * the strip's own refresh timer with a short timeout, never on render or
- * keystrokes; battery is sampled less often because it changes slowly.
- */
-export class LocalStats implements StatsSource {
-  private previous?: CpuTimes;
-  private lastBattery = 0;
-  private battery?: SystemStats['battery'];
-  constructor(private readonly platform: NodeJS.Platform = process.platform) {}
-
-  async sample(): Promise<SystemStats> {
-    const now = cpuTimes();
-    const previous = this.previous;
-    this.previous = now;
-    const cpu = previous && now.total > previous.total
-      ? Math.max(0, Math.min(100, 100 * (1 - (now.idle - previous.idle) / (now.total - previous.total)))) : undefined;
-    const total = totalmem();
-    let memory: SystemStats['memory'] = {used: total - freemem(), total};
-    if (this.platform === 'darwin') {
-      const vmStat = resolveCommand('vm_stat', '/usr/bin');
-      const result = vmStat ? await runExternal(vmStat, [], {timeoutMs: 1000, maxBytes: 16 * 1024}) : undefined;
-      memory = (result?.ok ? parseVmStat(result.stdout, total) : undefined) ?? memory;
-    } else if (this.platform === 'linux') {
-      try { memory = parseMeminfo(readFileSync('/proc/meminfo', 'utf8')) ?? memory; } catch { /* Keep os counters. */ }
-    }
-    if (Date.now() - this.lastBattery > 60_000) {
-      this.lastBattery = Date.now();
-      if (this.platform === 'darwin') {
-        const pmset = resolveCommand('pmset', '/usr/bin');
-        const result = pmset ? await runExternal(pmset, ['-g', 'batt'], {timeoutMs: 1000, maxBytes: 8 * 1024}) : undefined;
-        this.battery = result?.ok ? parsePmset(result.stdout) : undefined;
-      } else if (this.platform === 'linux') this.battery = linuxBattery();
-      else this.battery = undefined;
-    }
-    return {cpu, memory, uptimeSeconds: uptime(), ...(this.battery ? {battery: this.battery} : {})};
-  }
-}
-
-export const STRIP_REFRESH_MS = 5000;
 /** Below this width the strip yields its row to the transcript. */
 export const STRIP_MIN_COLUMNS = 30;
+
+/** The strip's own items, read from already-resolved Context Engine facts (render-safe, no I/O). */
+export function stripStatsFromFacts(facts: ContextFacts): SystemStats & {now?: number} {
+  const value = <T>(id: string) => (facts as Record<string, {value: unknown} | undefined>)[id]?.value as T | undefined;
+  const cpu = value<{percent: number}>('system.cpu');
+  const memory = value<{usedBytes: number; totalBytes: number}>('system.memory');
+  const battery = value<{percent: number; charging: boolean}>('system.battery');
+  const uptime = value<{seconds: number}>('system.uptime');
+  const time = value<{now: number}>('system.time');
+  return {
+    ...(cpu ? {cpu: cpu.percent} : {}),
+    ...(memory && memory.totalBytes > 0 ? {memory: {used: memory.usedBytes, total: memory.totalBytes}} : {}),
+    ...(battery ? {battery} : {}),
+    ...(uptime ? {uptimeSeconds: uptime.seconds} : {}),
+    ...(time ? {now: time.now} : {}),
+  };
+}
 
 function gigabytes(bytes: number): string {
   const value = bytes / 1024 ** 3;
@@ -88,18 +55,22 @@ function formatUptime(seconds: number): string {
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
 
-interface StripItem {icon: SemanticIconId | undefined; text: string; priority: number}
+interface StripItem {icon: SemanticIconId | undefined; text: string; priority: number; compact?: string}
 
-/** The strip's items in display order; text always carries the meaning, icons are optional. */
+/** The strip's own items in display order; text always carries the meaning, icons are optional. */
 export function stripItems(settings: StatusStripSettings, stats: SystemStats, now: Date = presentationNow()): StripItem[] {
   const items: StripItem[] = [];
-  if (settings.uptime && stats.uptimeSeconds !== undefined) items.push({icon: 'uptime', text: `up ${formatUptime(stats.uptimeSeconds)}`, priority: 4});
+  if (settings.uptime && stats.uptimeSeconds !== undefined) {
+    const text = formatUptime(stats.uptimeSeconds);
+    items.push({icon: 'uptime', text: `up ${text}`, compact: text.split(' ')[0], priority: 4});
+  }
   if (settings.cpu && stats.cpu !== undefined) items.push({icon: 'cpu', text: `CPU ${Math.round(stats.cpu)}%`, priority: 3});
   if (settings.ram && stats.memory) {
     const percent = `${Math.round(100 * stats.memory.used / stats.memory.total)}%`;
     const absolute = `${gigabytes(stats.memory.used)}/${gigabytes(stats.memory.total)} GB`;
     items.push({icon: 'memory', priority: 2,
-      text: `RAM ${settings.ramDisplay === 'percent' ? percent : settings.ramDisplay === 'absolute' ? absolute : `${percent} · ${absolute}`}`});
+      text: `RAM ${settings.ramDisplay === 'percent' ? percent : settings.ramDisplay === 'absolute' ? absolute : `${percent} · ${absolute}`}`,
+      ...(settings.ramDisplay === 'percent' ? {} : {compact: `RAM ${percent}`})});
   }
   // No battery hardware means no battery item, never a fake one.
   if (settings.battery && stats.battery) {
@@ -112,47 +83,139 @@ export function stripItems(settings: StatusStripSettings, stats: SystemStats, no
 /** Keep Awake in the strip: present whenever it is active and the strip is on; its forms from widest to narrowest. */
 export interface StripAwake {full: string; short: string; glyph: string}
 
-/** A module routed to the strip: already rendered plain text, its role (failure is emphasized) and its module priority 0..100. */
-export interface StripModuleItem {text: string; failure?: boolean; priority: number}
+/** A module routed to the strip: already rendered plain text, its role (failure is emphasized), its module priority 0..100, its group and narrower forms. */
+export interface StripModuleItem {text: string; failure?: boolean; priority: number; zone?: StripZone; compact?: readonly string[]; id?: string}
 
-/**
- * The right-aligned strip row, or '' when nothing fits. Lower-priority items
- * (uptime, CPU, RAM) drop first so the clock survives on narrow terminals.
- * An active Keep Awake ranks above all of them: it narrows (Awake · Display,
- * Awake, its glyph) before anything else would have to drop it.
- */
-export function renderStatusStrip(settings: StatusStripSettings, stats: SystemStats, columns: number, now?: Date, awake?: StripAwake,
-  modules: readonly StripModuleItem[] = []): string {
-  if (!settings.enabled || columns < STRIP_MIN_COLUMNS) return '';
-  // Routed modules come first and outlast the strip's own decorative items; among them, higher module priority stays longest.
-  const moduleItems: Array<StripItem & {failure?: boolean}> = modules.map(module => ({icon: undefined, text: module.text, priority: -1 - module.priority / 1000,
-    ...(module.failure ? {failure: true} : {})}));
-  let items: Array<StripItem & {failure?: boolean}> = [...moduleItems, ...stripItems(settings, stats, now)];
-  const subtle = foreground(UI_COLORS.subtle);
-  const secondary = foreground(UI_COLORS.secondary);
-  const accent = foreground(UI_COLORS.accent);
-  const reset = '\u001B[0m';
-  const forms = awake ? [...new Set([awake.full, awake.short, awake.glyph])] : [];
-  let form = 0;
-  const awakeText = () => forms[form];
-  const plain = (list: StripItem[]) => [...list.map(item => { const icon = item.icon ? semanticIcon(item.icon) : ''; return icon ? `${icon} ${item.text}` : item.text; }), ...(awakeText() ? [awakeText()!] : [])].join(' · ');
-  while (displayWidth(plain(items)) > columns - 2) {
-    // Decorative items drop first, lowest priority first; Keep Awake only narrows, then goes last of all.
-    if (items.length) { const drop = items.reduce((worst, item) => item.priority > worst.priority ? item : worst); items = items.filter(item => item !== drop); }
-    else if (form < forms.length) form += 1;
-    else break;
-  }
-  if (!items.length && !awakeText()) return '';
-  const failure = foreground(UI_COLORS.failure);
-  const body = [...items.map(item => {
-    const icon = item.icon ? semanticIcon(item.icon) : '';
-    return `${icon ? `${subtle}${icon} ` : ''}${item.failure ? failure : secondary}${item.text}`;
-  }), ...(awakeText() ? [`${accent}${awakeText()}`] : [])].join(`${subtle} · `);
-  const width = displayWidth(plain(items));
-  return `${' '.repeat(Math.max(0, columns - width - 1))}${body}${reset}`;
+/** One fitted item: its forms from widest to narrowest and which one is in use. */
+interface Entry {
+  zone: StripZone;
+  forms: string[];
+  form: number;
+  icon?: string;
+  /** Lower is kept longer. */
+  rank: number;
+  tone: 'secondary' | 'failure' | 'accent';
+  /** Keep Awake narrows only after everything else has gone (it outranks every other item). */
+  last?: boolean;
 }
 
-/** Whether the strip owns a row at this size. */
+/** Hostile module text loses whole control sequences, then is bounded like every other display string. */
+const clean = (text: string) => safeContextText(stripTerminalControls(text), 120);
+
+function entries(settings: StatusStripSettings, stats: SystemStats, now: Date | undefined, awake: StripAwake | undefined, modules: readonly StripModuleItem[]): Entry[] {
+  // Routed modules outlast the strip's own items; among them, higher module priority stays longest.
+  const routed: Entry[] = modules.map(module => ({zone: module.zone ?? 'right', forms: [...new Set([clean(module.text), ...(module.compact ?? []).map(clean)])].filter(Boolean),
+    form: 0, rank: -1 - module.priority / 1000, tone: module.failure ? 'failure' as const : 'secondary' as const})).filter(entry => entry.forms.length);
+  const native: Entry[] = stripItems(settings, stats, now).map(item => {
+    const icon = item.icon ? semanticIcon(item.icon) : '';
+    return {zone: settings.nativeZone, forms: item.compact ? [item.text, item.compact] : [item.text], form: 0, ...(icon ? {icon} : {}), rank: item.priority, tone: 'secondary' as const};
+  });
+  const forms = awake ? [...new Set([awake.full, awake.short, awake.glyph])].filter(Boolean) : [];
+  return [...routed, ...native, ...(forms.length ? [{zone: settings.nativeZone, forms, form: 0, rank: -Infinity, tone: 'accent' as const, last: true}] : [])];
+}
+
+const text = (entry: Entry) => `${entry.icon ? `${entry.icon} ` : ''}${entry.forms[entry.form]!}`;
+
+/** Plain separators; Divided's bar has a Safe-glyph spelling. */
+function separator(settings: StatusStripSettings): string {
+  if (settings.separator === 'space') return '  ';
+  if (settings.separator === 'bar') return getCurrentGlyphMode() === 'nerd' ? ' │ ' : ' | ';
+  return ' · ';
+}
+
+const POWERLINE_TONES: Record<Entry['tone'], {foreground: RgbColor; background: RgbColor}> = {
+  secondary: {foreground: UI_COLORS.projectForeground, background: UI_COLORS.cwdBackground},
+  accent: {foreground: UI_COLORS.projectForeground, background: UI_COLORS.projectBackground},
+  failure: {foreground: UI_COLORS.projectForeground, background: UI_COLORS.failure},
+};
+
+/** One group's painted text. Powerline reuses the prompt's own block geometry; the right group is mirrored toward the edge. */
+function paintZone(zone: StripZone, list: readonly Entry[], settings: StatusStripSettings): string {
+  if (!list.length) return '';
+  if (settings.style === 'powerline') {
+    const blocks: PowerlineBlock[] = list.map(entry => ({text: text(entry), ...POWERLINE_TONES[entry.tone]}));
+    return renderPowerlineBlocks(blocks, 0, 1, 'wedge', false, 'wedge', 'wedge', undefined, 'previous', zone === 'right' ? 'mirrored' : 'normal');
+  }
+  const subtle = foreground(UI_COLORS.subtle);
+  const tones = {secondary: foreground(UI_COLORS.secondary), failure: foreground(UI_COLORS.failure), accent: foreground(UI_COLORS.accent)};
+  return list.map(entry => `${entry.icon ? `${subtle}${entry.icon} ` : ''}${tones[entry.tone]}${entry.forms[entry.form]!}`).join(`${subtle}${separator(settings)}`) + '\u001B[0m';
+}
+
+const ZONES: readonly StripZone[] = ['left', 'center', 'right'];
+/** Space kept between groups, and at each end of the row. */
+const GROUP_GAP = 2;
+const MARGIN = 1;
+
+/** Width of a group as painted (Powerline caps included), measured in display cells. */
+function zoneWidth(zone: StripZone, list: readonly Entry[], settings: StatusStripSettings): number {
+  if (!list.length) return 0;
+  if (settings.style === 'powerline') return displayWidth(stripAnsi(paintZone(zone, list, settings)));
+  return list.reduce((sum, entry, index) => sum + displayWidth(text(entry)) + (index ? displayWidth(separator(settings)) : 0), 0);
+}
+
+function fits(all: readonly Entry[], settings: StatusStripSettings, columns: number): boolean {
+  const widths = ZONES.map(zone => zoneWidth(zone, all.filter(entry => entry.zone === zone), settings)).filter(width => width > 0);
+  return widths.reduce((sum, width) => sum + width, 0) + GROUP_GAP * Math.max(0, widths.length - 1) + 2 * MARGIN <= columns;
+}
+
+/**
+ * Deterministic width fitting: first every item that has a narrower form uses
+ * it (lowest priority first), then the lowest-priority items drop, the center
+ * group before the edge groups so the left and right anchors survive longest.
+ * Keep Awake narrows (full, short, glyph) only once nothing else is left.
+ */
+function fit(all: Entry[], settings: StatusStripSettings, columns: number): Entry[] {
+  let list = all.map(entry => ({...entry}));
+  const lowest = (candidates: Entry[]) => candidates.reduce((worst, entry) => entry.rank > worst.rank ? entry : worst);
+  while (list.length && !fits(list, settings, columns)) {
+    const compactable = list.filter(entry => !entry.last && entry.form < entry.forms.length - 1);
+    if (compactable.length) { lowest(compactable).form += 1; continue; }
+    const droppable = list.filter(entry => !entry.last);
+    if (droppable.length) {
+      const center = droppable.filter(entry => entry.zone === 'center');
+      const drop = lowest(center.length ? center : droppable);
+      list = list.filter(entry => entry !== drop);
+      continue;
+    }
+    const last = list.find(entry => entry.last && entry.form < entry.forms.length - 1);
+    if (last) { last.form += 1; continue; }
+    list = [];
+  }
+  return list;
+}
+
+/**
+ * The strip row for `columns`, or '' when it is off, too narrow or empty. The
+ * same function paints the live row and the /strip preview, so they cannot
+ * disagree. Groups never overlap: the center group is centered when there is
+ * room and otherwise pushed between its neighbours.
+ */
+export function renderStatusStrip(settings: StatusStripSettings, stats: SystemStats & {now?: number}, columns: number, now?: Date, awake?: StripAwake,
+  modules: readonly StripModuleItem[] = []): string {
+  if (!settings.enabled || columns < STRIP_MIN_COLUMNS) return '';
+  const time = now ?? (stats.now !== undefined ? new Date(stats.now) : undefined);
+  const list = fit(entries(settings, stats, time, awake, modules), settings, columns);
+  if (!list.length) return '';
+  const group = (zone: StripZone) => list.filter(entry => entry.zone === zone);
+  const [left, center, right] = ZONES.map(zone => ({zone, painted: paintZone(zone, group(zone), settings), width: zoneWidth(zone, group(zone), settings)}));
+  const leftEnd = left!.width ? MARGIN + left!.width : 0;
+  const rightStart = right!.width ? columns - MARGIN - right!.width : columns;
+  let centerStart = Math.floor((columns - center!.width) / 2);
+  if (center!.width) centerStart = Math.max(leftEnd + (leftEnd ? GROUP_GAP : MARGIN), Math.min(centerStart, rightStart - (right!.width ? GROUP_GAP : MARGIN) - center!.width));
+  let row = '';
+  let at = 0;
+  const place = (start: number, painted: string, width: number) => {
+    if (!width) return;
+    row += ' '.repeat(Math.max(0, start - at)) + painted;
+    at = Math.max(at, start) + width;
+  };
+  place(MARGIN, left!.painted, left!.width);
+  place(centerStart, center!.painted, center!.width);
+  place(rightStart, right!.painted, right!.width);
+  return row;
+}
+
+/** Whether the strip owns a row at this size. Content refreshes never change it, so facts arriving cannot make the screen jump. */
 export function stripVisible(settings: StatusStripSettings, columns: number, rows: number): boolean {
   return settings.enabled && columns >= STRIP_MIN_COLUMNS && rows >= 8;
 }

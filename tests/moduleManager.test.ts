@@ -121,8 +121,8 @@ test('long lists are windowed around the selection', () => {
 
 test('Status Strip routing: only supported modules may choose it; routed modules render as strip items, not prompt segments', () => {
   const config = normalizePromptConfiguration({...structuredClone(DEFAULT_PROMPT_CONFIGURATION), statusStrip: {enabled: true, clock: true, battery: false},
-    modules: [{id: 'gitBranch', visible: true, condition: 'always', surface: 'statusStrip'}, {id: 'nmsh.agents:claude-limits', visible: true, condition: 'always', surface: 'statusStrip'}]});
-  assert.equal(config.modules.find(module => module.id === 'gitBranch')!.surface, undefined, 'Git branch cannot present in the strip: no dead choice');
+    modules: [{id: 'exitStatus', visible: true, condition: 'always', surface: 'statusStrip'}, {id: 'nmsh.agents:claude-limits', visible: true, condition: 'always', surface: 'statusStrip'}]});
+  assert.equal(config.modules.find(module => module.id === 'exitStatus')!.surface, undefined, 'the exit status cannot present in the strip: no dead choice');
   assert.equal(routeModule(config.modules.find(module => module.id === 'nmsh.agents:claude-limits')!), 'statusStrip');
   const facts = {'agent.claude': {value: {fiveHourPercent: 95, fiveHourResetsAt: Date.UTC(2030, 0, 1)}, source: {capability: 'agent.claude', evidence: 'x'},
     collectedAt: 1, freshness: 'fresh', trust: 'session', sensitivity: 'public', persistence: 'display-only', resolution: 'bounded-async'} as ContextFact<unknown>} as ContextFacts;

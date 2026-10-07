@@ -201,7 +201,7 @@ export const CONCEPTS: readonly Concept[] = [
     description: '/status shows NMSh\'s own state: session, shell, providers, local understanding and more.'},
   {id: 'statusStrip', label: 'Status strip', support: 'actionable', open: '/strip', where: '/strip (also Settings → Status strip)', covers: ['settings:Status strip', '/strip', '/status-strip'],
     aliases: ['status strip', 'clock', 'battery', 'cpu', 'ram', 'uptime', 'status bar'],
-    description: 'The status strip is a compact row, top right: clock, battery, CPU, RAM and uptime, each optional.'},
+    description: 'The Status Strip is one live row at the top or bottom of the NMSh pane with left, center and right groups: clock, battery, CPU, RAM, uptime and Keep Awake, plus modules routed there in /modules. /strip composes it (edge, style, presets, groups) with a live preview; it is never saved to history and it is not a tmux status bar.'},
   {id: 'palette', label: 'Command palette', support: 'actionable', open: '/palette', prefers: ['open'], covers: ['/palette'],
     aliases: ['command palette', 'action palette', 'actions palette', 'palette', 'search actions'],
     description: 'The palette (Ctrl+Shift+P or F1) searches every NMSh action.'},

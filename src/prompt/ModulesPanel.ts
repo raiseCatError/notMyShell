@@ -366,6 +366,7 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
   const surface = routeModule({...module, visible: true});
   rows.push(...line('Shown', `${module.visible ? 'yes' : 'no'} · ${CONDITION_TEXT[module.condition]} · ${surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface]}`
     + `${module.surface === 'auto' || module.surface === undefined ? '' : ` (prefers ${MODULE_SURFACE_LABELS[definition.preferredSurface as ModuleSurface]})`}`));
+  if (surface === 'statusStrip') rows.push(...line('Strip group', `${({left: 'Left', center: 'Center', right: 'Right'})[module.stripZone ?? 'right']} · /strip arranges groups and order`));
   if (surface !== 'hidden') {
     const availability = surfaceAvailability(surface, configuration);
     if (!availability.available) rows.push(...line('Unavailable', `${availability.reason}; the setting is kept and applies again when it can`));
