@@ -4,6 +4,7 @@ import {getCurrentGlyphMode, GLYPHS} from '../../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../../ui/palette.js';
 import {colorLevel} from '../../presentation/capabilities.js';
 import {displayWidth, padCells, truncateAnsi} from '../../util/text.js';
+import {renderSemanticAgentView} from '../transcript/view.js';
 import {harness, type HarnessDescriptor} from '../harnesses.js';
 import type {AgentEvent, AgentSession} from './model.js';
 
@@ -30,6 +31,7 @@ export function stateLabel(session: AgentSession, now: number): string {
   switch (session.state) {
     case 'starting': return 'starting';
     case 'working': return session.activity ? `${session.activity.toLowerCase().startsWith('edit') ? 'editing' : session.activity.toLowerCase().startsWith('read') ? 'reading' : 'working'}${session.activity.includes(' ') ? ` ${session.activity.slice(session.activity.indexOf(' ') + 1)}` : ''}` : `working ${elapsedLabel(now - session.startedAt)}`;
+    case 'choice': return 'question for you';
     case 'approval': return 'needs approval';
     case 'waiting': return 'waiting for you';
     case 'finished': return 'finished';
@@ -78,9 +80,13 @@ export interface AgentPanelState {
   /** Renaming the selected session: the draft title. */
   rename?: string;
   message?: string;
+  targetIds?: string[];
+  query?: string;
+  searching?: boolean;
+  profiles?: import('./manager.js').AgentProfile[];
 }
 
-export type AgentPanelRow = {kind: 'session'; session: AgentSession} | {kind: 'harness'; harness: HarnessDescriptor; executable?: string; controllable: boolean};
+export type AgentPanelRow = {kind: 'session'; session: AgentSession} | {kind: 'harness'; harness: HarnessDescriptor; executable?: string; controllable: boolean} | {kind: 'profile'; profile: import('./manager.js').AgentProfile};
 
 export function agentPanelRows(sessions: readonly AgentSession[], harnesses: ReadonlyArray<{harness: HarnessDescriptor; executable?: string; controllable: boolean}>): AgentPanelRow[] {
   return [...shelfOrder(sessions).map(session => ({kind: 'session' as const, session})), ...harnesses.map(item => ({kind: 'harness' as const, ...item}))];
@@ -105,12 +111,15 @@ export function renderAgentPanel(state: AgentPanelState, rows: readonly AgentPan
       const where = [row.session.cwd ? row.session.cwd.replace(/^\/(?:Users|home)\/[^/]+/u, '~') : undefined, row.session.tty, row.session.pid ? `pid ${row.session.pid}` : undefined].filter(Boolean).join(' · ');
       const title = state.rename !== undefined && index === state.selected ? `${state.rename}${marker}▏${RESET}` : row.session.title;
       out.push(`${pick} ${signatureChip(row.session.signature, 8)}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${padCells(`${primary}${descriptor?.short ?? row.session.harness}${RESET}`, nameWidth)}${secondary}${title}${RESET}  ${subtle}${row.session.attention ? '◆ ' : ''}${stateLabel(row.session, now)} · ${levelLabel(row.session)}${where ? ` · ${where}` : ''}${RESET}`);
-    } else {
+    } else if (row.kind === 'harness') {
       const status = !row.executable ? 'not installed' : row.controllable ? 'installed · Enter starts a managed session' : 'installed · observed only (no supported control channel yet)';
       out.push(`${pick} ${accent(row.harness)}${glyphOf(row.harness)}${RESET} ${padCells(`${primary}${row.harness.name}${RESET}`, nameWidth)}${subtle}${status}${RESET}`);
+    } else {
+      out.push(`${pick} ${row.profile.name} · ${row.profile.harness} launch profile · Enter starts a fresh target`);
     }
   });
   if (state.message) out.push('', `  ${secondary}${state.message}${RESET}`);
+  if (state.searching || state.query) out.push(`  Search: ${state.query ?? ''}`);
   out.push('', renderControls(state.rename !== undefined ? [['Enter', 'rename'], ['Esc', 'cancel']] : [['↑↓', 'select'], ['Enter', 'open / start'], ['R', 'rename'], ['A', 'agent usage (/agents)'], ['Esc', 'back']]));
   const bounded = Number.isFinite(height) && out.length > height ? [...out.slice(0, 2), ...out.slice(out.length - (height - 2))] : out;
   return bounded.map(line => truncateAnsi(line, columns));
@@ -124,6 +133,8 @@ export interface AgentViewState {
   /** Rows scrolled up from the newest. */
   scroll: number;
   message?: string;
+  controller?: import('../input/controller.js').AgentInputController;
+  focusedObject?: import('../transcript/projection.js').SemanticObject;
 }
 
 /** The visible transcript of a session as plain-text blocks: what /copy and the view share. */
@@ -166,6 +177,7 @@ function wrap(text: string, width: number): string[] {
 }
 
 export function renderAgentView(session: AgentSession, state: AgentViewState, columns: number, height: number, now: number): string[] {
+  if (state.controller) return renderSemanticAgentView(session, state, columns, height);
   const descriptor = harness(session.harness);
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
