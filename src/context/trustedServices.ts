@@ -6,7 +6,8 @@ import {promisify} from 'node:util';
 
 const exec = promisify(execFile);
 let gitExecutable: Promise<string> | undefined;
-function trustedGit(): Promise<string> {
+/** The trusted Git binary (never a PATH or workspace candidate). Shared by context discovery and the worktree manager. */
+export function trustedGit(): Promise<string> {
   return gitExecutable ??= (async () => {
     if (process.platform === 'darwin') {
       // Apple's /usr/bin/git is an xcrun shim. Prefer a known local installation,
