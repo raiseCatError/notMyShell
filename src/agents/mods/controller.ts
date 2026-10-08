@@ -1,6 +1,7 @@
 import type {ModEntry, ModKind} from './model.js';
 import {displayText} from '../transcript/projection.js';
 import type {Key} from '../../terminal/keys.js';
+import {cycleTab, tabCycleDelta} from '../../ui/PanelShell.js';
 
 export const MOD_TABS = ['All', 'Portable', 'Provider-native', 'Context Packs'] as const;
 export type ModAction = {kind: 'Search' | 'Back' | 'ActivateAction' | 'Refresh' | 'BackspaceSearch'} | {kind: 'TypeSearch'; text: string} | {kind: 'SelectTab' | 'Navigate'; direction: number} | {kind: 'ProviderNext'} | {kind: 'Scroll'; rows: number};
@@ -37,7 +38,7 @@ export class ModsController {
       case 'Navigate': if (this.details) this.scroll = Math.max(0, this.scroll + action.direction); else {this.selected = Math.max(0, Math.min(this.rows.length - 1, this.selected + action.direction)); this.scroll = 0;} break;
       case 'Scroll': this.scroll = Math.max(0, this.scroll + action.rows); break;
       case 'ActivateAction': if (this.rows.length) {this.details = true; this.owner = 'PANEL'; this.scroll = 0;} break;
-      case 'SelectTab': this.tab = MOD_TABS[(MOD_TABS.indexOf(this.tab) + action.direction + MOD_TABS.length) % MOD_TABS.length]!; this.selected = 0; this.details = false; break;
+      case 'SelectTab': this.tab = cycleTab(MOD_TABS, this.tab, action.direction); this.selected = 0; this.details = false; break;
       case 'ProviderNext': {const filters = [undefined, ...this.providers]; this.setProvider(filters[(filters.indexOf(this.provider) + 1) % filters.length]); break;}
       case 'Refresh': return 'refresh';
     }
@@ -61,7 +62,8 @@ export function modsKeyAction(key: Key, owner: 'PANEL' | 'SEARCH'): ModAction | 
     if (key.kind === 'backspace') return {kind: 'BackspaceSearch'};
     return undefined; // Tab does not switch filters during editing.
   }
-  if (key.kind === 'complete' || key.kind === 'focusPrevious') return {kind: 'SelectTab', direction: key.kind === 'complete' ? 1 : -1};
+  const delta = tabCycleDelta(key);
+  if (delta) return {kind: 'SelectTab', direction: delta};
   if (key.kind === 'enter') return {kind: 'ActivateAction'};
   if (key.kind === 'text') {
     if (key.value === '/') return {kind: 'Search'};

@@ -1,6 +1,12 @@
-/** Eligible display text; preserve text/newlines, remove terminal instructions and bidi. */
+import {stripTerminalControls} from '../../util/terminalControls.js';
+
+/**
+ * Eligible display text: keeps line breaks, removes terminal instructions and bidi formatting with the
+ * shared display scrubber (whole sequences, including unterminated and C1 forms, never their debris).
+ * Tabs become spaces so cell widths stay exact.
+ */
 export function displayText(text: string): string {
-  return text.replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/gu, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/gu, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu, '');
+  return text.split('\n').map(line => stripTerminalControls(line.replace(/\t/gu, '    '), Number.MAX_SAFE_INTEGER)).join('\n');
 }
 export interface SemanticObject {id: string; kind: string; text: string; detail?: string; incomplete?: string}
 export function projectObject(object: SemanticObject, requested: number): {depth: number; text: string; depths: number[]} {

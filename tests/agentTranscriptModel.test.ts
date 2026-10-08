@@ -23,3 +23,11 @@ test('normalizer does not silently cut large tool results and excludes thinking 
   assert.equal((claudeEvents(JSON.stringify({type: 'user', message: {content: [{type: 'tool_result', tool_use_id: 't', content: detail}]}})).events[0] as any).detail, detail);
   assert.deepEqual(claudeEvents(JSON.stringify({type: 'assistant', message: {content: [{type: 'thinking', thinking: 'private reasoning'}]}})).events, []);
 });
+
+test('agent and mod text uses the shared display scrubber: whole sequences go, lines stay', async () => {
+  const {displayText} = await import('../src/agents/transcript/projection.js');
+  assert.equal(displayText('evil\u001b]0;PWNED\u0007 name\nnext\tline'), 'evil name\nnext    line');
+  assert.equal(displayText('a\u001b]0;unterminated title\nb'), 'a\nb', 'an unterminated OSC never leaves ]0; debris and ends at its line');
+  assert.equal(displayText('x\u009d0;C1 title\u009cy\u001bP+q544e\u001b\\z\u001b_Gi=1\u001b\\w'), 'xyzw', 'C1, DCS and APC strings');
+  assert.equal(displayText('pay‮exe⁦.txt\u001b[31m!'), 'payexe.txt!');
+});
