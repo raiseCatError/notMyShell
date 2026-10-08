@@ -1,6 +1,13 @@
 import {readdirSync} from 'node:fs';
 import {join} from 'node:path';
 
+/** Optional resource limit for npm verification scripts; CLI Node flags still win. */
+export function testConcurrency(value, parallelism) {
+  if (value === undefined) return Math.max(1, Math.min(4, parallelism - 1));
+  if (!/^[1-4]$/u.test(value)) throw new Error('NMSH_TEST_CONCURRENCY must be an integer from 1 to 4');
+  return Number(value);
+}
+
 // Explicit reviewed subsets, never inferred from file names or execution time.
 // Fast: pure editor/protocol/presentation/platform logic; no real PTY fixtures.
 const suites = {
