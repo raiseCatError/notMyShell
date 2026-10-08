@@ -65,15 +65,48 @@ function toolTarget(input: unknown): string | undefined {
 const textOf = (content: unknown): string => typeof content === 'string' ? content
   : Array.isArray(content) ? content.map(part => (part && typeof part === 'object' && (part as {type?: unknown}).type === 'text' ? String((part as {text?: unknown}).text ?? '') : '')).join('') : '';
 
+/** A model id the provider reported: a plain identifier, never a placeholder such as `<synthetic>` on error messages. */
+const runtimeModel = (value: unknown): string | undefined => typeof value === 'string' && /^[A-Za-z0-9][\w.:@/-]{0,79}$/u.test(value) ? value : undefined;
+
+/** Readable words for a provider error code (`authentication_failed` → `authentication failed`); unknown shapes give nothing. */
+export function providerErrorLabel(code: unknown): string | undefined {
+  if (typeof code !== 'string' || !/^[a-z][a-z0-9_]{0,48}$/u.test(code)) return undefined;
+  const known: Record<string, string> = {authentication_failed: 'authentication failed', billing_error: 'billing or usage limit', rate_limit: 'rate limited',
+    invalid_request: 'invalid request', server_error: 'provider server error', max_output_tokens: 'output limit reached'};
+  return known[code] ?? code.replace(/_/gu, ' ');
+}
+
+/**
+ * Why a result reports failure, from structured fields only. Claude can report `is_error: true` with
+ * `subtype: "success"` (an authentication failure did exactly that), so the subtype is a reason only when it
+ * names an error; `terminal_reason` is used when it does. Otherwise there is no trustworthy reason.
+ */
+export function resultFailure(message: Record<string, unknown>): string | undefined {
+  const subtype = message.subtype;
+  const bySubtype: Record<string, string> = {error_max_turns: 'turn limit reached', error_max_budget_usd: 'budget limit reached', error_during_execution: 'error during execution'};
+  if (typeof subtype === 'string' && bySubtype[subtype]) return bySubtype[subtype];
+  if (typeof subtype === 'string' && /^error_[a-z_]{1,40}$/u.test(subtype)) return subtype.slice(6).replace(/_/gu, ' ');
+  const terminal = message.terminal_reason;
+  if (terminal === 'api_error') return 'provider API error';
+  if (typeof terminal === 'string' && /^[a-z][a-z_]{0,40}$/u.test(terminal) && !['completed', 'end_turn', 'success'].includes(terminal)) return terminal.replace(/_/gu, ' ');
+  return undefined;
+}
+
 /** One stdout line → normalized events (unknown shapes produce nothing). */
-export function claudeEvents(line: string): {events: AgentEvent[]; control?: {requestId: string; subtype: string; tool?: string; input?: unknown}} {
+export function claudeEvents(line: string): {events: AgentEvent[]; control?: {requestId: string; subtype: string; tool?: string; input?: unknown}; turnError?: string} {
   let message: Record<string, unknown>;
   try { message = JSON.parse(line) as Record<string, unknown>; } catch { return {events: []}; }
   const type = message.type;
-  if (type === 'system' && message.subtype === 'init') return {events: [{kind: 'started', ...(typeof message.session_id === 'string' ? {harnessSessionId: message.session_id} : {})}]};
+  if (type === 'system' && message.subtype === 'init') {
+    const model = runtimeModel(message.model);
+    return {events: [{kind: 'started', ...(typeof message.session_id === 'string' ? {harnessSessionId: message.session_id} : {})}, ...(model ? [{kind: 'model' as const, model}] : [])]};
+  }
   if (type === 'assistant') {
     const content = (message.message as {content?: unknown} | undefined)?.content;
     const events: AgentEvent[] = [];
+    const model = runtimeModel((message.message as {model?: unknown} | undefined)?.model);
+    if (model) events.push({kind: 'model', model});
+    const turnError = message.is_api_error_message === true || typeof message.error === 'string' ? providerErrorLabel(message.error) : undefined;
     for (const part of Array.isArray(content) ? content : []) {
       const block = part as {type?: unknown; text?: unknown; id?: unknown; name?: unknown; input?: unknown};
       if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) events.push({kind: 'assistant', text: block.text});
@@ -82,7 +115,7 @@ export function claudeEvents(line: string): {events: AgentEvent[]; control?: {re
         events.push({kind: 'tool', id: block.id, name: block.name, ...(target ? {target} : {}), status: 'started', ...(block.input && typeof block.input === 'object' && !Array.isArray(block.input) ? {input: block.input as Record<string, unknown>} : {})});
       }
     }
-    return {events};
+    return {events, ...(turnError ? {turnError} : {})};
   }
   if (type === 'user') {
     const content = (message.message as {content?: unknown} | undefined)?.content;
@@ -98,7 +131,8 @@ export function claudeEvents(line: string): {events: AgentEvent[]; control?: {re
   }
   if (type === 'result') {
     const ok = message.is_error !== true && (message.subtype === undefined || message.subtype === 'success');
-    return {events: [{kind: 'settled', ok, ...(!ok && typeof message.subtype === 'string' ? {message: message.subtype} : {})}]};
+    const reason = ok ? undefined : resultFailure(message);
+    return {events: [{kind: 'settled', ok, ...(reason ? {message: reason} : {})}]};
   }
   if (type === 'control_request' && typeof message.request_id === 'string') {
     const request = message.request as {subtype?: unknown; tool_name?: unknown; input?: unknown} | undefined;
@@ -137,6 +171,10 @@ export class ClaudeSession {
   private initializationFailed = false;
   private initializeTimer?: ReturnType<typeof setTimeout>;
   private messages: string[] = [];
+  /** Structured facts about the current turn, used only to explain a failed result. */
+  private turnError?: string;
+  private interruptRequested = false;
+  private model?: string;
   readonly capabilities: ClaudeCapabilities;
 
   constructor(private readonly options: ClaudeSessionOptions, help?: string) {
@@ -193,9 +231,17 @@ export class ClaudeSession {
         else this.failInitialization('Provider initialization was rejected');
         continue;
       }
-      const {events, control} = claudeEvents(line);
-      for (const event of events) {
-        if (event.kind === 'settled') {clearTimeout(this.interruptTimer); this.interruptTimer = undefined; this.pending.clear();}
+      const {events, control, turnError} = claudeEvents(line);
+      if (turnError) this.turnError = turnError;
+      for (let event of events) {
+        if (event.kind === 'model') { if (event.model === this.model) continue; this.model = event.model; }
+        if (event.kind === 'settled') {
+          clearTimeout(this.interruptTimer); this.interruptTimer = undefined; this.pending.clear();
+          // A failed turn the person interrupted is an interruption; otherwise the provider's own error code
+          // (an assistant `error`) explains it better than the result's generic fields.
+          if (!event.ok) event = this.interruptRequested ? {kind: 'settled', ok: false, interrupted: true} : {kind: 'settled', ok: false, ...(this.turnError ?? event.message ? {message: this.turnError ?? event.message} : {})};
+          this.turnError = undefined; this.interruptRequested = false;
+        }
         this.options.onEvent(event);
       }
       if (control) {
@@ -265,6 +311,7 @@ export class ClaudeSession {
   cancel(): void {
     if (!this.child) return;
     this.pending.clear(); this.options.onEvent({kind: 'requestsCleared'});
+    this.interruptRequested = true;
     this.write({type: 'control_request', request_id: randomUUID(), request: {subtype: 'interrupt'}});
     const child = this.child;
     clearTimeout(this.interruptTimer);

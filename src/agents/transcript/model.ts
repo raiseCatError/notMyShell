@@ -1,4 +1,4 @@
-import type {AgentEvent} from '../sessions/model.js';
+import {settledText, type AgentEvent} from '../sessions/model.js';
 import {AgentSourceStore, type SourceLimits} from './store.js';
 import {displayText, type SemanticObject} from './projection.js';
 
@@ -26,7 +26,7 @@ export class AgentTranscript {
     if (event.kind === 'user' || event.kind === 'assistant') text = event.text;
     else if (event.kind === 'approval') text = `Approval requested: ${event.tool}${event.target ? ` ${event.target}` : ''}`;
     else if (event.kind === 'approvalAnswered') text = event.allowed ? 'You allowed it.' : 'You denied it.';
-    else if (event.kind === 'settled') text = event.ok ? 'Finished; waiting for you.' : `Run failed: ${event.message ?? 'provider reported an error'}`;
+    else if (event.kind === 'settled') text = settledText(event);
     else if (event.kind === 'exited') text = `Provider ended${event.code === null ? '' : ` (exit ${event.code})`}`;
     else if (event.kind === 'choice') text = event.questions.map(q => q.question).join('\n');
     else if (event.kind === 'choiceAnswered') text = `Your answers: ${Object.values(event.answers).join('; ')}`;

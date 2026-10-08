@@ -25,7 +25,10 @@ export type AgentEvent =
   | {kind: 'tool'; id: string; name: string; target?: string; status: 'started' | 'finished' | 'failed'; detail?: string; input?: Record<string, unknown>}
   | {kind: 'approval'; requestId: string; tool: string; target?: string; input?: Record<string, unknown>}
   | {kind: 'approvalAnswered'; requestId: string; allowed: boolean}
-  | {kind: 'settled'; ok: boolean; message?: string}
+  /** A finished turn. `message` is a factual failure reason from structured provider fields only; `interrupted` when the person interrupted it. */
+  | {kind: 'settled'; ok: boolean; message?: string; interrupted?: boolean}
+  /** The model the provider reports it is running (structured runtime evidence, never inferred). */
+  | {kind: 'model'; model: string}
   | {kind: 'exited'; code: number | null}
   | {kind: 'renamed'; title: string};
 
@@ -52,6 +55,8 @@ export interface AgentSession {
   events: AgentEvent[];
   pendingChoice?: {requestId: string; questions: AgentQuestion[]};
   reconnectable?: boolean;
+  /** The runtime model from the provider's own structured events; absent until reported. */
+  model?: string;
   pendingApproval?: {requestId: string; tool: string; target?: string; input?: Record<string, unknown>};
   /** Meaningful news the user has not acknowledged (approval, waiting, finished, failed, exited). */
   attention: boolean;
@@ -117,5 +122,13 @@ export function pushEvent(session: AgentSession, event: AgentEvent, now = Date.n
     case 'settled': session.state = 'waiting'; session.pendingApproval = undefined; session.pendingChoice = undefined; session.activity = undefined; session.attention = true; break;
     case 'exited': session.state = event.code === 0 ? 'exited' : 'failed'; session.activity = undefined; session.attention = true; session.pendingApproval = undefined; session.pendingChoice = undefined; break;
     case 'renamed': session.title = event.title; break;
+    case 'model': session.model = event.model; break;
   }
+}
+
+/** One factual line for a finished turn: never a contradiction such as "failed: success". */
+export function settledText(event: {ok: boolean; message?: string; interrupted?: boolean}): string {
+  if (event.ok) return 'Finished; waiting for you.';
+  if (event.interrupted) return 'Interrupted; waiting for you.';
+  return event.message ? `Run failed: ${event.message}.` : 'Run failed.';
 }
