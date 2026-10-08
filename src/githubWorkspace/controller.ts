@@ -104,6 +104,8 @@ export interface WorkspaceState {
 export interface ControllerOptions {
   title?: string;
   initialQueries?: Partial<Record<ListTab, string>>;
+  /** The list tab shown first (PRs by default). */
+  initialTab?: ListTab;
   clock?: () => number;
   /** Data older than this is labelled stale. */
   staleAfterMs?: number;
@@ -131,7 +133,7 @@ export class GithubWorkspaceController {
     const queries = options.initialQueries ?? {};
     this.state = {
       title: options.title ?? 'GitHub',
-      tab: 'prs',
+      tab: options.initialTab ?? 'prs',
       lists: {prs: emptyList(queries.prs ?? 'is:open'), issues: emptyList(queries.issues ?? 'is:open'), search: emptyList(queries.search ?? '')},
       focus: 'list', queryReturn: 'list', history: [], historyIndex: -1,
     };

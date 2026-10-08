@@ -297,6 +297,18 @@ import {initialSelection, launcherRows, moveSelection, profileLabel, renderLaunc
 import {discoverClaudeProfiles} from '../agents/profileDiscovery.js';
 import {ModsController, modsKeyAction} from '../agents/mods/controller.js';
 import {renderMods} from '../agents/mods/view.js';
+import {WorktreeManagerController} from '../worktrees/controller.js';
+import {repositoryIdentity} from '../worktrees/discovery.js';
+import {createGitRunner, succeeded, type GitRunner} from '../worktrees/git.js';
+import {newWorktreeRequest} from '../worktrees/host.js';
+import {displayText as worktreeText} from '../worktrees/model.js';
+import {buildWorktreeView, renderWorktreeView} from '../worktrees/view.js';
+import {GithubWorkspaceController, type ListTab, type WorkspaceIntent} from '../githubWorkspace/controller.js';
+import {githubRepositoryFromRemote, workspaceKey} from '../githubWorkspace/host.js';
+import {attachRenderer, renderWorkspace, type RenderOptions as GithubRenderOptions} from '../githubWorkspace/render.js';
+import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
+import {GithubWorkspaceService} from '../githubWorkspace/service.js';
+import {GhSource} from '../githubWorkspace/source.js';
 import {loadModInventory} from '../agents/mods/inventory.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
@@ -1577,6 +1589,8 @@ export class TerminalApp {
       else if (result === 'refresh') void this.refreshMods();
       this.render(); return;
     }
+    if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
+    if (this.githubPanel) { this.handleGithubKey(key); return; }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
@@ -2410,6 +2424,8 @@ export class TerminalApp {
     else if (slash.kind === 'sessions') await this.openSessionsView();
     else if (slash.kind === 'ai') this.openAi(command, slash.target);
     else if (slash.kind === 'mods') this.openMods(slash.provider);
+    else if (slash.kind === 'worktrees') await this.openWorktrees();
+    else if (slash.kind === 'github') await this.openGithub(slash.tab);
     else if (slash.kind === 'managedTarget') this.openManagedTarget(command, slash.provider, slash.action);
     else if (slash.kind === 'rawProvider') {
       if (slash.command) {this.editor.replaceText(slash.command); await this.submit(true);}
@@ -3872,7 +3888,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3948,6 +3964,8 @@ export class TerminalApp {
     }
     if (this.launcher) return framePanel(renderLauncher(this.launcher, this.launcherRows(), columns, this.dimensions().rows - 4), columns);
     if (this.modsPanel) return framePanel(renderMods(this.modsPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.worktreePanel) return framePanel(this.worktreeRows(columns, this.dimensions().rows - 4), columns);
+    if (this.githubPanel) return framePanel(this.githubRows(columns, this.dimensions().rows - 4), columns);
     if (this.agentPanel) return framePanel(renderAgentPanel(this.agentPanel, this.agentPanelRows(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.askState) {
       const activity = this.askActivityLine();
@@ -7283,6 +7301,10 @@ export class TerminalApp {
   });
   private taskClock?: () => void;
   private modsPanel?: ModsController;
+  /** /worktrees: the core controller; `branch` while `n` collects a branch name; `notice` is the host's own outcome line. */
+  private worktreePanel?: {controller: WorktreeManagerController; git: GitRunner; branch?: string; notice?: string; select?: string};
+  /** /github, /prs, /issues: read-only workspace over the person's `gh`. */
+  private githubPanel?: {controller: GithubWorkspaceController; repository: string; detach: () => void; columns?: number};
   /** /claude, /claude new, /ai → Claude: the provider launcher (targets and launch profiles). */
   private launcher?: LauncherState;
   /** Found launch profiles were skipped in this window: not offered again until restart. */
@@ -8083,6 +8105,146 @@ export class TerminalApp {
     this.modsPanel ??= new ModsController();
     this.modsPanel.setProvider(provider);
     void this.refreshMods();
+  }
+
+  /** Where the shell is, as Git reports paths (macOS /tmp is /private/tmp), so removal never offers the shell's own worktree. */
+  private canonicalShellCwd(): string {
+    try { return realpathSync(this.shellCwd); } catch { return this.shellCwd; }
+  }
+
+  private async openWorktrees(select?: string): Promise<void> {
+    const git = createGitRunner();
+    let repository: string;
+    try { repository = await repositoryIdentity(git, this.shellCwd); } catch (error) {
+      this.output.addFrontendInteraction('/worktrees', `No worktrees here: ${worktreeText((error as Error).message, 200)}.`, INFO);
+      this.render(); return;
+    }
+    this.panelOrigin = undefined;
+    const controller = new WorktreeManagerController({git, repository, currentPath: () => this.canonicalShellCwd()});
+    const panel = {controller, git, ...(select ? {select} : {})};
+    this.worktreePanel = panel;
+    this.render();
+    await controller.refresh();
+    if (this.worktreePanel !== panel) return;
+    if (select) {
+      const match = controller.state.snapshot?.worktrees.find(worktree => worktree.branch === select);
+      if (match) controller.select(match.id);
+      else this.worktreePanel.notice = `No worktree has ${worktreeText(select, 120)} checked out. n creates one.`;
+    }
+    this.render();
+  }
+
+  /** Live managed agents working inside a worktree: removing it would pull the directory out from under them. */
+  private agentsInside(path: string): string[] {
+    const live = this.agents.sessions.filter(session => !['finished', 'failed', 'exited'].includes(session.state) && session.cwd);
+    return live.filter(session => {
+      let cwd = session.cwd!;
+      try { cwd = realpathSync(cwd); } catch { /* keep as reported */ }
+      return cwd === path || cwd.startsWith(`${path}/`);
+    }).map(session => session.title);
+  }
+
+  private async handleWorktreeKey(key: Key): Promise<void> {
+    const panel = this.worktreePanel;
+    if (!panel) return;
+    const {controller} = panel;
+    if (panel.branch !== undefined) {
+      if (key.kind === 'escape') panel.branch = undefined;
+      else if (key.kind === 'backspace') panel.branch = [...panel.branch].slice(0, -1).join('');
+      else if ((key.kind === 'text' || key.kind === 'paste') && !/[\u0000-\u001f\u007f-\u009f\s]/u.test(key.value)) panel.branch = (panel.branch + key.value).slice(0, 200);
+      else if (key.kind === 'enter' && controller.state.snapshot) {
+        const request = await newWorktreeRequest(panel.git, controller.state.snapshot, panel.branch);
+        if (this.worktreePanel !== panel) return;
+        if ('error' in request) panel.notice = request.error;
+        else { panel.branch = undefined; panel.notice = undefined; await controller.planNew(request); }
+      }
+      if (this.worktreePanel === panel) this.render();
+      return;
+    }
+    panel.notice = undefined;
+    if (key.kind === 'text' && key.value.toLowerCase() === 'x' && !controller.state.review && !controller.state.searching) {
+      const selected = controller.selected();
+      const agents = selected ? this.agentsInside(selected.path) : [];
+      if (agents.length) { panel.notice = `Not removed: ${agents.length === 1 ? 'agent' : 'agents'} ${agents.map(title => worktreeText(title, 60)).join(', ')} ${agents.length === 1 ? 'is' : 'are'} working there.`; this.render(); return; }
+    }
+    const outcome = await controller.handleKey(key);
+    if (this.worktreePanel !== panel) return;
+    if (outcome.kind === 'back') { this.worktreePanel = undefined; this.returnFromPanel(); }
+    else if (outcome.kind === 'requestNewWorktree') panel.branch = '';
+    else if (outcome.kind === 'navigate' && outcome.intent.kind === 'cd') {
+      if (this.editor.text.trim()) panel.notice = 'Your draft is kept. Clear the composer, then press Enter here to stage the cd.';
+      else {
+        let command: string | undefined;
+        try { command = directoryCommand(outcome.intent.path); } catch { panel.notice = 'That path cannot be typed safely as a cd command.'; }
+        if (command) { this.worktreePanel = undefined; this.returnFromPanel(); this.applySuggestion({insertion: command}); }
+      }
+    }
+    this.render();
+  }
+
+  private worktreeRows(columns: number, rows: number): string[] {
+    const panel = this.worktreePanel!;
+    const glyphs = this.promptConfiguration.glyphStyle === 'safe' ? 'safe' : 'nerd';
+    const extra = [
+      ...(panel.branch !== undefined ? [`New worktree branch: ${panel.branch}${glyphs === 'safe' ? '_' : '▏'}`, 'Enter plans it (nothing changes yet) · Esc cancels'] : []),
+      ...(panel.notice ? [panel.notice] : []),
+    ].map(line => truncateText(line, Math.max(1, columns)));
+    const body = renderWorktreeView(buildWorktreeView(panel.controller), {columns, rows: Math.max(1, rows - extra.length), glyphs, level: colorLevel(), home: homedir()});
+    return [...body, ...extra];
+  }
+
+  private async openGithub(tab: ListTab): Promise<void> {
+    const git = createGitRunner();
+    const remote = await git(this.shellCwd, ['remote', 'get-url', '--', 'origin'], {timeoutMs: 2000, maxBytes: 4096});
+    const repository = succeeded(remote) ? githubRepositoryFromRemote(remote.stdout) : undefined;
+    if (!repository) {
+      this.output.addFrontendInteraction(`/${tab === 'issues' ? 'issues' : 'github'}`, 'This directory has no github.com origin remote, so there is no repository to show.', INFO);
+      this.render(); return;
+    }
+    this.panelOrigin = undefined;
+    const controller = new GithubWorkspaceController(new GithubWorkspaceService(new GhSource()), {
+      title: `${repository} (read-only)`, initialTab: tab,
+      initialQueries: {prs: `repo:${repository} is:open`, issues: `repo:${repository} is:open`, search: `repo:${repository}`},
+    });
+    attachRenderer(controller, () => this.githubRenderOptions(this.githubPanel?.columns ?? this.dimensions().columns, this.dimensions().rows - 4));
+    const detach = controller.onChange(() => { if (this.githubPanel?.controller === controller) this.render(); });
+    this.githubPanel = {controller, repository, detach};
+    this.render();
+    await controller.submitQuery(tab);
+  }
+
+  private githubRenderOptions(columns: number, rows: number): GithubRenderOptions {
+    return {columns, rows: Math.max(1, rows), glyphs: this.promptConfiguration.glyphStyle === 'safe' ? 'safe' : 'nerd', color: colorLevel(), now: Date.now()};
+  }
+
+  private githubRows(columns: number, rows: number): string[] {
+    const panel = this.githubPanel!;
+    panel.columns = columns;
+    panel.controller.setViewport(columns, rows);
+    return renderWorkspace(panel.controller.snapshot, panel.controller.availableActions(), this.githubRenderOptions(columns, rows));
+  }
+
+  private handleGithubKey(key: Key): void {
+    const panel = this.githubPanel;
+    if (!panel) return;
+    const mapped = workspaceKey(key);
+    const intent = mapped ? panel.controller.handleKey(mapped) : undefined;
+    if (intent) this.githubIntent(panel, intent);
+    this.render();
+  }
+
+  private githubIntent(panel: NonNullable<TerminalApp['githubPanel']>, intent: WorkspaceIntent): void {
+    if (intent.type === 'Exit') { panel.detach(); this.githubPanel = undefined; this.returnFromPanel(); return; }
+    if (intent.type === 'OpenRelatedWorktree') {
+      if (intent.headRepository && intent.headRepository.toLowerCase() !== panel.repository.toLowerCase()) { panel.controller.notify(`The branch lives in ${intent.headRepository}, a fork; there is no local worktree for it here.`); return; }
+      panel.detach(); this.githubPanel = undefined;
+      void this.openWorktrees(intent.headRef);
+      return;
+    }
+    const url = safeGithubUrl(intent.url);
+    const opener = url ? selectOpener() : undefined;
+    if (!url || !opener) { panel.controller.notify(url ? `No system URL opener here. The URL is ${url}` : 'That link is not a github.com URL, so it was not opened.'); return; }
+    try { spawn(opener, [url], {detached: true, stdio: 'ignore'}).unref(); panel.controller.notify(`Opened ${url}`); } catch { panel.controller.notify(`Couldn't open ${url}`); }
   }
 
   private async refreshMods(): Promise<void> {
