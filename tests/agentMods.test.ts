@@ -4,7 +4,7 @@ import {ModBroker, PortableInstance} from '../src/agents/mods/broker.js';
 import {claudeInventory} from '../src/agents/mods/claudeDiscovery.js';
 import {ModsController} from '../src/agents/mods/controller.js';
 import {renderMods} from '../src/agents/mods/view.js';
-import {displayWidth} from '../src/util/text.js';
+import {stripAnsi, displayWidth} from '../src/util/text.js';
 import {capabilityFacts} from '../src/agents/targets/capabilities.js';
 import {mkdtempSync, writeFileSync, existsSync, rmSync, symlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -72,8 +72,11 @@ for (const columns of [30, 40, 50, 80, 120, 200]) test(`mod risk and provenance 
   const c = new ModsController(); c.setInventory(claudeInventory([{id: 'native-long-name-界'.repeat(5), scope: 'user', enabled: true}], '/p'));
   const lines = renderMods(c, columns, 24);
   assert.ok(lines.every(line => displayWidth(line) <= columns));
-  assert.match(lines.join('\n'), /NMSh sandbox: No/u);
-  assert.match(lines.join('\n'), /Managed by NMSh: No/u);
+  // The selected entry's execution facts stay visible while browsing, wrapped (never cut) at narrow widths.
+  const browsing = stripAnsi(lines.join('\n')).replace(/\s+/gu, ' ');
+  assert.match(browsing, /runs inside Claude Code/u);
+  assert.match(browsing, /no NMSh sandbox/u);
+  assert.match(browsing, /not managed by NMSh/u);
 });
 
 test('refresh failure preserves inventory with stale/error state', async () => {

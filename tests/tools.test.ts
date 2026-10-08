@@ -409,7 +409,10 @@ test('the selected tool row is an unmistakable band that follows the selection, 
     const filtered = selectedRows(renderTools(state, 100, 40)).filter(row => !/Discover/u.test(stripAnsi(row)));
     assert.equal(filtered.length, 1, 'search keeps one clear selection');
     delete process.env.NMSH_COLOR; process.env.NO_COLOR = '1';
-    const plain = renderTools(createToolsPanel(), 60, 30).filter(row => row.includes('\u001b[7m'));
+    const reversed = renderTools(createToolsPanel(), 60, 30).filter(row => row.includes('\u001b[7m'));
+    // The active tab is reverse video too (the shared tab strip), as in the colored branch above it is excluded here.
+    assert.ok(reversed.some(row => /Discover/u.test(stripAnsi(row))), 'NO_COLOR: the active tab is reverse video');
+    const plain = reversed.filter(row => !/Discover/u.test(stripAnsi(row)));
     assert.equal(plain.length, 1, 'NO_COLOR: reverse video carries the selection');
     assert.match(stripAnsi(plain[0]!), /^ {2}› /u);
   } finally {
