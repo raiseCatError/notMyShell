@@ -21,7 +21,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/motion': {group: 'Appearance', title: 'Open Motion'}, '/glyphs': {group: 'Appearance', title: 'Configure Glyph Style'},
   '/strip': {group: 'Appearance', title: 'Configure Status Strip'}, '/status-strip': {alias: '/strip'},
   '/screensaver': {group: 'Appearance', title: 'Open Idle visuals'}, '/activity': {group: 'Appearance', title: 'Open Live activity colors'},
-  '/prompt': {group: 'Composer & transcript', title: 'Open Prompt'}, '/layout': {group: 'Composer & transcript', title: 'Configure Composer Layout'},
+  '/prompt': {group: 'Composer & transcript', title: 'Open Prompt'}, '/modules': {group: 'Composer & transcript', title: 'Open Modules'}, '/layout': {group: 'Composer & transcript', title: 'Configure Composer Layout'},
   '/composer': {alias: '/layout'}, '/syntax': {group: 'Composer & transcript', title: 'Open Syntax highlighting'},
   '/transcript': {group: 'Composer & transcript', title: 'Open Transcript appearance'}, '/keyboard': {group: 'Composer & transcript', title: 'Open Keyboard'},
   '/providers': {group: 'Providers', title: 'Open Providers'}, '/picker': {group: 'Providers', title: 'Configure Picker Provider'}, '/pickers': {alias: '/picker'},
@@ -41,6 +41,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
+  {name: '/modules', insertion: '/modules', description: 'Context modules, catalog and Context Packs: show, route to a surface, search; saved as you change them'},
   {name: '/cursor', insertion: '/cursor', description: 'Text caret shape and blink while NMSh owns the composer'},
   {name: '/activity', insertion: '/activity', description: 'Live activity colors for the running-command line'},
   {name: '/screensaver', insertion: '/screensaver', description: 'Idle visuals: live gallery, timeout and colors'},
@@ -67,7 +68,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/composer', insertion: '/composer', description: 'Composer position and transcript presentation (same as /layout)'},
   {name: '/chrome', insertion: '/chrome', description: 'UI chrome: NMSh frames, rules, tabs, selection and accents (not Chroma)'},
   {name: '/glyphs', insertion: '/glyphs', description: 'Glyph style: compare Nerd Font and Safe / ASCII symbols and icons'},
-  {name: '/strip', insertion: '/strip', description: 'Status strip: clock, battery, CPU, RAM and uptime, with a live preview'},
+  {name: '/strip', insertion: '/strip', description: 'Status Strip Studio: top or bottom row, left/center/right groups, style, presets and system items, with a live preview'},
   {name: '/status-strip', insertion: '/status-strip', description: 'Same as /strip'},
   {name: '/configure', insertion: '/configure ', description: 'Tool Configuration: supported settings for tmux, Starship and other registered tools'},
   {name: '/tmux', insertion: '/tmux', description: 'Configure tmux: settings, keys, Status Studio, new panes start NMSh, theme'},
@@ -127,6 +128,7 @@ export type ParsedSlashCommand =
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
+  | {kind: 'modules'}
   | {kind: 'chroma'}
   | {kind: 'theme'}
   | {kind: 'themeBridge'}
@@ -187,6 +189,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
+  if (/^\/modules\s*$/u.test(input)) return {kind: 'modules'};
   if (/^\/chroma\s*$/u.test(input)) return {kind: 'chroma'};
   if (/^\/theme\s*$/u.test(input)) return {kind: 'theme'};
   if (/^\/theme-bridge\s*$/u.test(input)) return {kind: 'themeBridge'};

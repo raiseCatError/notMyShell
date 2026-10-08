@@ -4,7 +4,7 @@ import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {historicalPromptLevel} from '../output/TranscriptPanel.js';
-import {PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -461,8 +461,16 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     optionsFor: c => symbolIds(c).map(id => promptSymbolLabel(id, c.promptSymbolCustom)),
     index: c => Math.max(0, symbolIds(c).indexOf(c.promptSymbol)),
     select: (c, index) => ({...c, promptSymbol: symbolIds(c)[index] ?? 'chevron'})},
-  {id: 'statusStrip', label: 'Status strip', description: 'Compact NMSh-owned status row, top right; Minimal shows the clock and a real battery', category: 'Status strip',
+  {id: 'statusStrip', label: 'Status strip', description: 'Compact NMSh-owned status row; Minimal shows the clock and a real battery. /strip composes it', category: 'Status strip',
     control: 'boolean', get: c => c.statusStrip.enabled, set: (c, enabled) => withStrip(c, {enabled})},
+  enumRow({id: 'stripEdge', parent: 'statusStrip', when: stripOn, label: 'Edge', description: 'Top or bottom row of the NMSh pane; inside tmux, Bottom sits above tmux\'s own status line', category: 'Status strip',
+    values: STRIP_EDGES, labels: ['Top', 'Bottom'], get: c => c.statusStrip.edge, set: (c, edge) => withStrip(c, {edge})}),
+  enumRow({id: 'stripStyle', parent: 'statusStrip', when: stripOn, label: 'Style', description: 'Plain text items, or blocks with NMSh\'s Powerline geometry', category: 'Status strip',
+    values: STRIP_STYLES, labels: ['Plain', 'Powerline'], get: c => c.statusStrip.style, set: (c, style) => withStrip(c, {style})}),
+  enumRow({id: 'stripSeparator', parent: 'stripStyle', when: c => stripOn(c) && c.statusStrip.style === 'plain', label: 'Separator', description: 'Between plain items: a dot (Minimal), a bar (Divided) or space', category: 'Status strip',
+    values: STRIP_SEPARATORS, labels: ['Dot ·', 'Bar │', 'Space'], get: c => c.statusStrip.separator, set: (c, separator) => withStrip(c, {separator})}),
+  enumRow({id: 'stripNativeZone', parent: 'statusStrip', when: stripOn, label: 'System items', description: 'Where the clock, CPU, RAM, battery, uptime and Keep Awake sit', category: 'Status strip',
+    values: STRIP_ZONES, labels: ['Left', 'Center', 'Right'], get: c => c.statusStrip.nativeZone, set: (c, nativeZone) => withStrip(c, {nativeZone})}),
   {id: 'stripClock', parent: 'statusStrip', when: stripOn, label: 'Clock', description: 'Local time', category: 'Status strip',
     control: 'boolean', get: c => c.statusStrip.clock, set: (c, clock) => withStrip(c, {clock})},
   {id: 'stripBattery', parent: 'statusStrip', when: stripOn, label: 'Battery', description: 'Shown only when this machine has a battery', category: 'Status strip',

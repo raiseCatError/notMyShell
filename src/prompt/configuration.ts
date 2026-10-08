@@ -205,6 +205,8 @@ export interface ContextModuleConfig {
   placement?: ModulePlacement;
   /** Missing preserves legacy left/right; explicit Auto opts into definition preference. */
   surface?: ModuleSurface;
+  /** Status Strip group when routed there; missing means Right, where strip modules always sat. Independent of Main Prompt placement. */
+  stripZone?: StripZone;
   foreground?: string;
   background?: string;
 }
@@ -482,16 +484,37 @@ export function normalizeCursor(value: unknown): CursorSettings {
 /** Optional NMSh-owned status strip; Off by default, Minimal (clock + real battery) when enabled. */
 export const RAM_DISPLAYS = ['percent', 'absolute', 'both'] as const;
 export type RamDisplay = typeof RAM_DISPLAYS[number];
+/** Which edge of the NMSh pane the strip row sits on (inside tmux: above tmux's own status line). */
+export const STRIP_EDGES = ['top', 'bottom'] as const;
+export type StripEdge = typeof STRIP_EDGES[number];
+/** Independent left, center and right groups on the one strip row. */
+export const STRIP_ZONES = ['left', 'center', 'right'] as const;
+export type StripZone = typeof STRIP_ZONES[number];
+/** Plain text items, or blocks drawn with NMSh's Powerline geometry. */
+export const STRIP_STYLES = ['plain', 'powerline'] as const;
+export type StripStyle = typeof STRIP_STYLES[number];
+/** Between plain items: a middle dot (Minimal), a bar (Divided) or space. */
+export const STRIP_SEPARATORS = ['dot', 'bar', 'space'] as const;
+export type StripSeparator = typeof STRIP_SEPARATORS[number];
 export interface StatusStripSettings {
   enabled: boolean; clock: boolean; battery: boolean; cpu: boolean; ram: boolean; uptime: boolean; ramDisplay: RamDisplay;
+  /** Absent in settings saved before Status Strip 2.0: the strip stayed at the top, so that is the migrated value. */
+  edge: StripEdge;
+  style: StripStyle;
+  separator: StripSeparator;
+  /** Where the clock, CPU, RAM, battery, uptime and Keep Awake sit; Right is the original right-aligned row. */
+  nativeZone: StripZone;
 }
-export const DEFAULT_STATUS_STRIP: StatusStripSettings = {enabled: false, clock: true, battery: true, cpu: false, ram: false, uptime: false, ramDisplay: 'percent'};
+export const DEFAULT_STATUS_STRIP: StatusStripSettings = {enabled: false, clock: true, battery: true, cpu: false, ram: false, uptime: false, ramDisplay: 'percent',
+  edge: 'top', style: 'plain', separator: 'dot', nativeZone: 'right'};
 
 export function normalizeStatusStrip(value: unknown): StatusStripSettings {
   const v = isRecord(value) ? value : {};
   const flag = (key: keyof StatusStripSettings) => typeof v[key] === 'boolean' ? v[key] as boolean : DEFAULT_STATUS_STRIP[key] as boolean;
+  const pick = <T extends string>(values: readonly T[], key: keyof StatusStripSettings): T => values.includes(v[key] as T) ? v[key] as T : DEFAULT_STATUS_STRIP[key] as T;
   return {enabled: flag('enabled'), clock: flag('clock'), battery: flag('battery'), cpu: flag('cpu'), ram: flag('ram'), uptime: flag('uptime'),
-    ramDisplay: RAM_DISPLAYS.includes(v.ramDisplay as RamDisplay) ? v.ramDisplay as RamDisplay : 'percent'};
+    ramDisplay: RAM_DISPLAYS.includes(v.ramDisplay as RamDisplay) ? v.ramDisplay as RamDisplay : 'percent',
+    edge: pick(STRIP_EDGES, 'edge'), style: pick(STRIP_STYLES, 'style'), separator: pick(STRIP_SEPARATORS, 'separator'), nativeZone: pick(STRIP_ZONES, 'nativeZone')};
 }
 
 /** Idle visuals: minutes of inactivity before the NMSh screensaver starts; 0 is Never (the default). */
@@ -913,6 +936,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     if (MODULE_SURFACES.includes(item.surface as ModuleSurface) && (item.surface === 'auto' || item.surface === 'hidden' || !surfaceDefinition
       || surfaceDefinition.supportedSurfaces.includes(item.surface as ContextSurface))) module.surface = item.surface as ModuleSurface;
     if (item.placement === 'right') module.placement = 'right';
+    if (item.stripZone === 'left' || item.stripZone === 'center' || item.stripZone === 'right') module.stripZone = item.stripZone;
     if (validColor(item.foreground)) module.foreground = item.foreground;
     if (validColor(item.background)) module.background = item.background;
     modules.push(module);

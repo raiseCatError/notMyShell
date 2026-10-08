@@ -53,7 +53,9 @@ fi
 # Prevent UI plugins from fighting during bootstrap
 unsetopt zle
 export POWERLEVEL9K_DISABLE_PROMPT=true
+typeset -g nmsh_had_cache=\${+XDG_CACHE_HOME} nmsh_orig_cache=\$XDG_CACHE_HOME
 export XDG_CACHE_HOME="\${XDG_CACHE_HOME:-\$HOME/.cache}/nmsh-disabled"
+typeset -g nmsh_disabled_cache=\$XDG_CACHE_HOME
 
 # Suppress fastfetch via TERM
 local nmsh_orig_term=\$TERM
@@ -114,6 +116,19 @@ ${shellKnowledgeBootstrap(join(stateDir, '.nmsh-knowledge'))}
 autoload -Uz add-zsh-hook
 add-zsh-hook precmd nmsh_precmd
 add-zsh-hook preexec nmsh_preexec
+
+# Startup is over: this shell has read its files. A zsh started from it (a tmux
+# pane, a nested shell) must be an ordinary zsh, not a second copy of this
+# bootstrap, which blanks the prompt and turns off ZLE and echo. Give children
+# the person's own ZDOTDIR back and stop exporting the prompt override.
+${env.ZDOTDIR ? `export ZDOTDIR=${shellQuote(env.ZDOTDIR)}` : 'unset ZDOTDIR'}
+typeset +x POWERLEVEL9K_DISABLE_PROMPT
+# The cache redirect only kept prompt themes' instant prompt out of this shell's startup; programs started
+# from it use the person's own cache again, unless their own startup files chose another one.
+if [[ \$XDG_CACHE_HOME == "\$nmsh_disabled_cache" ]]; then
+  if (( nmsh_had_cache )); then export XDG_CACHE_HOME=\$nmsh_orig_cache; else unset XDG_CACHE_HOME; fi
+fi
+unset nmsh_had_cache nmsh_orig_cache nmsh_disabled_cache
 
 # Background cleanup handled by Node.js
 `);

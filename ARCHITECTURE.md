@@ -128,6 +128,8 @@ Raw output is not blindly printed over the composer. `AnsiOutputParser` interpre
 
 NMSh-authored submitted command lines can keep semantic highlighting. Folding changes which output rows are visible; it does not rerun commands or turn hidden output into a different result. Search, selection, and copy work from transcript state. `/copy` exports plain text without NMSh's ANSI chrome.
 
+The Status Strip is one frontend row at the top or bottom edge of the NMSh pane, planned by the same screen plan as everything else, with left, center and right groups fitted in display cells. Its clock, CPU, RAM, battery and uptime are Context Engine facts demanded only while the row shows; strip-routed modules are the same facts every surface uses. Painting it reads no files and starts no process. Passthrough hides it and panels own their screen as before.
+
 Historical command blocks retain prompt/context snapshots from submission time. Viewing an old command should not pretend it ran in today's directory or Git state. Frontend chrome such as the Status Strip, find bar, and accessory rows stays outside the transcript.
 
 The viewport follows the newest output during execution (**FOLLOW**). Scrolling into history enters **DETACHED** viewport mode so new output does not pull the view away. This is a viewing state, distinct from detaching a live shell session.

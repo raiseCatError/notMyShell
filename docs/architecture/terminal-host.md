@@ -42,7 +42,8 @@ feature is introduced.
 | Kitty | Yes | Yes | Shift | Yes | Kitty | None |
 | WezTerm | Probe only (configuration dependent) | Yes | Shift (configurable) | Yes | iTerm2 inline images | None |
 | Zed | Probe only | Wheel and clicks; no movement tracking | Shift | OSC 8 opt-in (`NMSH_HYPERLINKS=1`); truecolor from `COLORTERM` | None | None |
-| Unknown / nested | No | No | Native | No / explicit color evidence | None | None |
+| Inside tmux | No | Wheel and clicks (tmux forwards SGR reports to the pane); no movement tracking | Shift | No / explicit color evidence | None | None |
+| Unknown / screen / Zellij | No | No | Native | No / explicit color evidence | None | None |
 
 All synchronized output remains probe-only. A graphics hint never emits image
 bytes; rich previews remain research-first. WezTerm supports multiple image

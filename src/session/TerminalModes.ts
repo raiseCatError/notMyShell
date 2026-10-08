@@ -134,3 +134,42 @@ export class AlternateScreenTracker {
     return this.active || this.interactive;
   }
 }
+
+/**
+ * Where a command's output stops being transcript text: the first sequence
+ * that shows the program took the terminal (the alternate screen, an input
+ * mode, a kitty keyboard push), the same evidence the classifier uses. Text
+ * before it is ordinary output; from it on everything is the program's screen
+ * paint, which belongs to the program and never becomes transcript text, even
+ * when it arrives in the same read as earlier output.
+ */
+export class TranscriptCut {
+  owned = false;
+  private held = '';
+
+  /** The part of `data` that belongs to the transcript. A sequence split across reads is held until complete. */
+  push(data: string): string {
+    if (this.owned) return '';
+    const text = this.held + data;
+    this.held = '';
+    for (const match of text.matchAll(MODE_SEQUENCE)) {
+      const takes = match[4] === '>' || (match[2] === 'h' && match[1]!.split(';').some(param => OWNERSHIP_MODES.has(Number(param))));
+      if (takes) { this.owned = true; return text.slice(0, match.index); }
+    }
+    const escape = text.lastIndexOf('\u001b');
+    const tail = escape < 0 ? '' : text.slice(escape);
+    if (tail.length < 16 && /^\u001b(?:\[(?:\?[\d;]*|[><]\d*)?)?$/u.test(tail)) {
+      this.held = tail;
+      return text.slice(0, escape);
+    }
+    return text;
+  }
+
+  /** What is still held when the command ends. */
+  flush(): string {
+    const held = this.owned ? '' : this.held;
+    this.held = '';
+    return held;
+  }
+}
+const OWNERSHIP_MODES = new Set([47, 1047, 1049, ...INPUT_MODES]);

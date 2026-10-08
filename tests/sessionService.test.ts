@@ -267,3 +267,12 @@ test('the service remembers a fullscreen app\'s input modes so a reattaching ter
   screen.reset();
   assert.equal(screen.restoreSequence(), '', 'the app ending clears its modes');
 });
+
+test('a shell from an older session service is called out, because the service builds every shell\'s startup', async () => {
+  const {serviceBuildNotice} = await import('../src/session/SocketSessionClient.js');
+  const own = {version: '0.16.0', commit: '964f5e9'};
+  assert.equal(serviceBuildNotice('0.16.0 964f5e9', own), undefined, 'same build: nothing to say');
+  assert.equal(serviceBuildNotice('0.16.0 abc1234', {version: 'unknown', commit: 'unknown'}), undefined, 'unknown own build: no guess');
+  assert.match(serviceBuildNotice('0.16.0 1234567', own) ?? '', /older NMSh session service \(0\.16\.0 1234567; this window is 0\.16\.0 964f5e9\)/u);
+  assert.match(serviceBuildNotice(undefined, own) ?? '', /build not reported/u, 'a service too old to report its build');
+});

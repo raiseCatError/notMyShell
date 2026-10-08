@@ -48,14 +48,18 @@ export interface ContextModuleDefinition {
 }
 
 const PROMPT_SURFACES: readonly ContextSurface[] = ['mainPrompt', 'rightContext', 'contextRail'];
-/** Low-attention context may also sit in the Status Strip; identity, Git and path stay prompt surfaces. */
+/**
+ * Every built-in may also sit in the Status Strip except the exit status, which
+ * belongs next to the command it describes. A module has one surface, so moving
+ * project, path or Git to the strip is always the person's own routing choice.
+ */
 const STRIP_SURFACES: readonly ContextSurface[] = [...PROMPT_SURFACES, 'statusStrip'];
 
 function builtin(id: BuiltinModuleId, label: string, description: string, category: ModuleCategory, fields: readonly FactId[], demand: string,
   priority: number, conditions: readonly ContextCondition[], preferredSurface: ContextSurface = 'mainPrompt', engine: Record<string, readonly string[]> = {}): ContextModuleDefinition {
   return {id, label, description, category, fields, capabilities: [...fields.map(field => FACT_CAPABILITIES[field]), ...Object.keys(engine)],
     facts: new Map(Object.entries(engine).map(([capability, wanted]) => [capability, new Set(wanted)])), demand, priority,
-    supportedSurfaces: category === 'context' || id === 'shell' || id === 'discoveredTools' ? STRIP_SURFACES : PROMPT_SURFACES,
+    supportedSurfaces: id === 'exitStatus' ? PROMPT_SURFACES : STRIP_SURFACES,
     preferredSurface, conditions, icons: 'existing-semantic-glyphs', width: 'compact-then-drop'};
 }
 

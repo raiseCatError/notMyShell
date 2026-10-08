@@ -25,7 +25,7 @@ export function resolveProbeReplies(input: string, hints: Readonly<TerminalCapab
         return '';
       }
       if (flags !== undefined) capabilities.kittyKeyboard = capabilities.enhancedKeyboard = true;
-      if (status !== undefined) capabilities.synchronizedOutput = status === '1' || status === '2';
+      if (status !== undefined) capabilities.synchronizedOutput = !hints.hostSynchronizes && (status === '1' || status === '2');
       return '';
     });
   return {capabilities, input: remaining};
