@@ -188,6 +188,9 @@ test('transport classifies auth, rate limit, network and missing gh failures wit
   }
   const leaky = redactMessage('HTTP 401 token ghp_abcdefghijklmnopqrstuvwxyz0123 github_pat_11ABCDEFG0123456789 Authorization: bearer xyz');
   assert.doesNotMatch(leaky, /ghp_|github_pat_|bearer xyz/u);
+  const limited = redactMessage('API rate limit exceeded for 183.83.230.26 and 2001:db8:85a3:0:0:8a2e:370:7334 at 04:34:12 (HTTP 403)');
+  assert.doesNotMatch(limited, /183\.83|2001:db8/u, 'client addresses never reach the screen');
+  assert.match(limited, /04:34:12/u, 'clock times are not addresses');
   assert.equal(classifyFailure('HTTP 404: Not Found'), 'not_found');
 });
 

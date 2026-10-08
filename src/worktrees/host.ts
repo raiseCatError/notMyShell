@@ -22,5 +22,5 @@ export async function newWorktreeRequest(git: GitRunner, snapshot: WorktreeSnaps
   const exists = await git(main.path, ['rev-parse', '--verify', '--quiet', '--end-of-options', `refs/heads/${name}`], {timeoutMs: 2000, maxBytes: 4096});
   return succeeded(exists)
     ? {kind: 'existingBranch', destination, branch: name}
-    : {kind: 'newBranch', destination, branch: name, startPoint: main.head ?? 'HEAD'};
+    : {kind: 'newBranch', destination, branch: name, startPoint: main.branch ?? main.head ?? 'HEAD'};
 }

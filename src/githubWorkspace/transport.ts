@@ -56,7 +56,9 @@ const CREDENTIAL = /\b(?:gh[pousr]_[A-Za-z0-9_]{10,}|github_pat_[A-Za-z0-9_]{10,
 
 /** A short, sanitized, credential-free description of a failure. */
 export function redactMessage(text: string): string {
-  return sanitizeLine(text.replace(CREDENTIAL, '[redacted]').replace(/(authorization|token)[:=]\s*\S+/giu, '$1: [redacted]'), 240);
+  // GitHub's rate-limit text names the client's IP address; errors end up in screenshots and bug reports.
+  const withoutAddresses = text.replace(/\b(?:\d{1,3}\.){3}\d{1,3}\b/gu, '[address]').replace(/\b(?:[0-9a-f]{1,4}:){3,7}[0-9a-f]{1,4}\b/giu, '[address]');
+  return sanitizeLine(withoutAddresses.replace(CREDENTIAL, '[redacted]').replace(/(authorization|token)[:=]\s*\S+/giu, '$1: [redacted]'), 240);
 }
 
 export function classifyFailure(text: string): GithubErrorKind {

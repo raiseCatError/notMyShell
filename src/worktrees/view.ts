@@ -110,7 +110,7 @@ export function renderWorktreeView(view: WorktreeView, options: RenderOptions): 
 
   if (state.review) {
     const title = state.review.kind === 'remove' ? 'Remove worktree?' : 'Create worktree?';
-    const body = describePlan(state.review.plan).map(line => fit(line, width, safe));
+    const body = describePlan(state.review.plan, path => displayPath(path, options.home)).map(line => fit(line, width, safe));
     const controls = fit(`Enter confirm${dot}Esc cancel`, width, safe);
     return [paint(bold + color(UI_COLORS.primary), fit(title, width, safe)), '', ...body, '', controls].slice(0, Math.max(1, options.rows));
   }

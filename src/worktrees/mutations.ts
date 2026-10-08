@@ -201,19 +201,20 @@ export async function applyRemoval(git: GitRunner, repository: string, plan: Rem
 }
 
 /** Exactly-what-will-happen preview lines (sanitized). */
-export function describePlan(plan: NewWorktreePlan | RemovalPlan): string[] {
+/** Plan lines for review; `path` formats paths for display (the view abbreviates the home directory). */
+export function describePlan(plan: NewWorktreePlan | RemovalPlan, path: (value: string) => string = displayText): string[] {
   if (plan.kind === 'newWorktree') {
     return [
-      `Repository   ${displayText(plan.repository)}`,
-      `Destination  ${displayText(plan.destination)}`,
+      `Repository   ${path(plan.repository)}`,
+      `Destination  ${path(plan.destination)}`,
       `Branch       ${displayText(plan.branch)}${plan.createsBranch ? ' (new branch)' : ' (existing branch)'}`,
       ...(plan.startPoint ? [`Start point  ${displayText(plan.startPoint.input)} -> ${plan.startPoint.commit.slice(0, 12)}`] : []),
     ];
   }
   const e = plan.evidence;
   return [
-    `Repository   ${displayText(e.repository)}`,
-    `Remove       ${displayText(e.path)}`,
+    `Repository   ${path(e.repository)}`,
+    `Remove       ${path(e.path)}`,
     `Checkout     ${e.ref ? displayText(e.ref.replace(/^refs\/heads\//u, '')) : `detached ${e.head?.slice(0, 12) ?? ''}`}`,
     'State        clean, no untracked files',
     ...(plan.ignoredEntries ? [`Ignored      ${plan.ignoredEntries}${plan.ignoredPartial ? '+' : ''} ignored entries will be deleted by Git`] : []),
