@@ -71,6 +71,13 @@ present the operation fails closed: status becomes `unknown (repository
 configures filters or includes; status not run)`, and creation/removal are
 refused. This mirrors the Context Engine's status policy.
 
+Status runs as `git -C <worktree>`, which follows that worktree's own `.git`
+pointer. So before each status probe (and the removal preview's ignored-file
+probe), `worktreeStatusBlock` checks in that worktree that the common Git
+directory is the repository being listed and that the config Git reads there
+has none of the entries above. A worktree whose pointer leads elsewhere shows
+`unknown (worktree points at a different repository; status not run)`.
+
 The user's own global Git configuration is still read (it is the user's
 trusted configuration, as for their own `git`), but the overrides above win.
 

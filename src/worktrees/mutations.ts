@@ -1,7 +1,7 @@
 import {lstat, readFile, realpath} from 'node:fs/promises';
 import {basename, dirname, isAbsolute, join, normalize} from 'node:path';
 import {executableRepositoryConfig, failureText, succeeded, type GitRunner} from './git.js';
-import {discoverWorktrees, probeStatus, repositoryIdentity} from './discovery.js';
+import {discoverWorktrees, repositoryIdentity, worktreeStatusBlock} from './discovery.js';
 import {displayText, type WorktreeRecord} from './model.js';
 
 /**
@@ -164,6 +164,8 @@ async function gatherEvidence(git: GitRunner, repository: string, id: string, cu
     if (!stat.isDirectory()) return refuse('Path is not a directory');
     gitFile = await readFile(join(worktree.path, '.git'), 'utf8');
   } catch { return refuse('Worktree path could not be inspected'); }
+  const block = await worktreeStatusBlock(git, worktree.path, snapshot.commonDir);
+  if (block) return refuse(`Status could not be checked: ${block}`);
   const ignored = await git(worktree.path, ['status', '--porcelain=v2', '-z', '--ignored=traditional', '--untracked-files=normal', '--ignore-submodules=all', '--no-renames'],
     {timeoutMs: 5000, maxBytes: 256 * 1024});
   if (!ignored.truncated && !succeeded(ignored)) return refuse(`Status could not be checked: ${failureText(ignored)}`);

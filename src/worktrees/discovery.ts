@@ -46,18 +46,18 @@ export async function discoverWorktrees(git: GitRunner, cwd: string, options: Di
   const statusBlock = blocked === undefined ? 'repository configuration could not be checked'
     : blocked.length ? 'repository configures filters or includes; status not run' : undefined;
   const records = await mapBounded(entries, options.concurrency ?? DEFAULT_STATUS_CONCURRENCY,
-    (entry, index) => enrich(git, entry, index === 0, statusBlock, options));
+    (entry, index) => enrich(git, entry, index === 0, statusBlock, commonDir, options));
   return {commonDir, worktrees: records, truncated: all.length > entries.length, discoveredAt: (options.now ?? Date.now)()};
 }
 
-async function enrich(git: GitRunner, entry: PorcelainWorktree, main: boolean, statusBlock: string | undefined,
+async function enrich(git: GitRunner, entry: PorcelainWorktree, main: boolean, statusBlock: string | undefined, commonDir: string,
   options: DiscoveryOptions): Promise<WorktreeRecord> {
   const pathState = await probePath(entry.path);
   let status: WorktreeStatus;
   if (entry.bare) status = {kind: 'unknown', reason: 'bare repository has no working tree'};
   else if (pathState !== 'present') status = {kind: 'unknown', reason: pathState === 'missing' ? 'path is missing' : 'path is not a directory'};
   else if (statusBlock) status = {kind: 'unknown', reason: statusBlock};
-  else status = await probeStatus(git, entry.path, options);
+  else status = await probeStatus(git, entry.path, {...options, commonDir});
   return {
     id: entry.path, path: entry.path, ref: entry.ref,
     branch: entry.ref?.startsWith('refs/heads/') ? entry.ref.slice('refs/heads/'.length) : undefined,
@@ -76,8 +76,27 @@ export async function probePath(path: string): Promise<WorktreeRecord['pathState
   }
 }
 
+/**
+ * Status runs `git -C <worktree>`, which follows that worktree's own `.git`
+ * pointer. Before running anything there, prove the pointer resolves to the
+ * same repository and that the config Git will read there executes nothing.
+ * Returns a reason when status must not run.
+ */
+export async function worktreeStatusBlock(git: GitRunner, path: string, commonDir: string): Promise<string | undefined> {
+  let identity: string;
+  try { identity = await repositoryIdentity(git, path); } catch { return 'worktree repository could not be identified'; }
+  if (identity !== commonDir) return 'worktree points at a different repository; status not run';
+  const config = await executableRepositoryConfig(git, path);
+  if (config === undefined) return 'repository configuration could not be checked';
+  return config.length ? 'repository configures filters or includes; status not run' : undefined;
+}
+
 /** Status for one worktree: machine format, no renames, untracked files listed normally, submodules ignored. */
-export async function probeStatus(git: GitRunner, path: string, options: Pick<DiscoveryOptions, 'statusTimeoutMs' | 'statusMaxBytes'> = {}): Promise<WorktreeStatus> {
+export async function probeStatus(git: GitRunner, path: string, options: Pick<DiscoveryOptions, 'statusTimeoutMs' | 'statusMaxBytes'> & {commonDir?: string} = {}): Promise<WorktreeStatus> {
+  if (options.commonDir) {
+    const block = await worktreeStatusBlock(git, path, options.commonDir);
+    if (block) return {kind: 'unknown', reason: block};
+  }
   const result = await git(path, ['status', '--porcelain=v2', '-z', '--untracked-files=normal', '--ignore-submodules=all', '--no-renames'],
     {timeoutMs: options.statusTimeoutMs ?? 5000, maxBytes: options.statusMaxBytes ?? 256 * 1024});
   if (result.truncated) return statusFromCounts(parseStatusCounts(result.stdout, true));

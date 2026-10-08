@@ -162,6 +162,30 @@ test('opening a malicious repository runs no hook, fsmonitor or filter program',
   } finally { await fx.dispose(); }
 });
 
+test('a linked worktree whose .git pointer leads to another repository is not probed', async () => {
+  const fx = await createRepo();
+  const other = await createRepo();
+  try {
+    const linked = join(fx.root, 'linked');
+    fx.git('worktree', 'add', '-q', '-b', 'l', '--', linked, 'HEAD');
+    const marker = join(fx.root, 'RAN');
+    const evil = join(fx.root, 'evil.sh');
+    await writeFile(evil, `#!/bin/sh\ntouch '${marker}'\ncat\n`);
+    await chmod(evil, 0o755);
+    await writeFile(join(other.repo, 'f.txt'), 'x\n');
+    other.git('add', 'f.txt');
+    other.git('config', 'filter.evil.clean', evil);
+    await writeFile(join(other.repo, '.gitattributes'), '* filter=evil\n');
+    await writeFile(join(linked, 'f.txt'), 'y\n');
+    await writeFile(join(linked, '.git'), `gitdir: ${join(other.repo, '.git')}\n`);
+    const snapshot = await discoverWorktrees(git, fx.repo);
+    const row = snapshot.worktrees.find(candidate => candidate.path === linked)!;
+    assert.equal(row.status.kind, 'unknown');
+    assert.match(stateWords(row).join(' '), /different repository/u);
+    assert.equal(await exists(marker), false);
+  } finally { await fx.dispose(); await other.dispose(); }
+});
+
 test('failures: not a repository, failing Git, timeout and oversized output are reported, never fabricated', async () => {
   const fx = await createRepo();
   try {
