@@ -1,6 +1,6 @@
 # NMSh demo gallery
 
-Four chapters of real NMSh: make it yours, see it move, work with your tools, and return to your sessions. Each chapter opens with a featured recording; expand the walkthroughs for the rest.
+Five chapters of real NMSh: make it yours, see it move, work with your tools, and return to your sessions. Each chapter opens with a featured recording; expand the walkthroughs for the rest.
 
 ## See notMyShell in motion
 
@@ -10,7 +10,7 @@ Four chapters of real NMSh: make it yours, see it move, work with your tools, an
 
 ## Feature recordings
 
-[Customization](#customization) · [Color and motion](#color-and-motion) · [Tools and shells](#tools-and-shells) · [Sessions](#sessions)
+[Customization](#customization) · [Color and motion](#color-and-motion) · [Tools and shells](#tools-and-shells) · [Sessions](#sessions) · [Context and repositories](#context-and-repositories)
 
 Every GIF runs the real binary in a disposable home (`~/Projects/demo`), with an opaque 1440 × 960 capture and neutral demo welcome. VHS provides a clean terminal surface; these are not Ghostty or Zed desktop captures. The clips were recorded on macOS; Linux and Windows/WSL behavior is covered by automated tests. [Recording sources and reproduction](../scripts/demos/README.md).
 
@@ -190,6 +190,30 @@ The frontend receives `SIGHUP`, as from a closing window. The build continues; `
 
 ---
 
+## Context and repositories
+
+What your project and machine look like at a glance, your worktrees, and your pull requests, without leaving the composer.
+
+### Status Strip
+
+`/strip` composes the strip with a live preview at the panel width and at 50 columns; here it sits on the bottom edge in the Powerline style with CPU, RAM and the clock. See [Context Modules](architecture/context-modules.md).
+
+<img alt="Status Strip Studio and the strip on the bottom edge" src="../assets/readme/status-strip.gif" width="960">
+
+### Worktrees
+
+`/worktrees` lists the repository's worktrees with their state. `n` turns a branch name into an exact plan that changes nothing until Enter; Enter on a row stages `cd` in the composer. See [Worktree manager](design/worktree-manager.md).
+
+<img alt="Worktrees with a reviewed new-worktree plan" src="../assets/readme/worktrees.gif" width="960">
+
+### GitHub workspace
+
+`/prs` opens this repository's pull requests through your own `gh` login, read-only: lists with checks, then a pull request's overview, diff, checks, comments, commits and files. See [GitHub workspace](architecture/github-workspace.md).
+
+<img alt="Read-only GitHub workspace: pull requests and an overview" src="../assets/readme/github.gif" width="960">
+
+*Recorded live against this public repository; the only recording that uses the network.*
+
 ## Architecture
 
 The simple stack follows the original artwork: terminal host, NMSh frontend and real shell, with Vespyr beside the NMSh title.
@@ -214,6 +238,14 @@ Full-size views for inspecting details without motion.
 | Composer and Native prompt | Theme Studio | Keep Awake idle reminder |
 | --- | --- | --- |
 | [<img alt="Composer with the Native prompt" src="../assets/readme/nmsh-composer.png" width="300">](../assets/readme/nmsh-composer.png) | [<img alt="Theme Studio" src="../assets/readme/theme-studio.png" width="300">](../assets/readme/theme-studio.png) | [<img alt="Keep Awake idle reminder" src="../assets/readme/keep-awake.png" width="300">](../assets/readme/keep-awake.png) |
+
+| Status Strip | Status Strip Studio | Worktrees |
+| --- | --- | --- |
+| [<img alt="Status Strip on the bottom edge" src="../assets/readme/status-strip.png" width="300">](../assets/readme/status-strip.png) | [<img alt="Status Strip Studio" src="../assets/readme/status-strip-studio.png" width="300">](../assets/readme/status-strip-studio.png) | [<img alt="Worktrees list" src="../assets/readme/worktrees.png" width="300">](../assets/readme/worktrees.png) |
+
+| New worktree plan | Pull requests | Pull request overview |
+| --- | --- | --- |
+| [<img alt="A reviewed new-worktree plan" src="../assets/readme/worktrees-plan.png" width="300">](../assets/readme/worktrees-plan.png) | [<img alt="GitHub pull requests" src="../assets/readme/github-prs.png" width="300">](../assets/readme/github-prs.png) | [<img alt="A pull request overview" src="../assets/readme/github-pr.png" width="300">](../assets/readme/github-pr.png) |
 
 <p align="center"><img alt="Vespyr, the NMSh cat" src="../assets/readme/vespyr-divider.svg" width="520"></p>
 
