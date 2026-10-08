@@ -7,6 +7,7 @@ import {pushEvent, type AgentSession} from '../src/agents/sessions/model.js';
 import {AgentInputController} from '../src/agents/input/controller.js';
 import {handleAgentInput} from '../src/agents/input/surface.js';
 import {renderSemanticAgentView} from '../src/agents/transcript/view.js';
+import {stripAnsi} from '../src/util/text.js';
 import {ClaudeSession} from '../src/agents/sessions/claudeAdapter.js';
 
 const target = (): AgentSession => ({id: 'a', harness: 'claude', level: 'managed', title: 'a', state: 'working', startedAt: 0, updatedAt: 0, attention: false, events: []});
@@ -43,7 +44,7 @@ test('choice reentry cannot reuse another requests draft or toggles; long UI ret
   pushEvent(t, {kind: 'choice', requestId: 'new', questions: [{question: 'Long question '.repeat(100), header: 'Q', options: [{label: 'a'.repeat(1000), description: 'description '.repeat(100)}, {label: 'b', description: ''}], multiSelect: true}]});
   handleAgentInput(view, t, {kind: 'focusPrevious'}, host);
   assert.equal(c.choiceEditor.text, ''); assert.equal(c.choiceToggled.size, 0);
-  const rendered = renderSemanticAgentView(t, view, 30, 20).join('\n');
+  const rendered = stripAnsi(renderSemanticAgentView(t, view, 30, 20).join('\n'));
   assert.match(rendered, /Enter answer/u); assert.match(rendered, /Other:/u);
 });
 
