@@ -356,6 +356,10 @@ test('the diff tab loads patches lazily, once per head SHA, and labels an incomp
   assert.equal(controller.snapshot.detail?.diff.depth, 'compact');
   await press('tab', 'shiftTab');
   assert.equal(calls.filter(call => call.startsWith('patches')).length, 1, 'cached by head SHA');
+  await press({char: 'r'});
+  assert.equal(controller.snapshot.detail?.tab, 'diff');
+  assert.equal(calls.filter(call => call.startsWith('patches')).length, 2, 'R refetches the patch');
+  assert.equal(controller.snapshot.detail?.diff.status, 'loaded');
 });
 
 // --- Checks, mergeability, merge plan --------------------------------------------------------------------

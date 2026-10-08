@@ -543,7 +543,13 @@ export class GithubWorkspaceController {
     const detail = this.state.detail!;
     if (typeof key === 'object') {
       switch (key.char) {
-        case 'r': case 'R': void this.loadDetail(); if (detail.tab === 'diff') { this.update(() => { detail.diff.status = 'idle'; }); } return undefined;
+        case 'r': case 'R':
+          if (detail.tab === 'diff') {
+            this.service.forgetPatches(detail.ref, detail.pr?.headSha);
+            this.update(() => { detail.diff = {status: 'idle', depth: detail.diff.depth}; });
+          }
+          void this.loadDetail();
+          return undefined;
         case 'n': case 'N': this.stepFile(1); return undefined;
         case 'p': case 'P': this.stepFile(-1); return undefined;
         case 'j': this.scrollDetail(1); return undefined;

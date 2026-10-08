@@ -64,6 +64,11 @@ export class GithubWorkspaceService {
     return headSha ? this.patches.get(`${itemKey(ref)}@${headSha}`) : undefined;
   }
 
+  /** An explicit refresh (R) must reach GitHub even when the head SHA is unchanged. */
+  forgetPatches(ref: ItemRef, headSha: string | undefined): void {
+    if (headSha) this.patches.delete(`${itemKey(ref)}@${headSha}`);
+  }
+
   async pullRequest(ref: ItemRef): Promise<PrDetail> {
     if (ref.kind !== 'pr') throw new GithubError('invalid_query', 'Not a pull request');
     const detail = await this.once(`pr:${itemKey(ref)}`, () => this.source.pullRequest(ref));
