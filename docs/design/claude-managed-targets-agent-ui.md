@@ -20,7 +20,7 @@ Audited base and initial HEAD: `fd08406d10efe4c76d01e1a0228525d859b31940`
 
 NMSh supervises real providers and presents supported structured information. It does not replace their ecosystems or interpret their rendered terminal screens. This branch establishes the minimum target, capability, mod inventory, semantic transcript, and input foundations, with Claude as the first runtime prototype. Portable mods and provider-native extensions remain separate lanes.
 
-The explicit request overrides repository defaults: retain this branch/base, eventually push this branch and open a PR against `master`, and never merge it. Do not modify or merge `feature/status-strip-2`, clean unrelated worktrees, release, tag, change package version, or touch Homebrew. The original audit preceded implementation and active probes. Subsequent evidence and implementation are recorded below.
+This branch is based on `master` at `4f30ffd` (#328 merged) and is never merged by its author. #328's terminal ownership lifecycle (terminal-query forwarding, untranslated passthrough output, mode reconciliation), shared Tab cycling and shared display scrubber are the base it builds on: raw provider TUIs (`/nmsh raw …`) use that generic passthrough unchanged, managed Claude never does. No release, tag, version change or Homebrew work. The original audit preceded implementation and active probes. Subsequent evidence and implementation are recorded below.
 
 ## 1. Pre-implementation architecture audit
 
@@ -166,3 +166,7 @@ Automated checks cannot prove Ghostty/Terminal.app rendering, physical keyboard 
 No marketplace, remote installation, arbitrary executable portable loader, automatic trust/approval, default cross-target visibility, unrestricted filesystem/network/process access, provider TUI scraping, Codex/OpenCode control without probes, replacement supervisor, renderer/PTY rewrite, release/version/Homebrew work or merge. Provider-native code may access resources under provider/user permissions; NMSh wrapping does not sandbox it. The portable boundary protects access to NMSh capabilities and presentation, not against arbitrary native provider code executing outside that boundary.
 
 Implementation now wires the managed Claude surfaces, semantic transcript/input controllers and unified passive mod inventory. See the execution ledger and evidence report for verification and the explicit deferred boundaries. Physical terminal QA remains pending.
+
+## Related roadmap (not in this PR)
+
+Future work is specified separately and intentionally out of scope here: Codex/OpenCode adapters and named provider profiles (#339), Claude Remote Control compatibility (#340), enforced isolation before any executable Portable Mod (#341), and a configurable semantic keymap over the input owners above (#335). Workspace surfaces (#330–#334, #336–#338) are independent of this foundation.

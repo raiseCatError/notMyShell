@@ -64,3 +64,7 @@ Verification fixture corrections: Theme Bridge uses a probe-owned tmux socket di
 ## Final automated verification
 
 Passed affected agent/mod/input/command tests and the complete canonical suite. Passed `npm run verify:release` with `NO_COLOR` unset, `TERM=xterm-256color`, `COLORTERM=truecolor`, and `NMSH_TEST_CONCURRENCY=1`; this includes build, canonical tests, diff checks, benchmark typechecking and timing smoke. Initial parallel PTY timeouts and the isolated provider fixture race are not represented as successful runs. Assertions and timing budgets remain unchanged. Physical terminal QA remains pending.
+
+## Reconciled onto master after #328
+
+Rebased onto `master` `4f30ffd` (#328 merged). Conflicts: the settings-panel list (kept both #328's Status Strip studio and #329's mods panel) and `tests/themeBridge.test.ts` (kept master's equivalent, stronger tmux isolation instead of this branch's duplicate). Aligned with #328: the mods panel uses the shared Tab cycling helpers, and agent/mod display text uses the shared terminal-control scrubber. Physical terminal QA remains pending.
