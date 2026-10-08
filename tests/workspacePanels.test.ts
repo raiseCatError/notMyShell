@@ -137,8 +137,10 @@ test('new worktree request: an existing branch is checked out, a new one starts 
     const git = createGitRunner();
     const snapshot = await discoverWorktrees(git, fixture.repo);
     assert.deepEqual(await newWorktreeRequest(git, snapshot, 'exists'), {kind: 'existingBranch', destination: `${fixture.repo}-exists`, branch: 'exists'});
-    const fresh = await newWorktreeRequest(git, snapshot, 'fresh');
-    assert.equal('kind' in fresh && fresh.kind, 'newBranch');
+    fixture.git('tag', 'main', 'HEAD');
+    fixture.git('commit', '-q', '--allow-empty', '-m', 'second');
+    const fresh = await newWorktreeRequest(git, (await discoverWorktrees(git, fixture.repo)), 'fresh');
+    assert.ok('kind' in fresh && fresh.kind === 'newBranch' && fresh.startPoint === 'refs/heads/main', 'the full branch ref: a tag with the same name cannot win');
     assert.deepEqual(await newWorktreeRequest(git, snapshot, '  '), {error: 'Type a branch name first.'});
   } finally { await fixture.dispose(); }
 });
