@@ -22,24 +22,31 @@ test('product target focus/picker and agent input preserve shell draft and edito
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
   app['startupPending'] = false;
+  app['discoverProfiles'] = () => [];
   const session = (id: string): AgentSession => ({id, harness: 'claude', level: 'managed', title: id, cwd: app['shellCwd'], startedAt: 0, state: 'waiting', events: [], attention: false, updatedAt: 0});
   try {
     app['agents'].sessions.push(session('a'));
     app['editor'].insert('git stat'); app['editor'].selectLeft();
     const snapshot = {text: app['editor'].text, cursor: app['editor'].cursorIndex, selection: app['editor'].selection};
+    // /claude always opens the launcher; selection alone activates nothing, Enter opens the selected target.
     await app['runSlash']('/claude', parseSlashCommand('/claude')!);
+    assert.equal(app['agentView'], undefined, 'the launcher opens; no target is entered implicitly');
+    assert.equal(app['launcherRows']()[app['launcher']!.selected]?.kind, 'target');
+    app['handleKey']({kind: 'enter'});
     assert.equal(app['agentView']?.sessionId, 'a');
     app['handleKey']({kind: 'text', value: 'inspect parser'}); app['handleKey']({kind: 'left'});
     app['handleKey']({kind: 'escape'});
     assert.deepEqual({text: app['editor'].text, cursor: app['editor'].cursorIndex, selection: app['editor'].selection}, snapshot);
     await app['runSlash']('/claude', parseSlashCommand('/claude')!);
+    app['handleKey']({kind: 'enter'});
     assert.equal(app['agentView']?.input, 'inspect parser');
     assert.equal(app['agentView']?.controller?.editor.cursorIndex, 13);
     app['handleKey']({kind: 'escape'});
     app['agents'].sessions.push(session('b'));
     await app['runSlash']('/claude', parseSlashCommand('/claude')!);
-    assert.deepEqual(app['agentPanel']?.targetIds, ['a', 'b']);
-    app['handleKey']({kind: 'down'}); app['handleKey']({kind: 'enter'});
+    app['handleKey']({kind: 'down'});
+    assert.equal(app['agentView'], undefined, 'moving the selection never switches targets');
+    app['handleKey']({kind: 'enter'});
     assert.equal(app['agentView']?.sessionId, 'b');
   } finally {app['stop'](0); app['session'].kill();}
 });

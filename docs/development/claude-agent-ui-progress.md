@@ -68,3 +68,7 @@ Passed affected agent/mod/input/command tests and the complete canonical suite. 
 ## Reconciled onto master after #328
 
 Rebased onto `master` `4f30ffd` (#328 merged). Conflicts: the settings-panel list (kept both #328's Status Strip studio and #329's mods panel) and `tests/themeBridge.test.ts` (kept master's equivalent, stronger tmux isolation instead of this branch's duplicate). Aligned with #328: the mods panel uses the shared Tab cycling helpers, and agent/mod display text uses the shared terminal-control scrubber. Physical terminal QA remains pending.
+
+## Physical QA round: launcher, shelf, header, results
+
+Physical QA confirmed managed Claude through account2. This round: one launcher for `/claude`, `/claude new` and `/ai` → Claude (profiles never bypassed), Up-to-shelf focus with a non-color focus marker, an NMSh-native provider header with the runtime model when reported, factual failure reasons instead of "Run failed: success", and opt-in import of simple Claude launch aliases. Real Claude 2.1.292 smoke after the change: two account2 turns with the model event, and the expired default namespace reading "Run failed: authentication failed." Physical terminal QA remains pending.

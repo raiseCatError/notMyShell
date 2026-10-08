@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {capabilityFacts, updateCapabilities} from '../src/agents/targets/capabilities.js';
-import {providerRoute, bareProviderRoute} from '../src/agents/targets/commandRouting.js';
+import {bareProviderRoute} from '../src/agents/targets/commandRouting.js';
 
 test('target capabilities are distinct from relationship and isolated by target', () => {
   const a = capabilityFacts('a', 'managed', 'claude');
@@ -22,15 +22,6 @@ for (const level of ['observed', 'attachable'] as const) test(`${level} has no i
   assert.equal(facts['conversation.read'].availability, 'unavailable');
   assert.equal(facts['message.send'].availability, 'unavailable');
   assert.ok(facts['message.send'].reason);
-});
-
-test('provider routing focuses one, picks many, and forces fresh new', () => {
-  const sessions = [{id: 'a', harness: 'claude', cwd: '/p', level: 'managed', state: 'waiting'}, {id: 'b', harness: 'claude', cwd: '/q', level: 'managed', state: 'working'}] as any;
-  assert.deepEqual(providerRoute('claude', 'open', '/p', sessions), {kind: 'focus', targetId: 'a'});
-  assert.deepEqual(providerRoute('claude', 'new', '/p', sessions), {kind: 'launch', provider: 'claude'});
-  assert.deepEqual(providerRoute('claude', 'mods', '/p', sessions), {kind: 'mods', provider: 'claude'});
-  assert.equal(providerRoute('claude', 'open', '/p', [...sessions, {...sessions[0], id: 'c'}]).kind, 'picker');
-  assert.equal(providerRoute('codex', 'open', '/p', sessions).kind, 'launch');
 });
 
 test('bare routing fails closed on arguments, wrappers, aliases and unprobed providers', () => {

@@ -6,7 +6,7 @@ import {colorLevel} from '../../presentation/capabilities.js';
 import {displayWidth, padCells, truncateAnsi} from '../../util/text.js';
 import {renderSemanticAgentView} from '../transcript/view.js';
 import {harness, type HarnessDescriptor} from '../harnesses.js';
-import type {AgentEvent, AgentSession} from './model.js';
+import {settledText, type AgentEvent, type AgentSession} from './model.js';
 
 /**
  * Agent session presentation: the transient shelf above the composer, the
@@ -46,7 +46,11 @@ export function shelfOrder(sessions: readonly AgentSession[]): AgentSession[] {
   return [...sessions].sort((a, b) => Number(b.attention) - Number(a.attention) || b.updatedAt - a.updatedAt);
 }
 
-/** One compact row: "✻ Claude · working 4m   ◇ Codex · waiting", narrowing to "✻ Claude · working · +1", then "* Claude". */
+/**
+ * One compact row: "✻ Claude · working 4m   ◇ Codex · waiting", narrowing to "✻ Claude · working · +1", then "* Claude".
+ * Focused, every item keeps a two-cell lead and the selected one carries the selection marker (`>` in Safe and
+ * Unicode modes), so focus reads without color; with color the selected provider name takes its registry accent.
+ */
 export function renderShelf(sessions: readonly AgentSession[], columns: number, now: number, selected?: number, focused = false): string {
   const items = shelfOrder(sessions);
   if (!items.length) return '';
@@ -56,23 +60,28 @@ export function renderShelf(sessions: readonly AgentSession[], columns: number, 
   const cell = (session: AgentSession, index: number, withTitle: boolean) => {
     const descriptor = harness(session.harness);
     const chosen = focused && index === selected;
+    const lead = !focused ? '' : chosen ? `${accent(descriptor) || marker}${GLYPHS.selection}${RESET} ` : '  ';
     const title = withTitle && session.level === 'managed' && !session.title.includes(' · ') ? ` · ${session.title}` : '';
     const attention = session.attention ? (getCurrentGlyphMode() === 'safe' ? '! ' : '◆ ') : '';
-    return `${chosen ? `${marker}${GLYPHS.selection} ${RESET}` : ''}${signatureChip(session.signature)}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${chosen ? primary : ''}${descriptor?.short ?? session.harness}${RESET}${subtle}${title} · ${attention}${stateLabel(session, now)}${RESET}`;
+    return `${lead}${signatureChip(session.signature)}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${chosen ? accent(descriptor) || primary : ''}${descriptor?.short ?? session.harness}${RESET}${chosen ? primary : subtle}${title}${RESET}${subtle} · ${attention}${stateLabel(session, now)}${RESET}`;
   };
+  const hint = focused ? `${subtle}   ← → select · Enter open · ↓ back${RESET}` : '';
   for (const withTitle of [true, false]) {
     const row = items.map((session, index) => cell(session, index, withTitle)).join('   ');
+    if (displayWidth(row + hint) <= columns) return row + hint;
     if (displayWidth(row) <= columns) return row;
   }
+  // Narrow: the selected (or first) item alone, keeping its marker.
+  const index = focused && selected !== undefined && selected < items.length ? selected : 0;
   const more = items.length > 1 ? `${subtle} · +${items.length - 1}${RESET}` : '';
-  const first = cell(items[0]!, 0, false);
+  const first = cell(items[index]!, index, false);
   if (displayWidth(first + more) <= columns) return first + more;
-  // Narrow: the state word only ("✻ Claude · editing · +1").
-  const head = items[0]!;
+  const head = items[index]!;
   const descriptor = harness(head.harness);
-  const short = `${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${descriptor?.short ?? head.harness}${subtle} · ${head.attention ? (getCurrentGlyphMode() === 'safe' ? '! ' : '◆ ') : ''}${stateLabel(head, now).split(' ')[0]}${RESET}`;
+  const lead = focused ? `${GLYPHS.selection} ` : '';
+  const short = `${lead}${accent(descriptor)}${glyphOf(descriptor)}${RESET} ${descriptor?.short ?? head.harness}${subtle} · ${head.attention ? (getCurrentGlyphMode() === 'safe' ? '! ' : '◆ ') : ''}${stateLabel(head, now).split(' ')[0]}${RESET}`;
   if (displayWidth(short + more) <= columns) return short + more;
-  return truncateAnsi(`${glyphOf(descriptor)} ${descriptor?.short ?? head.harness}`, columns);
+  return truncateAnsi(`${lead}${glyphOf(descriptor)} ${descriptor?.short ?? head.harness}`, columns);
 }
 
 export interface AgentPanelState {
@@ -158,7 +167,7 @@ export function agentBlocks(session: AgentSession): Array<{kind: 'user' | 'assis
       }
     } else if (event.kind === 'approval') blocks.push({kind: 'note', text: `Approval requested: ${event.tool}${event.target ? ` ${event.target}` : ''}`});
     else if (event.kind === 'approvalAnswered') blocks.push({kind: 'note', text: event.allowed ? 'You allowed it.' : 'You denied it.'});
-    else if (event.kind === 'settled') blocks.push({kind: 'note', text: event.ok ? 'Finished; waiting for you.' : `Run failed${event.message ? ` (${event.message})` : ''}.`});
+    else if (event.kind === 'settled') blocks.push({kind: 'note', text: settledText(event)});
     else if (event.kind === 'exited') blocks.push({kind: 'note', text: `The harness process ended${event.code ? ` (exit ${event.code})` : ''}.`});
   }
   return blocks;
@@ -176,8 +185,20 @@ function wrap(text: string, width: number): string[] {
   return out;
 }
 
-export function renderAgentView(session: AgentSession, state: AgentViewState, columns: number, height: number, now: number): string[] {
-  if (state.controller) return renderSemanticAgentView(session, state, columns, height);
+/** Facts the host supplies for an agent view's header; each one only when known. */
+export interface AgentViewMeta {
+  /** The launch profile's human label ("Claude account 2"). */
+  profileLabel?: string;
+  /** Shown when the target runs on the provider's default configuration rather than a launch profile. */
+  identity?: string;
+  /** A model the launch profile explicitly configures; labeled "configured", never presented as observed. */
+  configuredModel?: string;
+  /** The shell's branch, when the target shares the shell's directory. */
+  branch?: string;
+}
+
+export function renderAgentView(session: AgentSession, state: AgentViewState, columns: number, height: number, now: number, meta: AgentViewMeta = {}): string[] {
+  if (state.controller) return renderSemanticAgentView(session, state, columns, height, meta);
   const descriptor = harness(session.harness);
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);

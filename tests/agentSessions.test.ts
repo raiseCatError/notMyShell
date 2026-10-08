@@ -52,7 +52,7 @@ test('event normalization: text, tools with factual targets, results, approvals;
   assert.deepEqual(claudeEvents('{"type":"system","subtype":"init","session_id":"s"}').events, [{kind: 'started', harnessSessionId: 's'}]);
   assert.deepEqual(claudeEvents(JSON.stringify({type: 'assistant', message: {content: [{type: 'tool_use', id: 'a', name: 'Bash', input: {command: 'npm test\nmore'}}]}})).events,
     [{kind: 'tool', id: 'a', name: 'Bash', target: 'npm test', status: 'started', input: {command: 'npm test\nmore'}}]);
-  assert.deepEqual(claudeEvents('{"type":"result","subtype":"error_max_turns","is_error":true}').events, [{kind: 'settled', ok: false, message: 'error_max_turns'}]);
+  assert.deepEqual(claudeEvents('{"type":"result","subtype":"error_max_turns","is_error":true}').events, [{kind: 'settled', ok: false, message: 'turn limit reached'}]);
   assert.deepEqual(claudeEvents('not json').events, []);
   assert.deepEqual(claudeEvents('{"type":"mystery"}').events, []);
 });
