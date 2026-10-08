@@ -163,6 +163,7 @@ import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, ty
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
+import {QueryExtractor, ReplyRouter} from '../passthrough/TerminalQueries.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
 import {helpMarkdown} from '../help/helpContent.js';
@@ -942,6 +943,10 @@ export class TerminalApp {
    * byte goes to the program. Reclaimed in onShellPrompt.
    */
   private handOverTerminal(restore = ''): void {
+    // A reply still arriving belongs to the program, which now receives every byte anyway.
+    const held = this.replyRouter.stop();
+    if (held) this.session.write(held);
+    this.queryExtractor.reset();
     if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
     this.keyDecoder.reset();
     this.terminalFocus = 'unknown';
@@ -1082,6 +1087,9 @@ export class TerminalApp {
     return exitCode;
   }
 
+  private readonly queryExtractor = new QueryExtractor();
+  private readonly replyRouter = new ReplyRouter();
+
   private readonly onInput = (data: string): void => {
     if (process.env.NMSH_DEBUG_KEYS === '1') {
       const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
@@ -1091,6 +1099,13 @@ export class TerminalApp {
     if (this.passthrough && !this.startupPending) {
       this.session.write(data);
       return;
+    }
+    // The terminal's answers to queries a running program asked (see TerminalQueries) are the program's.
+    if (this.replyRouter.expecting) {
+      const {replies, rest} = this.replyRouter.split(data, Date.now());
+      if (replies && this.running) this.session.write(replies);
+      if (!rest) return;
+      data = rest;
     }
     const keys = this.keyDecoder.push(data);
     this.scheduleEscapeFlush();
@@ -3023,6 +3038,9 @@ export class TerminalApp {
         this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
+        // Queries the program asked before taking the screen go to the terminal; they paint nothing.
+        const queries = this.running ? this.queryExtractor.push(data) : '';
+        if (queries) { process.stdout.write(queries); this.replyRouter.expect(Date.now()); }
         this.render();
       }
     }
@@ -3115,6 +3133,8 @@ export class TerminalApp {
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the completed command.', ERROR);
     });
+    this.replyRouter.stop();
+    this.queryExtractor.reset();
     if (this.passthrough) {
       this.passthrough = false;
       // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.

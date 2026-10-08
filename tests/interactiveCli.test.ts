@@ -213,3 +213,36 @@ process.stdin.on('data', data => {
     await sandbox.dispose();
   }
 });
+
+test('a program that asks the terminal before taking the screen gets the terminal\'s answers, as from a plain shell', async () => {
+  // agy's shape: queries in their own first write, a wait for the answers, then the alternate screen.
+  const sandbox = new LiveSandbox();
+  const script = join(sandbox.home, 'ask.mjs');
+  writeFileSync(script, `
+process.stdin.setRawMode(true);
+let got = '';
+process.stdin.on('data', data => { got += data; });
+process.stdout.write('\\u001b[?2026$p\\u001b]11;?\\u0007');
+setTimeout(() => {
+  process.stdout.write('\\u001b[?1049h\\u001b[H\\u001b[2JANSWERS=' + JSON.stringify(got) + '\\r\\n');
+  setTimeout(() => { process.stdout.write('\\u001b[?1049l'); process.exit(0); }, 400);
+}, 700);
+`);
+  try {
+    const app = sandbox.launch();
+    app.pty.onData(data => {
+      if (data.includes('\u001b[?2026$p')) app.pty.write('\u001b[?2026;2$y');
+      if (data.includes('\u001b]11;?')) app.pty.write('\u001b]11;rgb:1e1e/1e1e/2e2e\u001b\\');
+    });
+    await app.waitFor(/❯/);
+    const mark = app.mark;
+    app.pty.write(`node ${script}\r`);
+    await app.waitFor(/ANSWERS=/, mark);
+    assert.match(strip(app.output.slice(mark)), /ANSWERS="\\u001b\[\?2026;2\$y\\u001b\]11;rgb:1e1e\/1e1e\/2e2e\\u001b\\\\"/u, 'both answers reached the program');
+    await app.waitFor(/❯/, app.output.indexOf('ANSWERS=', mark));
+    await app.run('echo BACK_$((6*7))', /BACK_42/);
+    assert.doesNotMatch(strip(app.output.slice(app.output.indexOf('\u001b[?1049l', app.output.indexOf('ANSWERS=', mark)))), /2026;2|rgb:1e1e|ANSWERS/u, 'no answer reached the composer or transcript');
+  } finally {
+    await sandbox.dispose();
+  }
+});
