@@ -13,7 +13,7 @@ import {createGitRunner} from '../src/worktrees/git.js';
 import {newWorktreeRequest, worktreeDestination} from '../src/worktrees/host.js';
 import {discoverWorktrees} from '../src/worktrees/discovery.js';
 import type {Key} from '../src/terminal/keys.js';
-import {stripAnsi} from '../src/util/text.js';
+import {displayWidth, stripAnsi} from '../src/util/text.js';
 import {createRepo} from './helpers/worktreeRepos.js';
 
 const text = (value: string): Key => ({kind: 'text', value});
@@ -128,6 +128,35 @@ test('/worktrees: removal is refused while a managed agent works inside the work
     assert.match(screen(instance), /Not removed: agent Winter is working there/u);
     assert.equal(existsSync(linked), true);
   } finally { await fixture.dispose(); }
+});
+
+test('panels in Safe glyphs and NO_COLOR: no color codes, worktrees in ASCII, every row fits narrow widths', async () => {
+  const fixture = await createRepo();
+  const before = process.env.NO_COLOR;
+  process.env.NO_COLOR = '1';
+  try {
+    fixture.git('worktree', 'add', '-q', '-b', 'topic/with-a-long-branch-name', join(fixture.root, 'a worktree with a long folder name'));
+    const instance = app(fixture.repo);
+    instance['promptConfiguration'] = {...instance['promptConfiguration'], glyphStyle: 'safe'};
+    await instance['openWorktrees']();
+    const controller = new GithubWorkspaceController(new GithubWorkspaceService(new FixtureSource()), {title: 'example/repo (read-only)', clock: () => FIXTURE_NOW});
+    await controller.submitQuery('prs');
+    for (const columns of [100, 50, 32]) {
+      const worktrees = instance['panelContentRows'](columns);
+      // The shared panel frame (every panel) ends its rule with a bare reset; no color is ever emitted.
+      assert.ok(worktrees.every(row => !/\u001b\[[\d;]*[34]\d/u.test(row) && displayWidth(stripAnsi(row)) <= columns), `worktrees at ${columns}`);
+      assert.ok(worktrees.slice(1).every(row => /^[\x20-\x7e]*$/u.test(stripAnsi(row))), `worktrees ASCII at ${columns}`);
+    }
+    instance['worktreePanel'] = undefined;
+    instance['githubPanel'] = {controller, repository: 'example/repo', detach: () => {}};
+    for (const columns of [100, 50, 32]) {
+      const github = instance['panelContentRows'](columns);
+      assert.ok(github.every(row => !/\u001b\[[\d;]*[34]\d/u.test(row) && displayWidth(stripAnsi(row)) <= columns), `github at ${columns}`);
+    }
+  } finally {
+    if (before === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = before;
+    await fixture.dispose();
+  }
 });
 
 test('new worktree request: an existing branch is checked out, a new one starts at main HEAD', async () => {
