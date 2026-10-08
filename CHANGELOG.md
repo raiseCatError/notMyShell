@@ -6,9 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-Not yet released; the package version stays 0.17.0 until a release is prepared.
+## [0.18.0] - 2026-10-09
 
-### Context Engine and modules
+Context Engine Platform & Status Strip 2.0: demand-driven capabilities, a first-party module catalog, declarative Context Packs, Claude Code agent context, `/modules` and `/strip`, terminal-title ownership, plus tmux, passthrough and cursor fixes.
+
+### Added — Context Engine and modules
 - **Capability scheduler:** typed capabilities declare what they read, their environment, cost, timeout, cache lifetime and per-field privacy. Only facts that visible, routed modules demand are resolved, off the typing path, with bounded concurrency, coalescing, timeouts with backoff (and a cold-start allowance), cancellation on directory change, staged scopes that keep the old context visible until the new one settles, stale-while-revalidate caching and command-completion invalidation. Hidden modules cost nothing.
 - **Shell-reported environment:** each zsh, Bash and Fish prompt reports an allowlisted set of non-secret environment values (and only the presence of credential variables), so context follows the live shell, not NMSh's launch environment.
 - **First-party catalog** as bundled declarative packs: project package; Node, Python, Go, Rust and Java versions from pins and install layouts (never by running them); mise/asdf tool requests and direnv state (never reading `.envrc`); Terraform/OpenTofu, Helm, Pulumi; AWS, Google Cloud and Azure from local non-secret configuration (no API calls, no credentials); OS, user/host/SSH, jobs, session duration, time, memory and battery; Git stash and upstream. Every module has a deterministic preview, Safe-glyph labels and Theme/Neutral roles.
@@ -20,23 +22,34 @@ Not yet released; the package version stays 0.17.0 until a release is prepared.
 - **`/modules`** opens the module manager directly and saves each change as it is made; inside `/prompt` it says it edits the draft and A saves module changes alone. `/` searches Modules, Catalog and Packs over loaded data, Tab/Shift+Tab switch tabs, footers only offer controls that can act, details wrap at narrow widths (the prompt preview yields first), and under Starship, Powerlevel10k, Oh My Posh or Prompt None the manager marks which surfaces cannot show modules and why, keeping their settings.
 - `/prompt` → Modules gains **Catalog** (every module by category, with local recommendations) and **Packs** tabs, and a details view saying what a module reads, how fresh each fact is and whether it may enter command history.
 
-### Theme Bridge, terminal and shell assistance
-- Fixed (physical QA, Ghostty): **Project and session** titles now show the session's name at once after `/rename` (and its signature after a reset) without a `cd` or notices; after Vim or another passthrough program sets its own title on exit ("Thanks for flying Vim"), NMSh writes its title back as soon as it has the screen; hostile directory names lose whole escape sequences instead of showing `]0;PWNED` debris.
-- Fixed (physical QA): inside **tmux**, the mouse wheel scrolls the NMSh transcript instead of cycling composer history; NMSh now asks tmux for button and SGR mouse reports, which tmux forwards with its `mouse` option on or off. Passthrough programs, copy mode and Shift selection are unchanged.
+### Added — Theme Bridge, terminal and shell assistance
 - **Tab / Shift+Tab** switch tabs in every visual tab bar (/prompt views, Modules, Settings, Tools, tmux configuration, Theme Studio), wrapping at the ends; text fields keep Tab.
 - **Terminal title** (Settings → Sessions, Off by default): Project, or Project and session, written only while NMSh owns the screen; programs keep their own titles, hostile names cannot inject escapes, and hosts with a title stack get their previous title back on exit.
 - Host semantics: command start (OSC 133 `C`) is written at once even ahead of a fullscreen program, the directory is reported again after a program owned the screen, and a reattach replays no history to the host.
 - **Open in pager** block action: a command and its complete stored output in your pager on the host terminal, through stdin only (never shell source), with escape sequences shown inert.
 - delta's status says whether its syntax highlighting follows bat's NMSh theme or your git config pins it (read as data); diff colors stay in git config.
 - Theme Bridge colors are valid on 16- and 8-color terminals (theme ANSI slots instead of 256-color codes for less/man, listings and Vim).
-- Fixed: Apply themes Follow NMSh / Choose theme now themes NMSh's own fzf launches even when fzf's Manual setting is Independent.
 - Typo correction works in Bash and Fish, and Bash/Fish command recognition, correction and install offers use the live shell's `PATH`.
+
+### Fixed
+- (Physical QA, Ghostty) **Project and session** titles now show the session's name at once after `/rename` (and its signature after a reset) without a `cd` or notices; after Vim or another passthrough program sets its own title on exit ("Thanks for flying Vim"), NMSh writes its title back as soon as it has the screen; hostile directory names lose whole escape sequences instead of showing `]0;PWNED` debris.
+- (Physical QA) Inside **tmux**, the mouse wheel scrolls the NMSh transcript instead of cycling composer history; NMSh now asks tmux for button and SGR mouse reports, which tmux forwards with its `mouse` option on or off. Passthrough programs, copy mode and Shift selection are unchanged.
+- Apply themes Follow NMSh / Choose theme now themes NMSh's own fzf launches even when fzf's Manual setting is Independent.
+- A detached session's spooled prompt events are no longer dropped on replay when the shell's knowledge exceeds 64 KiB.
+- (Physical QA) `tmux` typed in the composer opens ordinary panes again: tmux no longer inherits NMSh's private `ZDOTDIR` or `POWERLEVEL9K_DISABLE_PROMPT`, children get the person's own `XDG_CACHE_HOME` back, and a window says when its session service is an older build that still writes the old bootstrap.
+- Passthrough programs get their bytes exactly as written: output processing (`ONLCR`) is off while a program owns the terminal, so raw-mode TUIs that move down with a bare LF (agy's inline interface) no longer overwrite their own prompt or jump the cursor. Two-byte Alt+key prefixes are no longer held as possible terminal answers.
+- Terminal queries a program writes before it takes the screen (synchronized output, grapheme clustering, colours) reach the host, and the answers go back to the program instead of the key decoder.
+- Ownership handoff: output from the first sign a program owns the screen (alternate screen, an input mode, a kitty keyboard push) is the program's, so its paint no longer stays in the transcript after it exits; undrawn sequences no longer print debris (`ESC ( B` → `B`, `ESC[NaN;2m`), zero colour components are kept, and half-decoded input is dropped at every handoff.
+- Cursor inside tmux: NMSh no longer wraps frames in its own DEC 2026 synchronized-output block (tmux already synchronizes), and repaints that leave the caret in place no longer toggle cursor visibility, so host cursor trails and blink stop jumping. Renderer **Portable** leaves NMSh's managed Ghostty cursor shader off (NMSh draws the trail itself), and the managed shader files follow `/cursor` inside tmux.
+- Unmodified F1 in its kitty keyboard form (`CSI P`) opens the palette.
+- Ask's config edits no longer refuse files in a home folder or project reached through a symlink (macOS `/tmp` and `/var` are symlinks); a symlink leading out of them is still refused.
 
 ### Security and performance
 - Context discovery never runs a discovered executable; one inside the current workspace (followed through symlinks) is not even inspected. Pack metadata, workspace names and settings text cannot inject terminal escapes into `/prompt`, `nmsh packs` or `nmsh agent-status`.
 - Hostile-workspace coverage for control/bidi/OSC payloads, huge, malformed and symlinked files, fake executables, malicious PATH entries, `.envrc`, kubeconfig `exec`, hostile Git metadata and malicious packs.
 - Context Engine benchmarks (cold/warm collection, rapid directory changes, every module on every surface, hidden modules, a large repository) with budgets enforced by the timing smoke.
-- Fixed: a detached session's spooled prompt events are no longer dropped on replay when the shell's knowledge exceeds 64 KiB.
+- Every NMSh display path (prompt, modules, path, Status Strip, `/prompt` and `/modules` disclosures, fact cache, historical prompt blocks, welcome, startup picker, `/resume` and live-session lists) removes escape sequences whole instead of leaving visible debris; an unterminated OSC in a session-reported directory can no longer swallow the startup screen.
+- Retained control sequences are bounded: the transcript parser keeps at most 8 KiB of one unfinished sequence (OSC, DCS, SOS, PM and APC are discarded to their terminator), shell markers are capped at 1 MiB and the key decoder at 256 bytes.
 
 ## [0.17.0] - 2026-10-06
 

@@ -4,7 +4,7 @@ Security is critical for NMSh, as it executes and presents shell commands and ha
 
 ## Supported Versions
 
-Security fixes target the latest stable release (currently v0.17.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
+Security fixes target the latest stable release (currently v0.18.0, the `master` branch) and the active development branch. Older releases are not patched separately; update with `/update`.
 
 ## Scope
 
