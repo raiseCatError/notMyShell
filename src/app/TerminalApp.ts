@@ -3960,7 +3960,8 @@ export class TerminalApp {
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
     if (this.agentView) {
       const session = this.agents.get(this.agentView.sessionId);
-      if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - 4, Date.now(), this.agentViewMeta(session)), columns);
+      // The agent view is a workspace: it owns the full height below its frame line (the shell is one Esc away).
+      if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session)), columns);
     }
     if (this.launcher) return framePanel(renderLauncher(this.launcher, this.launcherRows(), columns, this.dimensions().rows - 4), columns);
     if (this.modsPanel) return framePanel(renderMods(this.modsPanel, columns, this.dimensions().rows - 4), columns);
