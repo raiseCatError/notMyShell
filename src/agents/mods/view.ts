@@ -76,7 +76,7 @@ function row(entry: ModEntry, selected: boolean, columns: number): string {
   const nameWidth = columns >= 90 ? 40 : columns >= 60 ? Math.max(16, columns - 40) : Math.max(4, columns - 4 - stateWidth);
   const short = {on: 'on', off: 'off', unknown: 'unknown', inert: 'inert'} as const;
   const meta = [SCOPE[entry.scope], entry.version ? clean(entry.version, 24) : ''].filter(Boolean).join(' · ');
-  const name = padCells(truncateText(clean(entry.name, 200), nameWidth - 1), nameWidth, 0);
+  const name = padCells(truncateText(clean(entry.name, 200), nameWidth - 2), nameWidth, 0);
   const stateText = padCells(wide ? state.text : short[state.tone], stateWidth, 0);
   const metaText = columns >= 60 ? meta : '';
   if (!selected) return truncateAnsi(`    ${c.secondary}${name}${RESET}${stateStyle(state.tone, false)}${stateText}${RESET}${c.subtle}${metaText}${RESET}`, columns);
@@ -153,8 +153,12 @@ export function renderMods(state: ModsController, columns: number, height: numbe
   const width = Math.max(1, columns);
   const c = color();
   const status = state.refreshing ? `${c.subtle}refreshing…${RESET}` : state.stale ? `${c.failure}stale${RESET}` : '';
-  const title = `${c.primary}  Mods${RESET}  ${c.subtle}provider extensions and NMSh packs · inventory only; nothing runs from here${RESET}`;
-  const head = [displayWidth(title) + (status ? displayWidth(status) + 2 : 0) <= width || !status ? `${title}${status ? `  ${status}` : ''}` : `${c.primary}  Mods${RESET}  ${status}`,
+  // The subtitle shortens by whole clauses, never mid-phrase; the refresh state always keeps its place.
+  const reserve = status ? displayWidth(status) + 2 : 0;
+  const subtitle = ['provider extensions and NMSh packs · inventory only; nothing runs from here', 'inventory only; nothing runs from here', '']
+    .find(text => !text || 8 + displayWidth(text) + reserve <= width)!;
+  const title = `${c.primary}  Mods${RESET}${subtitle ? `  ${c.subtle}${subtitle}${RESET}` : ''}${status ? `  ${status}` : ''}`;
+  const head = [title,
     renderTabStrip([...MOD_TABS], MOD_TABS.indexOf(state.tab), width, state.owner === 'PANEL' && !state.details)];
   const searching = state.owner === 'SEARCH';
   const caret = getCurrentGlyphMode() === 'safe' ? '_' : '▏';
@@ -172,7 +176,7 @@ export function renderMods(state: ModsController, columns: number, height: numbe
     const room = Math.max(1, height - head.length - message.length - footer.length - 1);
     const offset = Math.min(state.scroll, Math.max(0, lines.length - room));
     body = lines.slice(offset, offset + room);
-    if (offset + room < lines.length) body[body.length - 1] = `  ${c.subtle}${getCurrentGlyphMode() === 'nerd' ? '↓' : 'v'} more · ↑↓ scroll${RESET}`;
+    if (offset + room < lines.length) body[body.length - 1] = `  ${c.subtle}${getCurrentGlyphMode() === 'nerd' ? '↓ more · ↑↓ scroll' : 'v more · Up/Down scroll'}${RESET}`;
   } else if (!rows.length) {
     body = [`  ${c.subtle}${state.refreshing ? 'Reading the inventory…' : state.query || state.provider || state.tab !== 'All' ? 'No matching mods.' : 'No mods found.'}${RESET}`];
   } else {

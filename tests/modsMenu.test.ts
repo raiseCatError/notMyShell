@@ -133,8 +133,13 @@ test('every width fits in display cells; narrow rows keep name and state; Safe g
       if (!details) assert.match(text, /commit-command\S*\s+(?:off|disabled)/u, 'state survives narrow rows');
     }
   }
+  // The subtitle shortens by clause at 80 columns instead of being cut.
+  assert.equal(stripAnsi(renderMods(controller(), 80, 30)[0]!), '  Mods  inventory only; nothing runs from here');
+  assert.equal(stripAnsi(renderMods(controller(), 30, 30)[0]!), '  Mods');
   setIconStyle('safe');
   try {
+    const details = controller(); details.dispatch({kind: 'ActivateAction'});
+    assert.match(plain(renderMods(details, 40, 14)).join('\n'), /v more · Up\/Down scroll/u);
     const text = plain(renderMods(controller(), 80, 30)).join('\n');
     assert.match(text, /^ {2}> Context Meter/mu);
     assert.match(text, /Up\/Down select/u);
