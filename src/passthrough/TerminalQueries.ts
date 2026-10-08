@@ -16,8 +16,12 @@
 
 const QUERY = /\u001b\[\??\d+\$p|\u001b\[0?c|\u001b\[>0?c|\u001b\[>0?q|\u001b\[\?u|\u001b\[\?996n|\u001b\[1[468]t|\u001b\](?:1[0-2]|4;\d{1,3});\?(?:\u0007|\u001b\\)|\u001bP(?:\+q[0-9A-Fa-f;]{1,256}|\$q[ -~]{1,8})\u001b\\/gu;
 const REPLY = /^(?:\u001b\[\??\d+;\d\$y|\u001b\[\?[\d;]{1,64}c|\u001b\[>[\d;]{1,64}c|\u001bP>\|[ -~]{0,128}\u001b\\|\u001b\[\?\d{1,10}u|\u001b\[\?997;\d n|\u001b\[[468];\d{1,6};\d{1,6}t|\u001b\](?:1[0-2]|4;\d{1,3});[ -~]{1,128}(?:\u0007|\u001b\\)|\u001bP[01][+$]r[ -~]{0,512}\u001b\\)/u;
-/** A reply that may still be arriving: an ESC-introduced prefix of one of the forms above. */
-const REPLY_PREFIX = /^\u001b(?:\[[?>]?[\d;$]*|\][\d;]*[ -~]*|P[>|01+$]*[ -~]*)?$/u;
+/**
+ * A reply that may still be arriving: at least three bytes of a form only a terminal answer starts with
+ * (CSI ? / CSI > / CSI digit, OSC with a number, DCS > or DCS 0/1). Two-byte prefixes are never held, so
+ * Alt+P (ESC P), Alt+] (ESC ]) and Alt+[ stay ordinary keys and are never delayed.
+ */
+const REPLY_PREFIX = /^\u001b(?:\[[?>\d][\d;$]*|\]\d[\d;]*(?:;[ -~]*)?|P(?:>\|?[ -~]*|[01][+$]?r?[ -~]*))$/u;
 const MAX_CARRY = 600;
 
 /** Query sequences in `text`, in order, joined; a sequence split across reads is completed by `carry`. */
@@ -72,8 +76,8 @@ export class ReplyRouter {
       const tail = text.slice(escape, escape + MAX_CARRY);
       const reply = REPLY.exec(tail);
       if (reply) { replies += reply[0]; index = escape + reply[0].length; continue; }
-      // A lone ESC is the Escape key, never held; a longer prefix may be a reply split across reads.
-      if (tail.length >= 2 && tail.length === text.length - escape && tail.length < MAX_CARRY && REPLY_PREFIX.test(tail)) { this.held = tail; break; }
+      // Escape and Alt+key are never held; only an unmistakable reply prefix split across reads is.
+      if (tail.length >= 3 && tail.length === text.length - escape && tail.length < MAX_CARRY && REPLY_PREFIX.test(tail)) { this.held = tail; break; }
       rest += '\u001b';
       index = escape + 1;
     }

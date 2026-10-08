@@ -246,3 +246,33 @@ setTimeout(() => {
     await sandbox.dispose();
   }
 });
+
+test('a program\'s bare line feeds reach the terminal untouched while it owns it, as from a plain shell', async () => {
+  // A raw-mode TUI moves down a row in the same column with a bare LF (agy's inline redraws, `\n\n\b`).
+  // Node's raw mode keeps ONLCR on NMSh's terminal, which turned each into CR LF: the cursor jumped to
+  // column 1 and the next characters overwrote the start of the line.
+  const sandbox = new LiveSandbox();
+  // cfmakeraw, as TUIs use (OPOST off); Node's own raw mode would keep ONLCR.
+  const script = join(sandbox.home, 'lf.py');
+  writeFileSync(script, `import os, termios, time, tty
+saved = termios.tcgetattr(0)
+tty.setraw(0)
+os.write(1, b'\\x1b[?1049h\\x1b[HSTART_MARK\\n\\nDOWN_TWO\\x1b[?1049l')
+time.sleep(0.3)
+termios.tcsetattr(0, termios.TCSADRAIN, saved)
+`);
+  try {
+    const app = sandbox.launch();
+    await app.waitFor(/❯/);
+    const mark = app.mark;
+    app.pty.write(`python3 -I ${script}\r`);
+    await app.waitFor(/DOWN_TWO/, mark);
+    const at = app.output.indexOf('START_MARK', mark);
+    assert.equal(app.output.slice(at, at + 'START_MARK\n\nDOWN_TWO'.length), 'START_MARK\n\nDOWN_TWO', 'the LFs are not rewritten as CR LF');
+    await app.waitFor(/❯/, at);
+    // NMSh's own terminal settings are back once it owns the terminal again.
+    await app.run('echo BACK_$((6*7))', /BACK_42/);
+  } finally {
+    await sandbox.dispose();
+  }
+});

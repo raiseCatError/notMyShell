@@ -28,3 +28,13 @@ test('replies go to the program only while expected; keys, a lone Escape and arr
   router.split('\u001b[?20', 6001);
   assert.equal(router.stop(), '\u001b[?20', 'what was held is handed back');
 });
+
+test('while answers are expected, Alt+key and ordinary keys pass at once and in order; only answers are taken', () => {
+  const router = new ReplyRouter();
+  router.expect(0);
+  for (const key of ['\u001bP', '\u001b]', '\u001b[', '\u001bp', 'hello', '\u001b[1;5A', '\u001b[99;5u', '\u001bOP', '\r', '\u0003'])
+    assert.deepEqual(router.split(key, 1), {replies: '', rest: key}, JSON.stringify(key));
+  assert.deepEqual(router.split('a\u001b[?2026;2$yb\u001b[Ac', 1), {replies: '\u001b[?2026;2$y', rest: 'ab\u001b[Ac'}, 'coalesced with typing');
+  assert.deepEqual(router.split('x\u001b[?20', 1), {replies: '', rest: 'x'}, 'an answer split across reads waits');
+  assert.deepEqual(router.split('27;1$yz', 1), {replies: '\u001b[?2027;1$y', rest: 'z'});
+});

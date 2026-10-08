@@ -164,6 +164,7 @@ import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {QueryExtractor, ReplyRouter} from '../passthrough/TerminalQueries.js';
+import {TerminalOutputProcessing} from '../terminal/outputProcessing.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
 import {helpMarkdown} from '../help/helpContent.js';
@@ -943,6 +944,8 @@ export class TerminalApp {
    * byte goes to the program. Reclaimed in onShellPrompt.
    */
   private handOverTerminal(restore = ''): void {
+    // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
+    this.outputProcessing.set(true);
     // A reply still arriving belongs to the program, which now receives every byte anyway.
     const held = this.replyRouter.stop();
     if (held) this.session.write(held);
@@ -1087,6 +1090,7 @@ export class TerminalApp {
     return exitCode;
   }
 
+  private readonly outputProcessing = new TerminalOutputProcessing();
   private readonly queryExtractor = new QueryExtractor();
   private readonly replyRouter = new ReplyRouter();
 
@@ -1199,6 +1203,7 @@ export class TerminalApp {
     this.terminalFocus = 'unknown';
     this.renderer.leave();
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+    this.outputProcessing.reapplied();
     process.stdin.pause();
     process.kill(process.pid, 'SIGSTOP');
   };
@@ -1208,8 +1213,12 @@ export class TerminalApp {
     this.frontendSuspended = false;
     this.terminalFocus = 'unknown';
     this.renderer.enter();
-    if (this.passthrough) this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    this.outputProcessing.reapplied();
+    if (this.passthrough) {
+      this.outputProcessing.set(true);
+      this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
+    }
     process.stdin.resume();
     this.keyDecoder.reset();
     this.onResize();
@@ -3140,6 +3149,7 @@ export class TerminalApp {
       // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
       this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
+      this.outputProcessing.set(false);
       // Bytes the program owned (its keys, the terminal's replies to it) never continue as NMSh input.
       if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
       this.keyDecoder.reset();
