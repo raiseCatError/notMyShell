@@ -1,9 +1,9 @@
 # Worktree manager core (#337)
 
-Status: core, controller and presentation model implemented and tested in
-`src/worktrees/`. **Not wired into the live product**: `/worktrees`, key
-dispatch, shell `cd`, session/tmux focus, the diff panel and PR evidence are
-deferred (see the end of this document).
+Status: shipped in v0.18.0 as `/worktrees`. The core, controller and
+presentation model live in `src/worktrees/`; TerminalApp hosts the panel (see
+[Host integration](#host-integration-v0180)). Session/tmux focus, the diff
+panel and PR evidence remain deferred (see the end of this document).
 
 ## Boundary
 
@@ -153,7 +153,7 @@ are typed as unavailable with reasons.
 
 ## Controller and presentation
 
-Keys (as a model, not wired): ↑/↓ select, Enter navigation intent, `n` new
+Keys: ↑/↓ select, Enter navigation intent, `n` new
 (returns `requestNewWorktree` so the host can collect input, then `planNew`),
 `x` removal preview only when available (otherwise a reason), `r` refresh,
 `/` local search, Esc clears search, then cancels review, then `back`. In a
@@ -188,12 +188,28 @@ terminals window whole entries around the selection with an `a-b/N` indicator.
   non-forced checks cover dirt and locks in that window.
 - `id` is Git's path; a worktree moved with `git worktree move` is a new row.
 
+## Host integration (v0.18.0)
+
+- `/worktrees` opens the panel for the shell's repository (`repositoryIdentity`);
+  outside a repository it says so and opens nothing.
+- Enter on a row stages `cd -- '<path>'` in the composer and closes the panel;
+  nothing runs until the person presses Enter. A non-empty draft is never
+  replaced: the panel says to clear it first.
+- `n` collects one branch name in the panel (`src/worktrees/host.ts`). The
+  destination is a sibling of the main worktree, `<repo>-<branch>` with `/` as
+  `-`; an existing local branch is checked out, otherwise a new branch starts at
+  the main worktree's HEAD. The core then plans, and Enter on the reviewed plan
+  creates it.
+- `x` is additionally refused while a live managed agent's working directory is
+  inside the selected worktree. The shell's own worktree is compared in resolved
+  form (macOS `/tmp` is `/private/tmp`).
+- `w` in a pull request (`/github`) opens `/worktrees` with that PR's head
+  branch selected when a worktree has it checked out; branches from forks are
+  not matched.
+
 ## Deferred integration
 
-- `/worktrees` command and TerminalApp key/panel wiring (after #329 lands; this
-  PR does not touch `TerminalApp.ts`, `slashCommands.ts` or `src/input/**`).
-- Shell `cd` (preserving the composer draft), NMSh session focus, tmux focus,
-  and opening a new session — the host acts on intents.
+- NMSh session focus, tmux focus, and opening a new session for a worktree.
 - #331 sidebar quick navigation (can reuse `discoverWorktrees` and the model).
 - #332 diff panel (consumes `DiffIntent`).
 - #338 related PR evidence.

@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [0.18.0] - 2026-10-09
 
-Context Engine Platform & Status Strip 2.0: demand-driven capabilities, a first-party module catalog, declarative Context Packs, Claude Code agent context, `/modules` and `/strip`, terminal-title ownership, plus tmux, passthrough and cursor fixes.
+Context Engine platform, Status Strip 2.0, managed Claude Code, worktrees and a read-only GitHub workspace: demand-driven context modules and Context Packs, `/strip` and `/modules`, `/claude` with structured permissions and questions, `/mods`, `/worktrees`, `/github`, terminal-title ownership, and tmux, passthrough and cursor fixes.
 
 ### Added — Context Engine and modules
 - **Capability scheduler:** typed capabilities declare what they read, their environment, cost, timeout, cache lifetime and per-field privacy. Only facts that visible, routed modules demand are resolved, off the typing path, with bounded concurrency, coalescing, timeouts with backoff (and a cold-start allowance), cancellation on directory change, staged scopes that keep the old context visible until the new one settles, stale-while-revalidate caching and command-completion invalidation. Hidden modules cost nothing.
@@ -31,6 +31,12 @@ Context Engine Platform & Status Strip 2.0: demand-driven capabilities, a first-
 - Theme Bridge colors are valid on 16- and 8-color terminals (theme ANSI slots instead of 256-color codes for less/man, listings and Vim).
 - Typo correction works in Bash and Fish, and Bash/Fish command recognition, correction and install offers use the live shell's `PATH`.
 
+### Added — Managed Claude Code, mods, worktrees and GitHub
+- **Managed Claude Code targets** ([#329](https://github.com/raiseCatError/notMyShell/pull/329)): `/claude` focuses or resumes existing work, or opens one launcher listing targets under their launch profile with `+ New target`; `/claude new` always starts fresh, and `/ai` keeps the supervisor. Named launch profiles keep each Claude account's config and identity apart. NMSh drives Claude Code through its structured stdio interface, so tool permission requests (allow/deny) and AskUserQuestion questions are answered in NMSh, never by scraping a terminal. Turn results give the real reason ("authentication failed", "Interrupted"), and the model is shown only as Claude reports it. A shelf above the composer shows live targets: Up from an idle composer focuses it, Left/Right select, Enter opens, Down/Esc return.
+- **`/mods`** (`/extensions`, `/claude mods`, `/codex mods`): one searchable, keyboard-first inventory of portable mods, provider-native plugins and settings hooks, and Context Packs, with provenance and security facts. Discovery reads files only and never runs mod code.
+- **`/worktrees`** ([#342](https://github.com/raiseCatError/notMyShell/pull/342)): this repository's Git worktrees with branch, HEAD, dirty/untracked, locked and prunable state. Enter stages `cd -- '<path>'` in an empty composer (it never runs it, never replaces a draft). `n` takes a branch name and shows the exact plan; nothing is created until Enter on that plan, and Git state is revalidated first. `x` previews removal; removal is never forced, keeps the branch, and is refused for the main, current, locked, prunable or dirty worktree and while a managed agent works inside it.
+- **`/github`, `/prs`, `/issues`** ([#343](https://github.com/raiseCatError/notMyShell/pull/343)): a read-only workspace for the `origin` repository through your own `gh` login: PR and issue lists with GitHub search syntax, PR overview, checks (with required flags), reviews and comments, commits, files and a bounded diff, and a merge *preview* that only describes what a merge would do. `o` opens the item on github.com and `w` jumps to the PR branch's worktree. NMSh writes nothing to GitHub.
+
 ### Fixed
 - (Physical QA, Ghostty) **Project and session** titles now show the session's name at once after `/rename` (and its signature after a reset) without a `cd` or notices; after Vim or another passthrough program sets its own title on exit ("Thanks for flying Vim"), NMSh writes its title back as soon as it has the screen; hostile directory names lose whole escape sequences instead of showing `]0;PWNED` debris.
 - (Physical QA) Inside **tmux**, the mouse wheel scrolls the NMSh transcript instead of cycling composer history; NMSh now asks tmux for button and SGR mouse reports, which tmux forwards with its `mouse` option on or off. Passthrough programs, copy mode and Shift selection are unchanged.
@@ -50,6 +56,18 @@ Context Engine Platform & Status Strip 2.0: demand-driven capabilities, a first-
 - Context Engine benchmarks (cold/warm collection, rapid directory changes, every module on every surface, hidden modules, a large repository) with budgets enforced by the timing smoke.
 - Every NMSh display path (prompt, modules, path, Status Strip, `/prompt` and `/modules` disclosures, fact cache, historical prompt blocks, welcome, startup picker, `/resume` and live-session lists) removes escape sequences whole instead of leaving visible debris; an unterminated OSC in a session-reported directory can no longer swallow the startup screen.
 - Retained control sequences are bounded: the transcript parser keeps at most 8 KiB of one unfinished sequence (OSC, DCS, SOS, PM and APC are discarded to their terminator), shell markers are capped at 1 MiB and the key decoder at 256 bytes.
+
+### Upgrade notes
+- Settings carry over: existing prompts, modules and Status Strip placement (Top, right-aligned) are kept, and nothing new is turned on by the upgrade. The terminal title stays Off until chosen in Settings → Sessions.
+- Claude Code agent context needs one reviewed settings change from `nmsh agent-status setup`; `nmsh agent-status remove` undoes exactly that change.
+- `/github` uses your existing `gh` login and needs a github.com `origin` remote; NMSh stores no GitHub credentials.
+- A session service started by an older NMSh keeps writing the old shell bootstrap until it restarts; new windows say when this is the case.
+
+### Known limitations
+- Managed targets are Claude Code only. Codex and OpenCode routing say the adapter is not available; live attach to a Claude session started outside NMSh is not supported.
+- The GitHub workspace is read-only: no merging, reviewing, commenting or closing from NMSh.
+- `/worktrees` navigates by staging `cd` in the composer; focusing an NMSh session or tmux pane for a worktree is not implemented.
+- Physical checks in iTerm2, Kitty, WezTerm, Linux and WSL 2 remain open follow-ups.
 
 ## [0.17.0] - 2026-10-06
 

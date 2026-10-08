@@ -4,10 +4,10 @@
 
 | | |
 |---|---|
-| **Current release** | [v0.18.0 — Context Engine Platform & Status Strip 2.0](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) — released |
+| **Current release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) — released |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
 | **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305) and [#304 — Theme Bridge / semantic terminal](https://github.com/raiseCatError/notMyShell/issues/304); foundation released in v0.17.0, the module platform and further Theme Bridge work released in v0.18.0 |
-| **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328), see CHANGELOG → 0.18.0 |
+| **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (#337), read-only `/github` (#338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328), see CHANGELOG → 0.18.0 |
 | **Unscheduled** | [Future / Backlog](https://github.com/raiseCatError/notMyShell/milestone/7) |
 | **Development branch** | `dev` |
 | **Project board** | [NMSh Development](https://github.com/users/raiseCatError/projects/1) |
@@ -156,9 +156,9 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
 
-## Released — v0.18 Context Engine Platform & Status Strip 2.0
+## Released — v0.18 Context Engine, Managed Agents & Workspaces
 
-Ships the module ecosystem previously planned for v0.19.0 ([#305](https://github.com/raiseCatError/notMyShell/issues/305), [#316](https://github.com/raiseCatError/notMyShell/issues/316)–[#321](https://github.com/raiseCatError/notMyShell/issues/321)) together with the Theme Bridge work planned for v0.18.0 ([#304](https://github.com/raiseCatError/notMyShell/issues/304)): terminal title ownership (OSC 0/2), host-marker lifecycle refinements, Open in pager, truthful delta status, 16/8-color correctness and Bash/Fish typo correction. Still deferred from #304: delta diff styles (git config), terminal emulator and editor base-theme takeover; physical host QA. See CHANGELOG → 0.18.0.
+Ships the module ecosystem previously planned for v0.19.0 ([#305](https://github.com/raiseCatError/notMyShell/issues/305), [#316](https://github.com/raiseCatError/notMyShell/issues/316)–[#321](https://github.com/raiseCatError/notMyShell/issues/321)) together with managed Claude Code targets and `/mods` ([PR #329](https://github.com/raiseCatError/notMyShell/pull/329)), the worktree manager ([#337](https://github.com/raiseCatError/notMyShell/issues/337), [PR #342](https://github.com/raiseCatError/notMyShell/pull/342)), the read-only GitHub workspace ([#338](https://github.com/raiseCatError/notMyShell/issues/338) phase 1, [PR #343](https://github.com/raiseCatError/notMyShell/pull/343)) and the Theme Bridge work planned for v0.18.0 ([#304](https://github.com/raiseCatError/notMyShell/issues/304)): terminal title ownership (OSC 0/2), host-marker lifecycle refinements, Open in pager, truthful delta status, 16/8-color correctness and Bash/Fish typo correction. Still deferred from #304: delta diff styles (git config), terminal emulator and editor base-theme takeover; physical host QA. See CHANGELOG → 0.18.0.
 
 ## Planned releases
 

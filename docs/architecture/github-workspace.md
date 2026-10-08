@@ -1,8 +1,8 @@
 # GitHub workspace core (#338, phase 1)
 
-Status: **read-only core, controller, renderer and a development-only preview.**
-Not wired into NMSh. There is no `/prs`, `/issues` or `/github` command yet, and
-no remote mutation of any kind. Physical terminal QA is **still pending**.
+Status: **read-only**, shipped in v0.18.0 as `/github`, `/prs` and `/issues`.
+There is no remote mutation of any kind; the merge preview only describes what a
+merge would do. Physical terminal QA is **still pending**.
 
 Boundary: GitHub owns remote PR and issue truth. Git owns local checkouts (see #337).
 NMSh owns presentation, navigation and safe interaction. This is a terminal control
@@ -186,22 +186,26 @@ A future integration must:
    success (merged, branch kept) truthfully.
 5. Never bypass branch protection, and never infer readiness from local Git.
 
+## Live routing (v0.18.0)
+
+`/github` and `/prs` open the PRs tab, `/issues` the Issues tab, for the
+repository of the shell's `origin` remote when it is on github.com (https, ssh or
+scp form; anything else opens nothing and says why). TerminalApp constructs
+`GhSource`, `GithubWorkspaceService` and `GithubWorkspaceController` and renders
+in the shared panel slot; NMSh's decoded keys map onto `WorkspaceKey`
+(`src/githubWorkspace/host.ts`), with Tab and Shift+Tab switching tabs.
+Intents: `OpenExternal` and `OpenExternalReview` open only `safeGithubUrl` URLs
+with the system opener; `OpenRelatedWorktree` opens `/worktrees` on the PR's head
+branch (same-repository PRs only); `Exit` closes the panel.
+
 ## Future integrations
 
-- **#329 (input ownership):** feed `WorkspaceKey`s from the managed input-owner
-  dispatcher. Map `FocusRegion` to the shared owners.
 - **#336 (semantic actions):** `availableActions()` becomes the action list. Mouse
   actions call the same handlers.
 - **#331 (sidebar):** reuse `SearchItem`, `itemKey` and `checksLabel` for quick links.
   Deep management stays here.
 - **#332 (detail and diff panel):** consume `DiffModel` and `detailLines`. The right
   panel replaces the inline review depth.
-- **#337 (worktrees):** handle the `OpenRelatedWorktree` intent (repository, PR number,
-  head ref, head repository, head SHA). Worktree state stays `unknown` until #337
-  provides a factual adapter. Nothing here imports `src/worktrees`.
-- **Live routing:** `/prs`, `/issues` and `/github` construct `GhSource`,
-  `GithubWorkspaceService` and `GithubWorkspaceController`, and render inside a panel.
-  This happens only after #329 lands.
 
 ## Verification
 
