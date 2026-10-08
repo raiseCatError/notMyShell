@@ -1,12 +1,12 @@
 // Real-terminal captures of the managed agent view (VHS), with a fixture provider and a disposable home.
-// usage: node capture.mjs <repo> <outdir> [width height label]
+// usage: node capture.mjs <repo> <outdir> [width height label ENV=value,... '{"configKey":value}']
 import {execFileSync, spawnSync} from 'node:child_process';
 import {readdirSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {dirname, join, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
-const [repo, outdir, width = '1440', height = '960', label = 'wide', extraEnv = ''] = process.argv.slice(2);
+const [repo, outdir, width = '1440', height = '960', label = 'wide', extraEnv = '', extraConfig = '{}'] = process.argv.slice(2);
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-cap-')));
 const home = join(root, 'home');
 const dirs = {home, config: join(home, '.config'), data: join(home, '.local/share'), state: join(home, '.local/state'), cache: join(home, '.cache'), runtime: join(root, 'run'), temp: join(root, 'tmp'), bin: join(root, 'bin')};
@@ -18,7 +18,7 @@ writeFileSync(join(home, '.zshrc'), '# capture home\n');
 writeFileSync(join(home, '.zshenv'), '');
 writeFileSync(join(home, '.gitconfig'), '[user]\n\tname = Demo\n\temail = demo@example.com\n[init]\n\tdefaultBranch = main\n');
 mkdirSync(join(dirs.config, 'nmsh'), {recursive: true});
-writeFileSync(join(dirs.config, 'nmsh', 'config.json'), JSON.stringify({onboardingComplete: true, toolsSetupComplete: true, glyphChoiceComplete: true, glyphStyle: 'nerd', updateMode: 'off', toolUpdateChecks: 'off', installSuggestions: false, liveSessionStartup: 'ask'}));
+writeFileSync(join(dirs.config, 'nmsh', 'config.json'), JSON.stringify({onboardingComplete: true, toolsSetupComplete: true, glyphChoiceComplete: true, glyphStyle: 'nerd', updateMode: 'off', toolUpdateChecks: 'off', installSuggestions: false, liveSessionStartup: 'ask', ...JSON.parse(extraConfig)}));
 const project = join(home, 'Projects', 'demo');
 mkdirSync(join(project, 'src'), {recursive: true});
 writeFileSync(join(project, 'src', 'sum.js'), 'export const sum = (a, b) => a + b;\n');

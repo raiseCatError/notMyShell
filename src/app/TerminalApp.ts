@@ -711,7 +711,7 @@ export class TerminalApp {
   private presentationStarted = false;
   private presentationSubscription?: () => void;
   private readonly effects = new EffectState();
-  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan};
+  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number};
   private activityAnimationNow = Date.now();
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
@@ -3910,6 +3910,7 @@ export class TerminalApp {
   }
 
   private panelContentRows(columns: number): string[] {
+    this.agentCaret = undefined;
     if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
@@ -3961,7 +3962,15 @@ export class TerminalApp {
     if (this.agentView) {
       const session = this.agents.get(this.agentView.sessionId);
       // The agent view is a workspace: it owns the full height below its frame line (the shell is one Esc away).
-      if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session)), columns);
+      if (session) {
+        // The agent draft uses the shell composer's geometry and the terminal's own caret: the view reports where it is.
+        const layout: {caret?: {row: number; column: number}} = {};
+        const rows = framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session),
+          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout}), columns);
+        // framePanel puts its rule first; a Top panel later moves that rule to its last row.
+        this.agentCaret = layout.caret && {row: layout.caret.row + 1, column: layout.caret.column};
+        return rows;
+      }
     }
     if (this.launcher) return framePanel(renderLauncher(this.launcher, this.launcherRows(), columns, this.dimensions().rows - 4), columns);
     if (this.modsPanel) return framePanel(renderMods(this.modsPanel, columns, this.dimensions().rows - 4), columns);
@@ -7302,6 +7311,8 @@ export class TerminalApp {
   });
   private taskClock?: () => void;
   private modsPanel?: ModsController;
+  /** The agent draft's caret in the framed panel rows, when the agent view owns typing; drives the terminal cursor. */
+  private agentCaret?: {row: number; column: number};
   /** /worktrees: the core controller; `branch` while `n` collects a branch name; `notice` is the host's own outcome line. */
   private worktreePanel?: {controller: WorktreeManagerController; git: GitRunner; branch?: string; notice?: string; select?: string};
   /** /github, /prs, /issues: read-only workspace over the person's `gh`. */
@@ -8588,16 +8599,20 @@ export class TerminalApp {
       for (let index = 0; index < region.height; index += 1) frameRows[region.top + index] = content[index] ?? '';
     }
 
+    // The agent view's draft owns typing: the terminal caret sits in its composer row (a Top panel ends with its frame rule).
+    const panelRegion = plan.regions.find(region => region.kind === 'panel');
+    const agentOffset = this.agentCaret && panelRegion ? this.agentCaret.row - (plan.panelPosition === 'top' ? 1 : 0) : -1;
+    const agentCaretRow = plan.panelActive && panelRegion && agentOffset >= 0 && agentOffset < panelRegion.height ? panelRegion.top + agentOffset : undefined;
     const frame: TerminalFrame = {
       rows: frameRows,
       columns,
-      cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
-      cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
+      cursorRow: terminalRowFromScreen(agentCaretRow ?? cursorScreenRow(plan, input.caretRow)),
+      cursorColumn: Math.max(1, Math.min(columns, (agentCaretRow !== undefined ? this.agentCaret!.column : input.caretColumn) + 1)),
       // Flow can scroll the input row off screen.
-      cursorVisible: !plan.panelActive && plan.inputHeight > 0,
+      cursorVisible: agentCaretRow !== undefined || (!plan.panelActive && plan.inputHeight > 0),
     };
     this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
-    this.presentationFrame = {frame, plan};
+    this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
     this.paintPresentation(Date.now());
     this.renderRail = undefined;
     this.syncPresentationClock();
@@ -8793,9 +8808,13 @@ export class TerminalApp {
     this.paintTransitions(rows, plan, columns, now);
     // Cursor effects: an overlay on the input rows only, never over panels, passthrough or idle visuals.
     const input = plan.regions.find(item => item.kind === 'input');
-    const caretShown = frame.cursorVisible !== false && Boolean(input) && !plan.panelActive;
+    // The agent composer's caret gets the same caret effects, bounded to its own row.
+    const agentRow = this.presentationFrame?.agentCaretRow;
+    const caretShown = frame.cursorVisible !== false && (agentRow !== undefined || (Boolean(input) && !plan.panelActive));
+    const bounds = agentRow !== undefined ? {top: agentRow, bottom: agentRow, columns}
+      : {top: Math.max(0, (input?.top ?? 0) - 1), bottom: (input?.top ?? 0) + (input?.height ?? 1) - 1, columns};
     const cursor = this.cursorPresenter.apply(rows, caretShown ? {row: frame.cursorRow - 1, column: frame.cursorColumn - 1} : undefined,
-      {top: Math.max(0, (input?.top ?? 0) - 1), bottom: (input?.top ?? 0) + (input?.height ?? 1) - 1, columns}, this.caretCause,
+      bounds, this.caretCause,
       !this.passthrough && !this.externalPassthrough && this.decorativeMotionAllowed() && colorLevel() !== 'none', now, this.cursorBackend());
     const painted = cursor.rows;
     try {

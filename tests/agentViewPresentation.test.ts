@@ -33,16 +33,34 @@ function conversation(): AgentSession {
 }
 const plain = (rows: string[]) => rows.map(row => stripAnsi(row));
 
-test('the agent view owns its full height: header at the top, composer and controls at the bottom edge', () => {
+test('the agent view owns its full height: the conversation meets the composer, the state rides the composer rule', () => {
   for (const height of [12, 24, 40]) {
     const rows = plain(renderSemanticAgentView(conversation(), view(), 90, height, {profileLabel: 'Claude account 2', branch: 'main'}));
     assert.equal(rows.length, height, `exactly ${height} rows`);
-    assert.match(rows[0]!, /^✻ Claude Code · Sum helper +fixture-model$/u);
-    assert.match(rows[1]!, /^ {2}Waiting for you · Claude account 2 · ~\/Projects\/demo · main$/u, 'state first, then identity and place');
     assert.match(rows.at(-2)!, /^❯ ▏Message Claude…$/u);
     assert.match(rows.at(-1)!, /^Enter send · Tab transcript · Esc shell$/u);
-    assert.match(rows.at(-3)!, /^─+$/u, 'a single rule separates the conversation from the composer');
+    assert.match(rows.at(-3)!, /^─ Waiting for you ─+$/u, 'one rule separates the conversation from the composer and carries the state');
+    assert.notEqual(rows.at(-4), '', 'the newest row sits on the rule: no gap above the composer');
   }
+  const tall = plain(renderSemanticAgentView(conversation(), view(), 90, 40, {profileLabel: 'Claude account 2', branch: 'main'}));
+  const header = tall.findIndex(row => /^✻ Claude Code · Sum helper +fixture-model$/u.test(row));
+  assert.ok(header > 0, 'the header starts the stream, after the space the conversation has not filled');
+  assert.match(tall[header + 1]!, /^ {2}Claude account 2 · ~\/Projects\/demo · main$/u, 'identity and place; the state is not repeated');
+  assert.ok(tall.slice(0, header).every(row => row === ''), 'unused space is above the header, never between it and the composer');
+});
+
+test('a fresh session: a compact welcome directly above the composer, then it gives way to the conversation', () => {
+  const fresh = session();
+  const rows = plain(renderSemanticAgentView(fresh, view(), 90, 30, {profileLabel: 'Claude account 2', branch: 'main'}));
+  const welcome = rows.findIndex(row => /^✻ Claude Code/u.test(row));
+  assert.ok(welcome > 0);
+  assert.ok(rows.slice(welcome).length <= 9, 'compact: welcome, rule, composer and controls');
+  assert.match(rows.at(-4)!, /What would you like to work on\?/u, 'the welcome ends right above the composer rule');
+  assert.equal(rows.filter(row => /Claude account 2/u.test(row)).length, 1, 'identity once');
+  pushEvent(fresh, {kind: 'user', text: 'first question'});
+  const started = plain(renderSemanticAgentView(fresh, view(), 90, 30, {profileLabel: 'Claude account 2'}));
+  assert.ok(!started.some(row => /What would you like/u.test(row)), 'the welcome prompt gives way once a message is sent');
+  assert.ok(started.some(row => /first question/u.test(row)));
 });
 
 test('turns are distinct without color: user marker, indented agent prose, quiet tool rows, outcome glyphs', () => {
@@ -75,27 +93,29 @@ test('every width fits in display cells, including wide characters and very narr
     const rendered = renderSemanticAgentView(s, view('a draft'), columns, 30);
     assert.equal(rendered.length, 30);
     for (const row of rendered) assert.ok(displayWidth(row) <= columns, `${columns}: ${JSON.stringify(stripAnsi(row))}`);
-    assert.match(stripAnsi(rendered[1]!), /Waiting/u, 'the state survives every width');
+    assert.ok(rendered.some(row => /Waiting/u.test(stripAnsi(row))), 'the state survives every width');
   }
 });
 
 test('narrow header gives way in order: identity, then the start of the path; state and project survive', () => {
   const s = conversation();
   s.cwd = `${process.env.HOME}/Projects/clients/acme/very-long-repository-name`;
-  const rows = plain(renderSemanticAgentView(s, view(), 48, 20, {profileLabel: 'Claude account 2', branch: 'feature/x'}));
-  assert.doesNotMatch(rows[1]!, /Claude account 2/u);
-  assert.match(rows[1]!, /^ {2}Waiting for you · …\S*\/very-long-repository-name$/u, 'the project name stays whole; the branch gives way first');
+  const rows = plain(renderSemanticAgentView(s, view(), 40, 30, {profileLabel: 'Claude account 2', branch: 'feature/x'}));
+  const place = rows.find(row => /very-long-repository-name/u.test(row))!;
+  assert.doesNotMatch(place, /Claude account 2/u, 'the identity gives way first');
+  assert.match(place, /^ {2}…\S*\/very-long-repository-name$/u, 'the project name stays whole; the branch gives way before it');
+  assert.ok(rows.some(row => /^─ Waiting for you/u.test(row)), 'the state survives on the composer rule');
 });
 
 test('state feedback: working offers interrupt; approvals and questions are marked in words and glyph', () => {
   const s = conversation();
   pushEvent(s, {kind: 'user', text: 'Run it again'});
   let rows = plain(renderSemanticAgentView(s, view(), 90, 24));
-  assert.match(rows[1]!, /^ {2}Working/u);
+  assert.match(rows.at(-3)!, /^─ Working/u);
   assert.match(rows.at(-1)!, /Ctrl\+C interrupt/u);
   pushEvent(s, {kind: 'approval', requestId: 'r1', tool: 'Edit', target: 'src/sum.js'});
   rows = plain(renderSemanticAgentView(s, view(), 90, 24));
-  assert.match(rows[1]!, /^ {2}◆ Needs approval/u);
+  assert.ok(rows.some(row => /^─ ◆ Needs approval/u.test(row)), 'attention in words and glyph on the composer rule');
   assert.ok(rows.some(row => /^◆ Permission pending · Shift\+Tab or \/approval to review$/u.test(row)));
   assert.ok(rows.some(row => /^ {2}◆ Approval requested: Edit src\/sum\.js$/u.test(row)));
 });
@@ -133,7 +153,7 @@ test('Safe glyphs are ASCII markers; NO_COLOR emits no color escapes and keeps e
     assert.match(text, /^ {2}- Read src\/sum\.js$/mu);
     assert.match(text, /^ {2}\+ Finished; waiting for you\.$/mu);
     assert.match(rows.at(-2)!, /^> draft_$/u);
-    assert.match(rows.at(-3)!, /^-+$/u);
+    assert.match(rows.at(-3)!, /^- Waiting for you -+$/u);
     assert.match(rows.at(-1)!, /Enter send/u);
     for (const row of rows) assert.ok(/^[\x20-\x7e·]*$/u.test(row), `ASCII apart from the shared separator: ${JSON.stringify(row)}`);
   } finally { setIconStyle('nerd'); if (before === undefined) delete process.env.NO_COLOR; else process.env.NO_COLOR = before; }

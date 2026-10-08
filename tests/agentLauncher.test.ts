@@ -162,8 +162,9 @@ test('header: provider welcome, no implementation names, model only as reported,
   pushEvent(fresh, {kind: 'model', model: 'claude-opus-5-5'});
   pushEvent(fresh, {kind: 'user', text: 'hello'});
   const compact = renderSemanticAgentView(fresh, view, 90, 30, {profileLabel: 'Claude account 2'});
-  assert.match(stripAnsi(compact[0]!), /✻ Claude Code · .*claude-opus-5-5$/u);
-  assert.match(compact[0]!, /\u001b\[38;2;217;119;87m/u, 'provider identity carries the registry accent');
+  const headerRow = compact.find(row => /✻ Claude Code · /u.test(stripAnsi(row)))!;
+  assert.match(stripAnsi(headerRow), /✻ Claude Code · .*claude-opus-5-5$/u);
+  assert.match(headerRow, /\u001b\[38;2;217;119;87m/u, 'provider identity carries the registry accent');
 });
 
 test('turn results never read "failed: success"; reasons come from structured fields; interruptions and denials are told apart', () => {

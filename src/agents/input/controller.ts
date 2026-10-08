@@ -36,6 +36,7 @@ export function agentKeyAction(key: Key, owner: InputOwner): AgentAction | undef
   if (key.kind === 'enter') return {kind: 'SendMessage'};
   if (key.kind === 'interrupt') return {kind: 'Interrupt'};
   if (key.kind === 'toggleDetails') return {kind: 'FocusTranscript'};
+  // Up/Down move between the rows of a multiline draft, as in the shell composer.
   return {kind: 'EditMessage', key};
 }
 
@@ -53,6 +54,9 @@ export class AgentInputController {
   choiceAnswers: Record<string, string> = {};
   choiceToggled = new Set<string>();
   readonly choiceEditor = new CommandEditor();
+  /** The draft's wrap width and first-row prefix as the view last drew them, so vertical moves follow the screen. */
+  composerColumns = 80;
+  composerPrefix?: string;
   dispatch(action: AgentAction, context: {shellEmpty: boolean; count: number} = {shellEmpty: true, count: 0}): void {
     switch (action.kind) {
       case 'FocusTranscript': if (context.shellEmpty) {this.owner = 'TRANSCRIPT'; this.selected = Math.max(0, context.count - 1);} else this.feedback = 'Transcript shortcuts require an empty shell composer'; break;
@@ -63,7 +67,13 @@ export class AgentInputController {
       case 'ZoomOut': this.depth = Math.max(1, this.depth - 1); break;
       case 'SelectDetailDepth': this.depth = Math.max(1, Math.min(5, action.depth)); break;
       case 'ScrollTranscript': this.scroll = Math.max(0, this.scroll + action.rows); break;
-      case 'EditMessage': applyEditingKey(this.editor, action.key); break;
+      case 'EditMessage': {
+        const key = action.key;
+        if (key.kind === 'up') this.editor.moveUp(this.composerColumns, this.composerPrefix);
+        else if (key.kind === 'down') this.editor.moveDown(this.composerColumns, this.composerPrefix);
+        else applyEditingKey(this.editor, key, this.composerColumns, this.composerPrefix);
+        break;
+      }
     }
   }
 }

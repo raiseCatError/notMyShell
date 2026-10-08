@@ -8,6 +8,19 @@ import {getCurrentGlyphMode, GLYPHS} from '../../ui/glyphs.js';
 import {foreground, UI_COLORS, type RgbColor} from '../../ui/palette.js';
 import {renderControlRows, renderControls} from '../../ui/controls.js';
 import {colorLevel} from '../../presentation/capabilities.js';
+import {layoutInput} from '../../input/inputLayout.js';
+import {chatColumn} from '../../output/TranscriptPresenter.js';
+
+/** How the host draws the view: the transcript presentation and composer side it already uses, and whether it shows the terminal's own caret. */
+export interface AgentViewOptions {
+  presentation?: 'normal' | 'chat';
+  composerPosition?: 'top' | 'bottom';
+  /** The host places the terminal cursor at {@link AgentViewLayout.caret}; no caret glyph is drawn. */
+  hardwareCaret?: boolean;
+  /** Filled in by the renderer: where the insertion caret is, in the returned rows. */
+  layout?: AgentViewLayout;
+}
+export interface AgentViewLayout { caret?: {row: number; column: number} }
 
 const RESET = '\u001b[0m';
 /** A line already built from scrubbed parts and styled by NMSh; every other line is scrubbed when emitted. */
@@ -136,34 +149,56 @@ function providerHeader(session: AgentSession, meta: AgentViewMeta, width: numbe
   }
   const title = displayText(session.title);
   const head = `${glyph} ${name} · ${title}`;
-  const tone = stateTone(session);
-  const lead = `${tone === 'attention' ? `${marks().attention} ` : ''}${targetStatus(session).label}`;
-  // The state is never dropped; the identity, then the start of the path, give way first.
-  const separator = 3;
-  let facts = identity ? [identity] : [];
-  let room = width - INDENT - displayWidth(lead) - facts.reduce((sum, fact) => sum + separator + displayWidth(fact), 0) - separator;
-  if (room < 12 && facts.length) { facts = []; room = width - INDENT - displayWidth(lead) - separator; }
-  const where = room > 0 ? place(room) : '';
-  const tail = [...facts, where].filter(Boolean).map(fact => ` · ${fact}`).join('');
+  // The target's state is on the composer rule, always visible; the header only says what and where.
+  // The project folder outranks the identity: the identity gives way when both cannot be whole.
+  const leaf = cwd.slice(cwd.lastIndexOf('/') + 1);
+  const withIdentity = identity ? place(width - INDENT - displayWidth(identity) - 3) : '';
+  const tail = identity && displayWidth(withIdentity) > 0 && (!leaf || withIdentity.includes(leaf)) && displayWidth(`${identity} · ${withIdentity}`) <= width - INDENT
+    ? `${identity} · ${withIdentity}` : place(width - INDENT) || identity;
   return [{styled: right(`${color}${glyph} ${name}${RESET}${primary} · ${title}${RESET}`, displayWidth(head))},
-    {styled: `  ${paint(toneColor(tone))}${lead}${RESET}${subtle}${tail}${RESET}`}];
+    ...(tail ? [{styled: `  ${subtle}${tail}${RESET}`}] : [])];
+}
+
+/** The composer rule: the target's state on the left (attention marked in words, not color only), the rule after it. */
+function stateRule(session: AgentSession, width: number): Styled {
+  const tone = stateTone(session);
+  const label = `${tone === 'attention' ? `${marks().attention} ` : ''}${displayText(targetStatus(session).label)}`;
+  const text = truncateText(label, Math.max(1, width - 4));
+  const rule = paint(UI_COLORS.separator);
+  return {styled: `${rule}${marks().rule}${RESET} ${paint(toneColor(tone))}${text}${RESET} ${rule}${repeatToWidth(marks().rule, Math.max(0, width - displayWidth(text) - 3))}${RESET}`};
+}
+
+/** Your turn in Chat: a right-aligned block in the chat column, labelled on its right edge (as the shell and Ask transcripts). */
+function chatTurn(text: string, width: number, column: number, label: string, style: string, labelStyle: string): Styled[] {
+  const lines = wrapText(text, column);
+  const widest = Math.max(displayWidth(label), ...lines.map(line => displayWidth(line)));
+  const left = Math.max(0, width - widest);
+  return [{styled: `${' '.repeat(left + widest - displayWidth(label))}${labelStyle}${label}${RESET}`},
+    ...lines.map(line => ({styled: `${' '.repeat(left + widest - displayWidth(line))}${style}${line}${RESET}`}))];
 }
 
 /** The conversation: user turns lead with a marker, the agent's text is the body, tools and outcomes stay quiet. */
-function conversation(session: AgentSession, width: number): Line[] {
+function conversation(session: AgentSession, width: number, presentation: 'normal' | 'chat' = 'normal'): Line[] {
   const source = session.transcript;
   const g = marks();
   const primary = paint(UI_COLORS.primary), secondary = paint(UI_COLORS.secondary), subtle = paint(UI_COLORS.subtle);
   const accent = paint(UI_COLORS.accent), failure = paint(UI_COLORS.failure), success = paint(UI_COLORS.success);
-  const items = source ? source.objects.slice(-20).map(object => ({kind: object.kind, text: object.text, long: object.text.length >= 400}))
+  // The whole (bounded) source, oldest first: scrollback reaches the start of the conversation.
+  const items = source ? source.objects.map(object => ({kind: object.kind, text: object.text, long: object.text.length >= 400}))
     : session.events.flatMap(event => event.kind === 'assistant' || event.kind === 'user' ? [{kind: event.kind as string, text: event.text, long: false}] : []);
+  // Chat: your turns are a right-aligned block, the agent's prose a left column with its name; tools stay quiet rows.
+  const column = presentation === 'chat' ? chatColumn(width - INDENT) : undefined;
   const lines: Line[] = [];
   let previous = '';
   for (const item of items) {
     // A blank row separates turns and sets prose apart from activity rows; consecutive tools stay together.
     if (lines.length && (item.kind === 'user' || item.kind !== previous) && !(item.kind === 'tool' && previous === 'tool')) lines.push('');
-    if (item.kind === 'user') lines.push(...turn(item.text, width, primary, g.you, accent));
-    else if (item.kind === 'assistant') lines.push(...turn(item.text, width, primary));
+    if (item.kind === 'user' && column) lines.push(...chatTurn(item.text, width, column, 'You', primary, subtle));
+    else if (item.kind === 'user') lines.push(...turn(item.text, width, primary, g.you, accent));
+    else if (item.kind === 'assistant' && column) {
+      if (previous !== 'assistant') lines.push({styled: `${' '.repeat(INDENT)}${accent}${displayText(harness(session.harness)?.short ?? session.harness)}${RESET}`});
+      lines.push(...turn(item.text, Math.min(width, column + INDENT), primary));
+    } else if (item.kind === 'assistant') lines.push(...turn(item.text, width, primary));
     else if (item.kind === 'tool') {
       const failed = item.text.endsWith(' · failed');
       const text = failed ? item.text.slice(0, -' · failed'.length) : item.text;
@@ -183,32 +218,44 @@ function conversation(session: AgentSession, width: number): Line[] {
   return lines;
 }
 
-/** The agent draft: prompt glyph, the text as edited (paste atoms by label), a caret at the cursor, continuation rows aligned. */
-function composer(session: AgentSession, view: AgentViewState, width: number): Styled[] {
+/**
+ * The agent draft, laid out by the shell composer's own geometry (`layoutInput`: prompt prefix, continuation
+ * indent, wrapping, caret cell). Returns its rows and the caret within them; with a hardware caret no glyph is drawn.
+ */
+function composer(session: AgentSession, view: AgentViewState, width: number, hardwareCaret: boolean): {rows: Styled[]; caret: {row: number; column: number}} {
   const c = view.controller!;
   const g = marks();
   const accent = paint(UI_COLORS.accent), primary = paint(UI_COLORS.primary), subtle = paint(UI_COLORS.subtle);
   const synced = c.editor.text === view.input;
-  const text = synced ? c.editor.displayText : view.input;
-  const cursor = synced ? c.editor.displayCursorIndex : text.length;
-  const gap = ' '.repeat(Math.max(1, INDENT - displayWidth(GLYPHS.prompt)));
-  const prompt = `${accent}${GLYPHS.prompt}${RESET}${gap}`;
-  const lead = displayWidth(GLYPHS.prompt) + gap.length;
+  const text = displayText(synced ? c.editor.displayText : view.input);
+  const cursor = synced ? c.editor.displayCursorIndex : [...text].length;
+  const prefix = `${GLYPHS.prompt} `;
+  c.composerColumns = width;
+  c.composerPrefix = prefix;
+  const layout = layoutInput(text, cursor, width, Number.POSITIVE_INFINITY, prefix);
+  const all = layout.allRows;
+  const begin = Math.max(0, Math.min(all.length - DRAFT_LINES, layout.caretRow - DRAFT_LINES + 1));
+  const out: Styled[] = [];
+  if (begin > 0) out.push({styled: `${' '.repeat(displayWidth(prefix))}${subtle}${begin} earlier line${begin === 1 ? '' : 's'}${RESET}`});
+  const caret = {row: out.length + layout.caretRow - begin, column: layout.caretColumn};
   if (!text) {
     const short = displayText(harness(session.harness)?.short ?? 'the agent');
-    return [{styled: `${prompt}${accent}${g.caret}${RESET}${subtle}${truncateText(`Message ${short}${g.ellipsis}`, Math.max(1, width - lead - 1))}${RESET}`}];
+    const mark = hardwareCaret ? ' ' : `${accent}${g.caret}${RESET}`;
+    out.push({styled: `${accent}${prefix}${RESET}${mark}${subtle}${truncateText(`Message ${short}${g.ellipsis}`, Math.max(1, width - displayWidth(prefix) - 1))}${RESET}`});
+    return {rows: out, caret: {row: out.length - 1, column: displayWidth(prefix)}};
   }
-  const clean = (part: string) => displayText(part).replaceAll(CARET, '');
-  const rows = wrapCells(`${clean(text.slice(0, cursor))}${CARET}${clean(text.slice(cursor))}`, Math.max(1, width - lead - 1));
-  const caretRow = Math.max(0, rows.findIndex(row => row.includes(CARET)));
-  const start = Math.max(0, Math.min(rows.length - DRAFT_LINES, caretRow - DRAFT_LINES + 1));
-  const out: Styled[] = [];
-  if (start > 0) out.push({styled: `${' '.repeat(lead)}${subtle}${start} earlier line${start === 1 ? '' : 's'}${RESET}`});
-  rows.slice(start, start + DRAFT_LINES).forEach((row, index) => {
-    const body = row.replace(CARET, `${RESET}${accent}${g.caret}${RESET}${primary}`);
-    out.push({styled: `${index === 0 && start === 0 ? prompt : ' '.repeat(lead)}${primary}${body}${RESET}`});
+  all.slice(begin, begin + DRAFT_LINES).forEach((row, index) => {
+    const lead = row.prefix === prefix ? `${accent}${prefix}${RESET}` : row.prefix;
+    let body = row.text;
+    if (!hardwareCaret && begin + index === layout.caretRow) {
+      const at = Math.max(0, layout.caretColumn - displayWidth(row.prefix));
+      let head = '', taken = 0;
+      for (const ch of row.text) { if (taken + displayWidth(ch) > at) break; head += ch; taken += displayWidth(ch); }
+      body = `${head}${RESET}${accent}${g.caret}${RESET}${primary}${row.text.slice(head.length)}`;
+    }
+    out.push({styled: `${lead}${primary}${body}${RESET}`});
   });
-  return out;
+  return {rows: out, caret};
 }
 
 /** What the keys do right now, with the shared footer styling (keys accent, actions muted); controls are dropped whole, never cut. */
@@ -228,7 +275,7 @@ function hints(session: AgentSession, view: AgentViewState, width: number): Line
 }
 
 /** Source has been loaded on semantic actions; render never reads disk/provider config. */
-export function renderSemanticAgentView(session: AgentSession, view: AgentViewState, columns: number, height: number, meta: AgentViewMeta = {}): string[] {
+export function renderSemanticAgentView(session: AgentSession, view: AgentViewState, columns: number, height: number, meta: AgentViewMeta = {}, options: AgentViewOptions = {}): string[] {
   const c = view.controller!;
   const width = Math.max(1, columns);
   const header = providerHeader(session, meta, width);
@@ -250,31 +297,52 @@ export function renderSemanticAgentView(session: AgentSession, view: AgentViewSt
     return [...header, '', ...prefix, ...body.slice(0, room), other, ...controls].slice(0, height).map(emit);
   }
 
-  const footer: Line[] = [];
-  if (session.pendingChoice) footer.push({styled: `${accent}${marks().attention} Question pending${RESET}${subtle} · Shift+Tab to answer${RESET}`});
-  if (session.pendingApproval) footer.push(c.owner === 'APPROVAL'
+  const notices: Line[] = [];
+  if (session.pendingChoice) notices.push({styled: `${accent}${marks().attention} Question pending${RESET}${subtle} · Shift+Tab to answer${RESET}`});
+  if (session.pendingApproval) notices.push(c.owner === 'APPROVAL'
     ? {styled: `${accent}${marks().attention} Permission: ${displayText(session.pendingApproval.tool)}${RESET}  ${renderControls([['Ctrl+O', 'allow once'], ['Ctrl+C', 'deny'], ['Esc', 'back']])}`}
     : {styled: `${accent}${marks().attention} Permission pending${RESET}${subtle} · Shift+Tab or /approval to review${RESET}`});
-  if (view.message) footer.push(...wrap(view.message, secondary));
-  if (c.feedback && Date.now() < c.feedbackUntil) footer.push(...wrap(c.feedback, secondary));
+  if (view.message) notices.push(...wrap(view.message, secondary));
+  if (c.feedback && Date.now() < c.feedbackUntil) notices.push(...wrap(c.feedback, secondary));
   const source = session.transcript;
-  if (source?.incomplete) footer.push(...wrap(`Incomplete: ${source.incomplete}`, paint(UI_COLORS.failure)));
-  footer.push({styled: `${paint(UI_COLORS.separator)}${repeatToWidth(marks().rule, width)}${RESET}`});
-  if (c.owner === 'AGENT_MESSAGE' && session.level === 'managed' && !['exited', 'failed'].includes(session.state)) footer.push(...composer(session, view, width));
-  if (session.level === 'managed') footer.push(...hints(session, view, width));
-  else footer.push(...wrap('Observed metadata only · Esc shell', subtle));
+  if (source?.incomplete) notices.push(...wrap(`Incomplete: ${source.incomplete}`, paint(UI_COLORS.failure)));
+  const composing = c.owner === 'AGENT_MESSAGE' && session.level === 'managed' && !['exited', 'failed'].includes(session.state);
+  const draft = composing ? composer(session, view, width, Boolean(options.hardwareCaret)) : undefined;
+  const controls: Line[] = session.level === 'managed' ? hints(session, view, width) : wrap('Observed metadata only · Esc shell', subtle);
+  const rule = stateRule(session, width);
+  const top = options.composerPosition === 'top';
 
+  // Approval input and a focused object read from their start; the conversation is a stream whose newest rows meet the composer.
   let body: Line[];
+  let stream = false;
   if (c.owner === 'APPROVAL' && session.pendingApproval) {
     body = wrap(JSON.stringify(session.pendingApproval.input ?? {tool: session.pendingApproval.tool, target: session.pendingApproval.target}, null, 2));
   } else if (c.owner === 'TRANSCRIPT' && view.focusedObject) {
-    body = [...wrap(`Object ${c.selected + 1}/${source?.objects.length ?? 0} · ${view.focusedObject.kind}`, subtle), ...wrap(projectObject(view.focusedObject, c.depth).text)];
-  } else body = conversation(session, width);
-  const room = Math.max(1, height - header.length - footer.length - 1);
+    body = [...header, '', ...wrap(`Object ${c.selected + 1}/${source?.objects.length ?? 0} · ${view.focusedObject.kind}`, subtle), ...wrap(projectObject(view.focusedObject, c.depth).text)];
+  } else {
+    // The welcome (or the compact header) is the start of the stream: it sits on the composer until messages push it up.
+    body = [...header, '', ...conversation(session, width, options.presentation)];
+    while (body.at(-1) === '') body.pop();
+    stream = true;
+  }
+  const draftRows = draft?.rows ?? [];
+  const room = Math.max(1, height - notices.length - 1 - draftRows.length - controls.length);
+  if (stream) {
+    // Scrolled back: rows that arrive below keep the visible ones where they are.
+    if (view.scroll > 0 && view.seenRows !== undefined && body.length > view.seenRows) view.scroll += body.length - view.seenRows;
+    view.seenRows = body.length;
+  }
   const scroll = Math.min(view.scroll, Math.max(0, body.length - room));
-  const start = c.owner === 'TRANSCRIPT' || c.owner === 'APPROVAL' ? scroll : Math.max(0, body.length - room - scroll);
-  const visible = body.slice(start, start + room);
-  // The view owns its full height: the conversation runs down from the header, the composer keeps the bottom edge.
+  c.scroll = scroll; view.scroll = scroll;
+  const first = stream ? Math.max(0, body.length - room - scroll) : scroll;
+  const visible = body.slice(first, first + room);
   const filler: Line[] = Array.from({length: Math.max(0, room - visible.length)}, () => '');
-  return [...header, '', ...visible, ...filler, ...footer].slice(0, height).map(emit);
+  const rows: Line[] = top
+    ? [...draftRows, rule, ...visible, ...filler, ...notices, ...controls]
+    : [...(stream ? [...filler, ...visible] : [...visible, ...filler]), ...notices, rule, ...draftRows, ...controls];
+  if (options.layout) {
+    const at = top ? 0 : rows.length - controls.length - draftRows.length;
+    options.layout.caret = draft && at + draft.caret.row < height ? {row: at + draft.caret.row, column: Math.min(width - 1, draft.caret.column)} : undefined;
+  }
+  return rows.slice(0, height).map(emit);
 }

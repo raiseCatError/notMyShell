@@ -4,7 +4,7 @@ import {getCurrentGlyphMode, GLYPHS} from '../../ui/glyphs.js';
 import {foreground, UI_COLORS} from '../../ui/palette.js';
 import {colorLevel} from '../../presentation/capabilities.js';
 import {displayWidth, padCells, truncateAnsi} from '../../util/text.js';
-import {renderSemanticAgentView} from '../transcript/view.js';
+import {renderSemanticAgentView, type AgentViewOptions} from '../transcript/view.js';
 import {harness, type HarnessDescriptor} from '../harnesses.js';
 import {settledText, type AgentEvent, type AgentSession} from './model.js';
 
@@ -141,6 +141,8 @@ export interface AgentViewState {
   expanded: Set<string>;
   /** Rows scrolled up from the newest. */
   scroll: number;
+  /** Conversation rows at the last render, so new rows below a scrolled-back view do not move it. */
+  seenRows?: number;
   message?: string;
   controller?: import('../input/controller.js').AgentInputController;
   focusedObject?: import('../transcript/projection.js').SemanticObject;
@@ -197,8 +199,8 @@ export interface AgentViewMeta {
   branch?: string;
 }
 
-export function renderAgentView(session: AgentSession, state: AgentViewState, columns: number, height: number, now: number, meta: AgentViewMeta = {}): string[] {
-  if (state.controller) return renderSemanticAgentView(session, state, columns, height, meta);
+export function renderAgentView(session: AgentSession, state: AgentViewState, columns: number, height: number, now: number, meta: AgentViewMeta = {}, options: AgentViewOptions = {}): string[] {
+  if (state.controller) return renderSemanticAgentView(session, state, columns, height, meta, options);
   const descriptor = harness(session.harness);
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
