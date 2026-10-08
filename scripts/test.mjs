@@ -3,7 +3,7 @@ import {mkdtempSync, readdirSync, realpathSync, rmSync} from 'node:fs';
 import {availableParallelism, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {discoverTestFiles, parseTestOptions, selectTestGroups} from './test-selection.mjs';
+import {discoverTestFiles, parseTestOptions, selectTestGroups, testConcurrency} from './test-selection.mjs';
 
 /** Short private temp roots keep Unix sockets below their path length limit. */
 export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio = 'inherit', report = message => console.error(message)} = {}) {
@@ -17,7 +17,7 @@ export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio
     delete env.NODE_TEST_CONTEXT;
     // PTY workers also own shell/helper processes. Bound fan-out on larger
     // development hosts; explicit Node --test-concurrency options still win.
-    const concurrency = Math.max(1, Math.min(4, availableParallelism() - 1));
+    const concurrency = testConcurrency(process.env.NMSH_TEST_CONCURRENCY, availableParallelism());
     const child = spawn(process.execPath, ['--import=tsx', '--test', `--test-concurrency=${concurrency}`, ...args, ...files], {
       cwd, stdio, env,
     });

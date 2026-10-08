@@ -178,7 +178,7 @@ export const CONCEPTS: readonly Concept[] = [
     covers: ['settings:Command notifications'],
     aliases: ['command notifications', 'desktop notifications', 'notify when done', 'notify me', 'long command notifications', 'notifications', 'notification'],
     description: 'Command notifications tell you when a long-running command finishes, after a minimum duration, on success and/or failure, optionally only when the terminal is not focused.'},
-  {id: 'agentSessions', label: 'Agent sessions', support: 'actionable', open: '/ai', covers: ['/ai'],
+  {id: 'agentSessions', label: 'Agent sessions', support: 'actionable', open: '/ai', covers: ['/ai', '/claude', '/codex'],
     aliases: ['agent sessions', 'ai sessions', 'background agent', 'background agents', 'claude session', 'codex session', 'agent session', 'start claude', 'run claude in the background'],
     description: '/ai starts and supervises external agent harnesses (Claude Code today) in the background and shows other running agents it can see. The harness owns models, sign-in and tools; NMSh never calls model APIs. ← on an empty composer opens sessions, ↓ shows the agent shelf.'},
   {id: 'agents', label: 'Agent activity', support: 'actionable', open: '/agents', covers: ['/agents'],
@@ -242,6 +242,9 @@ export const CONCEPTS: readonly Concept[] = [
 
 /** Public surfaces Ask deliberately has no concept for, with the reason (the coverage audit checks these too). */
 export const ASK_EXCLUDED: Readonly<Record<string, string>> = {
+  '/mods': 'Unified mod inventory is opened explicitly; installation and activation are not inferred Ask actions.',
+  '/extensions': 'Alias of the explicit /mods inventory surface.',
+  '/nmsh': 'Raw provider handoff requires an explicitly typed command and preserves provider CLI arguments.',
 };
 
 export type ConceptIntent = 'explain' | 'on' | 'off' | 'open' | 'change';
