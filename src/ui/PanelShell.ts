@@ -56,7 +56,9 @@ export function renderTabStrip(tabs: readonly string[], selected: number, column
   const labels = tabs.map(tab => ` ${tab} `);
   const {start, end} = tabWindow(labels.map(label => displayWidth(label)), selected, width);
   const muted = foreground(UI_COLORS.secondary);
-  const active = focused
+  // Without color the active tab is reverse video (as the selected row band is), so it never rests on weight alone;
+  // keyboard focus on the tab row adds weight.
+  const active = colorLevel() === 'none' ? `${focused ? BOLD : ''}\u001B[7m` : focused
     ? `${BOLD}${background(UI_COLORS.accent)}${foreground(UI_COLORS.projectBackground)}`
     : `${BOLD}${background(UI_COLORS.projectBackground)}${foreground(UI_COLORS.projectForeground)}`;
   let line = start > 0 ? `${foreground(UI_COLORS.subtle)}‹ ${RESET}` : INDENT;
