@@ -67,6 +67,7 @@ Context Engine platform, Status Strip 2.0, managed Claude Code, worktrees and a 
 - Managed targets are Claude Code only. Codex and OpenCode routing say the adapter is not available; live attach to a Claude session started outside NMSh is not supported.
 - The GitHub workspace is read-only: no merging, reviewing, commenting or closing from NMSh.
 - `/worktrees` navigates by staging `cd` in the composer; focusing an NMSh session or tmux pane for a worktree is not implemented.
+- `/worktrees` and `/github` are covered by automated tests and real headless terminal recordings; a hands-on pass in a physical terminal is still pending.
 - Physical checks in iTerm2, Kitty, WezTerm, Linux and WSL 2 remain open follow-ups.
 
 ## [0.17.0] - 2026-10-06
