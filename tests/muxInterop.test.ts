@@ -326,6 +326,8 @@ test('tmux launched from the NMSh composer is an ordinary tmux client; detaching
       await until(() => tmux('capture-pane', '-p', '-t', 'qa').stdout.trim().length > 0, 20000, () => `the tmux pane shell drew a prompt; pane: ${JSON.stringify(tmux('capture-pane', '-p', '-t', 'qa').stdout)}`);
       const paneEnv = tmux('show-environment', '-g').stdout;
       assert.doesNotMatch(paneEnv, /^ZDOTDIR=.*nmsh-zdotdir/mu, 'tmux did not inherit NMSh\'s private ZDOTDIR');
+      assert.doesNotMatch(paneEnv, /^XDG_CACHE_HOME=.*nmsh-disabled/mu, 'nor the startup-only cache redirect');
+      assert.doesNotMatch(paneEnv, /^POWERLEVEL9K_DISABLE_PROMPT=/mu, 'nor the prompt override');
       app.pty.write('echo FROM_TMUX_$((6*7))\r');
       await until(() => /FROM_TMUX_42/u.test(tmux('capture-pane', '-p', '-t', 'qa').stdout), 20000, 'raw keys reach the tmux pane');
       await until(() => strip(app.output.slice(mark)).includes('FROM_TMUX_42'), 20000, 'tmux draws on the real terminal');
