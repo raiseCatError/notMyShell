@@ -313,7 +313,9 @@ test('real tmux: a foreground program SIGKILLed with terminal modes enabled leav
 test('tmux launched from the NMSh composer is an ordinary tmux client; detaching gives NMSh the terminal back',
   {skip: hasTmux ? false : 'tmux is not installed'}, async () => {
     const sandbox = new LiveSandbox();
-    const socket = `nmsh-launch-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    // Digits only: the typed launch command is on screen after detach, and a base-36 suffix such as `5d` would
+    // itself match the stray-`d` check below (CI run 37743508082).
+    const socket = `nmsh-launch-${process.pid}-${String(Math.random()).slice(2, 8)}`;
     const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], {encoding: 'utf8', env: cleanEnv()});
     const app = sandbox.launch([], {cols: 100, rows: 30}, {TMUX: '', STY: '', ZELLIJ: ''});
     try {
