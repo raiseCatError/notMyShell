@@ -194,8 +194,17 @@ export type ParsedSlashCommand =
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
 
+/**
+ * Whether composer text is addressed to NMSh rather than the shell. An absolute path is the shell's: when the first
+ * word has a `/` after the leading one (`/usr/bin/env`, `/Volumes/tools/adb devices`) it runs as typed. No NMSh
+ * command name contains one, so this is decided from the text alone, without probing the filesystem.
+ */
+export function isSlashInput(input: string): boolean {
+  return input.startsWith('/') && !/^\/[^\s/]*\//u.test(input);
+}
+
 export function parseSlashCommand(input: string): ParsedSlashCommand | undefined {
-  if (!input.startsWith('/')) return undefined;
+  if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
@@ -313,7 +322,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
 }
 
 export function slashSuggestions(input: string): SlashCommand[] {
-  if (!input.startsWith('/') || input.includes('\n')) return [];
+  if (!isSlashInput(input) || input.includes('\n')) return [];
   return slashCommands.filter(command => !(command.name === '/ask' && input === '/') && (command.name.startsWith(input) || command.insertion.startsWith(input)));
 }
 

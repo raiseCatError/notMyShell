@@ -159,7 +159,7 @@ import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRendere
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
-import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
+import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
@@ -1904,7 +1904,7 @@ export class TerminalApp {
       this.lastSuggestionInput = '';
     }
 
-    if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
+    if (!this.running && !this.historySearchActive && !this.directorySearchActive && !isSlashInput(this.editor.text) && this.shellSuggestions.length > 0
       && !this.suggestions.alternativesOpen) {
       const action = resolveAction(COMPLETION_ACTIONS, key);
       // Up from the first candidate leaves the menu for shell history, as Up
@@ -1938,7 +1938,7 @@ export class TerminalApp {
     const suggestions = this.directorySearchActive ? this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length)) : this.historySearchActive
       ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
       : this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
-    const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
+    const isSlash = !this.editor.hasPasteAtoms && isSlashInput(this.editor.text);
     // /history and /dirs own Up/Down. Slash suggestions behave like the shell
     // completion menu: Down enters it, Up from its first row (or before
     // entering it) leaves it for command history.
@@ -2177,7 +2177,7 @@ export class TerminalApp {
     const cwd = this.context.cwd;
     const cursor = this.completionCursor;
     // A recalled command is not being typed: no completion menu claims Up/Down until it is edited.
-    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim())
+    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !isSlashInput(input) && Boolean(input.trim())
       && !this.composerHistory.showing(input);
     const key = eligible ? JSON.stringify([input, cursor, cwd]) : '';
     if (key === this.lastSuggestionInput) return;
@@ -5837,7 +5837,7 @@ export class TerminalApp {
   /** Suggestions apply to plain shell input at the end of the buffer only. */
   private suggestionGhost(): string | undefined {
     const text = this.editor.text;
-    if (this.editor.hasPasteAtoms || this.historySearchActive || text.startsWith('/')) {
+    if (this.editor.hasPasteAtoms || this.historySearchActive || isSlashInput(text)) {
       this.suggestions.reset();
       return undefined;
     }
@@ -6396,7 +6396,7 @@ export class TerminalApp {
     if (this.correction && this.editor.text.length === 0) return [this.correction];
     if (this.directorySearchActive) return this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length));
     if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
-    if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
+    if (!this.editor.hasPasteAtoms && isSlashInput(this.editor.text)) return slashSuggestions(this.editor.text);
     const alternatives = this.suggestions.alternatives();
     if (alternatives.items.length > 0) return alternatives.items.map(item => ({name: item.text, description: ''}));
     return this.shellSuggestions;
@@ -6408,7 +6408,7 @@ export class TerminalApp {
    */
   private inspectorRows(columns: number): string[] {
     if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms) return [];
-    if (this.editor.text.startsWith('/')) {
+    if (isSlashInput(this.editor.text)) {
       const slash = describeSlashCommand(this.editor.text);
       return slash ? [truncateText(`Inspect ${this.editor.text.trim().split(/\s+/u)[0]}`, columns), truncateText(slash, columns)] : [];
     }
