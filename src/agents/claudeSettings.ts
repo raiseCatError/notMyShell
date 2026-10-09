@@ -1,4 +1,4 @@
-import {readFile} from 'node:fs/promises';
+import {lstat, readFile} from 'node:fs/promises';
 import {homedir} from 'node:os';
 import {join} from 'node:path';
 import {EFFORT_LEVELS} from './sessions/claudeAdapter.js';
@@ -14,8 +14,10 @@ export async function settingsEffort(configDir: string | undefined, cwd: string)
   let found: string | undefined;
   for (const path of [user, join(cwd, '.claude', 'settings.json'), join(cwd, '.claude', 'settings.local.json')]) {
     try {
+      // Only a regular file of bounded size is read: a FIFO or device at a project path must never block or flood NMSh.
+      const info = await lstat(path);
+      if (!info.isFile() || info.size > 256 * 1024) continue;
       const text = await readFile(path, 'utf8');
-      if (text.length > 1024 * 1024) continue;
       const value = (JSON.parse(text) as {effortLevel?: unknown}).effortLevel;
       if (typeof value === 'string' && (EFFORT_LEVELS as readonly string[]).includes(value)) found = value;
     } catch { /* absent or unreadable: no fact */ }
