@@ -19,6 +19,10 @@ export interface AgentSurfaceHost {
   openPicker?(session: AgentSession, kind: PickerKind): PickerOpen;
   /** Apply one picker row through the provider's control channel; the host re-renders when it settles. */
   applyPicker?(session: AgentSession, picker: PickerState, row: PickerRow): void;
+  /** Show or hide the right panel; returns what the person sees, in words. */
+  togglePanel?(view: AgentViewState): string;
+  /** Ask the provider for its own context breakdown (shown in the right panel when it arrives). */
+  refreshContext?(session: AgentSession): void;
 }
 
 /** `/model`, `/model sonnet`, `/effort`, `/effort high`: NMSh's own commands in a managed agent composer. A leading space sends the text to the agent verbatim. */
@@ -108,6 +112,12 @@ export function handleAgentInput(view: AgentViewState, session: AgentSession, ke
     if (text.trim() === '/approval') {
       if (session.pendingApproval) {c.owner = 'APPROVAL'; c.approvalRequestId = session.pendingApproval.requestId; c.editor.clear(); view.input = '';}
       else view.message = 'No pending permission request.';
+      return false;
+    }
+    if (/^\/panel[ \t]*$/u.test(text)) { view.message = host.togglePanel?.(view) ?? 'The panel is not available here.'; c.editor.clear(); view.input = ''; return false; }
+    if (/^\/context[ \t]*$/u.test(text)) {
+      c.editor.clear(); view.input = '';
+      if (host.refreshContext) { host.refreshContext(session); view.panel = true; view.message = 'Asking Claude for its context breakdown…'; } else view.message = '/context needs a running managed Claude target.';
       return false;
     }
     const command = pickerCommand(text);

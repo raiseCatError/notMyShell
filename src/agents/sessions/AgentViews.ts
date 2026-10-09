@@ -145,6 +145,8 @@ export interface AgentViewState {
   seenRows?: number;
   message?: string;
   controller?: import('../input/controller.js').AgentInputController;
+  /** The right panel: the person's explicit choice (/panel); undefined follows the terminal width. */
+  panel?: boolean;
   focusedObject?: import('../transcript/projection.js').SemanticObject;
 }
 

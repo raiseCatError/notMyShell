@@ -158,7 +158,7 @@ import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
-import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
+import {displayWidth, padCells, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
@@ -314,6 +314,7 @@ import {inspectPlugin, setPluginEnabled} from '../agents/mods/claudePlugins.js';
 import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
 import {applyPickerChoice} from '../agents/input/surface.js';
 import {settingsEffort} from '../agents/claudeSettings.js';
+import {renderSidePanel, sidePanelShown, sidePanelWidth} from '../agents/workspace/sidePanel.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
@@ -3979,8 +3980,16 @@ export class TerminalApp {
       if (session) {
         // The agent draft uses the shell composer's geometry and the terminal's own caret: the view reports where it is.
         const layout: {caret?: {row: number; column: number}} = {};
-        const rows = framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session),
-          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout}), columns);
+        const height = this.dimensions().rows - (this.agentView.controller ? 1 : 4);
+        // The right panel sits beside the conversation when shown; the conversation keeps the composer and caret.
+        const panel = session.level === 'managed' && sidePanelShown(this.agentView.panel, columns);
+        const panelWidth = panel ? sidePanelWidth(columns) : 0;
+        const mainWidth = columns - (panel ? panelWidth + 3 : 0);
+        const main = renderAgentView(session, this.agentView, mainWidth, height, Date.now(), this.agentViewMeta(session),
+          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout});
+        const side = panel ? renderSidePanel(session, panelWidth, main.length, Date.now(), this.agentSettingsEffort.get(session.id)) : [];
+        const divider = `${foreground(UI_COLORS.subtle)}${getCurrentGlyphMode() === 'safe' ? '|' : '│'}\u001b[0m`;
+        const rows = framePanel(panel ? main.map((row, index) => `${padCells(row, mainWidth, 0)} ${divider} ${side[index] ?? ''}`) : main, columns);
         // framePanel puts its rule first; a Top panel later moves that rule to its last row.
         this.agentCaret = layout.caret && {row: layout.caret.row + 1, column: layout.caret.column};
         return rows;
@@ -8028,6 +8037,16 @@ export class TerminalApp {
         if (!this.agents.controllable(target.id)) return {ok: false, reason: `/${kind} needs a running managed Claude target with a live control channel.`};
         return kind === 'model' ? openModelPicker(target.telemetry) : openEffortPicker(target.telemetry, this.agentSettingsEffort.get(target.id));
       },
+      togglePanel: state => {
+        const columns = this.dimensions().columns;
+        state.panel = !sidePanelShown(state.panel, columns);
+        if (state.panel && columns < 72) { state.panel = undefined; return 'The panel needs at least 72 columns; widen the terminal.'; }
+        return state.panel ? 'Panel shown. /panel hides it.' : 'Panel hidden. /panel shows it.';
+      },
+      refreshContext: target => {void this.agents.contextUsage(target.id).then(result => {
+        if (this.agentView?.sessionId === target.id) this.agentView.message = result.ok ? `Context: ${result.value.totalTokens.toLocaleString()} of ${result.value.maxTokens.toLocaleString()} tokens, by Claude's count.` : `Context unavailable: ${result.reason}`;
+        if (!this.stopped) this.render();
+      });},
       applyPicker: (target, picker, row) => {void applyPickerChoice(view, picker, row, {
         setModel: model => this.agents.setModel(target.id, model), setEffort: level => this.agents.setEffort(target.id, level), render: () => { if (!this.stopped) this.render(); }});},
       copy: text => {void writeClipboard(text).then(() => {view.message = 'Copied.'; this.render();}).catch(() => {view.message = 'Clipboard unavailable.'; this.render();});},
