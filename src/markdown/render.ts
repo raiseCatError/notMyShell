@@ -4,6 +4,7 @@ import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import {UI_COLORS, type RgbColor} from '../ui/palette.js';
 import type {SyntaxSgr} from '../input/syntaxTheme.js';
 import {displayWidth, truncateAnsi} from '../util/text.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 import {parseBlocks, type Alignment, type Block} from './blocks.js';
 import {highlightCode, type CodeTokenKind} from './highlight.js';
 import {parseInline, plainInline, type InlineSpan, type InlineStyle} from './inline.js';
@@ -75,7 +76,38 @@ function spanSgr(style: InlineStyle, context: Context, base: string): string {
 }
 
 function hostOf(url: string): string {
-  try { return new URL(url).host; } catch { return url; }
+  try { return new URL(url).host.toLowerCase(); } catch { return url; }
+}
+
+/** Hostname-like words in link text, normalized the way URLs normalize them (lowercase, punycode for lookalikes). */
+function hostsIn(text: string): string[] {
+  const hosts: string[] = [];
+  for (const word of text.split(/[^A-Za-z0-9.\-\u00a0-\uffff]+/u)) {
+    let start = 0, end = word.length;
+    while (start < end && (word[start] === '.' || word[start] === '-')) start++;
+    while (end > start && (word[end - 1] === '.' || word[end - 1] === '-')) end--;
+    const candidate = word.slice(start, end);
+    if (!candidate.includes('.') || !/\p{L}/u.test(candidate) || candidate.length > 253) continue;
+    try { hosts.push(new URL(`http://${candidate}`).host.toLowerCase()); } catch { /* not a hostname */ }
+  }
+  return hosts;
+}
+
+const bare = (host: string) => host.replace(/^www\./u, '');
+
+/**
+ * Whether link text already shows exactly where the link goes. It must name the target's host as a whole hostname and
+ * name no other host: `[example.com](https://le.com)` or `[github.com login](https://github.com.evil.io)` reveal
+ * their real destination, while `[docs on example.com](https://example.com/docs)` needs nothing more.
+ */
+function textShowsHost(text: string, url: string): boolean {
+  const host = hostOf(url);
+  // An internationalized host can imitate another script's letters even when text and target agree: always reveal it.
+  if (host.split('.').some(label => label.startsWith('xn--'))) return false;
+  if (text === url) return true;
+  const target = bare(host);
+  const named = hostsIn(text).map(bare);
+  return named.length > 0 && named.every(host => host === target);
 }
 
 /** Spans as wrap atoms: words and spaces, each carrying its own SGR so every row can start fresh. */
@@ -95,12 +127,14 @@ function atomsOf(spans: readonly InlineSpan[], context: Context, base: string): 
       const space = /^\s+$/u.test(part);
       atoms.push({text: space ? ' ' : part, sgr: space ? base : sgr, ...(link && !space ? {link} : {}), space});
     }
-    // A link reveals where it goes: its host when the text does not already show it, or its URL without hyperlinks.
+    // A link reveals where it goes, judged on its whole text (it may span several styled pieces): the host when the
+    // text does not already show exactly that host, or the full URL when there are no hyperlinks to inspect.
     const next = spans[index + 1];
     if (span.style.link && next?.style.link !== span.style.link) {
-      const host = hostOf(span.style.link);
-      const shown = span.text.includes(host) || span.text === span.style.link;
-      const reveal = shown ? '' : context.hyperlinks ? host : span.style.link;
+      let first = index;
+      while (first > 0 && spans[first - 1]!.style.link === span.style.link) first--;
+      const whole = spans.slice(first, index + 1).map(part => part.text).join('');
+      const reveal = context.hyperlinks ? (textShowsHost(whole, span.style.link) ? '' : hostOf(span.style.link)) : whole === span.style.link ? '' : span.style.link;
       if (reveal) atoms.push({text: ' ', sgr: base, space: true}, {text: `(${reveal})`, sgr: subtle, space: false});
     }
   }
@@ -131,14 +165,16 @@ function wrapAtoms(atoms: readonly Atom[], width: number, first: string, rest: s
     const size = displayWidth(atom.text);
     if (!empty && used + size > width) push();
     if (used + size > width) {
-      let chunk = '';
+      // Hard-break a word wider than the row, measuring one character at a time (never re-measuring the chunk).
+      let chunk = '', chunkWidth = 0;
       for (const char of atom.text) {
-        if (used + displayWidth(chunk + char) > width && chunk) {
-          ansi += paintAtom({...atom, text: chunk}); plain += chunk; push(); chunk = '';
+        const cell = displayWidth(char);
+        if (used + chunkWidth + cell > width && chunk) {
+          ansi += paintAtom({...atom, text: chunk}); plain += chunk; push(); chunk = ''; chunkWidth = 0;
         }
-        chunk += char;
+        chunk += char; chunkWidth += cell;
       }
-      ansi += paintAtom({...atom, text: chunk}); plain += chunk; used += displayWidth(chunk); empty = false;
+      ansi += paintAtom({...atom, text: chunk}); plain += chunk; used += chunkWidth; empty = false;
       continue;
     }
     ansi += paintAtom(atom); plain += atom.text; used += size; empty = false;
@@ -343,7 +379,9 @@ export function renderMarkdown(source: string, columns: number, options: Markdow
     tone: options.tone === 'secondary' ? UI_COLORS.secondary : UI_COLORS.primary,
     codeIndex: 0,
   };
-  const rows = renderBlocks(parseBlocks(source), width, context, 0);
+  // The renderer never trusts its caller to have scrubbed: terminal controls and bidi formatting go, tabs become spaces.
+  const safe = source.split('\n').map(line => stripTerminalControls(line.replace(/\t/gu, '    '), Number.MAX_SAFE_INTEGER)).join('\n');
+  const rows = renderBlocks(parseBlocks(safe), width, context, 0);
   while (rows.length && rows.at(-1)!.kind === 'blank') rows.pop();
   // A last line of defence: no row may exceed the width whatever a rule above computed.
   return rows.map(row => displayWidth(row.ansi) > width ? {...row, ansi: truncateAnsi(row.ansi, width)} : row);

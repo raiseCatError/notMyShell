@@ -130,8 +130,13 @@ function tokenizeLine(line: string, grammar: Grammar, id: string, state: LineSta
   let index = 0;
   // Keys and section headers in data formats.
   if (id === 'yaml') {
-    const key = /^(\s*-?\s*)([\w.\-"' ]+?)(\s*:)(?=\s|$)/u.exec(line);
-    if (key && !line.trimStart().startsWith('#')) { push(key[1]!, 'plain'); push(key[2]!, 'property'); push(key[3]!, 'operator'); index = key[0].length; }
+    // `key:` (optionally after a list dash), found by a linear scan to the first colon that ends the key.
+    const lead = /^\s*(?:-\s+)?/u.exec(line)![0];
+    const colon = line.indexOf(':', lead.length);
+    const key = colon > lead.length ? line.slice(lead.length, colon) : '';
+    if (key.trim() && /^[\w.\-"' ]+$/u.test(key) && (colon + 1 === line.length || line[colon + 1] === ' ') && !line.trimStart().startsWith('#')) {
+      push(lead, 'plain'); push(key, 'property'); push(':', 'operator'); index = colon + 1;
+    }
   } else if (id === 'toml') {
     if (/^\s*\[[^\]]*\]\s*$/u.test(line)) return [{text: line, kind: 'heading'}];
     const key = /^(\s*)([\w.\-"']+)(\s*=)/u.exec(line);

@@ -178,3 +178,45 @@ test('render: deep nesting and huge inputs stay bounded', () => {
   assert.equal(rows.length, 3000);
   assert.ok(Date.now() - started < 2000, 'thousands of rows render quickly');
 });
+
+test('security: link text never hides a different destination', () => {
+  const shown = (source: string) => renderMarkdown(source, 120, {level: 'truecolor', hyperlinks: true})[0]!.plain;
+  assert.equal(shown('[example.com](https://le.com)'), 'example.com (le.com)', 'a host that is only a substring of the text is revealed');
+  assert.equal(shown('[github.com login](https://github.com.evil.io/login)'), 'github.com login (github.com.evil.io)');
+  assert.equal(shown('[docs on example.com](https://example.com/docs)'), 'docs on example.com', 'text naming exactly the host needs nothing more');
+  assert.equal(shown('[www.example.com](https://example.com)'), 'www.example.com');
+  assert.equal(shown('[see example.com or other.org](https://example.com)'), 'see example.com or other.org (example.com)', 'naming another host reveals the real one');
+  assert.equal(shown('[**git**hub.com](https://evil.com)'), 'github.com (evil.com)', 'the whole link text is judged, across styled pieces');
+  assert.match(shown('[\u0440\u0430\u0443\u0440\u0430l.com](https://\u0440\u0430\u0443\u0440\u0430l.com)'), /\(xn--[a-z0-9-]+\.com\)$/u, 'an internationalized lookalike host is shown as punycode');
+});
+
+test('security: entities and raw input never reintroduce controls, bidi or invisible characters', () => {
+  for (const entity of ['&#x202E;', '&#8238;', '&#x200B;', '&#xFEFF;', '&#x2066;', '&#x1B;', '&#x9B;', '&#xE000;', '&#x2028;']) {
+    assert.equal(plainInline(`a${entity}b`), `a${entity}b`, `${entity} stays literal text`);
+  }
+  const rows = renderMarkdown('safe \u001b]0;pwned\u0007 text \u202Eevil\u202C and \u001b[31mred\u001b[0m', 80, {level: 'none'});
+  assert.equal(rows[0]!.plain, 'safe text evil and red', 'the renderer scrubs its own input');
+  assert.ok(!rows[0]!.ansi.includes('\u001b]0;') && !rows[0]!.ansi.includes('\u202E'));
+});
+
+test('security: pathological lines parse and render in linear time', () => {
+  const inputs = [
+    `#${' '.repeat(60000)}x`,
+    `\`\`\`${' '.repeat(60000)}\`x`,
+    `${'- '.repeat(30000)}x`,
+    `a${' '.repeat(60000)}b`,
+    `a${' '.repeat(60000)}\nb`,
+    `\`${'\`\`'.repeat(20000)}`,
+    '['.repeat(40000),
+    '*a _'.repeat(15000),
+    `| ${'a |'.repeat(5000)}\n|${'---|'.repeat(5000)}`,
+    `[x](${'('.repeat(20000)}`,
+    `https://${'a.'.repeat(20000)}`,
+    `\`\`\`yaml\nkey${' '.repeat(3990)}\n\`\`\``,
+  ];
+  for (const input of inputs) {
+    const started = Date.now();
+    renderMarkdown(input, 80, {level: 'truecolor', hyperlinks: true});
+    assert.ok(Date.now() - started < 1500, `${JSON.stringify(input.slice(0, 20))}… took ${Date.now() - started} ms`);
+  }
+});

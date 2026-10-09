@@ -27,9 +27,6 @@ export interface ListItem {
 const MAX_DEPTH = 12;
 const MAX_LINES = 50_000;
 
-const FENCE = /^( {0,3})(`{3,}|~{3,})[ \t]*([^`]*?)[ \t]*$/u;
-const HEADING = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/u;
-const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/u;
 const QUOTE = /^ {0,3}>[ ]?/u;
 const ITEM = /^( {0,3})([-+*]|\d{1,9}[.)])([ \t]+|$)/u;
 const SETEXT = /^ {0,3}(=+|-+)[ \t]*$/u;
@@ -37,6 +34,70 @@ const DELIMITER_CELL = /^:?-+:?$/u;
 
 const blank = (line: string) => line.trim() === '';
 const indentOf = (line: string) => line.length - line.trimStart().length;
+
+/*
+ * Block markers are recognized by linear scans rather than backtracking patterns: agent text is untrusted and a
+ * single reply line may be tens of kilobytes, so no recognizer may be worse than linear in the line's length.
+ */
+
+/** Opening code fence: up to three spaces, three or more backticks or tildes, then an info string. */
+function fenceOf(line: string): {indent: number; marker: string; info: string} | undefined {
+  const indent = indentOf(line);
+  if (indent > 3) return undefined;
+  const char = line[indent];
+  if (char !== '`' && char !== '~') return undefined;
+  let end = indent;
+  while (line[end] === char) end++;
+  if (end - indent < 3) return undefined;
+  const info = line.slice(end).trim();
+  // A backtick fence's info string cannot contain a backtick (that is inline code instead).
+  if (char === '`' && info.includes('`')) return undefined;
+  return {indent, marker: line.slice(indent, end), info};
+}
+
+/** A closing fence for `marker`: the same character, at least as long, nothing else on the line. */
+function closesFence(line: string, marker: string): boolean {
+  const indent = indentOf(line);
+  if (indent > 3) return false;
+  let end = indent;
+  while (line[end] === marker[0]) end++;
+  return end - indent >= marker.length && line.slice(end).trim() === '';
+}
+
+/** ATX heading: level and text with any closing `#` sequence removed. */
+function headingOf(line: string): {level: number; text: string} | undefined {
+  const indent = indentOf(line);
+  if (indent > 3 || line[indent] !== '#') return undefined;
+  let end = indent;
+  while (line[end] === '#') end++;
+  const level = end - indent;
+  if (level > 6 || (end < line.length && line[end] !== ' ' && line[end] !== '\t')) return undefined;
+  let text = line.slice(end).trim();
+  // A closing sequence is a run of # preceded by a space (or the whole content).
+  let cut = text.length;
+  while (cut > 0 && text[cut - 1] === '#') cut--;
+  if (cut === 0) text = '';
+  else if (cut < text.length && (text[cut - 1] === ' ' || text[cut - 1] === '\t')) text = text.slice(0, cut).trimEnd();
+  return {level, text};
+}
+
+/** Thematic break: three or more of one of - * _, optionally spaced, nothing else. */
+function isRule(line: string): boolean {
+  const indent = indentOf(line);
+  if (indent > 3) return false;
+  const char = line[indent];
+  if (char !== '-' && char !== '*' && char !== '_') return false;
+  let count = 0;
+  for (let index = indent; index < line.length; index++) {
+    const current = line[index];
+    if (current === char) count++;
+    else if (current !== ' ' && current !== '\t') return false;
+  }
+  return count >= 3;
+}
+
+/** A hard line break at the end of a paragraph line: two trailing spaces or a backslash. */
+const hardBreak = (line: string) => line.endsWith('  ') || line.endsWith('\\');
 
 /** Cells of a pipe table row; escaped pipes stay text, and pipes inside code spans do not split. */
 export function splitRow(line: string): string[] {
@@ -65,7 +126,7 @@ function delimiterRow(line: string): Alignment[] | undefined {
 
 /** Whether a line starts a block that interrupts a paragraph (a lazy continuation line must not). */
 function interrupts(line: string, next: string | undefined): boolean {
-  if (FENCE.test(line) || HEADING.test(line) || RULE.test(line) || QUOTE.test(line)) return true;
+  if (fenceOf(line) || headingOf(line) || isRule(line) || QUOTE.test(line)) return true;
   const item = ITEM.exec(line);
   // An ordered item interrupts a paragraph only when it starts at 1, and an empty item never does (CommonMark).
   if (item && line.slice(item[0].length).trim() && (!/\d/u.test(item[2]!) || /^1[.)]$/u.test(item[2]!))) return true;
@@ -89,29 +150,26 @@ function parseLines(lines: readonly string[], depth: number): Block[] {
     const line = lines[index]!;
     if (blank(line)) { index++; continue; }
 
-    const fence = FENCE.exec(line);
-    if (fence && !(fence[2]!.startsWith('`') && fence[3]!.includes('`'))) {
-      const marker = fence[2]!;
-      const indent = fence[1]!.length;
+    const fence = fenceOf(line);
+    if (fence) {
       const code: string[] = [];
       let closed = false;
       for (index++; index < lines.length; index++) {
         const candidate = lines[index]!;
-        const close = /^ {0,3}(`{3,}|~{3,})[ \t]*$/u.exec(candidate);
-        if (close && close[1]![0] === marker[0] && close[1]!.length >= marker.length) { closed = true; index++; break; }
+        if (closesFence(candidate, fence.marker)) { closed = true; index++; break; }
         // Content keeps its own indentation, less the fence's.
-        code.push(candidate.slice(Math.min(indent, indentOf(candidate))));
+        code.push(candidate.slice(Math.min(fence.indent, indentOf(candidate))));
       }
-      const language = fence[3]!.split(/[\s{,]/u)[0]?.toLowerCase() || undefined;
+      const language = fence.info.split(/[\s{,]/u)[0]?.toLowerCase().slice(0, 40) || undefined;
       blocks.push({kind: 'code', ...(language ? {language} : {}), lines: code, closed});
       continue;
     }
 
-    const heading = HEADING.exec(line);
-    if (heading) { blocks.push({kind: 'heading', level: heading[1]!.length, text: (heading[2] ?? '').trim()}); index++; continue; }
+    const heading = headingOf(line);
+    if (heading) { blocks.push({kind: 'heading', level: heading.level, text: heading.text}); index++; continue; }
 
     // A thematic break wins over a list item (`* * *`).
-    if (RULE.test(line)) { blocks.push({kind: 'rule'}); index++; continue; }
+    if (isRule(line)) { blocks.push({kind: 'rule'}); index++; continue; }
 
     if (QUOTE.test(line)) {
       const inner: string[] = [];
@@ -172,7 +230,7 @@ function parseLines(lines: readonly string[], depth: number): Block[] {
       if (interrupts(candidate, lines[index + 1])) break;
       // A hard line break (two trailing spaces or a backslash) keeps the break.
       const previous = paragraph.at(-1)!;
-      if (/ {2,}$|\\$/u.test(lines[index - 1]!)) paragraph[paragraph.length - 1] = `${previous.replace(/\\$/u, '')}\n`;
+      if (hardBreak(lines[index - 1]!)) paragraph[paragraph.length - 1] = `${previous.endsWith('\\') ? previous.slice(0, -1) : previous}\n`;
       paragraph.push(candidate.trim());
     }
     if (paragraph.length) blocks.push({kind: 'paragraph', text: paragraph.join('\n').replace(/\n\n/gu, '\n')});

@@ -27,6 +27,8 @@ export interface InlineSpan {
 const PUNCTUATION = /[!-/:-@[-`{-~\p{P}]/u;
 const WHITESPACE = /\s/u;
 const ALNUM = /[\p{L}\p{N}]/u;
+/** How far back a closing delimiter looks for its opener. */
+const MAX_OPENERS = 64;
 /** Bound on scanned characters per inline run: longer paragraphs still render, only as fewer styled spans. */
 const MAX_INLINE = 64 * 1024;
 
@@ -36,6 +38,8 @@ function safeLink(url: string): string | undefined {
   return target && /^https?:/u.test(target) ? target : undefined;
 }
 
+const INVISIBLE = /[\p{Cc}\p{Cf}\p{Co}\p{Zl}\p{Zp}]/u;
+
 const ENTITIES: Record<string, string> = {amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', copy: '©', reg: '®', mdash: '—', ndash: '–', hellip: '…', rarr: '→', larr: '←', times: '×'};
 
 function decodeEntity(source: string, index: number): {text: string; length: number} | undefined {
@@ -43,9 +47,12 @@ function decodeEntity(source: string, index: number): {text: string; length: num
   if (!match) return undefined;
   if (match[3]) { const named = ENTITIES[match[3]]; return named ? {text: named, length: match[0].length} : undefined; }
   const code = match[1] ? Number(match[1]) : parseInt(match[2]!, 16);
-  // Controls and surrogates never come back through an entity.
-  if (!code || code < 0x20 || (code >= 0x7f && code < 0xa0) || (code >= 0xd800 && code <= 0xdfff) || code > 0x10ffff) return undefined;
-  return {text: String.fromCodePoint(code), length: match[0].length};
+  if (!code || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return undefined;
+  const text = String.fromCodePoint(code);
+  // An entity never smuggles in what the display scrubber removes: controls, bidi and other format characters
+  // (direction overrides, zero-width joiners), separators or private-use code points.
+  if (INVISIBLE.test(text)) return undefined;
+  return {text, length: match[0].length};
 }
 
 /** Raw tokens before emphasis resolution: literal text, finished spans (code, links) and delimiter runs. */
@@ -57,10 +64,17 @@ type Token =
 /** The text of a bracket pair starting at `start` (`[`), honoring one level of nested brackets and escapes. */
 function bracket(source: string, start: number): number {
   let depth = 0;
-  for (let index = start; index < source.length && index < start + 2000; index++) {
+  const limit = Math.min(source.length, start + 1000);
+  for (let index = start; index < limit; index++) {
     const char = source[index];
     if (char === '\\') { index++; continue; }
-    if (char === '`') { const end = source.indexOf('`', index + 1); if (end > 0) index = end; continue; }
+    if (char === '`') {
+      // A code span inside link text may contain brackets; search for its end only inside this bounded window.
+      let end = index + 1;
+      while (end < limit && source[end] !== '`') end++;
+      if (end < limit) index = end;
+      continue;
+    }
     if (char === '[') depth++;
     else if (char === ']') { depth--; if (depth === 0) return index; }
   }
@@ -134,8 +148,33 @@ function flanking(source: string, start: number, length: number, char: string): 
   return {open: left, close: right};
 }
 
+/** Every backtick run's start, grouped by run length, for linear code-span matching. */
+function backtickRuns(source: string): Map<number, number[]> {
+  const runs = new Map<number, number[]>();
+  for (let index = 0; index < source.length; index++) {
+    if (source[index] !== '`' || source[index - 1] === '`') continue;
+    let end = index;
+    while (source[end] === '`') end++;
+    const list = runs.get(end - index) ?? [];
+    list.push(index);
+    runs.set(end - index, list);
+  }
+  return runs;
+}
+
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
+  const runs = backtickRuns(source);
+  /** Per run length, how many runs are already behind the scan position. */
+  const consumed = new Map<number, number>();
+  const closingRun = (length: number, after: number): number => {
+    const list = runs.get(length);
+    if (!list) return -1;
+    let at = consumed.get(length) ?? 0;
+    while (at < list.length && list[at]! < after) at++;
+    consumed.set(length, at);
+    return at < list.length ? list[at]! : -1;
+  };
   let text = '';
   const flush = () => { if (text) { tokens.push({kind: 'text', text}); text = ''; } };
   let index = 0;
@@ -150,9 +189,8 @@ function tokenize(source: string): Token[] {
       let run = 1;
       while (source[index + run] === '`') run++;
       const fence = '`'.repeat(run);
-      let close = source.indexOf(fence, index + run);
       // The closing run must be exactly as long as the opening one.
-      while (close >= 0 && source[close + run] === '`') { let skip = close; while (source[skip] === '`') skip++; close = source.indexOf(fence, skip); }
+      const close = closingRun(run, index + run);
       if (close >= 0) {
         flush();
         let code = source.slice(index + run, close).replace(/\n/gu, ' ');
@@ -236,7 +274,8 @@ function resolve(tokens: Token[]): InlineSpan[] {
     let matched = node.close;
     while (matched && node.count > 0) {
       matched = false;
-      for (let depth = openers.length - 1; depth >= 0; depth--) {
+      // Emphasis pairs nearby delimiters; a bounded look-back keeps hostile delimiter floods linear.
+      for (let depth = openers.length - 1; depth >= Math.max(0, openers.length - MAX_OPENERS); depth--) {
         const opener = nodes[openers[depth]!] as Delim;
         if (opener.char !== node.char || opener.count === 0) continue;
         if (node.char === '~' && (opener.count < 2 || node.count < 2)) continue;
@@ -255,15 +294,20 @@ function resolve(tokens: Token[]): InlineSpan[] {
   }
   const spans: InlineSpan[] = [];
   const active = {strong: 0, em: 0, strike: 0};
+  const starting = new Map<number, Wrap[]>(), ending = new Map<number, Wrap[]>();
+  for (const wrap of wraps) {
+    starting.set(wrap.from, [...(starting.get(wrap.from) ?? []), wrap]);
+    ending.set(wrap.to, [...(ending.get(wrap.to) ?? []), wrap]);
+  }
   for (let position = 0; position < nodes.length; position++) {
     // Leftover delimiter characters sit outside their pair: close before the closer, open after the opener.
-    for (const wrap of wraps) if (wrap.to === position) active[wrap.style]--;
+    for (const wrap of ending.get(position) ?? []) active[wrap.style]--;
     const node = nodes[position]!;
     const style: InlineStyle = {...(active.strong > 0 ? {strong: true} : {}), ...(active.em > 0 ? {em: true} : {}), ...(active.strike > 0 ? {strike: true} : {})};
     if (node.kind === 'text') spans.push({text: node.text, style});
     else if (node.kind === 'span') for (const span of node.span) spans.push({text: span.text, style: {...style, ...span.style}});
     else if (node.count > 0) spans.push({text: node.char.repeat(node.count), style});
-    for (const wrap of wraps) if (wrap.from === position) active[wrap.style]++;
+    for (const wrap of starting.get(position) ?? []) active[wrap.style]++;
   }
   // Merge neighbours with identical styling so wrapping sees whole words.
   const merged: InlineSpan[] = [];
@@ -278,9 +322,16 @@ function resolve(tokens: Token[]): InlineSpan[] {
 /** Inline spans for one paragraph's source text. Soft line breaks become spaces; text past the bound stays plain. */
 export function parseInline(source: string): InlineSpan[] {
   const bounded = source.length > MAX_INLINE ? source.slice(0, MAX_INLINE) : source;
-  const spans = resolve(tokenize(bounded.replace(/[ \t]*\n[ \t]*/gu, ' ')));
-  if (bounded.length < source.length) spans.push({text: source.slice(MAX_INLINE).replace(/\s*\n\s*/gu, ' '), style: {}});
+  const spans = resolve(tokenize(softBreaks(bounded)));
+  if (bounded.length < source.length) spans.push({text: softBreaks(source.slice(MAX_INLINE)), style: {}});
   return spans;
+}
+
+/** Soft line breaks read as one space, with the spaces around them dropped (a linear scan, not a pattern). */
+function softBreaks(text: string): string {
+  if (!text.includes('\n')) return text;
+  const lines = text.split('\n');
+  return lines.map((line, index) => index === 0 ? line.trimEnd() : index === lines.length - 1 ? line.trimStart() : line.trim()).join(' ');
 }
 
 /** The text a reader sees, without styling (search, copy-visible, width measurement). */
