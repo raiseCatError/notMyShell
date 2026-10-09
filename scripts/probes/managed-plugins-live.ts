@@ -11,17 +11,34 @@ import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {chmodSync, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {homedir, tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {join, resolve} from 'node:path';
 import {AgentSessions} from '../../src/agents/sessions/manager.js';
 import {claudePluginEntries, listClaudePlugins, setPluginEnabled} from '../../src/agents/mods/claudePlugins.js';
 import {withLoadedIn} from '../../src/agents/mods/inventory.js';
 
 const real = process.env.NMSH_PROBE_CLAUDE ?? join(homedir(), '.local/bin/claude');
-const configDir = process.env.NMSH_PROBE_CONFIG_DIR ? realpathSync(process.env.NMSH_PROBE_CONFIG_DIR) : '';
 const market = process.env.NMSH_PROBE_MARKET ?? '';
-if (!configDir || !market) throw new Error('Set NMSH_PROBE_CONFIG_DIR (disposable, logged in) and NMSH_PROBE_MARKET');
-// Never a real account: the disposable directory must live in a temp folder.
-if (!/^\/(?:private\/)?tmp\//u.test(configDir) || /\.claude(?:-account\d+)?$/u.test(configDir)) throw new Error(`Refusing ${configDir}: not a disposable temp configuration`);
+
+/** The only configuration this probe may use or change. */
+const DISPOSABLE = '/tmp/nmsh-cc-probe';
+/** Real launch identities, resolved through symlinks; the probe never touches them. */
+const REAL_IDENTITIES = [join(homedir(), '.claude'), join(homedir(), '.claude-account1'), join(homedir(), '.claude-account2'), ...(process.env.CLAUDE_CONFIG_DIR ? [process.env.CLAUDE_CONFIG_DIR] : [])];
+const resolved = (path: string) => { try { return realpathSync(path); } catch { return resolve(path); } };
+const within = (child: string, parent: string) => child === parent || child.startsWith(`${parent}/`);
+
+/** Every check runs before any claude command (even auth status creates files in a fresh directory). */
+export function disposableConfig(requested: string | undefined): string {
+  if (!requested) throw new Error(`Set NMSH_PROBE_CONFIG_DIR=${DISPOSABLE}`);
+  const path = resolved(requested);
+  if (path !== resolved(DISPOSABLE)) throw new Error(`Refusing ${requested} (${path}): only ${DISPOSABLE} may be used`);
+  for (const identity of REAL_IDENTITIES) {
+    const real = resolved(identity);
+    if (within(path, real) || within(real, path)) throw new Error(`Refusing ${requested}: it resolves to or overlaps the real Claude configuration ${identity}`);
+  }
+  return path;
+}
+const configDir = disposableConfig(process.env.NMSH_PROBE_CONFIG_DIR);
+if (!market) throw new Error('Set NMSH_PROBE_MARKET');
 const realSettings = ['.claude', '.claude-account1', '.claude-account2'].map(dir => join(homedir(), dir, 'settings.json')).filter(existsSync);
 const hashes = () => realSettings.map(path => createHash('sha256').update(readFileSync(path)).digest('hex')).join(',');
 const before = hashes();
