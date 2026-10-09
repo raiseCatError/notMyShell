@@ -214,7 +214,7 @@ export type TelemetryUpdate =
   | {kind: 'task'; task: Partial<TaskInfo> & {id: string}; at: number}
   | {kind: 'todos'; todos: TodoItem[]; at: number}
   | {kind: 'file'; path: string; action: 'read' | 'edit' | 'write'; added?: number; removed?: number; patch?: PatchHunk[]; at: number}
-  | {kind: 'requested'; field: 'model' | 'effort' | 'permissionMode'; value: string | null; at: number}
+  | {kind: 'requested'; field: 'model' | 'effort' | 'permissionMode'; value: string | null; at: number; evidence?: string}
   | {kind: 'settled'; at: number};
 
 const MAX_FILES = 500;
@@ -272,7 +272,7 @@ export function applyTelemetry(telemetry: AgentTelemetry, update: TelemetryUpdat
       break;
     }
     case 'requested': {
-      const evidence = update.field === 'model' ? 'set_model acknowledged' : update.field === 'effort' ? 'apply_flag_settings acknowledged' : 'set_permission_mode acknowledged';
+      const evidence = update.evidence ?? (update.field === 'model' ? 'set_model acknowledged' : update.field === 'effort' ? 'apply_flag_settings acknowledged' : 'set_permission_mode acknowledged');
       if (update.field === 'model' && update.value) pushHistory(telemetry, update.value, 'requested', update.at);
       (telemetry.requested as Record<string, Sourced<string | null>>)[update.field] = {value: update.value, source: 'requested', at: update.at, evidence};
       break;
@@ -358,4 +358,32 @@ export function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1).replace(/\.0$/u, '')}M`;
   if (value >= 1000) return `${(value / 1000).toFixed(value >= 100_000 ? 0 : 1).replace(/\.0$/u, '')}k`;
   return String(Math.round(value));
+}
+
+/** The catalog entry for the model a target runs (or was asked to run): its name, aliases and effort levels. */
+export function modelOption(telemetry: AgentTelemetry | undefined, model: string | undefined): ModelOption | undefined {
+  if (!telemetry?.catalog || !model) return undefined;
+  const models = telemetry.catalog.models;
+  return models.find(item => item.value === model && item.value !== 'default') ?? models.find(item => item.resolved === model && item.value !== 'default')
+    ?? models.find(item => item.value === model) ?? models.find(item => item.resolved === model);
+}
+
+export type EffortState = 'acknowledged' | 'launch' | 'settings' | 'default' | 'unavailable' | 'unknown';
+
+/**
+ * What is known about a target's effort, honestly: headless Claude Code never reports the level in effect, so the
+ * best evidence is NMSh's own acknowledged request, then the launch flag, then the account's settings file. A model
+ * without effort levels has none to set; with nothing configured, the model's default applies (its level unreported).
+ */
+export function effortStatus(telemetry: AgentTelemetry | undefined, settingsEffort?: string): {value?: string; state: EffortState; words: string} {
+  if (!telemetry) return {state: 'unknown', words: 'unknown'};
+  const option = modelOption(telemetry, currentModel(telemetry)?.value);
+  if (option && !option.effortLevels?.length) return {state: 'unavailable', words: 'this model has no effort levels'};
+  const requested = telemetry.requested.effort;
+  if (requested) {
+    if (requested.evidence === 'launch flag') return {value: requested.value ?? undefined, state: 'launch', words: `${requested.value} · set at launch`};
+    return requested.value === null ? {state: 'default', words: 'model default · set in NMSh'} : {value: requested.value, state: 'acknowledged', words: `${requested.value} · acknowledged by Claude`};
+  }
+  if (settingsEffort) return {value: settingsEffort, state: 'settings', words: `${settingsEffort} · from Claude settings`};
+  return option ? {state: 'default', words: 'model default (level not reported)'} : {state: 'unknown', words: 'unknown until Claude publishes its models'};
 }

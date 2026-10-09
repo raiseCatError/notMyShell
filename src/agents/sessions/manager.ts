@@ -131,7 +131,7 @@ export class AgentSessions {
         session.partial = partial.thinking ? {text: '', at: now, thinking: true} : partial.text === undefined ? undefined : {text: partial.text, at: now};
         this.emitPartial(session);
       }}, this.env.claudeHelp);
-    if (profile?.effort) applyTelemetry(session.telemetry, {kind: 'requested', field: 'effort', value: profile.effort, at: this.env.now()});
+    if (profile?.effort && control.capabilities.effortFlag) applyTelemetry(session.telemetry, {kind: 'requested', field: 'effort', value: profile.effort, at: this.env.now(), evidence: 'launch flag'});
     const started = control.start();
     if (!started.ok) return started;
     session.pid = control.pid;

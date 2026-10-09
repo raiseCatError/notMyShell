@@ -10,6 +10,8 @@ import {renderControlRows, renderControls} from '../../ui/controls.js';
 import {colorLevel} from '../../presentation/capabilities.js';
 import {layoutInput} from '../../input/inputLayout.js';
 import {chatColumn} from '../../output/TranscriptPresenter.js';
+import {visibleRows, type PickerState} from '../input/pickers.js';
+import {currentModel, effortStatus, modelName} from '../telemetry.js';
 
 /** How the host draws the view: the transcript presentation and composer side it already uses, and whether it shows the terminal's own caret. */
 export interface AgentViewOptions {
@@ -28,7 +30,7 @@ type Styled = {styled: string};
 type Line = string | Styled;
 
 /** What the person is doing in the view, in words; the default (writing to the agent) needs no label. */
-const OWNER_WORDS: Partial<Record<string, string>> = {TRANSCRIPT: 'Reviewing the conversation', APPROVAL: 'Permission request', CHOICE: 'Question'};
+const OWNER_WORDS: Partial<Record<string, string>> = {TRANSCRIPT: 'Reviewing the conversation', APPROVAL: 'Permission request', CHOICE: 'Question', PICKER: 'Choosing'};
 
 /** Hanging indent of the conversation: text starts here; turn markers sit in the gutter before it. */
 const INDENT = 2;
@@ -120,7 +122,13 @@ function providerHeader(session: AgentSession, meta: AgentViewMeta, width: numbe
   const subtle = paint(UI_COLORS.subtle);
   const glyph = (safe() ? descriptor?.safeGlyph : descriptor?.glyph) ?? '*';
   const name = displayText(descriptor?.name ?? session.harness);
-  const model = session.model ? displayText(session.model) : meta.configuredModel ? `${displayText(meta.configuredModel)} · configured` : '';
+  const telemetry = session.telemetry;
+  const running = telemetry ? currentModel(telemetry, session.model) : undefined;
+  // Effort only as acknowledged, set at launch or read from the account's settings: never invented.
+  const effort = telemetry ? effortStatus(telemetry, meta.settingsEffort) : undefined;
+  const effortText = effort?.value && ['acknowledged', 'launch', 'settings'].includes(effort.state) ? ` · ${displayText(effort.value)} effort` : '';
+  const model = running ? `${displayText(modelName(running.value, telemetry))}${running.source === 'requested' ? ' (requested)' : ''}${effortText}`
+    : session.model ? displayText(session.model) : meta.configuredModel ? `${displayText(meta.configuredModel)} · configured` : '';
   const identity = displayText(meta.profileLabel ?? meta.identity ?? '');
   const cwd = session.cwd ? homeRelative(displayText(session.cwd)) : '';
   const branch = meta.branch ? displayText(meta.branch) : '';
@@ -258,10 +266,43 @@ function composer(session: AgentSession, view: AgentViewState, width: number, ha
   return {rows: out, caret};
 }
 
+/**
+ * The /model or /effort picker in the composer's place: a title with the current value and its source, the rows
+ * (selection marker, current and default marks in words so nothing depends on color), the selected row's description,
+ * when the change applies, and the picker's own message. Bounded to `room` rows; the selection stays visible.
+ */
+function pickerRows(picker: PickerState, width: number, room: number): Line[] {
+  const g = marks();
+  const primary = paint(UI_COLORS.primary), secondary = paint(UI_COLORS.secondary), subtle = paint(UI_COLORS.subtle), accent = paint(UI_COLORS.accent);
+  const title = picker.kind === 'model' ? 'Model' : 'Effort';
+  const head: Line[] = [{styled: `${accent}${title}${RESET}${subtle} · ${truncateText(picker.status, Math.max(1, width - displayWidth(title) - 3))}${RESET}`}];
+  if (picker.query) head.push({styled: `${subtle}Filter: ${RESET}${primary}${truncateText(picker.query, Math.max(1, width - 8))}${RESET}`});
+  const rows = visibleRows(picker);
+  const tail: Line[] = [];
+  const chosen = rows[picker.selected];
+  if (chosen?.detail) tail.push({styled: `${secondary}${truncateText(chosen.detail, width)}${RESET}`});
+  tail.push({styled: `${subtle}${truncateText(picker.busy ? 'Waiting for Claude to acknowledge' + g.ellipsis : picker.timing, width)}${RESET}`});
+  if (picker.message) tail.push({styled: `${paint(UI_COLORS.failure)}${truncateText(picker.message, width)}${RESET}`});
+  const listRoom = Math.max(1, room - head.length - tail.length);
+  const start = Math.max(0, Math.min(picker.selected - listRoom + 1, rows.length - listRoom));
+  const list: Line[] = rows.length ? rows.slice(start, start + listRoom).map((row, offset) => {
+    const index = start + offset;
+    const selected = index === picker.selected;
+    const lead = selected ? `${accent}${GLYPHS.selection}${RESET} ` : '  ';
+    const tags = [row.current ? 'current' : '', row.isDefault && picker.kind === 'model' ? 'default' : ''].filter(Boolean).join(', ');
+    const tag = tags ? `  ${subtle}(${tags})${RESET}` : '';
+    const label = truncateText(row.label, Math.max(1, width - 2 - (tags ? tags.length + 4 : 0)));
+    return {styled: `${lead}${selected ? primary : secondary}${label}${RESET}${tag}`};
+  }) : [{styled: `${subtle}  Nothing matches "${truncateText(picker.query, Math.max(1, width - 20))}"${RESET}`}];
+  return [...head, ...list, ...tail].slice(0, Math.max(1, room));
+}
+
 /** What the keys do right now, with the shared footer styling (keys accent, actions muted); controls are dropped whole, never cut. */
 function hints(session: AgentSession, view: AgentViewState, width: number): Line[] {
   const c = view.controller!;
-  const pairs: Array<[string, string]> = c.owner === 'TRANSCRIPT'
+  const pairs: Array<[string, string]> = c.owner === 'PICKER'
+    ? [['Enter', 'apply'], ['↑↓', 'choose'], ['Esc', 'cancel'], ['type', 'filter']]
+    : c.owner === 'TRANSCRIPT'
     ? [['↑↓', 'objects'], ['←→', 'zoom'], ['1-5', 'detail'], ['c', 'copy visible'], ['C', 'copy full'], ['Esc', 'shell']]
     : [['Enter', 'send'], ...(session.state === 'working' || session.state === 'approval' ? [['Ctrl+C', 'interrupt'] as [string, string]] : []), ['Tab', 'transcript'], ['Esc', 'shell']];
   const keys = safe() ? pairs.map(([key, label]) => [key.replace('↑↓', 'Up/Down').replace('←→', 'Left/Right'), label] as [string, string]) : pairs;
@@ -308,6 +349,7 @@ export function renderSemanticAgentView(session: AgentSession, view: AgentViewSt
   if (source?.incomplete) notices.push(...wrap(`Incomplete: ${source.incomplete}`, paint(UI_COLORS.failure)));
   const composing = c.owner === 'AGENT_MESSAGE' && session.level === 'managed' && !['exited', 'failed'].includes(session.state);
   const draft = composing ? composer(session, view, width, Boolean(options.hardwareCaret)) : undefined;
+  const picking = c.owner === 'PICKER' && c.picker ? pickerRows(c.picker, width, Math.max(3, Math.min(14, Math.floor(height / 2)))) : undefined;
   const controls: Line[] = session.level === 'managed' ? hints(session, view, width) : wrap('Observed metadata only · Esc shell', subtle);
   const rule = stateRule(session, width);
   const top = options.composerPosition === 'top';
@@ -325,7 +367,7 @@ export function renderSemanticAgentView(session: AgentSession, view: AgentViewSt
     while (body.at(-1) === '') body.pop();
     stream = true;
   }
-  const draftRows = draft?.rows ?? [];
+  const draftRows = picking ?? draft?.rows ?? [];
   const room = Math.max(1, height - notices.length - 1 - draftRows.length - controls.length);
   if (stream) {
     // Scrolled back: rows that arrive below keep the visible ones where they are.
@@ -342,7 +384,7 @@ export function renderSemanticAgentView(session: AgentSession, view: AgentViewSt
     : [...(stream ? [...filler, ...visible] : [...visible, ...filler]), ...notices, rule, ...draftRows, ...controls];
   if (options.layout) {
     const at = top ? 0 : rows.length - controls.length - draftRows.length;
-    options.layout.caret = draft && at + draft.caret.row < height ? {row: at + draft.caret.row, column: Math.min(width - 1, draft.caret.column)} : undefined;
+    options.layout.caret = draft && !picking && at + draft.caret.row < height ? {row: at + draft.caret.row, column: Math.min(width - 1, draft.caret.column)} : undefined;
   }
   return rows.slice(0, height).map(emit);
 }

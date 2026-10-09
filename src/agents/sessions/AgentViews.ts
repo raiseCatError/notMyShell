@@ -197,6 +197,8 @@ export interface AgentViewMeta {
   configuredModel?: string;
   /** The shell's branch, when the target shares the shell's directory. */
   branch?: string;
+  /** The effort level in the launch profile's Claude settings file, read passively by the host; labelled as such. */
+  settingsEffort?: string;
 }
 
 export function renderAgentView(session: AgentSession, state: AgentViewState, columns: number, height: number, now: number, meta: AgentViewMeta = {}, options: AgentViewOptions = {}): string[] {

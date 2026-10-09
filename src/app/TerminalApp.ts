@@ -310,6 +310,9 @@ import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
 import {GithubWorkspaceService} from '../githubWorkspace/service.js';
 import {GhSource} from '../githubWorkspace/source.js';
 import {loadModInventory} from '../agents/mods/inventory.js';
+import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
+import {applyPickerChoice} from '../agents/input/surface.js';
+import {settingsEffort} from '../agents/claudeSettings.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
@@ -8018,6 +8021,12 @@ export class TerminalApp {
       answer: (id, requestId, allow) => this.agents.get(id)?.pendingApproval?.requestId === requestId && this.agents.answer(id, allow),
       cancel: id => {this.agents.cancel(id);},
       choose: (id, requestId, answers) => this.agents.choose(id, requestId, answers),
+      openPicker: (target, kind) => {
+        if (!this.agents.controllable(target.id)) return {ok: false, reason: `/${kind} needs a running managed Claude target with a live control channel.`};
+        return kind === 'model' ? openModelPicker(target.telemetry) : openEffortPicker(target.telemetry, this.agentSettingsEffort.get(target.id));
+      },
+      applyPicker: (target, picker, row) => {void applyPickerChoice(view, picker, row, {
+        setModel: model => this.agents.setModel(target.id, model), setEffort: level => this.agents.setEffort(target.id, level), render: () => { if (!this.stopped) this.render(); }});},
       copy: text => {void writeClipboard(text).then(() => {view.message = 'Copied.'; this.render();}).catch(() => {view.message = 'Clipboard unavailable.'; this.render();});},
       copyReply: (target, index) => {void this.copyAgentBlock(target, index);},
     });
@@ -8112,12 +8121,20 @@ export class TerminalApp {
     this.render();
   }
 
+  /** Effort from each target's Claude settings files, read once off the render path. */
+  private readonly agentSettingsEffort = new Map<string, string | undefined>();
+
   /** Header facts for an agent view: the launch profile's label and configured model, and the shell's branch when the target shares its directory. */
   private agentViewMeta(session: AgentSession): AgentViewMeta {
     const profile = session.profileId ? this.promptConfiguration.agentProfiles.find(item => item.name === session.profileId) : undefined;
+    if (session.harness === 'claude' && session.cwd && !this.agentSettingsEffort.has(session.id)) {
+      this.agentSettingsEffort.set(session.id, undefined);
+      void settingsEffort(profile?.configDir, session.cwd).then(level => { if (level && !this.stopped) { this.agentSettingsEffort.set(session.id, level); this.render(); } });
+    }
+    const effort = this.agentSettingsEffort.get(session.id);
     const defaultDir = process.env.CLAUDE_CONFIG_DIR ? process.env.CLAUDE_CONFIG_DIR.replace(/^\/(?:Users|home)\/[^/]+/u, '~') : '~/.claude';
     return {...(profile ? {profileLabel: profileLabel(profile), ...(profile.model ? {configuredModel: profile.model} : {})} : {identity: session.harness === 'claude' ? `Default identity · ${defaultDir}` : 'Default identity'}),
-      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {})};
+      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {}), ...(effort ? {settingsEffort: effort} : {})};
   }
 
   private openMods(provider?: string): void {

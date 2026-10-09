@@ -1,14 +1,15 @@
 import {CommandEditor} from '../../input/CommandEditor.js';
 import {applyEditingKey} from '../../input/editingKeys.js';
 import type {Key} from '../../terminal/keys.js';
+import type {PickerState} from './pickers.js';
 
-export type InputOwner = 'COMPOSER' | 'TRANSCRIPT' | 'PANEL' | 'SEARCH' | 'CHOICE' | 'APPROVAL' | 'AGENT_MESSAGE' | 'PASSTHROUGH';
+export type InputOwner = 'COMPOSER' | 'TRANSCRIPT' | 'PANEL' | 'SEARCH' | 'CHOICE' | 'APPROVAL' | 'AGENT_MESSAGE' | 'PASSTHROUGH' | 'PICKER';
 export type AgentAction = {kind: 'FocusTranscript' | 'FocusApproval' | 'Back' | 'ZoomIn' | 'ZoomOut' | 'Approve' | 'Deny' | 'SendMessage' | 'Interrupt' | 'Choose' | 'CopyVisible' | 'CopyFull'}
   | {kind: 'Navigate'; direction: number} | {kind: 'SelectDetailDepth'; depth: number} | {kind: 'ScrollTranscript'; rows: number} | {kind: 'EditMessage'; key: Key};
 
 /** Context-specific bindings only. Controllers consume actions, not literal sequences. */
 export function agentKeyAction(key: Key, owner: InputOwner): AgentAction | undefined {
-  if (owner === 'COMPOSER' || owner === 'PASSTHROUGH' || owner === 'PANEL' || owner === 'SEARCH') return undefined;
+  if (owner === 'COMPOSER' || owner === 'PASSTHROUGH' || owner === 'PANEL' || owner === 'SEARCH' || owner === 'PICKER') return undefined;
   if (key.kind === 'escape') return {kind: 'Back'};
   if (owner === 'APPROVAL') {
     if (key.kind === 'toggleDetails') return {kind: 'Approve'};
@@ -54,6 +55,8 @@ export class AgentInputController {
   choiceAnswers: Record<string, string> = {};
   choiceToggled = new Set<string>();
   readonly choiceEditor = new CommandEditor();
+  /** NMSh's own /model or /effort picker, while it owns the keys (owner PICKER). */
+  picker?: PickerState;
   /** The draft's wrap width and first-row prefix as the view last drew them, so vertical moves follow the screen. */
   composerColumns = 80;
   composerPrefix?: string;
