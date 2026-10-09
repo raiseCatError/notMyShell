@@ -67,11 +67,15 @@ export interface OutputTranscript {
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
+/**
+ * What /copy and /copy N put on the clipboard: the command's own output (stdout and stderr as the PTY delivered them,
+ * line breaks kept), from the record's output field. NMSh's lifecycle row ("✔ Completed · 21.6s · 15:42") is stored
+ * separately in `lifecycleText` and is presentation, so it is never part of the payload; neither are folding,
+ * activity rows or separators, which never enter `output`. Output that merely looks like a status line is the
+ * command's and is kept.
+ */
 export function serializeCopyPayload(record: CompletedCommand): string {
-  const parts: string[] = [];
-  if (record.output.length > 0) parts.push(record.output);
-  if (record.lifecycleText.length > 0) parts.push(record.lifecycleText);
-  return parts.join('\n');
+  return record.output;
 }
 
 export class OutputBuffer {

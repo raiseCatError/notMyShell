@@ -2712,8 +2712,10 @@ export class TerminalApp {
       this.output.addFrontendInteraction(command, `No completed command output at /copy ${index}`, ERROR);
       return;
     }
+    const payload = serializeCopyPayload(record);
+    // Nothing printed: say so and leave the clipboard as it was (NMSh's status row is not output to copy).
+    if (!payload) { this.output.addFrontendInteraction(command, `Nothing to copy: ${record.command.split('\n')[0]!.slice(0, 80)} printed no output.`, INFO); return; }
     try {
-      const payload = serializeCopyPayload(record);
       await writeClipboard(payload);
       this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
     } catch (error) {

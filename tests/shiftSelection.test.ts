@@ -309,111 +309,65 @@ test('copy failure: PTY output + failure lifecycle row are both in payload', () 
   assert.equal(record.output, 'zsh: command not found: meow', 'output is PTY text only');
   assert.equal(record.lifecycleText, '✘ Failed after 0.0s · exit 127 · 04:12', 'lifecycleText is the completion row');
 
-  const payload = serializeCopyPayload(record);
-  assert.ok(payload.includes('zsh: command not found: meow'), 'payload must include PTY output');
-  assert.ok(payload.includes('✘ Failed after 0.0s · exit 127 · 04:12'), 'payload must include lifecycle row');
-  // Verify order: PTY first, then lifecycle
-  const lines = payload.split('\n');
-  assert.equal(lines[0], 'zsh: command not found: meow', 'PTY output is first line');
-  assert.equal(lines[1], '✘ Failed after 0.0s · exit 127 · 04:12', 'lifecycle row is second line');
+  // The lifecycle row is NMSh's presentation: recorded for display, never part of what /copy copies.
+  assert.equal(serializeCopyPayload(record), 'zsh: command not found: meow', 'payload is the PTY output only');
 });
 
-test('copy success: hello + success lifecycle row are both in payload', () => {
+test('copy success: the success lifecycle row is not in the payload', () => {
   const output = new OutputBuffer();
   output.beginCommand('echo hello', ['echo hello']);
   output.write('hello\n');
   output.complete(0);
   output.setCompletionLifecycle('Completed · 0.0s · 04:12');
   output.addHistoryLine('\u001B[32mCompleted · 0.0s\u001B[0m\u001B[2m · 04:12\u001B[0m');
-
-  const record = output.recent(1);
-  assert.ok(record);
-  const payload = serializeCopyPayload(record);
-  assert.ok(payload.includes('hello'), 'payload must include PTY output');
-  assert.ok(payload.includes('Completed · 0.0s · 04:12'), 'payload must include lifecycle row');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello');
 });
 
-test('copy empty PTY: no output command still copies lifecycle row', () => {
+test('copy empty PTY: a silent command has nothing to copy (the host says so and leaves the clipboard alone)', () => {
   const output = new OutputBuffer();
   output.beginCommand('sleep 2', ['sleep 2']);
-  // No PTY output
   output.complete(0);
   output.setCompletionLifecycle('✻ Slept for 2.0s · done 04:14');
-  output.addHistoryLine('\u001B[32m✻ Slept for 2.0s · done 04:14\u001B[0m');
-
-  const record = output.recent(1);
-  assert.ok(record);
+  const record = output.recent(1)!;
   assert.equal(record.output, '', 'output is empty for silent command');
-  assert.equal(record.lifecycleText, '✻ Slept for 2.0s · done 04:14');
-
-  const payload = serializeCopyPayload(record);
-  assert.ok(payload.length > 0, 'payload must not be empty even with no PTY output');
-  assert.equal(payload, '✻ Slept for 2.0s · done 04:14', 'payload is just the lifecycle row');
+  assert.equal(record.lifecycleText, '✻ Slept for 2.0s · done 04:14', 'the row is still recorded for display');
+  assert.equal(serializeCopyPayload(record), '');
 });
 
-test('copy interrupted: interrupted lifecycle row is in payload', () => {
+test('copy interrupted: the stopped row is not in the payload', () => {
   const output = new OutputBuffer();
   output.beginCommand('sleep 100', ['sleep 100']);
+  output.write('partial\n');
   output.complete(130);
   output.setCompletionLifecycle('✘ Stopped after 1.5s · done 04:14');
-  output.addHistoryLine('\u001B[31m✘ Stopped after 1.5s\u001B[0m\u001B[2m · done 04:14\u001B[0m');
-
-  const record = output.recent(1);
-  assert.ok(record);
-  const payload = serializeCopyPayload(record);
-  assert.ok(payload.includes('✘ Stopped after 1.5s · done 04:14'), 'interrupted lifecycle row must be in payload');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'partial');
 });
 
-test('copy /copy N: Nth recent item includes its full command result', () => {
+test('copy /copy N: the Nth recent command copies its own output', () => {
   const output = new OutputBuffer();
-
-  // Command 1 (most recent after both):
   output.beginCommand('echo first', ['echo first']);
   output.write('first\n');
   output.complete(0);
   output.setCompletionLifecycle('✻ Completed for 0.0s · done 04:10');
   output.addHistoryLine('✻ Completed for 0.0s · done 04:10');
-
-  // Command 2 (becomes recent(1) after this):
   output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · done 04:11');
   output.addHistoryLine('✘ Failed after 0.0s · exit 127 · done 04:11');
-
-  // recent(1) = meow (most recent)
-  const r1 = output.recent(1);
-  assert.ok(r1);
-  const p1 = serializeCopyPayload(r1);
-  assert.ok(p1.includes('zsh: command not found: meow'), '/copy 1 must include meow PTY output');
-  assert.ok(p1.includes('✘ Failed after 0.0s · exit 127 · done 04:11'), '/copy 1 must include meow lifecycle');
-
-  // recent(2) = echo first
-  const r2 = output.recent(2);
-  assert.ok(r2);
-  const p2 = serializeCopyPayload(r2);
-  assert.ok(p2.includes('first'), '/copy 2 must include echo first output');
-  assert.ok(p2.includes('✻ Completed for 0.0s · done 04:10'), '/copy 2 must include echo first lifecycle');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'zsh: command not found: meow');
+  assert.equal(serializeCopyPayload(output.recent(2)!), 'first');
 });
 
-test('copy feedback counts reflect full payload (PTY + lifecycle row)', () => {
+test('copy feedback counts reflect exactly what was copied', () => {
   const output = new OutputBuffer();
   output.beginCommand('meow', ['meow']);
   output.write('zsh: command not found: meow\n');
   output.complete(127);
   output.setCompletionLifecycle('✘ Failed after 0.0s · exit 127 · 04:12');
-
-  const record = output.recent(1)!;
-  const payload = serializeCopyPayload(record);
-  const stats = copyStats(payload);
-
-  // payload = "zsh: command not found: meow\n✘ Failed after 0.0s · exit 127 · 04:12"
-  // That is 2 lines
-  assert.equal(stats.lines, 2, 'feedback must count 2 lines (PTY + lifecycle)');
-  assert.ok(stats.characters > 0, 'feedback must count actual characters');
-
-  const feedback = copyFeedback(stats, 1);
-  assert.ok(feedback.includes('2 lines'), 'feedback string must say 2 lines');
+  const stats = copyStats(serializeCopyPayload(output.recent(1)!));
+  assert.equal(stats.lines, 1, 'one line of output; the lifecycle row is not counted');
+  assert.ok(copyFeedback(stats, 1).includes('1 line'));
 });
 
 test('copy no presentation chrome: ANSI codes do not appear in payload', () => {
