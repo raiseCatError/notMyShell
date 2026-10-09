@@ -10,6 +10,7 @@
  */
 
 import {NOTICE_KINDS, type SessionNotice} from './SessionNotices.js';
+import {INPUT_CONFIDENCES, INPUT_MODES, type InputState} from './inputState.js';
 
 // v2: a frontend going away detaches its session instead of ending it.
 export const PROTOCOL_VERSION = 2;
@@ -21,15 +22,28 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
+
+/**
+ * What a frontend understands beyond the base protocol, sent in its hello. A service sends a feature's messages or
+ * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
+ * attached to a newer service never receives a frame it would reject.
+ */
+export const CLIENT_FEATURES = ['input-state'] as const;
+export type ClientFeature = typeof CLIENT_FEATURES[number];
+
+export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
+  return new Set((text ?? '').split(',').map(item => item.trim()).filter((item): item is ClientFeature => (CLIENT_FEATURES as readonly string[]).includes(item)));
+}
 
 export function parseFeatures(text: string | undefined): Set<ServiceFeature> {
   return new Set((text ?? '').split(',').map(item => item.trim()).filter((item): item is ServiceFeature => (SERVICE_FEATURES as readonly string[]).includes(item)));
 }
 
 export type ClientMessage =
-  | {type: 'hello'; version: number; client: string}
+  /** features: comma-separated CLIENT_FEATURES this frontend understands; absent from older frontends. */
+  | {type: 'hello'; version: number; client: string; features?: string}
   /** shell: backend id (zsh, fish, bash); absent means zsh (older frontends). */
   | {type: 'create'; cwd: string; env: Record<string, string>; columns: number; rows: number; shell?: string}
   | {type: 'attach'; sessionId: string; columns: number; rows: number}
@@ -80,7 +94,12 @@ export type ServerMessage =
    */
   | {type: 'output'; data: string; seq?: number; at?: number}
   | {type: 'exec'; command: string; seq: number; at: number; historyAllowed?: number}
-  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number}
+  | {type: 'prompt'; exitCode: number; cwd: string; knowledge?: string; seq?: number; at?: number; inputWaitMs?: number; inputWaits?: number}
+  /**
+   * The running command's input state (see InputWatch), sent on every change to frontends that support it: a
+   * request (since/confidence/mode, with the open prompt and program when known) or none, plus waiting time so far.
+   */
+  | {type: 'input-state'; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
   | {type: 'killed'; sessionId: string}
@@ -124,6 +143,11 @@ export interface SessionInfo {
   name?: string;
   /** The session's current cross-session notice, until it is focused (#v0.16; absent from older services). */
   notice?: SessionNotice;
+  /** While the running command credibly waits for input: since when, how sure, how it reads, and the prompt shown. */
+  inputSince?: number;
+  inputConfidence?: string;
+  inputMode?: string;
+  inputPrompt?: string;
 }
 
 export type ProtocolMessage = ClientMessage | ServerMessage;
@@ -140,7 +164,7 @@ type Kind = 'string' | 'int' | 'env' | 'int?' | 'string?' | 'sessions' | 'notice
 type Shape = Record<string, Kind>;
 
 const SHAPES: Record<string, Shape> = {
-  hello: {version: 'int', client: 'string'},
+  hello: {version: 'int', client: 'string', features: 'string?'},
   create: {cwd: 'string', env: 'env', columns: 'int', rows: 'int', shell: 'string?'},
   'switch-shell': {shell: 'string', cwd: 'string'},
   rename: {sessionId: 'string', name: 'string'},
@@ -166,7 +190,8 @@ const SHAPES: Record<string, Shape> = {
   dismissed: {sessionId: 'string'},
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?'},
-  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?'},
+  prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?'},
+  'input-state': {since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
@@ -179,10 +204,11 @@ function isEnv(value: unknown): value is Record<string, string> {
 
 const INFO_SHAPE: Shape = {id: 'string', pid: 'int', state: 'string', cwd: 'string', createdAt: 'int',
   running: 'string?', runningSince: 'int?', idleSince: 'int?', journalId: 'string?',
-  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?', signature: 'string?', name: 'string?'};
+  process: 'string?', fullscreen: 'int?', lastOutputAt: 'int?', title: 'string?', attentionSince: 'int?', lastExit: 'int?', notice: 'notice?', shell: 'string?', signature: 'string?', name: 'string?',
+  inputSince: 'int?', inputConfidence: 'string?', inputMode: 'string?', inputPrompt: 'string?'};
 
 const NOTICE_SHAPE: Shape = {sessionId: 'string', kind: 'string', at: 'int', program: 'string?', agent: 'string?', exitCode: 'int?',
-  durationMs: 'int?', cwd: 'string?'};
+  durationMs: 'int?', cwd: 'string?', confidence: 'string?'};
 
 function decodeNotice(raw: unknown): SessionNotice | undefined {
   const decoded = decodeShape(NOTICE_SHAPE, raw) as SessionNotice | undefined;
@@ -256,4 +282,21 @@ export class FrameDecoder {
     }
     return results;
   }
+}
+
+/** The input-state message for a state; bounded prompt text. */
+export function inputStateMessage(state: InputState): Extract<ServerMessage, {type: 'input-state'}> {
+  const request = state.request;
+  return {type: 'input-state', waitedMs: Math.round(state.timing.waitedMs), waits: state.timing.waits,
+    ...(request ? {since: request.since, confidence: request.confidence, mode: request.mode,
+      ...(request.prompt ? {prompt: request.prompt.slice(0, 200)} : {}), ...(request.program ? {program: request.program.slice(0, 64)} : {})} : {})};
+}
+
+/** The state an input-state message describes; an unknown confidence or mode is dropped, never guessed. */
+export function inputStateFrom(message: Extract<ServerMessage, {type: 'input-state'}>): InputState {
+  const confidence = INPUT_CONFIDENCES.find(item => item === message.confidence);
+  const mode = INPUT_MODES.find(item => item === message.mode);
+  const timing = {waitedMs: message.waitedMs, waits: message.waits};
+  if (message.since === undefined || !confidence || !mode) return {timing};
+  return {request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
 }

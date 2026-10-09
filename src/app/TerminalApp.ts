@@ -178,6 +178,9 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
 import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
+import {directKeyBytes} from '../terminal/keyBytes.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
@@ -719,6 +722,16 @@ export class TerminalApp {
   private readonly effects = new EffectState();
   private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number};
   private activityAnimationNow = Date.now();
+  /** The running command's input state, as the session's InputWatch reports it; never guessed here. */
+  private inputState?: InputState;
+  /** Waiting time the shell's completing prompt carried for the command that just finished. */
+  private completedInputTiming?: InputTiming;
+  /**
+   * A composer draft started while a command runs: when, and whether a request for input was already shown (an
+   * answer, discarded rather than run if the command ends first). Drafts started before the command's latest output
+   * are type-ahead for the shell and stay in the composer.
+   */
+  private runningDraft?: {startId: number; at: number; answering: boolean};
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -790,11 +803,13 @@ export class TerminalApp {
         }
         // Host OSC 7 / OSC 133: a projection of this authoritative marker, never the other way round.
         this.hostSemantics.prompt(marker.cwd, marker.exitCode);
+        this.completedInputTiming = marker.inputWaits ? {waitedMs: marker.inputWaitMs ?? 0, waits: marker.inputWaits} : undefined;
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
     this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('inputState', state => this.onInputState(state));
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
@@ -1014,6 +1029,7 @@ export class TerminalApp {
       return;
     }
     this.commandModes.reset();
+    this.inputState = undefined;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
@@ -1120,7 +1136,8 @@ export class TerminalApp {
   private readonly replyRouter = new ReplyRouter();
 
   private readonly onInput = (data: string): void => {
-    if (process.env.NMSH_DEBUG_KEYS === '1') {
+    // Key debugging never records what a program reads with echo off (or single keys it asked for).
+    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.directInputRequest()) {
       const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
       const escaped = JSON.stringify(data);
       appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
@@ -1816,6 +1833,17 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    // A program reading a hidden line or single keys gets each key as it is typed, as in any terminal: the
+    // composer neither shows nor keeps it, and Enter is a key for the program, never a shell submission.
+    if (this.directInputRequest()) {
+      this.sendDirectKey(key);
+      return;
+    }
+    // Typing that starts while a command waits for a line is an answer: if the command ends before it is sent, it
+    // is discarded rather than left to run as the next shell command.
+    if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: Boolean(this.inputState?.request)};
+    }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
     if (this.promptConfiguration.composerPosition === 'flow' && this.historyViewport.detached && FLOW_EDIT_KEYS.has(key.kind)) {
@@ -2104,6 +2132,7 @@ export class TerminalApp {
         } else {
           const input = this.editor.text;
           this.editor.clear();
+          this.runningDraft = undefined;
           this.session.write(`${input}\r`);
           return;
         }
@@ -2606,6 +2635,8 @@ export class TerminalApp {
     const contextAtSubmission = this.context;
     this.effects.cancel();
     this.commandModes.reset();
+    this.inputState = undefined;
+    this.runningDraft = undefined;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
@@ -2828,10 +2859,10 @@ export class TerminalApp {
     rows.forEach((row, index) => {
       const selected = index === browser.selectedIndex;
       const marker = row.current ? (safe ? '*' : '●') : row.session.state === 'detached' ? (safe ? '-' : '◌') : (safe ? 'o' : '○');
-      const color = row.state === 'failed' ? ERROR : row.state === 'attention' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
+      const color = row.state === 'failed' ? ERROR : row.state === 'attention' || row.state === 'input' || row.state === 'inputLikely' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
       const who = row.agent ? `${agentColor(row.agent.color)}${safe ? row.agent.safeGlyph : row.agent.glyph} ${row.agent.short}${RESET} ` : '';
       out.push(truncateAnsi(`${selected ? `${ACCENT}›` : ' '} ${marker} ${PRIMARY}${(row.current ? 'this' : `#${row.ordinal}`).padEnd(5)}${RESET}${SECONDARY}${row.shell.padEnd(5)}${RESET} `
-        + `${color}${row.stateLabel.padEnd(16)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
+        + `${color}${row.stateLabel.padEnd(18)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
     });
     const confirming = browser.live.find(session => session.id === browser.confirmKill);
     if (confirming) out.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
@@ -3151,6 +3182,8 @@ export class TerminalApp {
     if (completedRecord) {
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
+      // Wall-clock duration stays whole; the time spent waiting for the person is a separate, measured fact.
+      if (this.completedInputTiming) { completedRecord.inputWaitMs = this.completedInputTiming.waitedMs; completedRecord.inputWaits = this.completedInputTiming.waits; }
       completedRecord.historyEligible = command.historyAllowed === 1 && !isPrivateCommand(command.command, ignorePatternFromEnv());
       this.directoryQuery = undefined;
       this.directoryQueryAbort?.abort();
@@ -3170,6 +3203,7 @@ export class TerminalApp {
       const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
       if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
       else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
+      parts.main += completionWaitFact(this.completedInputTiming);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -3178,6 +3212,17 @@ export class TerminalApp {
       if (known) this.output.addHistoryLine(`${INFO}${known}${RESET}`);
     }
     this.running = undefined;
+    this.inputState = undefined;
+    this.completedInputTiming = undefined;
+    // An answer typed for this command but never sent must not become the next shell command.
+    const draft = this.runningDraft;
+    this.runningDraft = undefined;
+    if (draft?.answering) {
+      if (this.editor.text) {
+        this.editor.clear();
+        this.output.addFrontendInteraction(commandWords(command.command)[0] ?? 'command', 'The command finished before your reply was sent; the reply was discarded, not run.', INFO);
+      }
+    }
     if (!this.replaying && !command.cleared && completedRecord) {
       const interrupted = command.interrupted || exitCode === 130;
       const now = Date.now();
@@ -4013,12 +4058,13 @@ export class TerminalApp {
         live.forEach((session, index) => {
           const selected = index === browser.selectedIndex;
           const state = liveRowState(session, now);
-          const stateColor = state === 'failed' ? ERROR : state === 'attention' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
+          const stateColor = state === 'failed' ? ERROR : state === 'attention' || state === 'input' || state === 'inputLikely' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
           const agent = liveRowAgent(session);
           // Agent color only when identity is proven and color is allowed; generic otherwise.
           const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
           const signature = signatureAccent(session.signature);
-          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
+          const stateMark = state === 'input' ? (safe ? '!' : '◆') : state === 'inputLikely' ? (safe ? '?' : '◇') : (safe ? '*' : '●');
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${stateMark} ${LIVE_ROW_LABELS[state].padEnd(17)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
             + `${selected ? ACCENT : SECONDARY}${describeLiveRow(session, now)}${RESET}`, columns));
         });
         rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
@@ -4540,7 +4586,9 @@ export class TerminalApp {
     if (mode === 'off') return undefined;
     const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
     const session = this.sessionId ? sessionTitleName(this.sessionIdentity, this.noticeLabels.get(this.sessionId)) : undefined;
-    const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
+    const request = this.running && !this.passthrough ? this.inputState?.request : undefined;
+    const running = request ? `${inputGlyph(request)} ${inputProgram(request, this.running!.command)} needs input`
+      : this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
     return composeTitle(mode, project, session, running);
   }
 
@@ -6560,9 +6608,10 @@ export class TerminalApp {
     // Expired notices never paint, even between polls.
     const notices = this.noticeView.notices.filter(notice => noticeVisible(notice, now));
     const safe = getCurrentGlyphMode() === 'safe';
-    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷'};
+    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷', input: safe ? '?' : '◇'};
     const rows = notices.map(notice => {
       const parts = describeNotice(notice, this.noticeLabels.get(notice.sessionId) ?? sessionLabel(notice.sessionId), now);
+      if (parts.symbol === 'input') return truncateAnsi(`${ACCENT}${inputGlyph({confidence: notice.confidence === 'likely' ? 'likely' : 'confirmed'})}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
       const color = parts.symbol === 'failed' ? ERROR : parts.symbol === 'attention' ? ACCENT : parts.symbol === 'done' ? SUCCESS : SECONDARY;
       return truncateAnsi(`${color}${symbols[parts.symbol]}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
     });
@@ -8530,8 +8579,10 @@ export class TerminalApp {
       }
     }
 
+    const direct = this.directInputRequest();
     const inputRows = input.rows.map(row => {
       const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
+      if (direct) return row === input.rows[0] ? truncateAnsi(`${prefix}${SUBTLE}${directInputPlaceholder(direct, inputProgram(direct, this.running!.command))}${RESET}`, this.inputColumns(columns)) : '';
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
       for (let i = 0; i < glyphsInRow.length; i++) {
@@ -8585,11 +8636,7 @@ export class TerminalApp {
           );
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
-        case 'activity': {
-          if (!this.running) return [];
-          const activity = truncateAnsi(this.currentActivity(), columns);
-          return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
-        }
+        case 'activity': return this.activityRows(plan, columns);
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -8793,8 +8840,7 @@ export class TerminalApp {
     const rows = [...frame.rows];
     for (const region of plan.regions) {
       if (region.kind === 'activity' && this.running) {
-        const line = truncateAnsi(this.currentActivity(), frame.columns ?? 80);
-        const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
+        const content = this.activityRows(plan, frame.columns ?? 80);
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
       // Live composer divider lines move with Chroma only when Divider lines follow Chroma.
@@ -8864,6 +8910,55 @@ export class TerminalApp {
     }
   }
 
+  /**
+   * The live activity region (two rows, always reserved while a command runs). Ordinarily the working line and a
+   * spacer; while the command waits for input, the attention line and the prompt it left open, so the question
+   * stays in view however far the transcript scrolled or folded. Nothing extra is reserved and the PTY never resizes.
+   */
+  private activityRows(plan: ScreenPlan, columns: number): string[] {
+    if (!this.running) return [];
+    const request = this.inputState?.request;
+    // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
+    if (request) return inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns).map(row => truncateAnsi(row, columns));
+    const activity = truncateAnsi(this.currentActivity(), columns);
+    return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
+  }
+
+  /** Keys go straight to the program (a hidden line or single keys) rather than through the composer. */
+  private directInputRequest() {
+    const request = this.inputState?.request;
+    return this.running && !this.passthrough && !this.startupPending && directInput(request) ? request : undefined;
+  }
+
+  private onInputState(state: InputState): void {
+    // A state for a finished run (a late message) never resurrects it.
+    if (!this.running) return;
+    this.inputState = state;
+    const request = state.request;
+    const draft = this.runningDraft;
+    // Keys typed after the program wrote its question, in the moment before NMSh could tell how it reads, were
+    // meant for it: a terminal would already have delivered them. Hand them over now instead of hiding them.
+    if (request && directInput(request) && draft && draft.startId === this.running.startId && draft.at >= request.since && this.editor.text) {
+      const typed = this.editor.text;
+      this.editor.clear();
+      this.runningDraft = undefined;
+      this.session.write(typed);
+    } else if (request && draft && draft.at >= request.since && this.editor.text) draft.answering = true;
+    this.render();
+  }
+
+  /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
+  private sendDirectKey(key: Key): void {
+    if (key.kind === 'interrupt') {
+      if (this.running) this.running.interrupted = true;
+      this.session.interrupt();
+      return;
+    }
+    if (key.kind === 'eof') { this.session.endInput(); return; }
+    const bytes = directKeyBytes(key);
+    if (bytes) this.session.write(bytes);
+  }
+
   private currentActivity(): string {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
@@ -8875,7 +8970,7 @@ export class TerminalApp {
     const still = !this.decorativeMotionAllowed() || sweepStill(this.promptConfiguration);
     const {cells, style} = liveActivityPaint(parts.phrase, this.promptConfiguration, this.activityAnimationNow, still);
     const phrase = sweepCells(cells, animationElapsed * (isActive ? 1.4 : 1), style, colorLevel(), !this.decorativeMotionAllowed());
-    return `${phrase}${SECONDARY}${parts.duration}${RESET}`;
+    return `${phrase}${SECONDARY}${parts.duration}${waitedDetail(this.inputState, this.activityAnimationNow, elapsed)}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -8917,9 +9012,11 @@ export class TerminalApp {
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
+    // Direct input: the composer shows where typing goes, never a draft, so the caret sits at the start.
+    const direct = Boolean(this.directInputRequest());
     return layoutInput(
-      this.editor.displayText,
-      this.editor.displayCursorIndex,
+      direct ? '' : this.editor.displayText,
+      direct ? 0 : this.editor.displayCursorIndex,
       this.inputColumns(columns),
       maxVisibleRows,
       this.railInputPrefix(columns),

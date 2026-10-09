@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Input awareness:** a command that waits for an answer is no longer just "Running". NMSh reads the terminal's own state, without touching the program. A password or other no-echo read, or a single-key question such as `e2fsck`'s `Fix<y>?`, is confirmed; on Linux, any blocking read of the terminal is confirmed too. An ordinary line question left open by an idle process is shown as "Probably waiting for input". The question stays visible beside the composer however far the transcript has scrolled, and the window title, `/sessions`, `/resume` and a cross-session notice show the wait. Hidden and single-key input goes straight to the program, keystroke by keystroke, and is never shown or kept. A reply left unsent when the command ends is discarded, never run as a shell command. Waiting time is measured separately from wall-clock time and reported on completion. See `docs/design/input-awareness.md`.
+
+### Fixed
+- **Single-key prompts:** answering a single-key question through the composer no longer sends a stray Enter that answered the next question with its default.
+- **Passwords:** text typed at a password prompt is no longer drawn in the composer.
+
 ## [0.18.0] - 2026-10-09
 
 Context Engine platform, Status Strip 2.0, managed Claude Code, worktrees and a read-only GitHub workspace: demand-driven context modules and Context Packs, `/strip` and `/modules`, `/claude` with structured permissions and questions, `/mods`, `/worktrees`, `/github`, terminal-title ownership, and tmux, passthrough and cursor fixes.

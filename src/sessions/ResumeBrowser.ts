@@ -116,14 +116,15 @@ export function resumeDayLabel(timestamp: string, now = new Date()): string {
 
 /**
  * The one-word state a live row leads with, strongest fact first. Only what
- * the service reports: a pending attention request, recent output, a running
- * command, or how the last command ended. "Awaiting input" is claimed only
- * when the program itself asked for attention.
+ * the service reports: its input watch seeing the command wait for input
+ * (confirmed or likely, never re-guessed here), a pending attention request,
+ * recent output, a running command, or how the last command ended.
  */
-export type LiveRowState = 'attention' | 'active' | 'running' | 'completed' | 'failed' | 'idle';
+export type LiveRowState = 'input' | 'inputLikely' | 'attention' | 'active' | 'running' | 'completed' | 'failed' | 'idle';
 
 export function liveRowState(session: SessionInfo, now: number): LiveRowState {
   if (session.running) {
+    if (session.inputSince !== undefined) return session.inputConfidence === 'likely' ? 'inputLikely' : 'input';
     if (session.attentionSince !== undefined) return 'attention';
     if (session.lastOutputAt !== undefined && now - session.lastOutputAt < ACTIVE_OUTPUT_MS) return 'active';
     return 'running';
@@ -134,7 +135,7 @@ export function liveRowState(session: SessionInfo, now: number): LiveRowState {
 }
 
 export const LIVE_ROW_LABELS: Record<LiveRowState, string> = {
-  attention: 'Needs attention', active: 'Active', running: 'Running', completed: 'Completed', failed: 'Failed', idle: 'Idle',
+  input: 'Waiting for input', inputLikely: 'Probably waiting', attention: 'Needs attention', active: 'Active', running: 'Running', completed: 'Completed', failed: 'Failed', idle: 'Idle',
 };
 
 /** A known agent, only when the command's program word or the foreground process proves it. */
@@ -146,10 +147,11 @@ export function liveRowAgent(session: SessionInfo): AgentDescriptor | undefined 
 export function describeLiveRow(session: SessionInfo, now: number): string {
   const where = tildePath(session.cwd);
   const attached = session.state === 'attached' ? 'open in another window' : 'detached';
+  const asked = session.running && session.inputPrompt ? `“${sessionText(session.inputPrompt).slice(0, 40)}” · ` : '';
   const what = session.running
-    ? `${sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
+    ? `${asked}${sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
     : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}${session.lastExit !== undefined && session.lastExit !== 0 ? ` · last exit ${session.lastExit}` : ''}`;
-  const extra = session.title && session.running ? ` · “${sessionText(session.title).slice(0, 32)}”` : '';
+  const extra = session.title && session.running && !session.inputPrompt ? ` · “${sessionText(session.title).slice(0, 32)}”` : '';
   const name = session.name || session.signature;
   return `${name ? `${name} · ` : ''}${where} · ${what}${extra} · ${attached} · age ${formatAge(now - session.createdAt)}`;
 }
