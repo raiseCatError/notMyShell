@@ -1,6 +1,8 @@
 import {spawn, spawnSync, type ChildProcess} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import type {AgentEvent, AgentQuestion} from './model.js';
+import {ClaudeStream, parseCatalog, parseContextUsage, parseSuggestions, parseToolResult, type PartialUpdate} from './claudeStream.js';
+import type {ContextSnapshot, TelemetryUpdate} from '../telemetry.js';
 
 export function claudeQuestions(input: unknown): AgentQuestion[] | undefined {
   const value = input as {questions?: unknown} | undefined;
@@ -32,6 +34,10 @@ export interface ClaudeCapabilities {
   hostPermissions: boolean;
   resume: boolean;
   sessionId: boolean;
+  /** `--include-partial-messages`: replies stream in as they are written (presentation only). */
+  partialMessages?: boolean;
+  /** `--effort <level>` at launch. */
+  effortFlag?: boolean;
 }
 
 const capabilityCache = new Map<string, ClaudeCapabilities>();
@@ -46,6 +52,8 @@ export function claudeCapabilities(executable: string, help?: string): ClaudeCap
     hostPermissions: /--permission-prompts[\s\S]{0,200}"host"/u.test(text),
     resume: /--resume\b/u.test(text),
     sessionId: /--session-id\b/u.test(text),
+    ...(/--include-partial-messages\b/u.test(text) ? {partialMessages: true} : {}),
+    ...(/--effort\b/u.test(text) ? {effortFlag: true} : {}),
   };
   if (help === undefined) capabilityCache.set(executable, capabilities);
   return capabilities;
@@ -92,11 +100,19 @@ export function resultFailure(message: Record<string, unknown>): string | undefi
   return undefined;
 }
 
+type ClaudeLine = {events: AgentEvent[]; control?: {requestId: string; subtype: string; tool?: string; input?: unknown}; turnError?: string};
+
 /** One stdout line → normalized events (unknown shapes produce nothing). */
-export function claudeEvents(line: string): {events: AgentEvent[]; control?: {requestId: string; subtype: string; tool?: string; input?: unknown}; turnError?: string} {
-  let message: Record<string, unknown>;
-  try { message = JSON.parse(line) as Record<string, unknown>; } catch { return {events: []}; }
+export function claudeEvents(line: string): ClaudeLine {
+  let message: unknown;
+  try { message = JSON.parse(line); } catch { return {events: []}; }
+  return message && typeof message === 'object' && !Array.isArray(message) ? claudeMessageEvents(message as Record<string, unknown>) : {events: []};
+}
+
+/** One parsed stream-json message → normalized events. */
+export function claudeMessageEvents(message: Record<string, unknown>): ClaudeLine {
   const type = message.type;
+  const parent = typeof message.parent_tool_use_id === 'string' && message.parent_tool_use_id ? message.parent_tool_use_id.slice(0, 128) : undefined;
   if (type === 'system' && message.subtype === 'init') {
     const model = runtimeModel(message.model);
     return {events: [{kind: 'started', ...(typeof message.session_id === 'string' ? {harnessSessionId: message.session_id} : {})}, ...(model ? [{kind: 'model' as const, model}] : [])]};
@@ -112,7 +128,7 @@ export function claudeEvents(line: string): {events: AgentEvent[]; control?: {re
       if (block.type === 'text' && typeof block.text === 'string' && block.text.trim()) events.push({kind: 'assistant', text: block.text});
       else if (block.type === 'tool_use' && typeof block.id === 'string' && typeof block.name === 'string') {
         const target = toolTarget(block.input);
-        events.push({kind: 'tool', id: block.id, name: block.name, ...(target ? {target} : {}), status: 'started', ...(block.input && typeof block.input === 'object' && !Array.isArray(block.input) ? {input: block.input as Record<string, unknown>} : {})});
+        events.push({kind: 'tool', id: block.id, name: block.name, ...(target ? {target} : {}), status: 'started', ...(block.input && typeof block.input === 'object' && !Array.isArray(block.input) ? {input: block.input as Record<string, unknown>} : {}), ...(parent ? {parent} : {})});
       }
     }
     return {events, ...(turnError ? {turnError} : {})};
@@ -120,11 +136,13 @@ export function claudeEvents(line: string): {events: AgentEvent[]; control?: {re
   if (type === 'user') {
     const content = (message.message as {content?: unknown} | undefined)?.content;
     const events: AgentEvent[] = [];
+    // One structured result per message: Claude Code sends each tool result as its own user message.
+    const result = parseToolResult(message.tool_use_result);
     for (const part of Array.isArray(content) ? content : []) {
       const block = part as {type?: unknown; tool_use_id?: unknown; is_error?: unknown; content?: unknown};
       if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
         const detail = textOf(block.content);
-        events.push({kind: 'tool', id: block.tool_use_id, name: '', status: block.is_error === true ? 'failed' : 'finished', ...(detail ? {detail} : {})});
+        events.push({kind: 'tool', id: block.tool_use_id, name: '', status: block.is_error === true ? 'failed' : 'finished', ...(detail ? {detail} : {}), ...(result && block.is_error !== true ? {result} : {}), ...(parent ? {parent} : {})});
       }
     }
     return {events};
@@ -135,12 +153,19 @@ export function claudeEvents(line: string): {events: AgentEvent[]; control?: {re
     return {events: [{kind: 'settled', ok, ...(reason ? {message: reason} : {})}]};
   }
   if (type === 'control_request' && typeof message.request_id === 'string') {
-    const request = message.request as {subtype?: unknown; tool_name?: unknown; input?: unknown} | undefined;
+    const request = message.request as {subtype?: unknown; tool_name?: unknown; input?: unknown; tool_use_id?: unknown; title?: unknown; description?: unknown;
+      decision_reason?: unknown; permission_suggestions?: unknown; blocked_path?: unknown; default_to_no?: unknown} | undefined;
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';
     const tool = typeof request?.tool_name === 'string' ? request.tool_name : undefined;
     const target = toolTarget(request?.input);
     const questions = tool === 'AskUserQuestion' ? claudeQuestions(request?.input) : undefined;
-    return {events: subtype === 'can_use_tool' && tool ? tool === 'AskUserQuestion' ? questions ? [{kind: 'choice', requestId: message.request_id, questions}] : [] : [{kind: 'approval', requestId: message.request_id, tool, ...(target ? {target} : {}), ...(request?.input && typeof request.input === 'object' ? {input: request.input as Record<string, unknown>} : {})}] : [],
+    // What the provider says about the request (its own title and reason, and any rule it offers to remember).
+    const text = (value: unknown, limit: number) => typeof value === 'string' && value.trim() ? value.slice(0, limit) : undefined;
+    const suggestions = parseSuggestions(request?.permission_suggestions);
+    const extra = {...(text(request?.tool_use_id, 128) ? {toolUseId: text(request?.tool_use_id, 128)!} : {}), ...(text(request?.title ?? request?.description, 300) ? {title: text(request?.title ?? request?.description, 300)!} : {}),
+      ...(text(request?.decision_reason, 600) ? {reason: text(request?.decision_reason, 600)!} : {}), ...(suggestions.length ? {suggestions} : {}),
+      ...(text(request?.blocked_path, 4096) ? {blockedPath: text(request?.blocked_path, 4096)!} : {}), ...(request?.default_to_no === true ? {defaultNo: true} : {})};
+    return {events: subtype === 'can_use_tool' && tool ? tool === 'AskUserQuestion' ? questions ? [{kind: 'choice', requestId: message.request_id, questions}] : [] : [{kind: 'approval', requestId: message.request_id, tool, ...(target ? {target} : {}), ...(request?.input && typeof request.input === 'object' ? {input: request.input as Record<string, unknown>} : {}), ...extra}] : [],
       control: {requestId: message.request_id, subtype, ...(tool ? {tool} : {}), input: request?.input}};
   }
   return {events: []};
@@ -154,8 +179,21 @@ export interface ClaudeSessionOptions {
   /** Extra provider-approved args from a launch profile (validated by the caller). */
   args?: readonly string[];
   env?: NodeJS.ProcessEnv;
+  /** A launch effort level (`--effort`), when the CLI documents it. */
+  effort?: string;
   onEvent(event: AgentEvent): void;
+  /** Runtime facts with provenance: catalog, model, usage, context, limits, files, tasks. */
+  onTelemetry?(update: TelemetryUpdate): void;
+  /** The reply streaming in now; presentation only, never source. Enables `--include-partial-messages`. */
+  onPartial?(partial: PartialUpdate): void;
 }
+
+/** The outcome of a control request: the provider's acknowledgement (and answer), or why there is none. */
+export type ControlResult<T = unknown> = {ok: true; value: T} | {ok: false; reason: string};
+
+/** Permission modes NMSh offers through set_permission_mode; bypassing all checks is never offered. */
+export const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'auto', 'dontAsk'] as const;
+export const EFFORT_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 /** One managed Claude Code process for one conversation. */
 export class ClaudeSession {
@@ -175,11 +213,20 @@ export class ClaudeSession {
   private turnError?: string;
   private interruptRequested = false;
   private model?: string;
+  private readonly stream = new ClaudeStream();
+  /** NMSh's own control requests awaiting the provider's response. */
+  private readonly requests = new Map<string, {resolve(result: ControlResult): void; timer: ReturnType<typeof setTimeout>}>();
+  private readonly ready: Promise<boolean>;
+  private settleReady!: (ok: boolean) => void;
   readonly capabilities: ClaudeCapabilities;
 
   constructor(private readonly options: ClaudeSessionOptions, help?: string) {
     this.capabilities = claudeCapabilities(options.executable, help);
+    this.ready = new Promise(resolve => { this.settleReady = resolve; });
   }
+
+  /** Whether the provider accepted the initialize handshake that control requests depend on. */
+  get controllable(): boolean { return Boolean(this.child) && this.initialized && !this.initializationFailed && this.capabilities.hostPermissions; }
 
   get pid(): number | undefined { return this.child?.pid; }
 
@@ -189,6 +236,9 @@ export class ClaudeSession {
       // Host prompts let the person answer in NMSh; without them, anything that would prompt is denied by Claude itself.
       ...(this.capabilities.hostPermissions ? ['--permission-prompts', 'host', '--permission-prompt-tool', 'stdio'] : []),
       ...(this.options.resume && this.capabilities.resume ? ['--resume', this.options.resume] : this.capabilities.sessionId ? ['--session-id', randomUUID()] : []),
+      // Live text as it is written; the completed messages that follow remain the only source.
+      ...(this.options.onPartial && this.capabilities.partialMessages ? ['--include-partial-messages'] : []),
+      ...(this.options.effort && this.capabilities.effortFlag && (EFFORT_LEVELS as readonly string[]).includes(this.options.effort) ? ['--effort', this.options.effort] : []),
       ...(this.options.args ?? [])];
     try {
       this.child = spawn(this.options.executable, args, {cwd: this.options.cwd, env: this.options.env ?? process.env, stdio: ['pipe', 'pipe', 'ignore']});
@@ -198,9 +248,10 @@ export class ClaudeSession {
     child.stdout!.on('data', (chunk: string) => this.read(chunk));
     child.stdin!.on('drain', () => { this.writable = true; this.flush(); });
     child.stdin!.on('error', () => { /* the exit event reports it */ });
-    child.on('error', () => this.options.onEvent({kind: 'exited', code: -1}));
-    child.on('exit', code => { this.child = undefined; this.options.onEvent({kind: 'exited', code}); });
+    child.on('error', () => { this.endRequests('The provider could not start'); this.options.onEvent({kind: 'exited', code: -1}); });
+    child.on('exit', code => { this.child = undefined; this.endRequests('The provider exited'); this.settleReady(false); this.options.onEvent({kind: 'exited', code}); });
     this.initialized = !this.capabilities.hostPermissions;
+    if (this.initialized) this.settleReady(false);
     if (!this.initialized) {
       this.initializeId = randomUUID();
       this.write({type: 'control_request', request_id: this.initializeId, request: {subtype: 'initialize', hooks: {}}});
@@ -223,15 +274,35 @@ export class ClaudeSession {
       this.buffer = this.buffer.slice(newline + 1);
       if (Buffer.byteLength(line) > 8 * 1024 * 1024) {this.options.onEvent({kind: 'incomplete', reason: 'Provider frame exceeds 8 MiB safety limit'}); continue;}
       if (!line) continue;
-      let raw: {type?: string; response?: {request_id?: string; subtype?: string}};
-      try {raw = JSON.parse(line);} catch {continue;}
+      let parsed: unknown;
+      try {parsed = JSON.parse(line);} catch {continue;}
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      const message = parsed as Record<string, unknown>;
+      const raw = message as {type?: string; response?: {request_id?: string; subtype?: string; response?: unknown}};
       if (raw.type === 'control_response' && raw.response?.request_id === this.initializeId) {
         clearTimeout(this.initializeTimer);
-        if (raw.response?.subtype === 'success') {this.initialized = true; for (const text of this.messages.splice(0)) if (!this.sendFrame(text)) this.options.onEvent({kind: 'incomplete', reason: 'Queued message was not submitted'});}
-        else this.failInitialization('Provider initialization was rejected');
+        if (raw.response?.subtype === 'success') {
+          this.initialized = true;
+          this.settleReady(true);
+          // The provider's model catalog, commands and account plan, as it published them.
+          const catalog = parseCatalog(raw.response.response, Date.now());
+          if (catalog) this.options.onTelemetry?.({kind: 'catalog', catalog});
+          for (const text of this.messages.splice(0)) if (!this.sendFrame(text)) this.options.onEvent({kind: 'incomplete', reason: 'Queued message was not submitted'});
+        } else this.failInitialization('Provider initialization was rejected');
         continue;
       }
-      const {events, control, turnError} = claudeEvents(line);
+      const parsedStream = this.stream.parse(message);
+      if (parsedStream.response) {
+        const waiting = this.requests.get(parsedStream.response.requestId);
+        if (waiting) {
+          this.requests.delete(parsedStream.response.requestId); clearTimeout(waiting.timer);
+          waiting.resolve(parsedStream.response.ok ? {ok: true, value: parsedStream.response.body} : {ok: false, reason: parsedStream.response.error ?? 'The provider refused the request'});
+        }
+        continue;
+      }
+      for (const update of parsedStream.telemetry) this.options.onTelemetry?.(update);
+      if (parsedStream.partial) this.options.onPartial?.(parsedStream.partial);
+      const {events, control, turnError} = claudeMessageEvents(message);
       if (turnError) this.turnError = turnError;
       for (let event of events) {
         if (event.kind === 'model') { if (event.model === this.model) continue; this.model = event.model; }
@@ -255,7 +326,93 @@ export class ClaudeSession {
 
   private failInitialization(reason: string): void {
     this.initializationFailed = true; this.messages = [];
+    this.settleReady(false);
     this.options.onEvent({kind: 'settled', ok: false, message: reason}); this.close();
+  }
+
+  private endRequests(reason: string): void {
+    for (const [id, waiting] of this.requests) { clearTimeout(waiting.timer); waiting.resolve({ok: false, reason}); this.requests.delete(id); }
+  }
+
+  /**
+   * One control request (the documented Agent SDK wire format), answered by the provider's control_response or a
+   * timeout. Requests wait for the initialize handshake; nothing is sent to a provider that never accepted it.
+   */
+  async request(body: Record<string, unknown>, timeoutMs = 15000): Promise<ControlResult> {
+    if (!this.child || this.initializationFailed) return {ok: false, reason: 'The provider is not running'};
+    if (!this.capabilities.hostPermissions) return {ok: false, reason: 'This Claude Code version does not document the control channel NMSh uses'};
+    if (!this.initialized && !(await Promise.race([this.ready, new Promise<boolean>(resolve => setTimeout(() => resolve(false), timeoutMs).unref())]))) {
+      return {ok: false, reason: 'The provider has not finished starting'};
+    }
+    if (this.requests.size >= 32) return {ok: false, reason: 'Too many requests are waiting for the provider'};
+    const id = randomUUID();
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { if (this.requests.delete(id)) resolve({ok: false, reason: 'The provider did not answer in time'}); }, timeoutMs);
+      timer.unref();
+      this.requests.set(id, {resolve, timer});
+      if (!this.write({type: 'control_request', request_id: id, request: body})) { this.requests.delete(id); clearTimeout(timer); resolve({ok: false, reason: 'The provider input queue is full'}); }
+    });
+  }
+
+  /** Change the model for later turns (set_model); undefined restores the provider's default. */
+  async setModel(model: string | undefined): Promise<ControlResult> {
+    if (model !== undefined && !/^[\w.:@/\-[\]]{1,96}$/u.test(model)) return {ok: false, reason: 'Not a model identifier'};
+    const result = await this.request({subtype: 'set_model', model: model ?? 'default'});
+    if (result.ok) this.acknowledged('model', model ?? 'default');
+    return result;
+  }
+
+  /** Session-only effort (apply_flag_settings effortLevel); null returns to the model's default. Never written to settings files. */
+  async setEffort(level: string | null): Promise<ControlResult> {
+    if (level !== null && !(EFFORT_LEVELS as readonly string[]).includes(level)) return {ok: false, reason: 'Not an effort level'};
+    const result = await this.request({subtype: 'apply_flag_settings', settings: {effortLevel: level}});
+    if (result.ok) this.acknowledged('effort', level);
+    return result;
+  }
+
+  /** The session's permission mode (set_permission_mode). Bypassing all checks is never sent. */
+  async setPermissionMode(mode: string): Promise<ControlResult> {
+    if (!(PERMISSION_MODES as readonly string[]).includes(mode)) return {ok: false, reason: 'Not a permission mode NMSh offers'};
+    const result = await this.request({subtype: 'set_permission_mode', mode});
+    if (result.ok) this.acknowledged('permissionMode', mode);
+    return result;
+  }
+
+  /** The provider's own breakdown of the context window. `full` asks the provider to count each category (slower, may call its API). */
+  async contextUsage(detail: 'summary' | 'full' = 'summary'): Promise<ControlResult<ContextSnapshot>> {
+    const result = await this.request({subtype: 'get_context_usage', detail}, detail === 'full' ? 45000 : 15000);
+    if (!result.ok) return result;
+    const snapshot = parseContextUsage(result.value, detail);
+    if (!snapshot) return {ok: false, reason: 'The provider answered in a shape NMSh does not know'};
+    this.options.onTelemetry?.({kind: 'context', snapshot, at: Date.now()});
+    return {ok: true, value: snapshot};
+  }
+
+  /** MCP servers as the provider sees them now (mcp_status). */
+  async mcpStatus(): Promise<ControlResult<unknown[]>> {
+    const result = await this.request({subtype: 'mcp_status'});
+    if (!result.ok) return result;
+    const servers = result.value && typeof result.value === 'object' && Array.isArray((result.value as {mcpServers?: unknown}).mcpServers) ? (result.value as {mcpServers: unknown[]}).mcpServers : undefined;
+    return servers ? {ok: true, value: servers.slice(0, 64)} : {ok: false, reason: 'The provider answered in a shape NMSh does not know'};
+  }
+
+  async mcpToggle(name: string, enabled: boolean): Promise<ControlResult> {
+    return this.request({subtype: 'mcp_toggle', serverName: name.slice(0, 128), enabled});
+  }
+
+  async mcpReconnect(name: string): Promise<ControlResult> {
+    return this.request({subtype: 'mcp_reconnect', serverName: name.slice(0, 128)}, 30000);
+  }
+
+  async stopTask(taskId: string): Promise<ControlResult> {
+    return this.request({subtype: 'stop_task', task_id: taskId.slice(0, 128)});
+  }
+
+  private acknowledged(field: 'model' | 'effort' | 'permissionMode', value: string | null): void {
+    const at = Date.now();
+    this.options.onTelemetry?.({kind: 'requested', field, value, at});
+    const label = field === 'model' ? `Model set to ${value}` : field === 'effort' ? value ? `Effort set to ${value}` : 'Effort back to the model default' : `Permission mode set to ${value}`;
+    this.options.onEvent({kind: 'control', field, value, label});
   }
 
   private write(message: unknown, control = true): boolean {
@@ -287,14 +444,17 @@ export class ClaudeSession {
     return this.write({type: 'user', message: {role: 'user', content: [{type: 'text', text}]}}, false);
   }
 
-  /** Answer one pending permission prompt with the person's explicit choice; never automatic. */
-  answer(requestId: string, allow: boolean): boolean {
+  /**
+   * Answer one pending permission prompt with the person's explicit choice; never automatic. `remember` is one of the
+   * rule changes the provider itself offered with this request, returned verbatim (NMSh never composes a rule).
+   */
+  answer(requestId: string, allow: boolean, remember?: {update: Record<string, unknown>; label: string}): boolean {
     const pending = this.pending.get(requestId);
     if (!pending || pending.questions || !this.child) return false;
     if (!this.write({type: 'control_response', response: {subtype: 'success', request_id: requestId,
-      response: allow ? {behavior: 'allow', updatedInput: pending.input ?? {}} : {behavior: 'deny', message: 'Denied in NMSh.'}}})) return false;
+      response: allow ? {behavior: 'allow', updatedInput: pending.input ?? {}, ...(remember ? {updatedPermissions: [remember.update]} : {})} : {behavior: 'deny', message: 'Denied in NMSh.'}}})) return false;
     this.pending.delete(requestId);
-    this.options.onEvent({kind: 'approvalAnswered', requestId, allowed: allow});
+    this.options.onEvent({kind: 'approvalAnswered', requestId, allowed: allow, ...(allow && remember ? {remembered: remember.label} : {})});
     return true;
   }
 
