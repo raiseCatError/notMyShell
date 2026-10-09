@@ -103,14 +103,17 @@ export function resultFailure(message: Record<string, unknown>): string | undefi
 type ClaudeLine = {events: AgentEvent[]; control?: {requestId: string; subtype: string; tool?: string; input?: unknown}; turnError?: string};
 
 /** One stdout line → normalized events (unknown shapes produce nothing). */
-export function claudeEvents(line: string): ClaudeLine {
+export function claudeEvents(line: string, toolName?: (id: string) => string | undefined): ClaudeLine {
   let message: unknown;
   try { message = JSON.parse(line); } catch { return {events: []}; }
-  return message && typeof message === 'object' && !Array.isArray(message) ? claudeMessageEvents(message as Record<string, unknown>) : {events: []};
+  return message && typeof message === 'object' && !Array.isArray(message) ? claudeMessageEvents(message as Record<string, unknown>, toolName) : {events: []};
 }
 
-/** One parsed stream-json message → normalized events. */
-export function claudeMessageEvents(message: Record<string, unknown>): ClaudeLine {
+/**
+ * One parsed stream-json message → normalized events. `toolName` names the tool behind a tool_use id; without it a
+ * tool result carries no structured reading (a result's shape alone never proves which tool produced it).
+ */
+export function claudeMessageEvents(message: Record<string, unknown>, toolName?: (id: string) => string | undefined): ClaudeLine {
   const type = message.type;
   const parent = typeof message.parent_tool_use_id === 'string' && message.parent_tool_use_id ? message.parent_tool_use_id.slice(0, 128) : undefined;
   if (type === 'system' && message.subtype === 'init') {
@@ -137,11 +140,11 @@ export function claudeMessageEvents(message: Record<string, unknown>): ClaudeLin
     const content = (message.message as {content?: unknown} | undefined)?.content;
     const events: AgentEvent[] = [];
     // One structured result per message: Claude Code sends each tool result as its own user message.
-    const result = parseToolResult(message.tool_use_result);
     for (const part of Array.isArray(content) ? content : []) {
       const block = part as {type?: unknown; tool_use_id?: unknown; is_error?: unknown; content?: unknown};
       if (block.type === 'tool_result' && typeof block.tool_use_id === 'string') {
         const detail = textOf(block.content);
+        const result = parseToolResult(message.tool_use_result, toolName?.(block.tool_use_id));
         events.push({kind: 'tool', id: block.tool_use_id, name: '', status: block.is_error === true ? 'failed' : 'finished', ...(detail ? {detail} : {}), ...(result && block.is_error !== true ? {result} : {}), ...(parent ? {parent} : {})});
       }
     }
@@ -302,7 +305,7 @@ export class ClaudeSession {
       }
       for (const update of parsedStream.telemetry) this.options.onTelemetry?.(update);
       if (parsedStream.partial) this.options.onPartial?.(parsedStream.partial);
-      const {events, control, turnError} = claudeMessageEvents(message);
+      const {events, control, turnError} = claudeMessageEvents(message, id => this.stream.toolName(id));
       if (turnError) this.turnError = turnError;
       for (let event of events) {
         if (event.kind === 'model') { if (event.model === this.model) continue; this.model = event.model; }

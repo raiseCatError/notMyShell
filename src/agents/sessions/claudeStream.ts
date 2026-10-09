@@ -117,8 +117,27 @@ function parsePatch(value: unknown): {hunks: PatchHunk[]; added: number; removed
   return {hunks, added, removed, truncated};
 }
 
-/** A tool's structured output by its shape (the documented *Output types). Contents of whole files are never kept. */
-export function parseToolResult(value: unknown): ToolResult | undefined {
+/** Which built-in tool produces each structured result shape; any other tool (MCP, plugins, unknown) gets none. */
+const RESULT_TOOLS: Record<ToolResult['kind'], ReadonlySet<string>> = {
+  patch: new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit']),
+  read: new Set(['Read']),
+  bash: new Set(['Bash', 'BashOutput']),
+  search: new Set(['Grep', 'Glob']),
+  todos: new Set(['TodoWrite']),
+  agent: new Set(['Agent', 'Task']),
+};
+
+/**
+ * A built-in tool's structured output (the documented *Output types). The tool's name decides how a result may be
+ * read: a result shaped like an edit from an MCP tool is not an edit, so it never becomes a diff or a file activity.
+ * Contents of whole files are never kept.
+ */
+export function parseToolResult(value: unknown, tool: string | undefined): ToolResult | undefined {
+  const result = tool ? resultByShape(value) : undefined;
+  return result && RESULT_TOOLS[result.kind].has(tool!) ? result : undefined;
+}
+
+function resultByShape(value: unknown): ToolResult | undefined {
   if (!isRecord(value)) return undefined;
   if (typeof value.filePath === 'string' && Array.isArray(value.structuredPatch)) {
     const patch = parsePatch(value.structuredPatch)!;
@@ -164,21 +183,39 @@ export function parseTodos(value: unknown): TodoItem[] | undefined {
   return todos;
 }
 
-/** Permission rule offers in plain words. Only typed fields are read; anything unrecognized is not offered. */
+/** Modes an offer may switch to: never one that bypasses permission checks. */
+const OFFERABLE_MODES = new Set(['default', 'acceptEdits', 'plan']);
+const RULE_TEXT = /^[^\u0000-\u001f\u007f-\u009f\u2028-\u202e\u2066-\u2069\u200e\u200f\u061c]{0,160}$/u;
+
+/**
+ * Permission rule offers in plain words. An offer is actionable only when the words say everything it does: it is
+ * rebuilt from exactly the fields shown (never returned with fields the person did not see), it is scoped to this
+ * session (NMSh never writes Claude's settings files), it allows rather than denies, it never switches to a mode
+ * that bypasses checks, and it is small enough to show whole. Anything else is not offered.
+ */
 export function parseSuggestions(value: unknown): PermissionSuggestion[] {
   if (!Array.isArray(value)) return [];
-  return value.slice(0, 8).flatMap(item => {
-    if (!isRecord(item) || typeof item.type !== 'string' || typeof item.destination !== 'string') return [];
-    const where = item.destination === 'session' ? 'for this session' : item.destination === 'localSettings' ? 'in this project (local settings)'
-      : item.destination === 'projectSettings' ? 'in this project (shared settings)' : item.destination === 'userSettings' ? 'for every project (user settings)' : undefined;
-    if (!where) return [];
-    let label: string | undefined;
-    if (item.type === 'addRules' && Array.isArray(item.rules) && item.behavior === 'allow') {
-      const rules = item.rules.flatMap(rule => isRecord(rule) && typeof rule.toolName === 'string' ? [`${rule.toolName}${typeof rule.ruleContent === 'string' && rule.ruleContent ? `(${rule.ruleContent})` : ''}`] : []);
-      if (rules.length) label = `Allow ${rules.join(', ').slice(0, 200)} ${where}`;
-    } else if (item.type === 'setMode' && typeof item.mode === 'string') label = `Switch to ${item.mode} mode ${where}`;
-    else if (item.type === 'addDirectories' && Array.isArray(item.directories)) label = `Allow access to ${strings(item.directories, 4, 512).join(', ')} ${where}`;
-    return label ? [{update: item, label, destination: item.destination}] : [];
+  return value.slice(0, 8).flatMap((item): PermissionSuggestion[] => {
+    if (!isRecord(item) || item.destination !== 'session') return [];
+    if (item.type === 'addRules' && item.behavior === 'allow' && Array.isArray(item.rules) && item.rules.length >= 1 && item.rules.length <= 3) {
+      const rules: Array<{toolName: string; ruleContent?: string}> = [];
+      for (const rule of item.rules) {
+        if (!isRecord(rule) || typeof rule.toolName !== 'string' || !/^[\w:.\-]{1,96}$/u.test(rule.toolName)) return [];
+        if (rule.ruleContent !== undefined && (typeof rule.ruleContent !== 'string' || !RULE_TEXT.test(rule.ruleContent))) return [];
+        rules.push({toolName: rule.toolName, ...(typeof rule.ruleContent === 'string' && rule.ruleContent ? {ruleContent: rule.ruleContent} : {})});
+      }
+      const words = rules.map(rule => `${rule.toolName}${rule.ruleContent ? `(${rule.ruleContent})` : ''}`).join(', ');
+      return [{update: {type: 'addRules', rules, behavior: 'allow', destination: 'session'}, label: `Allow ${words} for this session`, destination: 'session'}];
+    }
+    if (item.type === 'setMode' && typeof item.mode === 'string' && OFFERABLE_MODES.has(item.mode)) {
+      return [{update: {type: 'setMode', mode: item.mode, destination: 'session'}, label: `Switch to ${item.mode} mode for this session`, destination: 'session'}];
+    }
+    if (item.type === 'addDirectories' && Array.isArray(item.directories) && item.directories.length >= 1 && item.directories.length <= 2
+      && item.directories.every(directory => typeof directory === 'string' && directory.startsWith('/') && RULE_TEXT.test(directory))) {
+      const directories = item.directories as string[];
+      return [{update: {type: 'addDirectories', directories, destination: 'session'}, label: `Allow access to ${directories.join(', ')} for this session`, destination: 'session'}];
+    }
+    return [];
   });
 }
 
@@ -310,10 +347,10 @@ export class ClaudeStream {
         }
         if (content.some(part => isRecord(part) && part.type === 'text') && !parent) { this.partial = ''; out.partial = {}; }
       } else {
-        const result = parseToolResult(message.tool_use_result);
         for (const part of content) {
           if (!isRecord(part) || part.type !== 'tool_result' || typeof part.tool_use_id !== 'string') continue;
           const tool = this.tools.get(part.tool_use_id);
+          const result = parseToolResult(message.tool_use_result, tool?.name);
           if (result?.kind === 'patch' && part.is_error !== true) {
             out.telemetry.push({kind: 'file', path: result.path, action: tool?.name === 'Write' || result.created ? 'write' : 'edit', added: result.added, removed: result.removed, patch: result.hunks, at});
           }
@@ -324,9 +361,9 @@ export class ClaudeStream {
     return out;
   }
 
-  /** The structured result for a tool_result block in a user message, when the message carries one. */
-  resultFor(message: Record<string, unknown>): ToolResult | undefined {
-    return parseToolResult(message.tool_use_result);
+  /** The name of the tool a tool_use id belongs to, as the provider announced it. */
+  toolName(id: string): string | undefined {
+    return this.tools.get(id)?.name;
   }
 
   private toolStarted(name: string, input: Record<string, unknown> | undefined, at: number): TelemetryUpdate[] {
