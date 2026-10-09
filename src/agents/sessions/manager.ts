@@ -207,6 +207,21 @@ export class AgentSessions {
     return this.control(id)?.mcpReconnect(name) ?? {ok: false, reason: 'This target has no live control channel'};
   }
 
+  /** Reload plugins from disk into a running target (reload_plugins): what loaded, and how many failed to. */
+  async reloadPlugins(id: string): Promise<ControlResult<{plugins: string[]; errors: number}>> {
+    const control = this.control(id);
+    if (!control) return {ok: false, reason: 'This target has no live control channel'};
+    const result = await control.request({subtype: 'reload_plugins'}, 60_000);
+    if (!result.ok) return result;
+    const body = result.value as {plugins?: unknown; error_count?: unknown} | undefined;
+    const plugins = Array.isArray(body?.plugins) ? body!.plugins.flatMap(item => item && typeof item === 'object' && typeof (item as {name?: unknown}).name === 'string' ? [(item as {name: string}).name.slice(0, 96)] : []).slice(0, 256) : [];
+    const errors = typeof body?.error_count === 'number' && Number.isFinite(body.error_count) ? body.error_count : 0;
+    const session = this.get(id);
+    if (session?.telemetry?.runtime) session.telemetry.runtime = {...session.telemetry.runtime, plugins: plugins.map(name => ({name})), at: this.env.now()};
+    if (session) this.emit(session);
+    return {ok: true, value: {plugins, errors}};
+  }
+
   async stopTask(id: string, taskId: string): Promise<ControlResult> {
     return this.control(id)?.stopTask(taskId) ?? {ok: false, reason: 'This target has no live control channel'};
   }

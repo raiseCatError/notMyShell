@@ -3,10 +3,12 @@ import {firstPartyPacks} from '../../context/modules.js';
 import {installedPackStatuses, readManifest} from '../../context/packs/store.js';
 import {claudeSettingsPath} from '../claudeStatusLine.js';
 import {resolveCommand} from '../../providers/providers.js';
-import {discoverClaudePlugins} from './claudeDiscovery.js';
+import {claudePluginEntries, listClaudePlugins, standaloneSkills} from './claudePlugins.js';
+import {homedir} from 'node:os';
 import {builtinModInventory, type ModEntry} from './model.js';
 import {displayText} from '../transcript/projection.js';
 import type {AgentProfile} from '../sessions/manager.js';
+import type {AgentSession} from '../sessions/model.js';
 
 export async function discoverHooks(paths: readonly {path: string; scope: 'global' | 'project'}[]): Promise<ModEntry[]> {
   const entries: ModEntry[] = [];
@@ -23,7 +25,9 @@ export async function discoverHooks(paths: readonly {path: string; scope: 'globa
           if (!hook || typeof hook !== 'object') return;
           const id = `${displayText(event).slice(0, 80)} hook ${index + 1}.${n + 1}`;
           entries.push({key: JSON.stringify(['claude-hook', path, event, index, n]), id, name: id, kind: 'Provider-native', provider: 'claude', source: 'Claude settings hook declaration', scope,
-            reference: displayText(path).slice(0, 512), installedBy: 'unknown', enabled: value.disableAllHooks === true ? 'no' : 'unknown', managed: false, executesInside: 'Claude Code', sandbox: 'No', permissions: [], applicability: ['claude'], evidence: 'Passive declaration only; effective provider settings/activation not inferred'});
+            reference: displayText(path).slice(0, 512), installedBy: 'unknown', enabled: value.disableAllHooks === true ? 'no' : 'unknown', managed: false, executesInside: 'Claude Code', sandbox: 'No', permissions: [], applicability: ['claude'], evidence: 'Passive declaration only; effective provider settings/activation not inferred',
+            nativeType: 'Settings hook', runtime: 'Runs in NMSh-managed sessions like any Claude session', notes: [],
+            toggle: {supported: false, reason: 'Settings hooks live in Claude\'s settings files, which NMSh does not edit; disableAllHooks there turns them off'}});
         });
       });
     }
@@ -39,9 +43,26 @@ export async function loadModInventory(cwd: string, version: string, profiles: r
   const claudeProfiles = profiles.filter(p => p.harness === 'claude');
   const namespaces = claudeProfiles.length ? claudeProfiles : [undefined];
   for (const profile of namespaces) {
-    const native = executable ? await discoverClaudePlugins(executable, cwd, profile?.configDir) : [];
+    const configDir = profile?.configDir ?? process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude');
+    const native = executable ? await claudePluginEntries(await listClaudePlugins(executable, cwd, profile?.configDir), cwd, profile ? {name: profile.name, ...(profile.configDir ? {configDir: profile.configDir} : {})} : undefined) : [];
+    native.push(...await standaloneSkills(configDir));
     native.push(...await discoverHooks([{path: profile?.configDir ? join(profile.configDir, 'settings.json') : claudeSettingsPath(), scope: 'global'}, {path: join(cwd, '.claude', 'settings.json'), scope: 'project'}, {path: join(cwd, '.claude', 'settings.local.json'), scope: 'project'}]));
     entries.push(...native.map(i => profile ? {...i, profileId: profile.name, key: JSON.stringify([profile.name, i.key])} : i));
   }
   return entries;
+}
+
+/**
+ * Which running managed targets report each Claude plugin loaded (from their own init or reload report): the
+ * evidence that an enabled plugin is actually active there, not merely listed.
+ */
+export function withLoadedIn(entries: ModEntry[], sessions: readonly AgentSession[]): ModEntry[] {
+  const live = sessions.filter(session => session.harness === 'claude' && session.level === 'managed' && session.telemetry?.runtime);
+  return entries.map(entry => {
+    if (!entry.claude) return entry;
+    const name = entry.claude.pluginId.split('@')[0];
+    const loadedIn = live.filter(session => (session.profileId ?? undefined) === (entry.profileId ?? undefined) && session.telemetry!.runtime!.plugins.some(plugin => plugin.name === name || plugin.name === entry.claude!.pluginId))
+      .map(session => session.title);
+    return {...entry, loadedIn};
+  });
 }

@@ -309,7 +309,8 @@ import {attachRenderer, renderWorkspace, type RenderOptions as GithubRenderOptio
 import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
 import {GithubWorkspaceService} from '../githubWorkspace/service.js';
 import {GhSource} from '../githubWorkspace/source.js';
-import {loadModInventory} from '../agents/mods/inventory.js';
+import {loadModInventory, withLoadedIn} from '../agents/mods/inventory.js';
+import {inspectPlugin, setPluginEnabled} from '../agents/mods/claudePlugins.js';
 import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
 import {applyPickerChoice} from '../agents/input/surface.js';
 import {settingsEffort} from '../agents/claudeSettings.js';
@@ -1596,6 +1597,8 @@ export class TerminalApp {
       const result = action ? this.modsPanel.dispatch(action) : undefined;
       if (result === 'close') {this.modsPanel = undefined; this.returnFromPanel();}
       else if (result === 'refresh') void this.refreshMods();
+      else if (result === 'toggle') void this.toggleMod();
+      else if (result === 'inspect') void this.inspectMod();
       this.render(); return;
     }
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
@@ -8287,8 +8290,57 @@ export class TerminalApp {
   private async refreshMods(): Promise<void> {
     const panel = this.modsPanel;
     if (!panel) return;
-    await panel.refresh(() => loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles));
+    await panel.refresh(async () => withLoadedIn(await loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles), this.agents.sessions));
     if (this.modsPanel === panel) this.render();
+  }
+
+  /**
+   * The confirmed change, through Claude's own command at the plugin's installed scope; then the listing is read again
+   * as evidence, and running managed targets of the same launch identity reload plugins. Says exactly what happened.
+   */
+  private async toggleMod(): Promise<void> {
+    const panel = this.modsPanel;
+    const pending = panel?.confirm;
+    const entry = panel?.inventoryEntry(pending?.key);
+    if (!panel || !pending || !entry) return;
+    panel.confirm = undefined;
+    const executable = resolveCommand('claude');
+    if (!executable) { panel.message = 'Claude Code is not on PATH.'; this.render(); return; }
+    panel.busy = `${pending.enable ? 'Enabling' : 'Disabling'} ${entry.name}…`;
+    this.render();
+    try {
+      const installed = new Set(panel.entries.filter(item => item.profileId === entry.profileId && item.claude).map(item => item.claude!.pluginId));
+      const result = await setPluginEnabled(executable, entry, pending.enable, installed);
+      if (!result.ok) { panel.message = `Not changed: ${result.message}`; return; }
+      await panel.refresh(async () => withLoadedIn(await loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles), this.agents.sessions));
+      const after = panel.inventoryEntry(pending.key);
+      const confirmed = after?.enabled === (pending.enable ? 'yes' : 'no');
+      const targets = this.agents.sessions.filter(session => session.harness === 'claude' && session.level === 'managed' && (session.profileId ?? undefined) === (entry.profileId ?? undefined)
+        && this.agents.controllable(session.id) && (entry.claude?.scope === 'user' || session.cwd === entry.claude?.projectPath));
+      const reloads = await Promise.all(targets.map(async session => ({session, result: await this.agents.reloadPlugins(session.id)})));
+      const reloaded = reloads.filter(item => item.result.ok);
+      const errors = reloaded.reduce((sum, item) => sum + (item.result.ok ? item.result.value.errors : 0), 0);
+      panel.message = [
+        `${entry.name} ${pending.enable ? 'enabled' : 'disabled'}${result.alreadyInGoalState ? ' (it already was)' : ''}${confirmed ? ', confirmed by Claude\'s listing' : ', but Claude\'s listing does not show it yet'}.`,
+        targets.length ? `Reloaded in ${reloaded.length} of ${targets.length} running managed session${targets.length === 1 ? '' : 's'}${errors ? `; Claude reported ${errors} plugin load error${errors === 1 ? '' : 's'}` : ''}.` : 'New sessions pick it up; no managed session on this account is running.',
+        'Claude\'s own terminal sessions need /reload-plugins or a restart.',
+      ].join(' ');
+      if (this.modsPanel === panel) panel.setInventory(withLoadedIn([...panel.entries], this.agents.sessions));
+    } finally {
+      panel.busy = undefined;
+      if (this.modsPanel === panel) this.render();
+    }
+  }
+
+  private async inspectMod(): Promise<void> {
+    const panel = this.modsPanel;
+    const entry = panel?.selectedEntry;
+    const executable = resolveCommand('claude');
+    if (!panel || !entry?.claude || !executable || panel.inspections.has(entry.key)) return;
+    panel.busy = `Asking Claude to describe ${entry.name}…`;
+    this.render();
+    try { panel.inspections.set(entry.key, await inspectPlugin(executable, entry)); }
+    finally { panel.busy = undefined; if (this.modsPanel === panel) this.render(); }
   }
 
   /** /copy inside an agent view: the Nth newest reply's visible text, never protocol data. */

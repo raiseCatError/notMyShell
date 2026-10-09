@@ -4,7 +4,9 @@ import type {Key} from '../../terminal/keys.js';
 import {cycleTab, tabCycleDelta} from '../../ui/PanelShell.js';
 
 export const MOD_TABS = ['All', 'Portable', 'Provider-native', 'Context Packs'] as const;
-export type ModAction = {kind: 'Search' | 'Back' | 'ActivateAction' | 'Refresh' | 'BackspaceSearch'} | {kind: 'TypeSearch'; text: string} | {kind: 'SelectTab' | 'Navigate'; direction: number} | {kind: 'ProviderNext'} | {kind: 'Scroll'; rows: number};
+export type ModAction = {kind: 'Search' | 'Back' | 'ActivateAction' | 'Refresh' | 'BackspaceSearch' | 'Toggle' | 'Inspect'} | {kind: 'TypeSearch'; text: string} | {kind: 'SelectTab' | 'Navigate'; direction: number} | {kind: 'ProviderNext'} | {kind: 'Scroll'; rows: number};
+/** What a static inspection found: Claude's component summary, and a mod's hooks and calls. */
+export interface ModInspection {details?: string; hooks: string[]; calls: string[]; error?: string}
 export class ModsController {
   private inventory: ModEntry[] = [];
   tab: 'All' | ModKind = 'All';
@@ -17,6 +19,15 @@ export class ModsController {
   refreshing = false;
   stale = false;
   message?: string;
+  /** A change waiting for Enter: turning the entry on or off through the provider's own command. */
+  confirm?: {key: string; enable: boolean};
+  /** A provider command in flight, in words ("Disabling skins…"). */
+  busy?: string;
+  readonly inspections = new Map<string, ModInspection>();
+  get selectedEntry(): ModEntry | undefined {return this.rows[this.selected];}
+  /** Every entry, unfiltered (the host checks a change against the full listing). */
+  get entries(): readonly ModEntry[] {return this.inventory;}
+  inventoryEntry(key: string | undefined): ModEntry | undefined {return key ? this.inventory.find(entry => entry.key === key) : undefined;}
   get providers(): string[] {return [...new Set(this.inventory.flatMap(i => [i.provider, ...i.applicability]))].filter(p => p !== 'nmsh').sort();}
   get rows(): ModEntry[] {
     const q = this.query.toLowerCase();
@@ -29,8 +40,26 @@ export class ModsController {
     this.inventory = items;
     this.selected = Math.max(0, this.rows.findIndex(i => i.key === key));
   }
-  dispatch(action: ModAction): 'close' | 'refresh' | undefined {
+  dispatch(action: ModAction): 'close' | 'refresh' | 'toggle' | 'inspect' | undefined {
+    // While a provider command runs, keys wait: its result decides what the list shows next.
+    if (this.busy) return undefined;
+    if (this.confirm) {
+      // A pending change owns Enter and Esc; anything else cancels it so nothing changes by accident.
+      const pending = this.confirm;
+      this.confirm = undefined;
+      if (action.kind === 'ActivateAction' && this.selectedEntry?.key === pending.key) {this.confirm = pending; return 'toggle';}
+      if (action.kind !== 'Back') this.message = 'Change cancelled.';
+      return undefined;
+    }
     switch (action.kind) {
+      case 'Toggle': {
+        const entry = this.selectedEntry;
+        if (!entry) break;
+        if (!entry.toggle?.supported) {this.message = entry.toggle ? `Can't toggle here: ${entry.toggle.reason}` : 'NMSh has no supported way to turn this on or off.'; break;}
+        if (entry.enabled === 'unknown') {this.message = 'Its current state is unknown, so NMSh will not change it.'; break;}
+        this.confirm = {key: entry.key, enable: entry.enabled === 'no'}; this.message = undefined; break;
+      }
+      case 'Inspect': if (this.selectedEntry) {this.details = true; this.scroll = 0; return 'inspect';} break;
       case 'Search': this.owner = 'SEARCH'; this.details = false; break;
       case 'TypeSearch': this.query += displayText(action.text).slice(0, Math.max(0, 256 - this.query.length)); this.selected = 0; break;
       case 'BackspaceSearch': this.query = [...this.query].slice(0, -1).join(''); this.selected = 0; break;
@@ -66,6 +95,8 @@ export function modsKeyAction(key: Key, owner: 'PANEL' | 'SEARCH'): ModAction | 
   if (delta) return {kind: 'SelectTab', direction: delta};
   if (key.kind === 'enter') return {kind: 'ActivateAction'};
   if (key.kind === 'text') {
+    if (key.value === ' ') return {kind: 'Toggle'};
+    if (key.value.toLowerCase() === 'i') return {kind: 'Inspect'};
     if (key.value === '/') return {kind: 'Search'};
     if (key.value.toLowerCase() === 'r') return {kind: 'Refresh'};
     if (key.value.toLowerCase() === 'p') return {kind: 'ProviderNext'};
