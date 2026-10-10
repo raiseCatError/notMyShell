@@ -11,7 +11,7 @@ import {HARNESSES} from '../src/agents/harnesses.js';
 
 const HELP = 'Usage: claude [options]\n  -p, --print  Print response\n  --input-format <format>  "text" (default), or "stream-json"\n  --output-format <format>  "stream-json" (realtime)\n  --permission-prompts <target>  Who answers: "host" (the SDK host) or "none"\n  -r, --resume [value]\n  --session-id <uuid>\n';
 const root = mkdtempSync(join(tmpdir(), 'nmsh-agents-'));
-test.after(() => rmSync(root, {recursive: true, force: true}));
+test.after(() => rmSync(root, {recursive: true, force: true, maxRetries: 10, retryDelay: 50}));
 
 /** A stand-in harness speaking stream-json: it records stdin and answers like the real protocol. */
 const fake = join(root, 'claude');
