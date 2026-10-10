@@ -24,6 +24,9 @@ Design and research: [docs/design/terminal-workflow.md](../design/terminal-workf
 | `feature/command-queue` | `../notMyShell-command-queue` | #357 (draft, base #348) | complete; full verify green when the machine is not saturated |
 | `feature/copy-selection` | `../notMyShell-copy` | #358 (draft, base #357) | copy selection, picker, settings, sticky controls, Smart folding fix |
 
+| `feature/copy-report` | `../notMyShell-report` | #360 (draft, base #358) | Copy as Report; security fixes below |
+| `feature/compare-output` | `../notMyShell-compare` | #361 (draft, base #360) | Compare output; contains #360 by merge |
+
 Other open PRs (independent, not part of this stack): #347 agent workspace, #349 notice word wrap, #346 mods.
 
 ## Work completed
@@ -44,6 +47,24 @@ Other open PRs (independent, not part of this stack): #347 agent workspace, #349
 | Direct block Copy + sticky Copy/Actions on the sticky header | `7a94ce5` | app-level tests; captures `docs/captures/sticky-*.png` |
 | Smart folding: long output folds whatever the command; important lines stay visible | `7a94ce5` | rewritten policy tests incl. 5/50/200/500/5000 lines, wrapped lines, errors mid-log |
 | Copy never changes folding; opt-in auto-expand of copied blocks only | `7a94ce5` | `tests/copyFolding.test.ts` |
+
+## Security acceptance (#363), checked against current heads
+
+Verified fixed or not reproducible: parser/redaction differential (skeleton matching with span mapping), token
+splitting by zero-width, combining and full-width characters, bidi controls inside key names, private paths,
+URL credentials, auth headers, report fence sizing, editing (edited text is rescanned and labelled as not redacted).
+
+Found and fixed in this session (unit tests in `tests/compareSecurity.test.ts` and `tests/copyReport.test.ts`):
+
+| Finding | Fix |
+| --- | --- |
+| `c` copied the raw unified diff: escape bytes, bidi and invisible characters from program output reached the clipboard | `copyableDiff` applies the report character policy |
+| `c` gave no hint that the copy was not reviewed or redacted | the note says what looks sensitive and points to `r` |
+| Comparison report fence was sized before invisible characters were removed; hidden characters or U+2028 could close it | the diff is cleaned first, then the fence is sized |
+| Side labels (command text) sat in single-backtick inline code | `inlineCode` sizes its delimiter and folds to one line |
+| Report `Directory`/`Status` facts accepted line breaks and backticks | folded to one line, directory as `inlineCode` |
+
+Remaining limits: redaction is pattern based; secrets with no recognisable shape or context are not found.
 
 ## Findings worth remembering
 
