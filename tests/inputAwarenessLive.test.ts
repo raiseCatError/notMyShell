@@ -103,12 +103,13 @@ test('live fish: read is fish\'s own line editor: handed the terminal, answered 
     let mark = frontend.mark;
     frontend.pty.write(`read -P 'Name: ' x; echo got=$x\r`);
     // Fish's reader turns on bracketed paste: NMSh hands it the terminal, as for any interactive program.
-    await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, 'fish draws its own prompt');
+    // The typed command echoes "Name: " too; the second occurrence is fish's own prompt. Enter earlier would queue.
+    await until(() => frontend.output.slice(mark).split('Name: ').length > 2, 15_000, 'fish draws its own prompt');
     frontend.pty.write('abc\r');
     await frontend.waitFor(/got=abc[\s\S]*Completed/u, mark);
     mark = frontend.mark;
     frontend.pty.write(`read -s -P 'Password: ' p; echo len=(string length -- $p)\r`);
-    await until(() => frontend.output.slice(mark).includes('Password: '), 15_000, 'fish draws its hidden prompt');
+    await until(() => frontend.output.slice(mark).split('Password: ').length > 2, 15_000, 'fish draws its hidden prompt');
     frontend.pty.write('hunter2\r');
     // This command's own completion: a bare "Completed" could match the previous command's row.
     await frontend.waitFor(/len=7[\s\S]*Completed/u, mark);

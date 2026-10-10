@@ -24,11 +24,13 @@ const suites = {
 const runtimeWeights = {
   "bundledCatalog.test.ts": 5,
   "compatibilityHarness.test.ts": 28,
+  "commandQueueLive.test.ts": 68,
   "configuredCompletion.test.ts": 6,
   "ctrlZJobControl.test.ts": 12,
   "detachedOutput.test.ts": 22,
   "fullChromaQa.test.ts": 5,
   "hostProfiles.test.ts": 10,
+  "inputAwarenessLive.test.ts": 59,
   "interactiveCli.test.ts": 14,
   "liveHardening.test.ts": 45,
   "liveStatus.test.ts": 5,
@@ -41,6 +43,7 @@ const runtimeWeights = {
   "startupBlocked.test.ts": 29,
   "startupDiscovery.test.ts": 22,
   "startupLaunch.test.ts": 8,
+  "typingAfterRead.test.ts": 17,
   "themeBridgeLive.test.ts": 12
 };
 
