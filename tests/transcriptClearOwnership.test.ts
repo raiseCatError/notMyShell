@@ -158,3 +158,96 @@ test('a restored transcript drops records whose lines a clear removed before thi
   roundTrip.restoreTranscript(saved);
   assert.deepEqual(roundTrip.wrapped(80).map(row => row.plain), fresh.wrapped(80).map(row => row.plain), 'a current transcript restores as drawn');
 });
+
+test('legacy repair checks ownership, not just bounds: an in-range stale record and everything older are dropped', () => {
+  // After a clear, NMSh notices filled lines 0-1 and a command began at 2; a pre-clear record [0, 1, 2) fits the bounds.
+  const output = new OutputBuffer();
+  output.addFrontendInteraction('/notices', 'Nothing new.');
+  run(output, 'printf done', 'done\r\n');
+  const saved = output.transcript();
+  const staleInRange = {command: 'echo before', output: 'before', lifecycleText: '', exitCode: 0, startId: 0, outputStartId: 1, endId: 2, expanded: true};
+  const olderValidLooking = {command: 'true', output: '', lifecycleText: '', exitCode: 0, startId: 0, outputStartId: 0, endId: 0, expanded: true};
+  const restored = new OutputBuffer();
+  restored.restoreTranscript({...saved, records: [...saved.records, staleInRange, olderValidLooking]});
+  assert.deepEqual(restored.view().completed.map(record => record.command), ['printf done'],
+    'the stale record\'s header is an NMSh line, so it and every older record go');
+  assert.equal(restored.view().ownerOf(1), undefined, 'the notice line is attributed to no command');
+
+  // Header lines that are command lines but text that is not the record's output: also stale.
+  const twice = new OutputBuffer();
+  run(twice, 'seq 3', lines(3));
+  const copy = twice.transcript();
+  const restoredTwice = new OutputBuffer();
+  restoredTwice.restoreTranscript({...copy, records: copy.records.map(record => ({...record, output: 'something else'}))});
+  assert.equal(restoredTwice.view().completed.length, 0);
+});
+
+test('legacy repair keeps genuine records: Ask blocks with blank rows, cleared commands and folded blocks', () => {
+  const output = new OutputBuffer();
+  output.addAskInteraction('what is this', [{role: 'you', text: 'what is this'}, {role: 'ask', text: 'first\n\nsecond'}, {role: 'you', text: 'more'}, {role: 'ask', text: 'ok'}]);
+  run(output, 'seq 15', lines(15));
+  output.toggleExpanded(0);
+  output.beginCommand('clear-and-print', ['❯ clear-and-print']);
+  output.write(`\u001B[2J${lines(3, 'kept')}`);
+  output.complete(0);
+  run(output, 'seq 12', lines(12));
+  const saved = output.transcript();
+  const restored = new OutputBuffer();
+  restored.restoreTranscript(saved);
+  assert.deepEqual(restored.view().completed.map(record => record.command), ['seq 12', 'clear-and-print']);
+  assert.deepEqual(restored.wrapped(60).map(row => row.plain), output.wrapped(60).map(row => row.plain));
+
+  const ask = new OutputBuffer();
+  ask.addAskInteraction('what is this', [{role: 'you', text: 'what is this'}, {role: 'ask', text: 'first\n\nsecond'}, {role: 'you', text: 'more'}, {role: 'ask', text: 'ok'}]);
+  run(ask, 'seq 15', lines(15));
+  const askRestored = new OutputBuffer();
+  askRestored.restoreTranscript(ask.transcript());
+  assert.deepEqual(askRestored.view().completed.map(record => record.command), ['seq 15', '/btw what is this'],
+    'trailing blanks on an Ask row are not a mismatch');
+});
+
+test('a reattached running command whose journal predates the clear rule owns the stored lines, and older records go', () => {
+  const output = new OutputBuffer();
+  run(output, 'seq 3', lines(3));
+  // What an older NMSh journaled: the running command kept its pre-clear start (line 6) after its clear emptied the lines.
+  const transcript: OutputTranscript = {...output.transcript(), lines: [], lineTypes: [], visualGaps: []};
+  const after = new OutputBuffer();
+  after.write(lines(2, 'post'));
+  after.write('');
+  const restored = new OutputBuffer();
+  restored.restoreTranscript({...transcript, lines: after.transcript().lines});
+  assert.deepEqual(restored.resumeActive('tmux', 6, 7), {cleared: true});
+  restored.write(lines(1, 'more'));
+  const record = restored.complete(0)!;
+  assert.deepEqual([record.startId, record.outputStartId, record.endId], [0, 0, 3]);
+  assert.equal(record.output, 'post 1\npost 2\nmore 1');
+  assert.deepEqual(restored.view().completed.map(item => item.command), ['tmux']);
+
+  const intact = new OutputBuffer();
+  run(intact, 'seq 3', lines(3));
+  intact.beginCommand('sleep 5', ['❯ sleep 5']);
+  const live = intact.transcript();
+  const reattached = new OutputBuffer();
+  reattached.restoreTranscript(live);
+  assert.deepEqual(reattached.resumeActive('sleep 5', intact.activeStartId!, intact.activeOutputStartId!), {cleared: false});
+  assert.deepEqual(reattached.view().completed.map(item => item.command), ['seq 3'], 'a valid running block keeps the records before it');
+});
+
+test('alternate-screen programs, partial erases and progress redraws keep every record', () => {
+  const cases: Array<[string, string]> = [
+    ['full-screen program clearing its own screen', '\u001B[?1049h\u001B[2J\u001B[Hediting\u001B[3J\u001B[?1049l'],
+    ['erase below and above the cursor', 'one\r\ntwo\u001B[J\u001B[0J\u001B[1J\r\n'],
+    ['erase in line', 'status\u001B[K\r\u001B[2Kdone\r\n'],
+    ['progress redraw', '10%\r50%\r100%\r\n'],
+    ['cursor moves', 'a\u001B[3Gb\u001B[2Dc\u001B[1Cd\r\n'],
+  ];
+  for (const [name, data] of cases) {
+    const output = new OutputBuffer();
+    run(output, 'seq 15', lines(15));
+    run(output, 'printf ok', 'ok\r\n');
+    run(output, name, data);
+    assert.deepEqual(output.view().completed.map(record => record.command), [name, 'printf ok', 'seq 15'], name);
+    assert.equal(output.recentShell(3)?.output, lines(15).trimEnd().replaceAll('\r\n', '\n'), `${name}: earlier output is intact`);
+    assertFoldRowsOwned(output, output.wrapped(80));
+  }
+});

@@ -918,8 +918,8 @@ export class TerminalApp {
       this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
       const running = journal.live.running;
       if (running) {
-        this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
-        this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
+        const {cleared} = this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
+        this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared,
           startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
           // A submission checkpoint can precede the very first shell event.
           // Its replayed readiness prompt must not complete the queued command.

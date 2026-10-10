@@ -78,21 +78,39 @@ export function serializeCopyPayload(record: CompletedCommand): string {
   return record.output;
 }
 
+/** Stored line text, compared as the transcript draws it: trailing blanks are not content. */
+const sameText = (left: string, right: string) => left.split('\n').map(line => line.trimEnd()).join('\n')
+  === right.split('\n').map(line => line.trimEnd()).join('\n');
+
 /**
- * The records of a stored transcript that can be placed on its lines, newest first. Each block owns
- * [startId, endId) and blocks follow one another, so a record whose range runs past the stored lines or into a
- * newer block names lines that are not its own. Transcripts saved before screen clears retired their blocks kept
- * such records; drawing them put one command's fold row inside another command's output.
+ * The records of a stored transcript that still own their lines, newest first. Transcripts saved before screen
+ * clears retired their blocks keep records whose line ids now name other commands' lines; drawing them put one
+ * command's fold row inside another command's output. A bounds check alone cannot tell them apart, so each record
+ * must also show the evidence the format keeps:
+ * - its range lies within the stored lines and ends where the next newer block begins, or earlier;
+ * - its header lines are command lines (an Ask block's header is NMSh's own line), unless it is a command that
+ *   cleared the screen, which owns its output from line 0 with no header;
+ * - the lines it covers read as the output it recorded.
+ * A record that fails marks a clear the format did not record, so it and every older record are dropped: their
+ * lines stay in the transcript as plain rows, never attributed to a command that did not write them.
  */
-function placeableRecords(records: readonly CompletedCommand[], lineCount: number): CompletedCommand[] {
-  let limit = lineCount;
-  return records.filter(record => {
+export function placeableRecords(records: readonly CompletedCommand[], lines: readonly string[], lineTypes: ReadonlyMap<number, 'command' | 'metadata'>): CompletedCommand[] {
+  let limit = lines.length;
+  const placed: CompletedCommand[] = [];
+  for (const record of records) {
     const end = record.endId ?? limit;
-    const placed = Number.isInteger(record.startId) && record.startId >= 0 && record.startId <= record.outputStartId
-      && record.outputStartId <= end && end <= limit;
-    if (placed) limit = record.startId;
-    return placed;
-  });
+    const inRange = Number.isSafeInteger(record.startId) && Number.isSafeInteger(record.outputStartId) && Number.isSafeInteger(end)
+      && record.startId >= 0 && record.startId <= record.outputStartId && record.outputStartId <= end && end <= limit;
+    if (!inRange) break;
+    const headerLines = Array.from({length: record.outputStartId - record.startId}, (_, offset) => lineTypes.get(record.startId + offset));
+    const header = record.frontend === 'ask'
+      ? headerLines.length > 0 && headerLines.every(type => type === 'metadata')
+      : headerLines.length > 0 ? headerLines.every(type => type === 'command') : record.startId === 0;
+    if (!header || !sameText(lines.slice(record.outputStartId, end).join('\n'), record.output)) break;
+    placed.push(record);
+    limit = record.startId;
+  }
+  return placed;
 }
 
 export class OutputBuffer {
@@ -166,7 +184,8 @@ export class OutputBuffer {
   restoreTranscript(transcript: OutputTranscript): void {
     this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
     this.parser.restore(transcript.lines);
-    this.completed.splice(0, this.completed.length, ...placeableRecords(transcript.records, transcript.lines.length).map(record => ({
+    const lines = Array.from({length: this.parser.completedCount()}, (_, index) => this.parser.plainLineAt(index) ?? '');
+    this.completed.splice(0, this.completed.length, ...placeableRecords(transcript.records, lines, new Map(transcript.lineTypes)).map(record => ({
       ...record,
       historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
       activities: record.activities?.map(activity => ({...activity})),
@@ -247,11 +266,21 @@ export class OutputBuffer {
    * and output lines are already in the transcript, so only the active block
    * is re-established and new output continues it.
    */
-  resumeActive(command: string, startId: number, outputStartId: number, onModeChange?: (mode: PresentationMode) => void): void {
+  resumeActive(command: string, startId: number, outputStartId: number, onModeChange?: (mode: PresentationMode) => void): {cleared: boolean} {
     this.active = {command, start: startId, outputStart: outputStartId,
       historicalContext: this.historicalContexts.get(startId), activities: []};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
     this.cut = new TranscriptCut();
+    // A command that cleared the screen owns its output from line 0 (see retireClearedBlocks). A journal from before
+    // that rule kept its pre-clear position: a header that is no longer a command line, or a start inside or past
+    // the stored blocks, means the clear happened while it ran, so it owns everything stored and nothing older stays.
+    const after = this.completed[0]?.endId ?? 0;
+    const header = outputStartId > startId
+      && Array.from({length: outputStartId - startId}, (_, offset) => this.lineTypes.get(startId + offset)).every(type => type === 'command');
+    const placed = startId >= after && outputStartId <= this.parser.completedCount() && (header || (startId === 0 && outputStartId === 0));
+    if (!placed) this.retireClearedBlocks();
+    else if (!header) this.active.cleared = true;
+    return {cleared: Boolean(this.active.cleared)};
   }
 
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
