@@ -58,6 +58,15 @@ function substitutions(text: string): string[] {
 export function entryKinds(text: string, depth = 0): PasteKind[] {
   const kinds = new Set<PasteKind>();
   for (const piece of splitCommands(text)) for (const kind of classifyCommand(piece.text, piece.pipedFrom)) kinds.add(kind);
+  // A quote the splitter loses track of (an apostrophe in a heredoc, in a comment) must not hide what follows it:
+  // every line is classified on its own as well, and every statement after a `;`, `&&`, `||`, `|` or `&`. This only
+  // ever adds findings.
+  for (const line of text.split('\n')) {
+    for (const part of line.split(/&&|\|\||[;|&]/u)) {
+      const trimmed = part.trim().replace(/^[{(]\s*/u, '').replace(/^(?:do|then|else)\s+/u, '');
+      if (trimmed && !trimmed.startsWith('#')) for (const kind of classifyCommand(trimmed, false)) if (kind !== 'text') kinds.add(kind);
+    }
+  }
   if (depth < 3) for (const inner of substitutions(text)) for (const kind of entryKinds(inner, depth + 1)) kinds.add(kind);
   return [...kinds];
 }

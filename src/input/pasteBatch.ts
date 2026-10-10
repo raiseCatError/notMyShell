@@ -92,6 +92,8 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
       if (char === '\'') { index = skipSingle(index + 1, fish || text[index - 1] === '$') - 1; continue; }
       if (char === '"') { index = skipDouble(index + 1, depth) - 1; continue; }
       if (char === '`') { index = skipBacktick(index + 1) - 1; continue; }
+      // A comment inside a substitution can hide a quote or a parenthesis from the shell (or show one to it): not split.
+      if (close === ')' && !arithmetic && char === '#' && (index === from || /[\s;&|(]/u.test(text[index - 1]!))) fail('A comment inside a substitution is not split.');
       // A here-document inside a substitution has a body this scanner does not read: say so instead of guessing where the group ends.
       if (!arithmetic && close === ')' && char === '<' && text[index + 1] === '<' && text[index + 2] !== '<' && text[index - 1] !== '<') fail('A here-document inside a substitution is not split.');
       if (char === '$' && text[index + 1] === '(') { index = skipGroup(index + 2, ')', depth + 1, arithmetic || text[index + 2] === '(') - 1; continue; }
@@ -222,9 +224,12 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
         const strip = text[at] === '-';
         if (strip) at += 1;
         while (text[at] === ' ' || text[at] === '\t') at += 1;
-        const match = /^(?:'([^'\n]*)'|"([^"\n]*)"|\\?([^\s;&|<>()]+))/u.exec(text.slice(at, at + 200));
+        // The marker is a word: the shell removes its quotes and backslashes before comparing lines with it.
+        const match = /^(?:[^\s;&|<>()'"\\]|'[^'\n]*'|"[^"\n]*"|\\.)+/u.exec(text.slice(at, at + 200));
         if (!match) fail('A here-document has no readable end marker.');
-        heredocs.push({tag: (match![1] ?? match![2] ?? match![3])!, strip});
+        const tag = match![0].replace(/'([^']*)'|"([^"]*)"|\\(.)/gu, (_all, single?: string, double?: string, escaped?: string) => single ?? double ?? escaped ?? '');
+        if (!tag || /[$`]/u.test(tag)) fail('A here-document marker uses an expansion.');
+        heredocs.push({tag, strip});
         index = at + match![0].length;
         sawCode = true; continuation = false; commandStart = false;
         continue;

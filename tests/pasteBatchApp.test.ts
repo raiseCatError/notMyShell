@@ -173,3 +173,11 @@ test('the selected command is shown in full: a long line wraps and is never cut 
   long.cursor = 1;
   assert.match(stripAnsi(renderBatchReview(long, 60, 14).join('\n')), /more rows? hidden; still part of the command/u);
 });
+
+test('a quote the splitter loses track of cannot hide a later command from the label', () => {
+  // The apostrophe in the heredoc body opens a "string" for a naive splitter that runs to the end of the command.
+  const review = createBatchReview(['echo start', "for x in a; do\n  cat <<EOF\nit's here\nEOF\n  rm -rf ~/$x\ndone", "echo ok # don't\nsudo reboot"].join('\n'), 'bash', 100)!;
+  assert.ok(review.entries[1]!.kinds.includes('destructive'));
+  assert.ok(review.entries[3]!.kinds.includes('privilege'));
+  assert.ok(!review.entries[0]!.kinds.includes('destructive'));
+});

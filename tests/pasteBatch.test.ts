@@ -99,6 +99,17 @@ test('zsh does not treat # as a comment unless told to, so a comment with syntax
   assert.deepEqual(texts('# note; echo not-run\nls', 'fish'), ['# note; echo not-run\nls']);
 });
 
+test('comments inside substitutions and expansion in heredoc markers are refused; marker quotes are removed like the shell does', () => {
+  for (const shell of POSIX) {
+    assert.match(refuses('x=$(echo hi # )\nrm -rf ~\n)\nls', shell), /comment inside a substitution/u);
+    assert.match(refuses('x=$(echo hi\n# note\n)\nls', shell), /comment inside a substitution/u);
+    assert.deepEqual(texts('echo $(( 1 + 2 ))\nx=$(echo "a#b")\necho ${#x} $#\nls', shell), ['echo $(( 1 + 2 ))', 'x=$(echo "a#b")', 'echo ${#x} $#', 'ls']);
+    assert.deepEqual(texts('cat <<E"O"F\nbody\nEOF\nls', shell), ['cat <<E"O"F\nbody\nEOF', 'ls']);
+    assert.deepEqual(texts('cat <<\\EOF\nbody\nEOF\nls', shell), ['cat <<\\EOF\nbody\nEOF', 'ls']);
+    assert.match(refuses('cat <<$MARK\nbody\nx\nls', shell), /marker uses an expansion/u);
+  }
+});
+
 test('arithmetic is not a here-document, and a here-document inside a substitution is refused', () => {
   for (const shell of POSIX) {
     assert.deepEqual(texts('(( x = 1 << 2 ))\necho $((1<<3))\nls', shell), ['(( x = 1 << 2 ))', 'echo $((1<<3))', 'ls']);
@@ -172,10 +183,10 @@ for (const shell of ['bash', 'zsh', 'fish'] as const) {
  */
 const submission = (command: string) => command.includes('\n') ? `{ ${command}\n}` : command;
 const PIECES: Record<BatchShell, string[]> = {
-  bash: ['echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
+  bash: ['cat <<E"O"F\nbody\nEOF', 'echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
     'cat <<EOF\nbody $HOME-free\nEOF', 'cat <<\'RAW\'\n$x not expanded\nRAW', 'echo a &&\n  echo b', 'echo "p" |\n  cat', 'f() {\n  echo "in-f-$1"\n}\nf arg', 'case "$x" in\n  8) echo eight ;;\n  *) echo other ;;\nesac',
     'y=$(\n  echo sub\n)\necho "y=$y"', 'echo \\\n  continued', '# plain comment\necho after-comment', 'false || echo recovered', '(( x += 1 ))\necho "n=$x"', 'echo \'it\'"\'"\'s\'', 'while [ "${n:-0}" -lt 2 ]; do\n  n=$(( ${n:-0} + 1 ))\ndone\necho "n=$n"'],
-  zsh: ['echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
+  zsh: ['cat <<E"O"F\nbody\nEOF', 'echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
     'cat <<EOF\nbody\nEOF', 'cat <<\'RAW\'\n$x not expanded\nRAW', 'echo a &&\n  echo b', 'echo "p" |\n  cat', 'f() {\n  echo "in-f-$1"\n}\nf arg', 'case "$x" in\n  8) echo eight ;;\n  *) echo other ;;\nesac',
     'y=$(\n  echo sub\n)\necho "y=$y"', 'echo \\\n  continued', '# plain comment\necho after-comment', 'false || echo recovered', '(( x += 1 ))\necho "n=$x"', 'while [[ "${n:-0}" -lt 2 ]]; do\n  n=$(( ${n:-0} + 1 ))\ndone\necho "n=$n"'],
   fish: ['echo one', 'set x 8; echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2\n  echo "loop-$i"\nend', 'if test -z "$x"\n  echo empty\nelse if test "$x" = 8\n  echo eight\nelse\n  echo "has-$x"\nend',
