@@ -40,6 +40,7 @@ export function liveStatusParts(session: SessionInfo, now: number): string[] {
   if (!session.running) {
     const parts = [`idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}`];
     if (session.lastExit !== undefined) parts.push(session.lastExit === 0 ? 'last command succeeded' : `last command failed (exit ${session.lastExit})`);
+    if (session.queued) parts.push(queueStatus(session));
     return parts;
   }
   const parts = [`running ${session.running.replace(/\s+/gu, ' ').slice(0, 60)} · ${formatAge(now - (session.runningSince ?? now))}`];
@@ -57,5 +58,11 @@ export function liveStatusParts(session: SessionInfo, now: number): string[] {
   }
   if (session.fullscreen) parts.push('fullscreen');
   if (session.title) parts.push(`“${session.title.slice(0, 40)}”`);
+  if (session.queued) parts.push(queueStatus(session));
   return parts;
+}
+
+/** The session's queue as the service reports it: how many wait, and whether they are paused. */
+function queueStatus(session: SessionInfo): string {
+  return `${session.queued} queued${session.queuePaused ? ' (paused)' : ''}`;
 }

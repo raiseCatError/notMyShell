@@ -1,3 +1,4 @@
+import {QueueDispatcher} from './QueueDispatcher.js';
 import {assignSignature} from './signatures.js';
 import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
@@ -6,7 +7,7 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {isShellId, knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SessionEvidence} from './SessionEvidence.js';
-import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, inputStateMessage, parseClientFeatures, type ClientFeature, type ServerMessage,
+import {FrameDecoder, PROTOCOL_VERSION, SERVICE_FEATURES, encodeMessage, inputStateMessage, parseClientFeatures, queueOpFrom, queueStateMessage, type ClientFeature, type ServerMessage,
   type SessionInfo, type SessionState} from './SessionProtocol.js';
 import type {InputState} from './inputState.js';
 import {SESSION_ID_ENV, SESSION_MODE_ENV} from './SessionClient.js';
@@ -47,7 +48,7 @@ interface ManagedSession {
   input?: InputState;
   /** Pending check that a wait lasted long enough to become a cross-session notice. */
   inputNoticeTimer?: NodeJS.Timeout;
-  running?: {command: string; since: number};
+  running?: {command: string; since: number; queued?: string};
   /** When zsh last returned to its prompt. */
   idleSince: number;
   screen: AlternateScreenTracker;
@@ -60,6 +61,8 @@ interface ManagedSession {
   /** This session's cross-session notice; cleared when the session is focused. */
   notices: SessionNoticeTracker;
   knowledge?: string;
+  /** This session's command queue; it runs only in this session's shell (see QueueDispatcher). */
+  queue: QueueDispatcher;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -85,7 +88,7 @@ function toMessage(event: BacklogEvent): ServerMessage {
   switch (event.kind) {
     case 'output': return {type: 'output', data: event.data, seq: event.seq, at: event.at};
     case 'exec': return {type: 'exec', command: event.command, seq: event.seq, at: event.at,
-      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed})};
+      ...(event.historyAllowed === undefined ? {} : {historyAllowed: event.historyAllowed}), ...(event.queued === undefined ? {} : {queued: event.queued})};
     case 'prompt': return {type: 'prompt', exitCode: event.exitCode, cwd: event.cwd, seq: event.seq, at: event.at,
       ...(event.knowledge === undefined ? {} : {knowledge: event.knowledge}),
       ...(event.inputWaits ? {inputWaitMs: event.inputWaitMs ?? 0, inputWaits: event.inputWaits} : {})};
@@ -152,7 +155,9 @@ export class SessionService {
       ...(evidence.lastExit !== undefined && !running ? {lastExit: evidence.lastExit} : {}),
       ...(notice ? {notice} : {}),
       ...(request ? {inputSince: request.since, inputConfidence: request.confidence, inputMode: request.mode,
-        ...(request.prompt ? {inputPrompt: request.prompt.slice(0, 120)} : {})} : {})};
+        ...(request.prompt ? {inputPrompt: request.prompt.slice(0, 120)} : {})} : {}),
+      ...(features.has('queue') && session.queue.queue.size ? {queued: session.queue.queue.size,
+        ...(session.queue.state.paused ? {queuePaused: session.queue.state.paused.reason} : {})} : {})};
   }
 
   async start(): Promise<void> {
@@ -242,6 +247,7 @@ export class SessionService {
             send({type: 'attached', sessionId: info.id, pid: info.pid, cwd: info.cwd, fullscreen: session.screen.ownsTerminal ? 1 : 0,
               ...(session.screen.ownsTerminal && session.screen.restoreSequence() ? {modes: session.screen.restoreSequence()} : {}),
               ...(info.running ? {running: info.running, runningSince: info.runningSince} : {}),
+              ...(features.has('queue') && session.running?.queued !== undefined ? {runningQueued: session.running.queued} : {}),
               ...(backlog.journalId ? {journalId: backlog.journalId} : {}), ackedSeq: backlog.ackedSeq,
               ...(session.knowledge === undefined ? {} : {knowledge: session.knowledge}), shell: session.backend,
               ...(session.shell.isReady ? {} : {startup: session.shell.startupTail() ?? ''})});
@@ -251,6 +257,7 @@ export class SessionService {
             send({type: 'replayed', truncatedBytes: backlog.truncatedBytes});
             // The live input state is not a stream event: a reattaching frontend gets it now, after the replay.
             if (features.has('input-state') && info.running && session.input) send(inputStateMessage(session.input));
+            if (features.has('queue')) send(queueStateMessage(session.queue.state, {}));
             this.redraw(session, message.columns, message.rows);
             break;
           }
@@ -270,7 +277,16 @@ export class SessionService {
             this.endedNotices.dismiss(message.sessionId);
             send({type: 'dismissed', sessionId: message.sessionId});
             break;
+          case 'queue': {
+            const change = queueOpFrom(message.change);
+            if (!owned || !features.has('queue')) send({type: 'error', code: 'state', message: 'no session queue for this connection'});
+            else if (!change) send({type: 'error', code: 'queue', message: 'not a queue change'});
+            else owned.queue.request(change);
+            break;
+          }
           case 'input':
+            // Ctrl+C reaching a running command: what was queued after it waits (see QueueDispatcher).
+            if (message.data.includes('\u0003')) owned?.queue.onInterrupt();
             owned?.evidence.onInput();
             owned?.notices.clear();
             if (owned) {
@@ -402,7 +418,10 @@ export class SessionService {
       state: 'attached', protocolVersion: PROTOCOL_VERSION, signature};
     const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
-      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id)};
+      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id), queue: new QueueDispatcher(shell)};
+    session.queue.on('state', (state, event) => {
+      if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event));
+    });
     this.sessions.set(record.id, session);
     this.wire(session);
     return session;
@@ -427,10 +446,12 @@ export class SessionService {
     shell.on('inputState', state => this.onInputState(session, state));
     shell.on('exec', (command, historyAllowed) => {
       const at = Date.now();
-      session.running = {command, since: at};
+      // The queue says whether this is the entry it just submitted: every window, live or later, learns it from here.
+      const queued = session.queue.onExec(command)?.text;
+      session.running = {command, since: at, ...(queued === undefined ? {} : {queued})};
       session.evidence.onExec();
       session.notices.onExec(command, at);
-      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed})});
+      emit({kind: 'exec', seq: ++session.seq, at, command, ...(historyAllowed === undefined ? {} : {historyAllowed}), ...(queued === undefined ? {} : {queued})});
     });
     shell.on('prompt', marker => {
       session.knowledge = marker.knowledge;
@@ -443,8 +464,11 @@ export class SessionService {
       emit({kind: 'prompt', seq: ++session.seq, at: Date.now(), exitCode: marker.exitCode, cwd: marker.cwd,
         ...(marker.knowledge === undefined ? {} : {knowledge: marker.knowledge}),
         ...(marker.inputWaits ? {inputWaitMs: marker.inputWaitMs ?? 0, inputWaits: marker.inputWaits} : {})});
+      // After the prompt is on its way: the next queued command, if any, starts from this evidence only.
+      session.queue.onPrompt(marker.exitCode);
     });
     shell.on('exit', event => {
+      session.queue.onShellExit();
       this.sessions.delete(record.id);
       if (session.inputNoticeTimer) { clearTimeout(session.inputNoticeTimer); session.inputNoticeTimer = undefined; }
       // Ending with no window attached is news; with one attached, that window saw it.
@@ -496,6 +520,7 @@ export class SessionService {
     session.running = undefined;
     session.idleSince = Date.now();
     session.screen.reset();
+    session.queue.onShellSwitched(next);
     this.wire(session);
   }
 

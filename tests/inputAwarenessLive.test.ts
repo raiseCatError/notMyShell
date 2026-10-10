@@ -30,9 +30,15 @@ async function start(shell: Shell, options: {size?: {cols: number; rows: number}
     shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
   const started = Date.now();
   const frontend = sandbox.launch(options.args ?? [], options.size ?? {cols: 100, rows: 30}, options.env ?? {});
-  await frontend.waitFor(/Vespyr|notMyShell|zsh|bash|fish/u);
-  await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge', `environment.${shell}`)) || frontend.output.length > 0 && Date.now() - started > 8000, 20_000, 'the managed shell');
-  await frontend.run('echo READY', /READY/u);
+  try {
+    await frontend.waitFor(/Vespyr|notMyShell|zsh|bash|fish/u);
+    await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge', `environment.${shell}`)) || frontend.output.length > 0 && Date.now() - started > 8000, 20_000, 'the managed shell');
+    await frontend.run('echo READY', /READY/u);
+  } catch (error) {
+    // Not inside the test's try/finally yet: a sandbox given by the caller is the caller's to end.
+    if (!options.sandbox) await sandbox.dispose().catch(() => {});
+    throw error;
+  }
   return {sandbox, frontend};
 }
 
@@ -95,13 +101,14 @@ test('live fish: read is fish\'s own line editor: handed the terminal, answered 
   const stop = answerQueries(frontend);
   try {
     let mark = frontend.mark;
-    frontend.pty.write(`read -P 'Name: ' x; echo got=$x\r`);
+    // The prompt is built by fish, so "Name: " is not in the command text NMSh echoes and shows while it runs.
+    frontend.pty.write(`read -P (printf 'Na%s: ' me) x; echo got=$x\r`);
     // Fish's reader turns on bracketed paste: NMSh hands it the terminal, as for any interactive program.
     await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, 'fish draws its own prompt');
     frontend.pty.write('abc\r');
     await frontend.waitFor(/got=abc[\s\S]*Completed/u, mark);
     mark = frontend.mark;
-    frontend.pty.write(`read -s -P 'Password: ' p; echo len=(string length -- $p)\r`);
+    frontend.pty.write(`read -s -P (printf 'Pass%s: ' word) p; echo len=(string length -- $p)\r`);
     await until(() => frontend.output.slice(mark).includes('Password: '), 15_000, 'fish draws its hidden prompt');
     frontend.pty.write('hunter2\r');
     // This command's own completion: a bare "Completed" could match the previous command's row.

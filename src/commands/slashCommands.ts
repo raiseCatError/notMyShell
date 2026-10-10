@@ -102,6 +102,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
+  {name: '/queue', insertion: '/queue', description: 'Commands queued to run after the current one: view, edit, reorder, pause or clear (/queue pause|resume|clear)'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
@@ -189,6 +190,7 @@ export type ParsedSlashCommand =
   | {kind: 'llm'}
   | {kind: 'doctor'}
   | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
+  | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear'}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -306,6 +308,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (family) return {kind: 'providers', family: (family === 'pickers' ? 'picker' : family) as 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
+  const queue = /^\/queue(?:\s+(pause|resume|clear))?\s*$/u.exec(input);
+  if (queue) return {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
   if (watch) {
     const rest = (watch[1] ?? '').trim();

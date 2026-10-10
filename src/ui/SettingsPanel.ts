@@ -396,6 +396,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'terminalTitle', label: 'Terminal title', description: 'Set the window/tab title while NMSh owns the screen; programs set their own while they run and NMSh restores its title after them. Off leaves the title to the terminal', category: 'Sessions',
     values: ['off', 'project', 'session'] as const, labels: ['Off', 'Project', 'Project and session'],
     get: config => config.terminalTitle, set: (config, terminalTitle) => ({...config, terminalTitle})}),
+  {id: 'commandQueue', label: 'Queue commands', description: 'While a command runs, Enter queues the next one to run after it (Ctrl+Q always queues, Ctrl+S sends to the program); a program waiting for input still gets your answer. Off: Enter sends to the program', category: 'Sessions',
+    control: 'boolean', get: config => config.commandQueue, set: (config, commandQueue) => ({...config, commandQueue})},
   {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
     control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
   enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
