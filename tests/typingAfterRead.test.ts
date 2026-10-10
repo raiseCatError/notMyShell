@@ -29,7 +29,8 @@ function answerQueries(frontend: Frontend): () => void {
 }
 
 const READ = {
-  fish: (secret: boolean) => `read ${secret ? '-s ' : ''}-P 'Name: ' x; echo got=$x`,
+  // The prompt is built by the shell, so "Name: " is not in the command text that NMSh itself echoes and shows while it runs.
+  fish: (secret: boolean) => `read ${secret ? '-s ' : ''}-P (printf 'Na%s: ' me) x; echo got=$x`,
   zsh: (secret: boolean) => `read ${secret ? '-s ' : ''}'x?Name: '; echo got=$x`,
   bash: (secret: boolean) => `read ${secret ? '-s ' : ''}-p 'Name: ' x; echo got=$x`,
 };
@@ -49,8 +50,8 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           const tag = `${mode}${run}`;
           const mark = frontend.mark;
           frontend.pty.write(`${READ[shell](run % 2 === 1)}\r`);
-          // The typed command echoes "Name: " too, so one occurrence proves nothing: the second is the prompt itself.
-          await until(() => frontend.output.slice(mark).split('Name: ').length > 2, 15_000, `${shell} draws the read prompt`);
+          // zsh and Bash print their prompt from the command text; wait for it past the echo and NMSh's own "Running" line.
+          await until(() => frontend.output.slice(mark).split('Name: ').length > (shell === 'fish' ? 1 : 2), 15_000, `${shell} draws the read prompt`);
           // zsh and Bash reads are composer-owned: let NMSh see the question before answering it. While a command runs
           // with no visible question, Enter queues the next command (that is the queue); an answer is only an answer
           // once the question is open.
