@@ -347,6 +347,8 @@ const AGENT_DISCOVERY_MS = 15_000;
 const SHELF_IDLE_MS = 6000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
 const ERROR = lazyForeground(UI_COLORS.failure);
+/** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
+const STOP_TYPE_AHEAD_MS = 2000;
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -715,9 +717,11 @@ export class TerminalApp {
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean;
     /** Started from the command queue rather than typed at the prompt. */
     queued?: boolean;
-    /** You sent Ctrl+C or Ctrl+Z: the command is ending at your request, so what you type next is for the shell's
-     * prompt (type-ahead, as in any terminal), not a queue entry held behind the pause that stop causes. */
-    stopping?: boolean};
+    /** When you sent Ctrl+C or Ctrl+Z: for a moment the command is ending at your request, so what you type next is
+     * for the shell's prompt (type-ahead, as in any terminal), not a queue entry held behind the pause that stop
+     * causes. Only for STOP_TYPE_AHEAD_MS: a program that survives the signal (a REPL, a remote shell) gets the
+     * ordinary routing again, so later typing is never sent into it unasked. */
+    stoppedAt?: number};
   private hoveredLineIndex?: number;
   /** NMSh-owned transcript selection (plain drag); presentation only. */
   private selection?: TranscriptSelection;
@@ -1945,7 +1949,7 @@ export class TerminalApp {
       this.clearCorrection();
       if (this.running) {
         this.running.interrupted = true;
-        this.running.stopping = true;
+        this.running.stoppedAt = Date.now();
         this.editor.clear();
         this.session.interrupt();
       } else {
@@ -1965,7 +1969,7 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) { this.running.stopping = true; this.session.write('\u001A'); }
+      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); }
       return;
     }
     if (key.kind === 'selectAll') {
@@ -8979,12 +8983,18 @@ export class TerminalApp {
 
   /** While a command runs, the empty composer says what Enter will do with what you type. */
   private composerHint(): string | undefined {
-    if (!this.running || this.passthrough || this.queueEdit || !this.queueAvailable() || this.running.stopping) return undefined;
+    if (!this.running || this.passthrough || this.queueEdit || !this.queueAvailable() || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
     if (this.queueCompose) return 'Queue a command · Enter adds it · Esc returns to the program';
     const request = this.inputState?.request;
     const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
     return this.answersByDefault() ? `Enter answers ${program} · Ctrl+Q queues a command` : `Enter queues the next command · Ctrl+S sends to ${program}`;
+  }
+
+  /** Ctrl+C or Ctrl+Z was sent moments ago: typing is type-ahead for the prompt the stop brings back. */
+  private justStopped(): boolean {
+    const at = this.running?.stoppedAt;
+    return at !== undefined && Date.now() - at < STOP_TYPE_AHEAD_MS;
   }
 
   /**
@@ -9074,7 +9084,7 @@ export class TerminalApp {
         void this.submit();
         return;
       }
-      const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || Boolean(this.running.stopping)));
+      const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
       if (toProgram) {
         this.editor.clear();
         this.runningDraft = undefined;
@@ -9155,7 +9165,7 @@ export class TerminalApp {
   /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
   private sendDirectKey(key: Key): void {
     if (key.kind === 'interrupt') {
-      if (this.running) { this.running.interrupted = true; this.running.stopping = true; }
+      if (this.running) { this.running.interrupted = true; this.running.stoppedAt = Date.now(); }
       this.session.interrupt();
       return;
     }

@@ -200,6 +200,22 @@ test('live: after Ctrl+Z or Ctrl+C, what you type next is for the shell prompt, 
   } finally { await sandbox.dispose(); }
 });
 
+test('live: a program that survives Ctrl+C gets ordinary routing again: later typing queues, it is never sent into the program', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+  const {sandbox, frontend} = await start('zsh');
+  try {
+    const mark = frontend.mark;
+    // Ignores SIGINT and keeps reading stdin: anything sent to it would be echoed back as GOT=...
+    frontend.pty.write(`sh -c 'trap "" INT; sleep 5; if read -t 1 line; then echo "GOT=$line"; fi; echo SURVIVED'\r`);
+    await frontend.waitFor(/Running sh -c/u, mark);
+    frontend.pty.write('\u0003');
+    await pause(2600);
+    frontend.pty.write('echo LATER\r');
+    await frontend.waitFor(/≡ Queued \(1\) · next: echo LATER/u, mark);
+    await frontend.waitFor(/SURVIVED[\s\S]*LATER/u, mark, 20_000);
+    assert.doesNotMatch(drawn(frontend, mark), /GOT=echo LATER/u, 'nothing typed after the window reached the program');
+  } finally { await sandbox.dispose(); }
+});
+
 test('live: a multi-line paste queues as one entry and runs once, as one block', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
