@@ -272,4 +272,37 @@ export const javaRuntime = runtimeCapability('runtime.java', 'Java runtime and b
   return value ? {value, evidence: [requested?.from, build?.name, active.active ? 'JDK release file' : undefined].filter(Boolean).join(', ') || 'java'} : undefined;
 });
 
-export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime] as CapabilityDefinition<unknown>[];
+export const rubyRuntime = runtimeCapability('runtime.ruby', 'Ruby version', ['.ruby-version', 'Gemfile (ruby "x")', '.tool-versions', 'mise.toml',
+  'the ruby executable the shell resolves: its install location (never run)'], [],
+{requested: '3.3', requestedFrom: '.ruby-version', active: '3.3.5', manager: 'rbenv', buildTool: 'bundler'}, async context => {
+  let requested = await versionFile(context, ['.ruby-version']);
+  const gemfile = await findNearest(context, ['Gemfile']);
+  if (!requested && gemfile) {
+    const declared = /^\s*ruby\s+['"](\d[\w.+-]{0,31})['"]/mu.exec(await readMetadataText(gemfile.path, 64 * 1024) ?? '')?.[1];
+    if (declared) requested = {version: declared, from: 'Gemfile'};
+  }
+  requested ??= await toolRequest(context, ['ruby']);
+  if (!requested && !gemfile && !context.fields.has('active')) return undefined;
+  const active = await activeVersion(context, ['ruby']);
+  const value = compact({requested: requested?.version.replace(/^ruby-(?=\d)/u, ''), requestedFrom: requested?.from, ...active, ...(gemfile ? {buildTool: 'bundler'} : {})});
+  return value ? {value, evidence: [requested?.from, gemfile?.name, active.active ? 'ruby on PATH' : undefined].filter(Boolean).join(', ') || 'ruby'} : undefined;
+});
+
+export const phpRuntime = runtimeCapability('runtime.php', 'PHP version', ['.php-version', 'composer.json (require.php)', '.tool-versions', 'mise.toml',
+  'the php executable the shell resolves: its install location (never run)'], [],
+{requested: '8.3', requestedFrom: '.php-version', active: '8.3.12', manager: 'Homebrew', buildTool: 'composer'}, async context => {
+  let requested = await versionFile(context, ['.php-version']);
+  const manifest = await findNearest(context, ['composer.json']);
+  if (!requested && manifest) {
+    const pkg = parseJsonData(await readMetadataText(manifest.path, LARGE_METADATA_BYTES));
+    const constraint = record(pkg) && record(pkg.require) ? text(pkg.require.php, 64) : undefined;
+    if (constraint) requested = {version: constraint, from: 'composer.json'};
+  }
+  requested ??= await toolRequest(context, ['php']);
+  if (!requested && !manifest && !context.fields.has('active')) return undefined;
+  const active = await activeVersion(context, ['php']);
+  const value = compact({requested: requested?.version, requestedFrom: requested?.from, ...active, ...(manifest ? {buildTool: 'composer'} : {})});
+  return value ? {value, evidence: [requested?.from, manifest?.name, active.active ? 'php on PATH' : undefined].filter(Boolean).join(', ') || 'php'} : undefined;
+});
+
+export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime, rubyRuntime, phpRuntime] as CapabilityDefinition<unknown>[];

@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import type {CapabilityDefinition} from '../src/context/capability.js';
 import {projectPackage} from '../src/context/capabilities/project.js';
-import {goRuntime, javaRuntime, nodeRuntime, pythonRuntime, rustRuntime, versionMismatch} from '../src/context/capabilities/runtimes.js';
+import {goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, versionMismatch} from '../src/context/capabilities/runtimes.js';
 import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
 import {aws, azure, gcp} from '../src/context/capabilities/cloud.js';
@@ -341,4 +341,38 @@ test('vcs.git reads stash depth and upstream from Git files, including linked wo
     await rm(worktree, {recursive: true, force: true});
     assert.equal(await resolve(gitExtras, {cwd: root}), undefined, 'outside a repository there is nothing to read');
   } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('runtime facts: Ruby and PHP from the project\'s own files and the install location, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    const rbenv = join(tools, '.rbenv', 'versions', '3.3.5', 'bin');
+    await mkdir(rbenv, {recursive: true});
+    await sentinelExecutable(join(rbenv, 'ruby'), join(tools, 'RUBY_RAN'), 'ruby 9.9.9');
+    await writeFile(join(root, '.ruby-version'), 'ruby-3.2.4\n');
+    await writeFile(join(root, 'Gemfile'), 'source "https://rubygems.org"\nruby "3.1.0"\n');
+    const ruby = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: rbenv}});
+    assert.deepEqual(ruby, {requested: '3.2.4', requestedFrom: '.ruby-version', active: '3.3.5', manager: 'rbenv', buildTool: 'bundler', mismatch: true});
+    await rm(join(root, '.ruby-version'));
+    assert.deepEqual((await resolve(rubyRuntime, {cwd: root, root, env: {PATH: rbenv}, fields: ['requested', 'requestedFrom']})), {requested: '3.1.0', requestedFrom: 'Gemfile', buildTool: 'bundler'});
+    assert.equal(await exists(join(tools, 'RUBY_RAN')), false);
+
+    const cellar = join(tools, 'opt', 'Cellar', 'php', '8.3.12', 'bin');
+    await mkdir(cellar, {recursive: true});
+    await sentinelExecutable(join(cellar, 'php'), join(tools, 'PHP_RAN'), 'PHP 9.9.9');
+    await writeFile(join(root, 'composer.json'), JSON.stringify({require: {php: '^8.2'}}));
+    const php = await resolve(phpRuntime, {cwd: root, root, env: {PATH: cellar}});
+    assert.deepEqual(php, {requested: '^8.2', requestedFrom: 'composer.json', active: '8.3.12', manager: 'Homebrew', buildTool: 'composer'});
+    assert.equal(await exists(join(tools, 'PHP_RAN')), false);
+    // A ruby inside the workspace is never inspected.
+    const planted = join(root, 'bin');
+    await mkdir(planted);
+    await sentinelExecutable(join(planted, 'ruby'), join(root, 'PLANTED_RAN'), 'ruby 1.0.0');
+    resetServiceCaches();
+    const refused = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: planted}});
+    assert.equal(refused?.active, undefined);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
