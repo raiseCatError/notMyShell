@@ -126,3 +126,30 @@ test('entry points: the picker\'s r and the Actions menu name the same report fl
   assert.deepEqual(action?.kind === 'report' ? action.records.map(item => item.command) : [], ['adb devices', 'npm test']);
   assert.ok(BLOCK_ACTIONS.some(item => item.id === 'copyReport' && /report/u.test(item.label)));
 });
+
+test('no parser differential: invisible characters cannot hide a secret, glued tokens are found, and the review shows every copied character', () => {
+  // Zero-width space, zero-width joiner, a bidi override and a soft hyphen inside or around a token.
+  const hidden = 'TOKEN=gh​p_abcdefghij‍klmnopqrstuvwxyz0123456789 ‮evil‬ and gl­pat-abcdefghijklmnopqrstuv';
+  const {text} = redactText(hidden);
+  assert.doesNotMatch(text, /ghp_|glpat-/u, text);
+  assert.doesNotMatch(text, /\p{Cf}/u, 'no invisible format characters survive into the report');
+  assert.match(redactText('build_ghp_abcdefghijklmnopqrstuvwxyz0123456789_done').text, /build_\[REDACTED\]_done/u);
+  // A long line in the review: wrapped, every character visible; what Enter copies is exactly what was shown.
+  const long = record('echo', `${'x'.repeat(590)}-TAIL-END\r\n`, 0, '✔ Completed · 1 ms');
+  const review = createReportReview([long], {...DEFAULT_REPORT_OPTIONS, home: '/Users/alex'}, false);
+  const shown: string[] = [];
+  for (let page = 0; page < 40; page += 1) {
+    shown.push(...renderReportReview(review, 60, 24).map(stripAnsi));
+    reportReviewKey(review, {kind: 'pageDown'}, 24);
+  }
+  assert.ok(shown.some(row => row.includes('-TAIL-END')), 'the end of a long line is visible');
+  const action = reportReviewKey(review, {kind: 'enter'}, 24);
+  assert.deepEqual(action, {kind: 'copy', text: review.text});
+  // The rendered rows, joined, contain the whole report: nothing copied is unseen.
+  const visible = shown.join('').replace(/\s+/gu, '');
+  for (const line of review.text.split('\n')) assert.ok(visible.includes(line.replace(/\s+/gu, '')), `shown: ${line.slice(0, 40)}`);
+  // An edit carrying invisible characters is cleaned exactly like a generated report.
+  applyReportEdit(review, 'see gh​p_abcdefghijklmnopqrstuvwxyz0123456789\n');
+  assert.equal(review.text, 'see ghp_abcdefghijklmnopqrstuvwxyz0123456789\n');
+  assert.match(stripAnsi(renderReportReview(review, 100, 30).join('\n')), /Looks sensitive: 1 token · in your edit/u);
+});

@@ -2,9 +2,9 @@ import type {Key} from '../terminal/keys.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import {renderControlRows} from './controls.js';
 import {foreground, UI_COLORS} from './palette.js';
-import {truncateAnsi, truncateText} from '../util/text.js';
+import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {displaySafe} from '../input/PasteReview.js';
-import {buildReport, describeFindings, redactedLines, scanSensitive, type ReportFinding, type ReportOptions} from '../clipboard/report.js';
+import {buildReport, describeFindings, redactedLines, reportText, scanSensitive, type ReportFinding, type ReportOptions} from '../clipboard/report.js';
 
 /**
  * The review before a report is copied: the exact text that will go to the clipboard, what looks sensitive in the
@@ -46,7 +46,6 @@ function rebuild(state: ReportReviewState): void {
 export type ReportReviewAction = {kind: 'close'} | {kind: 'copy'; text: string} | {kind: 'edit'};
 
 export function reportReviewKey(state: ReportReviewState, key: Key, height: number): ReportReviewAction | undefined {
-  const lines = state.text.split('\n').length;
   const page = Math.max(1, height - 8);
   if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value === 'q')) return {kind: 'close'};
   if (key.kind === 'enter') return {kind: 'copy', text: state.text};
@@ -63,17 +62,34 @@ export function reportReviewKey(state: ReportReviewState, key: Key, height: numb
     const toggle = toggles[key.value];
     if (toggle) { toggle(); rebuild(state); }
   }
-  state.scroll = Math.max(0, Math.min(state.scroll, lines - 1));
+  // The render clamps to the wrapped rows it shows; here only the lower bound is known.
+  state.scroll = Math.max(0, state.scroll);
   return undefined;
+}
+
+/** A report line as display rows of at most `width` cells: wrapped, never cut, so every copied character is shown. */
+function wrapRows(line: string, width: number): string[] {
+  const rows: string[] = [];
+  let row = '';
+  let used = 0;
+  for (const char of displaySafe(line)) {
+    const cells = displayWidth(char);
+    if (used + cells > width && row) { rows.push(row); row = ''; used = 0; }
+    row += char;
+    used += cells;
+  }
+  rows.push(row);
+  return rows;
 }
 
 /** The person's edited text replaces the report as it will be copied (switches rebuild from the records again). */
 export function applyReportEdit(state: ReportReviewState, text: string): void {
-  state.text = text;
+  // The same characters as a generated report: nothing invisible survives into what is checked and copied.
+  state.text = reportText(text);
   state.edited = true;
   state.scroll = 0;
   // An edit is checked again: what it contains is what will be copied.
-  state.sensitive = scanSensitive(text, state.options.home);
+  state.sensitive = scanSensitive(state.text, state.options.home);
   state.redacted = [];
 }
 
@@ -98,13 +114,17 @@ export function renderReportReview(state: ReportReviewState, columns: number, he
   out.push(`  ${subtle}${truncateText(`Redact ${state.options.redact ? 'on' : 'off'} (r) · Directory ${state.options.directory ? 'on' : 'off'} (d) · Times ${state.options.timestamps ? 'on' : 'off'} (t) · Format (f)`, width)}${reset}`, '');
   const controls = renderControlRows([['↑↓', 'scroll'], ['Enter', 'copy'], ...(state.canEdit ? [['e', 'edit'] as const] : []), ['Esc', 'cancel']], width);
   const room = Math.max(1, height - out.length - controls.length - 1);
-  const lines = state.text.split('\n');
   const markedSet = new Set(marked);
-  lines.slice(state.scroll, state.scroll + room).forEach((line, offset) => {
-    const mark = markedSet.has(state.scroll + offset + 1) ? `${warning}▸${reset}` : ' ';
-    out.push(` ${mark}${secondary}${truncateText(displaySafe(line), width)}${reset}`);
-  });
-  if (state.scroll + room < lines.length) out[out.length - 1] = `  ${subtle}… ${lines.length - state.scroll - room + 1} more lines (↓)${reset}`;
+  // Every line wrapped to the panel: a long line is shown in full, never truncated out of sight.
+  const rows = state.text.split('\n').flatMap((line, index) => wrapRows(line, width - 1).map((text, part) => ({text, marked: part === 0 && markedSet.has(index + 1)})));
+  const more = rows.length > room;
+  const visible = more ? room - 1 : room;
+  state.scroll = Math.max(0, Math.min(state.scroll, Math.max(0, rows.length - visible)));
+  for (const row of rows.slice(state.scroll, state.scroll + visible)) out.push(` ${row.marked ? `${warning}▸${reset}` : ' '}${secondary}${row.text}${reset}`);
+  if (more) {
+    const below = rows.length - state.scroll - visible;
+    out.push(`  ${subtle}${below > 0 ? `… ${below} more row${below === 1 ? '' : 's'} below (↓)` : 'end of report (↑ to scroll back)'}${reset}`);
+  }
   out.push('', ...controls.map(row => `  ${row}`));
   return out.map(line => truncateAnsi(line, columns)).slice(0, Math.max(1, height));
 }

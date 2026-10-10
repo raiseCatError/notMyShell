@@ -39,8 +39,8 @@ const PATTERNS: readonly Pattern[] = [
   {kind: 'credential', pattern: /(--?(?:password|passwd|pass|token|secret|api-?key|access-?key|auth-?token|client-?secret)(?:=|\s+))(?!-)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/giu, replace: (match, prefix, value) => /^["']?\[REDACTED/u.test(value) ? match : `${prefix}${REDACTED}`},
   {kind: 'credential', pattern: /\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@/]+@/giu, replace: (_match, prefix) => `${prefix}${REDACTED}@`},
   {kind: 'credential', pattern: /\b(authorization\s*[:=]\s*(?:bearer|basic|token)\s+)[^\s"']+/giu, replace: (_match, prefix) => `${prefix}${REDACTED}`},
-  {kind: 'token', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|npm_[A-Za-z0-9]{36}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})\b/gu, replace: () => REDACTED},
-  {kind: 'token', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, replace: () => REDACTED},
+  {kind: 'token', pattern: /(?<![A-Za-z0-9])(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|npm_[A-Za-z0-9]{36}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})(?![A-Za-z0-9])/gu, replace: () => REDACTED},
+  {kind: 'token', pattern: /(?<![A-Za-z0-9])eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?![A-Za-z0-9])/gu, replace: () => REDACTED},
   {kind: 'credential', pattern: /\b((?:[A-Za-z0-9_.-]*?(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|auth))["']?\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;]+)/giu,
     replace: (match, prefix, value) => /^["']?\[REDACTED/u.test(value) || !value.replace(/["']/gu, '') ? match : `${prefix}${REDACTED}`},
   {kind: 'email address', pattern: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/gu, replace: () => '[REDACTED EMAIL]'},
@@ -63,7 +63,7 @@ export function scanSensitive(text: string, home?: string): ReportFinding[] {
 
 export function redactText(text: string, home?: string): {text: string; findings: ReportFinding[]} {
   const counts = new Map<FindingKind, number>();
-  let result = text;
+  let result = reportText(text);
   for (const {kind, pattern, replace} of [...PATTERNS, ...pathPatterns(home)]) {
     result = result.replace(pattern, (match: string, ...groups: unknown[]) => {
       const replaced = replace(match, ...groups.filter((group): group is string => typeof group === 'string'));
@@ -107,7 +107,15 @@ function fence(text: string): string {
 }
 
 /** Control characters (escape sequences, carriage returns) are not text a report should carry. */
-const clean = (text: string) => text.replace(/\r\n?/gu, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, '');
+/**
+ * The text a report may carry: line breaks normalized; control characters and invisible format characters
+ * (zero-width spaces and joiners, bidi overrides, soft hyphens) removed. The scanner, the review and the clipboard
+ * then see the same characters, so a secret cannot hide from redaction behind something the review never shows.
+ */
+export function reportText(text: string): string {
+  return text.replace(/\r\n?/gu, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, '');
+}
+const clean = reportText;
 
 interface Fact { label: string; value: string; code?: boolean }
 
