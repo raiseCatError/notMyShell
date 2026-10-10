@@ -170,7 +170,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
-import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {ClipboardUnavailableError, copyFeedback, copyStats, readClipboard, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {QueryExtractor, ReplyRouter} from '../passthrough/TerminalQueries.js';
@@ -245,7 +245,10 @@ import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
+import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
+import {batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {WHY_FAILED} from '../ask/failure.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
@@ -1715,10 +1718,36 @@ export class TerminalApp {
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
     if (this.githubPanel) { this.handleGithubKey(key); return; }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
+    if (this.batchReview && this.pastePreview) {
+      const review = this.batchReview;
+      const action = batchReviewKey(review, key, this.dimensions().rows - 4);
+      const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
+      if (action?.kind === 'queue') {
+        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, into this session's own queue.
+        const texts = batchTexts(review);
+        if (!this.queueAvailable() || texts.length > QUEUE_LIMIT - this.queueState.entries.length) {
+          this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
+        } else {
+          for (const text of texts) {
+            this.session.queue({op: 'add', text});
+            this.sessionSubmissions.push({text, slash: false});
+            if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+          }
+          this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
+        }
+        done();
+      } else if (action?.kind === 'edit') { this.editor.insertPaste(batchTexts(review).join('\n')); done(); }
+      else if (action?.kind === 'text') { this.editor.insertPaste(review.source); done(); }
+      else if (action?.kind === 'back') this.batchReview = undefined;
+      else if (action?.kind === 'cancel') done();
+      this.render();
+      return;
+    }
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
       const outcome = pasteReviewKey(this.pasteReview, key, this.dimensions().rows - 4);
-      if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
+      if (outcome === 'batch') this.openBatchReview(this.pastePreview.text);
+      else if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
       else if (outcome === 'back') { this.pasteReview = undefined; if (!this.pasteCompactFits()) this.pastePreview = undefined; }
       else if (outcome === 'cancel') { this.pasteReview = undefined; this.pastePreview = undefined; }
       this.render();
@@ -1727,7 +1756,8 @@ export class TerminalApp {
     if (this.pastePreview) {
       const preview = this.pastePreview;
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) this.openBatchReview(preview.text);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
       this.render();
       return;
@@ -2128,9 +2158,10 @@ export class TerminalApp {
       // Paste Guard: worth-a-look pastes are previewed first (never changed); ordinary ones insert at once.
       const analysis = analyzePaste(key.value);
       if (needsPreview(analysis, this.promptConfiguration.pastePreview)) {
-        this.pastePreview = {text: key.value, analysis};
+        const batch = this.batchAvailable(key.value);
+        this.pastePreview = {text: key.value, analysis, batch};
         // The compact strip never squeezes the composer: when this screen has no room for it, Review is the surface.
-        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis);
+        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch);
         this.render();
         return;
       }
@@ -2511,6 +2542,7 @@ export class TerminalApp {
       this.render();
     }
     else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
+    else if (slash.kind === 'pasteClipboard') await this.pasteClipboard(command);
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
       else {
@@ -4285,7 +4317,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4383,6 +4415,7 @@ export class TerminalApp {
       const activity = this.askActivityLine();
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
     }
+    if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
     if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
@@ -6892,6 +6925,41 @@ export class TerminalApp {
     return shelf ? [...rows, shelf] : rows;
   }
 
+  /** The shell grammar this session's shell speaks, for splitting a paste into commands (none for other shells). */
+  private batchShell(): BatchShell | undefined {
+    return this.shellId === 'zsh' || this.shellId === 'bash' || this.shellId === 'fish' ? this.shellId : undefined;
+  }
+
+  /** A paste can be offered as a queue of commands: the queue is available and the shell's grammar says it splits cleanly. */
+  private batchAvailable(text: string): boolean {
+    const shell = this.batchShell();
+    return Boolean(shell && this.queueAvailable() && text.includes('\n') && createBatchReview(text, shell, 1));
+  }
+
+  private openBatchReview(text: string): void {
+    const shell = this.batchShell();
+    const capacity = Math.max(0, QUEUE_LIMIT - this.queueState.entries.length);
+    this.batchReview = shell ? createBatchReview(text, shell, capacity) : undefined;
+  }
+
+  /** /ps: read the clipboard now, once, and bring it to paste review. Nothing is kept, inserted or run by reading it. */
+  private async pasteClipboard(command: string): Promise<void> {
+    if (this.running) { this.output.addFrontendInteraction(command, 'A command is running: /ps pastes at the prompt. Use your terminal\'s paste to send text to the program.', INFO); return; }
+    let text: string;
+    try { text = await this.readClipboardText(); }
+    catch (error) {
+      this.output.addFrontendInteraction(command, error instanceof ClipboardUnavailableError ? error.message : `Could not read the clipboard: ${error instanceof Error ? error.message : String(error)}`, ERROR);
+      return;
+    }
+    if (this.stopped) return;
+    if (!text.trim()) { this.output.addFrontendInteraction(command, 'The clipboard is empty.', INFO); return; }
+    const analysis = analyzePaste(text);
+    const batch = this.batchAvailable(text);
+    this.pastePreview = {text, analysis, batch};
+    // An explicit /ps always shows the review first, whatever Paste Preview is set to.
+    this.pasteReview = createPasteReview(text, analysis, batch);
+  }
+
   /** Whether the compact preview fits above the composer on this screen (the same rule notices follow). */
   private pasteCompactFits(): boolean {
     const {columns, rows} = this.dimensions();
@@ -6931,7 +6999,7 @@ export class TerminalApp {
     if (hidden > 0 && summary.length) summary[summary.length - 1] += `${SUBTLE} · +${hidden} more${RESET}`;
     for (const item of summary) rows.push(`  ${item}`);
     if (analysis.commands.some(command => ['text', 'unknown'].includes(primaryKind(command.kinds)))) rows.push(`${SUBTLE}${PASTE_EXACT_NOTE}${RESET}`);
-    rows.push(`${SUBTLE}Enter insert · R review · Esc cancel${RESET}`);
+    rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel${RESET}`);
     return rows.map(row => truncateAnsi(row, columns));
   }
 
@@ -7698,7 +7766,10 @@ export class TerminalApp {
   private readonly cursorPresenter = new CursorPresenter(() => resolveCursorSettings(this.promptConfiguration.cursor, {...contextFor(this.promptConfiguration), chrome: UI_COLORS.accent}), () => { if (!this.stopped) this.paintPresentation(Date.now()); });
   private caretCause: 'typing' | 'jump' = 'jump';
   /** A paste waiting for Insert / Review / Cancel (presentation and classification only; the text is never changed). */
-  private pastePreview?: {text: string; analysis: PasteAnalysis};
+  private pastePreview?: {text: string; analysis: PasteAnalysis; /** Splits into separate commands that can be queued. */ batch: boolean};
+  private batchReview?: BatchReviewState;
+  /** The one place the clipboard is read (only /ps calls it). */
+  private readClipboardText: () => Promise<string> = () => readClipboard();
   private pasteReview?: PasteReviewState;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,

@@ -94,3 +94,56 @@ export async function writeClipboard(text: string, options: ClipboardEnvironment
     child.stdin.end(text);
   });
 }
+
+/** The tool that prints the clipboard: only ever started by an explicit /ps, never in the background. */
+export function selectClipboardReadBackend(options: ClipboardEnvironment = {}): ClipboardBackend | undefined {
+  const {platform = process.platform, env = process.env, resolve = (name: string) => resolveCommand(name)} = options;
+  if (platform === 'darwin') return {command: 'pbpaste', args: []};
+  if (platform !== 'linux') return undefined;
+  const candidates: [string, string[]][] = [];
+  if (env.WAYLAND_DISPLAY) candidates.push(['wl-paste', ['--no-newline']]);
+  if (env.DISPLAY) candidates.push(['xclip', ['-selection', 'clipboard', '-o']], ['xsel', ['--clipboard', '--output']]);
+  for (const [name, args] of candidates) {
+    const command = resolve(name);
+    if (command) return {command, args};
+  }
+  return undefined;
+}
+
+/**
+ * The clipboard's text, read once on request. Bounded like a write (1 MiB, 3 s); a tool that fails, hangs or prints
+ * too much is an error with a reason, and nothing it printed is kept.
+ */
+export async function readClipboard(options: ClipboardEnvironment = {}): Promise<string> {
+  const backend = selectClipboardReadBackend(options);
+  if (!backend) {
+    const platform = options.platform ?? process.platform;
+    throw new ClipboardUnavailableError(platform === 'linux' ? 'install wl-paste (Wayland) or xclip/xsel (X11)' : `unsupported platform ${platform}`);
+  }
+  const timeoutMs = options.timeoutMs ?? CLIPBOARD_TIMEOUT_MS;
+  return await new Promise<string>((resolve, reject) => {
+    const child = spawn(backend.command, backend.args, {detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'ignore']});
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let settled = false;
+    const killTree = () => {
+      if (child.pid && process.platform !== 'win32') {
+        try { process.kill(-child.pid, 'SIGKILL'); } catch { /* already ended */ }
+      } else child.kill('SIGKILL');
+    };
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) { killTree(); reject(error); } else resolve(Buffer.concat(chunks).toString('utf8'));
+    };
+    const timer = setTimeout(() => finish(new Error(`${backend.command} timed out`)), timeoutMs);
+    child.once('error', finish);
+    child.stdout.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > CLIPBOARD_MAX_BYTES) { chunks.length = 0; finish(new ClipboardUnavailableError(`the clipboard holds more than ${CLIPBOARD_MAX_BYTES / 1024 / 1024} MiB`)); return; }
+      chunks.push(chunk);
+    });
+    child.once('close', code => { if (code !== 0) finish(new Error(`${backend.command} exited with code ${code}`)); else finish(); });
+  });
+}
