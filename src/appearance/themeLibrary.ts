@@ -20,10 +20,10 @@ export const THEME_LIBRARY_LIMIT = 64;
 /** The asset a pre-library `customTheme` migrates into. */
 export const LEGACY_THEME_ID = 'legacy-custom';
 
-export const THEME_SOURCE_KINDS = ['nmsh', 'base16', 'base24', 'windows-terminal', 'oh-my-posh', 'kitty', 'ghostty', 'iterm2', 'wezterm'] as const;
+export const THEME_SOURCE_KINDS = ['nmsh', 'base16', 'base24', 'windows-terminal', 'oh-my-posh', 'starship', 'kitty', 'ghostty', 'iterm2', 'wezterm'] as const;
 export type ThemeSourceKind = typeof THEME_SOURCE_KINDS[number];
 export const THEME_SOURCE_LABELS: Record<ThemeSourceKind, string> = {
-  nmsh: 'NMSh Theme JSON', base16: 'Base16', base24: 'Base24', 'windows-terminal': 'Windows Terminal', 'oh-my-posh': 'Oh My Posh',
+  nmsh: 'NMSh Theme JSON', base16: 'Base16', base24: 'Base24', 'windows-terminal': 'Windows Terminal', 'oh-my-posh': 'Oh My Posh', starship: 'Starship',
   kitty: 'Kitty', ghostty: 'Ghostty', iterm2: 'iTerm2', wezterm: 'WezTerm',
 };
 

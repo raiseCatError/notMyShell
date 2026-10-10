@@ -69,7 +69,7 @@ export const CONCEPTS: readonly Concept[] = [
     description: 'Appearance covers the Native theme, vibrance, UI chrome colors and terminal opacity/blur where the terminal supports it.'},
   {id: 'themeStudio', label: 'Theme Studio', support: 'actionable', open: '/theme', covers: ['/theme'],
     aliases: ['theme studio', 'custom theme', 'custom themes', 'import theme', 'export theme', 'my own theme', 'imported theme', 'theme library'],
-    description: 'Theme Studio manages Native themes: browse built-ins, import a theme file (Base16/24, Windows Terminal, Oh My Posh, Kitty, Ghostty, iTerm2, WezTerm), edit, duplicate, export and select.'},
+    description: 'Theme Studio manages Native themes: browse built-ins, import a theme file (Base16/24, Windows Terminal, Oh My Posh, Starship, Kitty, Ghostty, iTerm2, WezTerm), edit, duplicate, export and select.'},
   {id: 'uiChrome', label: 'UI chrome', support: 'actionable', open: '/chrome', covers: ['/chrome'],
     aliases: ['ui chrome', 'chrome', 'frames', 'panel colors', 'tab colors'],
     description: 'UI chrome is NMSh\'s frames, rules, tabs, selection and accents; it follows the theme or a custom preset. Not Chroma (animated color treatment).'},
