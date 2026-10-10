@@ -370,6 +370,12 @@ export class TerminalApp {
   private readonly output = new OutputBuffer(() => {
     this.historyViewport.latest();
     if (this.running) this.running.cleared = true;
+    // The cleared lines and their blocks are gone: nothing may stay focused, hovered or selected by their ids.
+    this.hoveredLineIndex = undefined;
+    this.focusedLineIndex = undefined;
+    this.focusedActivityId = undefined;
+    this.focusedCommandIndex = undefined;
+    this.selection = undefined;
   });
   private readonly tapActivityObserver = new TapActivityObserver();
   private readonly historyViewport = new HistoryViewport();
@@ -1028,7 +1034,7 @@ export class TerminalApp {
     const outputStartId = this.output.activeOutputStartId;
     return {sessionId: this.sessionId, seq: this.streamSeq,
       ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
-        cwd: running.cwd, startId: running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
+        cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
   }
 
   async run(): Promise<number> {

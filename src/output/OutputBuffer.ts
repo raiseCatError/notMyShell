@@ -78,6 +78,23 @@ export function serializeCopyPayload(record: CompletedCommand): string {
   return record.output;
 }
 
+/**
+ * The records of a stored transcript that can be placed on its lines, newest first. Each block owns
+ * [startId, endId) and blocks follow one another, so a record whose range runs past the stored lines or into a
+ * newer block names lines that are not its own. Transcripts saved before screen clears retired their blocks kept
+ * such records; drawing them put one command's fold row inside another command's output.
+ */
+function placeableRecords(records: readonly CompletedCommand[], lineCount: number): CompletedCommand[] {
+  let limit = lineCount;
+  return records.filter(record => {
+    const end = record.endId ?? limit;
+    const placed = Number.isInteger(record.startId) && record.startId >= 0 && record.startId <= record.outputStartId
+      && record.outputStartId <= end && end <= limit;
+    if (placed) limit = record.startId;
+    return placed;
+  });
+}
+
 export class OutputBuffer {
   private welcome?: WelcomeSnapshot;
   /** How rows look; presentation state here is never serialized into transcripts. */
@@ -93,6 +110,8 @@ export class OutputBuffer {
     outputStart: number;
     historicalContext?: HistoricalContextSnapshot;
     activities: SecondaryActivity[];
+    /** Its output cleared the screen: its header and earlier lines are gone. */
+    cleared?: boolean;
   };
   private classifier?: CommandClassifier;
   /** What of the active command's output is transcript text (see TranscriptCut). */
@@ -103,8 +122,28 @@ export class OutputBuffer {
       this.visualGaps.clear();
       this.lineTypes.clear();
       this.historicalContexts.clear();
+      this.retireClearedBlocks();
       this.onClear?.();
     });
+  }
+
+  /**
+   * A screen clear (`clear`, `ESC[2J`, `ESC[3J`) removes every stored line, so every block those lines belonged to
+   * goes with them: a record left behind would keep line ids that now name another command's lines, and its fold
+   * row, ownership and toggles would land inside that command. The running command keeps its identity and owns
+   * what it writes after the clear, from the first line on.
+   */
+  private retireClearedBlocks(): void {
+    this.completed.length = 0;
+    this.userToggled.clear();
+    this.setOutputFilter(undefined);
+    if (!this.active) return;
+    this.active.start = 0;
+    this.active.outputStart = 0;
+    this.active.historicalContext = undefined;
+    // Activity ranges were counted before the clear; none of them can be placed again.
+    this.active.activities = [];
+    this.active.cleared = true;
   }
 
   private readonly historicalContexts = new Map<number, HistoricalContextSnapshot>();
@@ -127,7 +166,7 @@ export class OutputBuffer {
   restoreTranscript(transcript: OutputTranscript): void {
     this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
     this.parser.restore(transcript.lines);
-    this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({
+    this.completed.splice(0, this.completed.length, ...placeableRecords(transcript.records, transcript.lines.length).map(record => ({
       ...record,
       historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
       activities: record.activities?.map(activity => ({...activity})),
@@ -221,12 +260,16 @@ export class OutputBuffer {
     }
   }
 
+  get activeStartId(): number | undefined {
+    return this.active?.start;
+  }
+
   get activeOutputStartId(): number | undefined {
     return this.active?.outputStart;
   }
 
   setActiveActivities(activities: SecondaryActivity[]): void {
-    if (!this.active) return;
+    if (!this.active || this.active.cleared) return;
     const previous = new Map(this.active.activities.map(activity => [activity.id, activity]));
     this.active.activities = activities.map(activity => {
       const prior = previous.get(activity.id);
