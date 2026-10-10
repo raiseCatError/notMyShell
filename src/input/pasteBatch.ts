@@ -69,7 +69,7 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
       const char = text[index]!;
       if (char === '\\') { index += 1; continue; }
       if (char === '"') return index + 1;
-      if (char === '$' && text[index + 1] === '(') index = skipGroup(index + 2, ')', depth + 1) - 1;
+      if (char === '$' && text[index + 1] === '(') index = skipGroup(index + 2, ')', depth + 1, text[index + 2] === '(') - 1;
       else if (char === '$' && text[index + 1] === '{') index = skipGroup(index + 2, '}', depth + 1) - 1;
       else if (char === '`') index = skipBacktick(index + 1) - 1;
     }
@@ -83,7 +83,7 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
     return fail('A backtick is never closed.');
   };
   /** Past the matching `close` of a `$(`, `${` or `(` group that started before `from`. */
-  const skipGroup = (from: number, close: ')' | '}', depth: number): number => {
+  const skipGroup = (from: number, close: ')' | '}', depth: number, arithmetic = false): number => {
     if (depth > MAX_DEPTH) fail('The paste nests too deeply to split safely.');
     const open = close === ')' ? '(' : '{';
     for (let index = from; index < length; index += 1) {
@@ -92,12 +92,27 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
       if (char === '\'') { index = skipSingle(index + 1, fish || text[index - 1] === '$') - 1; continue; }
       if (char === '"') { index = skipDouble(index + 1, depth) - 1; continue; }
       if (char === '`') { index = skipBacktick(index + 1) - 1; continue; }
-      if (char === '$' && text[index + 1] === '(') { index = skipGroup(index + 2, ')', depth + 1) - 1; continue; }
-      if (char === '$' && text[index + 1] === '{') { index = skipGroup(index + 2, '}', depth + 1) - 1; continue; }
-      if (char === open && close === ')') { index = skipGroup(index + 1, ')', depth + 1) - 1; continue; }
+      // A here-document inside a substitution has a body this scanner does not read: say so instead of guessing where the group ends.
+      if (!arithmetic && close === ')' && char === '<' && text[index + 1] === '<' && text[index + 2] !== '<' && text[index - 1] !== '<') fail('A here-document inside a substitution is not split.');
+      if (char === '$' && text[index + 1] === '(') { index = skipGroup(index + 2, ')', depth + 1, arithmetic || text[index + 2] === '(') - 1; continue; }
+      if (char === '$' && text[index + 1] === '{') { index = skipGroup(index + 2, '}', depth + 1, arithmetic) - 1; continue; }
+      if (char === open && close === ')') { index = skipGroup(index + 1, ')', depth + 1, arithmetic) - 1; continue; }
       if (char === close) return index + 1;
     }
     return fail(close === ')' ? 'A parenthesis is never closed.' : 'A brace is never closed.');
+  };
+
+  /**
+   * Past a `#` comment to the end of its line. Interactive zsh only treats `#` as a comment when the person turned
+   * interactive_comments on, which is not known here; otherwise everything after it is ordinary shell text, including
+   * `;` and `$( )`. A comment with no shell syntax in it reads the same either way. One with syntax in it is refused,
+   * so the review can never show something as a comment that the shell would run.
+   */
+  const skipComment = (from: number): number => {
+    let end = from;
+    while (end < length && text[end] !== '\n') end += 1;
+    if (shell === 'zsh' && /['"`$;&|()<>\\{}]/u.test(text.slice(from, end))) fail('A comment contains shell syntax, and zsh runs that unless interactive comments are on.');
+    return end;
   };
 
   const commands: BatchCommand[] = [];
@@ -163,7 +178,7 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
       continue;
     }
     if (char === ' ' || char === '\t') { index += 1; continue; }
-    if (char === '#') { while (index < length && text[index] !== '\n') index += 1; continue; }
+    if (char === '#') { index = skipComment(index); continue; }
     if (char === '\\') {
       if (text[index + 1] === '\n') { index += 2; continue; }
       sawCode = true; commandStart = false; continuation = false;
@@ -184,6 +199,11 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
       continue;
     }
     if (char === '&') { sawCode = true; continuation = false; commandStart = true; index += 1; continue; }
+    if (char === '(' && commandStart && text[index + 1] === '(' && !fish) {
+      // (( expression )): arithmetic, whose << is a shift and not a here-document.
+      const end = skipGroup(index + 2, ')', 1, true);
+      if (text[end] === ')') { index = end + 1; sawCode = true; continuation = false; commandStart = false; continue; }
+    }
     if (char === '(') {
       if (stack.length >= MAX_DEPTH) fail('The paste nests too deeply to split safely.');
       stack.push('('); sawCode = true; continuation = false; commandStart = true; index += 1; continue;
@@ -225,7 +245,7 @@ function scan(text: string, shell: BatchShell): BatchCommand[] {
       if (c === '\'') { plain = false; index = skipSingle(index + 1, fish || text[index - 1] === '$'); continue; }
       if (c === '"') { plain = false; index = skipDouble(index + 1, 1); continue; }
       if (c === '`') { plain = false; index = skipBacktick(index + 1); continue; }
-      if (c === '$' && text[index + 1] === '(') { plain = false; index = skipGroup(index + 2, ')', 1); continue; }
+      if (c === '$' && text[index + 1] === '(') { plain = false; index = skipGroup(index + 2, ')', 1, text[index + 2] === '('); continue; }
       if (c === '$' && text[index + 1] === '{') { plain = false; index = skipGroup(index + 2, '}', 1); continue; }
       if (c === '#' && word === '' ) break;
       word += c;

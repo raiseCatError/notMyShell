@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {tmpdir} from 'node:os';
 import {MAX_BATCH_CHARACTERS, splitBatch, type BatchShell} from '../src/input/pasteBatch.js';
 
 const texts = (input: string, shell: BatchShell) => {
@@ -84,7 +85,25 @@ test('blocks (if, for, while, case, functions) are one command until they close'
 test('comments stay with the command they precede; trailing ones with the command above', () => {
   for (const shell of ['zsh', 'bash', 'fish'] as const) {
     assert.deepEqual(texts('# install\nnpm i\n# build\nnpm run build # inline\n# done', shell), ['# install\nnpm i', '# build\nnpm run build # inline\n# done']);
-    assert.deepEqual(texts('echo a # it\'s fine\necho b', shell), ['echo a # it\'s fine', 'echo b']);
+  }
+  for (const shell of ['bash', 'fish'] as const) assert.deepEqual(texts('echo a # it\'s fine\necho b', shell), ['echo a # it\'s fine', 'echo b']);
+});
+
+test('zsh does not treat # as a comment unless told to, so a comment with syntax in it is refused, never shown as a comment', () => {
+  // Interactive zsh runs everything after the # as ordinary shell text: `; echo x` and `$( )` execute.
+  for (const hidden of ['# note; echo EXECUTED', '# note $(touch /tmp/x)', 'ls # `id`', '# a && b', '# it\'s', '# a > b', '# \\']) {
+    assert.match(refuses(`${hidden}\nls`, 'zsh'), /comment contains shell syntax/u, hidden);
+  }
+  // Bash and Fish comments are comments.
+  assert.deepEqual(texts('# note; echo not-run\nls', 'bash'), ['# note; echo not-run\nls']);
+  assert.deepEqual(texts('# note; echo not-run\nls', 'fish'), ['# note; echo not-run\nls']);
+});
+
+test('arithmetic is not a here-document, and a here-document inside a substitution is refused', () => {
+  for (const shell of POSIX) {
+    assert.deepEqual(texts('(( x = 1 << 2 ))\necho $((1<<3))\nls', shell), ['(( x = 1 << 2 ))', 'echo $((1<<3))', 'ls']);
+    assert.deepEqual(texts('echo $(( (1 << 2) + 1 ))\nls', shell), ['echo $(( (1 << 2) + 1 ))', 'ls']);
+    assert.match(refuses('x=$(cat <<EOF\n)\nEOF\n)\nls', shell), /here-document inside a substitution/u);
   }
 });
 
@@ -143,5 +162,53 @@ for (const shell of ['bash', 'zsh', 'fish'] as const) {
     const commands = texts(FIXTURES[shell], shell);
     assert.ok(commands.length >= 8, String(commands.length));
     for (const command of commands) assert.equal(parses(shell, command), true, `${command}`);
+  });
+}
+
+/**
+ * The differential check: run a paste whole, and run the commands the splitter made of it one after another, each
+ * submitted the way the queue does (a multi-line command as one brace group). Both must do exactly the same thing.
+ * Only echo, printf, variables and control flow run here; nothing touches the disk or the network.
+ */
+const submission = (command: string) => command.includes('\n') ? `{ ${command}\n}` : command;
+const PIECES: Record<BatchShell, string[]> = {
+  bash: ['echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
+    'cat <<EOF\nbody $HOME-free\nEOF', 'cat <<\'RAW\'\n$x not expanded\nRAW', 'echo a &&\n  echo b', 'echo "p" |\n  cat', 'f() {\n  echo "in-f-$1"\n}\nf arg', 'case "$x" in\n  8) echo eight ;;\n  *) echo other ;;\nesac',
+    'y=$(\n  echo sub\n)\necho "y=$y"', 'echo \\\n  continued', '# plain comment\necho after-comment', 'false || echo recovered', '(( x += 1 ))\necho "n=$x"', 'echo \'it\'"\'"\'s\'', 'while [ "${n:-0}" -lt 2 ]; do\n  n=$(( ${n:-0} + 1 ))\ndone\necho "n=$n"'],
+  zsh: ['echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
+    'cat <<EOF\nbody\nEOF', 'cat <<\'RAW\'\n$x not expanded\nRAW', 'echo a &&\n  echo b', 'echo "p" |\n  cat', 'f() {\n  echo "in-f-$1"\n}\nf arg', 'case "$x" in\n  8) echo eight ;;\n  *) echo other ;;\nesac',
+    'y=$(\n  echo sub\n)\necho "y=$y"', 'echo \\\n  continued', '# plain comment\necho after-comment', 'false || echo recovered', '(( x += 1 ))\necho "n=$x"', 'while [[ "${n:-0}" -lt 2 ]]; do\n  n=$(( ${n:-0} + 1 ))\ndone\necho "n=$n"'],
+  fish: ['echo one', 'set x 8; echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2\n  echo "loop-$i"\nend', 'if test -z "$x"\n  echo empty\nelse if test "$x" = 8\n  echo eight\nelse\n  echo "has-$x"\nend',
+    'echo a &&\n  echo b', 'echo "p" |\n  cat', 'function f\n  echo "in-f-$argv[1]"\nend\nf arg', 'switch $x\n  case 8\n    echo eight\n  case "*"\n    echo other\nend',
+    'set y (\n  echo sub\n)\necho "y=$y"', 'echo \\\n  continued', '# plain comment\necho after-comment', 'false; or echo recovered', 'test -n "$x"\nand echo set\nor echo unset', 'begin\n  echo in-begin\nend | cat'],
+};
+const RUN: Record<BatchShell, (script: string) => string[]> = {
+  bash: script => ['bash', '--noprofile', '--norc', '-c', script],
+  zsh: script => ['zsh', '-f', '-c', script],
+  fish: script => ['fish', '--no-config', '-c', script],
+};
+const execute = (shell: BatchShell, script: string) => {
+  const [command, ...args] = RUN[shell](script);
+  const result = spawnSync(command!, args, {encoding: 'utf8', timeout: 8000, cwd: tmpdir(), env: {PATH: process.env.PATH ?? '', HOME: tmpdir()}});
+  return `${result.stdout}\n--stderr--\n${result.stderr.replace(/line \d+|-c: line \d+|:\d+:/gu, '')}\n--status ${result.status}`;
+};
+for (const shell of ['bash', 'zsh', 'fish'] as const) {
+  test(`${shell}: running a paste whole and running its split commands one after another do exactly the same`, {skip: parses(shell, 'true') === undefined ? `${shell} is not installed` : false, timeout: 120_000}, () => {
+    let seed = shell.length * 7919;
+    const random = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+    let compared = 0;
+    const rounds = Number(process.env.NMSH_FUZZ_ROUNDS ?? 40);
+    for (let round = 0; round < rounds; round += 1) {
+      const count = 2 + Math.floor(random() * 5);
+      const pieces = Array.from({length: count}, () => PIECES[shell][Math.floor(random() * PIECES[shell].length)]!);
+      const paste = pieces.join('\n');
+      const result = splitBatch(paste, shell);
+      if (!result.ok) continue;
+      compared += 1;
+      const whole = execute(shell, submission(paste));
+      const parts = execute(shell, result.commands.map(command => submission(command.text)).join('\n'));
+      assert.equal(parts, whole, `${shell}: ${JSON.stringify(paste)} split into ${JSON.stringify(result.commands.map(command => command.text))}`);
+    }
+    assert.ok(compared >= Math.floor(rounds * 0.6), `only ${compared} comparable pastes`);
   });
 }
