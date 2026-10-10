@@ -34,10 +34,18 @@ accident: it waited for any "Completed", which matched the previous command's ro
   attributes query itself and kept its queries from the host. When the terminal's foreground process is fish itself
   (its `read` builtin), `ShellSession` now does the same (`ShellAdapter.editorQueries`). The answer is written in the
   same event-loop turn as the query arrives, which matches the first row above.
+- **Input waits until fish has redrawn its prompt.** Fish asks again as soon as it is answered and redraws, so
+  answering alone is not enough. Keys could reach fish after its next question and before NMSh had read that question
+  from the PTY. That happened in the full test suite under load: an answer typed after fish showed `Name: ` was lost.
+  After NMSh answers fish's editor, input waits for the editor's own prompt-drawn mark (OSC 133;B), answering any
+  further rounds on the way. This holds at fish's prompt and in its `read`, with the same bounded fallback.
 - **Keys never overtake an answer** (`src/shell/QueryOrder.ts`). For any program, from the moment it asks for device
   attributes until the answer is delivered, other input is held and then delivered right after the answer, with
   answers to other queries first. A host that never answers cannot stall typing: held input goes through after 500 ms,
   or at once beyond 64 KiB.
+- **Safety.** Ctrl+C discards held input, as a terminal's Ctrl+C discards pending input, so a cancelled line never
+  arrives after the interrupt. Bracketed pastes are opaque: answer-like bytes inside a paste never end a hold and are
+  never moved.
 
 After the fix, under the same load, type-ahead during a fish `read` is kept in 6 of 10 runs (zsh and Bash 10 of 10),
 in line with native fish. Keys typed once the command is shown complete are kept in every run on all three shells.

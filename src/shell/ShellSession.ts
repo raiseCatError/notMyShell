@@ -2,7 +2,7 @@ import {shellAdapter} from './adapters/registry.js';
 import type {ShellAdapter, ShellId} from './adapters/ShellAdapter.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import {QueryOrder} from './QueryOrder.js';
+import {QUERY_HOLD_MS, QueryOrder} from './QueryOrder.js';
 import { spawn, type IPty } from 'node-pty';
 import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
 import {MAX_SHELL_KNOWLEDGE_BYTES} from './ShellKnowledge.js';
@@ -49,7 +49,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   /** The shell's executable name, to tell the shell's own builtins from programs it starts. */
   private shellName = '';
   /** Input waits behind a device-attributes answer the program is waiting on (see QueryOrder). */
-  private readonly order = new QueryOrder(data => { if (!this.exited) this.pty.write(data); });
+  private readonly order: QueryOrder;
   /** The last composer submission, used when a shell cannot report a command's text (Bash, unrecorded lines). */
   private lastSubmitted = '';
 
@@ -57,6 +57,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     shell: ShellId | ShellAdapter = 'zsh') {
     super();
     this.adapter = typeof shell === 'string' ? shellAdapter(shell) : shell;
+    this.order = new QueryOrder(data => { if (!this.exited) this.pty.write(data); }, QUERY_HOLD_MS, this.adapter.editorSettled);
     const token = randomBytes(12).toString('hex');
     this.protocol = new ShellProtocolDecoder(token);
 

@@ -40,12 +40,19 @@ export const QUERY_HOLD_MS = 500;
 
 export class QueryOrder {
   private awaiting = false;
+  /** NMSh answered the program's editor itself; input waits until the editor has drawn its prompt again. */
+  private settling = false;
   private held = '';
   /** The tail of the last output chunk, so a query split across reads is still seen. */
   private carry = '';
   private timer?: NodeJS.Timeout;
 
-  constructor(private readonly write: (data: string) => void, private readonly holdMs = QUERY_HOLD_MS) {}
+  /**
+   * `settled`: the mark a line editor writes once it has drawn its prompt (fish: OSC 133;B). Fish asks again as soon
+   * as it is answered, so after NMSh answers it, input waits for this mark rather than for the next query to be read:
+   * keys that reached fish between its next question and NMSh reading it would be dropped.
+   */
+  constructor(private readonly write: (data: string) => void, private readonly holdMs = QUERY_HOLD_MS, private readonly settled?: RegExp) {}
 
   /** Whether input is being held for an answer (for tests and diagnostics). */
   get holding(): boolean { return this.awaiting; }
@@ -53,20 +60,32 @@ export class QueryOrder {
   /** Program output: a device-attributes query starts a hold. */
   observeOutput(data: string): void {
     const text = this.carry + data;
-    this.carry = text.slice(-3);
-    if (DA1_QUERY.test(text)) this.awaiting = true;
+    this.carry = text.slice(-8);
+    if (DA1_QUERY.test(text)) { this.awaiting = true; this.settling = false; return; }
+    if (this.settling && this.settled?.test(text)) this.release('');
   }
 
   /** NMSh answered the query itself: the answer goes first, then whatever was held. */
   answer(reply: string): void {
     this.write(reply);
-    if (DA1_REPLY.test(reply)) this.release('');
+    if (!DA1_REPLY.test(reply)) return;
+    if (!this.settled) { this.release(''); return; }
+    // Only a mark written after this answer counts.
+    this.settling = true;
+    this.carry = '';
+    this.armTimer();
+  }
+
+  private armTimer(): void {
+    this.timer ??= setTimeout(() => { this.timer = undefined; this.release(''); }, this.holdMs);
+    this.timer.unref?.();
   }
 
   /** Input for the program (keys, pastes, the host terminal's answers). */
   input(data: string): void {
     if (!this.awaiting) { this.write(data); return; }
     const buffer = this.held + data;
+    if (this.settling) { this.hold(buffer); return; }
     const segments = pasteSegments(buffer);
     // Only an answer outside a bracketed paste counts: pasted bytes are the person's, never the terminal's.
     let offset = 0;
@@ -78,13 +97,7 @@ export class QueryOrder {
       }
       offset += segment.text.length;
     }
-    if (!found) {
-      this.held = buffer;
-      if (this.held.length > HOLD_LIMIT) { this.release(''); return; }
-      this.timer ??= setTimeout(() => { this.timer = undefined; this.release(''); }, this.holdMs);
-      this.timer.unref?.();
-      return;
-    }
+    if (!found) { this.hold(buffer); return; }
     // Answers that came before it keep their place before the keys; a paste is never taken apart or reordered.
     let answers = '';
     let keys = '';
@@ -98,6 +111,12 @@ export class QueryOrder {
     this.release(`${keys}${buffer.slice(found.index + found.length)}`);
   }
 
+  private hold(buffer: string): void {
+    this.held = buffer;
+    if (this.held.length > HOLD_LIMIT) { this.release(''); return; }
+    this.armTimer();
+  }
+
   /** An interrupt: like a terminal's Ctrl+C, it discards input the program has not received yet. */
   discard(): void {
     this.held = '';
@@ -107,6 +126,7 @@ export class QueryOrder {
   /** Stops holding and delivers held input followed by `after`. */
   private release(after: string): void {
     this.awaiting = false;
+    this.settling = false;
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
     const data = `${this.held}${after}`;
     this.held = '';
@@ -114,6 +134,7 @@ export class QueryOrder {
   }
 
   dispose(): void {
+    this.settling = false;
     if (this.timer) { clearTimeout(this.timer); this.timer = undefined; }
     this.held = '';
     this.awaiting = false;

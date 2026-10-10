@@ -88,6 +88,8 @@ export interface ShellAdapter {
    * the editor sees the same terminal at its prompt and in `read`.
    */
   readonly editorQueries?: RegExp;
+  /** The mark the shell's editor writes once it has drawn its prompt (see QueryOrder): input waits for it after NMSh answers the editor. */
+  readonly editorSettled?: RegExp;
   /**
    * Terminal-mode bytes the shell's own editor emits as it hands the terminal
    * to a command (Fish turns bracketed paste off). They are editor chrome and

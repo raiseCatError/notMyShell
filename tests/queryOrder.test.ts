@@ -91,6 +91,24 @@ test('Ctrl+C discards what is held, as a terminal discards pending input; nothin
   assert.deepEqual(written, [DA1, 'ls\r']);
 });
 
+test('after NMSh answers an editor itself, input waits until the editor has drawn its prompt again, through every round', () => {
+  const written: string[] = [];
+  const queries = new QueryOrder(data => written.push(data), 500, /\u001b\]133;B/u);
+  // Fish's read: queries, then its prompt, in one burst; a prompt mark before the answer does not count.
+  queries.observeOutput('\u001b[6n\u001b[0c\u001b]133;A\u001b\\Name: \u001b]133;B\u001b\\');
+  queries.answer(DA1);
+  queries.input('abc\r');
+  // Fish asks again at once: answered again, still holding.
+  queries.observeOutput('\u001b[6n\u001b[0c');
+  queries.answer(DA1);
+  queries.input('more');
+  assert.deepEqual(written, [DA1, DA1], 'nothing reaches fish between its rounds');
+  queries.observeOutput('\u001b]133;A\u001b\\Name: \u001b]133;B\u001b\\');
+  assert.deepEqual(written, [DA1, DA1, 'abc\rmore']);
+  assert.equal(queries.holding, false);
+  queries.dispose();
+});
+
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 
 test('fish\'s read is answered like its prompt: its queries never reach the host, and it reads at once', {skip: fish ? false : 'fish not installed', timeout: 30_000}, async () => {
