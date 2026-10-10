@@ -272,4 +272,84 @@ export const javaRuntime = runtimeCapability('runtime.java', 'Java runtime and b
   return value ? {value, evidence: [requested?.from, build?.name, active.active ? 'JDK release file' : undefined].filter(Boolean).join(', ') || 'java'} : undefined;
 });
 
-export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime] as CapabilityDefinition<unknown>[];
+export const rubyRuntime = runtimeCapability('runtime.ruby', 'Ruby version', ['.ruby-version', 'Gemfile (ruby "x")', '.tool-versions', 'mise.toml',
+  'the ruby executable the shell resolves: its install location (never run)'], [],
+{requested: '3.3', requestedFrom: '.ruby-version', active: '3.3.5', manager: 'rbenv', buildTool: 'bundler'}, async context => {
+  let requested = await versionFile(context, ['.ruby-version']);
+  const gemfile = await findNearest(context, ['Gemfile']);
+  if (!requested && gemfile) {
+    const declared = /^\s*ruby\s+['"](\d[\w.+-]{0,31})['"]/mu.exec(await readMetadataText(gemfile.path, 64 * 1024) ?? '')?.[1];
+    if (declared) requested = {version: declared, from: 'Gemfile'};
+  }
+  requested ??= await toolRequest(context, ['ruby']);
+  if (!requested && !gemfile && !context.fields.has('active')) return undefined;
+  const active = await activeVersion(context, ['ruby']);
+  const value = compact({requested: requested?.version.replace(/^ruby-(?=\d)/u, ''), requestedFrom: requested?.from, ...active, ...(gemfile ? {buildTool: 'bundler'} : {})});
+  return value ? {value, evidence: [requested?.from, gemfile?.name, active.active ? 'ruby on PATH' : undefined].filter(Boolean).join(', ') || 'ruby'} : undefined;
+});
+
+export const phpRuntime = runtimeCapability('runtime.php', 'PHP version', ['.php-version', 'composer.json (require.php)', '.tool-versions', 'mise.toml',
+  'the php executable the shell resolves: its install location (never run)'], [],
+{requested: '8.3', requestedFrom: '.php-version', active: '8.3.12', manager: 'Homebrew', buildTool: 'composer'}, async context => {
+  let requested = await versionFile(context, ['.php-version']);
+  const manifest = await findNearest(context, ['composer.json']);
+  if (!requested && manifest) {
+    const pkg = parseJsonData(await readMetadataText(manifest.path, LARGE_METADATA_BYTES));
+    const constraint = record(pkg) && record(pkg.require) ? text(pkg.require.php, 64) : undefined;
+    if (constraint) requested = {version: constraint, from: 'composer.json'};
+  }
+  requested ??= await toolRequest(context, ['php']);
+  if (!requested && !manifest && !context.fields.has('active')) return undefined;
+  const active = await activeVersion(context, ['php']);
+  const value = compact({requested: requested?.version, requestedFrom: requested?.from, ...active, ...(manifest ? {buildTool: 'composer'} : {})});
+  return value ? {value, evidence: [requested?.from, manifest?.name, active.active ? 'php on PATH' : undefined].filter(Boolean).join(', ') || 'php'} : undefined;
+});
+
+
+/** The shared shape of the smaller runtimes: a requested version from the project's own files, an active one from the install path. */
+function simpleRuntime(id: string, title: string, binary: string, reads: readonly string[], preview: RuntimeFact,
+  requestedVersion: (context: CapabilityContext) => Promise<{version: string; from: string; tool?: string} | undefined>, present: readonly string[]): CapabilityDefinition<RuntimeFact> {
+  return runtimeCapability(id, title, [...reads, `the ${binary} executable the shell resolves: its install location (never run)`], [], preview, async context => {
+    const manifest = present.length ? await findNearest(context, present) : undefined;
+    const requested: {version: string; from: string; tool?: string} | undefined = await requestedVersion(context) ?? await toolRequest(context, [binary]);
+    if (!requested && !manifest && !context.fields.has('active')) return undefined;
+    const active = await activeVersion(context, [binary]);
+    const value = compact({requested: requested?.version, requestedFrom: requested?.from, ...active, ...(requested?.tool ? {buildTool: requested.tool} : {})});
+    return value ? {value, evidence: [requested?.from, manifest?.name, active.active ? `${binary} on PATH` : undefined].filter(Boolean).join(', ') || binary} : undefined;
+  });
+}
+
+export const dotnetRuntime = simpleRuntime('runtime.dotnet', '.NET SDK', 'dotnet', ['global.json (sdk.version)', '.tool-versions', 'mise.toml'],
+  {requested: '8.0.100', requestedFrom: 'global.json', active: '8.0.404', manager: 'Homebrew'}, async context => {
+    const found = await findNearest(context, ['global.json']);
+    const data = found ? parseJsonData(await readMetadataText(found.path, 64 * 1024)) : undefined;
+    const version = record(data) && record(data.sdk) ? text((data.sdk as Record<string, unknown>).version, 64) : undefined;
+    // global.json's version is a floor unless rollForward is "disable": a newer SDK satisfies it, so it is not judged as a mismatch.
+    const exact = record(data) && record(data.sdk) && (data.sdk as Record<string, unknown>).rollForward === 'disable';
+    return version ? {version: exact ? version : `≥${version}`, from: 'global.json'} : undefined;
+  }, ['global.json']);
+
+export const swiftRuntime = simpleRuntime('runtime.swift', 'Swift toolchain', 'swift', ['.swift-version', 'Package.swift (swift-tools-version)', '.tool-versions', 'mise.toml'],
+  {requested: '5.9', requestedFrom: 'Package.swift', active: '5.10.1', manager: 'Homebrew', buildTool: 'swiftpm'}, async context => {
+    const file = await versionFile(context, ['.swift-version']);
+    if (file) return file;
+    const manifest = await findNearest(context, ['Package.swift']);
+    const tools = manifest ? /^\/\/\s*swift-tools-version\s*:\s*(\d+(?:\.\d+){0,2})/mu.exec(await readMetadataText(manifest.path, 4096) ?? '')?.[1] : undefined;
+    // swift-tools-version is the oldest toolchain that can build the package, not a pin.
+    return tools ? {version: `≥${tools}`, from: 'Package.swift', tool: 'swiftpm'} : undefined;
+  }, ['Package.swift']);
+
+export const zigRuntime = simpleRuntime('runtime.zig', 'Zig toolchain', 'zig', ['build.zig.zon (minimum_zig_version)', '.zigversion', '.tool-versions', 'mise.toml'],
+  {requested: '0.13.0', requestedFrom: 'build.zig.zon', active: '0.13.0', manager: 'Homebrew'}, async context => {
+    const file = await versionFile(context, ['.zigversion']);
+    if (file) return file;
+    const manifest = await findNearest(context, ['build.zig.zon']);
+    const minimum = manifest ? /\.minimum_zig_version\s*=\s*"(\d[\w.+-]{0,31})"/u.exec(await readMetadataText(manifest.path, 16 * 1024) ?? '')?.[1] : undefined;
+    // minimum_zig_version is a floor, not a pin.
+    return minimum ? {version: `≥${minimum}`, from: 'build.zig.zon'} : undefined;
+  }, ['build.zig', 'build.zig.zon']);
+
+export const denoRuntime = simpleRuntime('runtime.deno', 'Deno runtime', 'deno', ['.dvmrc', 'deno.json / deno.jsonc presence', '.tool-versions', 'mise.toml'],
+  {requested: '2.1.0', requestedFrom: '.dvmrc', active: '2.1.4', manager: 'Homebrew'}, async context => versionFile(context, ['.dvmrc']), ['deno.json', 'deno.jsonc', 'deno.lock']);
+
+export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime, rubyRuntime, phpRuntime, dotnetRuntime, swiftRuntime, zigRuntime, denoRuntime] as CapabilityDefinition<unknown>[];

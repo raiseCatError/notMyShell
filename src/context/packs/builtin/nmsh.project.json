@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation; tool behavior studied from public documentation only."},
   "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
-  "requires": ["project.package", "runtime.node", "runtime.python", "runtime.go", "runtime.rust", "runtime.java"],
+  "requires": ["project.package", "runtime.node", "runtime.python", "runtime.go", "runtime.ruby", "runtime.php", "runtime.dotnet", "runtime.swift", "runtime.zig", "runtime.deno", "runtime.rust", "runtime.java"],
   "modules": [
     {
       "id": "package", "label": "Package", "description": "Version and package manager from the nearest declarative manifest.",
@@ -53,6 +53,78 @@
         {"fact": "runtime.go", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
         {"fact": "runtime.go", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
         {"fact": "runtime.go", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "ruby", "label": "Ruby", "description": "Ruby version from .ruby-version, Gemfile or the install location; never run.",
+      "category": "runtime", "priority": 43, "role": "runtime", "icon": "ruby", "condition": "onCommand",
+      "triggers": ["ruby", "bundle", "bundler", "rails", "rake", "gem"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "ruby", "parts": [
+        {"fact": "runtime.ruby", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.ruby", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.ruby", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.ruby", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "php", "label": "PHP", "description": "PHP version from .php-version, composer.json or the install location; never run.",
+      "category": "runtime", "priority": 42, "role": "runtime", "icon": "php", "condition": "onCommand",
+      "triggers": ["php", "composer", "artisan", "phpunit"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "php", "parts": [
+        {"fact": "runtime.php", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.php", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.php", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.php", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "dotnet", "label": ".NET", "description": ".NET SDK from global.json or the install location; never run.",
+      "category": "runtime", "priority": 41, "role": "runtime", "icon": "dotnet", "condition": "onCommand",
+      "triggers": ["dotnet", "msbuild", "nuget"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "dotnet", "parts": [
+        {"fact": "runtime.dotnet", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.dotnet", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.dotnet", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.dotnet", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "swift", "label": "Swift", "description": "Swift toolchain from .swift-version, Package.swift or the install location; never run.",
+      "category": "runtime", "priority": 40, "role": "runtime", "icon": "swift", "condition": "onCommand",
+      "triggers": ["swift", "swiftc", "xcodebuild"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "swift", "parts": [
+        {"fact": "runtime.swift", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.swift", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.swift", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.swift", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "zig", "label": "Zig", "description": "Zig toolchain from build.zig.zon, .zigversion or the install location; never run.",
+      "category": "runtime", "priority": 39, "role": "runtime", "icon": "zig", "condition": "onCommand",
+      "triggers": ["zig"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "zig", "parts": [
+        {"fact": "runtime.zig", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.zig", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.zig", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.zig", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "deno", "label": "Deno", "description": "Deno runtime from .dvmrc or the install location; never run.",
+      "category": "runtime", "priority": 38, "role": "runtime", "icon": "deno", "condition": "onCommand",
+      "triggers": ["deno"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "deno", "parts": [
+        {"fact": "runtime.deno", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.deno", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.deno", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.deno", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
       ]}]
     },
     {

@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import type {CapabilityDefinition} from '../src/context/capability.js';
 import {projectPackage} from '../src/context/capabilities/project.js';
-import {goRuntime, javaRuntime, nodeRuntime, pythonRuntime, rustRuntime, versionMismatch} from '../src/context/capabilities/runtimes.js';
+import {denoRuntime, dotnetRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
 import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
 import {aws, azure, gcp} from '../src/context/capabilities/cloud.js';
@@ -341,4 +341,79 @@ test('vcs.git reads stash depth and upstream from Git files, including linked wo
     await rm(worktree, {recursive: true, force: true});
     assert.equal(await resolve(gitExtras, {cwd: root}), undefined, 'outside a repository there is nothing to read');
   } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('runtime facts: Ruby and PHP from the project\'s own files and the install location, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    const rbenv = join(tools, '.rbenv', 'versions', '3.3.5', 'bin');
+    await mkdir(rbenv, {recursive: true});
+    await sentinelExecutable(join(rbenv, 'ruby'), join(tools, 'RUBY_RAN'), 'ruby 9.9.9');
+    await writeFile(join(root, '.ruby-version'), 'ruby-3.2.4\n');
+    await writeFile(join(root, 'Gemfile'), 'source "https://rubygems.org"\nruby "3.1.0"\n');
+    const ruby = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: rbenv}});
+    assert.deepEqual(ruby, {requested: '3.2.4', requestedFrom: '.ruby-version', active: '3.3.5', manager: 'rbenv', buildTool: 'bundler', mismatch: true});
+    await rm(join(root, '.ruby-version'));
+    assert.deepEqual((await resolve(rubyRuntime, {cwd: root, root, env: {PATH: rbenv}, fields: ['requested', 'requestedFrom']})), {requested: '3.1.0', requestedFrom: 'Gemfile', buildTool: 'bundler'});
+    assert.equal(await exists(join(tools, 'RUBY_RAN')), false);
+
+    const cellar = join(tools, 'opt', 'Cellar', 'php', '8.3.12', 'bin');
+    await mkdir(cellar, {recursive: true});
+    await sentinelExecutable(join(cellar, 'php'), join(tools, 'PHP_RAN'), 'PHP 9.9.9');
+    await writeFile(join(root, 'composer.json'), JSON.stringify({require: {php: '^8.2'}}));
+    const php = await resolve(phpRuntime, {cwd: root, root, env: {PATH: cellar}});
+    assert.deepEqual(php, {requested: '^8.2', requestedFrom: 'composer.json', active: '8.3.12', manager: 'Homebrew', buildTool: 'composer'});
+    assert.equal(await exists(join(tools, 'PHP_RAN')), false);
+    // A ruby inside the workspace is never inspected.
+    const planted = join(root, 'bin');
+    await mkdir(planted);
+    await sentinelExecutable(join(planted, 'ruby'), join(root, 'PLANTED_RAN'), 'ruby 1.0.0');
+    resetServiceCaches();
+    const refused = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: planted}});
+    assert.equal(refused?.active, undefined);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('runtime facts: .NET, Swift, Zig and Deno from the project\'s own files and the install location, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    const cellar = (name: string, version: string) => join(tools, 'opt', 'Cellar', name, version, 'bin');
+    const install = async (name: string, version: string, binary = name) => {
+      const bin = cellar(name, version);
+      await mkdir(bin, {recursive: true});
+      await sentinelExecutable(join(bin, binary), join(tools, `${name.toUpperCase()}_RAN`), `${name} 9.9.9`);
+      return bin;
+    };
+    await writeFile(join(root, 'global.json'), JSON.stringify({sdk: {version: '8.0.100'}}));
+    assert.deepEqual(await resolve(dotnetRuntime, {cwd: root, root, env: {PATH: await install('dotnet', '8.0.404')}}), {requested: '≥8.0.100', requestedFrom: 'global.json', active: '8.0.404', manager: 'Homebrew'});
+
+    await writeFile(join(root, 'Package.swift'), '// swift-tools-version: 5.9\nimport PackageDescription\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(swiftRuntime, {cwd: root, root, env: {PATH: await install('swift', '5.10.1')}}), {requested: '≥5.9', requestedFrom: 'Package.swift', active: '5.10.1', manager: 'Homebrew', buildTool: 'swiftpm'});
+
+    await writeFile(join(root, 'build.zig.zon'), '.{ .name = "x", .version = "0.1.0", .minimum_zig_version = "0.13.0" }\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(zigRuntime, {cwd: root, root, env: {PATH: await install('zig', '0.13.0')}}), {requested: '≥0.13.0', requestedFrom: 'build.zig.zon', active: '0.13.0', manager: 'Homebrew'});
+
+    await writeFile(join(root, '.dvmrc'), '2.0.0\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(denoRuntime, {cwd: root, root, env: {PATH: await install('deno', '2.1.4')}}), {requested: '2.0.0', requestedFrom: '.dvmrc', active: '2.1.4', manager: 'Homebrew', mismatch: true});
+
+    for (const name of ['DOTNET', 'SWIFT', 'ZIG', 'DENO']) assert.equal(await exists(join(tools, `${name}_RAN`)), false, `${name} was never run`);
+    // Nothing is claimed when the project asks for nothing and the demand is only for the project's own request.
+    const empty = await workspace();
+    try { assert.equal(await resolve(zigRuntime, {cwd: empty, root: empty, env: {PATH: ''}, fields: ['requested']}), undefined); } finally { await rm(empty, {recursive: true, force: true}); }
+    // A binary planted in the workspace is never inspected.
+    const planted = join(root, 'planted');
+    await mkdir(planted);
+    await sentinelExecutable(join(planted, 'deno'), join(root, 'PLANTED_RAN'), 'deno 1.0.0');
+    resetServiceCaches();
+    assert.equal((await resolve(denoRuntime, {cwd: root, root, env: {PATH: planted}}))?.active, undefined);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
