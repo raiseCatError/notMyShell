@@ -153,3 +153,33 @@ test('no parser differential: invisible characters cannot hide a secret, glued t
   assert.equal(review.text, 'see ghp_abcdefghijklmnopqrstuvwxyz0123456789\n');
   assert.match(stripAnsi(renderReportReview(review, 100, 30).join('\n')), /Looks sensitive: 1 token · in your edit/u);
 });
+
+test('no differential with what a reader parses: line separators, ignorable characters, look-alikes and marks', () => {
+  // A line separator would end a line in the editor or Markdown reader; it cannot close the fence from inside.
+  const escape = record('cat notes', 'safe\u2028```\u2029![x](https://example.invalid/leak)\r\n', 0, '✔ Completed · 1 ms');
+  const {text} = buildReport([escape], {...DEFAULT_REPORT_OPTIONS, redact: false});
+  assert.doesNotMatch(text, /[\u2028\u2029]/u);
+  assert.match(text, /````text\nsafe\n```\n!\[x\]\(https:\/\/example\.invalid\/leak\)\n````/u, 'the fence outgrows the inner run and still holds the whole output');
+  // Variation selectors, Hangul fillers, combining marks and full-width look-alikes inside a token.
+  for (const disguised of ['ghp_abcdefghij\uFE0Fklmnopqrstuvwxyz0123456789', 'ghp_abcdefghij\u3164klmnopqrstuvwxyz0123456789',
+    'ghp_abcdefghij\u0301klmnopqrstuvwxyz0123456789', '\uFF47\uFF48\uFF50_abcdefghijklmnopqrstuvwxyz0123456789']) {
+    const result = redactText(`token: ${disguised} end`).text;
+    assert.match(result, /^token: \[REDACTED\] end$/u, JSON.stringify(disguised));
+  }
+  // Ordinary non-ASCII text is never rewritten: fidelity outside redacted spans.
+  const faithful = 'café naïve x² ﬁle 日本語 émoji 🐈';
+  assert.equal(redactText(faithful).text, faithful);
+});
+
+test('the review never cuts a row: wide, ambiguous and combining characters wrap within the panel', () => {
+  const wide = record('echo', `${'日本語の出力'.repeat(30)} é\u0301 ${'🐈'.repeat(40)} TAIL\r\n`, 0, '✔ Completed · 1 ms');
+  const review = createReportReview([wide], {...DEFAULT_REPORT_OPTIONS}, false);
+  const seen: string[] = [];
+  for (let page = 0; page < 20; page += 1) {
+    const rows = renderReportReview(review, 50, 20).map(stripAnsi);
+    assert.ok(rows.every(row => displayWidth(row) <= 50), 'every row fits');
+    seen.push(...rows);
+    reportReviewKey(review, {kind: 'pageDown'}, 20);
+  }
+  assert.ok(seen.some(row => row.includes('TAIL')), 'the end of the line was shown');
+});

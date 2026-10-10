@@ -61,15 +61,42 @@ export function scanSensitive(text: string, home?: string): ReportFinding[] {
   return redactText(text, home).findings;
 }
 
+/**
+ * What the patterns are matched against: each character in compatibility form (NFKC: full-width and other look-alike
+ * letters become their plain forms) with combining marks dropped, and, for every UTF-16 unit of that skeleton, the
+ * span of the original text it came from. A secret dressed in look-alikes or decorated with marks is still found,
+ * and only its own span of the original is replaced: the rest of the report keeps its exact characters.
+ */
+function skeleton(text: string): {text: string; from: number[]; to: number[]} {
+  let out = '';
+  const from: number[] = [];
+  const to: number[] = [];
+  let index = 0;
+  for (const char of text) {
+    const start = index;
+    index += char.length;
+    if (/\p{M}/u.test(char)) { if (to.length) to[to.length - 1] = index; continue; }
+    for (const unit of char.normalize('NFKC').replace(/\p{M}/gu, '')) {
+      for (let at = 0; at < unit.length; at += 1) { from.push(start); to.push(index); }
+      out += unit;
+    }
+  }
+  return {text: out, from, to};
+}
+
 export function redactText(text: string, home?: string): {text: string; findings: ReportFinding[]} {
   const counts = new Map<FindingKind, number>();
   let result = reportText(text);
   for (const {kind, pattern, replace} of [...PATTERNS, ...pathPatterns(home)]) {
-    result = result.replace(pattern, (match: string, ...groups: unknown[]) => {
-      const replaced = replace(match, ...groups.filter((group): group is string => typeof group === 'string'));
-      if (replaced !== match) counts.set(kind, (counts.get(kind) ?? 0) + 1);
-      return replaced;
-    });
+    const view = skeleton(result);
+    const edits: Array<{from: number; to: number; text: string}> = [];
+    for (const match of view.text.matchAll(pattern)) {
+      const replaced = replace(match[0], ...match.slice(1).filter((group): group is string => typeof group === 'string'));
+      if (replaced === match[0] || !match[0].length) continue;
+      edits.push({from: view.from[match.index]!, to: view.to[match.index + match[0].length - 1]!, text: replaced});
+    }
+    for (const edit of edits.reverse()) result = result.slice(0, edit.from) + edit.text + result.slice(edit.to);
+    if (edits.length) counts.set(kind, (counts.get(kind) ?? 0) + edits.length);
   }
   return {text: result, findings: [...counts].map(([kind, count]) => ({kind, count}))};
 }
@@ -108,12 +135,16 @@ function fence(text: string): string {
 
 /** Control characters (escape sequences, carriage returns) are not text a report should carry. */
 /**
- * The text a report may carry: line breaks normalized; control characters and invisible format characters
- * (zero-width spaces and joiners, bidi overrides, soft hyphens) removed. The scanner, the review and the clipboard
+ * The text a report may carry: line breaks normalized (including U+2028/U+2029); control characters and every
+ * default-ignorable code point (zero-width spaces and joiners, bidi controls, soft hyphens, variation selectors,
+ * fillers) removed. The scanner, the review and the clipboard
  * then see the same characters, so a secret cannot hide from redaction behind something the review never shows.
  */
 export function reportText(text: string): string {
-  return text.replace(/\r\n?/gu, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}/gu, '');
+  // Line and paragraph separators are line breaks to the editors and Markdown readers a report is pasted into: they
+  // become real ones here, so a fence is sized for the lines a reader will see and cannot be closed from inside.
+  return text.replace(/\r\n?|[\u2028\u2029]/gu, '\n')
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]|\p{Cf}|\p{Default_Ignorable_Code_Point}/gu, '');
 }
 const clean = reportText;
 

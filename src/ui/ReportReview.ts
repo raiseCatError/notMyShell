@@ -73,7 +73,9 @@ function wrapRows(line: string, width: number): string[] {
   let row = '';
   let used = 0;
   for (const char of displaySafe(line)) {
-    const cells = displayWidth(char);
+    // Conservative cells: a character whose width a terminal may render wider (ambiguous, combining, emoji) counts
+    // as two, so no row can overflow the panel and be cut.
+    const cells = Math.max(displayWidth(char), (char.codePointAt(0) ?? 0) > 0xff ? 2 : 1);
     if (used + cells > width && row) { rows.push(row); row = ''; used = 0; }
     row += char;
     used += cells;
