@@ -79,7 +79,8 @@ test('live: /copy and /copy N put exactly the command output on the clipboard, t
     await until(() => existsSync(clip) && readFileSync(clip, 'utf8').length > 0, 15_000, `the clipboard after ${command}`);
     return readFileSync(clip, 'utf8');
   };
-  const frontend = sandbox.launch([], {cols: 100, rows: 30}, {PATH: `${bin}:${process.env.PATH}`});
+  // Linux picks a tool only with a display: a placeholder DISPLAY selects the stand-in xclip (CI has no display).
+  const frontend = sandbox.launch([], {cols: 100, rows: 30}, {PATH: `${bin}:${process.env.PATH}`, ...(process.platform === 'linux' ? {DISPLAY: ':nmsh-test'} : {})});
   try {
     await frontend.waitFor(/Vespyr|notMyShell|zsh/u);
     await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge')) || frontend.output.length > 2000, 20_000, 'startup');
