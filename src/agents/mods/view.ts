@@ -75,7 +75,7 @@ function row(entry: ModEntry, selected: boolean, columns: number): string {
   const stateWidth = wide ? 15 : 9;
   const nameWidth = columns >= 90 ? 40 : columns >= 60 ? Math.max(16, columns - 40) : Math.max(4, columns - 4 - stateWidth);
   const short = {on: 'on', off: 'off', unknown: 'unknown', inert: 'inert'} as const;
-  const meta = [SCOPE[entry.scope], entry.version ? clean(entry.version, 24) : ''].filter(Boolean).join(' · ');
+  const meta = [entry.nativeType ?? '', SCOPE[entry.scope], entry.version ? clean(entry.version, 24) : ''].filter(Boolean).join(' · ');
   const name = padCells(truncateText(clean(entry.name, 200), nameWidth - 2), nameWidth, 0);
   const stateText = padCells(wide ? state.text : short[state.tone], stateWidth, 0);
   const metaText = columns >= 60 ? meta : '';
@@ -89,12 +89,28 @@ function controls(state: ModsController, columns: number): string[] {
   const pairs: Array<[string, string]> = state.owner === 'SEARCH'
     ? [['type', 'filter'], ['Enter', 'details'], ['Esc', 'clear search']]
     : state.details
-      ? [[safe ? 'Up/Down' : '↑↓', 'scroll'], ['R', 'refresh'], ['Esc', 'back to list']]
-      : [[safe ? 'Up/Down' : '↑↓', 'select'], ['Tab', 'kind'], ...(state.rows.length ? [['Enter', 'details'] as [string, string]] : []), ['/', 'search'], ['P', 'provider'], ['R', 'refresh'], ['Esc', 'close']];
+      ? [[safe ? 'Up/Down' : '↑↓', 'scroll'], ...(state.selectedEntry?.toggle?.supported ? [['Space', 'on/off'] as [string, string]] : []), ...(state.selectedEntry?.claude ? [['i', 'inspect'] as [string, string]] : []), ['R', 'refresh'], ['Esc', 'back to list']]
+      : state.confirm ? [['Enter', 'confirm'], ['Esc', 'cancel']]
+      : [[safe ? 'Up/Down' : '↑↓', 'select'], ['Tab', 'kind'], ...(state.rows.length ? [['Enter', 'details'] as [string, string]] : []),
+        ...(state.selectedEntry?.toggle?.supported ? [['Space', 'on/off'] as [string, string]] : []), ...(state.selectedEntry?.claude ? [['i', 'inspect'] as [string, string]] : []),
+        ['/', 'search'], ['P', 'provider'], ['R', 'refresh'], ['Esc', 'close']];
   return renderControlRows(pairs, columns);
 }
 
-function detail(entry: ModEntry, columns: number): string[] {
+/** What turning the entry on or off would do, said before it happens; restart needs included. */
+export function changeWords(entry: ModEntry): string {
+  if (!entry.toggle) return 'Not available here; use the provider, or the Context Pack workflow for packs.';
+  if (!entry.toggle.supported) return entry.toggle.reason;
+  const scope = entry.claude?.scope === 'user' ? 'user scope' : `${entry.claude?.scope ?? 'its'} scope`;
+  return `Space runs Claude's own claude plugin ${entry.enabled === 'yes' ? 'disable' : 'enable'} at ${scope}${entry.profileId ? ` for ${clean(entry.profileId, 40)}` : ''}. Running NMSh-managed sessions on that account reload plugins at once; Claude's own terminal sessions need /reload-plugins or a restart.`;
+}
+
+/** The confirmation line for a pending change. */
+export function confirmWords(entry: ModEntry, enable: boolean): string {
+  return `${enable ? 'Enable' : 'Disable'} ${clean(entry.name, 80)}${entry.profileId ? ` for ${clean(entry.profileId, 40)}` : ''} at ${entry.claude?.scope ?? 'its'} scope? Enter confirms · Esc cancels`;
+}
+
+function detail(entry: ModEntry, columns: number, inspection?: import('./controller.js').ModInspection): string[] {
   const c = color();
   const width = Math.max(1, columns - 2 - FIELD);
   const field = (label: string, value: string, style = c.secondary) => wrapCells(value, width).map((line, index) =>
@@ -105,6 +121,20 @@ function detail(entry: ModEntry, columns: number): string[] {
     head,
     ...(entry.description ? wrapCells(clean(entry.description, 600), Math.max(1, columns - 2)).map(line => `  ${c.subtle}${line}${RESET}`) : []),
     '',
+    ...(entry.nativeType || entry.runtime ? [`  ${c.accent}In NMSh${RESET}`,
+      ...(entry.nativeType ? field('Type', entry.nativeType === 'Mod' ? 'Mod: code that runs inside Claude Code' : entry.nativeType) : []),
+      ...(entry.components ? field('Contains', componentWords(entry.components)) : []),
+      ...(entry.runtime ? field('In sessions', clean(entry.runtime, 400)) : []),
+      ...field('Loaded in', entry.loadedIn?.length ? entry.loadedIn.map(item => clean(item, 60)).join(', ') : 'no running managed target reports it'),
+      ...(entry.notes ?? []).flatMap((note, index) => field(index ? '' : 'Notes', clean(note, 300))),
+      ...field('Change', changeWords(entry)),
+      ''] : []),
+    ...(inspection ? [`  ${c.accent}Inspection${RESET}`,
+      ...(inspection.hooks.length ? field('Hooks', inspection.hooks.join(', ')) : []),
+      ...(inspection.calls.length ? field('Calls', inspection.calls.join(', ')) : []),
+      ...(inspection.details ? inspection.details.split('\n').filter(line => line.trim()).slice(0, 24).map(line => `  ${c.secondary}${truncateText(clean(line, 200), Math.max(1, columns - 2))}${RESET}`) : []),
+      ...(inspection.error ? field('Problem', inspection.error, c.failure) : []),
+      ''] : []),
     `  ${c.accent}Execution${RESET}`,
     ...field('Runs', entry.kind === 'Provider-native' ? `inside ${clean(entry.executesInside, 60)}, under the provider's own controls` : entry.kind === 'Portable' ? 'nowhere: an inert descriptor with no executable code' : 'nowhere: a declarative pack NMSh reads as data'),
     ...field('Sandbox', entry.kind === 'Provider-native' ? 'none from NMSh' : 'not applicable (not executable)', entry.kind === 'Provider-native' ? c.failure : c.secondary),
@@ -120,9 +150,15 @@ function detail(entry: ModEntry, columns: number): string[] {
     ...(entry.reference ? field('Location', clean(entry.reference)) : []),
     ...field('Evidence', clean(entry.evidence)),
     ...field('Trust', 'unknown: listing or integrity is not trust'),
-    '',
-    ...wrapCells('Enabling or disabling is not available here; use the provider, or the Context Pack workflow for packs.', Math.max(1, columns - 2)).map(line => `  ${c.subtle}${line}${RESET}`),
+    ...(entry.toggle ? [] : ['', ...wrapCells(changeWords(entry), Math.max(1, columns - 2)).map(line => `  ${c.subtle}${line}${RESET}`)]),
   ];
+}
+
+function componentWords(components: import('./model.js').ModComponents): string {
+  const parts = [components.mod ? 'mod hooks' : '', components.skills ? `${components.skills} skill${components.skills === 1 ? '' : 's'}` : '', components.agents ? `${components.agents} agent${components.agents === 1 ? '' : 's'}` : '',
+    components.commands ? `${components.commands} command${components.commands === 1 ? '' : 's'}` : '', components.hookEvents ? `settings hooks on ${components.hookEvents} event${components.hookEvents === 1 ? '' : 's'}` : '',
+    components.mcp ? 'MCP server' : '', components.lsp ? 'LSP server' : ''].filter(Boolean);
+  return parts.length ? parts.join(', ') : 'nothing NMSh can read from its manifest';
 }
 
 /** Word wrap in display cells; hard-breaks only words wider than the line. */
@@ -155,7 +191,7 @@ export function renderMods(state: ModsController, columns: number, height: numbe
   const status = state.refreshing ? `${c.subtle}refreshing…${RESET}` : state.stale ? `${c.failure}stale${RESET}` : '';
   // The subtitle shortens by whole clauses, never mid-phrase; the refresh state always keeps its place.
   const reserve = status ? displayWidth(status) + 2 : 0;
-  const subtitle = ['provider extensions and NMSh packs · inventory only; nothing runs from here', 'inventory only; nothing runs from here', '']
+  const subtitle = ['provider extensions and NMSh packs · discovery runs nothing', 'discovery runs nothing', '']
     .find(text => !text || 8 + displayWidth(text) + reserve <= width)!;
   const title = `${c.primary}  Mods${RESET}${subtitle ? `  ${c.subtle}${subtitle}${RESET}` : ''}${status ? `  ${status}` : ''}`;
   const head = [title,
@@ -172,7 +208,7 @@ export function renderMods(state: ModsController, columns: number, height: numbe
 
   let body: string[];
   if (state.details && selected) {
-    const lines = detail(selected, width);
+    const lines = detail(selected, width, state.inspections.get(selected.key));
     const room = Math.max(1, height - head.length - message.length - footer.length - 1);
     const offset = Math.min(state.scroll, Math.max(0, lines.length - room));
     body = lines.slice(offset, offset + room);
@@ -183,6 +219,9 @@ export function renderMods(state: ModsController, columns: number, height: numbe
     // Below the list: a more cue, then the selected entry's execution facts and evidence.
     // The execution facts wrap rather than truncate: they are never cut at narrow widths. Evidence is secondary.
     const summary = selected ? [
+      ...(state.confirm?.key === selected.key ? wrapCells(confirmWords(selected, state.confirm.enable), Math.max(1, width - 2)).map(line => `  ${c.accent}${line}${RESET}`) : []),
+      ...(state.busy ? [`  ${c.secondary}${truncateText(clean(state.busy, 200), Math.max(1, width - 2))}${RESET}`] : []),
+      ...(selected.runtime ? wrapCells(clean(selected.runtime, 300), Math.max(1, width - 2)).map(line => `  ${c.secondary}${line}${RESET}`) : []),
       ...wrapCells(modExecution(selected), Math.max(1, width - 2)).map(line => `  ${c.secondary}${line}${RESET}`),
       `  ${c.subtle}${truncateText(clean(selected.evidence), Math.max(1, width - 2))}${RESET}`,
     ] : [];

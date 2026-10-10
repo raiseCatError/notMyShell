@@ -31,7 +31,7 @@ const plain = (lines: string[]) => lines.map(line => stripAnsi(line));
 test('browse view: native tab strip, search and provider row, grouped rows with factual state words', () => {
   const lines = plain(renderMods(controller(), 100, 30));
   const text = lines.join('\n');
-  assert.match(lines[0]!, /^ {2}Mods {2}provider extensions and NMSh packs · inventory only; nothing runs from here$/u);
+  assert.match(lines[0]!, /^ {2}Mods {2}provider extensions and NMSh packs · discovery runs nothing$/u);
   assert.match(lines[1]!, /^ {3}All {3}Portable {3}Provider-native {3}Context Packs $/u);
   assert.match(lines[2]!, /^ {2}Search {2}\/ to filter {3}Provider {2}All$/u);
   assert.match(text, /^ {2}Portable descriptors$/mu);
@@ -41,7 +41,9 @@ test('browse view: native tab strip, search and provider row, grouped rows with 
   assert.doesNotMatch(text, /\n\n\n/u, 'no doubled blank rows');
   assert.match(text, /^ {4}code-review@official +enabled +global · 1\.4\.0$/mu);
   assert.match(text, /^ {4}commit-commands@official +disabled +global · 1\.0\.2$/mu);
-  assert.match(text, /^ {4}project-lint@team +disabled +this project$/mu, 'projectEnabled is the effective state');
+  // projectEnabled only says whether project settings name a plugin (it is false for nearly every installed one in
+  // Claude Code 2.1.295), so with no `enabled` the state is unknown, never inferred from it.
+  assert.match(text, /^ {4}project-lint@team +state unknown +this project$/mu, 'projectEnabled is not the effective state');
   assert.match(text, /^ {4}Node\.js +state unknown +global · 1$/mu, 'unknown is never shown as enabled');
 });
 
@@ -133,9 +135,9 @@ test('every width fits in display cells; narrow rows keep name and state; Safe g
       if (!details) assert.match(text, /commit-command\S*\s+(?:off|disabled)/u, 'state survives narrow rows');
     }
   }
-  // The subtitle shortens by clause at 80 columns instead of being cut.
-  assert.equal(stripAnsi(renderMods(controller(), 80, 30)[0]!), '  Mods  inventory only; nothing runs from here');
-  assert.equal(stripAnsi(renderMods(controller(), 30, 30)[0]!), '  Mods');
+  // The subtitle shortens by clause at 60 columns instead of being cut.
+  assert.equal(stripAnsi(renderMods(controller(), 60, 30)[0]!), '  Mods  discovery runs nothing');
+  assert.equal(stripAnsi(renderMods(controller(), 24, 30)[0]!), '  Mods');
   setIconStyle('safe');
   try {
     const details = controller(); details.dispatch({kind: 'ActivateAction'});

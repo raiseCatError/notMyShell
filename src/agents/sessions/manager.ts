@@ -2,7 +2,8 @@ import {assignSignature} from '../../session/signatures.js';
 import {basename, isAbsolute} from 'node:path';
 import {resolveCommand} from '../../providers/providers.js';
 import {harness, HARNESSES, type HarnessDescriptor} from '../harnesses.js';
-import {ClaudeSession} from './claudeAdapter.js';
+import {ClaudeSession, EFFORT_LEVELS, type ControlResult} from './claudeAdapter.js';
+import {applyTelemetry, emptyTelemetry, type ContextSnapshot, type TelemetryUpdate} from '../telemetry.js';
 import type {TargetAdapter} from '../targets/adapter.js';
 import {capabilityFacts, updateCapabilities} from '../targets/capabilities.js';
 import {AgentTranscript} from '../transcript/model.js';
@@ -22,6 +23,8 @@ export interface AgentProfile {
   model?: string;
   /** Claude: --permission-mode, one of the modes the CLI documents (never bypassPermissions). */
   permissionMode?: 'acceptEdits' | 'auto' | 'manual' | 'dontAsk' | 'plan';
+  /** Claude: --effort at launch (session-only in Claude; NMSh never writes Claude's settings). */
+  effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   /** Claude: CLAUDE_CONFIG_DIR, the harness's own config/account directory selector. */
   configDir?: string;
 }
@@ -41,6 +44,7 @@ export function normalizeProfiles(value: unknown): AgentProfile[] {
       if (typeof item.model === 'string' && /^[\w.:@-]{1,64}$/u.test(item.model)) profile.model = item.model;
       if (typeof item.permissionMode === 'string' && PERMISSION_MODES.has(item.permissionMode)) profile.permissionMode = item.permissionMode as AgentProfile['permissionMode'];
       if (typeof item.configDir === 'string' && isAbsolute(item.configDir) && !/[\n\u0000]/u.test(item.configDir)) profile.configDir = item.configDir;
+      if (typeof item.effort === 'string' && (EFFORT_LEVELS as readonly string[]).includes(item.effort)) profile.effort = item.effort as AgentProfile['effort'];
     }
     profiles.push(profile);
   }
@@ -101,6 +105,7 @@ export class AgentSessions {
     const profile = options.profile?.harness === descriptor.id ? options.profile : undefined;
     if (profile) session.profileId = profile.name;
     session.capabilities = capabilityFacts(id, 'managed', descriptor.id);
+    session.telemetry = emptyTelemetry();
     try {session.transcript = new AgentTranscript();} catch {return {ok: false, reason: 'Cannot create private agent source storage.'};}
     if (profile) this.profiles.set(id, profile);
     const started = this.startControl(session, profile);
@@ -115,8 +120,18 @@ export class AgentSessions {
     const executable = this.env.resolve('claude');
     if (!executable || !session.cwd) return {ok: false, reason: 'Claude executable or workspace unavailable'};
     const args = [...(profile?.model ? ['--model', profile.model] : []), ...(profile?.permissionMode ? ['--permission-mode', profile.permissionMode] : [])];
+    session.telemetry ??= emptyTelemetry();
     const control = new ClaudeSession({executable, cwd: session.cwd, args, ...(resume ? {resume} : {}), ...(profile?.configDir ? {env: {...process.env, CLAUDE_CONFIG_DIR: profile.configDir}} : {}),
-      onEvent: event => { if (event.kind === 'incomplete') session.transcript?.source.markIncomplete(event.reason); pushEvent(session, event, this.env.now()); updateCapabilities(session.capabilities!, event, this.env.now()); if (event.kind === 'started') session.reconnectable = Boolean(event.harnessSessionId && control.capabilities.resume); if (event.kind === 'exited') this.controls.delete(session.id); this.emit(session, event); }}, this.env.claudeHelp);
+      ...(profile?.effort ? {effort: profile.effort} : {}),
+      onEvent: event => { if (event.kind === 'incomplete') session.transcript?.source.markIncomplete(event.reason); pushEvent(session, event, this.env.now()); updateCapabilities(session.capabilities!, event, this.env.now()); if (event.kind === 'started') session.reconnectable = Boolean(event.harnessSessionId && control.capabilities.resume); if (event.kind === 'exited') this.controls.delete(session.id); this.emit(session, event); },
+      onTelemetry: update => this.telemetry(session, update),
+      onPartial: partial => {
+        // Presentation only: the streaming text is replaced by the provider's completed message, never stored.
+        const now = this.env.now();
+        session.partial = partial.thinking ? {text: '', at: now, thinking: true} : partial.text === undefined ? undefined : {text: partial.text, at: now};
+        this.emitPartial(session);
+      }}, this.env.claudeHelp);
+    if (profile?.effort && control.capabilities.effortFlag) applyTelemetry(session.telemetry, {kind: 'requested', field: 'effort', value: profile.effort, at: this.env.now(), evidence: 'launch flag'});
     const started = control.start();
     if (!started.ok) return started;
     session.pid = control.pid;
@@ -133,6 +148,84 @@ export class AgentSessions {
     return this.startControl(session, this.profiles.get(id), session.harnessSessionId);
   }
 
+  /** Apply one telemetry update; account-wide rate limits also reach live targets of the same launch profile, labelled. */
+  private telemetry(session: AgentSession, update: TelemetryUpdate): void {
+    session.telemetry ??= emptyTelemetry();
+    applyTelemetry(session.telemetry, update);
+    if (update.kind === 'rateLimit') {
+      const key = session.profileId ?? '';
+      for (const other of this.sessions) {
+        if (other === session || other.harness !== session.harness || (other.profileId ?? '') !== key || !other.telemetry) continue;
+        applyTelemetry(other.telemetry, {...update, limit: {...update.limit, from: session.title}});
+      }
+    }
+    this.emit(session);
+  }
+
+  private partialListeners = new Set<(session: AgentSession) => void>();
+  /** Streaming text changes often; hosts subscribe separately so they can coalesce frames. */
+  onPartial(listener: (session: AgentSession) => void): () => void {
+    this.partialListeners.add(listener);
+    return () => this.partialListeners.delete(listener);
+  }
+  private emitPartial(session: AgentSession): void { for (const listener of this.partialListeners) listener(session); }
+
+  /** The live control channel of a managed target, when its provider accepted one. */
+  private control(id: string): ClaudeSession | undefined {
+    const control = this.controls.get(id);
+    return control instanceof ClaudeSession ? control : undefined;
+  }
+
+  /** Whether a target can take runtime controls (model, effort, permission mode, context, MCP) right now. */
+  controllable(id: string): boolean { return Boolean(this.control(id)?.controllable); }
+
+  async setModel(id: string, model: string | undefined): Promise<ControlResult> {
+    return this.control(id)?.setModel(model) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  async setEffort(id: string, level: string | null): Promise<ControlResult> {
+    return this.control(id)?.setEffort(level) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  async setPermissionMode(id: string, mode: string): Promise<ControlResult> {
+    return this.control(id)?.setPermissionMode(mode) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  async contextUsage(id: string, detail: 'summary' | 'full' = 'summary'): Promise<ControlResult<ContextSnapshot>> {
+    return this.control(id)?.contextUsage(detail) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  async mcpStatus(id: string): Promise<ControlResult<unknown[]>> {
+    return this.control(id)?.mcpStatus() ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  async mcpToggle(id: string, name: string, enabled: boolean): Promise<ControlResult> {
+    return this.control(id)?.mcpToggle(name, enabled) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  async mcpReconnect(id: string, name: string): Promise<ControlResult> {
+    return this.control(id)?.mcpReconnect(name) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
+  /** Reload plugins from disk into a running target (reload_plugins): what loaded, and how many failed to. */
+  async reloadPlugins(id: string): Promise<ControlResult<{plugins: string[]; errors: number}>> {
+    const control = this.control(id);
+    if (!control) return {ok: false, reason: 'This target has no live control channel'};
+    const result = await control.request({subtype: 'reload_plugins'}, 60_000);
+    if (!result.ok) return result;
+    const body = result.value as {plugins?: unknown; error_count?: unknown} | undefined;
+    const plugins = Array.isArray(body?.plugins) ? body!.plugins.flatMap(item => item && typeof item === 'object' && typeof (item as {name?: unknown}).name === 'string' ? [(item as {name: string}).name.slice(0, 96)] : []).slice(0, 256) : [];
+    const errors = typeof body?.error_count === 'number' && Number.isFinite(body.error_count) ? body.error_count : 0;
+    const session = this.get(id);
+    if (session?.telemetry?.runtime) session.telemetry.runtime = {...session.telemetry.runtime, plugins: plugins.map(name => ({name})), at: this.env.now()};
+    if (session) this.emit(session);
+    return {ok: true, value: {plugins, errors}};
+  }
+
+  async stopTask(id: string, taskId: string): Promise<ControlResult> {
+    return this.control(id)?.stopTask(taskId) ?? {ok: false, reason: 'This target has no live control channel'};
+  }
+
   /** Text for a managed session; observed sessions never accept input. */
   send(id: string, text: string): boolean {
     const session = this.get(id);
@@ -142,12 +235,17 @@ export class AgentSessions {
     return control.send(text);
   }
 
-  /** The person's explicit answer to a pending approval; NMSh never answers on its own. */
-  answer(id: string, allow: boolean): boolean {
+  /**
+   * The person's explicit answer to a pending approval; NMSh never answers on its own. `remember` selects one of the
+   * rule changes the provider offered with this very request (by index), never one NMSh composed.
+   */
+  answer(id: string, allow: boolean, remember?: number): boolean {
     const session = this.get(id);
     const pending = session?.pendingApproval;
     const control = this.controls.get(id);
-    return Boolean(session && pending && control && control.answer(pending.requestId, allow));
+    const suggestion = remember === undefined ? undefined : pending?.suggestions?.[remember];
+    if (remember !== undefined && !suggestion) return false;
+    return Boolean(session && pending && control && control.answer(pending.requestId, allow, suggestion));
   }
 
   choose(id: string, requestId: string, answers: Record<string, string>): boolean {
@@ -208,5 +306,6 @@ export class AgentSessions {
     for (const session of this.sessions) session.transcript?.dispose();
     this.profiles.clear();
     this.listeners.clear();
+    this.partialListeners.clear();
   }
 }

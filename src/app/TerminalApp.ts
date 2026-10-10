@@ -158,7 +158,7 @@ import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
-import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
+import {displayWidth, padCells, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
@@ -309,7 +309,12 @@ import {attachRenderer, renderWorkspace, type RenderOptions as GithubRenderOptio
 import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
 import {GithubWorkspaceService} from '../githubWorkspace/service.js';
 import {GhSource} from '../githubWorkspace/source.js';
-import {loadModInventory} from '../agents/mods/inventory.js';
+import {loadModInventory, withLoadedIn} from '../agents/mods/inventory.js';
+import {inspectPlugin, setPluginEnabled} from '../agents/mods/claudePlugins.js';
+import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
+import {applyPickerChoice} from '../agents/input/surface.js';
+import {settingsEffort} from '../agents/claudeSettings.js';
+import {renderSidePanel, sidePanelShown, sidePanelWidth} from '../agents/workspace/sidePanel.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
@@ -1593,6 +1598,8 @@ export class TerminalApp {
       const result = action ? this.modsPanel.dispatch(action) : undefined;
       if (result === 'close') {this.modsPanel = undefined; this.returnFromPanel();}
       else if (result === 'refresh') void this.refreshMods();
+      else if (result === 'toggle') void this.toggleMod();
+      else if (result === 'inspect') void this.inspectMod();
       this.render(); return;
     }
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
@@ -3973,8 +3980,16 @@ export class TerminalApp {
       if (session) {
         // The agent draft uses the shell composer's geometry and the terminal's own caret: the view reports where it is.
         const layout: {caret?: {row: number; column: number}} = {};
-        const rows = framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session),
-          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout}), columns);
+        const height = this.dimensions().rows - (this.agentView.controller ? 1 : 4);
+        // The right panel sits beside the conversation when shown; the conversation keeps the composer and caret.
+        const panel = session.level === 'managed' && sidePanelShown(this.agentView.panel, columns);
+        const panelWidth = panel ? sidePanelWidth(columns) : 0;
+        const mainWidth = columns - (panel ? panelWidth + 3 : 0);
+        const main = renderAgentView(session, this.agentView, mainWidth, height, Date.now(), this.agentViewMeta(session),
+          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout});
+        const side = panel ? renderSidePanel(session, panelWidth, main.length, Date.now(), this.agentSettingsEffort.get(session.id)) : [];
+        const divider = `${foreground(UI_COLORS.subtle)}${getCurrentGlyphMode() === 'safe' ? '|' : '│'}\u001b[0m`;
+        const rows = framePanel(panel ? main.map((row, index) => `${padCells(row, mainWidth, 0)} ${divider} ${side[index] ?? ''}`) : main, columns);
         // framePanel puts its rule first; a Top panel later moves that rule to its last row.
         this.agentCaret = layout.caret && {row: layout.caret.row + 1, column: layout.caret.column};
         return rows;
@@ -8018,6 +8033,22 @@ export class TerminalApp {
       answer: (id, requestId, allow) => this.agents.get(id)?.pendingApproval?.requestId === requestId && this.agents.answer(id, allow),
       cancel: id => {this.agents.cancel(id);},
       choose: (id, requestId, answers) => this.agents.choose(id, requestId, answers),
+      openPicker: (target, kind) => {
+        if (!this.agents.controllable(target.id)) return {ok: false, reason: `/${kind} needs a running managed Claude target with a live control channel.`};
+        return kind === 'model' ? openModelPicker(target.telemetry) : openEffortPicker(target.telemetry, this.agentSettingsEffort.get(target.id));
+      },
+      togglePanel: state => {
+        const columns = this.dimensions().columns;
+        state.panel = !sidePanelShown(state.panel, columns);
+        if (state.panel && columns < 72) { state.panel = undefined; return 'The panel needs at least 72 columns; widen the terminal.'; }
+        return state.panel ? 'Panel shown. /panel hides it.' : 'Panel hidden. /panel shows it.';
+      },
+      refreshContext: target => {void this.agents.contextUsage(target.id).then(result => {
+        if (this.agentView?.sessionId === target.id) this.agentView.message = result.ok ? `Context: ${result.value.totalTokens.toLocaleString()} of ${result.value.maxTokens.toLocaleString()} tokens, by Claude's count.` : `Context unavailable: ${result.reason}`;
+        if (!this.stopped) this.render();
+      });},
+      applyPicker: (target, picker, row) => {void applyPickerChoice(view, picker, row, {
+        setModel: model => this.agents.setModel(target.id, model), setEffort: level => this.agents.setEffort(target.id, level), render: () => { if (!this.stopped) this.render(); }});},
       copy: text => {void writeClipboard(text).then(() => {view.message = 'Copied.'; this.render();}).catch(() => {view.message = 'Clipboard unavailable.'; this.render();});},
       copyReply: (target, index) => {void this.copyAgentBlock(target, index);},
     });
@@ -8112,12 +8143,20 @@ export class TerminalApp {
     this.render();
   }
 
+  /** Effort from each target's Claude settings files, read once off the render path. */
+  private readonly agentSettingsEffort = new Map<string, string | undefined>();
+
   /** Header facts for an agent view: the launch profile's label and configured model, and the shell's branch when the target shares its directory. */
   private agentViewMeta(session: AgentSession): AgentViewMeta {
     const profile = session.profileId ? this.promptConfiguration.agentProfiles.find(item => item.name === session.profileId) : undefined;
+    if (session.harness === 'claude' && session.cwd && !this.agentSettingsEffort.has(session.id)) {
+      this.agentSettingsEffort.set(session.id, undefined);
+      void settingsEffort(profile?.configDir, session.cwd).then(level => { if (level && !this.stopped) { this.agentSettingsEffort.set(session.id, level); this.render(); } });
+    }
+    const effort = this.agentSettingsEffort.get(session.id);
     const defaultDir = process.env.CLAUDE_CONFIG_DIR ? process.env.CLAUDE_CONFIG_DIR.replace(/^\/(?:Users|home)\/[^/]+/u, '~') : '~/.claude';
     return {...(profile ? {profileLabel: profileLabel(profile), ...(profile.model ? {configuredModel: profile.model} : {})} : {identity: session.harness === 'claude' ? `Default identity · ${defaultDir}` : 'Default identity'}),
-      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {})};
+      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {}), ...(effort ? {settingsEffort: effort} : {})};
   }
 
   private openMods(provider?: string): void {
@@ -8270,8 +8309,57 @@ export class TerminalApp {
   private async refreshMods(): Promise<void> {
     const panel = this.modsPanel;
     if (!panel) return;
-    await panel.refresh(() => loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles));
+    await panel.refresh(async () => withLoadedIn(await loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles), this.agents.sessions));
     if (this.modsPanel === panel) this.render();
+  }
+
+  /**
+   * The confirmed change, through Claude's own command at the plugin's installed scope; then the listing is read again
+   * as evidence, and running managed targets of the same launch identity reload plugins. Says exactly what happened.
+   */
+  private async toggleMod(): Promise<void> {
+    const panel = this.modsPanel;
+    const pending = panel?.confirm;
+    const entry = panel?.inventoryEntry(pending?.key);
+    if (!panel || !pending || !entry) return;
+    panel.confirm = undefined;
+    const executable = resolveCommand('claude');
+    if (!executable) { panel.message = 'Claude Code is not on PATH.'; this.render(); return; }
+    panel.busy = `${pending.enable ? 'Enabling' : 'Disabling'} ${entry.name}…`;
+    this.render();
+    try {
+      const installed = new Set(panel.entries.filter(item => item.profileId === entry.profileId && item.claude).map(item => item.claude!.pluginId));
+      const result = await setPluginEnabled(executable, entry, pending.enable, installed);
+      if (!result.ok) { panel.message = `Not changed: ${result.message}`; return; }
+      await panel.refresh(async () => withLoadedIn(await loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles), this.agents.sessions));
+      const after = panel.inventoryEntry(pending.key);
+      const confirmed = after?.enabled === (pending.enable ? 'yes' : 'no');
+      const targets = this.agents.sessions.filter(session => session.harness === 'claude' && session.level === 'managed' && (session.profileId ?? undefined) === (entry.profileId ?? undefined)
+        && this.agents.controllable(session.id) && (entry.claude?.scope === 'user' || session.cwd === entry.claude?.projectPath));
+      const reloads = await Promise.all(targets.map(async session => ({session, result: await this.agents.reloadPlugins(session.id)})));
+      const reloaded = reloads.filter(item => item.result.ok);
+      const errors = reloaded.reduce((sum, item) => sum + (item.result.ok ? item.result.value.errors : 0), 0);
+      panel.message = [
+        `${entry.name} ${pending.enable ? 'enabled' : 'disabled'}${result.alreadyInGoalState ? ' (it already was)' : ''}${confirmed ? ', confirmed by Claude\'s listing' : ', but Claude\'s listing does not show it yet'}.`,
+        targets.length ? `Reloaded in ${reloaded.length} of ${targets.length} running managed session${targets.length === 1 ? '' : 's'}${errors ? `; Claude reported ${errors} plugin load error${errors === 1 ? '' : 's'}` : ''}.` : 'New sessions pick it up; no managed session on this account is running.',
+        'Claude\'s own terminal sessions need /reload-plugins or a restart.',
+      ].join(' ');
+      if (this.modsPanel === panel) panel.setInventory(withLoadedIn([...panel.entries], this.agents.sessions));
+    } finally {
+      panel.busy = undefined;
+      if (this.modsPanel === panel) this.render();
+    }
+  }
+
+  private async inspectMod(): Promise<void> {
+    const panel = this.modsPanel;
+    const entry = panel?.selectedEntry;
+    const executable = resolveCommand('claude');
+    if (!panel || !entry?.claude || !executable || panel.inspections.has(entry.key)) return;
+    panel.busy = `Asking Claude to describe ${entry.name}…`;
+    this.render();
+    try { panel.inspections.set(entry.key, await inspectPlugin(executable, entry)); }
+    finally { panel.busy = undefined; if (this.modsPanel === panel) this.render(); }
   }
 
   /** /copy inside an agent view: the Nth newest reply's visible text, never protocol data. */
