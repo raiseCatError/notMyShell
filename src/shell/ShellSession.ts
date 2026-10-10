@@ -2,11 +2,12 @@ import {shellAdapter} from './adapters/registry.js';
 import type {ShellAdapter, ShellId} from './adapters/ShellAdapter.js';
 import { randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import {QueryOrder} from './QueryOrder.js';
 import { spawn, type IPty } from 'node-pty';
 import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
 import {MAX_SHELL_KNOWLEDGE_BYTES} from './ShellKnowledge.js';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import {bridgeEnvPath} from '../themeBridge/environment.js';
 import {PENDING_INPUT_LIMIT, sanitizeStartupOutput, STARTUP_RAW_LIMIT, utf8Tail} from './startupOutput.js';
 import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
@@ -45,6 +46,10 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private atPrompt = true;
   /** The next output chunk is the first after an exec marker. */
   private commandStart = false;
+  /** The shell's executable name, to tell the shell's own builtins from programs it starts. */
+  private shellName = '';
+  /** Input waits behind a device-attributes answer the program is waiting on (see QueryOrder). */
+  private readonly order = new QueryOrder(data => { if (!this.exited) this.pty.write(data); });
   /** The last composer submission, used when a shell cannot report a command's text (Bash, unrecorded lines). */
   private lastSubmitted = '';
 
@@ -67,6 +72,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     }
 
     try {
+      this.shellName = basename(launch.executable);
       this.pty = spawn(launch.executable, launch.args, {
         name: env.TERM || 'xterm-256color',
         cols: Math.max(2, columns),
@@ -89,6 +95,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     this.pty.onExit(event => {
       this.exited = true;
       this.pendingInput = '';
+      this.order.dispose();
       if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
       this.cleanup();
       this.emit('exit', event);
@@ -144,7 +151,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
    */
   private send(data: string, submission = false): void {
     if (submission) this.lastSubmitted = data.replace(/\r$/u, '');
-    if (this.ready) { this.pty.write(data); return; }
+    if (this.ready) { this.order.input(data); return; }
     if (this.pendingInputBytes() + Buffer.byteLength(data, 'utf8') <= PENDING_INPUT_LIMIT) this.pendingInput += data;
     else this.emit('inputRejected', data, submission);
   }
@@ -178,17 +185,20 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     // node-pty reports the exit later; nothing may be written to a PTY NMSh already closed (a late Fish query reply would fail with EIO).
     this.exited = true;
     this.pendingInput = '';
+    this.order.dispose();
     if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
     try { this.pty.kill(); } finally { this.cleanup(); }
   }
 
   private receive(data: string): void {
+    // Before readiness nothing answers the shell's startup queries, so input is never held for them.
+    if (this.ready) this.order.observeOutput(data);
     for (const event of this.protocol.push(data)) {
       if (event.kind === 'data') {
         if (!this.ready) this.captureStartup(event.data);
         else if (this.adapter.editorChrome === 'prompt-to-exec' && this.atPrompt) this.answerChrome(event.data);
         else {
-          const data = this.commandStart && this.adapter.scrubCommandStart ? this.adapter.scrubCommandStart(event.data) : event.data;
+          const data = this.answerEditor(this.commandStart && this.adapter.scrubCommandStart ? this.adapter.scrubCommandStart(event.data) : event.data);
           if (data) { this.commandStart = false; this.emit('data', data); }
         }
       } else if (event.kind === 'exec') {
@@ -212,10 +222,28 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     }
   }
 
+  /**
+   * The shell's own editor running for a command (Fish's `read`) asks what it asks at the prompt. It is answered here,
+   * as at the prompt, and its queries are not passed on: a round trip through the host terminal is slow enough
+   * that keys typed meanwhile reach fish while it waits for the answer, and fish drops them.
+   */
+  private answerEditor(data: string): string {
+    const queries = this.adapter.editorQueries;
+    if (!queries || !this.adapter.answerQueries || !data.match(queries) || !this.shellInForeground()) return data;
+    const reply = this.adapter.answerQueries(data);
+    if (reply && !this.exited) this.order.answer(reply);
+    return data.replace(queries, '');
+  }
+
+  /** The terminal's foreground process is the shell itself (a builtin), not a program it started. */
+  private shellInForeground(): boolean {
+    try { return basename(this.pty.process) === this.shellName; } catch { return false; }
+  }
+
   /** Line-editor chrome is never output; only queries it waits on get a (minimal) reply. */
   private answerChrome(data: string): void {
     const reply = this.adapter.answerQueries?.(data);
-    if (reply && !this.exited) this.pty.write(reply);
+    if (reply && !this.exited) this.order.answer(reply);
   }
 
   private captureStartup(data: string): void {

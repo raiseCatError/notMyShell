@@ -184,6 +184,8 @@ export const fishAdapter: ShellAdapter = {
   scrubCommandStart(data) {
     return data.replace(/^(?:\u001b\[\?2004l|\u001b\[\?1004l|\u001b\[<1u|\u001b\[=0;1u|\u001b\[>4;0m)+/u, '');
   },
+  // Background colour, cursor position and primary device attributes: fish 4's reader sends them each time it starts.
+  editorQueries: /\u001b\]11;\?(?:\u001b\\|\u0007)|\u001b\[6n|\u001b\[0?c/gu,
   answerQueries(chrome) {
     // Primary device attributes: Fish 4 waits for this reply. Answer as a VT220-class terminal; nothing else is claimed.
     return /\u001b\[0?c/u.test(chrome) ? '\u001b[?62;22c' : '';

@@ -83,6 +83,12 @@ export interface ShellAdapter {
    */
   answerQueries?(chrome: string): string;
   /**
+   * The queries the shell's own editor sends (global pattern). The editor also runs while the shell itself owns the
+   * terminal for a command (Fish's `read` builtin); NMSh answers those there too and they never reach the host, so
+   * the editor sees the same terminal at its prompt and in `read`.
+   */
+  readonly editorQueries?: RegExp;
+  /**
    * Terminal-mode bytes the shell's own editor emits as it hands the terminal
    * to a command (Fish turns bracketed paste off). They are editor chrome and
    * must not reach the host terminal during passthrough; removed from the start
