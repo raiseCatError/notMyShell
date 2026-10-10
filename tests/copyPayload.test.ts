@@ -95,7 +95,8 @@ test('live: /copy and /copy N put exactly the command output on the clipboard, t
     writeFileSync(clip, 'KEEP');
     const mark = frontend.mark;
     frontend.pty.write('/copy\r');
-    await frontend.waitFor(/Nothing to copy: true printed no output\./u, mark);
+    // A brief note above the composer, never a transcript line.
+    await frontend.waitFor(/Nothing to copy: true printed no output; the clipboard is unchanged/u, mark);
     assert.equal(readFileSync(clip, 'utf8'), 'KEEP');
   } finally { await sandbox.dispose(); }
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {evaluateFold, foldWindow, FOLD_HEAD_LINES, FOLD_TAIL_LINES, isFoldable, MIN_AUTO_FOLD_LINES, OUTPUT_FOLDING_MODES, shouldAutoFold} from '../src/output/FoldPolicy.js';
+import {evaluateFold, foldHighlights, foldWindow, FOLD_HEAD_LINES, FOLD_TAIL_LINES, isFoldable, LONG_OUTPUT_LINES, MIN_AUTO_FOLD_LINES, OUTPUT_FOLDING_MODES, shouldAutoFold} from '../src/output/FoldPolicy.js';
 import {SETTINGS_ROWS} from '../src/ui/SettingsPanel.js';
 import {OutputBuffer, type SecondaryActivity} from '../src/output/OutputBuffer.js';
 import {CommandClassifier} from '../src/output/Classifier.js';
@@ -15,40 +15,81 @@ const varied = (count: number) => lines(count, index => `${WORDS[index % WORDS.l
 const repetitive = (count: number) => lines(count, index => `processing item ${index} of ${count}`);
 const install = (count: number) => lines(count, index => index % 3 === 0 ? `npm http fetch GET 200 https://registry.npmjs.org/pkg-${index} 12ms` : `downloading pkg-${index}@1.${index}.0`);
 
-test('hard rules: short output and failures never auto-fold', () => {
+test('hard rules: short output never auto-folds; shorter failures stay expanded', () => {
   assert.equal(fold('seq 5', lines(5, String)).fold, false);
   assert.equal(fold('seq 15', repetitive(15)).fold, false);
   assert.equal(fold('build', repetitive(MIN_AUTO_FOLD_LINES)).fold, false, 'the floor is inclusive');
-  const failed = fold('npm install', install(300), 1);
+  const failed = fold('npm install', install(100), 1);
   assert.equal(failed.fold, false);
   assert.match(failed.reasons.join(), /failed/u);
 });
 
-test('useful varied output stays expanded, even when long', () => {
+test('below the long-output size, useful varied output stays expanded', () => {
   assert.equal(fold('describe', varied(25)).fold, false);
-  assert.equal(fold('describe', varied(120)).fold, false, 'varied human-readable output is not boring');
-  assert.equal(fold('git log', repetitive(400)).fold, false, 'git log is the requested result');
+  assert.equal(fold('describe', varied(110)).fold, false, 'varied human-readable output is not boring');
+  assert.equal(fold('git log', repetitive(100)).fold, false, 'git log is the requested result');
   assert.equal(fold('git status', lines(80, index => `\tmodified:   src/file${index}.ts`)).fold, false);
-  assert.equal(fold('rg TODO', repetitive(200)).fold, false);
+  assert.equal(fold('rg TODO', repetitive(100)).fold, false);
 });
 
-test('large repetitive, progress, and install output folds', () => {
-  const big = fold('./generate', repetitive(400));
-  assert.equal(big.fold, true, big.reasons.join('; '));
-  assert.equal(fold('./download', lines(60, index => `${index}% complete`), 0, {progressRewrites: true, sustainedStreaming: true}).fold, true);
-  assert.equal(fold('npm install', install(150)).fold, true);
-  assert.equal(fold('npm test', lines(500, index => `✔ test case ${WORDS[index % 12]} ${index} (${index % 7}.2ms)`)).fold, true);
+test(`long output folds whatever the command and status (${LONG_OUTPUT_LINES}+ lines); no list of known tools is needed`, () => {
+  // The reported bug: large diagnostics never folded (varied text, the odd "error" word, ps/env/adb-style output).
+  const getprop = lines(600, index => `[ro.vendor.prop.${WORDS[index % 12]}.${index}]: [${index % 5 ? 'enabled' : 'error-reporting'}]`);
+  for (const [command, output, exitCode] of [['adb shell getprop', getprop, 0], ['describe', varied(250), 0], ['git log', repetitive(400), 0],
+    ['ps aux', varied(LONG_OUTPUT_LINES), 0], ['npm install', install(300), 1], ['rg TODO', repetitive(200), 0]] as const) {
+    const decision = fold(command, output, exitCode);
+    assert.equal(decision.fold, true, `${command}: ${decision.reasons.join('; ')}`);
+  }
+  for (const count of [5, 50]) assert.equal(fold('diag', varied(count)).fold, false, `${count} lines stay open`);
+  for (const count of [200, 500, 5000]) assert.equal(fold('diag', varied(count)).fold, true, `${count} lines fold`);
+  // Logical lines vs. wrapped rows: 40 very long lines are several screens; 40 short ones are not.
+  assert.equal(fold('jq -c .', lines(40, index => `{"id":${index},"payload":"${'x'.repeat(600)}"}`)).fold, true);
+  assert.equal(fold('jq -c .', lines(40, index => `{"id":${index}}`)).fold, false);
 });
 
-test('diagnostics, stack traces, compiler errors, and diffs stay visible', () => {
-  const trace = `${repetitive(200)}\nTraceback (most recent call last):\n  File "a.py", line 3, in <module>\n  File "b.py", line 9, in f\nValueError: bad`;
+test('shorter diagnostics, stack traces, compiler errors and diffs stay visible', () => {
+  const trace = `${repetitive(80)}\nTraceback (most recent call last):\n  File "a.py", line 3, in <module>\n  File "b.py", line 9, in f\nValueError: bad`;
   assert.equal(fold('python job.py', trace).fold, false);
-  const node = `${repetitive(200)}\nTypeError: x is undefined\n    at run (/app/a.js:3:9)\n    at main (/app/b.js:10:2)`;
+  const node = `${repetitive(80)}\nTypeError: x is undefined\n    at run (/app/a.js:3:9)\n    at main (/app/b.js:10:2)`;
   assert.equal(fold('node job.js', node).fold, false);
-  assert.equal(fold('make', `${install(200)}\nsrc/a.c:10:5: error: expected ';'`).fold, false);
-  assert.equal(fold('npm test', `${lines(200, index => `✔ passes ${index}`)}\n✖ fails badly`).fold, false);
-  const diff = lines(300, index => index % 40 === 0 ? `@@ -${index},3 +${index},4 @@` : index % 2 ? `+ added ${index}` : `- removed ${index}`);
+  assert.equal(fold('make', `${install(80)}\nsrc/a.c:10:5: error: expected ';'`).fold, false);
+  assert.equal(fold('npm test', `${lines(80, index => `✔ passes ${index}`)}\n✖ fails badly`).fold, false);
+  const diff = lines(100, index => index % 40 === 0 ? `@@ -${index},3 +${index},4 @@` : index % 2 ? `+ added ${index}` : `- removed ${index}`);
   assert.equal(fold('cmp', `diff --git a/x b/x\n${diff}`).fold, false);
+});
+
+test('a long folded log keeps its important lines in view: errors near the middle or end, the first frame of a trace', () => {
+  const body = lines(400, index => index === 180 ? 'src/build.ts:42:7: error TS2322: wrong type'
+    : index === 390 ? 'FAILED: 3 tests' : index === 391 ? '    at run (/app/a.js:3:9)' : index === 392 ? '    at main (/app/b.js:10:2)' : `step ${index} ok`);
+  const all = body.split('\n');
+  const picked = foldHighlights(all, FOLD_HEAD_LINES, all.length - FOLD_TAIL_LINES).map(index => all[index]);
+  assert.deepEqual(picked, ['src/build.ts:42:7: error TS2322: wrong type', 'FAILED: 3 tests', '    at run (/app/a.js:3:9)']);
+  assert.deepEqual(foldHighlights(lines(400, index => `step ${index} ok`).split('\n'), 3, 395), [], 'no invented importance');
+  const output = new OutputBuffer();
+  run(output, 'make all', body, 2);
+  const rows = output.wrapped(100).map(row => row.plain);
+  assert.equal(output.recent(1)!.expanded, false, 'a long failure folds');
+  for (const line of ['src/build.ts:42:7: error TS2322: wrong type', 'FAILED: 3 tests', '    at run (/app/a.js:3:9)']) assert.ok(rows.includes(line), line);
+  assert.ok(rows.some(row => /^\s*389 lines hidden · 3 important lines shown · Ctrl\+O/u.test(row)), rows.find(row => /hidden/u.test(row)));
+  assert.equal(output.recent(1)!.output.split('\n').length, 400, 'stored output unchanged');
+});
+
+test('Smart never folds a block under the reader: scrolled back or selecting at completion, it finishes expanded', () => {
+  const output = new OutputBuffer();
+  output.beginCommand('seq 1 500', ['❯ seq 1 500']);
+  output.write(lines(500, String));
+  assert.equal(output.complete(0, {holdOpen: true})!.expanded, true);
+  run(output, 'seq 1 501', lines(501, String));
+  assert.equal(output.recent(1)!.expanded, false);
+});
+
+test('ANSI color and carriage-return progress count as the lines they leave, not as bytes or redraws', () => {
+  const colored = lines(200, index => `\u001b[32m✔\u001b[0m case ${WORDS[index % 12]} ${index}`);
+  assert.equal(fold('npm test', colored).fold, true);
+  const progress = Array.from({length: 2000}, (_, index) => `\r${index / 20}%`).join('') + '\ndone';
+  const output = new OutputBuffer();
+  run(output, 'curl -O big.iso', progress);
+  assert.equal(output.recent(1)!.expanded, true, 'a redrawn progress line is one line, not 2000');
 });
 
 test('the fold window keeps a head and a tail, and short blocks collapse to the row alone', () => {
@@ -97,12 +138,12 @@ test('/copy, the transcript, and /resume keep the complete original output and t
   assert.ok(restored.wrapped(100).some(row => row.plain === 'processing item 250 of 400'));
 });
 
-test('failures and useful output finish expanded in the buffer', () => {
+test('shorter failures and useful output finish expanded in the buffer', () => {
   const failed = new OutputBuffer();
-  run(failed, 'npm install', install(300), 1);
+  run(failed, 'npm install', install(100), 1);
   assert.equal(failed.recent(1)!.expanded, true);
   const log = new OutputBuffer();
-  run(log, 'git log --oneline', lines(200, index => `${(0xabc000 + index).toString(16)} commit ${index}`));
+  run(log, 'git log --oneline', lines(100, index => `${(0xabc000 + index).toString(16)} commit ${index}`));
   assert.equal(log.recent(1)!.expanded, true);
 });
 
