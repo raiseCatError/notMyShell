@@ -141,8 +141,8 @@ function inputKey(state: PinsPanelState, key: Key, item: PanelItem | undefined):
 }
 
 function label(item: PanelItem): string {
-  if (item.kind === 'recipe') return item.recipe.name;
-  return item.pin.name || item.pin.command.split('\n')[0]!.trim();
+  // Drawn text only: control and format characters are made visible wherever the label is used.
+  return displaySafe(item.kind === 'recipe' ? item.recipe.name : item.pin.name || item.pin.command.split('\n')[0]!.trim());
 }
 
 /** The panel's rows (unframed). */

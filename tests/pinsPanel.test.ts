@@ -198,3 +198,12 @@ test('a recipe with a placeholder inside quotes is not saved (it would be quoted
     assert.equal(instance['pinsPanel']!.mode, 'name', 'still asking, with the name kept');
   } finally { dispose(instance); }
 });
+
+test('the remove prompt and every label draw hostile pinned text safely', () => {
+  reset();
+  addPin({command: 'echo \u001b[2J\u001b]0;pwned\u0007 ‮ hidden'}, undefined, 1);
+  const panel = createPinsPanel(data(), '/w');
+  panel.mode = 'delete';
+  const drawn = renderPinsPanel(panel, 100, 22).join('');
+  assert.ok(!drawn.includes('\u001b[2J') && !drawn.includes('\u001b]0;') && !drawn.includes('\u0007') && !drawn.includes('‮'));
+});
