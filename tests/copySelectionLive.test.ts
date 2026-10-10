@@ -173,3 +173,31 @@ test('live: narrow, NO_COLOR and Safe glyphs keep the picker and copy notes legi
     await frontend.waitFor(/\+ Copied 2 outputs/u, after);
   } finally { await sandbox.dispose(); }
 });
+
+test('live: Copy as Report: /copy --report copies Markdown at once; a sensitive report is reviewed first, redacted, and Esc copies nothing', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+  const {sandbox, frontend, copied, reset, read} = withClipboard();
+  try {
+    await ready(frontend);
+    await history(frontend);
+    const report = await copied(frontend, '/cp -2 --report');
+    assert.match(report, /^# Command report\n\n2 commands, oldest first\.\n\n## 1\. `true`[\s\S]*_No output\._[\s\S]*## 2\. `echo omega`\n\n- \*\*Status:\*\* ✔ Completed · [^\n]+\n- \*\*Exit code:\*\* 0[\s\S]*```text\nomega\n```\n$/u, report);
+    assert.match(await copied(frontend, '/copy 3 --report=plain'), /^Command report · 1 command, oldest first\n\n=== 1\. \$ sh -c 'echo boom >&2; exit 3'\nStatus: ✘ Command failed · exit 3[\s\S]*Exit code: 3[\s\S]*--- output ---\nboom\n--- end ---/u);
+    // Something that looks like a secret: the review opens and says so; nothing is copied yet.
+    await frontend.run('echo GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789', /ghp_/u);
+    reset();
+    writeFileSync(join(sandbox.root, 'clipboard.txt'), 'KEEP');
+    let mark = frontend.mark;
+    frontend.pty.write('/copy --report\r');
+    await frontend.waitFor(/Copy as report[\s\S]*Looks sensitive: 2 tokens · redacted 2 tokens/u, mark);
+    frontend.pty.write('\u001b');
+    await frontend.run('echo AFTER-ESC', /AFTER-ESC/u);
+    assert.equal(read(), 'KEEP', 'Esc copied nothing');
+    mark = frontend.mark;
+    frontend.pty.write('/copy 2 --report\r');
+    await frontend.waitFor(/Looks sensitive/u, mark);
+    const redacted = await copied(frontend, '');
+    assert.match(redacted, /GITHUB_TOKEN=\[REDACTED\]/u);
+    assert.doesNotMatch(redacted, /ghp_abcdefghij/u);
+    await frontend.waitFor(/Copied report · 1 command/u, mark);
+  } finally { await sandbox.dispose(); }
+});
