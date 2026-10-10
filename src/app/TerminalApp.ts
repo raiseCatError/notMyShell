@@ -186,6 +186,7 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
 import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
 import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
@@ -722,6 +723,8 @@ export class TerminalApp {
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
   private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean;
+    /** The decorative phrase pair chosen for this command, once (Expressive activity wording). */
+    activity?: ActivityVerbPair;
     /** Started from the command queue rather than typed at the prompt. */
     queued?: boolean;
     /** When you sent Ctrl+C or Ctrl+Z: for a moment the command is ending at your request, so what you type next is
@@ -754,6 +757,8 @@ export class TerminalApp {
    * are type-ahead for the shell and stay in the composer.
    */
   private runningDraft?: {startId: number; at: number; answering: boolean};
+  /** The previous command's phrase pair, so two commands in a row never get the same one. */
+  private lastActivityPair?: ActivityVerbPair;
   /** This session's command queue as its owner (the session service or in-process client) last reported it. */
   private queueState: QueueState = {entries: []};
   /** Ctrl+Q while a program reads keys directly: the composer takes typing for one queue entry, never the program. */
@@ -3445,13 +3450,19 @@ export class TerminalApp {
       const facts = extractFacts(command.command, outputText);
       const isInterrupted = command.interrupted || exitCode === 130;
       const displayCompletedAt = presentationCompletionTime(completedAt);
-      const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
-      if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
-      else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
-      parts.main += completionWaitFact(this.completedInputTiming);
-      if (command.queued) parts.main += ' · from queue';
-      this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
+      const finish = (pair?: ActivityVerbPair) => {
+        const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts, pair);
+        if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
+        else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
+        parts.main += completionWaitFact(this.completedInputTiming);
+        if (command.queued) parts.main += ' · from queue';
+        return parts;
+      };
+      // What is stored (copies, reports, restored records) is always the factual wording; only the drawn row is playful.
+      const factual = finish();
+      this.output.setCompletionLifecycle(`${factual.main}${factual.detail}`);
+      const parts = agent || failure ? factual : finish(this.activityPairFor(command));
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
       // The raw shell error stays; a curated command NMSh knows gets a factual follow-up (identity only, no lookup or install).
@@ -5784,7 +5795,7 @@ export class TerminalApp {
     const customStops = editor.gradient.stops.length >= MIN_CUSTOM_STOPS ? [...editor.gradient.stops] : [...PRESET_STOPS.lavender];
     return editor.target === 'idle'
       ? {...config, idleVisuals: {...config.idleVisuals, colorSource: 'custom', customStops}}
-      : {...config, liveActivity: {colors: 'custom', customStops}};
+      : {...config, liveActivity: {...config.liveActivity, colors: 'custom', customStops}};
   }
 
   /** Shared stop editor keys; Esc (when not typing a hex) saves the stops and returns. */
@@ -9403,12 +9414,28 @@ export class TerminalApp {
     if (bytes) this.session.write(bytes);
   }
 
+  /** This command's phrase pair under Expressive wording: chosen once from the command and its start, so it never changes while it runs. */
+  private activityPair(): ActivityVerbPair | undefined {
+    if (!this.running || this.promptConfiguration.liveActivity.style !== 'expressive') return undefined;
+    if (!this.running.activity) {
+      this.running.activity = selectActivityVerb(this.running.command, this.running.startedAt, this.lastActivityPair);
+      this.lastActivityPair = this.running.activity;
+    }
+    return this.running.activity;
+  }
+
+  /** The pair for a command that just finished: the one it showed while running, or the same deterministic choice if it never drew. */
+  private activityPairFor(command: {command: string; startedAt: number; activity?: ActivityVerbPair}): ActivityVerbPair | undefined {
+    if (this.promptConfiguration.liveActivity.style !== 'expressive') return undefined;
+    return command.activity ?? selectActivityVerb(command.command, command.startedAt, this.lastActivityPair);
+  }
+
   private currentActivity(): string {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
     const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
-    const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
+    const parts = liveActivityParts(this.running.command, elapsed, animationElapsed, this.activityPair());
     // A soft light sweep over the working phrase: its own colors lifted in place, never moved; faster while output arrives.
     // Colors come from Live activity colors; the sweep is the same light sweep everywhere.
     const still = !this.decorativeMotionAllowed() || sweepStill(this.promptConfiguration);
