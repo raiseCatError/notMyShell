@@ -417,3 +417,16 @@ test('runtime facts: .NET, Swift, Zig and Deno from the project\'s own files and
     assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
   } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
+
+test('runtime manifests with huge whitespace runs are read in linear time', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    await writeFile(join(root, 'Gemfile'), `${'\n \t'.repeat(20_000)}ruby "3.3.0"\n`);
+    await writeFile(join(root, 'Package.swift'), `// swift-tools-version${' '.repeat(3000)}\n`);
+    const started = Date.now();
+    await resolve(rubyRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    await resolve(swiftRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});

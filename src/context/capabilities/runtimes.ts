@@ -278,7 +278,7 @@ export const rubyRuntime = runtimeCapability('runtime.ruby', 'Ruby version', ['.
   let requested = await versionFile(context, ['.ruby-version']);
   const gemfile = await findNearest(context, ['Gemfile']);
   if (!requested && gemfile) {
-    const declared = /^\s*ruby\s+['"](\d[\w.+-]{0,31})['"]/mu.exec(await readMetadataText(gemfile.path, 64 * 1024) ?? '')?.[1];
+    const declared = /^[ \t]*ruby[ \t]+['"](\d[\w.+-]{0,31})['"]/mu.exec(await readMetadataText(gemfile.path, 64 * 1024) ?? '')?.[1];
     if (declared) requested = {version: declared, from: 'Gemfile'};
   }
   requested ??= await toolRequest(context, ['ruby']);
@@ -334,7 +334,7 @@ export const swiftRuntime = simpleRuntime('runtime.swift', 'Swift toolchain', 's
     const file = await versionFile(context, ['.swift-version']);
     if (file) return file;
     const manifest = await findNearest(context, ['Package.swift']);
-    const tools = manifest ? /^\/\/\s*swift-tools-version\s*:\s*(\d+(?:\.\d+){0,2})/mu.exec(await readMetadataText(manifest.path, 4096) ?? '')?.[1] : undefined;
+    const tools = manifest ? /^\/\/\s*swift-tools-version[ \t]*:[ \t]*(\d+(?:\.\d+){0,2})/mu.exec(await readMetadataText(manifest.path, 4096) ?? '')?.[1] : undefined;
     // swift-tools-version is the oldest toolchain that can build the package, not a pin.
     return tools ? {version: `≥${tools}`, from: 'Package.swift', tool: 'swiftpm'} : undefined;
   }, ['Package.swift']);
