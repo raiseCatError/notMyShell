@@ -99,3 +99,25 @@ test('live: /copy and /copy N put exactly the command output on the clipboard, t
     assert.equal(readFileSync(clip, 'utf8'), 'KEEP');
   } finally { await sandbox.dispose(); }
 });
+
+test('NMSh lines added while a command runs are shown in its block but are never its output or its /copy payload', () => {
+  const output = new OutputBuffer();
+  output.beginCommand('true', ['❯ true']);
+  // A /copy that finished while the next command had already started, then an Ask aside.
+  output.addFrontendInteraction('/copy 3', 'Copied response 3 to clipboard · 5 characters · 1 line');
+  output.addAskInteraction('what is this', [{role: 'ask', text: 'an aside'}]);
+  const silent = output.complete(0)!;
+  assert.equal(silent.output, '', 'true printed nothing');
+  assert.ok(output.wrapped(80).some(row => row.plain.includes('Copied response 3')), 'the confirmation stays where it was shown');
+
+  output.beginCommand('printf', ['❯ printf']);
+  output.write('one\r\n');
+  output.addFrontendInteraction('/notices', 'Nothing new.');
+  output.write('two\r\n');
+  const record = output.complete(0)!;
+  assert.equal(serializeCopyPayload(record), 'one\ntwo');
+
+  const restored = new OutputBuffer();
+  restored.restoreTranscript(output.transcript());
+  assert.deepEqual(restored.view().completed.map(item => item.command), ['printf', 'true'], 'both records survive a restore');
+});

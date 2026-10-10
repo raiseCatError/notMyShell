@@ -106,7 +106,10 @@ export function placeableRecords(records: readonly CompletedCommand[], lines: re
     const header = record.frontend === 'ask'
       ? headerLines.length > 0 && headerLines.every(type => type === 'metadata')
       : headerLines.length > 0 ? headerLines.every(type => type === 'command') : record.startId === 0;
-    if (!header || !sameText(lines.slice(record.outputStartId, end).join('\n'), record.output)) break;
+    // A shell command's output leaves out NMSh's own lines inside its block; records saved before that rule kept them.
+    const covered = lines.slice(record.outputStartId, end);
+    const own = record.frontend === 'ask' ? covered : covered.filter((_, offset) => lineTypes.get(record.outputStartId + offset) !== 'metadata');
+    if (!header || !(sameText(own.join('\n'), record.output) || sameText(covered.join('\n'), record.output))) break;
     placed.push(record);
     limit = record.startId;
   }
@@ -330,7 +333,7 @@ export class OutputBuffer {
 
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
-    const output = this.parser.snapshotPlain(this.active.outputStart);
+    const output = this.commandOutput(this.active.outputStart, endId);
     // Activity-bearing parents keep their own disclosure; otherwise the fold
     // policy decides from the finished output. Presentation only.
     const autoFolded = this.active.activities.length === 0
@@ -358,6 +361,18 @@ export class OutputBuffer {
     this.classifier = undefined;
     this.cut = undefined;
     return record;
+  }
+
+  /**
+   * What a command wrote: its block's lines without the ones NMSh added while it ran (a /copy confirmation, an Ask
+   * exchange, a notice). Those stay where they were shown, but they were never the command's output.
+   */
+  private commandOutput(start: number, end: number): string {
+    const lines: string[] = [];
+    for (let index = start; index < end; index += 1) {
+      if (this.lineTypes.get(index) !== 'metadata') lines.push(this.parser.plainLineAt(index) ?? '');
+    }
+    return lines.join('\n');
   }
 
   /**
