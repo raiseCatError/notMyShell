@@ -7,12 +7,22 @@ import {EventEmitter} from 'node:events';
  * the in-process client) is the only place entries are taken for running (see QueueDispatcher), so an entry runs at
  * most once, and only in the shell of the session that owns it.
  */
+/**
+ * When an entry may run, beyond "the queue is not paused". Absent is the default: after the commands before it
+ * succeeded (a failure or interrupt pauses the queue before it). `always` also runs after a failure (never after an
+ * interrupt: Ctrl+C still stops the queue). `approve` waits for an explicit approval of this exact entry.
+ */
+export type QueueCondition = 'always' | 'approve';
+
 export interface QueueEntry {
   /** Unique within the session, never reused. */
   id: number;
   /** Exactly what is submitted to the shell, multi-line included. */
   text: string;
   addedAt: number;
+  condition?: QueueCondition;
+  /** `approve` entries only: approved by the person for this text; editing the entry withdraws it. */
+  approved?: boolean;
 }
 
 /** Why the queue does not run its next entry by itself. */
@@ -31,7 +41,11 @@ export interface QueueState {
 }
 
 export type QueueOp =
-  | {op: 'add'; text: string}
+  | {op: 'add'; text: string; condition?: QueueCondition}
+  /** Set (or with no condition, clear) when an entry may run. Withdraws any approval. */
+  | {op: 'condition'; id: number; condition?: QueueCondition}
+  /** Approve the entry that is waiting for approval, exactly as it stands. */
+  | {op: 'approve'; id: number}
   | {op: 'edit'; id: number; text: string}
   | {op: 'edit-begin'; id: number}
   | {op: 'edit-cancel'; id: number}
@@ -70,7 +84,7 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
         if (change.text.length > ENTRY_LIMIT) return 'That command is too long to queue.';
         if (this.entries.length >= QUEUE_LIMIT) return `The queue holds at most ${QUEUE_LIMIT} commands.`;
         if (this.bytes() + Buffer.byteLength(change.text) > QUEUE_BYTES_LIMIT) return 'The queue is full; run or remove some commands first.';
-        this.entries.push({id: this.nextId++, text: change.text, addedAt: this.now()});
+        this.entries.push({id: this.nextId++, text: change.text, addedAt: this.now(), ...(change.condition ? {condition: change.condition} : {})});
         break;
       }
       case 'edit': {
@@ -79,8 +93,24 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
         if (!change.text.trim()) return 'A queued command cannot be empty; remove it instead.';
         if (change.text.length > ENTRY_LIMIT) return 'That command is too long to queue.';
         if (this.bytes() - Buffer.byteLength(entry.text) + Buffer.byteLength(change.text) > QUEUE_BYTES_LIMIT) return 'The queue is full; run or remove some commands first.';
+        // Approval is for the exact text that was approved.
+        if (entry.text !== change.text) delete entry.approved;
         entry.text = change.text;
         if (this.editing === change.id) this.editing = undefined;
+        break;
+      }
+      case 'condition': {
+        const entry = this.entries.find(item => item.id === change.id);
+        if (!entry) return 'That command already ran or was removed.';
+        if (change.condition) entry.condition = change.condition; else delete entry.condition;
+        delete entry.approved;
+        break;
+      }
+      case 'approve': {
+        const entry = this.entries.find(item => item.id === change.id);
+        if (!entry) return 'That command already ran or was removed.';
+        if (entry.condition !== 'approve') return 'That command does not ask for approval.';
+        entry.approved = true;
         break;
       }
       case 'edit-begin': {
@@ -138,10 +168,21 @@ export class CommandQueue extends EventEmitter<{change: [QueueState]}> {
   take(): QueueEntry | undefined {
     if (this.pause || !this.entries.length) return undefined;
     if (this.editing === this.entries[0]!.id) return undefined;
+    // An entry that asks first waits for its own approval, whatever else is true.
+    if (this.entries[0]!.condition === 'approve' && !this.entries[0]!.approved) return undefined;
     const entry = this.entries.shift()!;
     this.changed();
     return entry;
   }
+
+  /** The entry that is next but waiting for the person's approval, if that is why the queue is not running. */
+  get awaitingApproval(): QueueEntry | undefined {
+    const next = this.entries[0];
+    return next && !this.pause && next.condition === 'approve' && !next.approved ? {...next} : undefined;
+  }
+
+  /** The next entry, without taking it. */
+  get next(): QueueEntry | undefined { return this.entries[0] ? {...this.entries[0]} : undefined; }
 
   /** Everything still queued, removed (the shell ended or the session went away). */
   drain(): QueueEntry[] {

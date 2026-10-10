@@ -1655,7 +1655,7 @@ export class TerminalApp {
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
     if (this.queuePanel) {
-      const action = queuePanelKey(this.queuePanel, key, this.queueState);
+      const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable());
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') this.session.queue(action.change);
       else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
@@ -4417,7 +4417,7 @@ export class TerminalApp {
     }
     if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
-    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4), columns);
+    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
@@ -9404,6 +9404,11 @@ export class TerminalApp {
   }
 
   /** Queueing works when the setting is on and whatever owns the shell runs a queue (an older service does not). */
+  /** The session's service understands per-entry conditions and approval (older ones would ignore them, so they are never offered). */
+  private queueConditionsAvailable(): boolean {
+    return this.queueAvailable() && this.session.features.has('queue-conditions');
+  }
+
   private queueAvailable(): boolean {
     return this.promptConfiguration.commandQueue !== false && this.session.features.has('queue');
   }

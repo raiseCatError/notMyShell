@@ -1,4 +1,4 @@
-import {QUEUE_LIMIT, type QueueEntry, type QueueOp, type QueuePause, type QueueState} from './CommandQueue.js';
+import {QUEUE_LIMIT, type QueueCondition, type QueueEntry, type QueueOp, type QueuePause, type QueueState} from './CommandQueue.js';
 import type {QueueEvent} from './QueueDispatcher.js';
 /**
  * Versioned wire protocol between an NMSh frontend and whatever owns the
@@ -24,7 +24,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -321,7 +321,16 @@ export function queueOpFrom(text: string): QueueOp | undefined {
   const id = Number.isSafeInteger(value.id) ? value.id as number : undefined;
   const text_ = typeof value.text === 'string' ? value.text : undefined;
   switch (value.op) {
-    case 'add': return text_ === undefined ? undefined : {op: 'add', text: text_};
+    case 'add': {
+      if (text_ === undefined) return undefined;
+      const condition = queueConditionFrom(value.condition);
+      return value.condition !== undefined && !condition ? undefined : {op: 'add', text: text_, ...(condition ? {condition} : {})};
+    }
+    case 'condition': {
+      const condition = queueConditionFrom(value.condition);
+      return id === undefined || (value.condition !== undefined && !condition) ? undefined : {op: 'condition', id, ...(condition ? {condition} : {})};
+    }
+    case 'approve': return id === undefined ? undefined : {op: 'approve', id};
     case 'edit': return id === undefined || text_ === undefined ? undefined : {op: 'edit', id, text: text_};
     case 'edit-begin': case 'edit-cancel': case 'remove': return id === undefined ? undefined : {op: value.op, id};
     case 'move': return id === undefined || !Number.isSafeInteger(value.to) ? undefined : {op: 'move', id, to: value.to as number};
@@ -329,6 +338,8 @@ export function queueOpFrom(text: string): QueueOp | undefined {
     default: return undefined;
   }
 }
+
+const queueConditionFrom = (value: unknown): QueueCondition | undefined => value === 'always' || value === 'approve' ? value : undefined;
 
 const PAUSE_REASONS = ['user', 'failed', 'interrupted', 'shell-switched', 'restored'] as const;
 
@@ -343,7 +354,8 @@ export function queueStateFrom(text: string): QueueState | undefined {
   for (const entry of value.entries as unknown[]) {
     const item = entry as Record<string, unknown> | null;
     if (!item || !Number.isSafeInteger(item.id) || typeof item.text !== 'string' || !Number.isSafeInteger(item.addedAt)) return undefined;
-    entries.push({id: item.id as number, text: item.text, addedAt: item.addedAt as number});
+    const condition = queueConditionFrom(item.condition);
+    entries.push({id: item.id as number, text: item.text, addedAt: item.addedAt as number, ...(condition ? {condition} : {}), ...(condition === 'approve' && item.approved === true ? {approved: true} : {})});
   }
   const pause = value.paused as Record<string, unknown> | undefined;
   let paused: QueuePause | undefined;
