@@ -157,11 +157,15 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   }
 
   interrupt(): void {
-    this.pty.write('\u0003');
+    // Input still held behind a terminal answer is discarded, as a terminal's Ctrl+C discards pending input:
+    // nothing typed before the interrupt may reach the program after it.
+    this.order.discard();
+    if (!this.exited) this.pty.write('\u0003');
   }
 
   endInput(): void {
-    this.pty.write('\u0004');
+    // End of input is ordinary input: it keeps its place after anything typed before it.
+    this.order.input('\u0004');
   }
 
   /**

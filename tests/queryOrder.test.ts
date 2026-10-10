@@ -68,6 +68,29 @@ test('other answers alone, DA2 and ordinary escapes never release or reorder a h
   assert.deepEqual(written, [`\u001b[>1;10;0c${DA1}`, '\u001b[A']);
 });
 
+test('a bracketed paste stays whole: answer-like bytes inside it neither release a hold nor move', () => {
+  const {written, order: queries} = order();
+  queries.observeOutput('\u001b[0c');
+  const paste = `\u001b[200~line one\u001b[1;1R${DA1}line two\u001b[201~`;
+  queries.input(paste);
+  assert.deepEqual(written, [], 'a pasted fake answer does not end the hold');
+  queries.input(`\u001b[200~still pasting${DA1}`);
+  assert.deepEqual(written, [], 'nor does one inside a paste that is still arriving');
+  queries.input(`\u001b[201~after${DA1}`);
+  assert.deepEqual(written, [DA1, `${paste}\u001b[200~still pasting${DA1}\u001b[201~after`], 'pastes are delivered intact, in order, after the real answer');
+});
+
+test('Ctrl+C discards what is held, as a terminal discards pending input; nothing typed before it arrives after it', () => {
+  const {written, order: queries} = order();
+  queries.observeOutput('\u001b[0c');
+  queries.input('rm -rf build\r');
+  queries.discard();
+  assert.equal(queries.holding, false);
+  queries.input(DA1);
+  queries.input('ls\r');
+  assert.deepEqual(written, [DA1, 'ls\r']);
+});
+
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 
 test('fish\'s read is answered like its prompt: its queries never reach the host, and it reads at once', {skip: fish ? false : 'fish not installed', timeout: 30_000}, async () => {

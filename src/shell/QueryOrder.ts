@@ -18,6 +18,24 @@ const DA1_REPLY = /\u001b\[\?[\d;]{1,64}c/u;
 const OTHER_REPLIES = /\u001b\[\d{1,6};\d{1,6}R|\u001b\[\??\d+;\d\$y|\u001b\[>[\d;]{1,64}c|\u001b\](?:1[0-2]|4;\d{1,3});[ -~]{1,128}(?:\u0007|\u001b\\)|\u001b\[\?\d{1,10}u/gu;
 /** Held input beyond this is delivered at once: the hold exists for typing, not for bulk transfers. */
 const HOLD_LIMIT = 64 * 1024;
+const PASTE_START = '\u001b[200~';
+const PASTE_END = '\u001b[201~';
+
+/** `text` split into bracketed-paste spans (start to end marker, or to the end while a paste is still arriving) and the rest. */
+function pasteSegments(text: string): Array<{text: string; paste: boolean}> {
+  const segments: Array<{text: string; paste: boolean}> = [];
+  let index = 0;
+  while (index < text.length) {
+    const start = text.indexOf(PASTE_START, index);
+    if (start === -1) { segments.push({text: text.slice(index), paste: false}); break; }
+    if (start > index) segments.push({text: text.slice(index, start), paste: false});
+    const end = text.indexOf(PASTE_END, start + PASTE_START.length);
+    const stop = end === -1 ? text.length : end + PASTE_END.length;
+    segments.push({text: text.slice(start, stop), paste: true});
+    index = stop;
+  }
+  return segments;
+}
 export const QUERY_HOLD_MS = 500;
 
 export class QueryOrder {
@@ -49,20 +67,41 @@ export class QueryOrder {
   input(data: string): void {
     if (!this.awaiting) { this.write(data); return; }
     const buffer = this.held + data;
-    const reply = DA1_REPLY.exec(buffer);
-    if (!reply) {
+    const segments = pasteSegments(buffer);
+    // Only an answer outside a bracketed paste counts: pasted bytes are the person's, never the terminal's.
+    let offset = 0;
+    let found: {index: number; length: number} | undefined;
+    for (const segment of segments) {
+      if (!segment.paste) {
+        const match = DA1_REPLY.exec(segment.text);
+        if (match) { found = {index: offset + match.index, length: match[0].length}; break; }
+      }
+      offset += segment.text.length;
+    }
+    if (!found) {
       this.held = buffer;
       if (this.held.length > HOLD_LIMIT) { this.release(''); return; }
       this.timer ??= setTimeout(() => { this.timer = undefined; this.release(''); }, this.holdMs);
       this.timer.unref?.();
       return;
     }
-    const head = buffer.slice(0, reply.index);
-    const answers = head.match(OTHER_REPLIES)?.join('') ?? '';
-    const keys = head.replace(OTHER_REPLIES, '');
+    // Answers that came before it keep their place before the keys; a paste is never taken apart or reordered.
+    let answers = '';
+    let keys = '';
+    for (const segment of pasteSegments(buffer.slice(0, found.index))) {
+      if (segment.paste) { keys += segment.text; continue; }
+      answers += segment.text.match(OTHER_REPLIES)?.join('') ?? '';
+      keys += segment.text.replace(OTHER_REPLIES, '');
+    }
     this.held = '';
-    this.write(`${answers}${reply[0]}`);
-    this.release(`${keys}${buffer.slice(reply.index + reply[0].length)}`);
+    this.write(`${answers}${buffer.slice(found.index, found.index + found.length)}`);
+    this.release(`${keys}${buffer.slice(found.index + found.length)}`);
+  }
+
+  /** An interrupt: like a terminal's Ctrl+C, it discards input the program has not received yet. */
+  discard(): void {
+    this.held = '';
+    this.release('');
   }
 
   /** Stops holding and delivers held input followed by `after`. */
