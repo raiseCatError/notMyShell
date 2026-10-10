@@ -7507,7 +7507,7 @@ export class TerminalApp {
         nmsh: {configurationLoaded: true, sessionMode: this.sessionMode, ...(serviceReachable !== undefined ? {serviceReachable} : {}), transcriptDirectory: join(nmshConfigDirectory(), 'sessions'),
           shell: {id: this.shellId, label: shellAdapter(this.shellId).label, ...(resolveCommand(this.shellId) ? {executable: resolveCommand(this.shellId)!} : {}), promptSeen: !this.startupPending},
           host: {name: this.host.name, truecolor: colorLevel() === 'truecolor', keyboard: this.host.capabilities.enhancedKeyboard || this.host.capabilities.kittyKeyboard}},
-        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows,
+        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows, contextEngine: {...this.contextEngine.stats},
         understanding: {mode: configuration.localUnderstanding.mode, ...(model ? {model: {label: model.label, runtime: model.runtime, ...(model.path ? {path: model.path} : {}), owned: Boolean(model.owned)}} : {}),
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),

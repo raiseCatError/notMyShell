@@ -69,7 +69,7 @@ export interface PackListing {
 }
 
 export interface ModulesContext {
-  status?(capability: string): {state: string; collectedAt?: number; evidence?: string; error?: string};
+  status?(capability: string): {state: string; collectedAt?: number; evidence?: string; error?: string; durationMs?: number};
   packs?: readonly PackListing[];
   recommendations?: readonly Recommendation[];
   claudeBridge?: {state: string; detail?: string};
@@ -390,8 +390,11 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
     const age = status.collectedAt !== undefined && context.now !== undefined ? ` · ${Math.max(0, Math.round((context.now - status.collectedAt) / 1000))}s ago` : '';
     const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refreshing` : status.state === 'absent' ? 'nothing to show here'
       : status.state === 'pending' ? 'checking…' : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.error ?? status.state})` : 'not checked (module not in use)';
-    rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
+    // How long the last collection took is measured by the engine; nothing is collected to show it.
+    const took = status.durationMs === undefined ? '' : ` · took ${status.durationMs < 1 ? '<1' : Math.round(status.durationMs)} ms`;
+    rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${took}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
   }
+  rows.push(...line('Why', whyText(module, surface, capabilities.map(capability => context.status?.(capability!.id)).filter((status): status is NonNullable<typeof status> => Boolean(status)), definition.triggers)));
   if (definition.facts.has('agent.claude')) {
     const bridge = context.claudeBridge;
     rows.push('', ...line('Claude Code', bridge?.state === 'configured' ? 'reports to NMSh through its status line · B to review removal'
@@ -399,6 +402,20 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
         : bridge?.state === 'unreadable' ? `settings not readable (${clean(bridge.detail, 80)})` : 'not reporting yet · B to review the one settings change'));
   }
   return rows;
+}
+
+/** One sentence on why this module is or is not on screen right now, from its settings and what the engine reported. */
+export function whyText(module: ContextModuleConfig, surface: string, statuses: ReadonlyArray<{state: string; error?: string}>, triggers?: readonly string[]): string {
+  if (!module.visible) return 'turned off in Modules';
+  if (surface === 'hidden') return 'routed to Hidden';
+  if (statuses.some(status => status.state === 'timeout')) return 'its data timed out, so nothing is shown (the last good value is not reused)';
+  if (statuses.some(status => status.state === 'failed')) return `its data could not be read (${statuses.find(status => status.state === 'failed')?.error ?? 'failed'})`;
+  if (statuses.length && statuses.every(status => status.state === 'absent')) return 'there is nothing for it to show in this directory';
+  if (statuses.length && statuses.every(status => status.state === 'idle') && module.condition === 'onCommand') {
+    return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; none has run here yet`;
+  }
+  if (statuses.some(status => status.state === 'pending')) return 'being collected now';
+  return 'its conditions are met and data is available';
 }
 
 function packDetailRows(pack: PackListing, columns: number): string[] {
