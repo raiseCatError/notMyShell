@@ -148,17 +148,31 @@ export function reportText(text: string): string {
 }
 const clean = reportText;
 
+/**
+ * Untrusted one-line text as Markdown inline code: cleaned like the rest of a report, folded onto one line, and
+ * delimited by more backticks than any run inside it, so it can neither end the code span nor add structure.
+ */
+export function inlineCode(text: string): string {
+  const value = clean(text).replace(/\s*\n\s*/gu, ' ').trim();
+  const longest = Math.max(0, ...[...value.matchAll(/`+/gu)].map(match => match[0].length));
+  const ticks = '`'.repeat(longest + 1);
+  const pad = value.startsWith('`') || value.endsWith('`') ? ' ' : '';
+  return `${ticks}${pad}${value}${pad}${ticks}`;
+}
+
 interface Fact { label: string; value: string; code?: boolean }
+
+const oneLine = (text: string) => clean(text).replace(/\s*\n\s*/gu, ' ').trim();
 
 function facts(record: CompletedCommand, options: ReportOptions): Fact[] {
   const list: Fact[] = [];
-  const status = clean(record.lifecycleText).trim();
+  const status = oneLine(record.lifecycleText);
   if (status) list.push({label: 'Status', value: status});
   list.push({label: 'Exit code', value: String(record.exitCode)});
   const took = duration(record.durationMs);
   if (took) list.push({label: 'Duration', value: took});
   const cwd = record.historicalContext?.cwd;
-  if (options.directory && cwd) list.push({label: 'Directory', value: cwd, code: true});
+  if (options.directory && cwd) list.push({label: 'Directory', value: oneLine(cwd), code: true});
   const started = options.timestamps ? timestamp(record.startedAt) : undefined;
   if (started) list.push({label: 'Started', value: started});
   return list;
@@ -177,7 +191,7 @@ export function buildReport(records: readonly CompletedCommand[], options: Repor
       const command = clean(record.command);
       const title = command.includes('\n') || command.includes('`') ? `## ${index + 1}. Command\n\n${fence(command)}sh\n${command}\n${fence(command)}`
         : `## ${index + 1}. \`${command}\``;
-      const lines = facts(record, options).map(fact => `- **${fact.label}:** ${fact.code ? `\`${fact.value}\`` : fact.value}`);
+      const lines = facts(record, options).map(fact => `- **${fact.label}:** ${fact.code ? inlineCode(fact.value) : fact.value}`);
       const output = clean(record.output).replace(/\n+$/u, '');
       const body = output ? `${fence(output)}text\n${output}\n${fence(output)}` : '_No output._';
       sections.push(`${title}\n\n${lines.join('\n')}\n\n${body}`);
