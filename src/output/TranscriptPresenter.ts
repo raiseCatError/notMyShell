@@ -3,7 +3,7 @@ import {askFoldLabel} from '../ask/transcriptSummary.js';
 import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
 import {type StyledLine} from './AnsiOutputParser.js';
-import {wrapStyledLine, type WrappedRow} from './viewport.js';
+import {wrapStyledLine, wrapStyledWords, type WrappedRow} from './viewport.js';
 import {background, foreground, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {mixRgb} from '../chroma/chroma.js';
 import {GLYPHS} from '../ui/glyphs.js';
@@ -97,7 +97,9 @@ export class TranscriptPresenter {
     const owner = view.ownerOf(index);
     const context = owner === undefined ? undefined : view.historicalContexts.get(owner);
     const line = view.lines[index] ?? [];
-    return wrapStyledLine(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
+    // NMSh's own lines wrap at words; shell output wraps by column, as a terminal does.
+    const wrap = view.lineTypes.get(index) === 'metadata' ? wrapStyledWords : wrapStyledLine;
+    return wrap(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
   }
 
   private treatment = DEFAULT_TREATMENT_SETTINGS;
