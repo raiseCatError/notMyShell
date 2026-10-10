@@ -28,7 +28,7 @@ Design and research: [docs/design/terminal-workflow.md](../design/terminal-workf
 | `feature/compare-output` | `../notMyShell-compare` | #361 (draft, base #360) | Compare output; contains #360 by merge |
 
 | `feature/expressive-activity-vocabulary` | `../notMyShell-activity` | none yet (PR body ready; opening it was held) | #362: Expressive/Classic wording, 663 curated pairs; contains #361 by merge; full suite green |
-| `feature/output-references` | `../notMyShell-references` | none yet | #353: block references menu and failed-command navigation; contains #361 |
+| `feature/output-references` | `../notMyShell-references` | none yet | #353 references + failure navigation; #354 paste batches, `/ps`; #355 queue conditions, pins, recipes (separate commits); contains #361 |
 
 Other open PRs (independent, not part of this stack): #347 agent workspace, #349 notice word wrap, #346 mods.
 
@@ -103,3 +103,11 @@ navigation, #354 paste batches and clipboard, #355 pins/recipes/queue conditions
 - `/copy ui` picker keys, search and preview at your usual window sizes.
 - Queue in daily use: Enter while a command runs, Ctrl+Q/Ctrl+S, a failing step pausing the rest.
 - Smart folding on your adb/diagnostic commands; the important-lines preview.
+
+## Session 2 checkpoint (branches pushed, no PRs opened by this session)
+
+- `feature/expressive-activity-vocabulary` (#362): full suite green (2227 pass). PR body ready; `gh pr create` was held by the safety hook, so open it with base `feature/compare-output`.
+- `feature/output-references`: full suite green after fixing three deterministic count/registry tests (see last commit).
+- Security: the batch splitter got three review rounds; it is now gated by real-shell parse checks (`pasteBatchCheck.ts`) and a whole-versus-split execution differential test. `displaySafe` now shows bidi/format characters.
+- Not done: clipboard-change suggestions and ephemeral clips (#354), pin from history selection (#355), #365 explain/timings, #304 import, #366 decisions, native runtime modules (matrix in `docs/design/native-module-coverage.md`), workspace work (#330), physical QA for everything.
+- CI: Ubuntu Fish live tests (`read` hand-over, alt-screen passthrough) time out on #357/#358 runs; they pass locally on macOS. Tracked under #356; needs a Linux repro.

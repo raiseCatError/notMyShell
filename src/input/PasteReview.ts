@@ -70,9 +70,13 @@ export function pasteReviewKey(state: PasteReviewState, key: Key, height: number
   return undefined;
 }
 
-/** Make a pasted line safe and legible to draw: control characters become visible, tabs become spaces. */
+/**
+ * Make a pasted line safe and legible to draw: control characters become visible, tabs become spaces. Format and
+ * separator characters (bidi overrides and isolates, zero-width characters, line and paragraph separators) are shown
+ * as · too: they change how text reads or hide that it is there, and a reviewer must be able to see them.
+ */
 export function displaySafe(line: string): string {
-  return line.replace(/\t/gu, '  ').replace(/[\u0000-\u001f\u007f-\u009f]/gu, char => `␛`.length && char === '\u001B' ? '␛' : '·');
+  return line.replace(/\t/gu, '  ').replace(/[\u0000-\u001f\u007f-\u009f]|[\p{Cf}\p{Zl}\p{Zp}]/gu, char => char === '\u001B' ? '␛' : '·');
 }
 
 const RISKY: ReadonlySet<PasteKind> = new Set(['destructive', 'privilege', 'pipeline']);

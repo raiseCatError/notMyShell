@@ -247,8 +247,13 @@ import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '.
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
+import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
+import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
+import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
+import {splitBatch} from '../input/pasteBatch.js';
+import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
@@ -768,6 +773,7 @@ export class TerminalApp {
   /** A queued entry being edited in the composer: Enter saves it in place, Esc cancels. */
   private queueEdit?: {id: number; draft: string};
   private queuePanel?: QueuePanelState;
+  private pinsPanel?: PinsPanelState;
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -1654,11 +1660,13 @@ export class TerminalApp {
       return;
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
+    if (this.pinsPanel) { void this.handlePinsKey(key); return; }
     if (this.queuePanel) {
       const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable());
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') this.session.queue(action.change);
       else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
+      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.queueState.entries.map(entry => entry.text)}); }
       this.render();
       return;
     }
@@ -1718,7 +1726,7 @@ export class TerminalApp {
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
     if (this.githubPanel) { this.handleGithubKey(key); return; }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
-    if (this.batchReview && this.pastePreview) {
+    if (this.batchReview) {
       const review = this.batchReview;
       const action = batchReviewKey(review, key, this.dimensions().rows - 4);
       const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
@@ -1738,7 +1746,7 @@ export class TerminalApp {
         done();
       } else if (action?.kind === 'edit') { this.editor.insertPaste(batchTexts(review).join('\n')); done(); }
       else if (action?.kind === 'text') { this.editor.insertPaste(review.source); done(); }
-      else if (action?.kind === 'back') this.batchReview = undefined;
+      else if (action?.kind === 'back') { this.batchReview = undefined; if (review.title) this.openPins(); }
       else if (action?.kind === 'cancel') done();
       this.render();
       return;
@@ -1746,7 +1754,7 @@ export class TerminalApp {
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
       const outcome = pasteReviewKey(this.pasteReview, key, this.dimensions().rows - 4);
-      if (outcome === 'batch') this.openBatchReview(this.pastePreview.text);
+      if (outcome === 'batch') void this.openBatchReview(this.pastePreview.text);
       else if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
       else if (outcome === 'back') { this.pasteReview = undefined; if (!this.pasteCompactFits()) this.pastePreview = undefined; }
       else if (outcome === 'cancel') { this.pasteReview = undefined; this.pastePreview = undefined; }
@@ -1757,7 +1765,7 @@ export class TerminalApp {
       const preview = this.pastePreview;
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
       else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) this.openBatchReview(preview.text);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
       this.render();
       return;
@@ -2543,6 +2551,7 @@ export class TerminalApp {
     }
     else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
     else if (slash.kind === 'pasteClipboard') await this.pasteClipboard(command);
+    else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
       else {
@@ -2776,6 +2785,7 @@ export class TerminalApp {
     else if (action === 'copyReport') this.startReport([record], 'markdown');
     else if (action === 'compare') this.openCompare(record);
     else if (action === 'references') this.openReferences(record);
+    else if (action === 'pin') this.pinCommand(record.command, record.historicalContext?.cwd ?? this.shellCwd);
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -4317,7 +4327,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4415,6 +4425,7 @@ export class TerminalApp {
       const activity = this.askActivityLine();
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
     }
+    if (this.pinsPanel) return framePanel(renderPinsPanel(this.pinsPanel, columns, this.dimensions().rows - 4), columns);
     if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
     if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
@@ -6936,10 +6947,23 @@ export class TerminalApp {
     return Boolean(shell && this.queueAvailable() && text.includes('\n') && createBatchReview(text, shell, 1));
   }
 
-  private openBatchReview(text: string): void {
+  /**
+   * B: split the paste, have the real shell parse-check every command on its own (it never runs them), and only then
+   * show the review. A boundary the shell does not accept means the paste stays one block of text.
+   */
+  private async openBatchReview(text: string): Promise<void> {
     const shell = this.batchShell();
-    const capacity = Math.max(0, QUEUE_LIMIT - this.queueState.entries.length);
-    this.batchReview = shell ? createBatchReview(text, shell, capacity) : undefined;
+    const review = shell ? createBatchReview(text, shell, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length)) : undefined;
+    if (!shell || !review) return;
+    const check = await verifyCommands(batchTexts(review), shell);
+    if (this.stopped || this.pastePreview?.text !== text) return;
+    if (check.ok) this.batchReview = review;
+    else {
+      this.output.addFrontendInteraction('/ps', check.reason, INFO);
+      this.pastePreview = {...this.pastePreview, batch: false};
+      if (this.pasteReview) this.pasteReview.batch = false;
+    }
+    this.render();
   }
 
   /** /ps: read the clipboard now, once, and bring it to paste review. Nothing is kept, inserted or run by reading it. */
@@ -6958,6 +6982,95 @@ export class TerminalApp {
     this.pastePreview = {text, analysis, batch};
     // An explicit /ps always shows the review first, whatever Paste Preview is set to.
     this.pasteReview = createPasteReview(text, analysis, batch);
+  }
+
+  // ---------------------------------------------------------------- pins and recipes
+
+  private openPins(options: {naming?: string[]} = {}): void {
+    const loaded = loadPins();
+    if (!loaded.ok) { this.output.addFrontendInteraction('/pins', loaded.reason, ERROR); return; }
+    this.pinsPanel = createPinsPanel(loaded.value, this.shellCwd, {composerText: this.editor.text, canEdit: Boolean(configuredEditor(process.env)), ...(options.naming ? {naming: options.naming} : {})});
+  }
+
+  /** Pin from a block: kept as written, global until you scope it in /pins; nothing about its output is kept. */
+  private pinCommand(command: string, cwd: string): void {
+    const result = addPin({command, cwd});
+    this.output.addFrontendInteraction('/pins', result.ok ? `Pinned. /pins lists what you kept; it is stored in ${pinsPath()}.` : result.reason, result.ok ? INFO : ERROR);
+  }
+
+  private refreshPins(panel: PinsPanelState, message?: {text: string; error: boolean}): void {
+    const loaded = loadPins();
+    if (loaded.ok) panel.data = loaded.value as PinData;
+    panel.composerText = this.editor.text;
+    panel.message = loaded.ok ? message : {text: loaded.reason, error: true};
+  }
+
+  private async handlePinsKey(key: Key): Promise<void> {
+    const panel = this.pinsPanel!;
+    const action = pinsPanelKey(panel, key);
+    const done = (result: {ok: true} | {ok: false; reason: string}, text: string) => this.refreshPins(panel, result.ok ? {text, error: false} : {text: result.reason, error: true});
+    if (action?.kind === 'close') { this.pinsPanel = undefined; this.returnFromPanel(); }
+    else if (action?.kind === 'stage') {
+      // The composer is the person's: a pin never replaces what they have typed.
+      if (this.editor.text.trim()) panel.message = {text: 'The composer has text. Clear it (or run it) first; nothing was staged.', error: true};
+      else {
+        if (action.command.includes('\n')) this.editor.insertPaste(action.command); else this.editor.insert(action.command);
+        this.pinsPanel = undefined; this.returnFromPanel();
+        this.output.addFrontendInteraction('/pins', 'Staged in the composer for you to review. Press Enter to run it.', INFO);
+      }
+    } else if (action?.kind === 'use') await this.useRecipe(panel, action.recipe, action.values);
+    else if (action?.kind === 'rename') done(changeItem(action.id, {name: action.name}), 'Renamed.');
+    else if (action?.kind === 'scope') done(changeItem(action.id, {scope: action.scope}), action.scope === 'directory' ? 'Kept for this folder and the folders inside it.' : 'Kept for every folder.');
+    else if (action?.kind === 'delete') done(removeItem(action.id), 'Removed.');
+    else if (action?.kind === 'pinComposer') done(addPin({command: this.editor.text, cwd: this.shellCwd}), 'Pinned what is in the composer. It is not run.');
+    else if (action?.kind === 'saveRecipe') {
+      const quoted = action.steps.map(step => quotedPlaceholder(step)).find(Boolean);
+      if (quoted) { panel.message = {text: `{{${quoted}}} is inside quotes. Put placeholders outside quotes: NMSh quotes the value for you.`, error: true}; panel.mode = 'name'; panel.naming = {steps: action.steps}; panel.input = action.name; }
+      else done(addRecipe({name: action.name, steps: action.steps, cwd: this.shellCwd}), `Saved the recipe “${action.name}”. Enter on it asks for its values and shows the commands first.`);
+    } else if (action?.kind === 'edit') { await this.editRecipe(panel, action.recipe); }
+    this.render();
+  }
+
+  /** Enter on a recipe: its values are quoted into the steps, and the expanded commands are reviewed before anything is queued. */
+  private async useRecipe(panel: PinsPanelState, recipe: Recipe, values: Record<string, string>): Promise<void> {
+    if (!this.queueAvailable()) { panel.message = {text: 'The command queue is off or unavailable here, so a recipe cannot be queued.', error: true}; return; }
+    const expanded = expandSteps(recipe.steps, values, this.shellId === 'fish' ? fishQuote : posixQuote);
+    if (!expanded.ok) { panel.message = {text: expanded.reason, error: true}; return; }
+    const shell = this.batchShell();
+    const check = shell ? await verifyCommands(expanded.steps, shell) : {ok: false as const, reason: 'This shell cannot check recipes.'};
+    if (this.pinsPanel !== panel) return;
+    if (!check.ok) { panel.message = {text: check.reason.replace('so the paste was not split', 'so the recipe was not queued'), error: true}; return; }
+    const where = this.shellCwd;
+    const note = recipe.scope === 'directory' && recipe.cwd && recipe.cwd !== where ? `Saved for ${recipe.cwd}; this shell is in ${where}.` : `Runs in this shell, from ${where}.`;
+    this.pinsPanel = undefined;
+    this.batchReview = batchFromCommands(expanded.steps, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length), {title: `Recipe: ${recipe.name}`, note});
+  }
+
+  /** e on a recipe: its commands in your editor (a private temporary file); saved only if they still split into whole commands. */
+  private async editRecipe(panel: PinsPanelState, recipe: Recipe): Promise<void> {
+    const editor = configuredEditor(process.env);
+    const shell = this.batchShell();
+    if (!editor || !shell || !this.hostTerminalFree()) return;
+    const directory = mkdtempSync(join(tmpdir(), 'nmsh-recipe-'));
+    const file = join(directory, 'recipe.sh');
+    try {
+      writeFileSync(file, recipe.steps.join('\n'), {mode: 0o600});
+      const code = await this.withHostTerminal(() => new Promise<number | null>(finish => {
+        const child = spawn(editor[0]!, [...editor.slice(1), file], {stdio: 'inherit'});
+        child.once('error', () => finish(null));
+        child.once('close', exit => finish(exit));
+      }));
+      if (code !== 0) { this.refreshPins(panel, {text: 'The editor did not finish; the recipe is unchanged.', error: true}); return; }
+      const split = splitBatch(readFileSync(file, 'utf8'), shell);
+      if (!split.ok) { this.refreshPins(panel, {text: `Not saved: ${split.reason} The recipe is unchanged.`, error: true}); return; }
+      const steps = split.commands.map(command => command.text);
+      const quoted = steps.map(step => quotedPlaceholder(step)).find(Boolean);
+      const problem = quoted ? `{{${quoted}}} is inside quotes; put placeholders outside quotes.` : steps.map(step => keepProblem(step)).find(Boolean);
+      if (problem || !steps.length) { this.refreshPins(panel, {text: `Not saved: ${problem ?? 'a recipe needs at least one command.'}`, error: true}); return; }
+      const saved = changeItem(recipe.id, {steps});
+      this.refreshPins(panel, saved.ok ? {text: `Saved ${steps.length} command${steps.length === 1 ? '' : 's'}. A queued run keeps the commands it was reviewed with.`, error: false} : {text: saved.reason, error: true});
+    } catch { this.refreshPins(panel, {text: 'The editor could not be started; the recipe is unchanged.', error: true}); }
+    finally { rmSync(directory, {recursive: true, force: true}); }
   }
 
   /** Whether the compact preview fits above the composer on this screen (the same rule notices follow). */

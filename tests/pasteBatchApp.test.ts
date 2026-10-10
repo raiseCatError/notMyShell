@@ -15,6 +15,11 @@ function app() {
   Object.defineProperty(app, 'dimensions', {value: () => ({columns: 100, rows: 30})});
   return app;
 }
+/** B verifies every command with the real shell before the review appears. */
+async function reviewing(instance: TerminalApp): Promise<void> {
+  const deadline = Date.now() + 8000;
+  while (!instance['batchReview'] && Date.now() < deadline) await new Promise(done => setTimeout(done, 10));
+}
 function dispose(app: TerminalApp) { app['stop'](0); app['session'].kill(); }
 const queued = (instance: TerminalApp) => instance['queueState'].entries.map(entry => entry.text);
 
@@ -68,6 +73,7 @@ test('pasting a multi-command block offers B; Enter on the review queues exactly
     assert.equal(instance['pastePreview']?.batch, true);
     assert.deepEqual(queued(instance), [], 'pasting alone queues nothing');
     instance['handleKey'](text('b'));
+    await reviewing(instance);
     assert.ok(instance['batchReview']);
     assert.deepEqual(queued(instance), [], 'reviewing alone queues nothing');
     instance['handleKey'](text('x'));
@@ -79,12 +85,13 @@ test('pasting a multi-command block offers B; Enter on the review queues exactly
   } finally { dispose(instance); }
 });
 
-test('Esc, T and E keep the paste as text; nothing is queued', () => {
+test('Esc, T and E keep the paste as text; nothing is queued', async () => {
   for (const choice of ['t', 'e'] as const) {
     const instance = app();
     try {
       instance['handleKey']({kind: 'paste', value: 'ls\npwd'});
       instance['handleKey'](text('b'));
+      await reviewing(instance);
       instance['handleKey'](text(choice));
       assert.deepEqual(queued(instance), []);
       assert.equal(instance['editor'].text.includes('ls'), true);
@@ -95,6 +102,7 @@ test('Esc, T and E keep the paste as text; nothing is queued', () => {
   try {
     instance['handleKey']({kind: 'paste', value: 'ls\npwd'});
     instance['handleKey'](text('b'));
+    await reviewing(instance);
     instance['handleKey']({kind: 'escape'});
     assert.equal(instance['batchReview'], undefined);
     assert.ok(instance['pastePreview'], 'back to the compact preview');

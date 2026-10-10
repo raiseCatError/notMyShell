@@ -5,7 +5,7 @@ import {displayWidth} from '../util/text.js';
 import {recordCopyText} from '../clipboard/copySelection.js';
 import {findOutputReferences} from '../output/references.js';
 
-export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references';
+export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references' | 'pin';
 /** One registry for both pointer-opened and keyboard-opened block palettes. */
 export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: string}[] = [
   {id: 'copyCommand', label: 'Copy command', detail: 'Stored plain command'},
@@ -16,6 +16,7 @@ export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: 
   {id: 'pager', label: 'Open in pager', detail: 'Command and full stored output in your pager (less), read-only'},
   {id: 'rerun', label: 'Rerun command', detail: 'Explicitly submit a visible command in the current shell directory'},
   {id: 'edit', label: 'Edit & rerun', detail: 'Put command in composer; Enter executes it'},
+  {id: 'pin', label: 'Pin command', detail: 'Keep this command to reuse later (/pins); it is never run for you'},
   {id: 'fold', label: 'Fold / unfold output', detail: 'Same stored disclosure state as Ctrl+O'},
   {id: 'references', label: 'Files, links and more…', detail: 'Open or copy the files, links, commits and devices found in this output'},
   {id: 'explain', label: 'Explain failure', detail: "Why it failed, from this block's own output (read-only)"},

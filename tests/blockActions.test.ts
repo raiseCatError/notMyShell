@@ -23,7 +23,7 @@ function dispose(app: TerminalApp) { app['stop'](0); app['session'].kill(); }
 test('one block registry supplies keyboard palette actions and copies authoritative full plain data', () => {
   const output = new OutputBuffer();
   const record = fixture(output);
-  assert.equal(blockPaletteItems(record).length, 9, 'Copy as report… and Compare output… joined the actions');
+  assert.equal(blockPaletteItems(record).length, 10, 'Copy as report… and Compare output… joined the actions');
   assert.equal(blockCopyPayload(record, 'copyCommand'), 'echo hello');
   assert.equal(blockCopyPayload(record, 'copyOutput'), record.output);
   assert.equal(blockCopyPayload(record, 'copyBoth'), record.command + '\n' + record.output);
@@ -53,7 +53,7 @@ test('keyboard focus opens actions; edit waits for Enter, rerun uses visible nor
     instance['handleKey']({kind: 'focusPrevious'});
     assert.equal(instance['focusedCommandIndex'], 0);
     instance['handleKey']({kind: 'enter'});
-    assert.equal(instance['paletteState']?.items.length, 9);
+    assert.equal(instance['paletteState']?.items.length, 10);
     instance['paletteState'] = undefined;
     await instance['runBlockAction'](record.startId, 'edit');
     assert.equal(instance['editor'].text, record.command);

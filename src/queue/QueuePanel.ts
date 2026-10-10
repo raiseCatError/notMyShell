@@ -22,7 +22,9 @@ export type QueuePanelAction =
   | {kind: 'close'}
   | {kind: 'change'; change: QueueOp}
   /** Load the entry into the composer for editing in place. */
-  | {kind: 'edit'; id: number};
+  | {kind: 'edit'; id: number}
+  /** Keep the queued commands, in order, as a named recipe (asks for the name). */
+  | {kind: 'saveRecipe'};
 
 /** The condition `w` moves to next: after success (the default), also after a failure, or only once approved. */
 export const nextCondition = (condition: QueueCondition | undefined): QueueCondition | undefined => condition === undefined ? 'always' : condition === 'always' ? 'approve' : undefined;
@@ -45,6 +47,7 @@ export function queuePanelKey(panel: QueuePanelState, key: Key, queue: QueueStat
     if (entries.length) panel.selected = (panel.selected + (key.kind === 'up' ? -1 : 1) + entries.length) % entries.length;
     return undefined;
   }
+  if (key.kind === 'text' && key.value === 's' && entries.length) return {kind: 'saveRecipe'};
   if (key.kind === 'text' && key.value === 'p') return {kind: 'change', change: {op: queue.paused ? 'resume' : 'pause'}};
   if (!entry) return undefined;
   if (key.kind === 'selectUp' || key.kind === 'selectDown') {
@@ -98,7 +101,7 @@ export function renderQueuePanel(panel: QueuePanelState, queue: QueueState, runn
   else {
     const approvable = conditions && selected?.condition === 'approve' && !selected.approved;
     out.push(renderControls([['↑↓', 'select'], ['Shift+↑↓', 'move'], ['Enter', 'edit'], ['Del', 'remove'], ...(conditions ? [['w', 'when it runs'] as const] : []), ...(approvable ? [['a', 'approve'] as const] : []),
-      ['p', queue.paused ? 'resume' : 'pause'], ['c', 'clear'], ['Esc', 'close']]));
+      ['s', 'save as recipe'], ['p', queue.paused ? 'resume' : 'pause'], ['c', 'clear'], ['Esc', 'close']]));
   }
   return out.map(line => truncateAnsi(line, columns));
 }

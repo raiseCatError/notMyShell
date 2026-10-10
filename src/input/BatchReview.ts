@@ -26,6 +26,10 @@ export interface BatchReviewState {
   top: number;
   /** Free places in the session's queue. */
   capacity: number;
+  /** Where the commands come from, when not a paste (a recipe): shown in the header. */
+  title?: string;
+  /** What the commands expect (the recipe's folder and the current one), shown above the list. */
+  note?: string;
 }
 
 export type BatchReviewAction = {kind: 'queue'} | {kind: 'text'} | {kind: 'edit'} | {kind: 'back'} | {kind: 'cancel'};
@@ -76,6 +80,12 @@ export function createBatchReview(source: string, shell: BatchShell, capacity: n
   const result = splitBatch(source, shell);
   if (!result.ok || result.commands.length < 2) return undefined;
   return {source, entries: result.commands.map(command => ({...command, kinds: entryKinds(command.text)})), cursor: 0, top: 0, capacity};
+}
+
+/** A reviewed list of commands that are already separate (a recipe's steps): the same review, queue and safety. */
+export function batchFromCommands(commands: readonly string[], capacity: number, details: {title: string; note?: string}): BatchReviewState {
+  const entries = commands.map((text, index): BatchEntry => ({text, firstLine: index + 1, lastLine: index + 1, kinds: entryKinds(text)}));
+  return {source: commands.join('\n'), entries, cursor: 0, top: 0, capacity, title: details.title, ...(details.note ? {note: details.note} : {})};
 }
 
 /** Why a paste is not offered as a batch (for the review's own note), or undefined when it is. */
@@ -146,7 +156,7 @@ function wrapRows(line: string, width: number): string[] {
   return rows;
 }
 
-const FIXED_ROWS = 9;
+const FIXED_ROWS = 10;
 const listRows = (height: number) => Math.max(1, Math.min(8, height - FIXED_ROWS - 3));
 const RISKY: ReadonlySet<PasteKind> = new Set(['destructive', 'privilege', 'pipeline']);
 
@@ -160,7 +170,9 @@ export function renderBatchReview(state: BatchReviewState, columns: number, heig
   const reset = '\u001B[0m';
   const count = state.entries.length;
   const width = Math.max(10, columns - 4);
-  const out: string[] = [`  ${primary}Review commands${reset}  ${subtle}${count} command${count === 1 ? '' : 's'}, in this order${reset}`, ''];
+  const out: string[] = [`  ${primary}Review commands${reset}  ${subtle}${truncateText(`${state.title ? `${state.title} · ` : ''}${count} command${count === 1 ? '' : 's'}, in this order`, Math.max(8, width - 18))}${reset}`];
+  if (state.note) out.push(`  ${subtle}${truncateText(state.note, width)}${reset}`);
+  out.push('');
   const rows = listRows(height);
   const numberWidth = String(count).length;
   const labelWidth = columns >= 76 ? 26 : 0;

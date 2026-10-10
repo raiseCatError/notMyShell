@@ -223,3 +223,19 @@ for (const shell of ['bash', 'zsh', 'fish'] as const) {
     assert.ok(compared >= Math.floor(rounds * 0.6), `only ${compared} comparable pastes`);
   });
 }
+
+test('the real shell checks every command on its own before a split is shown; a boundary through a construct is refused', async () => {
+  const {verifyCommands} = await import('../src/input/pasteBatchCheck.js');
+  for (const shell of ['bash', 'zsh', 'fish'] as const) {
+    if (parses(shell, 'true') === undefined) continue;
+    assert.deepEqual(await verifyCommands(texts(FIXTURES[shell], shell), shell), {ok: true});
+    // A command cut in the middle is not whole syntax, however the cut came about.
+    const fragments = shell === 'fish' ? ['echo "never closed', 'if true\n  echo hi'] : ['x=$(echo hi # )', 'echo "never closed', 'if true; then\n  echo hi', 'cat <<EOF\nbody'];
+    for (const fragment of fragments) {
+      const result = await verifyCommands(['echo ok', fragment], shell);
+      assert.equal(result.ok, false, `${shell}: ${fragment}`);
+      assert.match(result.ok ? '' : result.reason, /Command 2 is not complete/u);
+    }
+    assert.deepEqual(await verifyCommands([], shell), {ok: true});
+  }
+});
