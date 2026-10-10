@@ -93,16 +93,15 @@ test('live fish: read is fish\'s own line editor: handed the terminal, answered 
     // Fish's reader turns on bracketed paste: NMSh hands it the terminal, as for any interactive program.
     await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, 'fish draws its own prompt');
     frontend.pty.write('abc\r');
-    await frontend.waitFor(/got=abc|Completed/u, mark);
+    await frontend.waitFor(/got=abc[\s\S]*Completed/u, mark);
     mark = frontend.mark;
     frontend.pty.write(`read -s -P 'Password: ' p; echo len=(string length -- $p)\r`);
     await until(() => frontend.output.slice(mark).includes('Password: '), 15_000, 'fish draws its hidden prompt');
     frontend.pty.write('hunter2\r');
-    await frontend.waitFor(/Completed/u, mark);
+    // This command's own completion: a bare "Completed" could match the previous command's row.
+    await frontend.waitFor(/len=7[\s\S]*Completed/u, mark);
     assert.doesNotMatch(frontend.output, /Waiting for input/u, 'a program that owns the terminal is not reported as waiting');
-    // Known, pre-existing (reproduced on release/v0.18.0 without input awareness): under load, keys typed within about
-    // a second of fish returning from a handed-over `read` to its own prompt can be lost. Not part of this feature.
-    await pause(1500);
+    // The next command follows at once (tests/typingAfterRead.test.ts covers this across shells).
     await frontend.run('echo AFTER-READ', /AFTER-READ/u);
     // External programs under fish get the same awareness as under zsh.
     if (python) {
