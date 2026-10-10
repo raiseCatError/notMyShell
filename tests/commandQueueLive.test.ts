@@ -54,8 +54,8 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
     try {
       await frontend.run('mkdir -p sub', /❯/u);
       const mark = frontend.mark;
-      frontend.pty.write('sleep 3\r');
-      await frontend.waitFor(/Running sleep 3/u, mark);
+      frontend.pty.write('sleep 8\r');
+      await frontend.waitFor(/Running sleep 8/u, mark);
       for (const line of [...SET_STATE[shell], CHECK_STATE[shell]]) {
         frontend.pty.write(`${line}\r`);
         await pause(80);
@@ -63,7 +63,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       await frontend.waitFor(/≡ Queued \(5\) · next: cd sub/u, mark);
       assert.match(drawn(frontend, mark), /Enter queues the next command · Ctrl\+S sends to sleep/u, 'the empty composer says what Enter does');
       await frontend.waitFor(/STATE sub kept fn-x (?:opt|on)/u, mark, 30_000);
-      const commands = ['sleep 3', ...SET_STATE[shell], CHECK_STATE[shell]];
+      const commands = ['sleep 8', ...SET_STATE[shell], CHECK_STATE[shell]];
       const records = async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records).filter(record => commands.includes(record.command));
       await until(async () => (await records()).length >= commands.length, 20_000, 'every command recorded');
       const recorded = (await records()).reverse();
@@ -205,10 +205,10 @@ test('live: a program that survives Ctrl+C gets ordinary routing again: later ty
   try {
     const mark = frontend.mark;
     // Ignores SIGINT and keeps reading stdin: anything sent to it would be echoed back as GOT=...
-    frontend.pty.write(`sh -c 'trap "" INT; sleep 5; if read -t 1 line; then echo "GOT=$line"; fi; echo SURVIVED'\r`);
+    frontend.pty.write(`sh -c 'trap "" INT; sleep 9; if read -t 1 line; then echo "GOT=$line"; fi; echo SURVIVED'\r`);
     await frontend.waitFor(/Running sh -c/u, mark);
     frontend.pty.write('\u0003');
-    await pause(2600);
+    await pause(4200);
     frontend.pty.write('echo LATER\r');
     await frontend.waitFor(/≡ Queued \(1\) · next: echo LATER/u, mark);
     await frontend.waitFor(/SURVIVED[\s\S]*LATER/u, mark, 20_000);
