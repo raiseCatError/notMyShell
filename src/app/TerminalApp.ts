@@ -50,8 +50,10 @@ import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '.
 import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
 import {DEFAULT_REPORT_OPTIONS, type ReportFormat} from '../clipboard/report.js';
-import {applyReportEdit, createReportReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
+import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
+import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
+import {comparisonReport, previousRun, unifiedDiff} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
@@ -919,6 +921,8 @@ export class TerminalApp {
   lostServiceConnection = false;
   /** Commands the replay completed, for the reattach summary. */
   private replayedCompletions = 0;
+  /** Commands that completed during the current replay: marked incomplete if the replay lost output. */
+  private replayedRecords: CompletedCommand[] = [];
   private attachedSession?: AttachedSession;
   private continuedJournal?: TranscriptSession;
   private rendererEntered = false;
@@ -981,6 +985,10 @@ export class TerminalApp {
     const completed = this.replayedCompletions;
     if (completed > 0) parts.push(`${completed} command${completed === 1 ? '' : 's'} completed while detached`);
     this.output.addFrontendInteraction('session', `${parts.join(' · ')}.`, INFO);
+    // The spool keeps command boundaries but drops output past its limit: any command completed during this replay
+    // may be missing some, and says so wherever its output is used.
+    if (summary.truncatedBytes > 0) for (const record of this.replayedRecords) record.outputIncomplete = true;
+    this.replayedRecords = [];
     if (summary.truncatedBytes > 0) {
       this.output.addFrontendInteraction('session',
         `${formatBytes(summary.truncatedBytes)} of output produced while detached exceeded the retention limit and was not kept.`, ERROR);
@@ -1399,6 +1407,22 @@ export class TerminalApp {
         this.returnFromPanel();
         if (action.kind === 'report' || report) this.startReport(action.records, report ?? 'markdown');
         else void this.copyRecords(action.records, action.includeStatus);
+      }
+      this.render();
+      return;
+    }
+    if (this.comparePanel) {
+      const {columns, rows} = this.dimensions();
+      const action = comparePanelKey(this.comparePanel, key, columns, rows - 4);
+      if (action?.kind === 'close') { this.comparePanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy' && action.what === 'diff') {
+        const panel = this.comparePanel;
+        void this.copyText(unifiedDiff(action.comparison), 'Copied diff').then(note => { if (note && this.comparePanel === panel) { panel.note = note; this.render(); } });
+      } else if (action?.kind === 'copy') {
+        // A comparison report is a report: the same review (exact text, wrapped, redaction) before it is copied.
+        this.comparePanel = undefined;
+        this.reportReview = createTextReview('Copy comparison report', comparisonReport(action.comparison), [action.comparison.a, action.comparison.b],
+          {...DEFAULT_REPORT_OPTIONS, home: homedir()}, Boolean(configuredEditor(process.env)));
       }
       this.render();
       return;
@@ -2482,6 +2506,17 @@ export class TerminalApp {
       this.render();
     }
     else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
+    else if (slash.kind === 'compare') {
+      if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
+      else {
+        const recent = this.output.recentShellCommands();
+        const first = recent[(slash.first ?? 1) - 1];
+        const second = slash.second === undefined ? undefined : recent[slash.second - 1];
+        if (!first || (slash.second !== undefined && !second)) this.output.addFrontendInteraction(command.trim(), `No completed command output at ${!first ? slash.first ?? 1 : slash.second}.`, ERROR);
+        else if (second === first) this.output.addFrontendInteraction(command.trim(), 'Choose two different outputs to compare.', ERROR);
+        else this.openCompare(first, second ?? (slash.first === undefined ? previousRun(first, recent) : undefined));
+      }
+    }
     else if (slash.kind === 'copySettings') { this.panelOrigin = undefined; this.rowPanel = createRowPanel('Copy', '/copy and /cp', ['copyMode', 'copyIncludeStatus', 'copyAutoExpand']); }
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'motion') {
@@ -2614,6 +2649,7 @@ export class TerminalApp {
     const includeStatus = this.promptConfiguration.copy.includeStatus;
     if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
     else if (action === 'copyReport') this.startReport([record], 'markdown');
+    else if (action === 'compare') this.openCompare(record);
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -2886,6 +2922,23 @@ export class TerminalApp {
       if (code === 0 && this.reportReview === review) applyReportEdit(review, readFileSync(file, 'utf8'));
     } catch { /* The review keeps the text it had. */ }
     finally { rmSync(directory, {recursive: true, force: true}); this.render(); }
+  }
+
+  /** Compare output…: straight to the difference when the other side is known, otherwise choose it (previous run first). */
+  private openCompare(base: CompletedCommand, partner?: CompletedCommand): void {
+    this.panelOrigin = undefined;
+    this.comparePanel = createComparePanel(base, this.output.recentShellCommands(), partner);
+    this.render();
+  }
+
+  /** A text copy that is not command output (a diff, a comparison report): the same tool and feedback. */
+  private async copyText(text: string, what: string): Promise<string | undefined> {
+    try { await writeClipboard(text); }
+    catch (error) { const note = clipboardFailure(error); this.noteClipboard(note, 'error'); return note; }
+    const stats = copyStats(text);
+    const note = `${what} · ${stats.lines.toLocaleString()} line${stats.lines === 1 ? '' : 's'} · ${stats.characters.toLocaleString()} characters`;
+    this.noteClipboard(note, 'success');
+    return note;
   }
 
   /** /copy and /cp: one parser, the configured default, and the same clipboard write as the picker and block Copy. */
@@ -3368,6 +3421,7 @@ export class TerminalApp {
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     // Never collapse output under the reader: while scrolled back or selecting, the block finishes expanded.
     const completedRecord = this.output.complete(exitCode, {holdOpen: this.historyViewport.detached || Boolean(this.selection)});
+    if (this.replaying && completedRecord) this.replayedRecords.push(completedRecord);
     if (completedRecord) {
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
@@ -4131,7 +4185,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4168,6 +4222,7 @@ export class TerminalApp {
       (configuration, width) => this.statusStripRow(width, configuration));
     if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
+    if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
       : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
@@ -5020,6 +5075,8 @@ export class TerminalApp {
   private copyPickerReport?: ReportFormat;
   /** The review before a report is copied. */
   private reportReview?: ReportReviewState;
+  /** Compare output…: choosing the other block, then the difference. */
+  private comparePanel?: ComparePanelState;
   private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
   private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
   /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */

@@ -89,6 +89,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
       && (record.inputWaits === undefined || (Number.isSafeInteger(record.inputWaits) && record.inputWaits >= 0))
       && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
+      && (record.outputIncomplete === undefined || record.outputIncomplete === true)
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
       && typeof record.outputStartId === 'number'
       && (record.historicalContext === undefined

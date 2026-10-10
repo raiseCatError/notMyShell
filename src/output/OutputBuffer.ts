@@ -58,6 +58,11 @@ export interface CompletedCommand {
   activities?: SecondaryActivity[];
   /** An NMSh-owned block rather than a shell command: never history, /copy or shell-output folding input. */
   frontend?: 'ask';
+  /**
+   * Some of this command's output was not kept (it finished while no window was attached and the session's
+   * retention limit dropped output). Its `output` is what remained; copies, reports and comparisons say so.
+   */
+  outputIncomplete?: true;
   /** A recorded Ask conversation: its visible turns as plain text (version 1). Older transcripts lack it. */
   ask?: {version: 1; turns: RecordedAskTurn[]};
 }
