@@ -190,4 +190,3 @@ test('a working directory with a line break or backtick cannot add structure to 
   assert.equal(text.split('\n').some(line => /^# Injected|^- \*\*Status:\*\* fine/u.test(line)), false, text);
   assert.equal(buildReport([record('ls', 'a\n', 0, '', {historicalContext: {cwd}})], {...DEFAULT_REPORT_OPTIONS, format: 'plain', directory: true, redact: false}).text.split('\n').some(line => line === '# Injected'), false);
 });
-
