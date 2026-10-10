@@ -25,6 +25,8 @@ import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {selectOpener} from '../host/desktop.js';
+import {findOutputReferences, referenceFollowUp} from '../output/references.js';
+import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
@@ -168,7 +170,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
-import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {ClipboardUnavailableError, copyFeedback, copyStats, readClipboard, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {QueryExtractor, ReplyRouter} from '../passthrough/TerminalQueries.js';
@@ -243,7 +245,15 @@ import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
+import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
+import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {QUEUE_LIMIT} from '../session/CommandQueue.js';
+import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
+import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
+import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
+import {splitBatch} from '../input/pasteBatch.js';
+import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
@@ -763,6 +773,7 @@ export class TerminalApp {
   /** A queued entry being edited in the composer: Enter saves it in place, Esc cancels. */
   private queueEdit?: {id: number; draft: string};
   private queuePanel?: QueuePanelState;
+  private pinsPanel?: PinsPanelState;
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -1649,11 +1660,13 @@ export class TerminalApp {
       return;
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
+    if (this.pinsPanel) { void this.handlePinsKey(key); return; }
     if (this.queuePanel) {
-      const action = queuePanelKey(this.queuePanel, key, this.queueState);
+      const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable());
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') this.session.queue(action.change);
       else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
+      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.queueState.entries.map(entry => entry.text)}); }
       this.render();
       return;
     }
@@ -1713,10 +1726,36 @@ export class TerminalApp {
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
     if (this.githubPanel) { this.handleGithubKey(key); return; }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
+    if (this.batchReview) {
+      const review = this.batchReview;
+      const action = batchReviewKey(review, key, this.dimensions().rows - 4);
+      const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
+      if (action?.kind === 'queue') {
+        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, into this session's own queue.
+        const texts = batchTexts(review);
+        if (!this.queueAvailable() || texts.length > QUEUE_LIMIT - this.queueState.entries.length) {
+          this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
+        } else {
+          for (const text of texts) {
+            this.session.queue({op: 'add', text});
+            this.sessionSubmissions.push({text, slash: false});
+            if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+          }
+          this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
+        }
+        done();
+      } else if (action?.kind === 'edit') { this.editor.insertPaste(batchTexts(review).join('\n')); done(); }
+      else if (action?.kind === 'text') { this.editor.insertPaste(review.source); done(); }
+      else if (action?.kind === 'back') { this.batchReview = undefined; if (review.title) this.openPins(); }
+      else if (action?.kind === 'cancel') done();
+      this.render();
+      return;
+    }
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
       const outcome = pasteReviewKey(this.pasteReview, key, this.dimensions().rows - 4);
-      if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
+      if (outcome === 'batch') void this.openBatchReview(this.pastePreview.text);
+      else if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
       else if (outcome === 'back') { this.pasteReview = undefined; if (!this.pasteCompactFits()) this.pastePreview = undefined; }
       else if (outcome === 'cancel') { this.pasteReview = undefined; this.pastePreview = undefined; }
       this.render();
@@ -1725,7 +1764,8 @@ export class TerminalApp {
     if (this.pastePreview) {
       const preview = this.pastePreview;
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
       this.render();
       return;
@@ -2126,9 +2166,10 @@ export class TerminalApp {
       // Paste Guard: worth-a-look pastes are previewed first (never changed); ordinary ones insert at once.
       const analysis = analyzePaste(key.value);
       if (needsPreview(analysis, this.promptConfiguration.pastePreview)) {
-        this.pastePreview = {text: key.value, analysis};
+        const batch = this.batchAvailable(key.value);
+        this.pastePreview = {text: key.value, analysis, batch};
         // The compact strip never squeezes the composer: when this screen has no room for it, Review is the surface.
-        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis);
+        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch);
         this.render();
         return;
       }
@@ -2509,6 +2550,8 @@ export class TerminalApp {
       this.render();
     }
     else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
+    else if (slash.kind === 'pasteClipboard') await this.pasteClipboard(command);
+    else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
       else {
@@ -2628,7 +2671,95 @@ export class TerminalApp {
   private openPalette(): void {
     if (this.settingsPanelActive) return;
     const record = this.focusedCommandIndex === undefined ? this.output.recent(1) : this.output.recent(this.focusedCommandIndex + 1);
-    this.paletteState = createPalette([...paletteItems(), ...(record ? blockPaletteItems(record) : [])]);
+    this.paletteState = createPalette([...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
+  }
+
+  /** Newest-first indexes of completed commands that did not exit 0 (a nonzero exit or an interrupt is authoritative; output text is not). */
+  private failedBlockIndexes(): number[] {
+    return this.output.view().completed.flatMap((record, index) => record.exitCode !== 0 ? [index] : []);
+  }
+
+  private failureNavigationItems(): PaletteItem[] {
+    const failed = this.failedBlockIndexes();
+    if (!failed.length) return [];
+    const count = `${failed.length} failed command${failed.length === 1 ? '' : 's'} in this transcript`;
+    return [
+      {id: 'failure:previous', label: 'Previous failed command', detail: `Older block that exited nonzero or was interrupted · ${count}`, category: 'Transcript', action: {kind: 'failure', direction: 'previous'}},
+      {id: 'failure:next', label: 'Next failed command', detail: `Newer block that exited nonzero or was interrupted · ${count}`, category: 'Transcript', action: {kind: 'failure', direction: 'next'}},
+    ];
+  }
+
+  /** Focus the previous (older) or next (newer) failed block, found by its command record and brought into view. */
+  private goToFailure(direction: 'previous' | 'next'): void {
+    const failed = this.failedBlockIndexes();
+    const current = this.focusedCommandIndex;
+    const target = direction === 'previous'
+      ? failed.find(index => current === undefined || index > current)
+      : [...failed].reverse().find(index => current !== undefined && index < current);
+    if (target === undefined) {
+      this.output.addFrontendInteraction('/failures', direction === 'previous' ? (failed.length ? 'No older failed command.' : 'No failed command in this transcript.') : (current === undefined ? 'Nothing is focused; use Previous failed command first.' : 'No newer failed command.'), INFO);
+      return;
+    }
+    const record = this.output.view().completed[target];
+    this.focusedLineIndex = undefined;
+    this.focusedActivityId = undefined;
+    this.focusedCommandIndex = target;
+    if (record) this.revealBlock(record.startId);
+  }
+
+  /** Scroll so a block's first row is in view (the same placement find uses for a match). */
+  private revealBlock(startId: number): void {
+    const {columns, rows} = this.dimensions();
+    const wrapped = this.output.wrapped(columns);
+    const row = wrapped.findIndex(item => item.blockStartId === startId);
+    if (row < 0) return;
+    const height = this.planFrame(columns, rows).viewportRows;
+    this.historyViewport.scrollLines(wrapped.length, height, revealStart(row, wrapped.length, height) - this.historyViewport.resolve(wrapped.length, height));
+  }
+
+  private openReferences(record: CompletedCommand): void {
+    const references = findOutputReferences(record);
+    if (!references.length) {
+      this.output.addFrontendInteraction('/references', 'No files, links, commits or devices found in this output.', INFO);
+      return;
+    }
+    this.paletteState = createPalette(referencePaletteItems(record.startId, references));
+  }
+
+  /** One action on one reference, resolved again from its block: nothing here runs a command. */
+  private async runReference(startId: number, refId: string, verb: 'open' | 'copy' | 'stage'): Promise<void> {
+    const say = (message: string, style = INFO) => { this.output.addFrontendInteraction('/references', message, style); this.render(); };
+    const record = this.output.view().completed.find(item => item.startId === startId);
+    const reference = record ? findOutputReferences(record).find(item => item.id === refId) : undefined;
+    if (!record || !reference) return say('That output is no longer available.', ERROR);
+    if (verb === 'copy') {
+      const text = referenceCopyText(reference);
+      try { await writeClipboard(text); this.noteClipboard(`Copied ${reference.kind === 'file' ? 'location' : reference.kind} · ${copyStats(text).characters.toLocaleString()} characters`, 'success'); }
+      catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
+      return;
+    }
+    if (reference.kind === 'file') {
+      const resolved = resolveLocation({path: reference.value, ...(reference.line ? {line: reference.line} : {}), ...(reference.column ? {column: reference.column} : {})}, record.historicalContext?.cwd ?? this.shellCwd);
+      if (!resolved.ok) return say(resolved.reason, ERROR);
+      const adapter = this.hostActions();
+      await this.performHostAction(resolved.kind === 'directory' ? adapter.openDirectory(resolved.location.path) : adapter.openFile(resolved.location), say);
+      return;
+    }
+    if (reference.kind === 'url') {
+      const opener = selectOpener();
+      if (!opener) return say(`No system URL opener is available here. The link is ${reference.value}`);
+      try { spawn(opener, [reference.value], {detached: true, stdio: 'ignore'}).unref(); say(`Opened ${reference.value}.`); } catch { say(`Couldn't open ${reference.value}.`, ERROR); }
+      return;
+    }
+    const argv = referenceFollowUp(reference);
+    if (!argv) return say(reference.kind === 'device' ? `${reference.value} is not ready (${reference.state ?? 'unknown state'}), so there is no follow-up for it.` : 'There is nothing to stage for this.');
+    // The composer is the person's: staged text never replaces what they have typed.
+    if (this.editor.text.trim()) return say('The composer has text. Clear it (or run it) first; nothing was staged.');
+    const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+    this.editor.insert(argv.map(arg => (/^[\w@%+=:,./-]+$/u.test(arg) ? arg : quote(arg))).join(' '));
+    this.clearBlockFocus();
+    this.historyViewport.latest();
+    say('Staged in the composer for you to review. Press Enter to run it.');
   }
 
   private clearBlockFocus(): void {
@@ -2653,6 +2784,8 @@ export class TerminalApp {
     if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
     else if (action === 'copyReport') this.startReport([record], 'markdown');
     else if (action === 'compare') this.openCompare(record);
+    else if (action === 'references') this.openReferences(record);
+    else if (action === 'pin') this.pinCommand(record.command, record.historicalContext?.cwd ?? this.shellCwd);
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -2679,6 +2812,12 @@ export class TerminalApp {
     switch (action.kind) {
       case 'block':
         await this.runBlockAction(action.startId, action.id);
+        break;
+      case 'reference':
+        await this.runReference(action.startId, action.refId, action.verb);
+        break;
+      case 'failure':
+        this.goToFailure(action.direction);
         break;
       case 'slash': {
         const slash = parseSlashCommand(action.command);
@@ -4188,7 +4327,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4286,8 +4425,10 @@ export class TerminalApp {
       const activity = this.askActivityLine();
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
     }
+    if (this.pinsPanel) return framePanel(renderPinsPanel(this.pinsPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
-    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4), columns);
+    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
@@ -6795,6 +6936,143 @@ export class TerminalApp {
     return shelf ? [...rows, shelf] : rows;
   }
 
+  /** The shell grammar this session's shell speaks, for splitting a paste into commands (none for other shells). */
+  private batchShell(): BatchShell | undefined {
+    return this.shellId === 'zsh' || this.shellId === 'bash' || this.shellId === 'fish' ? this.shellId : undefined;
+  }
+
+  /** A paste can be offered as a queue of commands: the queue is available and the shell's grammar says it splits cleanly. */
+  private batchAvailable(text: string): boolean {
+    const shell = this.batchShell();
+    return Boolean(shell && this.queueAvailable() && text.includes('\n') && createBatchReview(text, shell, 1));
+  }
+
+  /**
+   * B: split the paste, have the real shell parse-check every command on its own (it never runs them), and only then
+   * show the review. A boundary the shell does not accept means the paste stays one block of text.
+   */
+  private async openBatchReview(text: string): Promise<void> {
+    const shell = this.batchShell();
+    const review = shell ? createBatchReview(text, shell, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length)) : undefined;
+    if (!shell || !review) return;
+    const check = await verifyCommands(batchTexts(review), shell);
+    if (this.stopped || this.pastePreview?.text !== text) return;
+    if (check.ok) this.batchReview = review;
+    else {
+      this.output.addFrontendInteraction('/ps', check.reason, INFO);
+      this.pastePreview = {...this.pastePreview, batch: false};
+      if (this.pasteReview) this.pasteReview.batch = false;
+    }
+    this.render();
+  }
+
+  /** /ps: read the clipboard now, once, and bring it to paste review. Nothing is kept, inserted or run by reading it. */
+  private async pasteClipboard(command: string): Promise<void> {
+    if (this.running) { this.output.addFrontendInteraction(command, 'A command is running: /ps pastes at the prompt. Use your terminal\'s paste to send text to the program.', INFO); return; }
+    let text: string;
+    try { text = await this.readClipboardText(); }
+    catch (error) {
+      this.output.addFrontendInteraction(command, error instanceof ClipboardUnavailableError ? error.message : `Could not read the clipboard: ${error instanceof Error ? error.message : String(error)}`, ERROR);
+      return;
+    }
+    if (this.stopped) return;
+    if (!text.trim()) { this.output.addFrontendInteraction(command, 'The clipboard is empty.', INFO); return; }
+    const analysis = analyzePaste(text);
+    const batch = this.batchAvailable(text);
+    this.pastePreview = {text, analysis, batch};
+    // An explicit /ps always shows the review first, whatever Paste Preview is set to.
+    this.pasteReview = createPasteReview(text, analysis, batch);
+  }
+
+  // ---------------------------------------------------------------- pins and recipes
+
+  private openPins(options: {naming?: string[]} = {}): void {
+    const loaded = loadPins();
+    if (!loaded.ok) { this.output.addFrontendInteraction('/pins', loaded.reason, ERROR); return; }
+    this.pinsPanel = createPinsPanel(loaded.value, this.shellCwd, {composerText: this.editor.text, canEdit: Boolean(configuredEditor(process.env)), ...(options.naming ? {naming: options.naming} : {})});
+  }
+
+  /** Pin from a block: kept as written, global until you scope it in /pins; nothing about its output is kept. */
+  private pinCommand(command: string, cwd: string): void {
+    const result = addPin({command, cwd});
+    this.output.addFrontendInteraction('/pins', result.ok ? `Pinned. /pins lists what you kept; it is stored in ${pinsPath()}.` : result.reason, result.ok ? INFO : ERROR);
+  }
+
+  private refreshPins(panel: PinsPanelState, message?: {text: string; error: boolean}): void {
+    const loaded = loadPins();
+    if (loaded.ok) panel.data = loaded.value as PinData;
+    panel.composerText = this.editor.text;
+    panel.message = loaded.ok ? message : {text: loaded.reason, error: true};
+  }
+
+  private async handlePinsKey(key: Key): Promise<void> {
+    const panel = this.pinsPanel!;
+    const action = pinsPanelKey(panel, key);
+    const done = (result: {ok: true} | {ok: false; reason: string}, text: string) => this.refreshPins(panel, result.ok ? {text, error: false} : {text: result.reason, error: true});
+    if (action?.kind === 'close') { this.pinsPanel = undefined; this.returnFromPanel(); }
+    else if (action?.kind === 'stage') {
+      // The composer is the person's: a pin never replaces what they have typed.
+      if (this.editor.text.trim()) panel.message = {text: 'The composer has text. Clear it (or run it) first; nothing was staged.', error: true};
+      else {
+        if (action.command.includes('\n')) this.editor.insertPaste(action.command); else this.editor.insert(action.command);
+        this.pinsPanel = undefined; this.returnFromPanel();
+        this.output.addFrontendInteraction('/pins', 'Staged in the composer for you to review. Press Enter to run it.', INFO);
+      }
+    } else if (action?.kind === 'use') await this.useRecipe(panel, action.recipe, action.values);
+    else if (action?.kind === 'rename') done(changeItem(action.id, {name: action.name}), 'Renamed.');
+    else if (action?.kind === 'scope') done(changeItem(action.id, {scope: action.scope}), action.scope === 'directory' ? 'Kept for this folder and the folders inside it.' : 'Kept for every folder.');
+    else if (action?.kind === 'delete') done(removeItem(action.id), 'Removed.');
+    else if (action?.kind === 'pinComposer') done(addPin({command: this.editor.text, cwd: this.shellCwd}), 'Pinned what is in the composer. It is not run.');
+    else if (action?.kind === 'saveRecipe') {
+      const quoted = action.steps.map(step => quotedPlaceholder(step)).find(Boolean);
+      if (quoted) { panel.message = {text: `{{${quoted}}} is inside quotes. Put placeholders outside quotes: NMSh quotes the value for you.`, error: true}; panel.mode = 'name'; panel.naming = {steps: action.steps}; panel.input = action.name; }
+      else done(addRecipe({name: action.name, steps: action.steps, cwd: this.shellCwd}), `Saved the recipe “${action.name}”. Enter on it asks for its values and shows the commands first.`);
+    } else if (action?.kind === 'edit') { await this.editRecipe(panel, action.recipe); }
+    this.render();
+  }
+
+  /** Enter on a recipe: its values are quoted into the steps, and the expanded commands are reviewed before anything is queued. */
+  private async useRecipe(panel: PinsPanelState, recipe: Recipe, values: Record<string, string>): Promise<void> {
+    if (!this.queueAvailable()) { panel.message = {text: 'The command queue is off or unavailable here, so a recipe cannot be queued.', error: true}; return; }
+    const expanded = expandSteps(recipe.steps, values, this.shellId === 'fish' ? fishQuote : posixQuote);
+    if (!expanded.ok) { panel.message = {text: expanded.reason, error: true}; return; }
+    const shell = this.batchShell();
+    const check = shell ? await verifyCommands(expanded.steps, shell) : {ok: false as const, reason: 'This shell cannot check recipes.'};
+    if (this.pinsPanel !== panel) return;
+    if (!check.ok) { panel.message = {text: check.reason.replace('so the paste was not split', 'so the recipe was not queued'), error: true}; return; }
+    const where = this.shellCwd;
+    const note = recipe.scope === 'directory' && recipe.cwd && recipe.cwd !== where ? `Saved for ${recipe.cwd}; this shell is in ${where}.` : `Runs in this shell, from ${where}.`;
+    this.pinsPanel = undefined;
+    this.batchReview = batchFromCommands(expanded.steps, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length), {title: `Recipe: ${recipe.name}`, note});
+  }
+
+  /** e on a recipe: its commands in your editor (a private temporary file); saved only if they still split into whole commands. */
+  private async editRecipe(panel: PinsPanelState, recipe: Recipe): Promise<void> {
+    const editor = configuredEditor(process.env);
+    const shell = this.batchShell();
+    if (!editor || !shell || !this.hostTerminalFree()) return;
+    const directory = mkdtempSync(join(tmpdir(), 'nmsh-recipe-'));
+    const file = join(directory, 'recipe.sh');
+    try {
+      writeFileSync(file, recipe.steps.join('\n'), {mode: 0o600});
+      const code = await this.withHostTerminal(() => new Promise<number | null>(finish => {
+        const child = spawn(editor[0]!, [...editor.slice(1), file], {stdio: 'inherit'});
+        child.once('error', () => finish(null));
+        child.once('close', exit => finish(exit));
+      }));
+      if (code !== 0) { this.refreshPins(panel, {text: 'The editor did not finish; the recipe is unchanged.', error: true}); return; }
+      const split = splitBatch(readFileSync(file, 'utf8'), shell);
+      if (!split.ok) { this.refreshPins(panel, {text: `Not saved: ${split.reason} The recipe is unchanged.`, error: true}); return; }
+      const steps = split.commands.map(command => command.text);
+      const quoted = steps.map(step => quotedPlaceholder(step)).find(Boolean);
+      const problem = quoted ? `{{${quoted}}} is inside quotes; put placeholders outside quotes.` : steps.map(step => keepProblem(step)).find(Boolean);
+      if (problem || !steps.length) { this.refreshPins(panel, {text: `Not saved: ${problem ?? 'a recipe needs at least one command.'}`, error: true}); return; }
+      const saved = changeItem(recipe.id, {steps});
+      this.refreshPins(panel, saved.ok ? {text: `Saved ${steps.length} command${steps.length === 1 ? '' : 's'}. A queued run keeps the commands it was reviewed with.`, error: false} : {text: saved.reason, error: true});
+    } catch { this.refreshPins(panel, {text: 'The editor could not be started; the recipe is unchanged.', error: true}); }
+    finally { rmSync(directory, {recursive: true, force: true}); }
+  }
+
   /** Whether the compact preview fits above the composer on this screen (the same rule notices follow). */
   private pasteCompactFits(): boolean {
     const {columns, rows} = this.dimensions();
@@ -6834,7 +7112,7 @@ export class TerminalApp {
     if (hidden > 0 && summary.length) summary[summary.length - 1] += `${SUBTLE} · +${hidden} more${RESET}`;
     for (const item of summary) rows.push(`  ${item}`);
     if (analysis.commands.some(command => ['text', 'unknown'].includes(primaryKind(command.kinds)))) rows.push(`${SUBTLE}${PASTE_EXACT_NOTE}${RESET}`);
-    rows.push(`${SUBTLE}Enter insert · R review · Esc cancel${RESET}`);
+    rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel${RESET}`);
     return rows.map(row => truncateAnsi(row, columns));
   }
 
@@ -7229,7 +7507,7 @@ export class TerminalApp {
         nmsh: {configurationLoaded: true, sessionMode: this.sessionMode, ...(serviceReachable !== undefined ? {serviceReachable} : {}), transcriptDirectory: join(nmshConfigDirectory(), 'sessions'),
           shell: {id: this.shellId, label: shellAdapter(this.shellId).label, ...(resolveCommand(this.shellId) ? {executable: resolveCommand(this.shellId)!} : {}), promptSeen: !this.startupPending},
           host: {name: this.host.name, truecolor: colorLevel() === 'truecolor', keyboard: this.host.capabilities.enhancedKeyboard || this.host.capabilities.kittyKeyboard}},
-        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows,
+        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows, contextEngine: {...this.contextEngine.stats},
         understanding: {mode: configuration.localUnderstanding.mode, ...(model ? {model: {label: model.label, runtime: model.runtime, ...(model.path ? {path: model.path} : {}), owned: Boolean(model.owned)}} : {}),
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
@@ -7601,7 +7879,10 @@ export class TerminalApp {
   private readonly cursorPresenter = new CursorPresenter(() => resolveCursorSettings(this.promptConfiguration.cursor, {...contextFor(this.promptConfiguration), chrome: UI_COLORS.accent}), () => { if (!this.stopped) this.paintPresentation(Date.now()); });
   private caretCause: 'typing' | 'jump' = 'jump';
   /** A paste waiting for Insert / Review / Cancel (presentation and classification only; the text is never changed). */
-  private pastePreview?: {text: string; analysis: PasteAnalysis};
+  private pastePreview?: {text: string; analysis: PasteAnalysis; /** Splits into separate commands that can be queued. */ batch: boolean};
+  private batchReview?: BatchReviewState;
+  /** The one place the clipboard is read (only /ps calls it). */
+  private readClipboardText: () => Promise<string> = () => readClipboard();
   private pasteReview?: PasteReviewState;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
@@ -9236,6 +9517,11 @@ export class TerminalApp {
   }
 
   /** Queueing works when the setting is on and whatever owns the shell runs a queue (an older service does not). */
+  /** The session's service understands per-entry conditions and approval (older ones would ignore them, so they are never offered). */
+  private queueConditionsAvailable(): boolean {
+    return this.queueAvailable() && this.session.features.has('queue-conditions');
+  }
+
   private queueAvailable(): boolean {
     return this.promptConfiguration.commandQueue !== false && this.session.features.has('queue');
   }

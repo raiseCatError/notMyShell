@@ -22,7 +22,8 @@ export interface QueueEvent {
  * - an entry is submitted only while the shell is at its prompt (after its prompt marker, before the next exec);
  * - the entry leaves the queue in the same step (`CommandQueue.take`), so it can never be submitted twice;
  * - after a command that failed (non-zero status) or was interrupted, the queue pauses with that reason instead of
- *   running what was prepared to follow it; the person resumes or clears it;
+ *   running what was prepared to follow it; the person resumes or clears it. Only an entry the person marked
+ *   `always` goes on after a plain failure (never after an interrupt), and one marked `approve` waits for approval;
  * - a shell switch pauses it (entries were written for the previous shell), and a shell exit drops what is left,
  *   reporting it, never replaying it elsewhere.
  * No timers: silence is never taken as completion.
@@ -81,7 +82,8 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     if (finished && this.queue.size) {
       const at = Date.now();
       if (this.interrupted || exitCode === 130) this.queue.hold({reason: 'interrupted', at, command: this.lastCommand});
-      else if (exitCode !== 0) this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
+      // An entry that is to run regardless of the result before it is not held back by a plain failure.
+      else if (exitCode !== 0 && this.queue.next?.condition !== 'always') this.queue.hold({reason: 'failed', at, command: this.lastCommand, exitCode});
     }
     this.interrupted = false;
     this.dispatch();

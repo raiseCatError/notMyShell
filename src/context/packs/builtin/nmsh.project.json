@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation; tool behavior studied from public documentation only."},
   "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
-  "requires": ["project.package", "runtime.node", "runtime.python", "runtime.go", "runtime.rust", "runtime.java"],
+  "requires": ["project.package", "runtime.node", "runtime.python", "runtime.go", "runtime.ruby", "runtime.php", "runtime.rust", "runtime.java"],
   "modules": [
     {
       "id": "package", "label": "Package", "description": "Version and package manager from the nearest declarative manifest.",
@@ -53,6 +53,30 @@
         {"fact": "runtime.go", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
         {"fact": "runtime.go", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
         {"fact": "runtime.go", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "ruby", "label": "Ruby", "description": "Ruby version from .ruby-version, Gemfile or the install location; never run.",
+      "category": "runtime", "priority": 43, "role": "runtime", "icon": "ruby", "condition": "onCommand",
+      "triggers": ["ruby", "bundle", "bundler", "rails", "rake", "gem"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "ruby", "parts": [
+        {"fact": "runtime.ruby", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.ruby", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.ruby", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.ruby", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
+      ]}]
+    },
+    {
+      "id": "php", "label": "PHP", "description": "PHP version from .php-version, composer.json or the install location; never run.",
+      "category": "runtime", "priority": 42, "role": "runtime", "icon": "php", "condition": "onCommand",
+      "triggers": ["php", "composer", "artisan", "phpunit"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "php", "parts": [
+        {"fact": "runtime.php", "field": "active", "format": "version", "optional": true},
+        {"fact": "runtime.php", "field": "requested", "optional": true, "when": {"field": "active", "present": false}},
+        {"fact": "runtime.php", "field": "requestedFrom", "join": " · ", "optional": true, "when": {"field": "mismatch", "equals": true}},
+        {"fact": "runtime.php", "field": "requested", "prefix": " ", "optional": true, "when": {"field": "mismatch", "equals": true}}
       ]}]
     },
     {

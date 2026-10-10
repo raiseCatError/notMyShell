@@ -40,6 +40,8 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Quick Copy or Interactive Picker, and whether copies include completion status'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
+  {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
+  {name: '/ps', insertion: '/ps', description: 'Paste from the clipboard, reviewed first: read when you run it, never in the background'},
   {name: '/cp', insertion: '/cp', description: 'Same as /copy (every form: /cp 2, /cp -3, /cp ui, /cp latest, --status)'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
@@ -140,6 +142,10 @@ export type ParsedSlashCommand =
   /** `args` is everything after /copy, parsed by parseCopyArgs (so a mistake gets a precise answer). */
   | {kind: 'copy'; args: string}
   | {kind: 'copySettings'}
+  /** /ps: read the clipboard now and bring it to paste review. */
+  | {kind: 'pasteClipboard'}
+  /** /pins: the pins and recipes panel. */
+  | {kind: 'pins'}
   /** /compare [A [B]]: outputs by /copy number; A defaults to the latest, B to A's previous run (or a choice). */
   | {kind: 'compare'; first?: number; second?: number; error?: string}
   | {kind: 'appearance'}
@@ -222,6 +228,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
     if (words.length > 2 || words.some(word => !/^[1-9]\d{0,2}$/u.test(word))) return {kind: 'compare', error: 'Use /compare, /compare N or /compare N M (numbers as /copy shows them, 1 is the latest).'};
     return {kind: 'compare', ...(words[0] ? {first: Number(words[0])} : {}), ...(words[1] ? {second: Number(words[1])} : {})};
   }
+  if (/^\/ps\s*$/u.test(input)) return {kind: 'pasteClipboard'};
+  if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
   // /cp is /copy: one parser, one handler, every form.
   if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
   const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
