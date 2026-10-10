@@ -148,3 +148,15 @@ test('the exec after a dispatch is that entry, by its own text; nothing else is 
   dispatcher.onPrompt(0);
   assert.equal(dispatcher.onExec('ls'), undefined);
 });
+
+test('queue text is drawn, never interpreted: control sequences in entries and pause reasons are neutralized', async () => {
+  const {queuePreview, pauseReason, queueRow} = await import('../src/status/queueStatus.js');
+  const {renderQueuePanel} = await import('../src/queue/QueuePanel.js');
+  const hostile = 'echo hi\u001b]52;c;cm0gLXJmIH4=\u0007\u001b[2J\u009b31m';
+  for (const text of [queuePreview(hostile), pauseReason({reason: 'failed', at: 1, command: hostile, exitCode: 2}),
+    queueRow({entries: [{id: 1, text: hostile, addedAt: 1}]}, 120) ?? '',
+    renderQueuePanel({selected: 0}, {entries: [{id: 1, text: `${hostile}\nsecond ${hostile}`, addedAt: 1}]}, hostile, 120, 30).join('\n')]) {
+    assert.doesNotMatch(text.replace(/\u001b\[[\d;]*m/gu, ''), /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u, JSON.stringify(text));
+  }
+  assert.match(queuePreview(hostile), /␛\]52/u, 'visible, not executed');
+});

@@ -5,6 +5,7 @@ import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {pauseReason, pausedGlyph, queueGlyph, queuePreview} from '../status/queueStatus.js';
+import {displaySafe} from '../input/PasteReview.js';
 
 /**
  * `/queue`: the session's command queue as a keyboard-first list. It holds no queue of its own: every change is a
@@ -79,7 +80,7 @@ export function renderQueuePanel(panel: QueuePanelState, queue: QueueState, runn
   const selected = entries[panel.selected];
   if (selected && selected.text.includes('\n') && height >= out.length + 8) {
     const lines = selected.text.split('\n');
-    out.push('', `  ${subtle}Runs as one block:${reset}`, ...lines.slice(0, 5).map(line => `  ${secondary}${truncateText(line, width)}${reset}`));
+    out.push('', `  ${subtle}Runs as one block:${reset}`, ...lines.slice(0, 5).map(line => `  ${secondary}${truncateText(displaySafe(line), width)}${reset}`));
     if (lines.length > 5) out.push(`  ${subtle}… ${lines.length - 5} more line${lines.length === 6 ? '' : 's'}${reset}`);
   }
   out.push('');

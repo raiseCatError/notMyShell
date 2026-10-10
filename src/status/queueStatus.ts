@@ -1,4 +1,5 @@
 import {displayWidth, truncateText} from '../util/text.js';
+import {displaySafe} from '../input/PasteReview.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
 import type {QueuePause, QueueState} from '../session/CommandQueue.js';
@@ -17,7 +18,8 @@ export function queuePreview(text: string, limit = 80): string {
   const lines = text.split('\n');
   const more = lines.length > 1 ? ` (+${lines.length - 1} line${lines.length === 2 ? '' : 's'})` : '';
   const room = Math.max(1, limit - displayWidth(more));
-  return `${truncateText(lines[0]!.trim() || '(blank first line)', room)}${more}`;
+  // Command text is drawn, never interpreted: a pasted escape sequence shows as ␛, it does not reach the terminal.
+  return `${truncateText(displaySafe(lines[0]!.trim()) || '(blank first line)', room)}${more}`;
 }
 
 /** Why the queue waits, in words. */
@@ -32,7 +34,7 @@ export function pauseReason(pause: QueuePause): string {
 }
 
 function commandName(command: string): string {
-  return truncateText(command.split('\n')[0]!.trim() || 'the command', 32);
+  return truncateText(displaySafe(command.split('\n')[0]!.trim()) || 'the command', 32);
 }
 
 /**
