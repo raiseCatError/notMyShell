@@ -1,3 +1,4 @@
+import {shellSubmission} from '../shell/submission.js';
 import {railNeedsPromptConversion, railPreviewConfiguration} from '../prompt/railLayout.js';
 import {prepareRail, paintRailComposition, railCompositionPreview, type PreparedRail} from '../prompt/railComposition.js';
 import {routeModule} from '../context/surfaceRouter.js';
@@ -178,7 +179,12 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
 import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
+import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
+import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
+import type {QueueNews} from '../session/SessionClient.js';
 import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
 import {directKeyBytes} from '../terminal/keyBytes.js';
 import {extractFacts} from '../status/adapters.js';
@@ -706,7 +712,12 @@ export class TerminalApp {
   /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean;
+    /** Started from the command queue rather than typed at the prompt. */
+    queued?: boolean;
+    /** You sent Ctrl+C or Ctrl+Z: the command is ending at your request, so what you type next is for the shell's
+     * prompt (type-ahead, as in any terminal), not a queue entry held behind the pause that stop causes. */
+    stopping?: boolean};
   private hoveredLineIndex?: number;
   /** NMSh-owned transcript selection (plain drag); presentation only. */
   private selection?: TranscriptSelection;
@@ -732,6 +743,15 @@ export class TerminalApp {
    * are type-ahead for the shell and stay in the composer.
    */
   private runningDraft?: {startId: number; at: number; answering: boolean};
+  /** This session's command queue as its owner (the session service or in-process client) last reported it. */
+  private queueState: QueueState = {entries: []};
+  /** Ctrl+Q while a program reads keys directly: the composer takes typing for one queue entry, never the program. */
+  private queueCompose = false;
+  /** The line the running command left the cursor on: a question there is answered before any probe confirms it. */
+  private readonly commandLine = new OpenLine();
+  /** A queued entry being edited in the composer: Enter saves it in place, Esc cancels. */
+  private queueEdit?: {id: number; draft: string};
+  private queuePanel?: QueuePanelState;
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -807,9 +827,10 @@ export class TerminalApp {
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
-    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
+    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed, stamp.queued); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('inputState', state => this.onInputState(state));
+    this.session.on('queueState', (state, news) => this.onQueueState(state, news));
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
@@ -956,7 +977,7 @@ export class TerminalApp {
         `${formatBytes(summary.truncatedBytes)} of output produced while detached exceeded the retention limit and was not kept.`, ERROR);
     }
     // Without a journal the running command is known only from the service.
-    if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
+    if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince, undefined, attached.runningQueued);
     if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.cancelPresentation();
       this.passthrough = true;
@@ -1015,7 +1036,7 @@ export class TerminalApp {
    * zsh started a command line this frontend did not submit (it began while
    * detached, or came from type-ahead): give it its own transcript block.
    */
-  private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
+  private onShellExec(command: string, at = Date.now(), historyAllowed?: number, queued?: string): void {
     this.effects.cancel();
     if (this.running) {
       this.running.awaitingExec = false;
@@ -1029,11 +1050,21 @@ export class TerminalApp {
       return;
     }
     this.commandModes.reset();
+    this.commandLine.reset();
     this.inputState = undefined;
+    // A queued entry runs under its own text (a multi-line entry reaches the shell wrapped as one block); the session's
+    // queue says so on the exec itself, so a window that attached later shows it the same way.
+    if (queued !== undefined) command = queued;
+    if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      this.cancelPresentation();
+      this.passthrough = true;
+      this.noteForeignScreen();
+      this.handOverTerminal();
+    }
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
-    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed};
+    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed, ...(queued !== undefined ? {queued: true} : {})};
     this.scheduleJournal();
     if (!this.replaying) this.render();
   }
@@ -1559,6 +1590,14 @@ export class TerminalApp {
       return;
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
+    if (this.queuePanel) {
+      const action = queuePanelKey(this.queuePanel, key, this.queueState);
+      if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'change') this.session.queue(action.change);
+      else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
+      this.render();
+      return;
+    }
     if (this.watchPanel) {
       const panel = this.watchPanel;
       const action = watchPanelKey(panel, key, this.watches.active());
@@ -1835,6 +1874,24 @@ export class TerminalApp {
     }
     // A program reading a hidden line or single keys gets each key as it is typed, as in any terminal: the
     // composer neither shows nor keeps it, and Enter is a key for the program, never a shell submission.
+    // Ctrl+Q while a program reads keys directly: the composer takes the next command for the queue; the program
+    // never sees those keys. Esc returns typing to the program.
+    if (key.kind === 'queueCommand' && this.directInputRequest() && this.queueAvailable()) {
+      this.queueCompose = true;
+      this.render();
+      return;
+    }
+    if (key.kind === 'escape' && this.queueCompose) {
+      this.queueCompose = false;
+      this.editor.clear();
+      this.render();
+      return;
+    }
+    if (key.kind === 'escape' && this.queueEdit) {
+      this.cancelQueueEdit();
+      this.render();
+      return;
+    }
     if (this.directInputRequest()) {
       this.sendDirectKey(key);
       return;
@@ -1842,7 +1899,7 @@ export class TerminalApp {
     // Typing that starts while a command waits for a line is an answer: if the command ends before it is sent, it
     // is discarded rather than left to run as the next shell command.
     if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
-      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: Boolean(this.inputState?.request)};
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault()};
     }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
@@ -1888,6 +1945,7 @@ export class TerminalApp {
       this.clearCorrection();
       if (this.running) {
         this.running.interrupted = true;
+        this.running.stopping = true;
         this.editor.clear();
         this.session.interrupt();
       } else {
@@ -1907,7 +1965,7 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) this.session.write('\u001A');
+      if (this.running) { this.running.stopping = true; this.session.write('\u001A'); }
       return;
     }
     if (key.kind === 'selectAll') {
@@ -2118,30 +2176,9 @@ export class TerminalApp {
     else if (key.kind === 'deleteLineAfter') this.editor.deleteLineAfter();
     else if (key.kind === 'delete') this.editor.delete();
     else if (key.kind === 'newline') this.editor.insert('\n');
-    else if (key.kind === 'enter') {
-      if (this.running) {
-        if (this.editor.text.trim() === '/zsh') {
-          this.editor.clear();
-          this.output.addFrontendInteraction('/zsh', 'Wait for the foreground command to finish or interrupt it, then run /zsh.', INFO);
-        } else if (this.editor.text.trim() === '/clear') {
-          this.editor.clear();
-          this.output.addFrontendInteraction('/clear', 'Wait for the foreground command to finish before archiving this transcript.', INFO);
-        } else if (this.editor.text.trim() === '/resume') {
-          this.editor.clear();
-          this.output.addFrontendInteraction('/resume', 'Wait for the foreground command to finish before switching transcripts.', INFO);
-        } else {
-          const input = this.editor.text;
-          this.editor.clear();
-          this.runningDraft = undefined;
-          this.session.write(`${input}\r`);
-          return;
-        }
-        this.editor.clear();
-      } else {
-        if (this.preparingCommand) return;
-        void this.submit();
-      }
-    }
+    else if (key.kind === 'queueCommand') this.routeComposer('queue');
+    else if (key.kind === 'sendToProgram') this.routeComposer('send');
+    else if (key.kind === 'enter') this.routeComposer('enter');
   }
 
 
@@ -2497,6 +2534,7 @@ export class TerminalApp {
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else if (slash.kind === 'doctor') void this.openDoctor();
     else if (slash.kind === 'watch') this.handleWatch(command, slash.op, slash.arguments);
+    else if (slash.kind === 'queue') this.handleQueueCommand(command, slash.op);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
       else {
@@ -2664,11 +2702,7 @@ export class TerminalApp {
       this.noteForeignScreen();
       this.handOverTerminal();
     }
-    if (command.includes('\n')) {
-      this.session.submit(`{ ${command}\n}`);
-    } else {
-      this.session.submit(command);
-    }
+    this.session.submit(shellSubmission(command));
     // After the command is on its way: one sweep acknowledging the submission (never delays it).
     if (!this.passthrough) this.startSweep('prompt', 'vivid');
     this.render();
@@ -3117,6 +3151,7 @@ export class TerminalApp {
       process.stdout.write(data);
     } else {
       this.commandModes.observeModes(data);
+      if (this.running) this.commandLine.push(data);
       this.lastOutputTime = Date.now();
       const wasPassthrough = this.passthrough;
       this.output.write(data);
@@ -3204,6 +3239,7 @@ export class TerminalApp {
       if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
       else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
       parts.main += completionWaitFact(this.completedInputTiming);
+      if (command.queued) parts.main += ' · from queue';
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -3213,6 +3249,7 @@ export class TerminalApp {
     }
     this.running = undefined;
     this.inputState = undefined;
+    this.queueCompose = false;
     this.completedInputTiming = undefined;
     // An answer typed for this command but never sent must not become the next shell command.
     const draft = this.runningDraft;
@@ -3941,7 +3978,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -4035,6 +4072,7 @@ export class TerminalApp {
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
     }
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
+    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
@@ -8471,7 +8509,7 @@ export class TerminalApp {
       inputRows: fullInput.allRows.length,
       suggestions,
       inspectorRows: this.inspectorRows(columns).length,
-      running: Boolean(this.running),
+      running: Boolean(this.running) || Boolean(this.queueLine(80)),
       detached: this.historyViewport.detached,
       hasOutput: transcriptRows > 0,
       composerPosition: this.promptConfiguration.composerPosition,
@@ -8582,7 +8620,12 @@ export class TerminalApp {
     const direct = this.directInputRequest();
     const inputRows = input.rows.map(row => {
       const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
-      if (direct) return row === input.rows[0] ? truncateAnsi(`${prefix}${SUBTLE}${directInputPlaceholder(direct, inputProgram(direct, this.running!.command))}${RESET}`, this.inputColumns(columns)) : '';
+      if (direct) {
+        const queueHint = this.queueAvailable() ? ' · Ctrl+Q queues a command' : '';
+        return row === input.rows[0] ? truncateAnsi(`${prefix}${SUBTLE}${directInputPlaceholder(direct, inputProgram(direct, this.running!.command))}${queueHint}${RESET}`, this.inputColumns(columns)) : '';
+      }
+      const hint = row === input.rows[0] && !this.editor.text ? this.composerHint() : undefined;
+      if (hint) return truncateAnsi(`${prefix}${SUBTLE}${hint}${RESET}`, this.inputColumns(columns));
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
       for (let i = 0; i < glyphsInRow.length; i++) {
@@ -8916,18 +8959,180 @@ export class TerminalApp {
    * stays in view however far the transcript scrolled or folded. Nothing extra is reserved and the PTY never resizes.
    */
   private activityRows(plan: ScreenPlan, columns: number): string[] {
-    if (!this.running) return [];
+    const queue = this.queueLine(columns);
+    if (!this.running) return queue ? [queue, ''] : [];
     const request = this.inputState?.request;
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
-    if (request) return inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns).map(row => truncateAnsi(row, columns));
+    if (request) {
+      const rows = inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns);
+      const count = this.queueAvailable() ? this.queueState.entries.length : 0;
+      // The question keeps both rows; the queue is a count at the end of the headline, when it fits.
+      const tail = count ? `${SUBTLE} · ${queueGlyph()} ${count} queued${RESET}` : '';
+      if (tail && rows[0] !== undefined && displayWidth(stripAnsi(rows[0])) + displayWidth(stripAnsi(tail)) <= columns) rows[0] += tail;
+      return rows.map(row => truncateAnsi(row, columns));
+    }
     const activity = truncateAnsi(this.currentActivity(), columns);
+    // The queue reads after what runs now, in the row the region already reserves.
+    if (queue) return [activity, queue];
     return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
+  }
+
+  /** While a command runs, the empty composer says what Enter will do with what you type. */
+  private composerHint(): string | undefined {
+    if (!this.running || this.passthrough || this.queueEdit || !this.queueAvailable() || this.running.stopping) return undefined;
+    // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
+    if (this.queueCompose) return 'Queue a command · Enter adds it · Esc returns to the program';
+    const request = this.inputState?.request;
+    const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
+    return this.answersByDefault() ? `Enter answers ${program} · Ctrl+Q queues a command` : `Enter queues the next command · Ctrl+S sends to ${program}`;
+  }
+
+  /**
+   * Enter goes to the running program: it is known to wait for input, or it left a question open on its line
+   * ("Password: ", "Continue? [y/N] ") that no probe has looked at yet. A reply typed at a fresh prompt (a password
+   * most of all) must never become a queued shell command, so the open question wins until it is answered.
+   */
+  private answersByDefault(): boolean {
+    return Boolean(this.inputState?.request) || (this.commandLine.open && promptShaped(this.commandLine.line));
+  }
+
+  /** Queueing works when the setting is on and whatever owns the shell runs a queue (an older service does not). */
+  private queueAvailable(): boolean {
+    return this.promptConfiguration.commandQueue !== false && this.session.features.has('queue');
+  }
+
+  /** The queue's line: what is queued and what runs next, or why it waits; an edit in progress says how to finish. */
+  private queueLine(columns: number): string | undefined {
+    if (!this.queueAvailable()) return undefined;
+    if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
+    return queueRow(this.queueState, columns);
+  }
+
+  private onQueueState(state: QueueState, news: QueueNews): void {
+    const previous = this.queueState;
+    this.queueState = state;
+    if (news.refused) this.output.addFrontendInteraction('/queue', news.refused, INFO);
+    if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
+    const paused = state.paused;
+    // A pause NMSh decided (not the person's own) is a safety event: say it where the failure is.
+    if (paused && paused.reason !== 'user' && paused.at !== previous.paused?.at && state.entries.length) {
+      this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}${SECONDARY} ${state.entries.length} waiting · /queue to resume or clear${RESET}`);
+    }
+    if (this.queueEdit && !state.entries.some(entry => entry.id === this.queueEdit!.id)) {
+      this.queueEdit = undefined;
+      this.output.addFrontendInteraction('/queue', 'That queued command already ran or was removed; your edit is still in the composer.', INFO);
+    }
+    this.render();
+  }
+
+  /** Add the composer's text to the queue. */
+  private enqueue(text: string): void {
+    if (!this.queueAvailable()) {
+      this.output.addFrontendInteraction('/queue', this.session.features.has('queue')
+        ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
+      this.render();
+      return;
+    }
+    this.session.queue({op: 'add', text});
+    this.sessionSubmissions.push({text, slash: false});
+    if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+    this.editor.clear();
+    this.composerHistory.reset();
+    this.runningDraft = undefined;
+    this.queueCompose = false;
+    this.render();
+  }
+
+  /**
+   * Enter, Ctrl+Q (queue) and Ctrl+S (send to the running program). Input ownership comes first: a program that is
+   * waiting for input (InputWatch's evidence) gets Enter, and only an explicit Ctrl+Q queues then. Otherwise, while
+   * a command runs, Enter queues; at idle it queues behind pending entries so nothing jumps the order.
+   */
+  private routeComposer(intent: 'enter' | 'queue' | 'send'): void {
+    // Composing a queue entry (Ctrl+Q during direct input): Enter adds it, and nothing typed here reaches the program.
+    if (this.queueCompose) {
+      if (intent === 'send') return;
+      intent = 'queue';
+    }
+    const text = this.editor.text;
+    if (this.queueEdit) {
+      if (intent === 'send') return;
+      const edit = this.queueEdit;
+      if (!text.trim()) { this.output.addFrontendInteraction('/queue', 'A queued command cannot be empty; remove it in /queue instead.', INFO); this.render(); return; }
+      this.queueEdit = undefined;
+      this.session.queue({op: 'edit', id: edit.id, text});
+      this.editor.replaceText(edit.draft);
+      this.render();
+      return;
+    }
+    const slash = isSlashInput(text) ? parseSlashCommand(text) : undefined;
+    if (this.running) {
+      if (intent !== 'send' && slash && slash.kind !== 'unknown') {
+        const refused = ({zsh: 'Wait for the foreground command to finish or interrupt it, then run /zsh.', clear: 'Wait for the foreground command to finish before archiving this transcript.',
+          resume: 'Wait for the foreground command to finish before switching transcripts.'} as Record<string, string>)[slash.kind === 'shell' && text.trim() === '/zsh' ? 'zsh' : slash.kind];
+        if (refused) { this.editor.clear(); this.output.addFrontendInteraction(text.trim(), refused, INFO); this.render(); return; }
+        void this.submit();
+        return;
+      }
+      const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || Boolean(this.running.stopping)));
+      if (toProgram) {
+        this.editor.clear();
+        this.runningDraft = undefined;
+        this.session.write(`${text}\r`);
+        return;
+      }
+      if (!text.trim()) return;
+      this.enqueue(text);
+      return;
+    }
+    if (intent === 'send') return;
+    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused))) {
+      this.enqueue(text);
+      return;
+    }
+    if (this.preparingCommand) return;
+    void this.submit();
+  }
+
+  /** `/queue` opens the manager; `/queue pause|resume|clear` act at once. */
+  private handleQueueCommand(command: string, op: 'open' | 'pause' | 'resume' | 'clear'): void {
+    if (!this.queueAvailable()) {
+      this.output.addFrontendInteraction(command, this.session.features.has('queue')
+        ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
+      return;
+    }
+    if (op === 'open') { this.panelOrigin = undefined; this.queuePanel = {selected: 0}; return; }
+    const count = this.queueState.entries.length;
+    if (op === 'clear') {
+      this.session.queue({op: 'clear'});
+      this.output.addFrontendInteraction(command, count ? `Cleared ${count} queued command${count === 1 ? '' : 's'}; none of them ran.` : 'The queue was already empty.', INFO);
+      return;
+    }
+    this.session.queue({op});
+    this.output.addFrontendInteraction(command, op === 'pause' ? `Queue paused${count ? ` with ${count} waiting` : ''}; /queue resume continues it.` : `Queue resumed${count ? `; ${count} will run in order` : ''}.`, INFO);
+  }
+
+  /** Load a queued entry into the composer to edit it in place; the queue holds at that entry until it is saved. */
+  private beginQueueEdit(id: number): void {
+    const entry = this.queueState.entries.find(item => item.id === id);
+    if (!entry) return;
+    this.queueEdit = {id, draft: this.editor.text};
+    this.session.queue({op: 'edit-begin', id});
+    this.editor.replaceText(entry.text);
+  }
+
+  private cancelQueueEdit(): void {
+    const edit = this.queueEdit;
+    if (!edit) return;
+    this.queueEdit = undefined;
+    this.session.queue({op: 'edit-cancel', id: edit.id});
+    this.editor.replaceText(edit.draft);
   }
 
   /** Keys go straight to the program (a hidden line or single keys) rather than through the composer. */
   private directInputRequest() {
     const request = this.inputState?.request;
-    return this.running && !this.passthrough && !this.startupPending && directInput(request) ? request : undefined;
+    return this.running && !this.passthrough && !this.startupPending && !this.queueCompose && directInput(request) ? request : undefined;
   }
 
   private onInputState(state: InputState): void {
@@ -8950,7 +9155,7 @@ export class TerminalApp {
   /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
   private sendDirectKey(key: Key): void {
     if (key.kind === 'interrupt') {
-      if (this.running) this.running.interrupted = true;
+      if (this.running) { this.running.interrupted = true; this.running.stopping = true; }
       this.session.interrupt();
       return;
     }

@@ -30,9 +30,15 @@ async function start(shell: Shell, options: {size?: {cols: number; rows: number}
     shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
   const started = Date.now();
   const frontend = sandbox.launch(options.args ?? [], options.size ?? {cols: 100, rows: 30}, options.env ?? {});
-  await frontend.waitFor(/Vespyr|notMyShell|zsh|bash|fish/u);
-  await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge', `environment.${shell}`)) || frontend.output.length > 0 && Date.now() - started > 8000, 20_000, 'the managed shell');
-  await frontend.run('echo READY', /READY/u);
+  try {
+    await frontend.waitFor(/Vespyr|notMyShell|zsh|bash|fish/u);
+    await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge', `environment.${shell}`)) || frontend.output.length > 0 && Date.now() - started > 8000, 20_000, 'the managed shell');
+    await frontend.run('echo READY', /READY/u);
+  } catch (error) {
+    // Not inside the test's try/finally yet: a sandbox given by the caller is the caller's to end.
+    if (!options.sandbox) await sandbox.dispose().catch(() => {});
+    throw error;
+  }
   return {sandbox, frontend};
 }
 

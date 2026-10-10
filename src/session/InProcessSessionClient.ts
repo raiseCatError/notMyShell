@@ -4,6 +4,8 @@ import {ShellSession} from '../shell/ShellSession.js';
 import {knowledgeJobCount, type ShellId} from '../shell/adapters/ShellAdapter.js';
 import {shellAdapter} from '../shell/adapters/registry.js';
 import {SERVICE_FEATURES, type ServiceFeature} from './SessionProtocol.js';
+import {QueueDispatcher, type QueueShell} from './QueueDispatcher.js';
+import type {QueueOp} from './CommandQueue.js';
 import {SESSION_ID_ENV, SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
 
 type ShellLike = Pick<ShellSession, 'submit' | 'write' | 'interrupt' | 'endInput' | 'resize' | 'kill' | 'on'>
@@ -19,6 +21,8 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
   private size: {columns: number; rows: number};
   private running = false;
   private knowledge?: string;
+  /** The session's command queue, run in this process exactly as the service runs it. */
+  private readonly dispatcher: QueueDispatcher;
   /** This in-process session's NMSH_SESSION_ID (there is no service session id). */
   readonly contextId = `local-${randomUUID()}`;
 
@@ -27,23 +31,46 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     this.shellId = options.shell ?? 'zsh';
     this.size = {columns: options.columns, rows: options.rows};
     this.shell = factory({...options, contextId: this.contextId});
+    this.dispatcher = new QueueDispatcher(this.queueShell());
+    this.dispatcher.on('state', (state, event) => this.emit('queueState', state, {
+      ...(event.dispatched ? {dispatched: event.dispatched.id} : {}), ...(event.refused ? {refused: event.refused} : {}),
+      ...(event.dropped?.length ? {dropped: event.dropped.length} : {})}));
     this.wire(this.shell);
   }
 
   private wire(shell: ShellLike): void {
     shell.on('data', data => this.emit('data', data, NO_STAMP));
-    shell.on('prompt', marker => { this.running = false; this.knowledge = marker.knowledge; this.emit('prompt', marker, NO_STAMP); });
-    shell.on('exec', (command, historyAllowed) => { this.running = true; this.emit('exec', command, historyAllowed === undefined ? NO_STAMP : {historyAllowed}); });
+    shell.on('prompt', marker => {
+      this.running = false;
+      this.knowledge = marker.knowledge;
+      this.emit('prompt', marker, NO_STAMP);
+      this.dispatcher.onPrompt(marker.exitCode);
+    });
+    shell.on('exec', (command, historyAllowed) => {
+      this.running = true;
+      const queued = this.dispatcher.onExec(command)?.text;
+      this.emit('exec', command, historyAllowed === undefined && queued === undefined ? NO_STAMP
+        : {...(historyAllowed === undefined ? {} : {historyAllowed}), ...(queued === undefined ? {} : {queued})});
+    });
     shell.on('startup', tail => this.emit('startup', tail));
     shell.on('inputRejected', (data, submission) => this.emit('inputRejected', data, submission));
     shell.on('inputState', state => this.emit('inputState', state));
-    shell.on('exit', event => this.emit('exit', event));
+    shell.on('exit', event => { this.dispatcher.onShellExit(); this.emit('exit', event); });
   }
 
   start(): void {}
   submit(command: string): void { this.shell.submit(command); }
-  write(data: string): void { this.shell.write(data); }
-  interrupt(): void { this.shell.interrupt(); }
+  write(data: string): void {
+    if (data.includes('\u0003')) this.dispatcher.onInterrupt();
+    this.shell.write(data);
+  }
+  interrupt(): void { this.dispatcher.onInterrupt(); this.shell.interrupt(); }
+  queue(change: QueueOp): void { this.dispatcher.request(change); }
+
+  private queueShell(): QueueShell {
+    const client = this;
+    return {submit: command => client.shell.submit(command), get isReady() { return client.shell.isReady ?? true; }};
+  }
   endInput(): void { this.shell.endInput(); }
   resize(columns: number, rows: number): void { this.size = {columns, rows}; this.shell.resize(columns, rows); }
   kill(): void { this.shell.kill(); }
@@ -66,6 +93,7 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     this.shell = next;
     this.shellId = shell;
     this.knowledge = undefined;
+    this.dispatcher.onShellSwitched(this.queueShell());
     this.wire(next);
     return {shell, pid: next.pid ?? 0};
   }

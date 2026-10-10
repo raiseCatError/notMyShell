@@ -1,6 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
-import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
+import type {QueueOp} from './CommandQueue.js';
+import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, queueStateFrom, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -236,7 +237,12 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
       ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
     else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
-    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed});
+    else if (message.type === 'queue-state') {
+      const state = queueStateFrom(message.state);
+      if (state) this.emit('queueState', state, {...(message.dispatched === undefined ? {} : {dispatched: message.dispatched}),
+        ...(message.refused ? {refused: message.refused} : {}), ...(message.dropped ? {dropped: message.dropped} : {})});
+    }
+    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed, ...(message.queued === undefined ? {} : {queued: message.queued})});
     else if (message.type === 'input-rejected') this.emit('inputRejected', message.data, message.submission === 1);
     else if (message.type === 'startup') this.emit('startup', message.output);
     else if (message.type === 'replayed') this.emit('replayed', {truncatedBytes: message.truncatedBytes});
@@ -261,6 +267,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
 
   submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
+  queue(change: QueueOp): void { if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
   resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }

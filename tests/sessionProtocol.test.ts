@@ -20,6 +20,8 @@ const samples: ProtocolMessage[] = [
     journalId: 'j1', ackedSeq: 17},
   {type: 'ack', seq: 17, journalId: 'j1'},
   {type: 'exec', command: 'make', seq: 18, at: 1700000000001},
+  {type: 'exec', command: '{ for i in 1 2; do\n echo $i\ndone\n}', seq: 18, at: 1700000000001, queued: 'for i in 1 2; do\n echo $i\ndone'},
+  {type: 'attached', sessionId: 's1', pid: 42, cwd: '/tmp', fullscreen: 0, running: 'sleep 6', runningSince: 1, runningQueued: 'sleep 6', ackedSeq: 3},
   {type: 'output', data: 'x', seq: 19, at: 1700000000002},
   {type: 'prompt', exitCode: 2, cwd: '/w', seq: 20, at: 1700000000003},
   {type: 'replayed', truncatedBytes: 0},
