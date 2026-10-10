@@ -1,6 +1,6 @@
 import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
+import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -78,7 +78,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
     };
     const onError = (error: NodeJS.ErrnoException) => fail(`session service unreachable (${error.code ?? 'error'})`, error.code ?? 'error');
     const onClose = () => fail('session service closed the connection', 'closed');
-    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh'}));
+    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.join(',')}));
     socket.on('error', onError);
     socket.on('close', onClose);
     socket.on('data', onData);
@@ -233,7 +233,9 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     }
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
-      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge})}, {seq: message.seq, at: message.at});
+      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
+      ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
+    else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
     else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed});
     else if (message.type === 'input-rejected') this.emit('inputRejected', message.data, message.submission === 1);
     else if (message.type === 'startup') this.emit('startup', message.output);

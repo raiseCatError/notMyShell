@@ -2,6 +2,9 @@ export interface ShellMarker {
   exitCode: number;
   cwd: string;
   knowledge?: string;
+  /** Time the finished command spent waiting for input, and how many waits (see InputWatch); absent when none. */
+  inputWaitMs?: number;
+  inputWaits?: number;
 }
 
 export type ProtocolEvent =

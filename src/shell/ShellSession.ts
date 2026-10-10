@@ -11,6 +11,9 @@ import { basename, join } from 'node:path';
 import {bridgeEnvPath} from '../themeBridge/environment.js';
 import {PENDING_INPUT_LIMIT, sanitizeStartupOutput, STARTUP_RAW_LIMIT, utf8Tail} from './startupOutput.js';
 import { ShellProtocolDecoder, type ShellMarker } from './ShellProtocol.js';
+import {InputWatch} from '../session/InputWatch.js';
+import type {InputState} from '../session/inputState.js';
+import {systemProbe, type TerminalProbe} from '../session/terminalProbe.js';
 
 interface SessionEvents {
   data: [string];
@@ -20,6 +23,8 @@ interface SessionEvents {
   inputRejected: [string, boolean];
   exec: [string, number?];
   exit: [{ exitCode: number; signal?: number }];
+  /** Whether the running command credibly waits for input, and its waiting time (see InputWatch). */
+  inputState: [InputState];
 }
 
 /** node-pty's error for an ioctl on a PTY whose descriptor is already closed. */
@@ -52,10 +57,14 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   private readonly order: QueryOrder;
   /** The last composer submission, used when a shell cannot report a command's text (Bash, unrecorded lines). */
   private lastSubmitted = '';
+  /** One authoritative input-awareness state per session, next to the PTY. */
+  readonly inputWatch: InputWatch;
 
   constructor(cwd: string, columns: number, rows: number, home = process.env.HOME || '', env: NodeJS.ProcessEnv = process.env,
-    shell: ShellId | ShellAdapter = 'zsh') {
+    shell: ShellId | ShellAdapter = 'zsh', probe: TerminalProbe | undefined = systemProbe()) {
     super();
+    this.inputWatch = new InputWatch({probe, tty: () => this.ttyPath});
+    this.inputWatch.on('change', state => this.emit('inputState', state));
     this.adapter = typeof shell === 'string' ? shellAdapter(shell) : shell;
     this.order = new QueryOrder(data => { if (!this.exited) this.pty.write(data); }, QUERY_HOLD_MS, this.adapter.editorSettled);
     const token = randomBytes(12).toString('hex');
@@ -95,6 +104,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     this.pty.onData(data => this.receive(data));
     this.pty.onExit(event => {
       this.exited = true;
+      this.inputWatch.dispose();
       this.pendingInput = '';
       this.order.dispose();
       if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
@@ -121,6 +131,12 @@ export class ShellSession extends EventEmitter<SessionEvents> {
   /** Name of the terminal's foreground process, read on demand; undefined if the platform cannot tell. */
   get foregroundProcess(): string | undefined {
     try { return this.pty.process || undefined; } catch { return undefined; }
+  }
+
+  /** The PTY's terminal device (node-pty keeps it as a private field on Unix); undefined where unknown. */
+  get ttyPath(): string | undefined {
+    const path = (this.pty as unknown as {_pty?: unknown})._pty;
+    return typeof path === 'string' && path.startsWith('/dev/') ? path : undefined;
   }
 
   /** Whether the first prompt has been reached. */
@@ -152,7 +168,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
    */
   private send(data: string, submission = false): void {
     if (submission) this.lastSubmitted = data.replace(/\r$/u, '');
-    if (this.ready) { this.order.input(data); return; }
+    if (this.ready) { this.inputWatch.onInput(data); this.order.input(data); return; }
     if (this.pendingInputBytes() + Buffer.byteLength(data, 'utf8') <= PENDING_INPUT_LIMIT) this.pendingInput += data;
     else this.emit('inputRejected', data, submission);
   }
@@ -161,11 +177,13 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     // Input still held behind a terminal answer is discarded, as a terminal's Ctrl+C discards pending input:
     // nothing typed before the interrupt may reach the program after it.
     this.order.discard();
+    this.inputWatch.onInput('\u0003');
     if (!this.exited) this.pty.write('\u0003');
   }
 
   endInput(): void {
     // End of input is ordinary input: it keeps its place after anything typed before it.
+    this.inputWatch.onInput('\u0004');
     this.order.input('\u0004');
   }
 
@@ -191,6 +209,7 @@ export class ShellSession extends EventEmitter<SessionEvents> {
     this.exited = true;
     this.pendingInput = '';
     this.order.dispose();
+    this.inputWatch.dispose();
     if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = undefined; }
     try { this.pty.kill(); } finally { this.cleanup(); }
   }
@@ -204,13 +223,17 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         else if (this.adapter.editorChrome === 'prompt-to-exec' && this.atPrompt) this.answerChrome(event.data);
         else {
           const data = this.answerEditor(this.commandStart && this.adapter.scrubCommandStart ? this.adapter.scrubCommandStart(event.data) : event.data);
-          if (data) { this.commandStart = false; this.emit('data', data); }
+          if (data) { this.commandStart = false; this.inputWatch.onOutput(data); this.emit('data', data); }
         }
       } else if (event.kind === 'exec') {
         this.atPrompt = false;
         this.commandStart = true;
         // Bash cannot report the text of a line it chose not to record; the submitted text stands in.
-        if (this.ready) this.emit('exec', event.command || (this.adapter.id === 'zsh' ? '' : this.lastSubmitted), event.historyAllowed);
+        if (this.ready) {
+          const command = event.command || (this.adapter.id === 'zsh' ? '' : this.lastSubmitted);
+          this.inputWatch.onExec(command);
+          this.emit('exec', command, event.historyAllowed);
+        }
       } else if (!this.ready) {
         this.atPrompt = true;
         this.ready = true;
@@ -222,7 +245,10 @@ export class ShellSession extends EventEmitter<SessionEvents> {
         if (pending && !this.exited) this.pty.write(pending);
       } else {
         this.atPrompt = true;
-        this.emit('prompt', this.withKnowledge(event.marker));
+        // Final waiting time first, so it travels with the prompt that completes the command.
+        this.inputWatch.onPrompt();
+        const {waitedMs, waits} = this.inputWatch.state.timing;
+        this.emit('prompt', {...this.withKnowledge(event.marker), ...(waits ? {inputWaitMs: Math.round(waitedMs), inputWaits: waits} : {})});
       }
     }
   }
