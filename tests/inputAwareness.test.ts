@@ -87,6 +87,9 @@ test('Linux syscall report: a read of a descriptor, a poll/select wait, somethin
   assert.deepEqual(parseSyscall('63 0x3 0xffff 0x1 0 0 0 0xff 0xff', 'arm64'), {kind: 'read', fd: 3});
   assert.deepEqual(parseSyscall('7 0x7ffd 0x1 0xffffffff 0 0 0 0x1 0x2', 'x64'), {kind: 'wait'});
   assert.deepEqual(parseSyscall('230 0x0 0x0 0x7ffd 0 0 0 0x1 0x2', 'x64'), {kind: 'other'}, 'clock_nanosleep: sleeping, not reading');
+  // A timed read (zsh `read -t`, bash `read -t`) waits in select/pselect6/ppoll: a wait, never a confirmed read.
+  for (const nr of [23, 270, 271]) assert.deepEqual(parseSyscall(`${nr} 0x1 0x7ffd 0x0 0x0 0x7ffd 0x0 0x1 0x2`, 'x64'), {kind: 'wait'});
+  assert.deepEqual(parseSyscall('73 0x7ffd 0x1 0x7ffd 0x0 0x8 0x0 0x1 0x2', 'arm64'), {kind: 'wait'}, 'ppoll');
   assert.equal(parseSyscall('running', 'x64'), undefined);
   assert.equal(parseSyscall('-1 0x7ffd 0x1', 'x64'), undefined);
 });

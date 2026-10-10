@@ -227,7 +227,8 @@ test('live: a reply typed for a command that finishes first is discarded, never 
     const marker = join(sandbox.home, 'must-not-exist');
     const mark = frontend.mark;
     frontend.pty.write(`read -t 4 'x?Quick? ' || echo TIMED-OUT\r`);
-    await frontend.waitFor(new RegExp(LINE_WAIT, 'u'), mark);
+    // A timed read waits in poll/select, not read(), so even Linux's kernel evidence leaves it "probably".
+    await frontend.waitFor(/[◆◇] (?:Probably w|W)aiting for input/u, mark);
     frontend.pty.write(`touch ${marker}`);
     await frontend.waitFor(/reply was discarded, not run/u, mark, 20_000);
     frontend.pty.write('\r');
