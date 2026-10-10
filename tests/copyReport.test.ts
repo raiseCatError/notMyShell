@@ -183,3 +183,11 @@ test('the review never cuts a row: wide, ambiguous and combining characters wrap
   }
   assert.ok(seen.some(row => row.includes('TAIL')), 'the end of the line was shown');
 });
+
+test('a working directory with a line break or backtick cannot add structure to a report', () => {
+  const cwd = '/tmp/x`\n# Injected\n- **Status:** fine';
+  const {text} = buildReport([record('ls', 'a\n', 0, '', {historicalContext: {cwd}})], {...DEFAULT_REPORT_OPTIONS, directory: true, redact: false});
+  assert.equal(text.split('\n').some(line => /^# Injected|^- \*\*Status:\*\* fine/u.test(line)), false, text);
+  assert.equal(buildReport([record('ls', 'a\n', 0, '', {historicalContext: {cwd}})], {...DEFAULT_REPORT_OPTIONS, format: 'plain', directory: true, redact: false}).text.split('\n').some(line => line === '# Injected'), false);
+});
+
