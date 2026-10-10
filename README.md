@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest published stable release: [v0.17.0 — Context Engine, Themes & Discovery](https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0170---2026-10-06) for its implemented scope.
+Latest published stable release: [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0180---2026-10-09) for its implemented scope.
 
 ## See notMyShell in motion
 
@@ -70,7 +70,7 @@ NMSh is a **frontend**. Your shell stays underneath and does what it always did:
 
 The current engineering focus is NMSh's native module ecosystem: trusted capabilities resolve contextual facts, modules turn those facts into presentation, and a Surface Router places them in the Main Prompt, Context Rail or Right Context.
 
-v0.17.0 implements fact metadata, native module routing and the Context Rail. The development line (not yet released) adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
+v0.17.0 introduced fact metadata, native module routing and the Context Rail. v0.18.0 adds demand-driven capability scheduling, a first-party module catalog (projects, runtimes, environment managers, infrastructure, cloud, system, Git), installable declarative Context Packs (`nmsh packs`), Claude Code agent context, `/modules`, and Status Strip 2.0 (a top or bottom row with left, center and right groups composed in `/strip`). Context Packs are data, not an executable plugin API. Entering a repository must never execute arbitrary repository-controlled code through context discovery.
 
 Read the [Context Modules guide](docs/architecture/context-modules.md) for the surfaces, capabilities, Context Pack format and discovery boundaries, or the [roadmap](ROADMAP.md#current-engineering-focus--native-modules-and-context-engine) for what remains.
 
@@ -164,6 +164,7 @@ Type `/` in the composer for the full list, or `/help` for everything grouped by
 | Look and motion | `/appearance`, `/theme`, `/theme-bridge`, `/chroma`, `/motion`, `/chrome`, `/glyphs`, `/strip`, `/screensaver` |
 | Tools | `/tools`, `/providers`, `/configure`, `/tmux`, `/integrations`, `/dotfiles` |
 | Sessions and history | `/resume`, `/sessions`, `/history`, `/find`, `/filter`, `/copy`, `/clear` |
+| Agents and repositories | `/claude` (`/claude new`), `/ai`, `/mods` (`/extensions`), `/worktrees`, `/github` (`/prs`, `/issues`) |
 | Shells | `/shell` (switch zsh / Bash / Fish in place), `/zsh` (hand off to an ordinary shell) |
 | Everyday extras | `/btw`, `/watch`, `/open`, `/zoomies` (`/caffeinate`, `/awake`), `/update`, `/doctor` |
 

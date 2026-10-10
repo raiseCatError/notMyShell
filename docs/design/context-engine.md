@@ -8,8 +8,7 @@ context, #321 security, performance and QA). User-facing guide:
 
 Status: v0.17.0 shipped the foundation (fact metadata, module routing, Context
 Rail). The capability scheduler, first-party catalog, declarative packs, Status
-Strip routing and agent context described here are on the development line
-after v0.17.0 and unreleased.
+Strip routing and agent context described here shipped in v0.18.0.
 
 ## Vocabulary and ownership
 
@@ -159,7 +158,7 @@ explicit Auto uses the definition's preference. Hidden suppresses presentation
 are appended (only show-on-command cloud, infrastructure and agent modules start
 visible).
 
-**Status Strip** (development line, Status Strip 2.0). The strip is one row at
+**Status Strip** (Status Strip 2.0, v0.18.0). The strip is one row at
 the Top or Bottom edge of the NMSh pane (inside tmux, Bottom sits above tmux's
 own status line, which is outside the pane) with independent Left, Center and
 Right groups. Routed modules render through the same painter as every surface

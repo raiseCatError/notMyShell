@@ -23,7 +23,7 @@ VHS supplies its own clean terminal surface. These assets are reproducible termi
 ## What a run does
 
 - Builds NMSh, then for each tape creates a **disposable demo home** (HOME, XDG directories, NMSh config and runtime, git config, TMPDIR) with a small fixture project at `~/Projects/demo` on branch `feature/theme-preview`. Your NMSh settings, shell rc files, history, themes, sessions and dotfiles are never read or written, and nothing personal (user, host, paths) appears in a recording.
-- Uses no network: NMSh update checks are off in the demo config and npm's update notifier is disabled.
+- Uses no network, except `github.tape`, which reads this public repository through the recorder's `gh` login (pass `GH_TOKEN`; the demo home cannot reach the keychain): NMSh update checks are off in the demo config and npm's update notifier is disabled.
 - Composes `settings.tape` (shared framing: font, size, colors, typing speed), the demo environment as `Env` lines, and the tape. VHS records PNG frames and `render.mjs` encodes the GIF (and any `# demo-still:` PNGs) itself with ffmpeg, so the palette and size do not depend on a particular VHS/ffmpeg pairing.
 - Afterwards stops every process that still holds files in the demo home (frontends, the session service, shells, the Keep Awake helper), removes it, and fails if anything survives.
 
@@ -78,4 +78,7 @@ This replaces the earlier asciinema/tmux recorder (`scripts/readme-demo/`), whic
 | `ask.tape` | `ask.gif` | Typed local guidance, optional model settings, layout preview |
 | `shell-vim.tape` | `shell-vim.gif` | Real Vim entry/exit, Fish switching, leading shell module, theme carryover |
 | `screensavers-motion.tape` | `screensavers-motion.gif` | Sparkles, Night Fireworks, Black Hole, Fireworks, Circletastic |
+| `status-strip.tape` | `status-strip.gif`, `status-strip.png`, `status-strip-studio.png` | `/strip` Studio with live previews; the strip on the bottom edge |
+| `worktrees.tape` | `worktrees.gif`, `worktrees.png`, `worktrees-plan.png` | `/worktrees`, a reviewed new-worktree plan, a staged `cd` |
+| `github.tape` | `github.gif`, `github-prs.png`, `github-pr.png` | `/prs` live and read-only against this repository; record with `GH_TOKEN="$(gh auth token)"` |
 | `screensavers-cats.tape` | `screensavers-cats.gif` | Bouncing Vespyr and raiseCatError with its playful errors |

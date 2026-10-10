@@ -55,7 +55,9 @@ export function inspectFile(path: string, allowedRoots: readonly string[]): File
   let symlink = false;
   let resolvedPath = path;
   try { symlink = lstatSync(path).isSymbolicLink(); resolvedPath = realpathSync(path); } catch { return {path, resolvedPath, symlink, writable: false, refusal: 'does not exist'}; }
-  const inside = (candidate: string) => allowedRoots.some(root => candidate === root || candidate.startsWith(`${root}/`));
+  // The file is compared in resolved form, so the roots must be too (/tmp and /var are symlinks on macOS).
+  const roots = allowedRoots.map(root => { try { return realpathSync(root); } catch { return root; } });
+  const inside = (candidate: string) => roots.some(root => candidate === root || candidate.startsWith(`${root}/`));
   if (!inside(resolvedPath)) return {path, resolvedPath, symlink, writable: false, refusal: `is outside your home folder and this project (${resolvedPath}); Ask won't edit it`};
   let content: string | undefined;
   try {

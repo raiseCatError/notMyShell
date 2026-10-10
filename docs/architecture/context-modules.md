@@ -8,8 +8,8 @@ without taking over shell execution or running anything the workspace chose.
 > **Release status.** v0.17.0 shipped the foundation: typed fact metadata,
 > native module routing and the Context Rail. Everything else described here —
 > capability scheduling, the first-party module catalog, declarative Context
-> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — is on the
-> development line after v0.17.0 and is **not part of any published release yet**.
+> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — shipped in
+> v0.18.0.
 
 ## From capability to presentation
 

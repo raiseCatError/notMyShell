@@ -159,7 +159,7 @@ import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRendere
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
-import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
+import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
@@ -289,9 +289,28 @@ import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../ses
 import {OLDER_SERVICE_SWITCH, serviceBuildNotice} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
-import {AgentSessions} from '../agents/sessions/manager.js';
+import {AgentSessions, normalizeProfiles, type AgentProfile} from '../agents/sessions/manager.js';
 import type {AgentSession} from '../agents/sessions/model.js';
-import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewState} from '../agents/sessions/AgentViews.js';
+import {AgentInputController} from '../agents/input/controller.js';
+import {handleAgentInput} from '../agents/input/surface.js';
+import {initialSelection, launcherRows, moveSelection, profileLabel, renderLauncher, targetStatus, type LauncherRow, type LauncherState} from '../agents/launcher.js';
+import {discoverClaudeProfiles} from '../agents/profileDiscovery.js';
+import {ModsController, modsKeyAction} from '../agents/mods/controller.js';
+import {renderMods} from '../agents/mods/view.js';
+import {WorktreeManagerController} from '../worktrees/controller.js';
+import {repositoryIdentity} from '../worktrees/discovery.js';
+import {createGitRunner, succeeded, type GitRunner} from '../worktrees/git.js';
+import {newWorktreeRequest} from '../worktrees/host.js';
+import {displayText as worktreeText} from '../worktrees/model.js';
+import {buildWorktreeView, renderWorktreeView} from '../worktrees/view.js';
+import {GithubWorkspaceController, type ListTab, type WorkspaceIntent} from '../githubWorkspace/controller.js';
+import {githubRepositoryFromRemote, workspaceKey} from '../githubWorkspace/host.js';
+import {attachRenderer, renderWorkspace, type RenderOptions as GithubRenderOptions} from '../githubWorkspace/render.js';
+import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
+import {GithubWorkspaceService} from '../githubWorkspace/service.js';
+import {GhSource} from '../githubWorkspace/source.js';
+import {loadModInventory} from '../agents/mods/inventory.js';
+import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
 
@@ -351,6 +370,12 @@ export class TerminalApp {
   private readonly output = new OutputBuffer(() => {
     this.historyViewport.latest();
     if (this.running) this.running.cleared = true;
+    // The cleared lines and their blocks are gone: nothing may stay focused, hovered or selected by their ids.
+    this.hoveredLineIndex = undefined;
+    this.focusedLineIndex = undefined;
+    this.focusedActivityId = undefined;
+    this.focusedCommandIndex = undefined;
+    this.selection = undefined;
   });
   private readonly tapActivityObserver = new TapActivityObserver();
   private readonly historyViewport = new HistoryViewport();
@@ -692,7 +717,7 @@ export class TerminalApp {
   private presentationStarted = false;
   private presentationSubscription?: () => void;
   private readonly effects = new EffectState();
-  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan};
+  private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number};
   private activityAnimationNow = Date.now();
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
@@ -893,8 +918,8 @@ export class TerminalApp {
       this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
       const running = journal.live.running;
       if (running) {
-        this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
-        this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared: false,
+        const {cleared} = this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
+        this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared,
           startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
           // A submission checkpoint can precede the very first shell event.
           // Its replayed readiness prompt must not complete the queued command.
@@ -1009,7 +1034,7 @@ export class TerminalApp {
     const outputStartId = this.output.activeOutputStartId;
     return {sessionId: this.sessionId, seq: this.streamSeq,
       ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
-        cwd: running.cwd, startId: running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
+        cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
   }
 
   async run(): Promise<number> {
@@ -1563,6 +1588,15 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.modsPanel) {
+      const action = modsKeyAction(key, this.modsPanel.owner);
+      const result = action ? this.modsPanel.dispatch(action) : undefined;
+      if (result === 'close') {this.modsPanel = undefined; this.returnFromPanel();}
+      else if (result === 'refresh') void this.refreshMods();
+      this.render(); return;
+    }
+    if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
+    if (this.githubPanel) { this.handleGithubKey(key); return; }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
@@ -1582,6 +1616,7 @@ export class TerminalApp {
       return;
     }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
+    if (this.launcher) { this.handleLauncherKey(key); return; }
     if (this.agentPanel) { this.handleAgentPanelKey(key); return; }
     if (this.askState) {
       const event = askKey(this.askState, key, this.dimensions().columns);
@@ -1875,7 +1910,7 @@ export class TerminalApp {
       this.lastSuggestionInput = '';
     }
 
-    if (!this.running && !this.historySearchActive && !this.directorySearchActive && !this.editor.text.startsWith('/') && this.shellSuggestions.length > 0
+    if (!this.running && !this.historySearchActive && !this.directorySearchActive && !isSlashInput(this.editor.text) && this.shellSuggestions.length > 0
       && !this.suggestions.alternativesOpen) {
       const action = resolveAction(COMPLETION_ACTIONS, key);
       // Up from the first candidate leaves the menu for shell history, as Up
@@ -1909,7 +1944,7 @@ export class TerminalApp {
     const suggestions = this.directorySearchActive ? this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length)) : this.historySearchActive
       ? this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length))
       : this.editor.hasPasteAtoms ? [] : slashSuggestions(this.editor.text);
-    const isSlash = !this.editor.hasPasteAtoms && this.editor.text.startsWith('/');
+    const isSlash = !this.editor.hasPasteAtoms && isSlashInput(this.editor.text);
     // /history and /dirs own Up/Down. Slash suggestions behave like the shell
     // completion menu: Down enters it, Up from its first row (or before
     // entering it) leaves it for command history.
@@ -2025,13 +2060,16 @@ export class TerminalApp {
     else if (key.kind === 'selectWordRight') this.editor.selectWordRight();
     else if (key.kind === 'up') {
       const {columns} = this.dimensions();
+      // Spatial focus: the shelf sits above the composer. Only an already visible shelf, from a completely idle
+      // composer; a hidden shelf is never revealed by ↑, which stays shell history.
+      if (this.composerIdle() && !this.composerHistory.active && this.shelfShown()) { this.shelf.focused = true; this.shelf.selected = 0; this.render(); return; }
       if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
       this.editor.selectUp(this.inputColumns(columns), this.railInputPrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
-      // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (and a second ↓ focuses it).
+      // At the newest, empty composer ↓ has nothing to do: it reveals the agent shelf (↑ then focuses it).
       if (!this.editor.text && !this.composerHistory.active && this.agents.sessions.length && !this.running) { this.revealShelf(); this.render(); return; }
       if (!this.editor.moveDown(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('next');
     } else if (key.kind === 'selectDown') {
@@ -2145,7 +2183,7 @@ export class TerminalApp {
     const cwd = this.context.cwd;
     const cursor = this.completionCursor;
     // A recalled command is not being typed: no completion menu claims Up/Down until it is edited.
-    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !input.startsWith('/') && Boolean(input.trim())
+    const eligible = !this.running && !this.settingsPanelActive && !this.editor.hasPasteAtoms && !isSlashInput(input) && Boolean(input.trim())
       && !this.composerHistory.showing(input);
     const key = eligible ? JSON.stringify([input, cursor, cwd]) : '';
     if (key === this.lastSuggestionInput) return;
@@ -2391,6 +2429,14 @@ export class TerminalApp {
     else if (slash.kind === 'resume') await this.openResumePicker();
     else if (slash.kind === 'sessions') await this.openSessionsView();
     else if (slash.kind === 'ai') this.openAi(command, slash.target);
+    else if (slash.kind === 'mods') this.openMods(slash.provider);
+    else if (slash.kind === 'worktrees') await this.openWorktrees();
+    else if (slash.kind === 'github') await this.openGithub(slash.tab);
+    else if (slash.kind === 'managedTarget') this.openManagedTarget(command, slash.provider, slash.action);
+    else if (slash.kind === 'rawProvider') {
+      if (slash.command) {this.editor.replaceText(slash.command); await this.submit(true);}
+      else this.output.addFrontendInteraction(command, 'Native provider TUI: /nmsh raw claude [CLI args] or /nmsh raw codex [CLI args]. The command runs through your real shell.', INFO);
+    }
     else if (slash.kind === 'help') this.showHelp(command);
     else if (slash.kind === 'agents') this.runAgentsCommand(command, slash.action);
     else if (slash.kind === 'about') { this.panelOrigin = undefined; this.openAbout(); }
@@ -2672,8 +2718,10 @@ export class TerminalApp {
       this.output.addFrontendInteraction(command, `No completed command output at /copy ${index}`, ERROR);
       return;
     }
+    const payload = serializeCopyPayload(record);
+    // Nothing printed: say so and leave the clipboard as it was (NMSh's status row is not output to copy).
+    if (!payload) { this.output.addFrontendInteraction(command, `Nothing to copy: ${record.command.split('\n')[0]!.slice(0, 80)} printed no output.`, INFO); return; }
     try {
-      const payload = serializeCopyPayload(record);
       await writeClipboard(payload);
       this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
     } catch (error) {
@@ -3848,7 +3896,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3870,6 +3918,7 @@ export class TerminalApp {
   }
 
   private panelContentRows(columns: number): string[] {
+    this.agentCaret = undefined;
     if (this.startupPanel) return framePanel(renderStartupPanel({tail: this.startupPanel.tail, elapsedMs: Date.now() - this.startupPanel.since}, columns, this.dimensions().rows), columns);
     if (this.toolConfigurationLoading) return framePanel(['  Reading supported configuration...', '  Esc cancel'], columns);
     if (this.toolConfiguration) return renderConfigurationPanel(this.toolConfiguration, columns, this.dimensions().rows);
@@ -3920,8 +3969,21 @@ export class TerminalApp {
     if (this.openPanel) return framePanel(renderOpenPanel(this.openPanel, columns, this.dimensions().rows - 4), columns);
     if (this.agentView) {
       const session = this.agents.get(this.agentView.sessionId);
-      if (session) return framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - 4, Date.now()), columns);
+      // The agent view is a workspace: it owns the full height below its frame line (the shell is one Esc away).
+      if (session) {
+        // The agent draft uses the shell composer's geometry and the terminal's own caret: the view reports where it is.
+        const layout: {caret?: {row: number; column: number}} = {};
+        const rows = framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session),
+          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout}), columns);
+        // framePanel puts its rule first; a Top panel later moves that rule to its last row.
+        this.agentCaret = layout.caret && {row: layout.caret.row + 1, column: layout.caret.column};
+        return rows;
+      }
     }
+    if (this.launcher) return framePanel(renderLauncher(this.launcher, this.launcherRows(), columns, this.dimensions().rows - 4), columns);
+    if (this.modsPanel) return framePanel(renderMods(this.modsPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.worktreePanel) return framePanel(this.worktreeRows(columns, this.dimensions().rows - 4), columns);
+    if (this.githubPanel) return framePanel(this.githubRows(columns, this.dimensions().rows - 4), columns);
     if (this.agentPanel) return framePanel(renderAgentPanel(this.agentPanel, this.agentPanelRows(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.askState) {
       const activity = this.askActivityLine();
@@ -5783,7 +5845,7 @@ export class TerminalApp {
   /** Suggestions apply to plain shell input at the end of the buffer only. */
   private suggestionGhost(): string | undefined {
     const text = this.editor.text;
-    if (this.editor.hasPasteAtoms || this.historySearchActive || text.startsWith('/')) {
+    if (this.editor.hasPasteAtoms || this.historySearchActive || isSlashInput(text)) {
       this.suggestions.reset();
       return undefined;
     }
@@ -6342,7 +6404,7 @@ export class TerminalApp {
     if (this.correction && this.editor.text.length === 0) return [this.correction];
     if (this.directorySearchActive) return this.directoryMatches(this.editor.text.substring(DIRECTORY_SEARCH.length));
     if (this.historySearchActive) return this.historyMatches(this.editor.text.substring(HISTORY_SEARCH.length));
-    if (!this.editor.hasPasteAtoms && this.editor.text.startsWith('/')) return slashSuggestions(this.editor.text);
+    if (!this.editor.hasPasteAtoms && isSlashInput(this.editor.text)) return slashSuggestions(this.editor.text);
     const alternatives = this.suggestions.alternatives();
     if (alternatives.items.length > 0) return alternatives.items.map(item => ({name: item.text, description: ''}));
     return this.shellSuggestions;
@@ -6354,7 +6416,7 @@ export class TerminalApp {
    */
   private inspectorRows(columns: number): string[] {
     if (!this.inspectorVisible || this.running || this.settingsPanelActive || this.editor.hasPasteAtoms) return [];
-    if (this.editor.text.startsWith('/')) {
+    if (isSlashInput(this.editor.text)) {
       const slash = describeSlashCommand(this.editor.text);
       return slash ? [truncateText(`Inspect ${this.editor.text.trim().split(/\s+/u)[0]}`, columns), truncateText(slash, columns)] : [];
     }
@@ -7256,6 +7318,20 @@ export class TerminalApp {
     this.syncTaskClock(); this.render();
   });
   private taskClock?: () => void;
+  private modsPanel?: ModsController;
+  /** The agent draft's caret in the framed panel rows, when the agent view owns typing; drives the terminal cursor. */
+  private agentCaret?: {row: number; column: number};
+  /** /worktrees: the core controller; `branch` while `n` collects a branch name; `notice` is the host's own outcome line. */
+  private worktreePanel?: {controller: WorktreeManagerController; git: GitRunner; branch?: string; notice?: string; select?: string};
+  /** /github, /prs, /issues: read-only workspace over the person's `gh`. */
+  private githubPanel?: {controller: GithubWorkspaceController; repository: string; detach: () => void; columns?: number};
+  /** /claude, /claude new, /ai → Claude: the provider launcher (targets and launch profiles). */
+  private launcher?: LauncherState;
+  /** Found launch profiles were skipped in this window: not offered again until restart. */
+  private launcherDiscoverySkipped = false;
+  /** Passive, text-only discovery of simple Claude launch aliases (see profileDiscovery); replaceable in tests. */
+  private discoverProfiles = (existing: ReadonlySet<string>) => discoverClaudeProfiles({home: homedir(), claude: resolveCommand('claude', this.shellPath())}, existing);
+  private readonly agentDrafts = new Map<string, AgentViewState>();
   private agentPanel?: AgentPanelState;
   private agentView?: AgentViewState;
   /** The transient activity shelf above the composer: hidden at rest, revealed by ↓, pinned while something needs attention. */
@@ -7815,20 +7891,26 @@ export class TerminalApp {
   }
 
   private revealShelf(): void {
-    if (this.shelf.visible) { this.shelf.focused = true; this.shelf.selected = 0; return; }
     this.shelf.visible = true;
     this.shelf.shownAt = Date.now();
     // Auto-hide after a short idle period unless something needs attention (checked on the presentation clock).
     setTimeout(() => { if (!this.stopped) this.render(); }, SHELF_IDLE_MS + 50).unref?.();
   }
 
+  /** The shelf row is on screen now (shown, or pinned because something needs attention). */
+  private shelfShown(): boolean {
+    return this.shelfRow(this.dimensions().columns) !== undefined;
+  }
+
+  /** Shelf focus: ←/→ select (selection never switches targets), Enter opens, ↓ or Esc return to the composer. */
   private handleShelfKey(key: Key): boolean {
     const items = shelfOrder(this.agents.sessions);
     if (!items.length) { this.shelf.focused = false; return false; }
     if (key.kind === 'left' || key.kind === 'right') this.shelf.selected = (this.shelf.selected + (key.kind === 'left' ? -1 : 1) + items.length) % items.length;
     else if (key.kind === 'enter') { const session = items[this.shelf.selected]; this.shelf.focused = false; if (session) this.openAgentView(session.id); }
-    else if (key.kind === 'up' || key.kind === 'escape') { this.shelf.focused = false; this.shelf.shownAt = Date.now(); }
-    else return false;
+    else if (key.kind === 'down' || key.kind === 'escape') { this.shelf.focused = false; this.shelf.shownAt = Date.now(); }
+    else if (key.kind === 'up') { /* already at the shelf: nothing above it */ }
+    else { this.shelf.focused = false; return false; }
     this.render();
     return true;
   }
@@ -7845,7 +7927,9 @@ export class TerminalApp {
   }
 
   private agentPanelRows() {
-    return agentPanelRows(this.agents.sessions, this.agents.harnesses());
+    const panel = this.agentPanel;
+    const rows = panel?.profiles ? panel.profiles.map(profile => ({kind: 'profile' as const, profile})) : agentPanelRows(this.agents.sessions, this.agents.harnesses());
+    return rows.filter(row => (!panel?.targetIds || (row.kind === 'session' && panel.targetIds.includes(row.session.id))) && (!panel?.query || (row.kind === 'session' ? row.session.title : row.kind === 'profile' ? row.profile.name : row.harness.name).toLowerCase().includes(panel.query.toLowerCase())));
   }
 
   /** /ai: the agent session list; /ai <harness|profile>: start a managed session in the background. */
@@ -7854,6 +7938,12 @@ export class TerminalApp {
     if (!target) { this.agentPanel = {selected: 0}; void this.agents.discover(); return; }
     const profile = this.promptConfiguration.agentProfiles.find(item => item.name === target);
     const harnessId = profile?.harness ?? target;
+    // `/ai claude` names the provider, not an identity: with launch profiles configured (or simple ones to import),
+    // the launcher chooses, starting on a fresh target. `/ai <profile>` stays the direct path.
+    if (!profile && harnessId === 'claude' && (this.promptConfiguration.agentProfiles.some(item => item.harness === 'claude') || (!this.launcherDiscoverySkipped && this.discoverProfiles(new Set()).length))) {
+      this.openManagedTarget(command, 'claude', 'new');
+      return;
+    }
     if (!harness(harnessId)) {
       this.output.addFrontendInteraction(command, `No harness or launch profile is called "${target}". /ai lists the harnesses; profiles live in NMSh's config as agentProfiles (name, harness, and for Claude: model, permissionMode, configDir).`, INFO);
       return;
@@ -7865,9 +7955,16 @@ export class TerminalApp {
   }
 
   private openAgentView(id: string): void {
+    const target = this.agents.get(id);
+    if (target?.reconnectable && ['exited', 'failed'].includes(target.state)) {
+      const result = this.agents.resume(id);
+      if (!result.ok) {if (this.agentPanel) this.agentPanel.message = result.reason; return;}
+    }
     this.agentPanel = undefined;
     this.resumeBrowser = undefined;
-    this.agentView = {sessionId: id, input: '', expanded: new Set(), scroll: 0};
+    this.agentView = this.agentDrafts.get(id) ?? {sessionId: id, input: '', expanded: new Set(), scroll: 0, controller: new AgentInputController()};
+    this.agentView.controller!.owner = 'AGENT_MESSAGE';
+    this.agentDrafts.set(id, this.agentView);
     this.agents.acknowledge(id);
     this.shelf.visible = false;
   }
@@ -7875,6 +7972,14 @@ export class TerminalApp {
   private handleAgentPanelKey(key: Key): void {
     const panel = this.agentPanel!;
     const rows = this.agentPanelRows();
+    if (panel.searching) {
+      if (key.kind === 'escape') {panel.searching = false; panel.query = ''; panel.selected = 0;}
+      else if (key.kind === 'text' || key.kind === 'paste') {panel.query = ((panel.query ?? '') + key.value).slice(0, 256); panel.selected = 0;}
+      else if (key.kind === 'backspace') {panel.query = [...(panel.query ?? '')].slice(0, -1).join(''); panel.selected = 0;}
+      else if (key.kind === 'enter') panel.searching = false;
+      this.render(); return;
+    }
+    if (key.kind === 'text' && key.value === '/') {panel.searching = true; panel.query = ''; this.render(); return;}
     if (panel.rename !== undefined) {
       const row = rows[panel.selected];
       if (key.kind === 'escape' || key.kind === 'interrupt') panel.rename = undefined;
@@ -7891,9 +7996,14 @@ export class TerminalApp {
     else if (key.kind === 'enter') {
       const row = rows[panel.selected];
       if (row?.kind === 'session') this.openAgentView(row.session.id);
+      else if (row?.kind === 'profile') this.openAi(`/ai ${row.profile.name}`, row.profile.name);
       else if (row?.kind === 'harness') {
-        const result = this.agents.launch(row.harness.id, this.shellCwd);
-        if (result.ok) this.openAgentView(result.session.id); else panel.message = result.reason;
+        // A provider with launch profiles (or simple ones to import) opens its launcher: configured identities are never bypassed.
+        if (row.controllable && row.harness.id === 'claude') this.openManagedTarget(`/${row.harness.id}`, row.harness.id, 'open');
+        else {
+          const result = this.agents.launch(row.harness.id, this.shellCwd);
+          if (result.ok) this.openAgentView(result.session.id); else panel.message = result.reason;
+        }
       }
     }
     this.render();
@@ -7902,32 +8012,266 @@ export class TerminalApp {
   private handleAgentViewKey(key: Key): void {
     const view = this.agentView!;
     const session = this.agents.get(view.sessionId);
-    if (!session || key.kind === 'escape') { this.agentView = undefined; this.returnFromPanel(); this.render(); return; }
-    view.message = undefined;
-    // Approvals are explicit: A allows once, D denies; nothing else answers them.
-    if (session.pendingApproval && !view.input && key.kind === 'text' && /^[aAdD]$/u.test(key.value)) {
-      this.agents.answer(session.id, /^[aA]$/u.test(key.value));
-    } else if (key.kind === 'interrupt') {
-      if (session.state === 'working' || session.state === 'approval') this.agents.cancel(session.id); else { this.agentView = undefined; this.returnFromPanel(); }
-    } else if (key.kind === 'toggleDetails') {
-      const tools = agentBlocks(session).filter(block => block.kind === 'tool' && block.detail);
-      const last = tools.at(-1);
-      if (last?.id) { if (view.expanded.has(last.id)) view.expanded.delete(last.id); else view.expanded.add(last.id); }
-    } else if (key.kind === 'pageUp' || key.kind === 'wheelUp') view.scroll += key.kind === 'pageUp' ? 10 : 3;
-    else if (key.kind === 'pageDown' || key.kind === 'wheelDown') view.scroll = Math.max(0, view.scroll - (key.kind === 'pageDown' ? 10 : 3));
-    else if (session.level === 'observed') { /* metadata only: no input */ }
-    else if (key.kind === 'text' || key.kind === 'paste') view.input += key.value.replace(/[\u0000-\u0009\u000b-\u001f\u007f]/gu, '');
-    else if (key.kind === 'newline') view.input += '\n';
-    else if (key.kind === 'backspace') view.input = [...view.input].slice(0, -1).join('');
-    else if (key.kind === 'enter' && view.input.trim()) {
-      const text = view.input;
-      view.input = '';
-      const copy = /^\/copy(?:\s+(\d+))?\s*$/u.exec(text.trim());
-      if (copy) void this.copyAgentBlock(session, Number(copy[1] ?? 1));
-      else if (!this.agents.send(session.id, text)) view.message = 'This session is not accepting input.';
-      view.scroll = 0;
+    const close = !session || handleAgentInput(view, session, key, {
+      shellEmpty: !this.editor.text,
+      send: (id, text) => this.agents.send(id, text),
+      answer: (id, requestId, allow) => this.agents.get(id)?.pendingApproval?.requestId === requestId && this.agents.answer(id, allow),
+      cancel: id => {this.agents.cancel(id);},
+      choose: (id, requestId, answers) => this.agents.choose(id, requestId, answers),
+      copy: text => {void writeClipboard(text).then(() => {view.message = 'Copied.'; this.render();}).catch(() => {view.message = 'Clipboard unavailable.'; this.render();});},
+      copyReply: (target, index) => {void this.copyAgentBlock(target, index);},
+    });
+    if (close) {this.agentView = undefined; this.returnFromPanel();}
+    this.render();
+  }
+
+  /**
+   * `/claude` and `/claude new` open the same launcher: existing targets and the launch profiles fresh ones start
+   * from. `new` only changes the initial selection to a fresh target; nothing opens, resumes or starts until Enter or N.
+   */
+  private openManagedTarget(_command: string, provider: string, action: 'open' | 'new'): void {
+    this.panelOrigin = undefined;
+    this.agentPanel = undefined;
+    const launcher: LauncherState = {provider, selected: 0};
+    const configured = this.promptConfiguration.agentProfiles.filter(profile => profile.harness === provider);
+    if (provider === 'claude' && !configured.length && !this.launcherDiscoverySkipped) {
+      const names = new Set(this.promptConfiguration.agentProfiles.map(profile => profile.name));
+      const found = this.discoverProfiles(names);
+      if (found.length) launcher.found = found;
+    }
+    this.launcher = launcher;
+    launcher.selected = initialSelection(this.launcherRows(), action);
+  }
+
+  private launcherRows(): LauncherRow[] {
+    return this.launcher ? launcherRows(this.launcher, this.agents.sessions, this.promptConfiguration.agentProfiles) : [];
+  }
+
+  /** Start a fresh target from a launch profile (or the provider's default identity when none is configured). */
+  private startTarget(provider: string, profile?: AgentProfile): boolean {
+    const result = this.agents.launch(provider, this.shellCwd, profile ? {profile} : {});
+    if (!result.ok) { if (this.launcher) this.launcher.message = result.reason; return false; }
+    this.launcher = undefined;
+    this.openAgentView(result.session.id);
+    return true;
+  }
+
+  private handleLauncherKey(key: Key): void {
+    const launcher = this.launcher!;
+    const rows = this.launcherRows();
+    launcher.message = undefined;
+    if (launcher.searching) {
+      if (key.kind === 'escape') { launcher.searching = false; launcher.query = undefined; }
+      else if (key.kind === 'enter') launcher.searching = false;
+      else if (key.kind === 'text' || key.kind === 'paste') launcher.query = ((launcher.query ?? '') + key.value.replace(/[\u0000-\u001f\u007f]/gu, '')).slice(0, 80);
+      else if (key.kind === 'backspace') launcher.query = [...(launcher.query ?? '')].slice(0, -1).join('');
+      launcher.selected = initialSelection(this.launcherRows(), 'open');
+      this.render(); return;
+    }
+    const row = rows[launcher.selected];
+    const profiles = this.promptConfiguration.agentProfiles;
+    if (key.kind === 'escape' || key.kind === 'interrupt') { this.launcher = undefined; this.returnFromPanel(); }
+    else if (key.kind === 'up' || key.kind === 'down') launcher.selected = moveSelection(rows, launcher.selected, key.kind === 'up' ? -1 : 1);
+    else if (key.kind === 'text' && key.value === '/') { launcher.searching = true; launcher.query = ''; }
+    else if (key.kind === 'text' && /^[nN]$/u.test(key.value)) {
+      // A fresh target from the selected row's profile: the target's own launch profile, or the + New row's.
+      const profile = row?.kind === 'target' ? row.profile : row?.kind === 'new' ? row.profile : undefined;
+      const configured = profiles.filter(item => item.harness === launcher.provider);
+      if (profile) this.startTarget(launcher.provider, profile);
+      else if (!configured.length && row?.kind !== 'import' && row?.kind !== 'skip') this.startTarget(launcher.provider);
+      else {
+        launcher.selected = initialSelection(rows, 'new');
+        launcher.message = 'Choose which account starts it: select its + New target and press Enter.';
+      }
+    } else if (key.kind === 'enter' && row) {
+      if (row.kind === 'target') {
+        const status = targetStatus(row.session);
+        if (!status.live && status.resumable) {
+          const resumed = this.agents.resume(row.session.id);
+          if (!resumed.ok) { launcher.message = resumed.reason; this.render(); return; }
+        }
+        this.launcher = undefined;
+        this.openAgentView(row.session.id);
+      } else if (row.kind === 'new') this.startTarget(launcher.provider, row.profile);
+      else if (row.kind === 'import' && launcher.found?.length) {
+        const imported: AgentProfile[] = launcher.found.map(item => ({name: item.name, harness: launcher.provider, label: item.label, configDir: item.configDir}));
+        const next = {...this.promptConfiguration, agentProfiles: normalizeProfiles([...profiles, ...imported])};
+        try {
+          savePromptConfiguration(next, undefined, this.promptConfiguration);
+          this.promptConfiguration = next;
+          launcher.found = undefined;
+          launcher.message = `Imported ${imported.length} launch profile${imported.length === 1 ? '' : 's'}.`;
+          launcher.selected = initialSelection(this.launcherRows(), 'new');
+        } catch { launcher.message = 'Could not save the launch profiles; nothing was changed.'; }
+      } else if (row.kind === 'skip') {
+        this.launcherDiscoverySkipped = true;
+        launcher.found = undefined;
+        launcher.selected = initialSelection(this.launcherRows(), 'open');
+      }
     }
     this.render();
+  }
+
+  /** Header facts for an agent view: the launch profile's label and configured model, and the shell's branch when the target shares its directory. */
+  private agentViewMeta(session: AgentSession): AgentViewMeta {
+    const profile = session.profileId ? this.promptConfiguration.agentProfiles.find(item => item.name === session.profileId) : undefined;
+    const defaultDir = process.env.CLAUDE_CONFIG_DIR ? process.env.CLAUDE_CONFIG_DIR.replace(/^\/(?:Users|home)\/[^/]+/u, '~') : '~/.claude';
+    return {...(profile ? {profileLabel: profileLabel(profile), ...(profile.model ? {configuredModel: profile.model} : {})} : {identity: session.harness === 'claude' ? `Default identity · ${defaultDir}` : 'Default identity'}),
+      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {})};
+  }
+
+  private openMods(provider?: string): void {
+    this.panelOrigin = undefined;
+    this.modsPanel ??= new ModsController();
+    this.modsPanel.setProvider(provider);
+    void this.refreshMods();
+  }
+
+  /** Where the shell is, as Git reports paths (macOS /tmp is /private/tmp), so removal never offers the shell's own worktree. */
+  private canonicalShellCwd(): string {
+    try { return realpathSync(this.shellCwd); } catch { return this.shellCwd; }
+  }
+
+  private async openWorktrees(select?: string): Promise<void> {
+    const git = createGitRunner();
+    let repository: string;
+    try { repository = await repositoryIdentity(git, this.shellCwd); } catch (error) {
+      this.output.addFrontendInteraction('/worktrees', `No worktrees here: ${worktreeText((error as Error).message, 200)}.`, INFO);
+      this.render(); return;
+    }
+    this.panelOrigin = undefined;
+    const controller = new WorktreeManagerController({git, repository, currentPath: () => this.canonicalShellCwd()});
+    const panel = {controller, git, ...(select ? {select} : {})};
+    this.worktreePanel = panel;
+    this.render();
+    await controller.refresh();
+    if (this.worktreePanel !== panel) return;
+    if (select) {
+      const match = controller.state.snapshot?.worktrees.find(worktree => worktree.branch === select);
+      if (match) controller.select(match.id);
+      else this.worktreePanel.notice = `No worktree has ${worktreeText(select, 120)} checked out. n creates one.`;
+    }
+    this.render();
+  }
+
+  /** Live managed agents working inside a worktree: removing it would pull the directory out from under them. */
+  private agentsInside(path: string): string[] {
+    const live = this.agents.sessions.filter(session => !['finished', 'failed', 'exited'].includes(session.state) && session.cwd);
+    return live.filter(session => {
+      let cwd = session.cwd!;
+      try { cwd = realpathSync(cwd); } catch { /* keep as reported */ }
+      return cwd === path || cwd.startsWith(`${path}/`);
+    }).map(session => session.title);
+  }
+
+  private async handleWorktreeKey(key: Key): Promise<void> {
+    const panel = this.worktreePanel;
+    if (!panel) return;
+    const {controller} = panel;
+    if (panel.branch !== undefined) {
+      if (key.kind === 'escape') panel.branch = undefined;
+      else if (key.kind === 'backspace') panel.branch = [...panel.branch].slice(0, -1).join('');
+      else if ((key.kind === 'text' || key.kind === 'paste') && !/[\u0000-\u001f\u007f-\u009f\s]/u.test(key.value)) panel.branch = (panel.branch + key.value).slice(0, 200);
+      else if (key.kind === 'enter' && controller.state.snapshot) {
+        const request = await newWorktreeRequest(panel.git, controller.state.snapshot, panel.branch);
+        if (this.worktreePanel !== panel) return;
+        if ('error' in request) panel.notice = request.error;
+        else { panel.branch = undefined; panel.notice = undefined; await controller.planNew(request); }
+      }
+      if (this.worktreePanel === panel) this.render();
+      return;
+    }
+    panel.notice = undefined;
+    if (key.kind === 'text' && key.value.toLowerCase() === 'x' && !controller.state.review && !controller.state.searching) {
+      const selected = controller.selected();
+      const agents = selected ? this.agentsInside(selected.path) : [];
+      if (agents.length) { panel.notice = `Not removed: ${agents.length === 1 ? 'agent' : 'agents'} ${agents.map(title => worktreeText(title, 60)).join(', ')} ${agents.length === 1 ? 'is' : 'are'} working there.`; this.render(); return; }
+    }
+    const outcome = await controller.handleKey(key);
+    if (this.worktreePanel !== panel) return;
+    if (outcome.kind === 'back') { this.worktreePanel = undefined; this.returnFromPanel(); }
+    else if (outcome.kind === 'requestNewWorktree') panel.branch = '';
+    else if (outcome.kind === 'navigate' && outcome.intent.kind === 'cd') {
+      if (this.editor.text.trim()) panel.notice = 'Your draft is kept. Clear the composer, then press Enter here to stage the cd.';
+      else {
+        let command: string | undefined;
+        try { command = directoryCommand(outcome.intent.path); } catch { panel.notice = 'That path cannot be typed safely as a cd command.'; }
+        if (command) { this.worktreePanel = undefined; this.returnFromPanel(); this.applySuggestion({insertion: command}); }
+      }
+    }
+    this.render();
+  }
+
+  private worktreeRows(columns: number, rows: number): string[] {
+    const panel = this.worktreePanel!;
+    const glyphs = this.promptConfiguration.glyphStyle === 'safe' ? 'safe' : 'nerd';
+    const extra = [
+      ...(panel.branch !== undefined ? [`New worktree branch: ${panel.branch}${glyphs === 'safe' ? '_' : '▏'}`, 'Enter plans it (nothing changes yet) · Esc cancels'] : []),
+      ...(panel.notice ? [panel.notice] : []),
+    ].map(line => truncateText(line, Math.max(1, columns)));
+    const body = renderWorktreeView(buildWorktreeView(panel.controller), {columns, rows: Math.max(1, rows - extra.length), glyphs, level: colorLevel(), home: homedir()});
+    return [...body, ...extra];
+  }
+
+  private async openGithub(tab: ListTab): Promise<void> {
+    const git = createGitRunner();
+    const remote = await git(this.shellCwd, ['remote', 'get-url', '--', 'origin'], {timeoutMs: 2000, maxBytes: 4096});
+    const repository = succeeded(remote) ? githubRepositoryFromRemote(remote.stdout) : undefined;
+    if (!repository) {
+      this.output.addFrontendInteraction(`/${tab === 'issues' ? 'issues' : 'github'}`, 'This directory has no github.com origin remote, so there is no repository to show.', INFO);
+      this.render(); return;
+    }
+    this.panelOrigin = undefined;
+    const controller = new GithubWorkspaceController(new GithubWorkspaceService(new GhSource()), {
+      title: `${repository} (read-only)`, initialTab: tab,
+      initialQueries: {prs: `repo:${repository} is:open`, issues: `repo:${repository} is:open`, search: `repo:${repository}`},
+    });
+    attachRenderer(controller, () => this.githubRenderOptions(this.githubPanel?.columns ?? this.dimensions().columns, this.dimensions().rows - 4));
+    const detach = controller.onChange(() => { if (this.githubPanel?.controller === controller) this.render(); });
+    this.githubPanel = {controller, repository, detach};
+    this.render();
+    await controller.submitQuery(tab);
+  }
+
+  private githubRenderOptions(columns: number, rows: number): GithubRenderOptions {
+    return {columns, rows: Math.max(1, rows), glyphs: this.promptConfiguration.glyphStyle === 'safe' ? 'safe' : 'nerd', color: colorLevel(), now: Date.now()};
+  }
+
+  private githubRows(columns: number, rows: number): string[] {
+    const panel = this.githubPanel!;
+    panel.columns = columns;
+    panel.controller.setViewport(columns, rows);
+    return renderWorkspace(panel.controller.snapshot, panel.controller.availableActions(), this.githubRenderOptions(columns, rows));
+  }
+
+  private handleGithubKey(key: Key): void {
+    const panel = this.githubPanel;
+    if (!panel) return;
+    const mapped = workspaceKey(key);
+    const intent = mapped ? panel.controller.handleKey(mapped) : undefined;
+    if (intent) this.githubIntent(panel, intent);
+    this.render();
+  }
+
+  private githubIntent(panel: NonNullable<TerminalApp['githubPanel']>, intent: WorkspaceIntent): void {
+    if (intent.type === 'Exit') { panel.detach(); this.githubPanel = undefined; this.returnFromPanel(); return; }
+    if (intent.type === 'OpenRelatedWorktree') {
+      if (intent.headRepository && intent.headRepository.toLowerCase() !== panel.repository.toLowerCase()) { panel.controller.notify(`The branch lives in ${intent.headRepository}, a fork; there is no local worktree for it here.`); return; }
+      panel.detach(); this.githubPanel = undefined;
+      void this.openWorktrees(intent.headRef);
+      return;
+    }
+    const url = safeGithubUrl(intent.url);
+    const opener = url ? selectOpener() : undefined;
+    if (!url || !opener) { panel.controller.notify(url ? `No system URL opener here. The URL is ${url}` : 'That link is not a github.com URL, so it was not opened.'); return; }
+    try { spawn(opener, [url], {detached: true, stdio: 'ignore'}).unref(); panel.controller.notify(`Opened ${url}`); } catch { panel.controller.notify(`Couldn't open ${url}`); }
+  }
+
+  private async refreshMods(): Promise<void> {
+    const panel = this.modsPanel;
+    if (!panel) return;
+    await panel.refresh(() => loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles));
+    if (this.modsPanel === panel) this.render();
   }
 
   /** /copy inside an agent view: the Nth newest reply's visible text, never protocol data. */
@@ -8263,16 +8607,20 @@ export class TerminalApp {
       for (let index = 0; index < region.height; index += 1) frameRows[region.top + index] = content[index] ?? '';
     }
 
+    // The agent view's draft owns typing: the terminal caret sits in its composer row (a Top panel ends with its frame rule).
+    const panelRegion = plan.regions.find(region => region.kind === 'panel');
+    const agentOffset = this.agentCaret && panelRegion ? this.agentCaret.row - (plan.panelPosition === 'top' ? 1 : 0) : -1;
+    const agentCaretRow = plan.panelActive && panelRegion && agentOffset >= 0 && agentOffset < panelRegion.height ? panelRegion.top + agentOffset : undefined;
     const frame: TerminalFrame = {
       rows: frameRows,
       columns,
-      cursorRow: terminalRowFromScreen(cursorScreenRow(plan, input.caretRow)),
-      cursorColumn: Math.max(1, Math.min(columns, input.caretColumn + 1)),
+      cursorRow: terminalRowFromScreen(agentCaretRow ?? cursorScreenRow(plan, input.caretRow)),
+      cursorColumn: Math.max(1, Math.min(columns, (agentCaretRow !== undefined ? this.agentCaret!.column : input.caretColumn) + 1)),
       // Flow can scroll the input row off screen.
-      cursorVisible: !plan.panelActive && plan.inputHeight > 0,
+      cursorVisible: agentCaretRow !== undefined || (!plan.panelActive && plan.inputHeight > 0),
     };
     this.renderer.setImageOverlay(this.aboutOverlay(plan, columns));
-    this.presentationFrame = {frame, plan};
+    this.presentationFrame = {frame, plan, ...(agentCaretRow !== undefined ? {agentCaretRow} : {})};
     this.paintPresentation(Date.now());
     this.renderRail = undefined;
     this.syncPresentationClock();
@@ -8468,9 +8816,13 @@ export class TerminalApp {
     this.paintTransitions(rows, plan, columns, now);
     // Cursor effects: an overlay on the input rows only, never over panels, passthrough or idle visuals.
     const input = plan.regions.find(item => item.kind === 'input');
-    const caretShown = frame.cursorVisible !== false && Boolean(input) && !plan.panelActive;
+    // The agent composer's caret gets the same caret effects, bounded to its own row.
+    const agentRow = this.presentationFrame?.agentCaretRow;
+    const caretShown = frame.cursorVisible !== false && (agentRow !== undefined || (Boolean(input) && !plan.panelActive));
+    const bounds = agentRow !== undefined ? {top: agentRow, bottom: agentRow, columns}
+      : {top: Math.max(0, (input?.top ?? 0) - 1), bottom: (input?.top ?? 0) + (input?.height ?? 1) - 1, columns};
     const cursor = this.cursorPresenter.apply(rows, caretShown ? {row: frame.cursorRow - 1, column: frame.cursorColumn - 1} : undefined,
-      {top: Math.max(0, (input?.top ?? 0) - 1), bottom: (input?.top ?? 0) + (input?.height ?? 1) - 1, columns}, this.caretCause,
+      bounds, this.caretCause,
       !this.passthrough && !this.externalPassthrough && this.decorativeMotionAllowed() && colorLevel() !== 'none', now, this.cursorBackend());
     const painted = cursor.rows;
     try {

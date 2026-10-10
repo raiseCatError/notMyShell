@@ -67,11 +67,53 @@ export interface OutputTranscript {
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
+/**
+ * What /copy and /copy N put on the clipboard: the command's own output (stdout and stderr as the PTY delivered them,
+ * line breaks kept), from the record's output field. NMSh's lifecycle row ("✔ Completed · 21.6s · 15:42") is stored
+ * separately in `lifecycleText` and is presentation, so it is never part of the payload; neither are folding,
+ * activity rows or separators, which never enter `output`. Output that merely looks like a status line is the
+ * command's and is kept.
+ */
 export function serializeCopyPayload(record: CompletedCommand): string {
-  const parts: string[] = [];
-  if (record.output.length > 0) parts.push(record.output);
-  if (record.lifecycleText.length > 0) parts.push(record.lifecycleText);
-  return parts.join('\n');
+  return record.output;
+}
+
+/** Stored line text, compared as the transcript draws it: trailing blanks are not content. */
+const sameText = (left: string, right: string) => left.split('\n').map(line => line.trimEnd()).join('\n')
+  === right.split('\n').map(line => line.trimEnd()).join('\n');
+
+/**
+ * The records of a stored transcript that still own their lines, newest first. Transcripts saved before screen
+ * clears retired their blocks keep records whose line ids now name other commands' lines; drawing them put one
+ * command's fold row inside another command's output. A bounds check alone cannot tell them apart, so each record
+ * must also show the evidence the format keeps:
+ * - its range lies within the stored lines and ends where the next newer block begins, or earlier;
+ * - its header lines are command lines (an Ask block's header is NMSh's own line), unless it is a command that
+ *   cleared the screen, which owns its output from line 0 with no header;
+ * - the lines it covers read as the output it recorded.
+ * A record that fails marks a clear the format did not record, so it and every older record are dropped: their
+ * lines stay in the transcript as plain rows, never attributed to a command that did not write them.
+ */
+export function placeableRecords(records: readonly CompletedCommand[], lines: readonly string[], lineTypes: ReadonlyMap<number, 'command' | 'metadata'>): CompletedCommand[] {
+  let limit = lines.length;
+  const placed: CompletedCommand[] = [];
+  for (const record of records) {
+    const end = record.endId ?? limit;
+    const inRange = Number.isSafeInteger(record.startId) && Number.isSafeInteger(record.outputStartId) && Number.isSafeInteger(end)
+      && record.startId >= 0 && record.startId <= record.outputStartId && record.outputStartId <= end && end <= limit;
+    if (!inRange) break;
+    const headerLines = Array.from({length: record.outputStartId - record.startId}, (_, offset) => lineTypes.get(record.startId + offset));
+    const header = record.frontend === 'ask'
+      ? headerLines.length > 0 && headerLines.every(type => type === 'metadata')
+      : headerLines.length > 0 ? headerLines.every(type => type === 'command') : record.startId === 0;
+    // A shell command's output leaves out NMSh's own lines inside its block; records saved before that rule kept them.
+    const covered = lines.slice(record.outputStartId, end);
+    const own = record.frontend === 'ask' ? covered : covered.filter((_, offset) => lineTypes.get(record.outputStartId + offset) !== 'metadata');
+    if (!header || !(sameText(own.join('\n'), record.output) || sameText(covered.join('\n'), record.output))) break;
+    placed.push(record);
+    limit = record.startId;
+  }
+  return placed;
 }
 
 export class OutputBuffer {
@@ -89,6 +131,8 @@ export class OutputBuffer {
     outputStart: number;
     historicalContext?: HistoricalContextSnapshot;
     activities: SecondaryActivity[];
+    /** Its output cleared the screen: its header and earlier lines are gone. */
+    cleared?: boolean;
   };
   private classifier?: CommandClassifier;
   /** What of the active command's output is transcript text (see TranscriptCut). */
@@ -99,8 +143,28 @@ export class OutputBuffer {
       this.visualGaps.clear();
       this.lineTypes.clear();
       this.historicalContexts.clear();
+      this.retireClearedBlocks();
       this.onClear?.();
     });
+  }
+
+  /**
+   * A screen clear (`clear`, `ESC[2J`, `ESC[3J`) removes every stored line, so every block those lines belonged to
+   * goes with them: a record left behind would keep line ids that now name another command's lines, and its fold
+   * row, ownership and toggles would land inside that command. The running command keeps its identity and owns
+   * what it writes after the clear, from the first line on.
+   */
+  private retireClearedBlocks(): void {
+    this.completed.length = 0;
+    this.userToggled.clear();
+    this.setOutputFilter(undefined);
+    if (!this.active) return;
+    this.active.start = 0;
+    this.active.outputStart = 0;
+    this.active.historicalContext = undefined;
+    // Activity ranges were counted before the clear; none of them can be placed again.
+    this.active.activities = [];
+    this.active.cleared = true;
   }
 
   private readonly historicalContexts = new Map<number, HistoricalContextSnapshot>();
@@ -123,7 +187,8 @@ export class OutputBuffer {
   restoreTranscript(transcript: OutputTranscript): void {
     this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
     this.parser.restore(transcript.lines);
-    this.completed.splice(0, this.completed.length, ...transcript.records.map(record => ({
+    const lines = Array.from({length: this.parser.completedCount()}, (_, index) => this.parser.plainLineAt(index) ?? '');
+    this.completed.splice(0, this.completed.length, ...placeableRecords(transcript.records, lines, new Map(transcript.lineTypes)).map(record => ({
       ...record,
       historicalContext: record.historicalContext ? structuredClone(record.historicalContext) : undefined,
       activities: record.activities?.map(activity => ({...activity})),
@@ -204,11 +269,21 @@ export class OutputBuffer {
    * and output lines are already in the transcript, so only the active block
    * is re-established and new output continues it.
    */
-  resumeActive(command: string, startId: number, outputStartId: number, onModeChange?: (mode: PresentationMode) => void): void {
+  resumeActive(command: string, startId: number, outputStartId: number, onModeChange?: (mode: PresentationMode) => void): {cleared: boolean} {
     this.active = {command, start: startId, outputStart: outputStartId,
       historicalContext: this.historicalContexts.get(startId), activities: []};
     this.classifier = new CommandClassifier(Date.now(), onModeChange);
     this.cut = new TranscriptCut();
+    // A command that cleared the screen owns its output from line 0 (see retireClearedBlocks). A journal from before
+    // that rule kept its pre-clear position: a header that is no longer a command line, or a start inside or past
+    // the stored blocks, means the clear happened while it ran, so it owns everything stored and nothing older stays.
+    const after = this.completed[0]?.endId ?? 0;
+    const header = outputStartId > startId
+      && Array.from({length: outputStartId - startId}, (_, offset) => this.lineTypes.get(startId + offset)).every(type => type === 'command');
+    const placed = startId >= after && outputStartId <= this.parser.completedCount() && (header || (startId === 0 && outputStartId === 0));
+    if (!placed) this.retireClearedBlocks();
+    else if (!header) this.active.cleared = true;
+    return {cleared: Boolean(this.active.cleared)};
   }
 
   updateCommandHighlight(startId: number, formattedLines: string[]): void {
@@ -217,12 +292,16 @@ export class OutputBuffer {
     }
   }
 
+  get activeStartId(): number | undefined {
+    return this.active?.start;
+  }
+
   get activeOutputStartId(): number | undefined {
     return this.active?.outputStart;
   }
 
   setActiveActivities(activities: SecondaryActivity[]): void {
-    if (!this.active) return;
+    if (!this.active || this.active.cleared) return;
     const previous = new Map(this.active.activities.map(activity => [activity.id, activity]));
     this.active.activities = activities.map(activity => {
       const prior = previous.get(activity.id);
@@ -254,7 +333,7 @@ export class OutputBuffer {
 
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
-    const output = this.parser.snapshotPlain(this.active.outputStart);
+    const output = this.commandOutput(this.active.outputStart, endId);
     // Activity-bearing parents keep their own disclosure; otherwise the fold
     // policy decides from the finished output. Presentation only.
     const autoFolded = this.active.activities.length === 0
@@ -282,6 +361,18 @@ export class OutputBuffer {
     this.classifier = undefined;
     this.cut = undefined;
     return record;
+  }
+
+  /**
+   * What a command wrote: its block's lines without the ones NMSh added while it ran (a /copy confirmation, an Ask
+   * exchange, a notice). Those stay where they were shown, but they were never the command's output.
+   */
+  private commandOutput(start: number, end: number): string {
+    const lines: string[] = [];
+    for (let index = start; index < end; index += 1) {
+      if (this.lineTypes.get(index) !== 'metadata') lines.push(this.parser.plainLineAt(index) ?? '');
+    }
+    return lines.join('\n');
   }
 
   /**

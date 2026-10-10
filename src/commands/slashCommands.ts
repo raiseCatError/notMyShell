@@ -91,6 +91,15 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/btw', insertion: '/btw ', description: 'Local intelligence: ask NMSh in plain English'},
   {name: '/ask', insertion: '/ask ', description: 'Compatibility alias for /btw'},
   {name: '/ai', insertion: '/ai', description: 'Agent sessions: Claude Code and other harnesses running in the background; /ai claude starts one'},
+  {name: '/claude', insertion: '/claude', description: 'Focus or start a managed Claude target; new forces fresh; mods opens inventory'},
+  {name: '/codex', insertion: '/codex', description: 'Managed Codex routing where supported; mods opens inventory'},
+  {name: '/mods', insertion: '/mods', description: 'Unified portable mods, provider-native extensions and Context Packs'},
+  {name: '/extensions', insertion: '/extensions', description: 'Alias of /mods'},
+  {name: '/worktrees', insertion: '/worktrees', description: 'This repository\'s Git worktrees: open one, create or remove with a reviewed plan'},
+  {name: '/github', insertion: '/github', description: 'Read-only GitHub workspace for this repository: PRs, issues, checks and diffs (uses gh)'},
+  {name: '/prs', insertion: '/prs', description: 'Open pull requests in the GitHub workspace'},
+  {name: '/issues', insertion: '/issues', description: 'Open issues in the GitHub workspace'},
+  {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
@@ -171,6 +180,11 @@ export type ParsedSlashCommand =
   | {kind: 'ask'; request: string}
   /** Agent sessions: /ai opens the list; /ai <harness or profile> starts one in the background. */
   | {kind: 'ai'; target?: string}
+  | {kind: 'mods'; provider?: string}
+  | {kind: 'worktrees'}
+  | {kind: 'github'; tab: 'prs' | 'issues' | 'search'}
+  | {kind: 'managedTarget'; provider: 'claude' | 'codex'; action: 'open' | 'new'}
+  | {kind: 'rawProvider'; command?: string}
   | {kind: 'providers'; family?: 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'}
   | {kind: 'llm'}
   | {kind: 'doctor'}
@@ -180,8 +194,17 @@ export type ParsedSlashCommand =
   | {kind: 'history', query: string}
   | {kind: 'unknown'; input: string};
 
+/**
+ * Whether composer text is addressed to NMSh rather than the shell. An absolute path is the shell's: when the first
+ * word has a `/` after the leading one (`/usr/bin/env`, `/Volumes/tools/adb devices`) it runs as typed. No NMSh
+ * command name contains one, so this is decided from the text alone, without probing the filesystem.
+ */
+export function isSlashInput(input: string): boolean {
+  return input.startsWith('/') && !/^\/[^\s/]*\//u.test(input);
+}
+
 export function parseSlashCommand(input: string): ParsedSlashCommand | undefined {
-  if (!input.startsWith('/')) return undefined;
+  if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
   const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
@@ -261,6 +284,18 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/palette\s*$/u.test(input)) return {kind: 'palette'};
   if (/^\/guide\s*$/u.test(input)) return {kind: 'ask', request: 'guide'};
   const ai = /^\/ai(?:\s+([\w.-]{1,40}))?\s*$/u.exec(input);
+  const mods = /^\/(?:mods|extensions)\s*$/u.exec(input);
+  if (mods) return {kind: 'mods'};
+  if (/^\/worktrees\s*$/u.test(input)) return {kind: 'worktrees'};
+  const github = /^\/(github|prs|issues)\s*$/u.exec(input);
+  if (github) return {kind: 'github', tab: github[1] === 'issues' ? 'issues' : 'prs'};
+  const providerMods = /^\/(claude|codex|opencode)\s+mods\s*$/u.exec(input);
+  if (providerMods) return {kind: 'mods', provider: providerMods[1]!};
+  const managed = /^\/(claude|codex)(?:\s+(new))?\s*$/u.exec(input);
+  if (managed) return {kind: 'managedTarget', provider: managed[1] as 'claude' | 'codex', action: managed[2] ? 'new' : 'open'};
+  const rawProvider = /^\/nmsh\s+raw\s+((?:claude|codex)(?:\s[^\n]*)?)\s*$/u.exec(input);
+  if (rawProvider) return {kind: 'rawProvider', command: rawProvider[1]!};
+  if (/^\/nmsh(?:\s+raw)?\s*$/u.test(input)) return {kind: 'rawProvider'};
   if (ai) return ai[1] ? {kind: 'ai', target: ai[1]} : {kind: 'ai'};
   const ask = /^\/(?:btw|ask)(?:\s+([\s\S]*))?$/u.exec(input);
   if (ask) return {kind: 'ask', request: (ask[1] ?? '').trim()};
@@ -287,7 +322,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
 }
 
 export function slashSuggestions(input: string): SlashCommand[] {
-  if (!input.startsWith('/') || input.includes('\n')) return [];
+  if (!isSlashInput(input) || input.includes('\n')) return [];
   return slashCommands.filter(command => !(command.name === '/ask' && input === '/') && (command.name.startsWith(input) || command.insertion.startsWith(input)));
 }
 

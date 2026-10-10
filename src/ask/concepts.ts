@@ -127,6 +127,12 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'sessions', label: 'Live sessions', support: 'actionable', capability: 'session.list', open: '/sessions', covers: ['/sessions', '/rename', 'settings:Sessions'],
     aliases: ['live sessions', 'running sessions', 'detached sessions', 'current sessions', 'open sessions', 'other sessions', 'sessions', 'session', 'other windows', 'startup restore'],
     description: 'Live sessions are NMSh sessions running right now, attached or detached. /sessions switches to or ends one.'},
+  {id: 'worktrees', label: 'Git worktrees', support: 'actionable', open: '/worktrees', covers: ['/worktrees'],
+    aliases: ['worktrees', 'worktree', 'git worktrees', 'git worktree', 'linked worktrees', 'worktree manager', 'new worktree', 'remove worktree'],
+    description: '/worktrees lists this repository\'s Git worktrees. Enter stages a cd in the composer; n plans a new one and x previews removal, each applied only after you confirm the plan.'},
+  {id: 'githubWorkspace', label: 'GitHub pull requests and issues', support: 'actionable', open: '/github', covers: ['/github', '/prs', '/issues'],
+    aliases: ['github', 'pull requests', 'pull request', 'prs', 'github issues', 'issues', 'pr checks', 'pr review', 'github workspace'],
+    description: '/github (/prs, /issues) is a read-only view of this repository\'s pull requests and issues through your gh login: checks, reviews, commits, files and diffs. NMSh changes nothing on GitHub.'},
   {id: 'transcripts', label: 'Archived transcripts', support: 'actionable', capability: 'session.resume', open: '/resume', overrides: ['session.list'], covers: ['/resume'],
     aliases: ['old sessions', 'past sessions', 'previous sessions', 'archived sessions', 'saved sessions', 'old transcripts', 'archived transcripts', 'saved transcripts',
       'past transcripts', 'transcript archive', 'old output', 'old terminal output'],
@@ -178,7 +184,7 @@ export const CONCEPTS: readonly Concept[] = [
     covers: ['settings:Command notifications'],
     aliases: ['command notifications', 'desktop notifications', 'notify when done', 'notify me', 'long command notifications', 'notifications', 'notification'],
     description: 'Command notifications tell you when a long-running command finishes, after a minimum duration, on success and/or failure, optionally only when the terminal is not focused.'},
-  {id: 'agentSessions', label: 'Agent sessions', support: 'actionable', open: '/ai', covers: ['/ai'],
+  {id: 'agentSessions', label: 'Agent sessions', support: 'actionable', open: '/ai', covers: ['/ai', '/claude', '/codex'],
     aliases: ['agent sessions', 'ai sessions', 'background agent', 'background agents', 'claude session', 'codex session', 'agent session', 'start claude', 'run claude in the background'],
     description: '/ai starts and supervises external agent harnesses (Claude Code today) in the background and shows other running agents it can see. The harness owns models, sign-in and tools; NMSh never calls model APIs. ← on an empty composer opens sessions, ↓ shows the agent shelf.'},
   {id: 'agents', label: 'Agent activity', support: 'actionable', open: '/agents', covers: ['/agents'],
@@ -242,6 +248,9 @@ export const CONCEPTS: readonly Concept[] = [
 
 /** Public surfaces Ask deliberately has no concept for, with the reason (the coverage audit checks these too). */
 export const ASK_EXCLUDED: Readonly<Record<string, string>> = {
+  '/mods': 'Unified mod inventory is opened explicitly; installation and activation are not inferred Ask actions.',
+  '/extensions': 'Alias of the explicit /mods inventory surface.',
+  '/nmsh': 'Raw provider handoff requires an explicitly typed command and preserves provider CLI arguments.',
 };
 
 export type ConceptIntent = 'explain' | 'on' | 'off' | 'open' | 'change';
@@ -336,7 +345,7 @@ export const GUIDE_SECTIONS: readonly GuideSection[] = [
   {id: 'ask', title: 'Ask', why: 'Plain-English help that knows NMSh, your commands and this repository, and never runs anything you did not confirm.', concepts: ['ask']},
   {id: 'intelligence', title: 'Local intelligence', why: 'An optional local model helps Ask map vague requests to known actions. It runs on this machine, never writes commands, and Ask works fully without it.', concepts: ['understanding'],
     notes: ['Modes: Off, Auto (used only when the deterministic resolver is unsure) and Always (consulted first). /llm shows the model, runtime and last inference.']},
-  {id: 'projects', title: 'Project & dev tasks', why: 'Ask reads this project\'s scripts (package.json, Makefile, Cargo, …) and can run them for you.', concepts: [],
+  {id: 'projects', title: 'Project & dev tasks', why: 'Ask reads this project\'s scripts (package.json, Makefile, Cargo, …) and can run them for you; /worktrees and /github show its worktrees, pull requests and issues.', concepts: ['worktrees', 'githubWorkspace'],
     notes: ['Try: "run the tests" · "start the dev server" · "what scripts does this project have?"', 'Dev servers run as NMSh-managed background tasks: a live status row, detected URLs to open, and "stop the dev server" to end them.']},
   {id: 'files', title: 'Files, config & editor', why: 'Jump to folders, open what output mentions, and let Ask find and open config files or add/update a setting with a verified, previewed edit (it never removes settings).', concepts: ['navigation', 'editor', 'pastePreview']},
   {id: 'providers', title: 'Providers & tools', why: 'Choose what powers each part of NMSh, and install optional tools with previewed recipes.', concepts: ['providers', 'welcome', 'tools', 'toolConfig', 'integrations', 'dotfiles', 'homebrew', 'agents']},
