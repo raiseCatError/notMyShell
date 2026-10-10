@@ -179,9 +179,16 @@ test('live: Copy as Report: /copy --report copies Markdown at once; a sensitive 
   try {
     await ready(frontend);
     await history(frontend);
-    const report = await copied(frontend, '/cp -2 --report');
+    // Every report is reviewed before it is copied: Enter in the review copies.
+    const reviewed = async (command: string) => {
+      const at = frontend.mark;
+      frontend.pty.write(`${command}\r`);
+      await frontend.waitFor(/Copy as report/u, at);
+      return copied(frontend, '');
+    };
+    const report = await reviewed('/cp -2 --report');
     assert.match(report, /^# Command report\n\n2 commands, oldest first\.\n\n## 1\. `true`[\s\S]*_No output\._[\s\S]*## 2\. `echo omega`\n\n- \*\*Status:\*\* ✔ Completed · [^\n]+\n- \*\*Exit code:\*\* 0[\s\S]*```text\nomega\n```\n$/u, report);
-    assert.match(await copied(frontend, '/copy 3 --report=plain'), /^Command report · 1 command, oldest first\n\n=== 1\. \$ sh -c 'echo boom >&2; exit 3'\nStatus: ✘ Command failed · exit 3[\s\S]*Exit code: 3[\s\S]*--- output ---\nboom\n--- end ---/u);
+    assert.match(await reviewed('/copy 3 --report=plain'), /^Command report · 1 command, oldest first\n\n=== 1\. \$ sh -c 'echo boom >&2; exit 3'\nStatus: ✘ Command failed · exit 3[\s\S]*Exit code: 3[\s\S]*--- output ---\nboom\n--- end ---/u);
     // Something that looks like a secret: the review opens and says so; nothing is copied yet.
     await frontend.run('echo GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789', /ghp_/u);
     reset();

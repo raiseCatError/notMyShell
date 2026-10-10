@@ -34,10 +34,12 @@ const REDACTED = '[REDACTED]';
 
 /** Common shapes, most specific first. Each replaces only the secret part and keeps what makes the line readable. */
 const PATTERNS: readonly Pattern[] = [
-  {kind: 'private key', pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/gu, replace: () => '[REDACTED PRIVATE KEY]'},
+  {kind: 'private key', pattern: /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----|$)/gu, replace: () => '[REDACTED PRIVATE KEY]'},
+  {kind: 'credential', pattern: /\b((?:set-)?cookie\s*:\s*)[^\n]+/giu, replace: (_match, prefix) => `${prefix}${REDACTED}`},
+  {kind: 'credential', pattern: /(--?(?:password|passwd|pass|token|secret|api-?key|access-?key|auth-?token|client-?secret)(?:=|\s+))(?!-)("[^"\n]*"|'[^'\n]*'|[^\s"']+)/giu, replace: (match, prefix, value) => /^["']?\[REDACTED/u.test(value) ? match : `${prefix}${REDACTED}`},
   {kind: 'credential', pattern: /\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@]+:)[^\s@/]+@/giu, replace: (_match, prefix) => `${prefix}${REDACTED}@`},
   {kind: 'credential', pattern: /\b(authorization\s*[:=]\s*(?:bearer|basic|token)\s+)[^\s"']+/giu, replace: (_match, prefix) => `${prefix}${REDACTED}`},
-  {kind: 'token', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|npm_[A-Za-z0-9]{36})\b/gu, replace: () => REDACTED},
+  {kind: 'token', pattern: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|npm_[A-Za-z0-9]{36}|[sr]k_(?:live|test)_[A-Za-z0-9]{16,})\b/gu, replace: () => REDACTED},
   {kind: 'token', pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu, replace: () => REDACTED},
   {kind: 'credential', pattern: /\b((?:[A-Za-z0-9_.-]*?(?:password|passwd|passphrase|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|auth))["']?\s*[=:]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;]+)/giu,
     replace: (match, prefix, value) => /^["']?\[REDACTED/u.test(value) || !value.replace(/["']/gu, '') ? match : `${prefix}${REDACTED}`},
@@ -70,6 +72,11 @@ export function redactText(text: string, home?: string): {text: string; findings
     });
   }
   return {text: result, findings: [...counts].map(([kind, count]) => ({kind, count}))};
+}
+
+/** 1-based line numbers of `text` that carry a redaction marker (what the review points the reader at). */
+export function redactedLines(text: string): number[] {
+  return text.split('\n').flatMap((line, index) => /\[REDACTED[^\]]*\]|(?:^|[\s=:"'(`])~(?=\/|[\s"'`)]|$)|\/(?:Users|home)\/<user>/u.test(line) ? [index + 1] : []);
 }
 
 /** "2 tokens and 1 private path" */

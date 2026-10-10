@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {OutputBuffer, type CompletedCommand} from '../src/output/OutputBuffer.js';
-import {buildReport, DEFAULT_REPORT_OPTIONS, describeFindings, parseReportFlag, redactText, scanSensitive} from '../src/clipboard/report.js';
+import {buildReport, DEFAULT_REPORT_OPTIONS, describeFindings, parseReportFlag, redactedLines, redactText, scanSensitive} from '../src/clipboard/report.js';
 import {parseCopyArgs} from '../src/clipboard/copySelection.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
-import {applyReportEdit, createReportReview, renderReportReview, reportNeedsReview, reportReviewKey} from '../src/ui/ReportReview.js';
+import {applyReportEdit, createReportReview, renderReportReview, reportReviewKey} from '../src/ui/ReportReview.js';
 import {copyPickerKey, createCopyPicker} from '../src/ui/CopyPicker.js';
 import {BLOCK_ACTIONS} from '../src/ui/BlockActions.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
@@ -53,16 +53,20 @@ test('redaction: common secret shapes and private paths are replaced and counted
     '-----BEGIN OPENSSH PRIVATE KEY-----', 'b3BlbnNzaC1rZXktdjEAAAAA', '-----END OPENSSH PRIVATE KEY-----',
     'cd /Users/alex/Projects/demo && ls /home/sam/build',
     'mail me at alex@example.com',
+    'mysql --password=s3cr3tpw -u root && deploy --token abc.def.ghi && login -p',
+    'Set-Cookie: session=abcdef123; HttpOnly',
+    'stripe sk_live_ABCDEFGHIJKLMNOPQRSTUV and -----BEGIN PGP PRIVATE KEY BLOCK-----', 'lQOYBF', '-----END PGP PRIVATE KEY BLOCK-----',
     'ordinary output: 3 tests passed, token count 42, key: value',
   ].join('\n');
   const {text, findings} = redactText(source, '/Users/alex');
   for (const secret of ['ghp_abcdefghijklmnopqrstuvwxyz0123456789', 'eyJhbGciOiJIUzI1NiJ9', 's3cretPass', 'wJalrXUtnFEMI', 'AKIAIOSFODNN7EXAMPLE', 'sk-ant-api03', 'hunter2',
-    'b3BlbnNzaC1rZXktdjEAAAAA', '/Users/alex', '/home/sam', 'alex@example.com']) assert.ok(!text.includes(secret), `${secret} redacted:\n${text}`);
+    'b3BlbnNzaC1rZXktdjEAAAAA', '/Users/alex', '/home/sam', 'alex@example.com', 's3cr3tpw', 'abc.def.ghi', 'session=abcdef123', 'sk_live_ABCD', 'lQOYBF']) assert.ok(!text.includes(secret), `${secret} redacted:\n${text}`);
   assert.match(text, /git clone https:\/\/alex:\[REDACTED\]@github\.com/u);
   assert.match(text, /cd ~\/Projects\/demo && ls \/home\/<user>\/build/u);
   assert.match(text, /ordinary output: 3 tests passed, token count 42, key: value/u, 'not every "token" or "key" is a secret');
   const kinds = Object.fromEntries(findings.map(finding => [finding.kind, finding.count]));
-  assert.equal(kinds['private key'], 1);
+  assert.equal(kinds['private key'], 2);
+  assert.match(text, /login -p$/mu, 'a bare flag with no value is left alone');
   assert.equal(kinds['private path'], 2);
   assert.ok(kinds.token! >= 3 && kinds.credential! >= 3, JSON.stringify(kinds));
   assert.match(describeFindings([{kind: 'token', count: 2}, {kind: 'private path', count: 1}, {kind: 'email address', count: 3}]), /^2 tokens, 1 private path and 3 email addresses$/u);
@@ -83,12 +87,13 @@ test('flags: --report and --report=plain in /copy and /cp; with --status it expl
   assert.deepEqual(parseSlashCommand('/cp 1-4 --report'), parseSlashCommand('/copy 1-4 --report'));
 });
 
-test('review: needed only when something looks sensitive; switches rebuild; an edit is what gets copied', () => {
+test('review: every report is reviewed; changed lines are marked; switches rebuild; an edit is re-checked and is what gets copied', () => {
   const secret = record('env', 'API_KEY=abc123def456\r\nHOME=/Users/alex\r\n', 0, '✔ Completed · 3 ms');
   const home = {...DEFAULT_REPORT_OPTIONS, home: '/Users/alex'};
-  assert.equal(reportNeedsReview([devices()], home), false);
-  assert.equal(reportNeedsReview([secret], home), true);
+  assert.match(stripAnsi(renderReportReview(createReportReview([devices()], home, false), 100, 30).join('\n')), /No common secret shapes found[\s\S]*not a guarantee/u);
   const review = createReportReview([secret], home, true);
+  assert.deepEqual(redactedLines(review.text).length, 2);
+  assert.match(stripAnsi(renderReportReview(review, 100, 30).join('\n')), /Changed lines \(▸\): \d+, \d+[\s\S]*▸- \*\*|▸API_KEY=\[REDACTED\]/u);
   assert.ok(!review.text.includes('abc123def456') && !review.text.includes('/Users/alex'));
   assert.match(stripAnsi(renderReportReview(review, 100, 30).join('\n')), /Looks sensitive: 1 credential and 1 private path · redacted 1 credential and 1 private path/u);
   reportReviewKey(review, {kind: 'text', value: 'r'}, 30);
@@ -99,7 +104,10 @@ test('review: needed only when something looks sensitive; switches rebuild; an e
   assert.match(review.text, /^Command report · 1 command/u);
   assert.deepEqual(reportReviewKey(review, {kind: 'text', value: 'e'}, 30), {kind: 'edit'});
   applyReportEdit(review, 'my corrected report\n');
+  assert.deepEqual(review.sensitive, []);
   assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 30), {kind: 'copy', text: 'my corrected report\n'});
+  applyReportEdit(review, 'oops ghp_abcdefghijklmnopqrstuvwxyz0123456789\n');
+  assert.match(stripAnsi(renderReportReview(review, 100, 30).join('\n')), /Looks sensitive: 1 token · in your edit, not redacted/u);
   assert.equal(reportReviewKey(review, {kind: 'escape'}, 30)?.kind, 'close');
   // No editor configured: no edit key.
   const noEditor = createReportReview([secret], home, false);

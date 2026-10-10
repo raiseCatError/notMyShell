@@ -49,8 +49,8 @@ import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeB
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
-import {buildReport, DEFAULT_REPORT_OPTIONS, type ReportFormat} from '../clipboard/report.js';
-import {applyReportEdit, createReportReview, renderReportReview, reportNeedsReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
+import {DEFAULT_REPORT_OPTIONS, type ReportFormat} from '../clipboard/report.js';
+import {applyReportEdit, createReportReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
@@ -1397,7 +1397,7 @@ export class TerminalApp {
         this.copyPicker = undefined;
         this.copyPickerReport = undefined;
         this.returnFromPanel();
-        if (action.kind === 'report' || report) this.startReport(action.records, report ?? 'markdown', true);
+        if (action.kind === 'report' || report) this.startReport(action.records, report ?? 'markdown');
         else void this.copyRecords(action.records, action.includeStatus);
       }
       this.render();
@@ -2613,7 +2613,7 @@ export class TerminalApp {
     if (!record) return; // A clear/restore must never act on stale screen coordinates.
     const includeStatus = this.promptConfiguration.copy.includeStatus;
     if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
-    else if (action === 'copyReport') this.startReport([record], 'markdown', true);
+    else if (action === 'copyReport') this.startReport([record], 'markdown');
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -2852,18 +2852,13 @@ export class TerminalApp {
   }
 
   /**
-   * Copy as Report. `review`: an interactive surface asked for it (the picker, Actions), so the review always opens;
-   * from /copy --report it opens only when something in the report looks sensitive. Records are oldest first.
+   * Copy as Report. A report is made to be shared, and pattern-based redaction cannot promise to catch everything,
+   * so every report goes through its review (Enter copies): it never reaches the clipboard unseen. Oldest first.
    */
-  private startReport(records: readonly CompletedCommand[], format: ReportFormat, review: boolean): void {
-    const options = {...DEFAULT_REPORT_OPTIONS, format, home: homedir()};
-    if (review || reportNeedsReview(records, options)) {
-      this.panelOrigin = undefined;
-      this.reportReview = createReportReview(records, options, Boolean(configuredEditor(process.env)));
-      this.render();
-      return;
-    }
-    void this.copyReportText(buildReport(records, options).text, records);
+  private startReport(records: readonly CompletedCommand[], format: ReportFormat): void {
+    this.panelOrigin = undefined;
+    this.reportReview = createReportReview(records, {...DEFAULT_REPORT_OPTIONS, format, home: homedir()}, Boolean(configuredEditor(process.env)));
+    this.render();
   }
 
   /** The report's clipboard write: the same tool, feedback and Auto-expand rule as every other copy. */
@@ -2907,7 +2902,7 @@ export class TerminalApp {
     }
     const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
     if (!resolved.ok) { this.output.addFrontendInteraction(command.trim(), resolved.error, ERROR); return; }
-    if (report) { this.startReport(resolved.records, report, false); return; }
+    if (report) { this.startReport(resolved.records, report); return; }
     await this.copyRecords(resolved.records, includeStatus);
   }
 

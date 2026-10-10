@@ -4,7 +4,7 @@ import {renderControlRows} from './controls.js';
 import {foreground, UI_COLORS} from './palette.js';
 import {truncateAnsi, truncateText} from '../util/text.js';
 import {displaySafe} from '../input/PasteReview.js';
-import {buildReport, describeFindings, scanSensitive, type ReportFinding, type ReportOptions} from '../clipboard/report.js';
+import {buildReport, describeFindings, redactedLines, scanSensitive, type ReportFinding, type ReportOptions} from '../clipboard/report.js';
 
 /**
  * The review before a report is copied: the exact text that will go to the clipboard, what looks sensitive in the
@@ -42,10 +42,6 @@ function rebuild(state: ReportReviewState): void {
   state.edited = false;
 }
 
-/** Whether a report needs the review before copying: something in it looks sensitive. */
-export function reportNeedsReview(records: readonly CompletedCommand[], options: ReportOptions): boolean {
-  return scanSensitive(buildReport(records, {...options, redact: false}).text, options.home).length > 0;
-}
 
 export type ReportReviewAction = {kind: 'close'} | {kind: 'copy'; text: string} | {kind: 'edit'};
 
@@ -76,6 +72,9 @@ export function applyReportEdit(state: ReportReviewState, text: string): void {
   state.text = text;
   state.edited = true;
   state.scroll = 0;
+  // An edit is checked again: what it contains is what will be copied.
+  state.sensitive = scanSensitive(text, state.options.home);
+  state.redacted = [];
 }
 
 export function renderReportReview(state: ReportReviewState, columns: number, height: number): string[] {
@@ -91,14 +90,20 @@ export function renderReportReview(state: ReportReviewState, columns: number, he
   const out = [`  ${primary}Copy as report${reset}  ${subtle}${truncateText(`${count} command${count === 1 ? '' : 's'} · ${format}${state.edited ? ' · edited' : ''}`, Math.max(4, width - 16))}${reset}`];
   if (state.sensitive.length) {
     const what = describeFindings(state.sensitive);
-    const how = state.edited ? 'check your edit' : state.options.redact ? `redacted ${describeFindings(state.redacted) || 'nothing'}` : 'NOT redacted';
+    const how = state.edited ? 'in your edit, not redacted' : state.options.redact ? `redacted ${describeFindings(state.redacted) || 'nothing'}` : 'NOT redacted';
     out.push(`  ${warning}${truncateText(`Looks sensitive: ${what} · ${how}`, width)}${reset}`);
   } else out.push(`  ${subtle}${truncateText('No common secret shapes found. Redaction is a pattern match, not a guarantee: read before sharing.', width)}${reset}`);
+  const marked = redactedLines(state.text);
+  if (marked.length) out.push(`  ${subtle}${truncateText(`Changed lines (▸): ${marked.slice(0, 12).join(', ')}${marked.length > 12 ? ` and ${marked.length - 12} more` : ''}`, width)}${reset}`);
   out.push(`  ${subtle}${truncateText(`Redact ${state.options.redact ? 'on' : 'off'} (r) · Directory ${state.options.directory ? 'on' : 'off'} (d) · Times ${state.options.timestamps ? 'on' : 'off'} (t) · Format (f)`, width)}${reset}`, '');
   const controls = renderControlRows([['↑↓', 'scroll'], ['Enter', 'copy'], ...(state.canEdit ? [['e', 'edit'] as const] : []), ['Esc', 'cancel']], width);
   const room = Math.max(1, height - out.length - controls.length - 1);
   const lines = state.text.split('\n');
-  for (const line of lines.slice(state.scroll, state.scroll + room)) out.push(`  ${secondary}${truncateText(displaySafe(line), width)}${reset}`);
+  const markedSet = new Set(marked);
+  lines.slice(state.scroll, state.scroll + room).forEach((line, offset) => {
+    const mark = markedSet.has(state.scroll + offset + 1) ? `${warning}▸${reset}` : ' ';
+    out.push(` ${mark}${secondary}${truncateText(displaySafe(line), width)}${reset}`);
+  });
   if (state.scroll + room < lines.length) out[out.length - 1] = `  ${subtle}… ${lines.length - state.scroll - room + 1} more lines (↓)${reset}`;
   out.push('', ...controls.map(row => `  ${row}`));
   return out.map(line => truncateAnsi(line, columns)).slice(0, Math.max(1, height));
