@@ -1,4 +1,5 @@
 import type {CompletedCommand} from './OutputBuffer.js';
+import {inlineCode, reportText} from '../clipboard/report.js';
 
 /**
  * Compare output: two executions' stored output, line by line, computed only when asked. Faithful by default (every
@@ -202,12 +203,18 @@ export function unifiedDiff(comparison: Comparison): string {
   return `${[...header, ...body].join('\n')}\n`;
 }
 
+/** The unified diff as it goes to the clipboard: the same characters a report may carry (no controls, no hidden ones). */
+export function copyableDiff(comparison: Comparison): string {
+  return reportText(unifiedDiff(comparison));
+}
+
 /** The comparison as a Markdown report: both sides, the summary, notes, and the diff. */
 export function comparisonReport(comparison: Comparison): string {
-  const diff = unifiedDiff(comparison);
+  // Cleaned before the fence is sized: removing hidden characters can join backtick runs or start new lines.
+  const diff = copyableDiff(comparison);
   const longest = Math.max(0, ...[...diff.matchAll(/`+/gu)].map(match => match[0].length));
   const fence = '`'.repeat(Math.max(3, longest + 1));
-  const lines = ['# Output comparison', '', `- **A (older):** \`${sideLabel(comparison.a)}\``, `- **B (newer):** \`${sideLabel(comparison.b)}\``,
+  const lines = ['# Output comparison', '', `- **A (older):** ${inlineCode(sideLabel(comparison.a))}`, `- **B (newer):** ${inlineCode(sideLabel(comparison.b))}`,
     `- **Result:** ${summary(comparison)}`, ...comparisonNotes(comparison).map(note => `- **Note:** ${note}`), ''];
   lines.push(comparison.identical ? '_No differences._' : `${fence}diff\n${diff.replace(/\n$/u, '')}\n${fence}`);
   return `${lines.join('\n')}\n`;

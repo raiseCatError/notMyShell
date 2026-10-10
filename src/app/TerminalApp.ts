@@ -49,11 +49,11 @@ import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeB
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
-import {DEFAULT_REPORT_OPTIONS, type ReportFormat} from '../clipboard/report.js';
+import {DEFAULT_REPORT_OPTIONS, describeFindings, scanSensitive, type ReportFormat} from '../clipboard/report.js';
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
-import {comparisonReport, previousRun, unifiedDiff} from '../output/compare.js';
+import {comparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
@@ -1417,7 +1417,10 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.comparePanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'copy' && action.what === 'diff') {
         const panel = this.comparePanel;
-        void this.copyText(unifiedDiff(action.comparison), 'Copied diff').then(note => { if (note && this.comparePanel === panel) { panel.note = note; this.render(); } });
+        const diff = copyableDiff(action.comparison);
+        // The plain diff is copied as is, without the report review: say so when it looks like it holds secrets.
+        const sensitive = scanSensitive(diff, homedir());
+        void this.copyText(diff, 'Copied diff', sensitive.length ? ` · not redacted: ${describeFindings(sensitive)} (r reviews)` : '').then(note => { if (note && this.comparePanel === panel) { panel.note = note; this.render(); } });
       } else if (action?.kind === 'copy') {
         // A comparison report is a report: the same review (exact text, wrapped, redaction) before it is copied.
         this.comparePanel = undefined;
@@ -2932,11 +2935,11 @@ export class TerminalApp {
   }
 
   /** A text copy that is not command output (a diff, a comparison report): the same tool and feedback. */
-  private async copyText(text: string, what: string): Promise<string | undefined> {
+  private async copyText(text: string, what: string, caution = ''): Promise<string | undefined> {
     try { await writeClipboard(text); }
     catch (error) { const note = clipboardFailure(error); this.noteClipboard(note, 'error'); return note; }
     const stats = copyStats(text);
-    const note = `${what} · ${stats.lines.toLocaleString()} line${stats.lines === 1 ? '' : 's'} · ${stats.characters.toLocaleString()} characters`;
+    const note = `${what} · ${stats.lines.toLocaleString()} line${stats.lines === 1 ? '' : 's'} · ${stats.characters.toLocaleString()} characters${caution}`;
     this.noteClipboard(note, 'success');
     return note;
   }
