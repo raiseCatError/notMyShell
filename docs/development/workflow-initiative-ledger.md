@@ -27,6 +27,9 @@ Design and research: [docs/design/terminal-workflow.md](../design/terminal-workf
 | `feature/copy-report` | `../notMyShell-report` | #360 (draft, base #358) | Copy as Report; security fixes below |
 | `feature/compare-output` | `../notMyShell-compare` | #361 (draft, base #360) | Compare output; contains #360 by merge |
 
+| `feature/expressive-activity-vocabulary` | `../notMyShell-activity` | none yet (PR body ready; opening it was held) | #362: Expressive/Classic wording, 663 curated pairs; contains #361 by merge; full suite green |
+| `feature/output-references` | `../notMyShell-references` | none yet | #353: block references menu and failed-command navigation; contains #361 |
+
 Other open PRs (independent, not part of this stack): #347 agent workspace, #349 notice word wrap, #346 mods.
 
 ## Work completed
