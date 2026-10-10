@@ -19,7 +19,7 @@ const root = mkdtempSync(join(tmpdir(), 'nmsh-plugins-'));
 test.after(() => rmSync(root, {recursive: true, force: true}));
 const write = (path: string, content: string) => { mkdirSync(join(path, '..'), {recursive: true}); writeFileSync(path, content); };
 
-/** Two launch identities, each with its own plugins folder, as claude-account1 and claude-account2 are laid out. */
+/** Two launch identities, each with its own plugins folder, as separate accounts are usually laid out. */
 function plugin(account: string, name: string, files: Record<string, string>): string {
   const dir = join(root, account, 'plugins', 'cache', 'market', name, '1.0.0');
   for (const [file, content] of Object.entries(files)) write(join(dir, file), content);
