@@ -7,7 +7,7 @@
  * controls are exercised (set_model, apply_flag_settings), so no settings are written; the account's settings.json is
  * hashed before and after to prove it. Prints shapes and outcomes only, never account identity values.
  *
- * NMSH_PROBE_CONFIG_DIR=~/.claude-account2 node --import=tsx scripts/probes/managed-pickers-live.ts
+ * NMSH_PROBE_CONFIG_DIR=<a logged-in Claude config directory> node --import=tsx scripts/probes/managed-pickers-live.ts
  */
 import {spawnSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
