@@ -49,9 +49,12 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
           const tag = `${mode}${run}`;
           const mark = frontend.mark;
           frontend.pty.write(`${READ[shell](run % 2 === 1)}\r`);
-          await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, `${shell} draws the read prompt`);
-          // zsh and Bash reads are composer-owned: let NMSh see the question before answering it.
-          if (shell !== 'fish') await frontend.waitFor(/Waiting for input|Name: /u, mark);
+          // The typed command echoes "Name: " too, so one occurrence proves nothing: the second is the prompt itself.
+          await until(() => frontend.output.slice(mark).split('Name: ').length > 2, 15_000, `${shell} draws the read prompt`);
+          // zsh and Bash reads are composer-owned: let NMSh see the question before answering it. While a command runs
+          // with no visible question, Enter queues the next command (that is the queue); an answer is only an answer
+          // once the question is open.
+          if (shell !== 'fish') await frontend.waitFor(/[Ww]aiting for input/u, mark);
           frontend.pty.write(`v${tag}\r`);
           if (mode === 'after') await frontend.waitFor(new RegExp(`got=v${tag}[\\s\\S]*Completed`, 'u'), mark);
           frontend.pty.write(`echo NEXT-${tag}\r`);
