@@ -21,8 +21,8 @@ Design and research: [docs/design/terminal-workflow.md](../design/terminal-workf
 | --- | --- | --- | --- |
 | `release/v0.18.0` | `/private/tmp/nmsh-rel-fix` | #345 | base of the stack; CI green |
 | `feature/input-awareness` | `../notMyShell-input-awareness` | #348 | timed-read test fixed (Ubuntu); lapsed-wait start fixed (macOS); CI re-running |
-| `feature/command-queue` | `../notMyShell-command-queue` | draft, base #348 | complete; full verify green when the machine is not saturated |
-| `feature/copy-selection` | `../notMyShell-copy` | draft, base queue | copy selection, picker, settings, sticky controls, Smart folding fix |
+| `feature/command-queue` | `../notMyShell-command-queue` | #357 (draft, base #348) | complete; full verify green when the machine is not saturated |
+| `feature/copy-selection` | `../notMyShell-copy` | #358 (draft, base #357) | copy selection, picker, settings, sticky controls, Smart folding fix |
 
 Other open PRs (independent, not part of this stack): #347 agent workspace, #349 notice word wrap, #346 mods.
 
@@ -57,9 +57,14 @@ Other open PRs (independent, not part of this stack): #347 agent workspace, #349
 - Known flake, still tracked: Fish can lose keys typed within ~1 s after a handed-over `read` returns
   (docs/development/fish-typeahead.md).
 
+## Issues
+
+Epic #359. Slices: #350 folding/copy (fixed in #358), #351 report, #352 compare, #353 references and failure
+navigation, #354 paste batches and clipboard, #355 pins/recipes/queue conditions, #356 Fish type-ahead flake.
+
 ## Next
 
-1. Push the stack, open draft PRs, file the initiative issues (epic + slices).
+1. (done) Stack pushed; draft PRs #357, #358; issues filed.
 2. Phase B: Copy as Report (Markdown/plain, review + optional redaction), Compare output, contextual references,
    error navigation.
 3. Paste batches → queue (`/ps`, syntax-aware splitting), clipboard-change suggestion (opt-in where detection is
