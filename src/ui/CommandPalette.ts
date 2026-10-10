@@ -24,7 +24,10 @@ export type PaletteAction =
   | {kind: 'latest'}
   | {kind: 'toggleDetails'}
   | {kind: 'toggleInspector'}
-  | {kind: 'block'; id: BlockActionId; startId: number};
+  | {kind: 'block'; id: BlockActionId; startId: number}
+  /** An action on one reference found in a block's output; resolved again from the block when it runs. */
+  | {kind: 'reference'; startId: number; refId: string; verb: 'open' | 'copy' | 'stage'}
+  | {kind: 'failure'; direction: 'previous' | 'next'};
 
 export interface PaletteItem {
   id: string;

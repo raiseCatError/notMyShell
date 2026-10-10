@@ -25,6 +25,8 @@ import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {selectOpener} from '../host/desktop.js';
+import {findOutputReferences, referenceFollowUp} from '../output/references.js';
+import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
@@ -2628,7 +2630,95 @@ export class TerminalApp {
   private openPalette(): void {
     if (this.settingsPanelActive) return;
     const record = this.focusedCommandIndex === undefined ? this.output.recent(1) : this.output.recent(this.focusedCommandIndex + 1);
-    this.paletteState = createPalette([...paletteItems(), ...(record ? blockPaletteItems(record) : [])]);
+    this.paletteState = createPalette([...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
+  }
+
+  /** Newest-first indexes of completed commands that did not exit 0 (a nonzero exit or an interrupt is authoritative; output text is not). */
+  private failedBlockIndexes(): number[] {
+    return this.output.view().completed.flatMap((record, index) => record.exitCode !== 0 ? [index] : []);
+  }
+
+  private failureNavigationItems(): PaletteItem[] {
+    const failed = this.failedBlockIndexes();
+    if (!failed.length) return [];
+    const count = `${failed.length} failed command${failed.length === 1 ? '' : 's'} in this transcript`;
+    return [
+      {id: 'failure:previous', label: 'Previous failed command', detail: `Older block that exited nonzero or was interrupted · ${count}`, category: 'Transcript', action: {kind: 'failure', direction: 'previous'}},
+      {id: 'failure:next', label: 'Next failed command', detail: `Newer block that exited nonzero or was interrupted · ${count}`, category: 'Transcript', action: {kind: 'failure', direction: 'next'}},
+    ];
+  }
+
+  /** Focus the previous (older) or next (newer) failed block, found by its command record and brought into view. */
+  private goToFailure(direction: 'previous' | 'next'): void {
+    const failed = this.failedBlockIndexes();
+    const current = this.focusedCommandIndex;
+    const target = direction === 'previous'
+      ? failed.find(index => current === undefined || index > current)
+      : [...failed].reverse().find(index => current !== undefined && index < current);
+    if (target === undefined) {
+      this.output.addFrontendInteraction('/failures', direction === 'previous' ? (failed.length ? 'No older failed command.' : 'No failed command in this transcript.') : (current === undefined ? 'Nothing is focused; use Previous failed command first.' : 'No newer failed command.'), INFO);
+      return;
+    }
+    const record = this.output.view().completed[target];
+    this.focusedLineIndex = undefined;
+    this.focusedActivityId = undefined;
+    this.focusedCommandIndex = target;
+    if (record) this.revealBlock(record.startId);
+  }
+
+  /** Scroll so a block's first row is in view (the same placement find uses for a match). */
+  private revealBlock(startId: number): void {
+    const {columns, rows} = this.dimensions();
+    const wrapped = this.output.wrapped(columns);
+    const row = wrapped.findIndex(item => item.blockStartId === startId);
+    if (row < 0) return;
+    const height = this.planFrame(columns, rows).viewportRows;
+    this.historyViewport.scrollLines(wrapped.length, height, revealStart(row, wrapped.length, height) - this.historyViewport.resolve(wrapped.length, height));
+  }
+
+  private openReferences(record: CompletedCommand): void {
+    const references = findOutputReferences(record);
+    if (!references.length) {
+      this.output.addFrontendInteraction('/references', 'No files, links, commits or devices found in this output.', INFO);
+      return;
+    }
+    this.paletteState = createPalette(referencePaletteItems(record.startId, references));
+  }
+
+  /** One action on one reference, resolved again from its block: nothing here runs a command. */
+  private async runReference(startId: number, refId: string, verb: 'open' | 'copy' | 'stage'): Promise<void> {
+    const say = (message: string, style = INFO) => { this.output.addFrontendInteraction('/references', message, style); this.render(); };
+    const record = this.output.view().completed.find(item => item.startId === startId);
+    const reference = record ? findOutputReferences(record).find(item => item.id === refId) : undefined;
+    if (!record || !reference) return say('That output is no longer available.', ERROR);
+    if (verb === 'copy') {
+      const text = referenceCopyText(reference);
+      try { await writeClipboard(text); this.noteClipboard(`Copied ${reference.kind === 'file' ? 'location' : reference.kind} · ${copyStats(text).characters.toLocaleString()} characters`, 'success'); }
+      catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
+      return;
+    }
+    if (reference.kind === 'file') {
+      const resolved = resolveLocation({path: reference.value, ...(reference.line ? {line: reference.line} : {}), ...(reference.column ? {column: reference.column} : {})}, record.historicalContext?.cwd ?? this.shellCwd);
+      if (!resolved.ok) return say(resolved.reason, ERROR);
+      const adapter = this.hostActions();
+      await this.performHostAction(resolved.kind === 'directory' ? adapter.openDirectory(resolved.location.path) : adapter.openFile(resolved.location), say);
+      return;
+    }
+    if (reference.kind === 'url') {
+      const opener = selectOpener();
+      if (!opener) return say(`No system URL opener is available here. The link is ${reference.value}`);
+      try { spawn(opener, [reference.value], {detached: true, stdio: 'ignore'}).unref(); say(`Opened ${reference.value}.`); } catch { say(`Couldn't open ${reference.value}.`, ERROR); }
+      return;
+    }
+    const argv = referenceFollowUp(reference);
+    if (!argv) return say(reference.kind === 'device' ? `${reference.value} is not ready (${reference.state ?? 'unknown state'}), so there is no follow-up for it.` : 'There is nothing to stage for this.');
+    // The composer is the person's: staged text never replaces what they have typed.
+    if (this.editor.text.trim()) return say('The composer has text. Clear it (or run it) first; nothing was staged.');
+    const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+    this.editor.insert(argv.map(arg => (/^[\w@%+=:,./-]+$/u.test(arg) ? arg : quote(arg))).join(' '));
+    this.clearBlockFocus();
+    this.historyViewport.latest();
+    say('Staged in the composer for you to review. Press Enter to run it.');
   }
 
   private clearBlockFocus(): void {
@@ -2653,6 +2743,7 @@ export class TerminalApp {
     if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
     else if (action === 'copyReport') this.startReport([record], 'markdown');
     else if (action === 'compare') this.openCompare(record);
+    else if (action === 'references') this.openReferences(record);
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -2679,6 +2770,12 @@ export class TerminalApp {
     switch (action.kind) {
       case 'block':
         await this.runBlockAction(action.startId, action.id);
+        break;
+      case 'reference':
+        await this.runReference(action.startId, action.refId, action.verb);
+        break;
+      case 'failure':
+        this.goToFailure(action.direction);
         break;
       case 'slash': {
         const slash = parseSlashCommand(action.command);

@@ -3,8 +3,9 @@ import type {PaletteItem} from './CommandPalette.js';
 import type {WrappedRow} from '../output/viewport.js';
 import {displayWidth} from '../util/text.js';
 import {recordCopyText} from '../clipboard/copySelection.js';
+import {findOutputReferences} from '../output/references.js';
 
-export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain';
+export type BlockActionId = 'copyCommand' | 'copyOutput' | 'copyBoth' | 'copyReport' | 'compare' | 'pager' | 'rerun' | 'edit' | 'fold' | 'explain' | 'references';
 /** One registry for both pointer-opened and keyboard-opened block palettes. */
 export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: string}[] = [
   {id: 'copyCommand', label: 'Copy command', detail: 'Stored plain command'},
@@ -16,12 +17,14 @@ export const BLOCK_ACTIONS: readonly {id: BlockActionId; label: string; detail: 
   {id: 'rerun', label: 'Rerun command', detail: 'Explicitly submit a visible command in the current shell directory'},
   {id: 'edit', label: 'Edit & rerun', detail: 'Put command in composer; Enter executes it'},
   {id: 'fold', label: 'Fold / unfold output', detail: 'Same stored disclosure state as Ctrl+O'},
+  {id: 'references', label: 'Files, links and more…', detail: 'Open or copy the files, links, commits and devices found in this output'},
   {id: 'explain', label: 'Explain failure', detail: "Why it failed, from this block's own output (read-only)"},
 ];
 
 export function blockPaletteItems(record: CompletedCommand): PaletteItem[] {
-  // Explain failure is offered only on failed blocks.
-  return BLOCK_ACTIONS.filter(action => action.id !== 'explain' || (record.exitCode ?? 0) !== 0).map(action => ({id: `block:${record.startId}:${action.id}`, label: action.label,
+  // Explain failure is offered only on failed blocks, and references only when the output has some.
+  const hasReferences = findOutputReferences(record).length > 0;
+  return BLOCK_ACTIONS.filter(action => (action.id !== 'explain' || (record.exitCode ?? 0) !== 0) && (action.id !== 'references' || hasReferences)).map(action => ({id: `block:${record.startId}:${action.id}`, label: action.label,
     detail: action.detail, category: 'Transcript', action: {kind: 'block', id: action.id, startId: record.startId}}));
 }
 
