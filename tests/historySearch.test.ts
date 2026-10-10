@@ -10,7 +10,7 @@ test('/history parses to one history kind with or without a query', () => {
   assert.deepEqual(parseSlashCommand('/history nonexistent-query'), {kind: 'history', query: 'nonexistent-query'});
   assert.equal(parseSlashCommand('/historyx')?.kind, 'unknown');
   assert.deepEqual(parseSlashCommand('/help'), {kind: 'help'});
-  assert.deepEqual(parseSlashCommand('/copy 2'), {kind: 'copy', index: 2});
+  assert.deepEqual(parseSlashCommand('/copy 2'), {kind: 'copy', args: '2'});
   assert.equal(parseSlashCommand('/resume')?.kind, 'resume');
 });
 

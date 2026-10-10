@@ -20,7 +20,7 @@ import {awakeDuration, awakeLabel, awakeStyle, awakeView, edgeAccessoryColumns, 
 import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
 import {homedir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
-import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
+import {blockAffordance, blockControlsLayout, blockPaletteItems, stickyControlsWidth, type BlockActionId, type BlockControls} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
@@ -46,7 +46,9 @@ import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
 import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
-import {renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
+import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
@@ -1384,6 +1386,17 @@ export class TerminalApp {
       void this.handleThemeBridgeKey(key, this.themeBridgePanel);
       return;
     }
+    if (this.copyPicker) {
+      const action = copyPickerKey(this.copyPicker, key);
+      if (action?.kind === 'close') { this.copyPicker = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy') {
+        this.copyPicker = undefined;
+        this.returnFromPanel();
+        void this.copyRecords(action.records, action.includeStatus);
+      }
+      this.render();
+      return;
+    }
     if (this.rowPanel) {
       const action = rowPanelKey(this.rowPanel, key, this.promptConfiguration);
       if (action?.kind === 'close') { this.rowPanel = undefined; this.returnFromPanel(); }
@@ -1770,7 +1783,11 @@ export class TerminalApp {
         // The sticky header paints over the transcript region's first row.
         const sticky = localVisibleIndex === 0 ? this.stickyHeader(wrapped, viewStart) : undefined;
         if (sticky) {
-          // The sticky overlay owns the top row: a click jumps to the block's real header.
+          // The sticky overlay owns the top row: its controls act on that block; elsewhere a click jumps to its header.
+          const controls = key.kind === 'mouseClick' ? this.stickyControls(sticky.startId, columns)?.controls : undefined;
+          const x = key.x ?? 0;
+          if (controls?.copy && x >= controls.copy.column && x <= controls.copy.end) { void this.copyBlock(sticky.startId); return; }
+          if (controls && x >= controls.column) { this.openBlockPalette(sticky.startId); this.render(); return; }
           if (key.kind === 'mouseClick') {
             this.historyViewport.scrollLines(wrapped.length, outputHeight, sticky.targetIndex - viewStart);
             this.hoveredLineIndex = undefined;
@@ -1784,12 +1801,11 @@ export class TerminalApp {
           // A press may start a drag selection; a plain click still acts exactly as before.
           if (key.kind === 'mouseClick' && row && key.y) this.selection = beginSelection(viewStart + localVisibleIndex, key.y);
           if (row) {
-            const affordance = blockAffordance(row, columns);
-            if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex
-              && affordance && (key.x ?? 0) >= affordance.column && row.blockStartId !== undefined) {
-              this.openBlockPalette(row.blockStartId);
-              this.render();
-              return;
+            const affordance = blockAffordance(row, columns, this.controlOptions(row.blockStartId));
+            if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex && affordance && row.blockStartId !== undefined) {
+              const x = key.x ?? 0;
+              if (affordance.copy && x >= affordance.copy.column && x <= affordance.copy.end) { this.selection = undefined; void this.copyBlock(row.blockStartId); return; }
+              if (x >= affordance.column) { this.selection = undefined; this.openBlockPalette(row.blockStartId); this.render(); return; }
             }
             if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
               this.output.toggleExpanded(row.commandIndex);
@@ -2450,7 +2466,8 @@ export class TerminalApp {
       }
       this.render();
     }
-    else if (slash.kind === 'copy') await this.copyRecent(slash.index);
+    else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
+    else if (slash.kind === 'copySettings') { this.panelOrigin = undefined; this.rowPanel = createRowPanel('Copy', '/copy and /cp', ['copyMode', 'copyIncludeStatus', 'copyAutoExpand']); }
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'motion') {
       // The same Motion screen and state as /appearance → Motion.
@@ -2579,10 +2596,13 @@ export class TerminalApp {
     const index = records.findIndex(item => item.startId === startId);
     const record = records[index];
     if (!record) return; // A clear/restore must never act on stale screen coordinates.
-    const payload = blockCopyPayload(record, action);
-    if (payload !== undefined) {
-      try { await writeClipboard(payload); }
-      catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
+    const includeStatus = this.promptConfiguration.copy.includeStatus;
+    if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
+    else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
+    else if (action === 'copyCommand') {
+      // The command text only: completion status never applies here.
+      try { await writeClipboard(record.command); this.noteClipboard(`Copied command · ${copyStats(record.command).characters.toLocaleString()} characters`, 'success'); }
+      catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
     else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
@@ -2780,22 +2800,96 @@ export class TerminalApp {
     this.render();
   }
 
-  private async copyRecent(index: number): Promise<void> {
-    const command = index === 1 ? '/copy' : `/copy ${index}`;
-    const record = this.output.recentShell(index);
-    if (!record) {
-      this.output.addFrontendInteraction(command, `No completed command output at /copy ${index}`, ERROR);
+  /** Whether a block's Copy control currently confirms a copy. */
+  private controlOptions(startId: number | undefined): {copied: boolean; safe: boolean} {
+    const copied = this.copiedBlock;
+    return {copied: Boolean(copied && copied.startId === startId && Date.now() < copied.until), safe: getCurrentGlyphMode() === 'safe'};
+  }
+
+  /** Controls in muted text; a confirmed copy in the success color (words carry it under NO_COLOR). */
+  private styledControls(controls: BlockControls, width?: number): string {
+    const text = width === undefined ? controls.suffix : controls.suffix.slice(-width);
+    return `${SUBTLE}${text.replace(/\[[✓+] Copied\]/u, match => `${SUCCESS}${match}${SUBTLE}`)}${RESET}`;
+  }
+
+  /** The sticky row's controls for a completed block (none for a running one, or when NMSh is busy with a panel). */
+  private stickyControls(startId: number, columns: number): {controls: BlockControls; width: number} | undefined {
+    if (this.running) return undefined;
+    if (!this.output.view().completed.some(record => record.startId === startId)) return undefined;
+    const width = stickyControlsWidth(columns);
+    const controls = width ? blockControlsLayout(columns - width, columns, this.controlOptions(startId)) : undefined;
+    return controls ? {controls, width} : undefined;
+  }
+
+  /** A block's direct Copy: that command's full stored output (folded lines too), with the Copy settings. */
+  private async copyBlock(startId: number): Promise<void> {
+    if (this.running || this.stopped) return;
+    const record = this.output.view().completed.find(item => item.startId === startId);
+    if (!record) return; // A clear or restore must never act on stale coordinates.
+    if (!await this.copyRecords([record], this.promptConfiguration.copy.includeStatus)) return;
+    // Only after the clipboard accepted it: Copy reads "Copied" for a moment, in place.
+    this.copiedBlock = {startId, until: Date.now() + 1600};
+    if (this.copiedBlockTimer) clearTimeout(this.copiedBlockTimer);
+    this.copiedBlockTimer = setTimeout(() => { this.copiedBlock = undefined; this.copiedBlockTimer = undefined; if (!this.stopped) this.render(); }, 1600);
+    this.copiedBlockTimer.unref?.();
+    this.render();
+  }
+
+  /** /copy and /cp: one parser, the configured default, and the same clipboard write as the picker and block Copy. */
+  private async copySlash(command: string, args: string): Promise<void> {
+    const parsed = parseCopyArgs(args);
+    if (!parsed.ok) { this.output.addFrontendInteraction(command.trim(), parsed.error, ERROR); return; }
+    const {selector, status} = parsed.request;
+    const includeStatus = status ?? this.promptConfiguration.copy.includeStatus;
+    if (selector.kind === 'picker' || (selector.kind === 'default' && this.promptConfiguration.copy.mode === 'picker')) {
+      this.panelOrigin = undefined;
+      this.copyPicker = createCopyPicker(this.output.recentShellCommands(), includeStatus);
       return;
     }
-    const payload = serializeCopyPayload(record);
-    // Nothing printed: say so and leave the clipboard as it was (NMSh's status row is not output to copy).
-    if (!payload) { this.output.addFrontendInteraction(command, `Nothing to copy: ${record.command.split('\n')[0]!.slice(0, 80)} printed no output.`, INFO); return; }
-    try {
-      await writeClipboard(payload);
-      this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
-    } catch (error) {
-      this.output.addFrontendInteraction(command, clipboardFailure(error), ERROR);
+    const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
+    if (!resolved.ok) { this.output.addFrontendInteraction(command.trim(), resolved.error, ERROR); return; }
+    await this.copyRecords(resolved.records, includeStatus);
+  }
+
+  /**
+   * The one clipboard write for command output (/copy, /cp, the picker, block Copy and Copy output): the records'
+   * stored output, oldest first, each followed by its recorded completion status when asked. Nothing to copy leaves
+   * the clipboard as it was. Feedback is a brief note above the composer, given only after the write succeeded.
+   */
+  private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string): Promise<boolean> {
+    const payload = [before ?? '', copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
+    if (!payload.trim()) {
+      const what = records.length === 1 ? `${records[0]!.command.split('\n')[0]!.slice(0, 60)} printed no output` : 'the selected commands printed no output';
+      this.noteClipboard(`Nothing to copy: ${what}; the clipboard is unchanged`, 'info');
+      return false;
     }
+    try { await writeClipboard(payload); }
+    catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); return false; }
+    // Folding is presentation and copying reads stored data: only the explicit setting connects them, and only
+    // for the blocks whose text was copied (a silent block copied for nothing stays as it was).
+    if (this.promptConfiguration.copy.autoExpand) {
+      this.output.expandBlocks(records.filter(record => recordCopyText(record, includeStatus)).map(record => record.startId));
+    }
+    this.noteClipboard(copiedNote(records.length, copyStats(payload), includeStatus), 'success');
+    return true;
+  }
+
+  /** One transient clipboard note in the notice slot above the composer (never a transcript line). */
+  private noteClipboard(text: string, tone: 'success' | 'info' | 'error'): void {
+    const ms = tone === 'error' ? 6000 : 2600;
+    this.clipboardNote = {text, tone, until: Date.now() + ms};
+    if (this.clipboardNoteTimer) clearTimeout(this.clipboardNoteTimer);
+    this.clipboardNoteTimer = setTimeout(() => { this.clipboardNote = undefined; this.clipboardNoteTimer = undefined; if (!this.stopped) this.render(); }, ms);
+    this.clipboardNoteTimer.unref?.();
+    this.render();
+  }
+
+  private clipboardRows(columns: number): string[] {
+    const note = this.clipboardNote;
+    if (!note || this.passthrough || Date.now() > note.until) return [];
+    const glyph = note.tone === 'success' ? `${SUCCESS}${GLYPHS.success}` : note.tone === 'error' ? `${ERROR}${GLYPHS.failure}` : `${SUBTLE}·`;
+    // Notes can name a command: drawn as text, never interpreted.
+    return [truncateAnsi(`${glyph}${RESET} ${SECONDARY}${displaySafe(note.text)}${RESET}`, columns)];
   }
 
   private async archiveCurrentPresentation(): Promise<void> {
@@ -3217,7 +3311,8 @@ export class TerminalApp {
     const completedAt = new Date(at);
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
-    const completedRecord = this.output.complete(exitCode);
+    // Never collapse output under the reader: while scrolled back or selecting, the block finishes expanded.
+    const completedRecord = this.output.complete(exitCode, {holdOpen: this.historyViewport.detached || Boolean(this.selection)});
     if (completedRecord) {
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
@@ -3981,7 +4076,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4016,7 +4111,9 @@ export class TerminalApp {
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
     if (this.stripStudio) return renderStripStudio(this.stripStudio, this.promptConfiguration, columns, this.dimensions().rows,
       (configuration, width) => this.statusStripRow(width, configuration));
-    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
+    if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
+    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
+      : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
     if (this.tmuxPanel) return renderTmuxPanel(this.tmuxPanel, columns, this.dimensions().rows);
     if (this.dotfiles) return renderDotfilesPanel(this.dotfiles, columns, this.dimensions().rows);
@@ -4861,6 +4958,13 @@ export class TerminalApp {
   // ---- Status strip, /configure, /tmux, /integrations -------------------------------
 
   private rowPanel?: RowPanelState;
+  /** /copy as an Interactive Picker (Settings → Copy, or /copy ui). */
+  private copyPicker?: CopyPickerState;
+  private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
+  private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
+  /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */
+  private copiedBlock?: {startId: number; until: number};
+  private copiedBlockTimer?: ReturnType<typeof setTimeout>;
   private configureList?: ConfigureListState;
   private tmuxPanel?: TmuxPanelState;
   /** The include plan shown in the tmux review, applied exactly if confirmed. */
@@ -6567,7 +6671,7 @@ export class TerminalApp {
     // The agent shelf shares this chrome slot (and the screen plan's rows): hidden at rest, never a permanent row.
     const shelf = this.shelfRow(columns);
     const now = Date.now();
-    const rows = [...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
+    const rows = [...this.clipboardRows(columns), ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
     return shelf ? [...rows, shelf] : rows;
   }
 
@@ -8589,6 +8693,9 @@ export class TerminalApp {
       for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
     });
     this.visibleBlocks = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.blockStartId);
+    const sticky = this.stickyHeader(wrapped, viewStart);
+    // While the block's header is scrolled away, its controls ride on the sticky row instead: never both.
+    const stickyControls = sticky ? this.stickyControls(sticky.startId, columns) : undefined;
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
       if (isRowSelected(this.selection, viewStart + offset)) return `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
       const marked = findSpans.get(viewStart + offset);
@@ -8596,11 +8703,13 @@ export class TerminalApp {
         marked.active ? '' : '\u001b[4m');
       const ansi = presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction);
       const focused = this.focusedCommandIndex !== undefined && row.lineIndex === this.output.recent(this.focusedCommandIndex + 1)?.startId;
-      const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) ? blockAffordance(row, columns) : undefined;
-      return controls ? `${ansi}${RESET}${controls.suffix}` : ansi;
+      const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) && !(stickyControls && row.blockStartId === sticky?.startId)
+        ? blockAffordance(row, columns, this.controlOptions(row.blockStartId)) : undefined;
+      return controls ? `${ansi}${RESET}${this.styledControls(controls)}` : ansi;
     });
-    const sticky = this.stickyHeader(wrapped, viewStart);
-    const stickyRow = sticky && this.output.presentSticky(sticky.startId, columns);
+    const stickyRow = sticky && (stickyControls
+      ? this.output.presentSticky(sticky.startId, columns, this.styledControls(stickyControls.controls, stickyControls.width), stickyControls.width)
+      : this.output.presentSticky(sticky.startId, columns));
     if (stickyRow && visible.length > 0) visible[0] = stickyRow;
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;

@@ -71,6 +71,8 @@ export interface TranscriptView {
   welcome?: WelcomeSnapshot;
   /** Structural block ownership from command records (never from text). */
   ownerOf: (lineIndex: number) => number | undefined;
+  /** Line ids worth keeping in view inside a collapsed block's hidden middle (failures, diagnostics). */
+  foldHighlights?: (record: CompletedCommand) => readonly number[];
 }
 
 /** Transient interaction state the app tracks; the presenter decides how it looks. */
@@ -204,7 +206,11 @@ export class TranscriptPresenter {
                 }
               };
               pushLines(cmd.outputStartId, cmd.outputStartId + head);
-              const plain = foldHint(`${hiddenLines - head - tail} lines hidden · Ctrl+O`, '›', width);
+              // The block's important lines stay in view, in order, after the head (real output rows, unchanged).
+              const highlights = head ? view.foldHighlights?.(cmd) ?? [] : [];
+              for (const line of highlights) pushLines(line, line + 1);
+              const shown = highlights.length ? ` · ${highlights.length} important line${highlights.length === 1 ? '' : 's'} shown` : '';
+              const plain = foldHint(`${hiddenLines - head - tail - highlights.length} lines hidden${shown} · Ctrl+O`, '›', width);
               const ansi = `${foreground(UI_COLORS.secondary)}${plain}\u001B[0m`;
               result.push({ansi, plain, lineIndex: cmd.outputStartId, isFoldHint: true, commandIndex});
               pushLines(cmd.endId - tail, cmd.endId);
@@ -294,12 +300,20 @@ export class TranscriptPresenter {
     return `${' '.repeat(indent)}${COMMAND_SURFACE}${row.replaceAll(RESET, `${RESET}${COMMAND_SURFACE}`)}\u001B[K${RESET}`;
   }
 
-  /** The finished sticky row for a block, aligned like the block's command rows. */
-  presentSticky(view: TranscriptView, startId: number, width: number): string | undefined {
-    const column = this.layout === 'chat' ? chatColumn(width) : undefined;
-    const row = this.stickyHeaderRow(view, startId, column ?? width);
+  /**
+   * The finished sticky row for a block, aligned like the block's command rows. `trailing` (the block's controls,
+   * `trailingWidth` cells, ending in a reset) sits at the right edge on the same surface; the header is cut to leave
+   * room for it, so neither covers the other.
+   */
+  presentSticky(view: TranscriptView, startId: number, width: number, trailing = '', trailingWidth = 0): string | undefined {
+    const available = Math.max(0, width - trailingWidth);
+    const chat = this.layout === 'chat' ? chatColumn(width) : undefined;
+    const column = chat === undefined ? undefined : Math.min(chat, available);
+    const row = this.stickyHeaderRow(view, startId, column ?? available);
     if (row === undefined) return undefined;
-    return this.stickyHeaderSurface(row, column === undefined ? 0 : Math.max(0, width - displayWidth(row)));
+    const indent = column === undefined ? 0 : Math.max(0, available - displayWidth(row));
+    if (!trailingWidth) return this.stickyHeaderSurface(row, indent);
+    return this.stickyHeaderSurface(`${row}${' '.repeat(Math.max(0, available - indent - displayWidth(row)))}${trailing}`, indent);
   }
 
   /** Final ANSI for a visible row: live shimmer, command surface, hover and focus treatment. */
