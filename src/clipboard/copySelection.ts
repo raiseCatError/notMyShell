@@ -1,4 +1,5 @@
 import type {CompletedCommand} from '../output/OutputBuffer.js';
+import {parseReportFlag, type ReportFormat} from './report.js';
 
 /**
  * Which completed commands /copy takes, by recency (1 is the latest), and whether NMSh's completion status follows
@@ -14,6 +15,7 @@ import type {CompletedCommand} from '../output/OutputBuffer.js';
  * - `/copy 1,3,5`    those outputs; items may be ranges (`1,3-5`)
  * - `--status` / `--no-status` override the "Include completion status" setting for this copy only. Flags always
  *   start with two dashes, so they never read as a negative count.
+ * - `--report` (Markdown) or `--report=plain`: the selection as a structured report (see report.ts).
  * `/cp` is the same command: it reaches this parser with the same arguments.
  */
 export const COPY_MAX_INDEX = 999;
@@ -30,17 +32,23 @@ export interface CopyRequest {
   selector: CopySelector;
   /** An explicit --status / --no-status; undefined follows the setting. */
   status?: boolean;
+  /** Copy as a report in this format instead of plain output. */
+  report?: ReportFormat;
 }
 
 export type CopyArgs = {ok: true; request: CopyRequest} | {ok: false; error: string};
 
-const USAGE = 'Use /copy, /copy latest, /copy ui, /copy N, /copy -N, /copy A-B or /copy 1,3-5, optionally with --status or --no-status.';
+const USAGE = 'Use /copy, /copy latest, /copy ui, /copy N, /copy -N, /copy A-B or /copy 1,3-5, optionally with --status, --no-status or --report[=plain].';
 
 /** The text after `/copy`. Nothing is guessed: anything unrecognised is an error that names the usage. */
 export function parseCopyArgs(text: string): CopyArgs {
   let status: boolean | undefined;
+  let report: ReportFormat | undefined;
   const selectors: string[] = [];
   for (const token of text.trim().split(/\s+/u).filter(Boolean)) {
+    const format = parseReportFlag(token);
+    if (format === 'invalid') return {ok: false, error: `${token}: a report is --report (Markdown) or --report=plain.`};
+    if (format) { report = format; continue; }
     if (token === '--status' || token === '--no-status') {
       const value = token === '--status';
       if (status !== undefined && status !== value) return {ok: false, error: 'Use either --status or --no-status, not both.'};
@@ -49,7 +57,8 @@ export function parseCopyArgs(text: string): CopyArgs {
     else selectors.push(token);
   }
   if (selectors.length > 1) return {ok: false, error: `One selection at a time (write lists with commas: /copy 1,3,5). ${USAGE}`};
-  const withStatus = (selector: CopySelector): CopyArgs => ({ok: true, request: {selector, ...(status === undefined ? {} : {status})}});
+  if (report && status !== undefined) return {ok: false, error: 'A report always includes each command\'s status; leave out --status and --no-status.'};
+  const withStatus = (selector: CopySelector): CopyArgs => ({ok: true, request: {selector, ...(status === undefined ? {} : {status}), ...(report ? {report} : {})}});
   const selector = selectors[0];
   if (selector === undefined) return withStatus({kind: 'default'});
   if (selector === 'ui') return withStatus({kind: 'picker'});

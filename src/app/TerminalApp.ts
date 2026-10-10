@@ -18,7 +18,7 @@ import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.
 import {detectBackend, keepAwakePath, KeepAwakeController, type KeepAwakeRecord} from '../keepAwake/keepAwake.js';
 import {awakeDuration, awakeLabel, awakeStyle, awakeView, edgeAccessoryColumns, edgeFits, placeOnSaver, renderComposerEdge, resolveAccessorySlot, sliceAnsiCells} from '../keepAwake/presentation.js';
 import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
-import {homedir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockControlsLayout, blockPaletteItems, stickyControlsWidth, type BlockActionId, type BlockControls} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
@@ -49,6 +49,9 @@ import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeB
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
+import {DEFAULT_REPORT_OPTIONS, type ReportFormat} from '../clipboard/report.js';
+import {applyReportEdit, createReportReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
+import {configuredEditor} from '../host/HostActions.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
@@ -89,7 +92,7 @@ import {
   SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {accessSync, appendFileSync, constants, existsSync, readFileSync, realpathSync, rmSync, statSync} from 'node:fs';
+import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -1388,12 +1391,24 @@ export class TerminalApp {
     }
     if (this.copyPicker) {
       const action = copyPickerKey(this.copyPicker, key);
-      if (action?.kind === 'close') { this.copyPicker = undefined; this.returnFromPanel(); }
-      else if (action?.kind === 'copy') {
+      const report = this.copyPickerReport;
+      if (action?.kind === 'close') { this.copyPicker = undefined; this.copyPickerReport = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy' || action?.kind === 'report') {
         this.copyPicker = undefined;
+        this.copyPickerReport = undefined;
         this.returnFromPanel();
-        void this.copyRecords(action.records, action.includeStatus);
+        if (action.kind === 'report' || report) this.startReport(action.records, report ?? 'markdown');
+        else void this.copyRecords(action.records, action.includeStatus);
       }
+      this.render();
+      return;
+    }
+    if (this.reportReview) {
+      const action = reportReviewKey(this.reportReview, key, this.dimensions().rows - 4);
+      const review = this.reportReview;
+      if (action?.kind === 'close') { this.reportReview = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy') { this.reportReview = undefined; this.returnFromPanel(); void this.copyReportText(action.text, review.records); }
+      else if (action?.kind === 'edit') void this.editReport(review);
       this.render();
       return;
     }
@@ -2598,6 +2613,7 @@ export class TerminalApp {
     if (!record) return; // A clear/restore must never act on stale screen coordinates.
     const includeStatus = this.promptConfiguration.copy.includeStatus;
     if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
+    else if (action === 'copyReport') this.startReport([record], 'markdown');
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -2835,19 +2851,58 @@ export class TerminalApp {
     this.render();
   }
 
+  /**
+   * Copy as Report. A report is made to be shared, and pattern-based redaction cannot promise to catch everything,
+   * so every report goes through its review (Enter copies): it never reaches the clipboard unseen. Oldest first.
+   */
+  private startReport(records: readonly CompletedCommand[], format: ReportFormat): void {
+    this.panelOrigin = undefined;
+    this.reportReview = createReportReview(records, {...DEFAULT_REPORT_OPTIONS, format, home: homedir()}, Boolean(configuredEditor(process.env)));
+    this.render();
+  }
+
+  /** The report's clipboard write: the same tool, feedback and Auto-expand rule as every other copy. */
+  private async copyReportText(text: string, records: readonly CompletedCommand[]): Promise<void> {
+    try { await writeClipboard(text); }
+    catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); return; }
+    if (this.promptConfiguration.copy.autoExpand) this.output.expandBlocks(records.filter(record => record.output.trim()).map(record => record.startId));
+    const stats = copyStats(text);
+    this.noteClipboard(`Copied report · ${records.length} command${records.length === 1 ? '' : 's'} · ${stats.characters.toLocaleString()} characters`, 'success');
+  }
+
+  /** e in the report review: the text in your editor (a private temporary file), back into the review when it exits. */
+  private async editReport(review: ReportReviewState): Promise<void> {
+    const editor = configuredEditor(process.env);
+    if (!editor || !this.hostTerminalFree()) return;
+    const directory = mkdtempSync(join(tmpdir(), 'nmsh-report-'));
+    const file = join(directory, review.options.format === 'markdown' ? 'report.md' : 'report.txt');
+    try {
+      writeFileSync(file, review.text, {mode: 0o600});
+      const code = await this.withHostTerminal(() => new Promise<number | null>(done => {
+        const child = spawn(editor[0]!, [...editor.slice(1), file], {stdio: 'inherit'});
+        child.once('error', () => done(null));
+        child.once('close', exit => done(exit));
+      }));
+      if (code === 0 && this.reportReview === review) applyReportEdit(review, readFileSync(file, 'utf8'));
+    } catch { /* The review keeps the text it had. */ }
+    finally { rmSync(directory, {recursive: true, force: true}); this.render(); }
+  }
+
   /** /copy and /cp: one parser, the configured default, and the same clipboard write as the picker and block Copy. */
   private async copySlash(command: string, args: string): Promise<void> {
     const parsed = parseCopyArgs(args);
     if (!parsed.ok) { this.output.addFrontendInteraction(command.trim(), parsed.error, ERROR); return; }
-    const {selector, status} = parsed.request;
+    const {selector, status, report} = parsed.request;
     const includeStatus = status ?? this.promptConfiguration.copy.includeStatus;
     if (selector.kind === 'picker' || (selector.kind === 'default' && this.promptConfiguration.copy.mode === 'picker')) {
       this.panelOrigin = undefined;
       this.copyPicker = createCopyPicker(this.output.recentShellCommands(), includeStatus);
+      this.copyPickerReport = report;
       return;
     }
     const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
     if (!resolved.ok) { this.output.addFrontendInteraction(command.trim(), resolved.error, ERROR); return; }
+    if (report) { this.startReport(resolved.records, report); return; }
     await this.copyRecords(resolved.records, includeStatus);
   }
 
@@ -4076,7 +4131,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4112,6 +4167,7 @@ export class TerminalApp {
     if (this.stripStudio) return renderStripStudio(this.stripStudio, this.promptConfiguration, columns, this.dimensions().rows,
       (configuration, width) => this.statusStripRow(width, configuration));
     if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
+    if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
       : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
@@ -4960,6 +5016,10 @@ export class TerminalApp {
   private rowPanel?: RowPanelState;
   /** /copy as an Interactive Picker (Settings → Copy, or /copy ui). */
   private copyPicker?: CopyPickerState;
+  /** /copy picks headed for a report (`/copy ui --report`). */
+  private copyPickerReport?: ReportFormat;
+  /** The review before a report is copied. */
+  private reportReview?: ReportReviewState;
   private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
   private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
   /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */
