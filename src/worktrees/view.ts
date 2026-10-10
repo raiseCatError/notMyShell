@@ -1,3 +1,4 @@
+import {renderActionRow} from '../ui/actionControls.js';
 import {colorEscape} from '../chroma/escape.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import type {GlyphMode} from '../ui/glyphs.js';
@@ -111,8 +112,12 @@ export function renderWorktreeView(view: WorktreeView, options: RenderOptions): 
   if (state.review) {
     const title = state.review.kind === 'remove' ? 'Remove worktree?' : 'Create worktree?';
     const body = describePlan(state.review.plan, path => displayPath(path, options.home)).map(line => fit(line, width, safe));
-    const controls = fit(`Enter confirm${dot}Esc cancel`, width, safe);
-    return [paint(bold + color(UI_COLORS.primary), fit(title, width, safe)), '', ...body, '', controls].slice(0, Math.max(1, options.rows));
+    // Removal is the destructive one: its mark ("!") says so without color. The keys stay Enter and Esc.
+    const controls = renderActionRow([
+      {id: 'Action.Confirm', label: state.review.kind === 'remove' ? 'Remove' : 'Create', state: state.review.kind === 'remove' ? 'destructiveFocused' : 'focused', key: 'Enter', essential: true},
+      {id: 'Action.Cancel', label: 'Cancel', state: 'default', key: 'Esc', essential: true},
+    ], {columns: width, safe, keys: true, color: options.level !== 'none'}).rows;
+    return [paint(bold + color(UI_COLORS.primary), fit(title, width, safe)), '', ...body, '', ...controls].slice(0, Math.max(1, options.rows));
   }
 
   const budget = Math.max(0, options.rows - header.length - footer.length - 1);

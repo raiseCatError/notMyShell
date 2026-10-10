@@ -159,7 +159,7 @@ test('controller: discovery, stable selection across refresh, local search, keys
     assert.equal(controller.state.review?.kind, 'remove');
     const preview = renderWorktreeView(buildWorktreeView(controller), {columns: 80, rows: 30, glyphs: 'safe', level: 'none'}).join('\n');
     assert.match(preview, /Remove worktree\?/u);
-    assert.match(preview, /Enter confirm - Esc cancel/u);
+    assert.match(preview, /\[>!Remove<\] Enter \[ Cancel \] Esc/u, 'removal is the destructive control, and the keys stay visible');
     await controller.handleKey({kind: 'escape'});
     assert.equal(controller.state.review, undefined);
     await controller.handleKey({kind: 'text', value: 'x'});
