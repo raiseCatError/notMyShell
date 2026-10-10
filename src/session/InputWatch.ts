@@ -67,6 +67,15 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   private request?: InputRequest;
   private waitedMs = 0;
   private waits = 0;
+  /**
+   * Changes with every output and every input: one prompt is one epoch. Evidence that lapses and returns within an
+   * epoch (a resize waking the program for a moment) continues the same prompt; it is never counted twice.
+   */
+  private epoch = 0;
+  private requestEpoch = -1;
+  private countedEpoch = -1;
+  /** When the last wait ended: a new wait never starts earlier, so no time is counted twice. */
+  private lastWaitEnd = 0;
   private lastActivity = 0;
   private lastOutput = 0;
   /** Bumped by every stream event; a probe that started before the latest event is stale. */
@@ -100,6 +109,8 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.running = {command, since: at};
     this.waitedMs = 0;
     this.waits = 0;
+    this.epoch += 1;
+    this.lastWaitEnd = 0;
     this.line.reset();
     this.screen.reset();
     this.previous.clear();
@@ -114,6 +125,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.screen.push(data);
     this.line.push(data);
     this.lastOutput = at;
+    this.epoch += 1;
     // Output after the prompt: the program moved on (or asks again, which the next look sees).
     if (this.request) this.closeWait(at, true);
     this.touch(at);
@@ -124,6 +136,7 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     if (!this.running) return;
     const request = this.request;
     if (request && (request.mode === 'key' || /[\r\n\u0003\u0004\u001a]/u.test(data))) this.closeWait(at, true);
+    this.epoch += 1;
     this.touch(at);
   }
 
@@ -150,7 +163,8 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     if (!request) return;
     this.request = undefined;
     this.waitedMs += Math.max(0, at - request.since);
-    this.waits += 1;
+    this.lastWaitEnd = Math.max(this.lastWaitEnd, at);
+    if (this.requestEpoch !== this.countedEpoch) { this.waits += 1; this.countedEpoch = this.requestEpoch; }
     if (emit) this.emit('change', this.state);
   }
 
@@ -205,10 +219,11 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
       return;
     }
     const program = sample.foreground.find(item => item.command)?.command;
-    const request: InputRequest = {since: current?.since ?? Math.max(this.running.since, this.lastOutput), confidence: next.confidence, mode: next.mode,
+    const request: InputRequest = {since: current?.since ?? Math.max(this.running.since, this.lastOutput, this.lastWaitEnd), confidence: next.confidence, mode: next.mode,
       ...(promptText(this.line.line) ? {prompt: promptText(this.line.line)} : {}), ...(program ? {program: program.slice(0, 64)} : {})};
     if (current && current.confidence === request.confidence && current.mode === request.mode && current.prompt === request.prompt
       && current.program === request.program) return;
+    if (!current) this.requestEpoch = this.epoch;
     this.request = request;
     this.emit('change', this.state);
   }

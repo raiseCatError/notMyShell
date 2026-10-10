@@ -302,6 +302,34 @@ test('watch: evidence that disappears without input or output (a timed-out read)
   assert.notEqual(h.watch.state.request?.confidence, 'confirmed');
 });
 
+test('watch: a prompt whose evidence lapses for a moment (a resize waking the program) is one prompt, its time counted once', async () => {
+  const h = harness('python3 askyn.py');
+  const asked = h.at();
+  h.watch.onOutput('First question. Fix<y>? ', asked);
+  h.set({modes: keyModes, foreground: fg('S+', 10, 'python3')});
+  await h.advance(5000);
+  assert.equal(h.watch.state.request?.since, asked);
+  // Reattaching resizes the PTY: the program wakes for SIGWINCH and one look sees it running.
+  h.set({modes: keyModes, foreground: fg('R+', 40, 'python3')});
+  await h.advance(3000);
+  assert.equal(h.watch.state.request, undefined);
+  const lapsed = h.watch.state.timing.waitedMs;
+  h.set({modes: keyModes, foreground: fg('S+', 40, 'python3')});
+  await h.advance(3000);
+  const reopened = h.watch.state.request;
+  assert.ok(reopened);
+  assert.ok(reopened.since >= asked + lapsed, 'the reopened wait starts where the last one ended, never at the old prompt');
+  h.watch.onInput('y', h.at());
+  h.watch.onOutput('yes\r\nSecond question. Fix<y>? ', h.at());
+  h.set({modes: keyModes, foreground: fg('S+', 41, 'python3')});
+  await h.advance(300);
+  h.watch.onInput('n', h.at());
+  const elapsed = h.at() - asked;
+  const {waitedMs, waits} = h.watch.state.timing;
+  assert.equal(waits, 2, 'two questions, two prompts');
+  assert.ok(waitedMs <= elapsed, `waiting (${waitedMs} ms) never exceeds the time since the first question (${elapsed} ms)`);
+});
+
 // ------------------------------------------------------------------ protocol, notices, surfaces
 
 test('protocol: input-state round-trips; unknown values are dropped, never guessed; hello features gate new values', () => {

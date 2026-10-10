@@ -16,6 +16,12 @@ const bash = ['/opt/homebrew/bin/bash', '/usr/local/bin/bash', '/usr/bin/bash', 
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 const python = spawnSync('python3', ['-c', 'import termios'], {encoding: 'utf8'}).status === 0;
 const supported = process.platform === 'darwin' || process.platform === 'linux';
+/**
+ * What each platform can know (docs/design/input-awareness.md): Linux's kernel confirms an ordinary line read (◆),
+ * macOS can only infer it (◇ Probably). The foreground program is named as the platform reports it.
+ */
+const LINE_WAIT = process.platform === 'linux' ? '◆ Waiting for input' : '◇ Probably waiting for input';
+const PYTHON = process.platform === 'linux' ? 'python3' : 'Python';
 
 type Shell = 'zsh' | 'bash' | 'fish';
 
@@ -42,7 +48,7 @@ for (const shell of ['zsh', 'bash'] as const) {
       // An ordinary line: the evidence is a question left open while the shell idles, so NMSh says "probably".
       let mark = frontend.mark;
       frontend.pty.write(`${shell === 'zsh' ? "read 'x?Continue? [y/N] '" : "read -p 'Continue? [y/N] ' x"}; echo got=$x\r`);
-      await frontend.waitFor(/◇ Probably waiting for input · (?:zsh|bash)[\s\S]*Continue\? \[y\/N\]/u, mark);
+      await frontend.waitFor(new RegExp(`${LINE_WAIT} · (?:zsh|bash)[\\s\\S]*Continue\\? \\[y/N\\]`, 'u'), mark);
       // A considered answer (waits under a second are not worth a completion fact).
       await pause(1200);
       frontend.pty.write('y\r');
@@ -120,8 +126,8 @@ test('live: an e2fsck-style yes/no session: each key answers one question, Enter
     const mark = frontend.mark;
     const started = Date.now();
     frontend.pty.write(`python3 ${ASKYN} 'Padding at end of inode bitmap is not set. Fix<y>? ' 'Inode 12 ref count is 2, should be 1. Fix<y>? ' 'Free blocks count wrong. Fix<y>? '\r`);
-    await frontend.waitFor(/◆ Waiting for input · Python[\s\S]*Padding at end of inode bitmap is not set\. Fix<y>\?  ·  each key goes straight to Python/u, mark);
-    assert.match(drawn(frontend, mark), /Keys go straight to Python/u, 'the composer says where typing goes');
+    await frontend.waitFor(new RegExp(`◆ Waiting for input · ${PYTHON}[\\s\\S]*Padding at end of inode bitmap is not set\\. Fix<y>\\?  ·  each key goes straight to ${PYTHON}`, 'u'), mark);
+    assert.match(drawn(frontend, mark), new RegExp(`Keys go straight to ${PYTHON}`, 'u'), 'the composer says where typing goes');
     await pause(1200);
     frontend.pty.write('n');
     await frontend.waitFor(/Inode 12 ref count is 2, should be 1\. Fix<y>\?  ·  each key/u, mark);
@@ -221,7 +227,7 @@ test('live: a reply typed for a command that finishes first is discarded, never 
     const marker = join(sandbox.home, 'must-not-exist');
     const mark = frontend.mark;
     frontend.pty.write(`read -t 4 'x?Quick? ' || echo TIMED-OUT\r`);
-    await frontend.waitFor(/Probably waiting for input/u, mark);
+    await frontend.waitFor(new RegExp(LINE_WAIT, 'u'), mark);
     frontend.pty.write(`touch ${marker}`);
     await frontend.waitFor(/reply was discarded, not run/u, mark, 20_000);
     frontend.pty.write('\r');
