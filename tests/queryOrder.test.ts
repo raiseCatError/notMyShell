@@ -134,7 +134,10 @@ test('fish\'s read is answered like its prompt: its queries never reach the host
       assert.ok(Date.now() - started < 3000, `read answered promptly (${Date.now() - started} ms)`);
     }
   } finally {
+    // Fish may still be writing its history as it exits: wait for the exit, then remove the home.
+    const exited = once(shell, 'exit');
     shell.kill();
-    rmSync(home, {recursive: true, force: true});
+    await Promise.race([exited, new Promise(done => setTimeout(done, 5000))]);
+    rmSync(home, {recursive: true, force: true, maxRetries: 10, retryDelay: 50});
   }
 });
