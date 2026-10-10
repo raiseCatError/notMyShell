@@ -76,6 +76,11 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   private countedEpoch = -1;
   /** When the last wait ended: a new wait never starts earlier, so no time is counted twice. */
   private lastWaitEnd = 0;
+  /**
+   * The wait that just closed without output or input (evidence lapsed), and what closing it added. If the evidence
+   * returns in the same epoch it is the same prompt: it resumes with its own start, and that time is taken back.
+   */
+  private lapsed?: {request: InputRequest; epoch: number; addedMs: number; previousEnd: number};
   private lastActivity = 0;
   private lastOutput = 0;
   /** Bumped by every stream event; a probe that started before the latest event is stale. */
@@ -158,11 +163,14 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     this.removeAllListeners();
   }
 
-  private closeWait(at: number, emit: boolean): void {
+  private closeWait(at: number, emit: boolean, lapse = false): void {
     const request = this.request;
+    this.lapsed = undefined;
     if (!request) return;
     this.request = undefined;
-    this.waitedMs += Math.max(0, at - request.since);
+    const addedMs = Math.max(0, at - request.since);
+    if (lapse) this.lapsed = {request, epoch: this.epoch, addedMs, previousEnd: this.lastWaitEnd};
+    this.waitedMs += addedMs;
     this.lastWaitEnd = Math.max(this.lastWaitEnd, at);
     if (this.requestEpoch !== this.countedEpoch) { this.waits += 1; this.countedEpoch = this.requestEpoch; }
     if (emit) this.emit('change', this.state);
@@ -215,11 +223,18 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
     if (!next) {
       // The evidence went away without input or output (a timed-out read, a restored terminal): the wait ended no
       // later than now.
-      if (current) this.closeWait(now, true);
+      if (current) this.closeWait(now, true, true);
       return;
     }
+    // The same prompt after a lapse (nothing was written or typed since): it keeps its start, counted once.
+    const resumed = !current && this.lapsed && this.lapsed.epoch === this.epoch ? this.lapsed : undefined;
+    if (resumed) {
+      this.waitedMs = Math.max(0, this.waitedMs - resumed.addedMs);
+      this.lastWaitEnd = resumed.previousEnd;
+    }
+    this.lapsed = undefined;
     const program = sample.foreground.find(item => item.command)?.command;
-    const request: InputRequest = {since: current?.since ?? Math.max(this.running.since, this.lastOutput, this.lastWaitEnd), confidence: next.confidence, mode: next.mode,
+    const request: InputRequest = {since: current?.since ?? resumed?.request.since ?? Math.max(this.running.since, this.lastOutput, this.lastWaitEnd), confidence: next.confidence, mode: next.mode,
       ...(promptText(this.line.line) ? {prompt: promptText(this.line.line)} : {}), ...(program ? {program: program.slice(0, 64)} : {})};
     if (current && current.confidence === request.confidence && current.mode === request.mode && current.prompt === request.prompt
       && current.program === request.program) return;

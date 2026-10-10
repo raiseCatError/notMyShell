@@ -316,12 +316,13 @@ test('watch: a prompt whose evidence lapses for a moment (a resize waking the pr
   h.set({modes: keyModes, foreground: fg('R+', 40, 'python3')});
   await h.advance(3000);
   assert.equal(h.watch.state.request, undefined);
-  const lapsed = h.watch.state.timing.waitedMs;
+  assert.ok(h.watch.state.timing.waitedMs > 0, 'closing counted the time so far');
   h.set({modes: keyModes, foreground: fg('S+', 40, 'python3')});
   await h.advance(3000);
   const reopened = h.watch.state.request;
   assert.ok(reopened);
-  assert.ok(reopened.since >= asked + lapsed, 'the reopened wait starts where the last one ended, never at the old prompt');
+  assert.equal(reopened.since, asked, 'the same prompt: it keeps its own start (what other windows and /sessions show)');
+  assert.equal(h.watch.state.timing.waitedMs, 0, 'resuming took that back: the open wait counts it once, when it ends');
   h.watch.onInput('y', h.at());
   h.watch.onOutput('yes\r\nSecond question. Fix<y>? ', h.at());
   h.set({modes: keyModes, foreground: fg('S+', 41, 'python3')});
