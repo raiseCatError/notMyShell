@@ -24,7 +24,7 @@ test('zsh discovery accepts executable symlinks and Unicode/spaces; rejects miss
 });
 
 test('Linux runtime prefers private absolute XDG runtime; unsafe, relative, symlink and long paths fall back', () => {
-  const root = mkdtempSync('/tmp/nr-'); chmodSync(root, 0o700);
+  const root = mkdtempSync(join(tmpdir(), 'nr-')); chmodSync(root, 0o700);
   try {
     const selected = defaultRuntimeDir({XDG_RUNTIME_DIR: root}, 'linux');
     assert.equal(selected, join(root, 'nmsh'));

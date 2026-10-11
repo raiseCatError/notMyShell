@@ -1189,7 +1189,7 @@ export class TerminalApp {
 
   private logEditorKeyInput(data: string): void {
     const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
+    appendFileSync(join(tmpdir(), 'nmsh-key-debug.log'), `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
   }
 
   private readonly onInput = (data: string): void => {
