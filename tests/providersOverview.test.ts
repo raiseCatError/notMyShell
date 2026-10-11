@@ -1,4 +1,7 @@
 import test from 'node:test';
+import {mkdtempSync, writeFileSync, rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {delimiter, join} from 'node:path';
 import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
@@ -37,7 +40,18 @@ test('/providers overview lists every family inline; modern status words; select
   assert.match(shown, /Atuin\s+✓ Selected · fallback → NMSh Native/u);
 });
 
-test('/providers keys: inline expand, select at once, inline install confirm defaulting No, Esc collapses first', () => {
+test('/providers keys: inline expand, select at once, inline install confirm defaulting No, Esc collapses first', t => {
+  // Test an available curated installer without depending on host Homebrew.
+  // Key handling must only open the review, never execute this fixture.
+  const root = mkdtempSync(join(tmpdir(), 'provider-installer-'));
+  const previousPath = process.env.PATH;
+  t.after(() => {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+    rmSync(root, {recursive: true, force: true});
+  });
+  writeFileSync(join(root, 'brew'), '#!/bin/sh\nexit 99\n', {mode: 0o700});
+  process.env.PATH = [root, previousPath].filter(Boolean).join(delimiter);
   const statuses = new Map<string, ProviderStatus>([['fzf', {state: 'installed', binary: '/x/fzf'}], ['television', {state: 'missing'}]]);
   const f = {configuration: config(), statuses};
   const state = createProvidersOverview();
