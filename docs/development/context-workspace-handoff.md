@@ -26,10 +26,10 @@ only; nothing depends on them.
 | #373 | #364 | `feature/project-build-module` | #372 | `029fac4` | one `build` module: Bazel, Gradle, Maven, CMake, Meson, Make |
 | #374 | #364 | `feature/vcs-hg-jj` | `release/v0.18.0` | `d7d3488` | Mercurial bookmark/branch, Jujutsu repository state |
 | #369 | #336 | `feature/action-controls` | `release/v0.18.0` | `85ab930` | shared action-control renderer; narrow-width fixes |
-| #375 | #330 | `feature/workspace-foundation` | `release/v0.18.0` | `1740f4e` | column plan, regional focus, semantic bindings, resource model |
-| #376 | #331, #333 | `feature/workspace-sidebar` | #375 | `04764c9` | Workspace Sidebar, tmux discovery and navigation, worktree/manager sections |
-| #377 | #332 | `feature/workspace-panel` | #375 | `fcad006` | detail panel: resource, worktree, diff, fact details |
-| #378 | #335 | `feature/semantic-keymap` | #375 | `55bf55c` | validated keymap, composer-meaning conflicts, host notes |
+| #375 | #330 | `feature/workspace-foundation` | `release/v0.18.0` | `111af0d` | column plan, regional focus, semantic bindings, resource model |
+| #376 | #331, #333 | `feature/workspace-sidebar` | #375 | `955d29f` | Workspace Sidebar, tmux discovery and navigation, worktree/manager sections |
+| #377 | #332 | `feature/workspace-panel` | #375 | `f5ef4b2` | detail panel: resource, worktree, diff, fact details |
+| #378 | #335 | `feature/semantic-keymap` | #375 | `1dc8a24` | validated keymap, composer-meaning conflicts, host notes |
 | #379 | #341 | `feature/portable-mod-gate` | `release/v0.18.0` | `fccf68e` | executable Portable Mods stay disabled: threat model + regression gate |
 | #380 | #339, #340 | `feature/codex-app-server-adapter` | `release/v0.18.0` | `8854bb7` | Codex app-server adapter (not wired); provider evidence; Remote Control go/no-go; approval-target security fix (Claude + Codex) |
 | #381 | #337, #338 | `feature/worktree-pr-evidence` | `release/v0.18.0` | `8a40b76` | related PR evidence for `/worktrees`; PR summaries carry head repository and SHA |
@@ -69,7 +69,8 @@ the text being read drifted with every new line (anchored to seq now, with a not
 the view shows a live task's unfinished progress line; at 40 columns a stopping task's label disappeared behind its
 state words; key hints drop whole entries and keep Esc; the manager list scrolls with its selection; removing a task
 selects its neighbour; the bar hint names Shift+Up when Up is off; below about 80 columns a drawer covered the
-composer that had the keyboard, and at 40 columns both drawers stacked (drawers now follow focus); only the innermost
+composer that had the keyboard, and at 40 columns both drawers stacked (drawers now follow focus, and `/sidebar` on
+a tucked drawer brings it forward, `111af0d`); only the innermost
 nested worktree is marked current; the panel returns to each content's scroll position.
 
 ### Investigated, not vulnerabilities
