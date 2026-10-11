@@ -14,11 +14,11 @@ The site is organized into logical learning paths to support both beginners and 
 - **Project**: Architecture, Roadmap & Releases.
 
 ## 3. Feature/Status Provenance Strategy
-To clearly distinguish released vs in-development features, we use a reusable MDX `<Availability />` component.
+To clearly distinguish released vs in-development features, we use a reusable MDX `<Availability />` component supporting dynamic version and branch properties.
 - **Released**: `status="released" version="v0.17.0"`
-- **Unreleased (Dev)**: `status="unreleased" issue="304"` (Implemented on `dev`, planned for the next release, e.g. v0.18.0)
-- **In Progress**: `status="in-progress" issue="305"`
-- **Planned**: `status="planned"`
+- **Unreleased (v0.18.0)**: `status="unreleased" version="v0.18.0" pr="345" issue="305"` (Implemented on `release/v0.18.0` integration branch, slated for v0.18.0 release)
+- **In Progress**: `status="in-progress" issue="358"`
+- **Planned**: `status="planned" version="v0.19.0"`
 
 ## 4. Branding and Assets
 - Strictly no legacy screenshots, GIFs, stock imagery, or placeholder artwork.
