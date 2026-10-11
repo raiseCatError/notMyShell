@@ -63,7 +63,9 @@ test('a task that ignores SIGINT stays "stopping"; escalation is explicit, one l
     supervisor.stop(task.id, 'terminate');
     await waitFor(() => supervisor.get(task.id)!.state === 'stopped', 'stopped after SIGTERM');
     assert.equal(supervisor.get(task.id)!.stopRequested, 'terminate');
-    const stubborn = supervisor.start({command: node(STREAM, '--ignore-int', '--ignore-term'), cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
+    // It also ignores the hangup: where /bin/sh does not exec the program (dash), SIGTERM ends the shell, the kernel
+    // hangs up the task's group, and a program that obeyed that would be stopped by it rather than by SIGKILL.
+    const stubborn = supervisor.start({command: node(STREAM, '--ignore-int', '--ignore-term', '--ignore-hup'), cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
     await waitFor(() => supervisor.output(stubborn.task.id)!.lines().length >= 1, 'output');
     supervisor.stop(stubborn.task.id); supervisor.stop(stubborn.task.id, 'terminate');
     await new Promise(resolve => setTimeout(resolve, 300));
