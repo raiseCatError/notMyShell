@@ -130,7 +130,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, statusStripModules, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, statusStripModules, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, moduleConditionMet, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -3916,7 +3916,8 @@ export class TerminalApp {
 
   /** What /prompt's module manager shows beside the draft: live capability status, packs, recommendations, the Claude Code bridge. */
   private modulesContext(): ModulesContext {
-    return {status: id => this.contextEngine.status(id), packs: this.modulesListings, recommendations: this.moduleRecommendations,
+    const presentation = this.promptContext();
+    return {conditionMet: module => moduleConditionMet(module, presentation), status: id => this.contextEngine.status(id), packs: this.modulesListings, recommendations: this.moduleRecommendations,
       ...(this.claudeBridgeState ? {claudeBridge: this.claudeBridgeState} : {}), now: Date.now()};
   }
 

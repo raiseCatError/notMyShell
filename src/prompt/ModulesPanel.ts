@@ -69,7 +69,9 @@ export interface PackListing {
 }
 
 export interface ModulesContext {
-  status?(capability: string): {state: string; collectedAt?: number; evidence?: string; error?: string; durationMs?: number};
+  /** Existing live display context; a false result is distinct from unavailable collection. */
+  conditionMet?(module: ContextModuleConfig): boolean;
+  status?(capability: string): {state: string; collectedAt?: number; evidence?: string; error?: string; durationMs?: number; hasValue?: boolean};
   packs?: readonly PackListing[];
   recommendations?: readonly Recommendation[];
   claudeBridge?: {state: string; detail?: string};
@@ -364,7 +366,7 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
   rows.push(truncateAnsi(`${PRIMARY}${clean(definition.label, 48)}${RESET}  ${SUBTLE}${CATEGORY_LABELS[definition.category]}${narrow ? '' : ` · ${origin}`}${RESET}`, columns),
     ...(narrow ? wrapped(origin, columns, SUBTLE) : []), ...wrapped(clean(definition.description, 240), columns, SECONDARY, '', 4), '');
   const surface = routeModule({...module, visible: true});
-  rows.push(...line('Shown', `${module.visible ? 'yes' : 'no'} · ${CONDITION_TEXT[module.condition]} · ${surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface]}`
+  rows.push(...line('Enabled', `${module.visible ? 'yes' : 'no'} · ${CONDITION_TEXT[module.condition]} · ${surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface]}`
     + `${module.surface === 'auto' || module.surface === undefined ? '' : ` (prefers ${MODULE_SURFACE_LABELS[definition.preferredSurface as ModuleSurface]})`}`));
   if (surface === 'statusStrip') rows.push(...line('Strip group', `${({left: 'Left', center: 'Center', right: 'Right'})[module.stripZone ?? 'right']} · /strip arranges groups and order`));
   if (surface !== 'hidden') {
@@ -385,16 +387,28 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
   rows.push(...line('History', definition.pack ? (history ? `may be kept with commands when shown in the Main Prompt${privateFields.length ? ` (never: ${privateFields.join(', ')})` : ''}`
     : 'live only; never kept in command history') : 'kept with commands when shown in the Main Prompt'));
   for (const capability of capabilities) {
+    // Declarative policy and existing snapshots only: opening details never demands a collector.
+    rows.push(...line('Source', clean(`${capability!.id} · ${capability!.scope} scope · ${capability!.trust}`, 200)));
+    const ttl = `${capability!.ttlMs} ms freshness TTL`;
+    const invalidation = capability!.invalidateOn.length ? `invalidated by ${capability!.invalidateOn.join(', ')}` : 'no event invalidation';
+    const refresh = capability!.refreshMs === undefined ? '' : ` · refresh every ${capability!.refreshMs} ms while demanded`;
+    rows.push(...line('Cache', clean(`${ttl} · ${invalidation}${refresh}`, 240)));
     const status = context.status?.(capability!.id);
     if (!status) continue;
     const age = status.collectedAt !== undefined && context.now !== undefined ? ` · ${Math.max(0, Math.round((context.now - status.collectedAt) / 1000))}s ago` : '';
     const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refreshing` : status.state === 'absent' ? 'nothing to show here'
-      : status.state === 'pending' ? 'checking…' : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.state})` : 'not checked (module not in use)';
+      : status.state === 'pending' ? `checking…${status.hasValue ? ' · last known data retained' : ''}`
+        : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.state})${status.hasValue ? ' · last known data retained' : ''}` : 'not checked (module not in use)';
     // How long the last collection took is measured by the engine; nothing is collected to show it.
     const took = status.durationMs === undefined ? '' : ` · took ${status.durationMs < 1 ? '<1' : Math.round(status.durationMs)} ms`;
     rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${took}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
   }
-  rows.push(...line('Why', whyText(module, surface, capabilities.map(capability => context.status?.(capability!.id)).filter((status): status is NonNullable<typeof status> => Boolean(status)), definition.triggers)));
+  if (capabilities.length) rows.push(...line('Timing', 'last collection wall time; excludes queue delay. Opening details does not collect data.'));
+  const availability = surface === 'hidden' ? undefined : surfaceAvailability(surface, configuration);
+  rows.push(...line('Why', !module.visible ? 'turned off in Modules'
+    : availability && !availability.available ? availability.reason
+      : context.conditionMet?.(module) === false ? `hidden: current condition does not match (${CONDITION_TEXT[module.condition]})`
+        : whyText(module, surface, capabilities.map(capability => context.status?.(capability!.id)).filter((status): status is NonNullable<typeof status> => Boolean(status)), definition.triggers)));
   if (definition.facts.has('agent.claude')) {
     const bridge = context.claudeBridge;
     rows.push('', ...line('Claude Code', bridge?.state === 'configured' ? 'reports to NMSh through its status line · B to review removal'
@@ -405,14 +419,19 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
 }
 
 /** One sentence on why this module is or is not on screen right now, from its settings and what the engine reported. */
-export function whyText(module: ContextModuleConfig, surface: string, statuses: ReadonlyArray<{state: string; error?: string}>, triggers?: readonly string[]): string {
+export function whyText(module: ContextModuleConfig, surface: string, statuses: ReadonlyArray<{state: string; error?: string; hasValue?: boolean}>, triggers?: readonly string[]): string {
   if (!module.visible) return 'turned off in Modules';
   if (surface === 'hidden') return 'routed to Hidden';
-  if (statuses.some(status => status.state === 'timeout')) return 'its data timed out, so nothing is shown (the last good value is not reused)';
-  if (statuses.some(status => status.state === 'failed')) return 'its data could not be read; collection failed';
+  const failed = statuses.filter(status => status.state === 'timeout' || status.state === 'failed');
+  if (failed.length) {
+    const reason = failed.some(status => status.state === 'timeout') ? 'its data timed out' : 'its data could not be read; collection failed';
+    const cache = failed.some(status => status.hasValue) ? 'last known data is retained; no new value was collected'
+      : failed.every(status => status.hasValue === false) ? 'no cached value is available' : 'cached-data availability is unknown';
+    return `${reason}; ${cache}`;
+  }
   if (statuses.length && statuses.every(status => status.state === 'absent')) return 'there is nothing for it to show in this directory';
   if (statuses.length && statuses.every(status => status.state === 'idle') && module.condition === 'onCommand') {
-    return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; none has run here yet`;
+    return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; no collection evidence is available yet`;
   }
   if (statuses.some(status => status.state === 'pending')) return 'being collected now';
   if (statuses.some(status => status.state === 'stale')) return 'last known data is available while refreshing; visibility follows the module condition and available space';

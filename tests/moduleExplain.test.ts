@@ -22,6 +22,9 @@ test('module explanations do not invent collection or visibility evidence', () =
   assert.match(whyText(module(), 'contextRail', [{state: 'stale'}]), /last known.*refreshing/u);
   assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'fresh'}]), /conditions are met/u);
   assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'failed', error: 'EACCES /Users/demo/private/config token=do-not-display'}]), /private|token|Users/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'timeout', hasValue: true}]), /last known data.*retained/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'failed', hasValue: false}]), /no cached value/u);
+  assert.doesNotMatch(whyText(module({condition: 'onCommand'}), 'contextRail', [{state: 'idle'}]), /none has run/u);
 });
 
 test('/doctor reports prompt-data health from the engine counters, and only complains with enough evidence', () => {

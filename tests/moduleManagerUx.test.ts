@@ -169,6 +169,20 @@ test('module details show measured time and safe failure state without raw excep
   assert.match(shown, /unavailable \(failed\).*took 4 ms/su);
   assert.match(shown, /AWS config/u);
   assert.doesNotMatch(shown, /Users|private|token=|do-not-display/u);
+  assert.match(shown, /cloud\.aws/u, 'the trusted capability is named');
+  assert.match(shown, /freshness TTL/u);
+  assert.match(shown, /queue delay/u);
+});
+
+test('module details distinguish enabled settings from a condition that currently does not match', () => {
+  const s = state();
+  s.context = {conditionMet: () => false, status: () => ({state: 'fresh', collectedAt: 1000}), now: 2000};
+  s.selectedIndex = listedModules(s).findIndex(module => module.id === 'nmsh.cloud:aws');
+  handlePromptPanelKey(ENTER, s);
+  const shown = renderPromptPanel(s, 100, [], [], Infinity).map(stripAnsi).join('\n');
+  assert.match(shown, /Enabled.*yes/u);
+  assert.match(shown, /current condition does not match/u);
+  assert.doesNotMatch(shown, /Why.*data is available/u);
 });
 
 test('external prompt providers keep the manager useful: unavailable surfaces say why, settings are kept, the Status Strip still works', async () => {
