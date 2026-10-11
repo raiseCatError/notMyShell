@@ -1,7 +1,7 @@
 import type {Key} from '../terminal/keys.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateText} from '../util/text.js';
-import {commandLine, elapsed, stateWords, taskLabel, taskText} from './bar.js';
+import {commandLine, elapsed, fitHints, removalBlocked, stateWords, stopChoice, taskLabel, taskText} from './bar.js';
 import type {TaskOutput} from './output.js';
 import {rememberFamily, type BackgroundPreferences} from './preferences.js';
 import type {StopLevel, TaskRecord} from './supervisor.js';
@@ -49,30 +49,52 @@ const live = (task: TaskRecord) => task.state === 'running' || task.state === 's
 
 export class BackgroundManager {
   tab: 'tasks' | 'preferences' = 'tasks';
+  /** The selected row of the Preferences tab. */
   selected = 0;
+  /**
+   * The selected task, by id: the order changes while the manager is open (a task finishes and moves down, a new one
+   * starts at the top), and a row index would then make `x` or Delete act on a task the person never chose.
+   */
+  selectedTaskId?: string;
+  private taskIndex = 0;
+  /** First task row shown when the list is taller than the room it has. */
+  private listTop = 0;
 
   /** Running tasks first, then finished ones, newest first. */
   static order(tasks: readonly TaskRecord[]): TaskRecord[] {
     return [...tasks].sort((a, b) => Number(live(b)) - Number(live(a)) || (b.endedAt ?? b.startedAt) - (a.endedAt ?? a.startedAt));
   }
 
-  handleKey(key: Key, tasks: readonly TaskRecord[], preferences: BackgroundPreferences, next: (taskId: string) => StopLevel | undefined): ManagerOutcome {
+  /** The selected task's position in `ordered`: the same task while it exists, else the one now in its place. */
+  private resolve(ordered: readonly TaskRecord[]): number {
+    let index = ordered.findIndex(task => task.id === this.selectedTaskId);
+    if (index === -1) index = Math.max(0, Math.min(this.taskIndex, ordered.length - 1));
+    this.selectedTaskId = ordered[index]?.id;
+    this.taskIndex = index;
+    return index;
+  }
+
+  handleKey(key: Key, tasks: readonly TaskRecord[], preferences: BackgroundPreferences, next: (taskId: string) => StopLevel | undefined, now = Date.now()): ManagerOutcome {
     if (key.kind === 'escape') return {kind: 'close'};
     if (key.kind === 'complete' || key.kind === 'focusPrevious') { this.tab = this.tab === 'tasks' ? 'preferences' : 'tasks'; this.selected = 0; return {kind: 'none'}; }
     if (this.tab === 'tasks') {
       const ordered = BackgroundManager.order(tasks);
-      this.selected = Math.max(0, Math.min(this.selected, ordered.length - 1));
-      const task = ordered[this.selected];
-      if (key.kind === 'up' || key.kind === 'down') { this.selected = Math.max(0, Math.min(ordered.length - 1, this.selected + (key.kind === 'up' ? -1 : 1))); return {kind: 'none'}; }
+      const index = this.resolve(ordered);
+      const task = ordered[index];
+      if (key.kind === 'up' || key.kind === 'down') {
+        const target = ordered[Math.max(0, Math.min(ordered.length - 1, index + (key.kind === 'up' ? -1 : 1)))];
+        if (target) { this.selectedTaskId = target.id; this.taskIndex = ordered.indexOf(target); }
+        return {kind: 'none'};
+      }
       if (key.kind === 'enter') return task ? {kind: 'view', taskId: task.id} : {kind: 'none'};
       if (key.kind === 'delete' || key.kind === 'backspace') {
         if (!task) return {kind: 'none'};
-        return live(task) ? {kind: 'none', message: 'stop it first; a running task is never removed'} : {kind: 'remove', taskId: task.id};
+        const blocked = removalBlocked(task);
+        return blocked ? {kind: 'none', message: blocked} : {kind: 'remove', taskId: task.id};
       }
       if (key.kind === 'text' && key.value === 'x' && task) {
-        if (!live(task)) return {kind: 'none', message: 'this task has already ended'};
-        const level = next(task.id);
-        return level ? {kind: 'stop', taskId: task.id, level} : {kind: 'none', message: 'already killed; waiting for the process to exit'};
+        const choice = stopChoice(task, next, now);
+        return 'level' in choice ? {kind: 'stop', taskId: task.id, level: choice.level} : {kind: 'none', message: choice.message};
       }
       if (key.kind === 'text' && key.value === 'c') return ordered.some(item => !live(item)) ? {kind: 'clear'} : {kind: 'none', message: 'no finished tasks'};
       return {kind: 'none'};
@@ -106,27 +128,44 @@ export class BackgroundManager {
     const pointer = options.safe ? '>' : '›';
     const tabs = `${this.tab === 'tasks' ? '[Tasks]' : ' Tasks '}  ${this.tab === 'preferences' ? '[Preferences]' : ' Preferences '}`;
     const lines = [paint(fit(`Background tasks  ${tabs}`), UI_COLORS.primary, true)];
-    const footer = this.tab === 'tasks' ? '↑↓ select · Enter output · x stop · Del remove · c clear finished · Tab preferences · Esc close'
-      : '↑↓ select · ←→ change · Del forget a command · Tab tasks · Esc close';
+    const footer = this.tab === 'tasks' ? ['↑↓ select', 'Enter output', 'x stop', 'Del remove', 'c clear finished', 'Tab preferences', 'Esc close']
+      : ['↑↓ select', '←→ change', 'Del forget a command', 'Tab tasks', 'Esc close'];
     if (this.tab === 'tasks') {
       const ordered = BackgroundManager.order(tasks);
       if (!ordered.length) lines.push(paint(fit('  No background tasks. Run one with /background run <command>, or choose b when NMSh suggests it.'), UI_COLORS.subtle));
-      ordered.forEach((task, index) => {
-        const chosen = index === this.selected;
-        const text = `${chosen ? pointer : ' '} ${task.id.padEnd(4)} ${taskLabel(task)}  ${elapsed((task.endedAt ?? options.now) - task.startedAt)}  ${stateWords(task)}`;
-        lines.push(paint(fit(text), task.state === 'failed' ? UI_COLORS.failure : chosen ? UI_COLORS.accent : UI_COLORS.secondary, chosen));
-      });
-      const task = ordered[Math.min(this.selected, ordered.length - 1)];
+      const selectedIndex = this.resolve(ordered);
+      const task = ordered[selectedIndex];
+      const details: string[] = [];
       if (task) {
         const output = outputs(task.id);
         const command = commandLine(task);
-        lines.push('', paint('Details', UI_COLORS.primary, true));
-        lines.push(fit(`  Command  ${command.text}${command.more ? ` (+${command.more} more line${command.more === 1 ? '' : 's'})` : ''}`));
-        lines.push(fit(`  In       ${taskText(task.cwd)}`), fit(`  Started  ${new Date(task.startedAt).toLocaleTimeString('en-GB')}`));
-        if (task.endedAt !== undefined) lines.push(fit(`  Ended    ${new Date(task.endedAt).toLocaleTimeString('en-GB')} · ${task.signal ? `signal ${task.signal}` : `exit ${task.exitCode}`}`));
-        if (output) lines.push(fit(`  Output   ${output.lines().length} lines kept${output.dropped ? `, ${output.dropped} dropped by the retention limit` : ''}`));
-        lines.push(paint(fit("  Runs in its own terminal, without this shell's aliases, functions or unexported variables."), UI_COLORS.subtle));
+        details.push('', paint('Details', UI_COLORS.primary, true));
+        details.push(fit(`  Command  ${command.text}${command.more ? ` (+${command.more} more line${command.more === 1 ? '' : 's'})` : ''}`));
+        details.push(fit(`  In       ${taskText(task.cwd)}`), fit(`  Started  ${new Date(task.startedAt).toLocaleTimeString('en-GB')}`));
+        if (task.endedAt !== undefined) details.push(fit(`  Ended    ${new Date(task.endedAt).toLocaleTimeString('en-GB')} · ${task.signal ? `signal ${task.signal}` : `exit ${task.exitCode}`}`));
+        if (task.leftovers) details.push(paint(fit('  Left     processes of this task still run; x kills them'), UI_COLORS.failure));
+        if (output) details.push(fit(`  Output   ${output.lines().length} lines kept${output.dropped ? `, ${output.dropped} dropped by the retention limit` : ''}`));
+        details.push(paint(fit("  Runs in its own terminal, without this shell's aliases, functions or unexported variables."), UI_COLORS.subtle));
       }
+      // The list keeps at least three rows (or all tasks, when fewer) and gives the rest to the details; a longer
+      // list scrolls with the selection and says how many rows it does not show.
+      const room = Math.max(1, options.rows - 2);
+      const listRows = Math.max(Math.min(ordered.length, 3), room - details.length);
+      const windowed = ordered.length > listRows;
+      const visible = windowed ? Math.max(1, listRows - 1) : ordered.length;
+      if (selectedIndex < this.listTop) this.listTop = selectedIndex;
+      if (selectedIndex >= this.listTop + visible) this.listTop = selectedIndex - visible + 1;
+      this.listTop = Math.max(0, Math.min(this.listTop, ordered.length - visible));
+      ordered.slice(this.listTop, this.listTop + visible).forEach(item => {
+        const chosen = item.id === task?.id;
+        const text = `${chosen ? pointer : ' '} ${item.id.padEnd(4)} ${taskLabel(item)}  ${elapsed((item.endedAt ?? options.now) - item.startedAt)}  ${stateWords(item)}`;
+        lines.push(paint(fit(text), item.state === 'failed' ? UI_COLORS.failure : chosen ? UI_COLORS.accent : UI_COLORS.secondary, chosen));
+      });
+      if (windowed) {
+        const above = this.listTop, below = ordered.length - this.listTop - visible;
+        lines.push(paint(fit(`  ${[above ? `${above} above` : '', below ? `${below} below` : ''].filter(Boolean).join(' · ')}`), UI_COLORS.subtle));
+      }
+      lines.push(...details);
     } else {
       SETTINGS.forEach((setting, index) => {
         const chosen = index === this.selected;
@@ -143,7 +182,7 @@ export class BackgroundManager {
     }
     const body = lines.slice(0, Math.max(0, options.rows - 1));
     while (body.length < options.rows - 1) body.push('');
-    if (options.rows >= 1) body.push(paint(fit(footer), UI_COLORS.subtle));
+    if (options.rows >= 1) body.push(paint(fitHints(footer, width), UI_COLORS.subtle));
     return body.slice(0, Math.max(0, options.rows));
   }
 }

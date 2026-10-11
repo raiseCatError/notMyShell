@@ -21,7 +21,9 @@ mark and a word (Unicode `● ◐ ✓ ✗ ■`, Safe `* ~ + x -`; `running`, `st
 `failed (exit 1)`, `stopped, processes left`), so color only reinforces. Labels are the command family
 (`adb logcat`) or the command's first line, width-aware; durations are `mm:ss` or `h:mm:ss` from the task's own
 start and end. The keys shown for the selection are the ones that apply to it (`x stop`, `x terminate (SIGTERM)`,
-`Del remove`).
+`x kill what is left`, `Del remove`), fitted to the width by dropping whole hints and keeping `Esc back`. In narrow
+rows the label outlasts the timer and the long state words: at 40 columns a stopping task still says which task it is.
+Removing the selected task selects its neighbour.
 
 ## Keyboard
 
@@ -39,6 +41,12 @@ the one NMSh already uses for the agent shelf above the composer:
   again on a task that has not exited: the next escalation, named on screen), Delete remove a finished task, Space
   expand/collapse, Esc back. Any other typing leaves the bar and is forwarded to the composer, so nothing typed is
   lost.
+- **Escalation is paced.** A stronger signal is offered and sent only `ESCALATION_PAUSE_MS` (1.5 s) after the previous
+  request; before that `x` says to give the program a moment. A double press or a held key's repeat therefore cannot
+  go from SIGINT to SIGKILL before the program could clean up. `/background kill t3` stays the immediate explicit path.
+- **Leftovers.** A finished task whose processes still run offers `x kill what is left` (one SIGKILL to its group) and
+  cannot be removed until nothing runs, so nothing is orphaned without a way to stop it. `stopChoice` and
+  `removalBlocked` are the one rule the bar and the manager share.
 - Nothing here runs while a foreground program owns input: the frontend only consults the bar for the composer
   owner, and `entersBar` refuses when a foreground command is busy.
 
@@ -72,12 +80,18 @@ Subcommands: `run`, `stop t3`, `kill t3` (stop with escalation intent), `remove 
   Foreground command blocks never receive task output. `taskBlockText` gives the plain text for copying, labelled
   with the task.
 - **Focused live view** (Enter on a task): header with label, id, state, duration and directory; follows new output
-  until the person scrolls back, then stays put and says `N new lines below · End follow`.
+  until the person scrolls back, then stays put and says `N new lines below · End follow`. The scrolled-back position
+  is the seq of the first line shown, not a row index, so the retention limit dropping old lines does not move what is
+  being read; if those very lines are dropped, the view shows the oldest kept line and says so. While following a live
+  task its unfinished line (a progress bar, a prompt without a newline) is the last row.
 
 ## Manager (`manager.ts`)
 
 Tasks tab: running first, newest first; details (command with a `(+N more lines)` note, directory, start, end and
-status, lines kept and dropped, the separate-shell note); Enter output, `x` stop, Delete remove, `c` clear finished.
+status, processes left, lines kept and dropped, the separate-shell note); Enter output, `x` stop, Delete remove, `c`
+clear finished. The selection is a task id, not a row: tasks finishing or starting while the manager is open reorder
+the list, and `x` or Delete still act on the task the person chose. The list keeps at least three rows, scrolls with
+the selection and counts the rows above and below it; the details get the remaining height.
 Preferences tab: suggestions, bar, Up, notifications, output kept, finished kept, and the remembered families (←→ or
 Enter flips Always/Never, Delete forgets). Changes return new preferences for the caller to save.
 

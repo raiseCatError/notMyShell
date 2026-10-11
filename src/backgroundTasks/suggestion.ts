@@ -77,7 +77,8 @@ export type BackgroundCommand =
 
 /** `/background` and its short form `/bg`. Task ids are NMSh's own (`t3`). */
 export function parseBackgroundCommand(input: string): BackgroundCommand | undefined {
-  const match = /^\/(background|bg)(?:[ \t]+([\s\S]*))?$/u.exec(input.replace(/\s+$/u, ''));
+  // trimEnd, not `/\s+$/`: the regular expression retries from every space of a long run (a paste), quadratically.
+  const match = /^\/(background|bg)(?:[ \t]+([\s\S]*))?$/u.exec(input.trimEnd());
   if (!match) return undefined;
   const rest = (match[2] ?? '').trim();
   if (!rest) return {kind: 'open'};

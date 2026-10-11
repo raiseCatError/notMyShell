@@ -19,8 +19,9 @@ import type {StopLevel, TaskRecord, TaskState} from './supervisor.js';
  * - Shift+Up from an empty composer always enters it (with an empty draft
  *   it has nothing to select), and `/background` works when keys are taken
  *   by the terminal.
- * - In the bar: ↑↓ select, Enter view output, `x` stop (again: the next
- *   escalation, named on screen), Delete remove a finished task, Space
+ * - In the bar: ↑↓ select, Enter view output, `x` stop (again, after a
+ *   moment: the next escalation, named on screen; on a finished task whose
+ *   processes still run: kill them), Delete remove a finished task, Space
  *   expand/collapse, Esc back. Any other typing returns to the composer and
  *   is not lost.
  */
@@ -56,21 +57,72 @@ export function entersBar(key: Key, composer: ComposerState, tasks: number, upAr
 const LIVE: ReadonlySet<TaskState> = new Set(['running', 'stopping']);
 const LEVEL_WORDS: Record<StopLevel, string> = {interrupt: 'interrupt', terminate: 'terminate (SIGTERM)', kill: 'kill (SIGKILL)'};
 
+/**
+ * How long a stronger signal waits after the previous stop request. Without it a double press, or a held key's
+ * repeat, went from SIGINT to SIGKILL in a fraction of a second, before the program could clean up.
+ */
+export const ESCALATION_PAUSE_MS = 1500;
+
+/** What `x` does for a task now: a stop level to request, or why nothing is sent. The bar and the manager share it. */
+export function stopChoice(task: TaskRecord, next: (taskId: string) => StopLevel | undefined, now: number): {level: StopLevel} | {message: string} {
+  if (!LIVE.has(task.state)) {
+    // A finished task whose group still runs: the only stop left is the explicit kill of what remains.
+    if (task.leftovers) return task.stopRequested === 'kill' ? {message: 'already killed; waiting for its processes to exit'} : {level: 'kill'};
+    return {message: 'this task has already ended; Delete removes it from the list'};
+  }
+  const level = next(task.id);
+  if (!level) return {message: 'already killed; waiting for the process to exit'};
+  if (level !== 'interrupt' && task.stopRequestedAt !== undefined && now - task.stopRequestedAt < ESCALATION_PAUSE_MS) {
+    return {message: `stop requested; give it a moment, then x sends ${LEVEL_WORDS[level]}`};
+  }
+  return {level};
+}
+
+/** Why a task cannot be removed now, or undefined when it can. */
+export function removalBlocked(task: TaskRecord): string | undefined {
+  if (LIVE.has(task.state)) return 'stop it first (x); a running task is never removed';
+  if (task.leftovers) return 'its processes still run; x kills them, then Delete removes it';
+  return undefined;
+}
+
+/** The key hint `x` has for a task now, or '' when it does nothing. */
+function stopHint(task: TaskRecord, next: ((taskId: string) => StopLevel | undefined) | undefined, now: number): string {
+  if (!next) return LIVE.has(task.state) ? 'x stop' : '';
+  const choice = stopChoice(task, next, now);
+  if (!('level' in choice)) return '';
+  if (!LIVE.has(task.state)) return 'x kill what is left';
+  return choice.level === 'interrupt' ? 'x stop' : `x ${LEVEL_WORDS[choice.level]}`;
+}
+
+/**
+ * Key hints joined with ` · `, fitted to a width by dropping hints before the last one (the way back), so a narrow
+ * terminal keeps the first actions and Esc rather than cutting through the middle of a word.
+ */
+export function fitHints(hints: readonly string[], width: number): string {
+  const kept = hints.filter(Boolean);
+  while (kept.length > 1 && displayWidth(kept.join(' · ')) > width) kept.splice(kept.length - 2, 1);
+  return truncateText(kept.join(' · '), Math.max(1, width));
+}
+
 export class TaskBarController {
   selectedId?: string;
   focused = false;
   expanded: boolean;
+  /** Where the selection was, so removing a task selects its neighbour rather than jumping to the first. */
+  private index = 0;
 
   constructor(expanded = false) { this.expanded = expanded; }
 
-  /** Keep the selection on an existing task (by id), else the first. */
+  /** Keep the selection on an existing task (by id); when it is gone, on the task now in its place. */
   sync(tasks: readonly TaskRecord[]): void {
-    if (!tasks.some(task => task.id === this.selectedId)) this.selectedId = tasks[0]?.id;
+    let index = tasks.findIndex(task => task.id === this.selectedId);
+    if (index === -1) { index = Math.min(this.index, tasks.length - 1); this.selectedId = tasks[index]?.id; }
+    this.index = Math.max(0, index);
     if (!tasks.length) this.focused = false;
   }
 
   /** A key while the bar has focus. `next` is the escalation the supervisor would apply for the selected task. */
-  handleKey(key: Key, tasks: readonly TaskRecord[], next: (taskId: string) => StopLevel | undefined): BarAction {
+  handleKey(key: Key, tasks: readonly TaskRecord[], next: (taskId: string) => StopLevel | undefined, now = Date.now()): BarAction {
     this.sync(tasks);
     const index = tasks.findIndex(task => task.id === this.selectedId);
     const selected = tasks[index];
@@ -84,14 +136,15 @@ export class TaskBarController {
         return {kind: 'select', delta: key.kind === 'up' ? -1 : 1};
       }
       case 'enter': return selected ? {kind: 'view', taskId: selected.id} : {kind: 'none'};
-      case 'delete': case 'backspace':
+      case 'delete': case 'backspace': {
         if (!selected) return {kind: 'none'};
-        return LIVE.has(selected.state) ? {kind: 'none', message: 'stop it first (x); a running task is never removed'} : {kind: 'remove', taskId: selected.id};
+        const blocked = removalBlocked(selected);
+        return blocked ? {kind: 'none', message: blocked} : {kind: 'remove', taskId: selected.id};
+      }
       case 'text': {
         if (key.value === 'x' && selected) {
-          if (!LIVE.has(selected.state)) return {kind: 'none', message: 'this task has already ended; Delete removes it from the list'};
-          const level = next(selected.id);
-          return level ? {kind: 'stop', taskId: selected.id, level} : {kind: 'none', message: 'already killed; waiting for the process to exit'};
+          const choice = stopChoice(selected, next, now);
+          return 'level' in choice ? {kind: 'stop', taskId: selected.id, level: choice.level} : {kind: 'none', message: choice.message};
         }
         if (key.value === ' ') { this.expanded = !this.expanded; return {kind: 'toggle'}; }
         this.focused = false;
@@ -122,6 +175,12 @@ export function elapsed(ms: number): string {
   const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = seconds % 60;
   const two = (n: number) => String(n).padStart(2, '0');
   return h ? `${h}:${two(m)}:${two(s)}` : `${two(m)}:${two(s)}`;
+}
+
+/** The state in one word or two, for rows too narrow for `stateWords` (the mark still tells the states apart). */
+function shortState(task: TaskRecord): string {
+  if (task.state === 'stopping' || task.state === 'failed') return task.state;
+  return task.leftovers ? `${task.state}, left` : task.state;
 }
 
 /** The words a person reads for a task state, from evidence only. */
@@ -167,6 +226,8 @@ export interface BarRenderOptions {
   /** The next escalation per task, so the focused row can name what `x` does. */
   next?: (taskId: string) => StopLevel | undefined;
   maxRows?: number;
+  /** The Up preference, so the hint names the key that actually enters the bar. */
+  upArrow?: 'idle' | 'off';
 }
 
 /**
@@ -182,25 +243,30 @@ export function renderTaskBar(controller: TaskBarController, tasks: readonly Tas
   const tone = (state: TaskState) => state === 'failed' ? UI_COLORS.failure : state === 'running' ? UI_COLORS.accent : state === 'stopping' ? UI_COLORS.secondary : UI_COLORS.subtle;
   const paint = (text: string, color: {red: number; green: number; blue: number}, bold = false) => options.color ? `${bold ? '\u001b[1m' : ''}${foreground(color)}${text}${reset}` : text;
   const selected = tasks.find(task => task.id === controller.selectedId) ?? tasks[0]!;
-  const keysFor = (task: TaskRecord) => {
-    const level = LIVE.has(task.state) ? options.next?.(task.id) : undefined;
-    const stop = !LIVE.has(task.state) ? 'Del remove' : level === 'interrupt' ? 'x stop' : level ? `x ${LEVEL_WORDS[level]}` : '';
-    return ['Enter view', stop, 'Esc back'].filter(Boolean).join(' · ');
-  };
+  const keysFor = (task: TaskRecord) => [
+    'Enter view', stopHint(task, options.next, options.now), removalBlocked(task) ? '' : 'Del remove', 'Esc back',
+  ].filter(Boolean);
   const rowText = (task: TaskRecord, focused: boolean, suffix = '') => {
     const lead = `${focused ? (options.safe ? '>' : '›') : ' '}${m[task.state]} `;
     const time = elapsed((task.endedAt ?? options.now) - task.startedAt);
-    const tail = `  ${time}  ${stateWords(task)}${suffix}`;
+    const label = taskLabel(task);
+    // Which task this is matters more than its timer: narrow rows drop the time, then the long state words, before
+    // the label goes below a dozen cells.
+    const keep = Math.min(displayWidth(label), 12);
+    const tails = [`  ${time}  ${stateWords(task)}${suffix}`, `  ${stateWords(task)}${suffix}`, `  ${shortState(task)}${suffix}`, `  ${shortState(task)}`];
+    const tail = tails.find(candidate => width - displayWidth(lead) - displayWidth(candidate) >= keep) ?? tails.at(-1)!;
     const room = Math.max(1, width - displayWidth(lead) - displayWidth(tail));
-    return truncateText(`${lead}${truncateText(taskLabel(task), Math.max(1, Math.min(room, 32)))}${tail}`, width);
+    return truncateText(`${lead}${truncateText(label, Math.max(1, Math.min(room, 32)))}${tail}`, width);
   };
   const row = (task: TaskRecord, focused: boolean) => paint(rowText(task, focused), tone(task.state), focused);
   if (!controller.expanded) {
     if (controller.focused) {
       const position = tasks.length > 1 ? `  ${tasks.indexOf(selected) + 1}/${tasks.length}` : '';
       const base = rowText(selected, true, position);
-      const keys = `  ${keysFor(selected)}`;
-      return [paint(displayWidth(base) + displayWidth(keys) <= width ? `${base}${keys}` : base, tone(selected.state), true)];
+      const room = width - displayWidth(base) - 2;
+      // Keys only when at least the way back fits beside the task; otherwise the task row alone.
+      const keys = room >= displayWidth('Esc back') ? `  ${fitHints(keysFor(selected), room)}` : '';
+      return [paint(`${base}${keys}`, tone(selected.state), true)];
     }
     const order: TaskState[] = ['running', 'stopping', 'failed', 'stopped', 'exited'];
     const counts = order.map(state => [state, tasks.filter(task => task.state === state).length] as const).filter(([, count]) => count);
@@ -211,7 +277,12 @@ export function renderTaskBar(controller: TaskBarController, tasks: readonly Tas
   const {visible} = expandedLayout(tasks.length, options.maxRows ?? 4);
   const index = Math.max(0, tasks.indexOf(selected));
   const start = Math.max(0, Math.min(index - visible + 1, tasks.length - visible));
-  const lines = [paint(truncateText(controller.focused ? `Background tasks  ${keysFor(selected)}` : `Background tasks  ${options.safe ? '^' : '↑'} or /background`, width), UI_COLORS.subtle)];
+  const up = options.safe ? '^' : '↑';
+  const enter = options.upArrow === 'off' ? `Shift+${up}` : up;
+  const title = 'Background tasks  ';
+  const header = !controller.focused ? `${title}${enter} or /background`
+    : width - displayWidth(title) >= displayWidth('Esc back') ? `${title}${fitHints(keysFor(selected), width - displayWidth(title))}` : title.trim();
+  const lines = [paint(truncateText(header, width), UI_COLORS.subtle)];
   for (const task of tasks.slice(start, start + visible)) lines.push(row(task, controller.focused && task.id === selected.id));
   if (tasks.length > visible) lines.push(paint(truncateText(`  +${tasks.length - visible} more · /background lists all`, width), UI_COLORS.subtle));
   return lines;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {entersBar, renderTaskBar, TaskBarController, taskLabel, type ComposerState} from '../src/backgroundTasks/bar.js';
+import {entersBar, ESCALATION_PAUSE_MS, fitHints, renderTaskBar, TaskBarController, taskLabel, type ComposerState} from '../src/backgroundTasks/bar.js';
 import {explicitRun, parseBackgroundCommand, renderSuggestion, suggestionKey} from '../src/backgroundTasks/suggestion.js';
 import {taskBlock, taskBlockText, TaskOutputView} from '../src/backgroundTasks/view.js';
 import {BackgroundManager} from '../src/backgroundTasks/manager.js';
@@ -200,4 +200,123 @@ test('manager: running first, stop/remove/clear rules, preferences changed and f
     }
   }
   assert.match(new BackgroundManager().render([], () => undefined, prefs, {width: 120, rows: 4, now: NOW, color: false, safe: true})[1]!, /No background tasks/u);
+});
+
+test('the manager acts on the task the person selected, even when the order changes under it', () => {
+  const manager = new BackgroundManager();
+  const prefs = DEFAULT_PREFERENCES();
+  const next = () => 'interrupt' as const;
+  const a = task('t1', {startedAt: NOW - 50_000});
+  const b = task('t2', {startedAt: NOW - 40_000, command: 'scrcpy', family: 'scrcpy'});
+  manager.handleKey(k('down'), [a, b], prefs, next);
+  assert.deepEqual(manager.handleKey(k('text', 'x'), [a, b], prefs, next), {kind: 'stop', taskId: 't1', level: 'interrupt'}, 'newest first: t2, then t1');
+  // A new task starts at the top while t1 is selected: the selection stays on t1.
+  const c = task('t3', {startedAt: NOW - 1000, command: 'tail -f x', family: 'tail -f'});
+  assert.deepEqual(manager.handleKey(k('text', 'x'), [a, b, c], prefs, next), {kind: 'stop', taskId: 't1', level: 'interrupt'});
+  // Finished tasks: one ends and is listed above the selected finished task; Delete still removes the selected one.
+  const old = task('t4', {state: 'exited', exitCode: 0, endedAt: NOW - 9000});
+  const ended = task('t5', {state: 'exited', exitCode: 0, endedAt: NOW - 8000});
+  for (let i = 0; i < 4; i++) manager.handleKey(k('down'), [a, old], prefs, next);
+  assert.deepEqual(manager.handleKey(k('delete'), [a, old], prefs, next), {kind: 'remove', taskId: 't4'});
+  assert.deepEqual(manager.handleKey(k('delete'), [a, old, ended], prefs, next), {kind: 'remove', taskId: 't4'});
+  // The selected task removed: its neighbour is selected, not the first row.
+  assert.deepEqual(manager.handleKey(k('delete'), [a, ended], prefs, next), {kind: 'remove', taskId: 't5'});
+});
+
+test('the manager list scrolls with the selection and leaves room for the details at any height', () => {
+  const manager = new BackgroundManager();
+  const prefs = DEFAULT_PREFERENCES();
+  const many = Array.from({length: 30}, (_, i) => task(`t${i + 1}`, {family: undefined, command: `tail -f /var/log/app${i + 1}.log`, startedAt: NOW - (i + 1) * 1000}));
+  for (let i = 0; i < 20; i++) manager.handleKey(k('down'), many, prefs, () => 'interrupt');
+  for (const rows of [8, 14, 24]) {
+    const lines = manager.render(many, () => undefined, prefs, {width: 80, rows, now: NOW, color: false, safe: true}).map(stripAnsi);
+    assert.equal(lines.length, rows);
+    assert.ok(lines.some(line => /^> t21 /u.test(line)), `${rows} rows: the selected task is visible\n${lines.join('\n')}`);
+    assert.match(lines.find(line => /above|below/u.test(line)) ?? '', /^ {2}\d+ above( · \d+ below)?$/u, 'the rows not shown are counted');
+    if (rows >= 14) assert.ok(lines.some(line => line.startsWith('  Command  tail -f /var/log/app21.log')), `${rows} rows: details of the selection`);
+  }
+});
+
+test('stopping is paced: a repeated or held x cannot go from interrupt to SIGKILL at once', () => {
+  const bar = new TaskBarController();
+  bar.focused = true;
+  const stopping = task('t1', {state: 'stopping', stopRequested: 'interrupt', stopRequestedAt: NOW});
+  const next = () => 'terminate' as const;
+  const early = bar.handleKey(k('text', 'x'), [stopping], next, NOW + 200);
+  assert.equal(early.kind, 'none');
+  assert.match((early as {message: string}).message, /give it a moment, then x sends terminate \(SIGTERM\)/u);
+  assert.deepEqual(bar.handleKey(k('text', 'x'), [stopping], next, NOW + ESCALATION_PAUSE_MS), {kind: 'stop', taskId: 't1', level: 'terminate'});
+  const manager = new BackgroundManager();
+  assert.equal(manager.handleKey(k('text', 'x'), [stopping], DEFAULT_PREFERENCES(), next, NOW + 200).kind, 'none', 'the manager uses the same rule');
+  // While paused the bar does not offer the escalation; afterwards it names it.
+  const paused = stripAnsi(renderTaskBar(bar, [stopping], {width: 120, now: NOW + 200, safe: true, color: false, next})[0]!);
+  assert.doesNotMatch(paused, /x terminate/u);
+  assert.match(stripAnsi(renderTaskBar(bar, [stopping], {width: 120, now: NOW + ESCALATION_PAUSE_MS, safe: true, color: false, next})[0]!), /x terminate \(SIGTERM\)/u);
+});
+
+test('a finished task with processes left: x kills what is left, Delete waits until nothing runs', () => {
+  const bar = new TaskBarController();
+  bar.focused = true;
+  const left = task('t1', {state: 'exited', exitCode: 0, endedAt: NOW - 1000, leftovers: true});
+  assert.deepEqual(bar.handleKey(k('text', 'x'), [left], () => undefined, NOW), {kind: 'stop', taskId: 't1', level: 'kill'});
+  assert.deepEqual(bar.handleKey(k('delete'), [left], () => undefined, NOW), {kind: 'none', message: 'its processes still run; x kills them, then Delete removes it'});
+  assert.match(stripAnsi(renderTaskBar(bar, [left], {width: 120, now: NOW, safe: true, color: false, next: () => undefined})[0]!), /x kill what is left · Esc back/u);
+  const killed = {...left, stopRequested: 'kill' as const};
+  assert.equal(bar.handleKey(k('text', 'x'), [killed], () => undefined, NOW).kind, 'none', 'one kill request; then it waits');
+  const manager = new BackgroundManager();
+  const lines = manager.render([left], () => undefined, DEFAULT_PREFERENCES(), {width: 100, rows: 20, now: NOW, color: false, safe: true});
+  assert.ok(lines.some(line => line.includes('processes of this task still run; x kills them')));
+});
+
+test('narrow terminals: the task stays named, the way back stays shown, and removal keeps the selection in place', () => {
+  const bar = new TaskBarController();
+  bar.focused = true;
+  const tasks = [task('t1', {state: 'stopping', stopRequested: 'terminate', stopRequestedAt: NOW - 5000}), task('t2'), task('t3', {command: 'npm run dev', family: 'npm run dev'})];
+  for (const width of [40, 48, 60]) {
+    const row = stripAnsi(renderTaskBar(bar, tasks, {width, now: NOW, safe: true, color: false, next: () => 'kill'})[0]!);
+    assert.ok(displayWidth(row) <= width);
+    assert.match(row, /adb logcat/u, `${width}: the label survives (${row})`);
+  }
+  assert.equal(fitHints(['↑↓ select', 'Enter output', 'x stop', 'Del remove', 'c clear finished', 'Tab preferences', 'Esc close'], 40), '↑↓ select · Enter output · Esc close', 'whole hints are dropped, the way back is kept');
+  const manager = new BackgroundManager();
+  const footer = stripAnsi(manager.render(tasks, () => undefined, DEFAULT_PREFERENCES(), {width: 40, rows: 12, now: NOW, color: false, safe: true}).at(-1)!);
+  assert.match(footer, /Esc close$/u, 'the way out is never cut off');
+  bar.selectedId = 't2';
+  bar.sync(tasks);
+  bar.sync([tasks[0]!, tasks[2]!]);
+  assert.equal(bar.selectedId, 't3', 'the neighbour takes the removed task\'s place');
+  const expanded = new TaskBarController(true);
+  assert.match(renderTaskBar(expanded, tasks, {width: 80, now: NOW, safe: false, color: false, upArrow: 'off'})[0]!, /Shift\+↑ or \/background/u, 'the hint names the key that enters the bar');
+});
+
+test('output view: a scrolled-back view stays on its lines while the retention limit drops older ones; the progress line shows', () => {
+  const output = new TaskOutput({lines: 20, bytes: 1024 * 1024});
+  for (let i = 1; i <= 20; i++) output.append(`line ${i}\n`);
+  const view = new TaskOutputView();
+  const running = task('t1');
+  const options = {width: 60, height: 7, now: NOW, color: false, safe: true};
+  view.render(running, output, options);
+  view.scroll(-8, output, 5);
+  const before = view.render(running, output, options).slice(1, 6);
+  assert.deepEqual(before, ['line 8', 'line 9', 'line 10', 'line 11', 'line 12']);
+  for (let i = 21; i <= 25; i++) output.append(`line ${i}\n`);
+  assert.deepEqual(view.render(running, output, options).slice(1, 6), before, 'the lines being read do not drift up as old ones are dropped');
+  assert.match(view.render(running, output, options)[6]!, /^5 new lines below/u);
+  for (let i = 26; i <= 40; i++) output.append(`line ${i}\n`);
+  const overtaken = view.render(running, output, {...options, width: 100});
+  assert.equal(overtaken[1], 'line 21', 'once its lines are gone the view shows the oldest kept line');
+  assert.match(overtaken[6]!, /older lines dropped \(retention limit\) · End follow · Esc back$/u);
+  assert.match(view.render(running, output, {...options, width: 44})[6]!, /^20 new lines below · End follow · Esc back$/u, 'narrow: notes go before the keys');
+  view.end(output);
+  output.append('downloading 42%');
+  const following = view.render(running, output, options);
+  assert.equal(following[5], 'downloading 42%', 'the unfinished line is the last row while following');
+  assert.equal(following[4], 'line 40');
+});
+
+test('/background parsing is linear on a long pasted run of spaces', () => {
+  const started = performance.now();
+  assert.equal(parseBackgroundCommand(`/background ${' '.repeat(100_000)}x${' '.repeat(100_000)}`)?.kind, 'invalid');
+  assert.equal(parseBackgroundCommand(`${' '.repeat(100_000)}x`), undefined);
+  assert.ok(performance.now() - started < 250, `took ${(performance.now() - started).toFixed(0)} ms`);
 });
