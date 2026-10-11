@@ -52,3 +52,14 @@ We have intentionally excluded existing screenshots and GIFs as requested.
 - Create the custom homepage.
 - Validate internal links.
 - Test deployment.
+
+
+## 7. GitHub Pages Activation Instructions (For Repository Admin)
+Because GitHub Pages is not yet enabled for this repository, the initial GitHub Actions deployment run will fail.
+
+To activate GitHub Pages for the documentation:
+1. Go to the repository **Settings** on GitHub.
+2. Under the "Code and automation" sidebar section, click **Pages**.
+3. Under "Build and deployment" > "Source", select **GitHub Actions** from the dropdown menu (instead of "Deploy from a branch").
+4. (Optional) If you have a custom domain (`nmsh.raisecaterror.com`), enter it under the Custom domain section and follow the DNS verification steps.
+5. Re-run the failed `Deploy Documentation Site to GitHub Pages` workflow in the Actions tab. The site will deploy successfully to `https://raisecaterror.github.io/notMyShell/`.
