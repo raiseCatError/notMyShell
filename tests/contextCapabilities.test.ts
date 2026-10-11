@@ -422,11 +422,58 @@ test('runtime manifests with huge whitespace runs are read in linear time', asyn
   resetServiceCaches();
   const root = await workspace();
   try {
-    await writeFile(join(root, 'Gemfile'), `${'\n \t'.repeat(20_000)}ruby "3.3.0"\n`);
-    await writeFile(join(root, 'Package.swift'), `// swift-tools-version${' '.repeat(3000)}\n`);
-    const started = Date.now();
-    await resolve(rubyRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
-    await resolve(swiftRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
-    assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+    const timed = async <V>(capability: CapabilityDefinition<V>) => {
+      const started = performance.now();
+      const value = await resolve(capability, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+      return {value, ms: performance.now() - started};
+    };
+    // A pattern whose leading whitespace may span lines restarts at every line and rescans the rest: ~0.7 s for this Gemfile.
+    const hostile = '\n \t'.repeat(21_000);
+    await writeFile(join(root, 'Gemfile'), `${hostile}gem "rails"\n`);
+    const missing = await timed(rubyRuntime);
+    assert.equal(missing.value?.requested, undefined);
+    assert.ok(missing.ms < 250, `no declaration: ${Math.round(missing.ms)} ms`);
+    await writeFile(join(root, 'Gemfile'), `${hostile}ruby "3.3.0"\n`);
+    const found = await timed(rubyRuntime);
+    assert.deepEqual(found.value, {requested: '3.3.0', requestedFrom: 'Gemfile', buildTool: 'bundler'});
+    assert.ok(found.ms < 250, `declaration after the run: ${Math.round(found.ms)} ms`);
+
+    await writeFile(join(root, 'Package.swift'), `// swift-tools-version${' \n//'.repeat(20_000)}\n`);
+    const swift = await timed(swiftRuntime);
+    assert.equal(swift.value?.requested, undefined);
+    assert.ok(swift.ms < 250, `${Math.round(swift.ms)} ms`);
+    await writeFile(join(root, 'go.mod'), `module x\n${'go \n'.repeat(15_000)}`);
+    const go = await timed(goRuntime);
+    assert.equal(go.value, undefined);
+    assert.ok(go.ms < 250, `${Math.round(go.ms)} ms`);
   } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('runtime manifests: declarations are read only where their tools read them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    const requested = async <V>(capability: CapabilityDefinition<V>) => resolve(capability, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    // SwiftPM reads swift-tools-version from the first line only, and real manifests are often larger than a few KiB.
+    await writeFile(join(root, 'Package.swift'), `// swift-tools-version:5.10\nimport PackageDescription\n${'// padding\n'.repeat(1000)}`);
+    assert.equal((await requested(swiftRuntime))?.requested, '≥5.10');
+    await writeFile(join(root, 'Package.swift'), 'import PackageDescription\n// swift-tools-version:5.10\n');
+    assert.equal((await requested(swiftRuntime))?.requested, undefined, 'a later line is not the declaration');
+    await writeFile(join(root, 'Package.swift'), '//\n swift-tools-version:5.10\n');
+    assert.equal((await requested(swiftRuntime))?.requested, undefined, 'the declaration does not span lines');
+    // go.mod directives are single lines; a trailing comment is allowed, a line break is not.
+    await writeFile(join(root, 'go.mod'), 'module x\r\n\r\ngo 1.22 // minimum\r\n');
+    assert.equal((await requested(goRuntime))?.requested, '1.22');
+    await writeFile(join(root, 'go.mod'), 'module x\n\ngo\n1.22\n');
+    assert.equal(await requested(goRuntime), undefined);
+    // asdf's .NET plugin is dotnet-core.
+    await writeFile(join(root, '.tool-versions'), 'dotnet-core 8.0.404\n');
+    assert.deepEqual(await requested(dotnetRuntime), {requested: '8.0.404', requestedFrom: '.tool-versions'});
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('Ruby install layouts: RVM and chruby/ruby-install rubies', () => {
+  assert.deepEqual(versionFromInstallPath('/Users/me/.rvm/rubies/ruby-3.2.2/bin/ruby'), {version: '3.2.2', manager: 'RVM'});
+  assert.deepEqual(versionFromInstallPath('/Users/me/.rubies/ruby-3.3.5/bin/ruby'), {version: '3.3.5', manager: 'chruby'});
+  assert.equal(versionFromInstallPath('/Users/me/.rubies/truffleruby-24.1.0/bin/ruby'), undefined, 'other implementations stay unknown');
 });

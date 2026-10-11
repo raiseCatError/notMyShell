@@ -172,8 +172,9 @@ export const goRuntime = runtimeCapability('runtime.go', 'Go toolchain', ['go.mo
   const module = await findNearest(context, ['go.work', 'go.mod']);
   if (module) {
     const content = await readMetadataText(module.path) ?? '';
-    const toolchain = /^toolchain\s+go(\d[\w.+-]{0,31})\s*$/mu.exec(content)?.[1];
-    const go = /^go\s+(\d[\w.+-]{0,31})\s*$/mu.exec(content)?.[1];
+    // Directives are single lines: horizontal whitespace only, so a hostile file cannot make a match span lines.
+    const toolchain = /^toolchain[ \t]+go(\d[\w.+-]{0,31})[ \t]*(?:\/\/[^\n]*)?\r?$/mu.exec(content)?.[1];
+    const go = /^go[ \t]+(\d[\w.+-]{0,31})[ \t]*(?:\/\/[^\n]*)?\r?$/mu.exec(content)?.[1];
     if (toolchain || go) requested = {version: (toolchain ?? go)!, from: module.name};
   }
   requested ??= await versionFile(context, ['.go-version']);
@@ -308,10 +309,11 @@ export const phpRuntime = runtimeCapability('runtime.php', 'PHP version', ['.php
 
 /** The shared shape of the smaller runtimes: a requested version from the project's own files, an active one from the install path. */
 function simpleRuntime(id: string, title: string, binary: string, reads: readonly string[], preview: RuntimeFact,
-  requestedVersion: (context: CapabilityContext) => Promise<{version: string; from: string; tool?: string} | undefined>, present: readonly string[]): CapabilityDefinition<RuntimeFact> {
+  requestedVersion: (context: CapabilityContext) => Promise<{version: string; from: string; tool?: string} | undefined>, present: readonly string[],
+  toolNames: readonly string[] = [binary]): CapabilityDefinition<RuntimeFact> {
   return runtimeCapability(id, title, [...reads, `the ${binary} executable the shell resolves: its install location (never run)`], [], preview, async context => {
     const manifest = present.length ? await findNearest(context, present) : undefined;
-    const requested: {version: string; from: string; tool?: string} | undefined = await requestedVersion(context) ?? await toolRequest(context, [binary]);
+    const requested: {version: string; from: string; tool?: string} | undefined = await requestedVersion(context) ?? await toolRequest(context, toolNames);
     if (!requested && !manifest && !context.fields.has('active')) return undefined;
     const active = await activeVersion(context, [binary]);
     const value = compact({requested: requested?.version, requestedFrom: requested?.from, ...active, ...(requested?.tool ? {buildTool: requested.tool} : {})});
@@ -327,15 +329,16 @@ export const dotnetRuntime = simpleRuntime('runtime.dotnet', '.NET SDK', 'dotnet
     // global.json's version is a floor unless rollForward is "disable": a newer SDK satisfies it, so it is not judged as a mismatch.
     const exact = record(data) && record(data.sdk) && (data.sdk as Record<string, unknown>).rollForward === 'disable';
     return version ? {version: exact ? version : `≥${version}`, from: 'global.json'} : undefined;
-  }, ['global.json']);
+  }, ['global.json'], ['dotnet', 'dotnet-core']);
 
 export const swiftRuntime = simpleRuntime('runtime.swift', 'Swift toolchain', 'swift', ['.swift-version', 'Package.swift (swift-tools-version)', '.tool-versions', 'mise.toml'],
   {requested: '5.9', requestedFrom: 'Package.swift', active: '5.10.1', manager: 'Homebrew', buildTool: 'swiftpm'}, async context => {
     const file = await versionFile(context, ['.swift-version']);
     if (file) return file;
     const manifest = await findNearest(context, ['Package.swift']);
-    const tools = manifest ? /^\/\/\s*swift-tools-version[ \t]*:[ \t]*(\d+(?:\.\d+){0,2})/mu.exec(await readMetadataText(manifest.path, 4096) ?? '')?.[1] : undefined;
-    // swift-tools-version is the oldest toolchain that can build the package, not a pin.
+    // SwiftPM reads the declaration from the first line only; swift-tools-version is the oldest toolchain that can build the package, not a pin.
+    const first = manifest ? (await readMetadataText(manifest.path, LARGE_METADATA_BYTES))?.split('\n', 1)[0] : undefined;
+    const tools = /^\/\/[ \t]*swift-tools-version[ \t]*:[ \t]*(\d+(?:\.\d+){0,2})/u.exec(first ?? '')?.[1];
     return tools ? {version: `≥${tools}`, from: 'Package.swift', tool: 'swiftpm'} : undefined;
   }, ['Package.swift']);
 
@@ -344,7 +347,7 @@ export const zigRuntime = simpleRuntime('runtime.zig', 'Zig toolchain', 'zig', [
     const file = await versionFile(context, ['.zigversion']);
     if (file) return file;
     const manifest = await findNearest(context, ['build.zig.zon']);
-    const minimum = manifest ? /\.minimum_zig_version\s*=\s*"(\d[\w.+-]{0,31})"/u.exec(await readMetadataText(manifest.path, 16 * 1024) ?? '')?.[1] : undefined;
+    const minimum = manifest ? /\.minimum_zig_version\s*=\s*"(\d[\w.+-]{0,31})"/u.exec(await readMetadataText(manifest.path) ?? '')?.[1] : undefined;
     // minimum_zig_version is a floor, not a pin.
     return minimum ? {version: `≥${minimum}`, from: 'build.zig.zon'} : undefined;
   }, ['build.zig', 'build.zig.zon']);
