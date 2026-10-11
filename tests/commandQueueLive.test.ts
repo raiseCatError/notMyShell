@@ -228,7 +228,7 @@ test('live: a multi-line paste queues as one entry and runs once, as one block',
     await frontend.waitFor(/Running sleep 5/u, mark);
     frontend.pty.write('\u001b[200~for i in 1 2; do\n  echo "LINE-$i"\ndone\u001b[201~');
     // NMSh's paste review comes first; Enter inserts the paste into the composer, and only the next Enter queues it.
-    await frontend.waitFor(/Enter insert · R review · Esc cancel/u, mark);
+    await frontend.waitFor(/Enter insert · R review(?: · B queue as commands)? · Esc cancel/u, mark);
     frontend.pty.write('\r');
     await frontend.waitFor(/❯ for i in 1 2; do/u, mark);
     await pause(300);
@@ -250,7 +250,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
       await frontend.waitFor(/MULTI-READY/u, mark);
       const command = `${shell === 'fish' ? 'set -g MULTI_VALUE kept' : 'MULTI_VALUE=kept'}\nprintf 'BLOCK-%s\\n' FIRST\nprintf 'BLOCK-%s-%s\\n' LAST "$MULTI_VALUE"`;
       frontend.pty.write(`\u001b[200~${command}\u001b[201~`);
-      await frontend.waitFor(/Enter insert · R review · Esc cancel/u, mark);
+      await frontend.waitFor(/Enter insert · R review(?: · B queue as commands)? · Esc cancel/u, mark);
       frontend.pty.write('\r');
       await frontend.waitFor(/❯ (?:set -g MULTI_VALUE|MULTI_VALUE=kept)/u, mark);
       frontend.pty.write('\u0011');
