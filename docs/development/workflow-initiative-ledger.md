@@ -10,13 +10,13 @@ has been merged to master or the release branch. Physical terminal QA remains ou
 | PR | Published head | Local additive candidate | Gate |
 | --- | --- | --- | --- |
 | #345 | 7122468 | unchanged | stack base |
-| #348 | 86fb4e4 | fix/workflow-cedar / 566c321 | published canonical/Actions green; isolated-home follow-up final gates pending |
-| #357 | 7fb6b5a | fix/workflow-birch / 2dd8b80 | final canonical/CI pending |
-| #358 | 790fd74 | fix/workflow-amber / 443eed5 | final canonical/CI pending |
-| #360 | afe7f69 | fix/workflow-coral / 26a2a7f | final canonical/CI pending |
-| #361 | b1cdfbe | fix/workflow-indigo / c6d7514 | final canonical/CI pending |
-| #367 | 66e164d | fix/workflow-willow / cd20d8a | independent sibling; final canonical/CI pending |
-| #368 | 5a795ed | fix/workflow-maple / 3dbd400 | final canonical/CI pending |
+| #348 | 86fb4e4 | fix/workflow-cedar / 48a0ded | published canonical/Actions green; home/readiness follow-up final gates pending |
+| #357 | 7fb6b5a | fix/workflow-birch / 3adc451 | final canonical/CI pending |
+| #358 | 790fd74 | fix/workflow-amber / 000736d | final canonical/CI pending |
+| #360 | afe7f69 | fix/workflow-coral / 80bd0cf | final canonical/CI pending |
+| #361 | b1cdfbe | fix/workflow-indigo / 0117a34 | final canonical/CI pending |
+| #367 | 66e164d | fix/workflow-willow / be037a0 | independent sibling; final canonical/CI pending |
+| #368 | 5a795ed | fix/workflow-maple / this checkpoint | final canonical/CI pending |
 
 All candidates preserve their published ancestors through additive merges. Owned
 worktrees use neutral names: nmsh-cedar-input, nmsh-birch-queue, nmsh-amber-copy,
@@ -29,7 +29,7 @@ Verification logs and the Linux VM now use durable external storage.
 The test runner supports NMSH_TEST_TMPDIR; fixture and key-diagnostic writers
 respect the selected temporary directory. Invalid storage fails instead of falling
 back. Source typecheck, focused lifecycle/privacy/platform tests and verify:fast
-passed for storage correction 9465eb5.
+passed for storage correction 9465eb5. The runner also isolates child HOME in the chosen root.
 
 ## Confirmed findings and work
 
@@ -44,7 +44,7 @@ passed for storage correction 9465eb5.
   the Ctrl+C survivor waits for trap installation, uses a timed-read-capable shell and an explicit release file.
 - **Attach privacy follow-up:** a final canonical run caught a password echoed by the outer PTY during journal I/O.
   A slow-journal real-PTY fixture reproduces it. Raw input is now protected before passthrough output and throughout
-  probing/journaling; full verification is pending. Key diagnostics now exclude all running/startup input.
+  probing/journaling; the later fixture follow-ups require their own final gate. Key diagnostics now exclude all running/startup input.
 - **Gemfile security:** `18e94d9` applies the bounded single-line Ruby declaration parser to the duplicate in #368.
   Malicious-whitespace and cross-line declaration regressions pass. #370 remains the canonical runtime owner.
 - **Workflow additions (a16d556, 3097cbb):** clips deliberately kept in bounded frontend memory, reviewed through the
@@ -77,8 +77,14 @@ passed for storage correction 9465eb5.
 
 - **Completion and home isolation (566c321):** the queue full run at f081c42 failed its first nested-path candidate assertion after about 1.5 seconds. Controlled slow initialization reproduces a bounded empty result and transport cleanup. Functional capture/cache fixtures now prepare their own completion cache; a new expiry/recovery test retains the production startup deadline. The suite runner also assigns a private home inside its selected temporary root, preventing generated shell caches from reaching the host home. The new isolation test failed before the correction; affected lifecycle/completion tests and verify:fast passed afterward. Final canonical/CI verification is pending.
 
+- **Fixture ownership follow-up (48a0ded, e2adc1e):** a visible composer preceded the third shell's authenticated startup prompt in the SIGHUP fixture; a controlled startup release gate now proves and waits for that transition. Same-shell queue tests use a release file rather than a fixed sleep, keeping all five entries pending until assertions finish. Interrupt typeahead waits for actual foreground process ownership before signalling. The focused SIGHUP case and all three shell queue cases plus Ctrl+C/Ctrl+Z passed.
+- **Short module details (52db115):** diagnostic rows now honor the panel's height and remain reachable through arrows/PageUp/PageDown. The viewport is ephemeral; reading and resizing do not change settings or demand collectors. Focused unit and real-PTY tests in a 50-column NO_COLOR Safe terminal, direct typecheck and verify:fast passed. Exact last-frame module width-compaction explanations remain an acceptance-integration follow-up.
+
 ## Verification recorded so far
 
+- macOS canonical verification passed at 566c321 with the isolated child home. Its later startup-gate fixture commit needs a new exact-head gate.
+- The macOS queue run at 2dd8b80 failed five cases: a transient five-entry assertion after the holding sleep expired, signalling before actual foreground ownership, two no-output frontend startup deadlines and the bounded zoxide query fixture. The first two assumptions are corrected above. At inspection this 8 GiB/8 CPU host had load averages 18.05/50.35/59.36 and unrelated Xcode/xctest work active. Their processes are preserved. Host verification now runs one test worker with this track's Linux VM stopped; resource pressure is evidence, not a blanket explanation for remaining failures.
+- The Ubuntu run at 895aae5 passed ranking and multiplexer cases but failed SIGHUP's third-shell readiness. That exact run is failed evidence; the controlled startup correction must pass a new full gate.
 - macOS canonical verification and direct typecheck passed at 86fb4e4. [Actions 38150534791](https://github.com/raiseCatError/notMyShell/actions/runs/38150534791) passed the Ubuntu/macOS shards, Quality, Node 22 and aggregate checks; timing/Fedora jobs were skipped on the PR event. The isolated-home follow-up needs its own final gates.
 - Ubuntu canonical verification passed at 5e45e87 with Fish 3.7.0, including the unchanged ranking threshold. Multiplexer tests were skipped because the minimal VM lacked tmux/screen; those tools are now installed for the next run.
 - The Ubuntu canonical run at 5756f7c failed the report assertion, two missing-tool fixtures, mise timestamp assertion, provider installer availability assertion and the unchanged suggestion timing threshold. The timing test passed an isolated rerun; the final canonical gate must pass before publication.
@@ -90,8 +96,7 @@ passed for storage correction 9465eb5.
   interruption, same-shell grouping and narrow/NO_COLOR/Safe presentation. Ubuntu amd64 CI remains an independent gate.
 - Focused report/diff sanitization, hostile pin rendering, clip/paste staging, recipe review, history pinning, failure
   keys, clipboard failure/EPIPE/size bounds, and actual stand-in clipboard diff bytes passed.
-- Live Report cancellation and actual clipboard bytes passed on macOS with hostile controls, invisible Unicode,
-  tokens and fence content; Linux execution of this new regression is pending.
+- Live Report cancellation and actual clipboard bytes passed on macOS and in the Ubuntu canonical run at 5e45e87 with hostile controls, invisible Unicode, tokens and fence content.
 - Early full local runs inherited disabled colors/dumb TERM and one hit ENOSPC. They are failed runs, not evidence
   of passing behavior. Final fixture runs explicitly set their truecolor environment; explicit NO_COLOR tests remain.
 
