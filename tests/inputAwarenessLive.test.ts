@@ -80,6 +80,28 @@ for (const shell of ['zsh', 'bash'] as const) {
  * Answer the terminal queries a program sends through NMSh (primary device attributes, cursor position), as a real
  * terminal does. Fish's reader waits for these answers; the test PTY alone never sends them.
  */
+test('live fish: a hidden reader inside a function keeps ownership across detach, then releases it at the prompt', {skip: supported && fish ? false : 'fish not installed', timeout: 90_000}, async () => {
+  const {sandbox, frontend} = await start('fish');
+  try {
+    await frontend.run("function ask; read -s -P (printf 'Pass%s: ' word) secret; echo; echo len=(string length -- $secret); end", /Completed/u);
+    const mark = frontend.mark;
+    frontend.pty.write('ask\r');
+    await frontend.waitFor(/Password: /u, mark);
+    const [session] = await sandbox.sessions();
+    frontend.pty.kill('SIGKILL');
+    await until(async () => (await sandbox.sessions()).find(item => item.id === session!.id)?.state === 'detached', 15_000, 'reader detached');
+    const back = sandbox.launch(['--attach', session!.id]);
+    await back.waitFor(/Password: /u);
+    const reply = back.mark;
+    back.pty.write('never-a-command\r');
+    await back.waitFor(/len=15[\s\S]*Completed/u, reply);
+    assert.doesNotMatch(strip(back.output.slice(reply)), /never-a-command|Queued/u);
+    await back.run('echo AFTER-READER', /AFTER-READER/u);
+    const records = (await sandbox.transcripts().list()).flatMap(item => item.transcript.records);
+    assert.equal(records.some(record => record.command.includes('never-a-command')), false);
+  } finally { await sandbox.dispose(); }
+});
+
 function answerQueries(frontend: Frontend): () => void {
   let seen = frontend.mark;
   const timer = setInterval(() => {
@@ -95,13 +117,14 @@ test('live fish: read is fish\'s own line editor: handed the terminal, answered 
   const stop = answerQueries(frontend);
   try {
     let mark = frontend.mark;
-    frontend.pty.write(`read -P 'Name: ' x; echo got=$x\r`);
-    // Fish's reader turns on bracketed paste: NMSh hands it the terminal, as for any interactive program.
+    // The prompt is built by fish, so "Name: " is not in the command text NMSh echoes and shows while it runs.
+    frontend.pty.write(`read -P (printf 'Na%s: ' me) x; echo got=$x\r`);
+    // Fish reports its reader before drawing; Fish 3 does not enable bracketed paste here.
     await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, 'fish draws its own prompt');
     frontend.pty.write('abc\r');
     await frontend.waitFor(/got=abc[\s\S]*Completed/u, mark);
     mark = frontend.mark;
-    frontend.pty.write(`read -s -P 'Password: ' p; echo len=(string length -- $p)\r`);
+    frontend.pty.write(`read -s -P (printf 'Pass%s: ' word) p; echo len=(string length -- $p)\r`);
     await until(() => frontend.output.slice(mark).includes('Password: '), 15_000, 'fish draws its hidden prompt');
     frontend.pty.write('hunter2\r');
     // This command's own completion: a bare "Completed" could match the previous command's row.

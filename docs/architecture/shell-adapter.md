@@ -21,7 +21,7 @@ ZshAdapter   FishAdapter   BashAdapter
 | Member | Purpose |
 |---|---|
 | `launch(context)` | Write private bootstrap files into a per-session directory and return argv + env. The user's own startup files load first. |
-| marker grammar | Every adapter emits the same authenticated OSC 777 markers: `<status>;<cwd>` when a command finished (or the shell became ready) and `exec2;<0\|1>;<command>` before a command runs. `ShellProtocolDecoder` is shared. |
+| marker grammar | Every adapter emits the same authenticated OSC 777 markers: `<status>;<cwd>` when a command finished (or the shell became ready) and `exec2;<0\|1>;<command>` before a command runs. Fish also emits `reader` from `fish_read` before builtin input starts. `ShellProtocolDecoder` is shared. |
 | `editorChrome` | `none` (zsh with ZLE off, Bash `--noediting`): everything after readiness is output. `prompt-to-exec` (Fish): bytes between readiness and exec are Fish's own line editor redrawing, and are dropped. |
 | `scrubCommandStart`, `answerQueries` | Fish turns bracketed paste off as it hands the terminal to a command; that byte sequence is removed from the start of command output so it can never reach the host in passthrough. Fish 4 waits for a primary-device-attributes reply while idle; NMSh, being its terminal, answers minimally. |
 | `capabilities` | What the backend can honestly provide: completion richness and descriptions, live names, history import, the shell's private-history rule, job counting. The frontend degrades on absent capabilities instead of faking them. |

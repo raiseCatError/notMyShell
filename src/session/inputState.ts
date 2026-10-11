@@ -33,6 +33,8 @@ export interface InputTiming {
 }
 
 export interface InputState {
+  /** The shell explicitly entered its interactive reader; ownership lasts until the next prompt. */
+  terminalOwner?: true;
   request?: InputRequest;
   timing: InputTiming;
 }
