@@ -7,7 +7,7 @@
   "license": "GPL-3.0-only",
   "provenance": {"author": "notMyShell", "notes": "First-party pack shipped with NMSh. Independent implementation; tool behavior studied from public documentation only."},
   "compatibility": {"contextApi": 1, "nmsh": ">=0.17.0"},
-  "requires": ["project.package", "runtime.node", "runtime.python", "runtime.go", "runtime.ruby", "runtime.php", "runtime.dotnet", "runtime.swift", "runtime.zig", "runtime.deno", "runtime.elixir", "runtime.dart", "runtime.flutter", "runtime.rust", "runtime.java"],
+  "requires": ["project.package", "project.build", "runtime.node", "runtime.python", "runtime.go", "runtime.ruby", "runtime.php", "runtime.dotnet", "runtime.swift", "runtime.zig", "runtime.deno", "runtime.elixir", "runtime.dart", "runtime.flutter", "runtime.rust", "runtime.java"],
   "modules": [
     {
       "id": "package", "label": "Package", "description": "Version and package manager from the nearest declarative manifest.",
@@ -16,6 +16,16 @@
       "segments": [{"label": "pkg", "parts": [
         {"fact": "project.package", "field": "version", "format": "version"},
         {"fact": "project.package", "field": "manager", "join": " · ", "optional": true}
+      ]}]
+    },
+    {
+      "id": "build", "label": "Build", "description": "Build system and the version the project pins for it (Gradle/Maven wrapper, .bazelversion, CMake/Meson minimum); nothing is run.",
+      "category": "project", "priority": 35, "role": "runtime", "icon": "tools", "condition": "onCommand",
+      "triggers": ["gradle", "gradlew", "mvn", "mvnw", "cmake", "ctest", "meson", "ninja", "bazel", "bazelisk", "make", "gmake"],
+      "surfaces": {"preferred": "contextRail"},
+      "segments": [{"label": "build", "parts": [
+        {"fact": "project.build", "field": "tool"},
+        {"fact": "project.build", "field": "version", "prefix": " ", "optional": true}
       ]}]
     },
     {
@@ -198,6 +208,7 @@
     {"module": "swift", "evidence": [{"kind": "workspaceFile", "names": ["Package.swift", ".swift-version"]}]},
     {"module": "zig", "evidence": [{"kind": "workspaceFile", "names": ["build.zig", "build.zig.zon", ".zigversion"]}]},
     {"module": "deno", "evidence": [{"kind": "workspaceFile", "names": ["deno.json", "deno.jsonc", ".dvmrc"]}]},
+    {"module": "build", "evidence": [{"kind": "workspaceFile", "names": ["MODULE.bazel", "WORKSPACE", "settings.gradle.kts", "settings.gradle", "build.gradle.kts", "build.gradle", "pom.xml", "CMakeLists.txt", "meson.build"]}]},
     {"module": "elixir", "evidence": [{"kind": "workspaceFile", "names": ["mix.exs"]}]},
     {"module": "dart", "evidence": [{"kind": "workspaceFile", "names": ["pubspec.yaml"]}]},
     {"module": "flutter", "evidence": [{"kind": "workspaceFile", "names": [".fvmrc", ".fvm"]}]}

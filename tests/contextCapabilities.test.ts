@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import type {CapabilityDefinition} from '../src/context/capability.js';
 import {projectPackage} from '../src/context/capabilities/project.js';
+import {projectBuild} from '../src/context/capabilities/build.js';
 import {dartRuntime, denoRuntime, dotnetRuntime, elixirRuntime, flutterRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
 import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
@@ -587,4 +588,76 @@ test('install layouts: FVM and Homebrew casks', () => {
   assert.deepEqual(versionFromInstallPath('/Users/me/fvm/versions/3.24.3/bin/flutter'), {version: '3.24.3', manager: 'FVM'});
   assert.deepEqual(versionFromInstallPath('/opt/homebrew/Caskroom/flutter/3.24.3/flutter/bin/flutter'), {version: '3.24.3', manager: 'Homebrew'});
   assert.deepEqual(versionFromInstallPath('/opt/homebrew/Caskroom/dotnet-sdk/8.0.404,abc123/dotnet'), {version: '8.0.404', manager: 'Homebrew'});
+});
+
+test('project.build: the build system and the version the project pins for it, without running a wrapper or build file', async () => {
+  const root = await workspace();
+  try {
+    const at = (cwd = root) => resolve(projectBuild, {cwd, root});
+    assert.equal(await at(), undefined, 'no build files, no fact');
+    await writeFile(join(root, 'Makefile'), 'all:\n\ttouch MAKE_RAN\n');
+    assert.deepEqual(await at(), {tool: 'make', file: 'Makefile'});
+
+    // Gradle: the wrapper's distributionUrl names the version; gradlew is a sentinel that must never run.
+    await writeFile(join(root, 'settings.gradle.kts'), 'rootProject.name = "app"\n');
+    await sentinelExecutable(join(root, 'gradlew'), join(root, 'GRADLEW_RAN'), 'Gradle 9.9.9');
+    await mkdir(join(root, 'gradle', 'wrapper'), {recursive: true});
+    await writeFile(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'),
+      'distributionBase=GRADLE_USER_HOME\r\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip\r\nzipStorePath=wrapper/dists\r\n');
+    assert.deepEqual(await at(), {tool: 'gradle', file: 'settings.gradle.kts', version: '8.10.2', versionFrom: 'gradle-wrapper.properties'});
+    // A subproject finds the wrapper at the root.
+    await mkdir(join(root, 'app', 'src'), {recursive: true});
+    await writeFile(join(root, 'app', 'build.gradle.kts'), 'plugins { id("java") }\n');
+    assert.deepEqual(await at(join(root, 'app', 'src')), {tool: 'gradle', file: 'build.gradle.kts', version: '8.10.2', versionFrom: 'gradle-wrapper.properties'});
+    assert.equal(await exists(join(root, 'GRADLEW_RAN')), false);
+    await rm(join(root, 'app'), {recursive: true});
+    for (const name of ['settings.gradle.kts', 'gradlew']) await rm(join(root, name));
+    await rm(join(root, 'gradle'), {recursive: true});
+
+    // Maven wrapper.
+    await writeFile(join(root, 'pom.xml'), '<project><artifactId>app</artifactId></project>');
+    await mkdir(join(root, '.mvn', 'wrapper'), {recursive: true});
+    await writeFile(join(root, '.mvn', 'wrapper', 'maven-wrapper.properties'), 'wrapperVersion=3.3.2\ndistributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip\n');
+    assert.deepEqual(await at(), {tool: 'maven', file: 'pom.xml', version: '3.9.9', versionFrom: 'maven-wrapper.properties'});
+    await rm(join(root, 'pom.xml')); await rm(join(root, '.mvn'), {recursive: true});
+
+    // CMake: a subdirectory without a declaration uses the nearest one that has it; the command is case-insensitive.
+    await writeFile(join(root, 'CMakeLists.txt'), '# top\nCMAKE_MINIMUM_REQUIRED(VERSION 3.20...3.28)\nproject(app)\nadd_subdirectory(lib)\n');
+    await mkdir(join(root, 'lib'));
+    await writeFile(join(root, 'lib', 'CMakeLists.txt'), 'add_library(lib lib.c)\n');
+    assert.deepEqual(await at(join(root, 'lib')), {tool: 'cmake', file: 'CMakeLists.txt', version: '≥3.20', versionFrom: 'CMakeLists.txt'});
+    await rm(join(root, 'lib'), {recursive: true}); await rm(join(root, 'CMakeLists.txt'));
+
+    await writeFile(join(root, 'meson.build'), "project('app', 'c',\n  version : '1.0',\n  meson_version : '>= 1.1.0')\n");
+    assert.deepEqual(await at(), {tool: 'meson', file: 'meson.build', version: '≥1.1.0', versionFrom: 'meson.build'});
+    await rm(join(root, 'meson.build'));
+
+    // Bazel: the nearest marker wins over a Makefile in the same directory; .bazelversion is Bazelisk's pin.
+    await writeFile(join(root, 'MODULE.bazel'), 'module(name = "app")\n');
+    await writeFile(join(root, '.bazelversion'), '7.4.1\n');
+    assert.deepEqual(await at(), {tool: 'bazel', file: 'MODULE.bazel', version: '7.4.1', versionFrom: '.bazelversion'});
+    assert.deepEqual(await resolve(projectBuild, {cwd: root, root, fields: ['tool']}), {tool: 'bazel', file: 'MODULE.bazel'}, 'versions only on demand');
+    assert.equal(await exists(join(root, 'MAKE_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('project.build: hostile build metadata is bounded text, never a version it does not state', async () => {
+  const root = await workspace();
+  try {
+    await writeFile(join(root, 'settings.gradle'), '');
+    await mkdir(join(root, 'gradle', 'wrapper'), {recursive: true});
+    const properties = join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    await writeFile(properties, `distributionUrl=https://evil.example/gradle-8.10.2-bin.zip\u001b]8;;x\u0007\n`);
+    assert.equal((await resolve(projectBuild, {cwd: root, root}))?.version, undefined, 'a value with trailing controls is not a version');
+    await writeFile(properties, `${'distributionUrl'.repeat(4000)}=${' '.repeat(4000)}\n`);
+    assert.equal((await resolve(projectBuild, {cwd: root, root}))?.version, undefined);
+    await rm(properties);
+    await symlink('/etc/passwd', properties);
+    assert.equal((await resolve(projectBuild, {cwd: root, root}))?.version, undefined, 'symlinked metadata is not read');
+    await rm(join(root, 'gradle'), {recursive: true}); await rm(join(root, 'settings.gradle'));
+    await writeFile(join(root, 'CMakeLists.txt'), `${'\n \t'.repeat(20_000)}x\n`);
+    const started = performance.now();
+    assert.deepEqual(await resolve(projectBuild, {cwd: root, root}), {tool: 'cmake', file: 'CMakeLists.txt'});
+    assert.ok(performance.now() - started < 250);
+  } finally { await rm(root, {recursive: true, force: true}); }
 });
