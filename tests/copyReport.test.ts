@@ -24,8 +24,8 @@ const failed = () => record('npm test', 'boom\r\n```inner fence```\r\n', 1, '✘
 test('Markdown report: one section per command, facts from the record, output fenced safely, oldest first', () => {
   const {text, findings} = buildReport([devices(), failed()], {...DEFAULT_REPORT_OPTIONS, redact: false});
   assert.deepEqual(findings, []);
-  assert.match(text, /^# Command report\n\n2 commands, oldest first\.\n\n## 1\. `adb devices`\n\n- \*\*Status:\*\* ✔ Completed · 1\.4s · 10:04\n- \*\*Exit code:\*\* 0\n- \*\*Duration:\*\* 12\.9s\n\n```text\nList of devices attached\nR58M12ABC {7}device\n```/u, 'output as stored (tabs expanded as shown)');
-  assert.match(text, /## 2\. `npm test`[\s\S]*- \*\*Status:\*\* ✘ Command failed · exit 1 · 12\.9s · 10:05 · 3\.1s waiting for input\n- \*\*Exit code:\*\* 1/u);
+  assert.match(text, /^# Command report\n\n2 commands, oldest first\.\n\n## 1\. `adb devices`\n\n- \*\*Status:\*\* `✔ Completed · 1\.4s · 10:04`\n- \*\*Exit code:\*\* 0\n- \*\*Duration:\*\* 12\.9s\n\n```text\nList of devices attached\nR58M12ABC {7}device\n```/u, 'output as stored (tabs expanded as shown)');
+  assert.match(text, /## 2\. `npm test`[\s\S]*- \*\*Status:\*\* `✘ Command failed · exit 1 · 12\.9s · 10:05 · 3\.1s waiting for input`\n- \*\*Exit code:\*\* 1/u);
   assert.match(text, /````text\nboom\n```inner fence```\n````/u, 'a longer fence than any backtick run in the output');
   assert.doesNotMatch(text, /Directory|Started/u, 'directory and times are opt-in');
   const options = {...DEFAULT_REPORT_OPTIONS, redact: false, directory: true, timestamps: true};
@@ -189,4 +189,12 @@ test('a working directory with a line break or backtick cannot add structure to 
   const {text} = buildReport([record('ls', 'a\n', 0, '', {historicalContext: {cwd}})], {...DEFAULT_REPORT_OPTIONS, directory: true, redact: false});
   assert.equal(text.split('\n').some(line => /^# Injected|^- \*\*Status:\*\* fine/u.test(line)), false, text);
   assert.equal(buildReport([record('ls', 'a\n', 0, '', {historicalContext: {cwd}})], {...DEFAULT_REPORT_OPTIONS, format: 'plain', directory: true, redact: false}).text.split('\n').some(line => line === '# Injected'), false);
+});
+
+test('restored status text stays literal Markdown rather than injecting links, HTML or code delimiters', () => {
+  const status = 'Completed ``` [open](javascript:alert(1)) <img src=x onerror=alert(1)>\n# forged heading';
+  const text = buildReport([record('echo x', 'ok\n', 0, status)], {...DEFAULT_REPORT_OPTIONS, redact: false}).text;
+  const line = text.split('\n').find(value => value.startsWith('- **Status:**'));
+  assert.equal(line, '- **Status:** ````Completed ``` [open](javascript:alert(1)) <img src=x onerror=alert(1)> # forged heading````');
+  assert.equal(text.split('\n').includes('# forged heading'), false);
 });
