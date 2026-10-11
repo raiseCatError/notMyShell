@@ -10,13 +10,13 @@ has been merged to master or the release branch. Physical terminal QA remains ou
 | PR | Published head | Local additive candidate | Gate |
 | --- | --- | --- | --- |
 | #345 | 7122468 | unchanged | stack base |
-| #348 | 684a3fb | fix/workflow-cedar / 86fb4e4 | published Actions green; parent canonical and final fixture checks passed; final CI pending |
-| #357 | 7fb6b5a | fix/workflow-birch / f081c42 | final canonical/CI pending |
-| #358 | 790fd74 | fix/workflow-amber / fd2f0e9 | final canonical/CI pending |
-| #360 | afe7f69 | fix/workflow-coral / d51e80f | final canonical/CI pending |
-| #361 | b1cdfbe | fix/workflow-indigo / eb4fdf9 | final canonical/CI pending |
-| #367 | 66e164d | fix/workflow-willow / 25dfcae | independent sibling; final canonical/CI pending |
-| #368 | 5a795ed | fix/workflow-maple / 52650f8 | final canonical/CI pending |
+| #348 | 86fb4e4 | fix/workflow-cedar / 566c321 | published canonical/Actions green; isolated-home follow-up final gates pending |
+| #357 | 7fb6b5a | fix/workflow-birch / 2dd8b80 | final canonical/CI pending |
+| #358 | 790fd74 | fix/workflow-amber / 443eed5 | final canonical/CI pending |
+| #360 | afe7f69 | fix/workflow-coral / 26a2a7f | final canonical/CI pending |
+| #361 | b1cdfbe | fix/workflow-indigo / c6d7514 | final canonical/CI pending |
+| #367 | 66e164d | fix/workflow-willow / cd20d8a | independent sibling; final canonical/CI pending |
+| #368 | 5a795ed | fix/workflow-maple / 3dbd400 | final canonical/CI pending |
 
 All candidates preserve their published ancestors through additive merges. Owned
 worktrees use neutral names: nmsh-cedar-input, nmsh-birch-queue, nmsh-amber-copy,
@@ -75,9 +75,12 @@ passed for storage correction 9465eb5.
 - **Linux prerequisites:** the disposable minimal Ubuntu VM initially lacked less and vim. Their command-not-found failures are recorded; both tools are now installed in that VM. This changes no application installer policy.
 - **Metadata/installer fixtures (86fb4e4):** identical size and timestamps after an immediate mise config edit reproduced even at nanosecond precision. The stat-only cache test now supplies a definite timestamp change and documents explicit refresh for unchanged metadata. Provider review tests supply their own fake executable installer; they do not require host Homebrew or run an installer.
 
+- **Completion and home isolation (566c321):** the queue full run at f081c42 failed its first nested-path candidate assertion after about 1.5 seconds. Controlled slow initialization reproduces a bounded empty result and transport cleanup. Functional capture/cache fixtures now prepare their own completion cache; a new expiry/recovery test retains the production startup deadline. The suite runner also assigns a private home inside its selected temporary root, preventing generated shell caches from reaching the host home. The new isolation test failed before the correction; affected lifecycle/completion tests and verify:fast passed afterward. Final canonical/CI verification is pending.
+
 ## Verification recorded so far
 
-- macOS canonical verification passed at 9465eb5. Final fixture-only changes passed focused checks; final exact-head verification is pending.
+- macOS canonical verification and direct typecheck passed at 86fb4e4. [Actions 38150534791](https://github.com/raiseCatError/notMyShell/actions/runs/38150534791) passed the Ubuntu/macOS shards, Quality, Node 22 and aggregate checks; timing/Fedora jobs were skipped on the PR event. The isolated-home follow-up needs its own final gates.
+- Ubuntu canonical verification passed at 5e45e87 with Fish 3.7.0, including the unchanged ranking threshold. Multiplexer tests were skipped because the minimal VM lacked tmux/screen; those tools are now installed for the next run.
 - The Ubuntu canonical run at 5756f7c failed the report assertion, two missing-tool fixtures, mise timestamp assertion, provider installer availability assertion and the unchanged suggestion timing threshold. The timing test passed an isolated rerun; the final canonical gate must pass before publication.
 - Typecheck and canonical verification of published #348: passed; exact Actions head `684a3fbc837be97f185cc938f4fb13cbccf1533b`.
 - Queue candidate canonical verification passed before the additional attach privacy finding; that later failed run
