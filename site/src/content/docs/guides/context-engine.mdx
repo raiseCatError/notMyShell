@@ -1,104 +1,132 @@
 ---
 title: Context Modules and Engine
-description: Native context modules, routing, and declarative Context Packs.
+description: Native context modules, surface routing, built-in prompt modules, and declarative Context Packs.
 ---
 
 import Availability from '../../../components/Availability.astro';
 
 <Availability status="released" version="v0.17.0" />
 
-NMSh runs around a real persistent zsh, Bash or Fish session. Its native modules present useful context about that session and workspace — the project, Git, runtimes, cloud and cluster contexts, the machine, an AI agent's session — without taking over shell execution or running anything the workspace chose.
+NMSh runs around a real persistent zsh, Bash or Fish session. Its native modules present useful context about that session and workspace — the project, Git, runtimes, cloud contexts, the machine, an agent's session — without taking over shell execution or executing workspace scripts.
 
-## Architecture
+## Architecture & Data Flow
 
 The Context Engine follows a strict path from demand to presentation:
 
-1. **Capability**: A named operation implemented and audited in NMSh core (e.g., "the nearest project manifest").
-2. **Fact**: One resolved value with its source, freshness, trust, sensitivity, and persistence policy.
-3. **Module**: A presentation definition that uses facts.
-4. **Surface Router**: Places the module on the appropriate UI surface.
+1. **Capability**: A named operation implemented and audited in NMSh core (e.g. reading nearest package manifest, checking battery charge).
+2. **Fact**: One resolved value with its source, freshness, trust level, sensitivity, and persistence policy.
+3. **Module**: A presentation definition that reads facts and formats segments.
+4. **Surface Router**: Places the module on the appropriate UI surface based on screen width and user preference.
 5. **Surfaces**: Main Prompt, Right Context, Context Rail, or Status Strip.
 
 ## Surfaces
 
-NMSh routes context to one of four surfaces based on your preferences and screen space:
+NMSh routes context to four distinct surfaces configured via `/prompt`:
 
-- **Main Prompt**: Stable identity and navigation context, such as directory, project and Git.
-- **Right Context**: Independently anchored context at the right edge of the prompt area.
-- **Context Rail**: Live contextual modules attached to the composer, with their own geometry and priority fitting.
-- **Status Strip**: Persistent low-attention state; modules join its existing items at a lower priority.
+- **Main Prompt**: Stable identity and navigation context anchored to your composer (directory, project, Git branch).
+- **Right Context**: Independently anchored context at the right margin of the prompt row.
+- **Context Rail**: Dynamic contextual modules attached directly above or below the composer, appearing conditionally (e.g. `onCommand`).
+- **Status Strip**: Persistent, low-attention telemetry along the bottom edge of the terminal.
 
-You can configure where modules appear by typing `/prompt` and opening the **Modules** tab.
+---
+
+## Built-in Prompt Modules
+
+NMSh core includes purpose-built prompt modules with specialized renderers:
+
+| Module ID | Label | Description | Default Surface |
+|---|---|---|---|
+| `project` | Project | Repository or directory name. | Main Prompt |
+| `cwd` | Path | Working directory path, intelligently shortened to fit geometry. | Main Prompt |
+| `gitBranch` | Git Branch | Current Git branch or detached HEAD commit. | Main Prompt |
+| `gitStatus` | Git Status | Rich Git working-tree status (staged, unstaged, untracked, ahead/behind). | Main Prompt |
+| `toolchain` | Toolchains | Toolchains whose marker files exist in this project. | Main Prompt |
+| `exitStatus` | Exit Status | Exit code of the last executed command (shows on failure by default). | Main Prompt |
+| `kubeContext` | Kubernetes | Active kubeconfig context and namespace (appears on `kubectl`, `helm`). | Context Rail |
+| `dockerContext`| Docker Context| Active Docker CLI context (appears on `docker`, `docker-compose`). | Context Rail |
+| `shell` | Current Shell | Displays the backend shell when it differs from your default backend. | Right Context |
+| `discoveredTools`| Local Tools | Count of local CLI tools detected in your environment. | Right Context |
+
+---
 
 ## Declarative Context Packs
 
 <Availability status="unreleased" issue="305" />
 
-The first-party catalog adds modules through bundled Context Packs (`nmsh.project`, `nmsh.environment`, `nmsh.cloud`, etc.).
+Additional modules are provided through bundled and installed **Context Packs**.
 
-**Packs are data, not plugins.** A pack cannot contain or reference shell text, commands, argv, JavaScript, executable or file paths, templates, includes, hooks or URLs. Parsing is strict and bounded.
+**Packs are purely declarative data, not plugins.** A pack is a validated JSON manifest that names capabilities NMSh core implements and describes how to render them. A pack **cannot** contain or reference shell commands, scripts, argv, templates, executable hooks, or network URLs.
 
 ### Managing Packs
 
-```sh
-nmsh packs                          # bundled and installed packs and their state
-nmsh packs inspect FILE             # validate; show what it would read and add
-nmsh packs install FILE [--sha256 HEX] [--replace] [--yes]
-nmsh packs remove ID [--yes]
-nmsh packs enable ID | disable ID
+Packs are managed via the `nmsh packs` CLI:
+
+```bash
+nmsh packs                          # List bundled and installed packs
+nmsh packs inspect FILE             # Validate a pack file and review what it reads
+nmsh packs install FILE [--sha256]  # Install pack (modules start hidden until enabled in /prompt)
+nmsh packs enable ID | disable ID   # Enable or disable an installed pack
+nmsh packs remove ID                # Remove an installed pack and its module entries
 ```
 
-## First-Party Module Catalog
+---
 
-NMSh bundles 7 first-party Context Packs. Each module specifies exactly what facts it reads, its privacy level, and its default surface routing.
+## First-Party Bundled Pack Catalog
 
-### 1. Project (`nmsh.project`)
-Identifies and surfaces metadata about the current directory's workspace.
-- **Modules**: Node Package, Rust Crate, Go Module, Python Package.
-- **Sources**: Fast bounded reads of `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`.
-- **Default Surface**: Right Context.
+NMSh ships with 7 first-party Context Packs defined in `src/context/packs/builtin/`:
 
-### 2. Environment (`nmsh.environment`)
-Surfaces active runtime versions and virtual environments.
-- **Modules**: Python venv, Node version, Ruby version, active toolchain versions.
-- **Sources**: Environment variables (`VIRTUAL_ENV`), dotfiles (`.nvmrc`, `.node-version`).
-- **Default Surface**: Right Context.
+### 1. `nmsh.project` — Package & Language Runtimes
+Extracts version and runtime details using bounded, local file reads:
+- `package`: Name and version from nearest manifest (`package.json`, `Cargo.toml`, `pyproject.toml`, etc.). (Surface: Right Context)
+- `node`: Node.js active/requested version from `.nvmrc` or `.node-version`. (Triggers: `node`, `npm`, `pnpm`, `yarn`, `bun`; Surface: Context Rail)
+- `python`: Python version, active virtualenv, and package manager. (Triggers: `python`, `pip`, `uv`, `pytest`; Surface: Context Rail)
+- `go`: Go version from `go.mod` or `go.work`. (Triggers: `go`; Surface: Context Rail)
+- `rust`: Active or requested `rustup` toolchain. (Triggers: `cargo`, `rustc`; Surface: Context Rail)
+- `java`: JDK version from release file and build tool (Maven/Gradle). (Triggers: `java`, `mvn`, `gradle`; Surface: Context Rail)
 
-### 3. Infrastructure (`nmsh.infrastructure`)
-Surfaces container and orchestration context.
-- **Modules**: Docker Context, Kubernetes Context (`kubeContext`).
-- **Sources**: Environment variables (`DOCKER_CONTEXT`, `KUBECONFIG`), default kubeconfig parse.
-- **Default Surface**: Status Strip.
+### 2. `nmsh.cloud` — Cloud Providers
+Reads non-secret local CLI configuration files. **Makes zero network requests, zero API calls, and handles no secrets**:
+- `aws`: Active AWS profile, region, and local credential expiry. (Triggers: `aws`, `sam`, `cdk`, `terraform`; Surface: Context Rail)
+- `gcp`: Active Google Cloud project/configuration and region. (Triggers: `gcloud`, `bq`, `terraform`; Surface: Context Rail)
+- `azure`: Active Azure CLI subscription. (Triggers: `az`, `func`, `terraform`; Surface: Context Rail)
 
-### 4. Cloud (`nmsh.cloud`)
-Displays active cloud provider profiles and regions.
-- **Modules**: AWS Profile, GCP Project, Azure Subscription.
-- **Sources**: Environment variables (`AWS_PROFILE`, `GOOGLE_CLOUD_PROJECT`).
-- **Default Surface**: Status Strip.
+### 3. `nmsh.infrastructure` — Infrastructure as Code
+Inspects local workspace configuration files:
+- `terraform`: Active Terraform or OpenTofu workspace. (Triggers: `terraform`, `tofu`, `terragrunt`; Surface: Context Rail)
+- `helm`: Chart name and version from nearest `Chart.yaml`. (Triggers: `helm`, `helmfile`; Surface: Context Rail)
+- `pulumi`: Selected Pulumi stack or project from `Pulumi.yaml`. (Triggers: `pulumi`; Surface: Context Rail)
 
-### 5. System (`nmsh.system`)
-Machine-level telemetrics and environment identity.
-- **Modules**: Battery, Load Average, Memory, Exit Status (`exitStatus`).
-- **Sources**: Fixed system API paths (never running arbitrary executables).
-- **Default Surface**: Status Strip / Context Rail.
+### 4. `nmsh.environment` — Environment Managers & Direnv
+Reads declarative environment manager requests:
+- `tools`: Requested tool versions from `.tool-versions` or `mise.toml` (never executes `asdf` or `mise`). (Surface: Right Context)
+- `direnv`: Indicates whether direnv loaded this workspace's `.envrc` (never reads or sources `.envrc`). (Surface: Right Context)
 
-### 6. VCS (`nmsh.vcs`)
-Version control tracking.
-- **Modules**: Git Branch (`gitBranch`), Git Status (`gitStatus`).
-- **Sources**: Sandboxed `git` commands (trusted executable, hooks and `fsmonitor` explicitly disabled).
-- **Default Surface**: Main Prompt.
+### 5. `nmsh.system` — System & Session Metrics
+Reads local OS metrics using bounded system APIs:
+- `os`: Operating system name and version. (Surface: Right Context)
+- `user`: Displays `user@host` during SSH sessions, and a prominent warning when running as `root`. (Surface: Main Prompt)
+- `jobs`: Number of background and stopped shell jobs. (Surface: Right Context)
+- `duration`: Elapsed time for the current NMSh session. (Surface: Right Context)
+- `time`: Current local clock. (Surface: Right Context)
+- `battery`: Battery charge level and charging indicator. (Surface: Right Context)
+- `memory`: Memory utilization percentage. (Surface: Right Context)
 
-### 7. Agents (`nmsh.agents`)
-Integrations with AI agents interacting with or observing the shell.
-- **Modules**: Claude Code, Aider, local managed agents.
-- **Sources**: Well-known session variables.
-- **Default Surface**: Context Rail.
+### 6. `nmsh.vcs` — Git Extras
+Supplements core Rich Git with repository metadata:
+- `stash`: Number of stashed changes in the current Git repository. (Surface: Right Context)
+- `upstream`: Configured Git upstream tracking branch. (Surface: Right Context)
 
-## Security and Discovery
+### 7. `nmsh.agents` — Agent Session Context
+Provides integration for coding assistants:
+- `claude`: Claude Code active model, reasoning effort, token usage, and session cost. (Triggers: `claude`; Surface: Context Rail)
+- `claude-limits`: Claude Code 5-hour and 7-day rate limit consumption and reset countdowns. (Surface: Context Rail)
 
-**Entering a repository never executes repository-controlled code through NMSh context discovery, contacts the network, or exposes secrets.**
+---
 
-- Metadata reads refuse leaf symlinks and special files and are size-bounded.
-- Executables found on PATH are evidence, never permission: NMSh does not run them for context.
-- Only fixed system tools at absolute paths are run (for memory and battery).
-- The contextual Git collector uses trusted Git, disables hooks and fsmonitor, and does not inspect submodules.
+## Security Boundaries
+
+**Entering a repository never executes repository code, invokes untrusted executables, or contacts the network for context discovery:**
+
+- **No Code Execution**: Executables discovered on `PATH` are evidence of tooling, not permission to execute them.
+- **Bounded Metadata Reads**: Manifest reads enforce strict size limits and refuse leaf symlinks and non-regular files.
+- **Trusted Git Only**: The VCS collector executes trusted system `git` with hooks (`core.hooksPath=/dev/null`) and filesystem monitors explicitly disabled.

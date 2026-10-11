@@ -1,8 +1,8 @@
 # NMSh Website Development Record
 
-## 1. Stack and Rationale
-- **Framework**: Astro with the Starlight template.
-- **Why**: Starlight provides out-of-the-box support for Markdown/MDX, excellent typography, a configurable sidebar, powerful search (Pagefind), accessibility features, dark/light mode switching, and an easy path to a customized homepage. It outputs static HTML perfectly suited for GitHub Pages.
+## 1. Stack and Architecture
+- **Framework**: Astro with Starlight.
+- **Why**: Starlight provides out-of-the-box support for Markdown/MDX, typography, a configurable sidebar, Pagefind search, accessibility features, dark/light mode switching, and static HTML output for GitHub Pages.
 - **Styling**: Tailwind CSS (v4) for utility classes, with customized Starlight CSS variables for the NMSh identity (Lavender accent: `#ac96e6`).
 
 ## 2. Content Architecture
@@ -13,7 +13,7 @@ The site is organized into logical learning paths to support both beginners and 
 - **Reference**: Comprehensive CLI Commands & Flags, Configuration files, Keyboard Shortcuts matrix.
 - **Project**: Architecture, Roadmap & Releases.
 
-## 3. Feature/Status Inventory Strategy
+## 3. Feature/Status Provenance Strategy
 To clearly distinguish released vs in-development features, we use a reusable MDX `<Availability />` component.
 - **Released**: `status="released" version="v0.17.0"`
 - **Unreleased (Dev)**: `status="unreleased" issue="304"` (Implemented on `dev`, planned for the next release, e.g. v0.18.0)
@@ -21,35 +21,19 @@ To clearly distinguish released vs in-development features, we use a reusable MD
 - **Planned**: `status="planned"`
 
 ## 4. Branding and Assets
-Per strict instructions, no legacy screenshots, GIFs, stock imagery, or AI mockups are used.
-- The default Starlight `houston.webp` logo has been replaced.
-- We exclusively use official vector branding: `nmsh-lockup.svg`, `vespyr-divider.svg`, and the `architecture.svg` diagrams located in `public/assets/`.
-- Future screenshots should be captured at 16:9 or terminal standard ratios, saved as highly optimized WebP, and placed in `src/assets/`.
+- Strictly no legacy screenshots, GIFs, stock imagery, or placeholder artwork.
+- We exclusively use official vector branding: `nmsh-lockup.svg`, `vespyr-divider.svg`, and architectural diagrams (`architecture.svg`, `architecture-detailed.svg`).
+- Future media should be captured at 16:9 or terminal standard ratios, saved as WebP, and placed in `src/assets/`.
 
 ## 5. Build and Deployment
 - **Local Dev**: `npm install` then `npm run dev` in the `site/` directory.
 - **Build**: `npm run build` inside `site/`.
-- **Deployment Workflow**: `.github/workflows/deploy.yml` triggers on pushes to the master branch (once the PR is merged) and deploys to GitHub Pages via Actions.
+- **Deployment Workflow**: `.github/workflows/deploy.yml` triggers on pushes to `master` and manual `workflow_dispatch`.
 
-## 6. Completed Audit (Quality Pass 2)
-- ✅ Retargeted PR #371 to `master`. Diff is clean (only `site/` and `.github/workflows/deploy.yml`).
-- ✅ Removed Starlight's default `houston.webp` from all configs and MDX.
-- ✅ Integrated NMSh's real vector branding (`nmsh-lockup.svg`, `vespyr-divider.svg`).
-- ✅ Configured Astro with `site: 'https://raisecaterror.github.io'` and `base: '/notMyShell'` for GH Pages.
-- ✅ Fixed Starlight navigation links to use `slug` to correctly resolve the `base` path.
-- ✅ Expanded Configuration docs (`config.json`, export/import, portable categories).
-- ✅ Expanded Commands docs (CLI flags, maintenance commands, slash-commands).
-- ✅ Created Keyboard Shortcuts matrix (Kitty protocol, editor keys, terminal host specifics).
-- ✅ Expanded Context Engine docs with the full 7 first-party module catalog.
-- ✅ Created Troubleshooting guide (macOS, Linux, WSL2, host configurations).
-- ✅ Created Contributing guide (development loop, verification rules).
-- ✅ Reconciled Roadmap (v0.18 is unreleased dev line, v0.19 is Context Engine). Fixed Availability component to use `issue` links.
-
-## 7. GitHub Pages Activation Instructions (For Repository Admin)
-Because GitHub Pages is not yet enabled for this repository, the initial GitHub Actions deployment run may fail with a permissions error.
-
-To activate GitHub Pages for the documentation:
-1. Go to the repository **Settings** on GitHub.
-2. Under the "Code and automation" sidebar section, click **Pages**.
-3. Under "Build and deployment" > "Source", select **GitHub Actions** from the dropdown menu (instead of "Deploy from a branch").
-4. Re-run the failed `Deploy Documentation Site to GitHub Pages` workflow in the Actions tab. The site will deploy successfully to `https://raisecaterror.github.io/notMyShell/`.
+## 6. Completed Source-Backed Audit
+- **Configuration Paths**: Corrected paths per `src/configuration/paths.ts`: macOS (`~/Library/Application Support/notMyShell/config.json`) and Linux (`~/.config/nmsh/config.json` or `$XDG_CONFIG_HOME/nmsh/config.json`).
+- **Portable Categories**: Updated export categories to match the 18 real IDs defined in `src/configuration/portability.ts` (`prompt`, `theme`, `themeBridge`, `chroma`, `chrome`, `syntax`, `transcript`, `layout`, `suggestions`, `providers`, `statusStrip`, `idle`, `notifications`, `tools`, `sessions`, `agents`, `shell`, `editor`).
+- **Context Engine Modules**: Aligned the catalog with the 7 bundled first-party pack definitions in `src/context/packs/builtin/` (`nmsh.agents`, `nmsh.cloud`, `nmsh.environment`, `nmsh.infrastructure`, `nmsh.project`, `nmsh.system`, `nmsh.vcs`). Correctly distinguished core built-in prompt modules (`kubeContext`, `dockerContext`, `cwd`, `gitBranch`, `gitStatus`, etc.) from pack modules.
+- **Commands & Flags**: Verified CLI flags (`nmsh --new`, `--sessions`, `--attach`, `--presets`, `--preset`, `--version`), maintenance commands (`nmsh doctor`, `nmsh uninstall`, `nmsh packs`, `nmsh agent-status`), and all slash commands in `src/commands/slashCommands.ts`.
+- **Keyboard Shortcuts**: Verified key bindings against `src/terminal/keys.ts` and `src/input/editingKeys.ts`.
+- **Authorship Conventions**: Strictly audited all site files, documentation, and commits to ensure zero model/tool attribution references.

@@ -2,7 +2,7 @@ name: Deploy Documentation Site to GitHub Pages
 
 on:
   push:
-    branches: [ master, docs/github-pages-site ]
+    branches: [ master ]
   workflow_dispatch:
 
 permissions:
@@ -50,8 +50,6 @@ jobs:
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - name: Install dependencies
         run: ${{ steps.detect-package-manager.outputs.manager }} ${{ steps.detect-package-manager.outputs.command }}
         working-directory: ${{ env.BUILD_PATH }}
