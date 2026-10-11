@@ -193,14 +193,33 @@ export class BackgroundTaskSupervisor {
   }
 
   private exited(task: LiveTask, exitCode: number, signal?: number): void {
+    const record = task.record;
+    if (signal) record.signal = signal; else record.exitCode = exitCode;
+    task.pty = undefined;
+    // After a stop request the task is the whole group, not just its leader: a shell that does not exec its command
+    // (dash) dies of SIGINT while a program that ignores SIGINT keeps running. Until the group is gone the task is
+    // still stopping, and escalation still reaches it.
+    if (record.stopRequested && groupAlive(task.group)) {
+      record.leftovers = true;
+      this.changed(task, true);
+      const poll = setInterval(() => {
+        if (groupAlive(task.group)) return;
+        clearInterval(poll);
+        this.finish(task);
+      }, 50);
+      poll.unref?.();
+      return;
+    }
+    this.finish(task);
+  }
+
+  private finish(task: LiveTask): void {
     task.output.finish();
     const record = task.record;
     record.endedAt = this.now();
-    if (signal) record.signal = signal; else record.exitCode = exitCode;
     // Stopped: it ended after the person asked. Otherwise its own exit status decides.
-    record.state = record.stopRequested ? 'stopped' : signal || exitCode !== 0 ? 'failed' : 'exited';
+    record.state = record.stopRequested ? 'stopped' : record.signal || record.exitCode !== 0 ? 'failed' : 'exited';
     record.leftovers = groupAlive(task.group);
-    task.pty = undefined;
     this.changed(task, true);
     // The kernel hangs up the group when its leader exits; members that obey it are gone a moment later.
     if (record.leftovers) for (const delay of [100, 1000]) {

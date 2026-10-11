@@ -42,7 +42,8 @@ test('a logcat-like stream: output arrives live; stop is SIGINT to its own group
     assert.equal(supervisor.get(id)!.state === 'stopping' || supervisor.get(id)!.state === 'stopped', true, 'never "stopped" before the exit is observed');
     await waitFor(() => supervisor.get(id)!.state === 'stopped', 'stopped');
     const task = supervisor.get(id)!;
-    assert.equal(task.exitCode, 130);
+    // The leader is the program itself when the shell execs it (bash, zsh) and the shell when it does not (dash).
+    assert.ok(task.exitCode === 130 || task.signal === 2, JSON.stringify(task));
     assert.equal(task.stopRequested, 'interrupt');
     assert.match(text(supervisor, id), /interrupted \(SIGINT\)/u, 'the program saw SIGINT, as with Ctrl+C');
     assert.equal(task.leftovers, false);
@@ -70,7 +71,8 @@ test('a task that ignores SIGINT stays "stopping"; escalation is explicit, one l
     assert.equal(supervisor.nextEscalation(stubborn.task.id), 'kill');
     supervisor.stop(stubborn.task.id, 'kill');
     await waitFor(() => supervisor.get(stubborn.task.id)!.state === 'stopped', 'killed');
-    assert.equal(supervisor.get(stubborn.task.id)!.signal, 9);
+    assert.equal(supervisor.get(stubborn.task.id)!.stopRequested, 'kill');
+    assert.equal(supervisor.get(stubborn.task.id)!.leftovers, false, 'the whole group is gone');
     assert.equal(supervisor.nextEscalation(stubborn.task.id), undefined, 'nothing beyond kill');
   });
 });
@@ -161,4 +163,19 @@ test('groupAlive never claims a group that is gone, and never checks group 0 or 
   assert.equal(groupAlive(undefined), false);
   assert.equal(groupAlive(1), false);
   assert.equal(groupAlive(2 ** 22 + 12345), false);
+});
+
+test('a wrapper shell that dies of SIGINT does not end the task while its program still runs', async () => {
+  // dash-style: the shell does not exec the program, so SIGINT ends the shell first; the program ignores it.
+  await withSupervisor(async (supervisor, cwd) => {
+    const {task} = supervisor.start({command: `${node(STREAM, '--ignore-int')}; true`, cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
+    await waitFor(() => supervisor.output(task.id)!.lines().length >= 2, 'output');
+    supervisor.stop(task.id);
+    await new Promise(resolve => setTimeout(resolve, 400));
+    assert.equal(supervisor.get(task.id)!.state, 'stopping', 'the program still runs, so the task is not stopped');
+    assert.equal(supervisor.nextEscalation(task.id), 'terminate');
+    assert.deepEqual(supervisor.stop(task.id, 'terminate'), {ok: true});
+    await waitFor(() => supervisor.get(task.id)!.state === 'stopped', 'stopped once the group is gone');
+    assert.equal(supervisor.get(task.id)!.leftovers, false);
+  });
 });
