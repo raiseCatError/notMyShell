@@ -171,7 +171,7 @@ fullscreen programs hide it, and it is never written to the transcript.
 
 A module's details show what it reads, whether its value may be kept with
 commands in history, and each fact's current state ("fresh · 3s ago", "last
-known, refreshing", "unavailable (timeout)", "not checked"). Trusted source IDs,
+known, refresh waits for demand", "unavailable (timeout)", "not checked"). Trusted source IDs,
 scope, freshness TTL, event invalidation and demand-driven refresh policy come
 from the capability definition. Failure text excludes raw exception paths and
 values. A failed refresh can retain a previous value; the view distinguishes

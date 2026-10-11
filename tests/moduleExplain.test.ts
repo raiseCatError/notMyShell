@@ -19,7 +19,8 @@ test('"Why" says in one sentence why a module is or is not on screen', () => {
 test('module explanations do not invent collection or visibility evidence', () => {
   assert.match(whyText(module(), 'contextRail', []), /not available/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'idle'}]), /not collected/u);
-  assert.match(whyText(module(), 'contextRail', [{state: 'stale'}]), /last known.*refreshing/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'stale'}]), /last known.*refresh waits for demand/u);
+  assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'stale'}]), /while refreshing/u);
   assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'fresh'}]), /conditions are met/u);
   assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'failed', error: 'EACCES /Users/demo/private/config token=do-not-display'}]), /private|token|Users/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'timeout', hasValue: true}]), /last known data.*retained/u);

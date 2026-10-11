@@ -396,9 +396,9 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
     const status = context.status?.(capability!.id);
     if (!status) continue;
     const age = status.collectedAt !== undefined && context.now !== undefined ? ` · ${Math.max(0, Math.round((context.now - status.collectedAt) / 1000))}s ago` : '';
-    const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refreshing` : status.state === 'absent' ? 'nothing to show here'
+    const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refresh waits for demand` : status.state === 'absent' ? 'nothing to show here'
       : status.state === 'pending' ? `checking…${status.hasValue ? ' · last known data retained' : ''}`
-        : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.state})${status.hasValue ? ' · last known data retained' : ''}` : 'not checked (module not in use)';
+        : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.state})${status.hasValue ? ' · last known data retained' : ''}` : 'not checked';
     // How long the last collection took is measured by the engine; nothing is collected to show it.
     const took = status.durationMs === undefined ? '' : ` · took ${status.durationMs < 1 ? '<1' : Math.round(status.durationMs)} ms`;
     rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${took}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
@@ -434,7 +434,7 @@ export function whyText(module: ContextModuleConfig, surface: string, statuses: 
     return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; no collection evidence is available yet`;
   }
   if (statuses.some(status => status.state === 'pending')) return 'being collected now';
-  if (statuses.some(status => status.state === 'stale')) return 'last known data is available while refreshing; visibility follows the module condition and available space';
+  if (statuses.some(status => status.state === 'stale')) return 'last known data is available; refresh waits for demand. Visibility follows the module condition and available space';
   if (statuses.length && statuses.every(status => status.state === 'idle')) return 'not collected yet; only modules in use demand collection';
   if (statuses.some(status => status.state === 'fresh')) return 'data is available; visibility follows the module condition and available space';
   return 'collection evidence is not available; visibility follows the module condition and available space';
