@@ -28,7 +28,7 @@ const HEX = /^#[0-9a-f]{6}$/u;
 const plain = (rows: string[]) => rows.map(stripAnsi).join('\n');
 
 test('Starship and Oh My Posh imports preview lossy mapping before saving and preserve provider files', async () => {
-  const directory = await mkdtemp(join(tmpdir(), 'nmsh-astra-theme-preview-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-maple-theme-preview-'));
   try {
     const providers = [
       {name: 'starship.toml', kind: 'starship', text: '[directory]\nstyle = "fg:#112233"\n[custom.untrusted]\ncommand = "touch NEVER_EXECUTED"\nstyle = "fg:#ff0000"\n'},

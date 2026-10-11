@@ -245,7 +245,7 @@ test('the real shell checks every command on its own before a split is shown; a 
 
 test('parse-only checks never execute commands or substitutions, including Fish -c transport', async () => {
   const {verifyCommands} = await import('../src/input/pasteBatchCheck.js');
-  const directory = await mkdtemp(join(tmpdir(), 'nmsh-astra-parse-only-'));
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-maple-parse-only-'));
   const marker = join(directory, 'must-not-exist');
   try {
     for (const shell of ['bash', 'zsh', 'fish'] as const) {
