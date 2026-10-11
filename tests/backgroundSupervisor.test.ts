@@ -63,13 +63,14 @@ test('a task that ignores SIGINT stays "stopping"; escalation is explicit, one l
     supervisor.stop(task.id, 'terminate');
     await waitFor(() => supervisor.get(task.id)!.state === 'stopped', 'stopped after SIGTERM');
     assert.equal(supervisor.get(task.id)!.stopRequested, 'terminate');
-    // It also ignores the hangup: where /bin/sh does not exec the program (dash), SIGTERM ends the shell, the kernel
-    // hangs up the task's group, and a program that obeyed that would be stopped by it rather than by SIGKILL.
+    // It also survives the hangup: where /bin/sh does not exec the program (dash), SIGTERM ends the shell, the kernel
+    // hangs up the terminal (SIGHUP, then EIO on writes), and a program that died of that would be stopped by it rather
+    // than by SIGKILL. That stop is real and reported as such; this test is about the explicit escalation.
     const stubborn = supervisor.start({command: node(STREAM, '--ignore-int', '--ignore-term', '--ignore-hup'), cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
     await waitFor(() => supervisor.output(stubborn.task.id)!.lines().length >= 1, 'output');
     supervisor.stop(stubborn.task.id); supervisor.stop(stubborn.task.id, 'terminate');
     await new Promise(resolve => setTimeout(resolve, 300));
-    assert.equal(supervisor.get(stubborn.task.id)!.state, 'stopping');
+    assert.equal(supervisor.get(stubborn.task.id)!.state, 'stopping', JSON.stringify({task: supervisor.get(stubborn.task.id), output: text(supervisor, stubborn.task.id).split('\n').slice(-4)}));
     assert.equal(supervisor.nextEscalation(stubborn.task.id), 'kill');
     supervisor.stop(stubborn.task.id, 'kill');
     await waitFor(() => supervisor.get(stubborn.task.id)!.state === 'stopped', 'killed');

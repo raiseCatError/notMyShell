@@ -13,6 +13,9 @@ if (flags.has('--gui')) console.log('window opened');
 const stop = name => () => { console.log(flags.has('--gui') ? `closing window (${name})` : `interrupted (${name})`); process.exit(name === 'SIGINT' ? 130 : 143); };
 process.on('SIGINT', flags.has('--ignore-int') ? () => console.log('ignoring SIGINT') : stop('SIGINT'));
 process.on('SIGTERM', flags.has('--ignore-term') ? () => console.log('ignoring SIGTERM') : stop('SIGTERM'));
-if (flags.has('--ignore-hup')) process.on('SIGHUP', () => {});
+// Ignoring the hangup also means surviving the terminal going away: on Linux, once the controlling process exits the
+// terminal is hung up and writes fail with EIO, which would otherwise end the program through an unhandled error.
+if (flags.has('--ignore-hup')) { process.on('SIGHUP', () => {}); process.stdout.on('error', () => {}); }
+const print = line => { try { console.log(line); } catch { /* the terminal is gone */ } };
 let n = 0;
-setInterval(() => console.log(`I/ActivityManager( ${process.pid}): line ${++n}`), 20);
+setInterval(() => print(`I/ActivityManager( ${process.pid}): line ${++n}`), 20);
