@@ -105,7 +105,7 @@ export type ServerMessage =
    */
   /** The session's command queue (QueueState as JSON) and what just happened to it. */
   | {type: 'queue-state'; state: string; dispatched?: number; refused?: string; dropped?: number}
-  | {type: 'input-state'; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
+  | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
   | {type: 'killed'; sessionId: string}
@@ -202,7 +202,7 @@ const SHAPES: Record<string, Shape> = {
   output: {data: 'string', seq: 'int?', at: 'int?'},
   exec: {command: 'string', seq: 'int', at: 'int', historyAllowed: 'int?', queued: 'string?'},
   prompt: {exitCode: 'int', cwd: 'string', knowledge: 'string?', seq: 'int?', at: 'int?', inputWaitMs: 'int?', inputWaits: 'int?'},
-  'input-state': {since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
+  'input-state': {terminalOwner: 'int?', since: 'int?', confidence: 'string?', mode: 'string?', prompt: 'string?', program: 'string?', waitedMs: 'int', waits: 'int'},
   replayed: {truncatedBytes: 'int'},
   killed: {sessionId: 'string'},
   exit: {exitCode: 'int', signal: 'int?'},
@@ -299,6 +299,7 @@ export class FrameDecoder {
 export function inputStateMessage(state: InputState): Extract<ServerMessage, {type: 'input-state'}> {
   const request = state.request;
   return {type: 'input-state', waitedMs: Math.round(state.timing.waitedMs), waits: state.timing.waits,
+    ...(state.terminalOwner ? {terminalOwner: 1} : {}),
     ...(request ? {since: request.since, confidence: request.confidence, mode: request.mode,
       ...(request.prompt ? {prompt: request.prompt.slice(0, 200)} : {}), ...(request.program ? {program: request.program.slice(0, 64)} : {})} : {})};
 }
@@ -308,6 +309,7 @@ export function inputStateFrom(message: Extract<ServerMessage, {type: 'input-sta
   const confidence = INPUT_CONFIDENCES.find(item => item === message.confidence);
   const mode = INPUT_MODES.find(item => item === message.mode);
   const timing = {waitedMs: message.waitedMs, waits: message.waits};
+  if (message.terminalOwner === 1) return {terminalOwner: true, timing};
   if (message.since === undefined || !confidence || !mode) return {timing};
   return {request: {since: message.since, confidence, mode, ...(message.prompt ? {prompt: message.prompt} : {}), ...(message.program ? {program: message.program} : {})}, timing};
 }

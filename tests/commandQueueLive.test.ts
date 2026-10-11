@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {existsSync} from 'node:fs';
+import {existsSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.js';
 
@@ -200,17 +200,21 @@ test('live: after Ctrl+Z or Ctrl+C, what you type next is for the shell prompt, 
   } finally { await sandbox.dispose(); }
 });
 
-test('live: a program that survives Ctrl+C gets ordinary routing again: later typing queues, it is never sent into the program', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+test('live: a program that survives Ctrl+C gets ordinary routing again: later typing queues, it is never sent into the program', {skip: supported && bash ? false : 'Bash 4.4+ not installed', timeout: 120_000}, async () => {
   const {sandbox, frontend} = await start('zsh');
   try {
     const mark = frontend.mark;
-    // Ignores SIGINT and keeps reading stdin: anything sent to it would be echoed back as GOT=...
-    frontend.pty.write(`sh -c 'trap "" INT; sleep 9; if read -t 1 line; then echo "GOT=$line"; fi; echo SURVIVED'\r`);
-    await frontend.waitFor(/Running sh -c/u, mark);
+    // Synchronize with the installed trap, not NMSh's submission echo. /bin/sh on Ubuntu is dash,
+    // whose read has no -t option. Keep the fixture alive until the assertion releases it rather
+    // than letting a fixed sleep expire under load. Unexpected input is actually read and reported.
+    const release = join(sandbox.home, 'release-survivor');
+    frontend.pty.write(`"${bash}" -c 'trap "" INT; printf "INT-%s\\n" READY; until test -f "$1"; do if read -t 0.1 line; then echo "GOT=$line"; fi; done; echo SURVIVED' nmsh-fixture "${release}"\r`);
+    await frontend.waitFor(/INT-READY/u, mark);
     frontend.pty.write('\u0003');
     await pause(4200);
     frontend.pty.write('echo LATER\r');
     await frontend.waitFor(/≡ Queued \(1\) · next: echo LATER/u, mark);
+    writeFileSync(release, '');
     await frontend.waitFor(/SURVIVED[\s\S]*LATER/u, mark, 20_000);
     assert.doesNotMatch(drawn(frontend, mark), /GOT=echo LATER/u, 'nothing typed after the window reached the program');
   } finally { await sandbox.dispose(); }
@@ -235,6 +239,32 @@ test('live: a multi-line paste queues as one entry and runs once, as one block',
     assert.equal(drawn(frontend, mark).match(/LINE-1/gu)?.length, 1, 'it ran exactly once');
   } finally { await sandbox.dispose(); }
 });
+
+for (const shell of ['zsh', 'bash', 'fish'] as const) {
+  test(`live ${shell}: a multiline queue entry uses native grouping and preserves shell variables`, {skip: supported && (shell === 'zsh' || (shell === 'bash' ? bash : fish)) ? false : `${shell} not installed`, timeout: 90_000}, async () => {
+    const {sandbox, frontend} = await start(shell);
+    try {
+      const release = join(sandbox.home, 'release-multiline');
+      const mark = frontend.mark;
+      frontend.pty.write(`sh -c 'printf "MULTI-%s\\n" READY; until test -f "$1"; do sleep 0.1; done' nmsh-fixture "${release}"\r`);
+      await frontend.waitFor(/MULTI-READY/u, mark);
+      const command = `${shell === 'fish' ? 'set -g MULTI_VALUE kept' : 'MULTI_VALUE=kept'}\nprintf 'BLOCK-%s\\n' FIRST\nprintf 'BLOCK-%s-%s\\n' LAST "$MULTI_VALUE"`;
+      frontend.pty.write(`\u001b[200~${command}\u001b[201~`);
+      await frontend.waitFor(/Enter insert · R review · Esc cancel/u, mark);
+      frontend.pty.write('\r');
+      await frontend.waitFor(/❯ (?:set -g MULTI_VALUE|MULTI_VALUE=kept)/u, mark);
+      frontend.pty.write('\u0011');
+      await frontend.waitFor(/≡ Queued \(1\)/u, mark);
+      assert.doesNotMatch(drawn(frontend, mark), /BLOCK-FIRST/u, 'review and insertion never execute');
+      writeFileSync(release, '');
+      await frontend.waitFor(/BLOCK-FIRST[\s\S]*BLOCK-LAST-kept[\s\S]*from queue/u, mark, 20_000);
+      await frontend.run("printf 'AFTER-%s\\n' \"$MULTI_VALUE\"", /AFTER-kept/u);
+      await until(async () => (await sandbox.transcripts().list()).some(item => item.transcript.records.some(record => record.command === command)), 15_000, 'one multiline command recorded');
+      const records = (await sandbox.transcripts().list()).flatMap(item => item.transcript.records).filter(record => record.command === command);
+      assert.equal(records.length, 1);
+    } finally { await sandbox.dispose(); }
+  });
+}
 
 test('live: the queue belongs to the session: it survives detach and reattach and runs in its own shell', {skip: supported ? false : 'unsupported platform', timeout: 150_000}, async () => {
   const {sandbox, frontend: first} = await start('zsh');

@@ -1,11 +1,13 @@
 import {shellSubmission} from '../shell/submission.js';
 import {EventEmitter} from 'node:events';
+import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import {CommandQueue, type QueueEntry, type QueueOp, type QueueState} from './CommandQueue.js';
 
 /** What the dispatcher needs from a shell session (ShellSession implements it). */
 export interface QueueShell {
   submit(command: string): void;
   readonly isReady: boolean;
+  readonly adapter: {readonly id: ShellId};
 }
 
 export interface QueueEvent {
@@ -118,6 +120,6 @@ export class QueueDispatcher extends EventEmitter<{state: [QueueState, QueueEven
     this.sent = entry;
     this.emit('state', this.queue.state, {dispatched: entry});
     // Exactly as the composer submits it: a multi-line entry runs as one block.
-    this.shell.submit(shellSubmission(entry.text));
+    this.shell.submit(shellSubmission(entry.text, this.shell.adapter.id));
   }
 }

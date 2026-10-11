@@ -9,6 +9,7 @@ export interface ShellMarker {
 
 export type ProtocolEvent =
   | {kind: 'data'; data: string}
+  | {kind: 'reader'}
   | {kind: 'marker'; marker: ShellMarker}
   /** zsh preexec: a command line is about to run in the foreground. */
   | {kind: 'exec'; command: string; historyAllowed?: number};
@@ -79,6 +80,7 @@ export class ShellProtocolDecoder {
   }
 
   private emit(payload: string, events: ProtocolEvent[]): void {
+    if (payload === 'reader') { events.push({kind: 'reader'}); return; }
     if (/^exec2;[01];/u.test(payload)) {
       events.push({kind: 'exec', command: payload.slice(8), historyAllowed: Number(payload[6])});
       return;
