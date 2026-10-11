@@ -17,7 +17,7 @@ import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.
 import {detectBackend, keepAwakePath, KeepAwakeController, type KeepAwakeRecord} from '../keepAwake/keepAwake.js';
 import {awakeDuration, awakeLabel, awakeStyle, awakeView, edgeAccessoryColumns, edgeFits, placeOnSaver, renderComposerEdge, resolveAccessorySlot, sliceAnsiCells} from '../keepAwake/presentation.js';
 import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
-import {homedir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
@@ -1141,7 +1141,7 @@ export class TerminalApp {
 
   private logEditorKeyInput(data: string): void {
     const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
+    appendFileSync(join(tmpdir(), 'nmsh-key-debug.log'), `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
   }
 
   private readonly onInput = (data: string): void => {
