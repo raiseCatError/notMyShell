@@ -1,5 +1,6 @@
 import test, {mock} from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import {existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -156,5 +157,23 @@ test('disposal observes an idle service that starts listening after its initial 
     assert.equal(existsSync(sandbox.root), false);
   } finally {
     child.kill(); await exited; await sandbox.dispose();
+  }
+});
+
+test('suite runner honors explicit temporary storage without silently falling back', async () => {
+  const previous = process.env.NMSH_TEST_TMPDIR;
+  const requested = join(tmpdir(), 'external');
+  process.env.NMSH_TEST_TMPDIR = requested;
+  const sentinel = new Error('stop before filesystem writes');
+  const probe = mock.method(fs, 'mkdtempSync', (prefix: string) => {
+    assert.equal(prefix, join(requested, 'nt-'));
+    throw sentinel;
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(runTestFiles(['unused.test.mjs']), error => error === sentinel);
+  } finally {
+    probe.mock.restore(); syncBuiltinESMExports();
+    if (previous === undefined) delete process.env.NMSH_TEST_TMPDIR; else process.env.NMSH_TEST_TMPDIR = previous;
   }
 });

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {once} from 'node:events';
 import {existsSync, mkdtempSync, rmSync} from 'node:fs';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {QueryOrder} from '../src/shell/QueryOrder.js';
 import {ShellSession} from '../src/shell/ShellSession.js';
 
@@ -112,7 +113,7 @@ test('after NMSh answers an editor itself, input waits until the editor has draw
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 
 test('fish\'s read is answered like its prompt: its queries never reach the host, and it reads at once', {skip: fish ? false : 'fish not installed', timeout: 30_000}, async () => {
-  const home = mkdtempSync('/tmp/nt-qo-');
+  const home = mkdtempSync(join(tmpdir(), 'nt-qo-'));
   const shell = new ShellSession(home, 100, 30, home, {...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, 'data'),
     PATH: `${fish!.replace(/\/fish$/u, '')}:${process.env.PATH}`, TERM: 'xterm-256color'}, 'fish');
   let output = '';
