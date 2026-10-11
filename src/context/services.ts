@@ -292,6 +292,8 @@ export function versionFromInstallPath(realpathValue: string): {version: string;
   const path = realpathValue.replace(/\\/gu, '/');
   const patterns: ReadonlyArray<[RegExp, string]> = [
     [/\/Cellar\/[^/]+\/(\d[^/_]*)(?:_\d+)?\//u, 'Homebrew'],
+    [/\/Caskroom\/[^/]+\/(\d[^/_,]*)(?:,[^/]*)?\//u, 'Homebrew'],
+    [/\/fvm\/versions\/(\d[^/]*)\//u, 'FVM'],
     [/\/mise\/installs\/[^/]+\/v?(\d[^/]*)\//u, 'mise'],
     [/\/\.asdf\/installs\/[^/]+\/v?(\d[^/]*)\//u, 'asdf'],
     [/\/\.nvm\/versions\/node\/v(\d[^/]*)\//u, 'nvm'],

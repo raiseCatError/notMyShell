@@ -9,7 +9,8 @@
  * icon sets: Octicons (MIT), Devicons (MIT), Seti UI (MIT), Font Awesome 4
  * (SIL OFL 1.1 font, CC BY 4.0 icons), Material Design Icons (Apache 2.0),
  * Font Logos (Unlicense). Product logos (Node.js, Go, Python, Docker,
- * Kubernetes, Rust, Java, Ruby, PHP, .NET, Swift, Zig, Deno, Apple, Linux)
+ * Kubernetes, Rust, Java, Ruby, PHP, .NET, Swift, Zig, Deno, Elixir, Dart,
+ * Flutter, Apple, Linux)
  * identify the tool they describe and
  * remain trademarks of their owners; cloud providers use a generic cloud glyph.
  */
@@ -35,6 +36,9 @@ export const MODULE_ICONS = {
   swift: {nerd: '\u{e755}', source: 'Devicons swift (nf-dev-swift)'},
   zig: {nerd: '\u{e6a9}', source: 'Seti zig (nf-seti-zig)'},
   deno: {nerd: '\u{e7c0}', source: 'Devicons denojs (nf-dev-denojs)'},
+  elixir: {nerd: '\u{e62d}', source: 'Seti elixir (nf-seti-elixir)'},
+  dart: {nerd: '\u{e64c}', source: 'Seti dart (nf-seti-dart)'},
+  flutter: {nerd: '\u{e7dd}', source: 'Devicons flutter (nf-dev-flutter, Nerd Fonts 3.3)'},
   code: {nerd: '', source: 'Font Awesome code (nf-fa-code)'},
   tools: {nerd: '', source: 'Octicons tools (nf-oct-tools)'},
   folder: {nerd: '', source: 'Font Awesome folder (nf-fa-folder)'},
