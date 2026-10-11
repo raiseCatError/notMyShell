@@ -155,6 +155,12 @@
     {"module": "python", "evidence": [{"kind": "workspaceFile", "names": ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile", ".python-version", "uv.lock"]}]},
     {"module": "go", "evidence": [{"kind": "workspaceFile", "names": ["go.mod", "go.work"]}]},
     {"module": "rust", "evidence": [{"kind": "workspaceFile", "names": ["Cargo.toml", "rust-toolchain.toml", "rust-toolchain"]}]},
-    {"module": "java", "evidence": [{"kind": "workspaceFile", "names": ["pom.xml", "build.gradle", "build.gradle.kts", ".java-version", ".sdkmanrc"]}]}
+    {"module": "java", "evidence": [{"kind": "workspaceFile", "names": ["pom.xml", "build.gradle", "build.gradle.kts", ".java-version", ".sdkmanrc"]}]},
+    {"module": "ruby", "evidence": [{"kind": "workspaceFile", "names": ["Gemfile", ".ruby-version"]}]},
+    {"module": "php", "evidence": [{"kind": "workspaceFile", "names": ["composer.json", ".php-version"]}]},
+    {"module": "dotnet", "evidence": [{"kind": "workspaceFile", "names": ["global.json"]}]},
+    {"module": "swift", "evidence": [{"kind": "workspaceFile", "names": ["Package.swift", ".swift-version"]}]},
+    {"module": "zig", "evidence": [{"kind": "workspaceFile", "names": ["build.zig", "build.zig.zon", ".zigversion"]}]},
+    {"module": "deno", "evidence": [{"kind": "workspaceFile", "names": ["deno.json", "deno.jsonc", ".dvmrc"]}]}
   ]
 }

@@ -9,7 +9,8 @@
  * icon sets: Octicons (MIT), Devicons (MIT), Seti UI (MIT), Font Awesome 4
  * (SIL OFL 1.1 font, CC BY 4.0 icons), Material Design Icons (Apache 2.0),
  * Font Logos (Unlicense). Product logos (Node.js, Go, Python, Docker,
- * Kubernetes, Rust, Java, Apple, Linux) identify the tool they describe and
+ * Kubernetes, Rust, Java, Ruby, PHP, .NET, Swift, Zig, Deno, Apple, Linux)
+ * identify the tool they describe and
  * remain trademarks of their owners; cloud providers use a generic cloud glyph.
  */
 export interface ModuleIcon {
@@ -28,6 +29,12 @@ export const MODULE_ICONS = {
   package: {nerd: '', source: 'Octicons package (nf-oct-package)'},
   rust: {nerd: '', source: 'Devicons rust (nf-dev-rust)'},
   java: {nerd: '', source: 'Devicons java (nf-dev-java)'},
+  ruby: {nerd: '\u{e791}', source: 'Devicons ruby_rough (nf-dev-ruby_rough)'},
+  php: {nerd: '\u{e608}', source: 'Seti php (nf-seti-php)'},
+  dotnet: {nerd: '\u{e77f}', source: 'Devicons dotnet (nf-dev-dotnet)'},
+  swift: {nerd: '\u{e755}', source: 'Devicons swift (nf-dev-swift)'},
+  zig: {nerd: '\u{e6a9}', source: 'Seti zig (nf-seti-zig)'},
+  deno: {nerd: '\u{e7c0}', source: 'Devicons denojs (nf-dev-denojs)'},
   code: {nerd: '', source: 'Font Awesome code (nf-fa-code)'},
   tools: {nerd: '', source: 'Octicons tools (nf-oct-tools)'},
   folder: {nerd: '', source: 'Font Awesome folder (nf-fa-folder)'},
