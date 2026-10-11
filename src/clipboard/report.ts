@@ -167,7 +167,9 @@ const oneLine = (text: string) => clean(text).replace(/\s*\n\s*/gu, ' ').trim();
 function facts(record: CompletedCommand, options: ReportOptions): Fact[] {
   const list: Fact[] = [];
   const status = oneLine(record.lifecycleText);
-  if (status) list.push({label: 'Status', value: status});
+  // Restored transcripts are untrusted too: status text must not become
+  // Markdown links, HTML or formatting outside the authored report structure.
+  if (status) list.push({label: 'Status', value: status, code: true});
   list.push({label: 'Exit code', value: String(record.exitCode)});
   const took = duration(record.durationMs);
   if (took) list.push({label: 'Duration', value: took});
