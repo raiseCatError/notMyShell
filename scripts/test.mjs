@@ -7,7 +7,7 @@ import {discoverTestFiles, parseTestOptions, selectTestGroups, testConcurrency} 
 
 /** Short private temp roots keep Unix sockets below their path length limit. */
 export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio = 'inherit', report = message => console.error(message)} = {}) {
-  const root = realpathSync(mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'nt-')));
+  const root = realpathSync(mkdtempSync(join(process.env.NMSH_TEST_TMPDIR ?? (process.platform === 'win32' ? tmpdir() : '/tmp'), 'nt-')));
   let leftovers = [];
   try {
     // Existing presentation snapshots pin truecolor; baseline fixtures override this explicitly.

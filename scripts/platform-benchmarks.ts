@@ -1,13 +1,14 @@
 import {once} from 'node:events';
 import {existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {performance} from 'node:perf_hooks';
 import {ShellSession} from '../src/shell/ShellSession.js';
 import {connectSession} from '../src/session/connectSession.js';
 import {socketPathFor} from '../src/session/runtimeDir.js';
 
 // A short, owned POSIX root avoids Unix-socket limits. Never touch existing roots.
-const root = realpathSync(mkdtempSync('/tmp/npb-'));
+const root = realpathSync(mkdtempSync(join(process.env.NMSH_TEST_TMPDIR ?? tmpdir(), 'npb-')));
 writeFileSync(join(root, '.zshrc'), '');
 const env = {...process.env, HOME: root};
 const samples: Record<string, number[]> = {'pty-ready': [], 'service-ready': [], 'service-cleanup': []};
