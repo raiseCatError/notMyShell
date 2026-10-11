@@ -1,0 +1,40 @@
+---
+title: notMyShell
+description: A terminal frontend for your real shell.
+template: splash
+hero:
+  tagline: A frontend over your real zsh, Bash, and Fish sessions. NMSh owns what you see and type, giving you a composer that stays put, semantic highlighting, a readable transcript, and live command feedback.
+  image:
+    file: ../../assets/houston.webp
+  actions:
+    - text: Get Started
+      link: /notMyShell/guides/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/raiseCatError/notMyShell
+      icon: external
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+## What makes NMSh different?
+
+<CardGrid stagger>
+	<Card title="A composer that stays put" icon="pencil">
+		Bottom, Top, or Flow (right after the newest output), one-line or two-line, with true multiline editing.
+	</Card>
+	<Card title="Semantic highlighting" icon="add-document">
+		Commands, builtins, aliases, and functions are classified against your real shell as you type. Partial input is never executed.
+	</Card>
+	<Card title="A transcript you can use" icon="setting">
+		Command blocks with status and timing, folding for long output, `/find` and `/filter`, plain-text `/copy`.
+	</Card>
+	<Card title="Live sessions" icon="open-book">
+		Closing a window detaches the shell instead of killing it. Running commands keep going. `/resume` brings them back.
+	</Card>
+</CardGrid>
+
+<div class="mt-12 text-center text-sm opacity-80">
+  <p>NMSh is not a shell, not a terminal emulator, and not an AI terminal. It runs your real shell in a persistent session and gives it a better frontend.</p>
+</div>

@@ -1,0 +1,58 @@
+---
+title: Context Modules and Engine
+description: Native context modules, routing, and declarative Context Packs.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh runs around a real persistent zsh, Bash or Fish session. Its native modules present useful context about that session and workspace — the project, Git, runtimes, cloud and cluster contexts, the machine, an AI agent's session — without taking over shell execution or running anything the workspace chose.
+
+## Architecture
+
+The Context Engine follows a strict path from demand to presentation:
+
+1. **Capability**: A named operation implemented and audited in NMSh core (e.g., "the nearest project manifest").
+2. **Fact**: One resolved value with its source, freshness, trust, sensitivity, and persistence policy.
+3. **Module**: A presentation definition that uses facts.
+4. **Surface Router**: Places the module on the appropriate UI surface.
+5. **Surfaces**: Main Prompt, Right Context, Context Rail, or Status Strip.
+
+## Surfaces
+
+NMSh routes context to one of four surfaces based on your preferences and screen space:
+
+- **Main Prompt**: Stable identity and navigation context, such as directory, project and Git.
+- **Right Context**: Independently anchored context at the right edge of the prompt area.
+- **Context Rail**: Live contextual modules attached to the composer, with their own geometry and priority fitting.
+- **Status Strip**: Persistent low-attention state; modules join its existing items at a lower priority.
+
+You can configure where modules appear by typing `/prompt` and opening the **Modules** tab.
+
+## Declarative Context Packs
+
+<Availability status="unreleased" pr="305" />
+
+The first-party catalog adds modules through bundled Context Packs (`nmsh.project`, `nmsh.environment`, `nmsh.cloud`, etc.). 
+
+**Packs are data, not plugins.** A pack cannot contain or reference shell text, commands, argv, JavaScript, executable or file paths, templates, includes, hooks or URLs. Parsing is strict and bounded.
+
+### Managing Packs
+
+```sh
+nmsh packs                          # bundled and installed packs and their state
+nmsh packs inspect FILE             # validate; show what it would read and add
+nmsh packs install FILE [--sha256 HEX] [--replace] [--yes]
+nmsh packs remove ID [--yes]
+nmsh packs enable ID | disable ID
+```
+
+## Security and Discovery
+
+**Entering a repository never executes repository-controlled code through NMSh context discovery, contacts the network, or exposes secrets.** 
+
+- Metadata reads refuse leaf symlinks and special files and are size-bounded.
+- Executables found on PATH are evidence, never permission: NMSh does not run them for context.
+- Only fixed system tools at absolute paths are run (for memory and battery).
+- The contextual Git collector uses trusted Git, disables hooks and fsmonitor, and does not inspect submodules.

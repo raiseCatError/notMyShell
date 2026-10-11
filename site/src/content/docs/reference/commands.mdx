@@ -1,0 +1,44 @@
+---
+title: Commands & Shortcuts
+description: Reference for NMSh slash-commands and keyboard shortcuts.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh uses **slash commands** for its internal actions, keeping them entirely separate from your shell's namespace. Type `/` in the composer for the full list, or `/help` for everything grouped by area.
+
+## Core Commands
+
+| Command | Description |
+|---|---|
+| `/settings` | Open the central configuration panel. |
+| `/setup` | Launch the interactive Setup Cat onboarding. |
+| `/theme` | Open Theme Studio to manage your palette. |
+| `/prompt` | Configure prompt styles, geometry, and modules. |
+| `/layout` | Configure composer position and transcript presentation. |
+| `/shell` | Switch between zsh, Bash, and Fish in place. |
+| `/tools` | Open the curated tools browser for shell utilities. |
+| `/providers` | Select backend providers for history, pickers, etc. |
+| `/tmux` | Open the tmux Config Studio. |
+| `/dotfiles` | Import dotfiles from Git or local paths. |
+| `/history` | View structured command history. |
+| `/find` | Search the transcript. |
+| `/filter` | Filter transcript rows matching a string. |
+| `/copy` | Enter copy mode for clean text extraction. |
+| `/clear` | Clear the current viewport. |
+| `/resume` | View and attach to live and archived sessions. |
+| `/zoomies` | Keep the machine or display awake (also `/caffeinate`, `/awake`). |
+| `/zsh` | Escape to an ordinary interactive shell. |
+
+## Important Shortcuts
+
+| Shortcut | Action |
+|---|---|
+| `F1`, `Ctrl+Shift+P` | Open the Command Palette. |
+| `Alt + Right Arrow` | Accept next word of a suggestion. |
+| `Right Arrow`, `End` | Accept full suggestion. |
+| `Ctrl + N` / `Ctrl + P` | Cycle through suggestion alternatives. |
+| `Esc` | Dismiss suggestion or close panel. |
+| `Ctrl + O` | Expand a folded output block. |

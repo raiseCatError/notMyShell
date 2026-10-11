@@ -1,0 +1,53 @@
+---
+title: Roadmap & Releases
+description: Track the development of notMyShell.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+## Tracking
+
+| | |
+|---|---|
+| **Current release** | v0.17.0 — Context Engine, Themes & Discovery |
+| **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh` |
+| **Development branch** | `dev` |
+
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished.
+
+## Planned Releases
+
+### v0.18.0 (Planned)
+
+Theme Bridge and semantic terminal integration.
+
+<Availability status="unreleased" pr="304" />
+
+- **Terminal Title Ownership (OSC 0/2)**: Written only while NMSh owns the screen. Programs keep their own titles, and hosts with a title stack get their previous title back on exit.
+- **Host marker lifecycle refinements**.
+- **Open in pager**: Block action to open stored output in a pager.
+- **Truthful delta status**: Shows whether syntax highlighting follows bat's NMSh theme or is pinned by git config.
+- **16/8-color correctness**: Theme Bridge colors are valid on 16- and 8-color terminals.
+- **Bash/Fish typo correction**.
+
+### v0.19.0 (Planned)
+
+NMSh Native module ecosystem.
+
+<Availability status="unreleased" pr="305" />
+
+- **Capability Scheduling**: Demand-driven capability scheduling (concurrency caps, timeouts and backoff, cancellation).
+- **First-party catalog**: Bundled declarative packs (projects, runtimes, environment managers, infrastructure, cloud, system, Git).
+- **Declarative Context Packs**: `nmsh packs` install/remove/enable/disable, integrity and recommendations.
+- **Claude Code agent context**.
+- **Status Strip routing**.
+
+## Recently Released (v0.17.0)
+
+Context Engine, Themes & Discovery.
+
+- **Theme Studio**: Built-in, Imported, and Custom themes with live previews.
+- **Theme Bridge**: Extend your NMSh theme to `fzf`, `less`/`man`, file listing colors, `bat`, `tmux`, `Vim`, `Neovim`, and `Helix`.
+- **Context Engine Foundation**: Typed fact metadata, routing, and the Context Rail.
+- **Curated Tools Browser**: `/tools` detects and configures shell tools safely.
+- **Keep Awake**: `/zoomies` (`/caffeinate`, `/awake`) prevents your machine or display from sleeping.

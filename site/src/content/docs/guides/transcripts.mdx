@@ -1,0 +1,47 @@
+---
+title: Transcripts and Workflows
+description: Understanding NMSh command transcripts, output folding, and selection.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+The transcript is the scrollable record of your past commands and their output. NMSh structures this output to make it more readable and useful.
+
+## Structured Command Blocks
+
+Each command in the transcript is a discrete block. It contains:
+- The command you typed.
+- The prompt snapshot at the time of execution.
+- The output of the command.
+- Status (success or failure) and execution timing.
+
+## Output Folding
+
+Configured via **Config → Output folding** (Smart, Always, or Never).
+
+- **Smart** (Default): Folds long, low-information output (like build chatter or progress rewrites) but keeps errors, diagnostics, diffs, and failures expanded.
+- **Always**: Folds all long blocks, keeping only the head and tail visible.
+- **Never**: Disables folding.
+
+A folded block displays a summary like `› N lines hidden · Ctrl+O` and can be expanded at any time.
+
+## Search and Filtering
+
+You can search and filter the transcript to find past output quickly:
+
+- `/find`: Search the transcript for specific text.
+- `/filter`: Filter the transcript to show only matching lines. This is presentation only; the underlying stored output is unchanged.
+
+## Copy Workflows
+
+Because NMSh manages the output, copying text from the transcript is clean. Terminal escape sequences, bidi formatting, and NMSh UI chrome are stripped out, giving you pure text.
+
+<Availability status="unreleased" pr="358" />
+
+**Copy Selection and Copy Modes:** Enhanced copy workflows (including plain-text `/copy`) and Smart Folding refinements are currently in development.
+
+## Sticky Headers
+
+While scrolling through long output, the command that generated the output stays pinned as a one-row header at the top of the viewport. Clicking it jumps you back to the real header.

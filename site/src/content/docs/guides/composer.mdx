@@ -1,0 +1,41 @@
+---
+title: Composer and Interaction
+description: Using the NMSh composer, completion, and keyboard shortcuts.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+The **composer** is the persistent editor at the bottom (or top) of your NMSh window where you type commands. It provides multiline editing, semantic syntax highlighting, and intelligent suggestions before a command is executed.
+
+## Composer Layouts
+
+You can position the composer via **Config → Composer position**:
+- **Bottom**: The classic layout. Input stays at the bottom of the screen.
+- **Top**: Input sits at the top; output pushes down.
+- **Flow**: The composer naturally follows the newest output, similar to a traditional terminal.
+
+You can also use a **two-line** layout where your prompt sits above the input line, or a **one-line** layout. 
+
+## Semantic Highlighting
+
+As you type, NMSh tokenizes and highlights your command based on real shell knowledge. Commands, builtins, aliases, and functions are recognized. Partial input is **never executed** behind the scenes.
+
+## Predictive Suggestions (NMSh Native)
+
+Ghost text suggestions are ranked by:
+- Fuzzy and acronym matching
+- Frecency
+- The current directory
+- What usually follows the previous command
+
+**Navigation:**
+- `Right Arrow` or `End` accepts the full suggestion.
+- `Alt + Right Arrow` accepts the next word.
+- `Ctrl + N` / `Ctrl + P` lists ranked alternatives.
+- `Esc` dismisses the suggestion.
+
+## The Command Palette
+
+Press `F1`, `Ctrl+Shift+P`, `Cmd+Shift+P`, or type `/palette` to open the Command Palette. It allows you to search through NMSh slash-commands, settings, layout toggles, and themes without executing shell text.

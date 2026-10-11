@@ -1,0 +1,29 @@
+---
+title: Sessions and Workspaces
+description: How NMSh handles persistent live sessions.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh sessions are built to survive window closures, network drops, and terminal emulator crashes. 
+
+## Persistent Live Sessions
+
+Under the hood, NMSh runs your shell in a small background service (`nmshd`). When you close a terminal window, the shell **detaches** instead of dying.
+
+If a command is running (e.g., a build script, a dev server, or a long copy), it continues executing.
+
+## Reattaching
+
+When you open a new terminal window, NMSh's startup prompt allows you to choose an existing live session to reattach to, or start a new one.
+
+- `/resume`: Opens the session viewer. **LIVE** sessions are listed at the top, above **ARCHIVED** transcripts. You can see what each live session is doing (the running command, elapsed time, etc.).
+- `nmsh --attach <id>`: Attach directly from the command line.
+
+When you reattach, any output that was printed while the session was detached is safely spooled and appended to your transcript.
+
+## Interactive UIs and Handoff
+
+If a detached session was running an interactive UI (like an editor, Claude Code, or a pager), NMSh correctly restores the terminal modes (including mouse reporting and bracketed paste) when you reattach, handing control back to the application seamlessly.
