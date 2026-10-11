@@ -171,5 +171,8 @@ test('drawers follow the keyboard: only a focused drawer is drawn, and opening o
   const back = applyFocusAction(inDrawer, 'focus.return', 40);
   assert.deepEqual(back, {owner: 'COMPOSER', sidebarOpen: true, panelOpen: false});
   assert.equal(planWorkspaceColumns({columns: 40, sidebarOpen: back.sidebarOpen, panelOpen: back.panelOpen, focus: regionOf(back.owner)}).sidebar.tucked, true);
+  assert.deepEqual(applyFocusAction(back, 'sidebar.toggle', 40), {owner: 'LEFT_SIDEBAR', sidebarOpen: true, panelOpen: false}, '/sidebar on a tucked drawer shows it');
+  assert.deepEqual(applyFocusAction(inDrawer, 'sidebar.toggle', 40), {owner: 'COMPOSER', sidebarOpen: false, panelOpen: false}, '/sidebar on the shown drawer closes it');
+  assert.equal(applyFocusAction({owner: 'COMPOSER', sidebarOpen: true, panelOpen: false}, 'sidebar.toggle', 160).sidebarOpen, false, 'a docked region still toggles closed');
   assert.equal(regionOf('APPROVAL'), 'center');
 });

@@ -48,8 +48,9 @@ columns both regions would be full-width drawers on top of each other. With `foc
 an open drawer is drawn only while it has the keyboard; otherwise it is `tucked` (open, not drawn, mode `hidden`).
 So at most one drawer shows, and nothing covers the region typing goes to. Tucking is not a resize and keeps the
 region open: focusing it again, or widening the terminal until it docks, shows it again. `applyFocusAction(state,
-action, columns)` focuses a region opened where it can only be a drawer (an unfocused drawer would show nothing);
-docked regions still open without taking focus.
+action, columns)` focuses a region opened where it can only be a drawer (an unfocused drawer would show nothing),
+and toggling a tucked drawer brings it forward instead of closing what cannot be seen; docked regions still open
+without taking focus and toggle closed.
 
 These thresholds are a starting point chosen so an 80-column shell stays usable; they still need physical
 measurement in Ghostty and Terminal.app (see QA).
