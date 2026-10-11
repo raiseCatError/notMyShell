@@ -1,4 +1,8 @@
-import test from 'node:test';
+import fs from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {syncBuiltinESMExports} from 'node:module';
+import test, {mock} from 'node:test';
 import assert from 'node:assert/strict';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 
@@ -28,6 +32,23 @@ test('key diagnostics observe only the idle composer, never startup or program i
     assert.deepEqual(logged, ['idle draft']);
   } finally {
     app['stop'](0); app['session'].kill();
+    if (previous === undefined) delete process.env.NMSH_DEBUG_KEYS; else process.env.NMSH_DEBUG_KEYS = previous;
+  }
+});
+
+test('key diagnostic files respect the configured temporary directory', () => {
+  const previous = process.env.NMSH_DEBUG_KEYS;
+  process.env.NMSH_DEBUG_KEYS = '1';
+  const paths: string[] = [];
+  const probe = mock.method(fs, 'appendFileSync', (path: string) => { paths.push(path); });
+  syncBuiltinESMExports();
+  const app = new TerminalApp();
+  try {
+    app['logEditorKeyInput']('safe-fixture');
+    assert.deepEqual(paths, [join(tmpdir(), 'nmsh-key-debug.log')]);
+  } finally {
+    app['stop'](0); app['session'].kill();
+    probe.mock.restore(); syncBuiltinESMExports();
     if (previous === undefined) delete process.env.NMSH_DEBUG_KEYS; else process.env.NMSH_DEBUG_KEYS = previous;
   }
 });
