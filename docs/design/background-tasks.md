@@ -77,7 +77,10 @@ settings, never commands, arguments or output.
   written to the task's input, which a program in raw mode reads as data. `nextEscalation` offers SIGTERM, then
   SIGKILL; each is an explicit request. NMSh's interactive shell, other tasks, and processes that left the group
   (an adb server started by `adb logcat` detaches with `setsid`) are never signalled (tested).
-- When the leader exits while members of its group still run (they ignored the hangup), the task says so
+- After a stop request the task is the whole process group: a shell that does not `exec` its command (dash, Ubuntu's
+  `/bin/sh`) dies of SIGINT while a program that ignores SIGINT keeps running, so the task stays `stopping`, and
+  escalation still reaches the group, until the group is gone (found by Linux CI; reproduced on macOS in tests).
+- When the leader exits on its own while members of its group still run (they ignored the hangup), the task says so
   (`leftovers`) and they are killed only on an explicit request.
 - **Remove** deletes a finished task and its output; a running task is never removed. **Dismissing** a view is a
   presentation matter and touches no task. These are three different operations.
