@@ -33,13 +33,31 @@ type Json = Record<string, unknown>;
 const record = (value: unknown): value is Json => typeof value === 'object' && value !== null && !Array.isArray(value);
 const string = (value: unknown, limit = 4000): string | undefined => typeof value === 'string' && value.length <= limit ? value : undefined;
 const firstLine = (value: string | undefined) => value?.split('\n')[0]!.slice(0, 160);
+export const APPROVAL_TARGET_LIMIT = 600;
+
+/**
+ * A command exactly as it would run, for an approval: every line shown (line breaks as ` ⏎ `), so a harmless first
+ * line cannot hide what follows; when it is too long to show, the cut says how much is not shown.
+ */
+export function approvalCommand(command: string): string {
+  const flat = command.replace(/\r?\n/gu, ' ⏎ ');
+  return flat.length <= APPROVAL_TARGET_LIMIT ? flat : `${flat.slice(0, APPROVAL_TARGET_LIMIT)}… (${flat.length - APPROVAL_TARGET_LIMIT} more characters; see details)`;
+}
+
+/** The files a file-change approval covers, from the matching fileChange item. */
+export function approvalFiles(paths: readonly string[] | undefined): string {
+  if (!paths?.length) return 'files not reported by Codex';
+  return `${paths[0]!.slice(0, 200)}${paths.length > 1 ? ` (+${paths.length - 1} more file${paths.length === 2 ? '' : 's'})` : ''}`;
+}
 
 /** A thread item → a normalized tool event, when the item is a tool the person should see. Unknown kinds give nothing. */
 export function codexToolEvent(item: unknown, phase: 'started' | 'completed'): AgentEvent | undefined {
   if (!record(item) || typeof item.id !== 'string') return undefined;
   const status = item.status === 'failed' || item.status === 'declined' ? 'failed' : phase === 'started' || item.status === 'inProgress' ? 'started' : 'finished';
   if (item.type === 'commandExecution') {
-    const target = firstLine(string(item.command));
+    const command = string(item.command, 100_000);
+    const more = command ? command.split('\n').length - 1 : 0;
+    const target = command ? `${firstLine(command)}${more ? ` (+${more} more line${more === 1 ? '' : 's'})` : ''}` : undefined;
     const exit = typeof item.exitCode === 'number' ? item.exitCode : undefined;
     return {kind: 'tool', id: item.id, name: 'command', ...(target ? {target} : {}), status: status === 'finished' && exit !== undefined && exit !== 0 ? 'failed' : status,
       ...(phase === 'completed' && exit !== undefined ? {detail: `exit ${exit}${item.status === 'declined' ? ' (declined)' : ''}`} : item.status === 'declined' ? {detail: 'declined'} : {})};
@@ -58,6 +76,8 @@ export function codexToolEvent(item: unknown, phase: 'started' | 'completed'): A
 
 export interface CodexMessageResult {
   events: AgentEvent[];
+  /** Paths of a fileChange item, by item id, so a later approval for it can name its files. */
+  fileChange?: {id: string; paths: string[]};
   /** A request from Codex that needs a response (an approval, or something NMSh refuses). */
   request?: {id: number | string; method: string; params: Json};
   /** A response to one of NMSh's requests. */
@@ -74,14 +94,19 @@ export function codexMessage(line: string): CodexMessageResult {
   const params = record(message.params) ? message.params : {};
   if (id !== undefined && !method) return {events: [], response: {id, ...('result' in message ? {result: message.result} : {}), ...('error' in message ? {error: message.error} : {})}};
   if (id !== undefined && method) {
+    // The reason is Codex's (model-written) explanation: labelled as such, never shown as NMSh's own words.
+    const reason = string(params.reason) ? {reasonFromCodex: string(params.reason)} : {};
     if (method === 'item/commandExecution/requestApproval') {
-      const target = firstLine(string(params.command));
-      return {events: [{kind: 'approval', requestId: String(id), tool: 'command', ...(target ? {target} : {}),
-        input: {...(target ? {command: string(params.command)} : {}), ...(string(params.cwd) ? {cwd: string(params.cwd)} : {}), ...(string(params.reason) ? {reason: string(params.reason)} : {})}}],
+      const command = string(params.command, 100_000);
+      return {events: [{kind: 'approval', requestId: String(id), tool: 'command', target: command ? approvalCommand(command) : 'command not reported by Codex',
+        input: {...(command ? {command} : {}), ...(string(params.cwd) ? {cwd: string(params.cwd)} : {}), ...reason}}],
       request: {id, method, params}};
     }
     if (method === 'item/fileChange/requestApproval') {
-      return {events: [{kind: 'approval', requestId: String(id), tool: 'file change', ...(string(params.reason) ? {input: {reason: string(params.reason)}} : {})}], request: {id, method, params}};
+      // The files come from the fileChange item this request names; the session fills them in (see CodexSession.handle).
+      return {events: [{kind: 'approval', requestId: String(id), tool: 'file change', target: approvalFiles(undefined),
+        input: {...(typeof params.itemId === 'string' ? {itemId: params.itemId} : {}), ...(string(params.grantRoot) ? {grantRoot: string(params.grantRoot)} : {}), ...reason}}],
+      request: {id, method, params}};
     }
     return {events: [], request: {id, method, params}};
   }
@@ -94,7 +119,13 @@ export function codexMessage(line: string): CodexMessageResult {
       const turn = record(params.turn) ? params.turn : {};
       return {events: [], ...(typeof turn.id === 'string' ? {turnId: turn.id} : {})};
     }
-    case 'item/started': return {events: [codexToolEvent(params.item, 'started')].filter((event): event is AgentEvent => event !== undefined)};
+    case 'item/started': {
+      const item = params.item;
+      const fileChange = record(item) && item.type === 'fileChange' && typeof item.id === 'string'
+        ? {id: item.id, paths: (Array.isArray(item.changes) ? item.changes : []).flatMap(change => (record(change) && typeof change.path === 'string' ? [change.path] : [])).slice(0, 200)}
+        : undefined;
+      return {events: [codexToolEvent(item, 'started')].filter((event): event is AgentEvent => event !== undefined), ...(fileChange ? {fileChange} : {})};
+    }
     case 'item/completed': {
       const item = params.item;
       if (record(item) && item.type === 'agentMessage') {
@@ -138,6 +169,8 @@ export class CodexSession {
   /** Approval requests awaiting the person, by NMSh request id → Codex JSON-RPC id. */
   private readonly approvals = new Map<string, number | string>();
   private threadId?: string;
+  /** fileChange items seen in this session (bounded), so their approvals can name the files. */
+  private readonly fileChanges = new Map<string, string[]>();
   private startedReported = false;
   private turnId?: string;
   private queued: string[] = [];
@@ -199,8 +232,9 @@ export class CodexSession {
     }
   }
 
-  private handle({events, request, response, turnId}: CodexMessageResult): void {
+  private handle({events, request, response, turnId, fileChange}: CodexMessageResult): void {
     if (turnId) this.turnId = turnId;
+    if (fileChange) { this.fileChanges.set(fileChange.id, fileChange.paths); if (this.fileChanges.size > 256) this.fileChanges.delete(this.fileChanges.keys().next().value!); }
     if (response && typeof response.id === 'number') {
       const kind = this.calls.get(response.id);
       this.calls.delete(response.id);
@@ -230,7 +264,11 @@ export class CodexSession {
       }
       return;
     }
-    for (const event of events) {
+    for (let event of events) {
+      if (event.kind === 'approval' && event.tool === 'file change') {
+        const paths = typeof event.input?.itemId === 'string' ? this.fileChanges.get(event.input.itemId) : undefined;
+        event = {...event, target: approvalFiles(paths), input: {...event.input, ...(paths ? {files: paths.slice(0, 50)} : {})}};
+      }
       if (event.kind === 'started') { if (this.startedReported) continue; this.startedReported = true; } // thread/started and the thread/start response may arrive in either order
       if (event.kind === 'settled') { clearTimeout(this.interruptTimer); this.interruptTimer = undefined; this.turnId = undefined; this.approvals.clear(); }
       this.options.onEvent(event);
