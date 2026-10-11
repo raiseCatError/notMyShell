@@ -29,7 +29,11 @@ A person's keymap is declarative data, validated before use, and never executed:
 - **Host notes** (`hostNotes`) say when a key usually never reaches NMSh: Terminal.app scrolls its own window on Page
   Up/Down and Home/End, macOS may take F1, a tmux root-table binding (`bind -n`) takes the key first, and Esc waits
   for tmux's `escape-time`. These are notes, never delivery guarantees.
-- `describeKeymap` lists every binding in effect and the commands that always work.
+- `describeKeymap` lists every binding in effect and the commands that always work. Problem messages never echo the
+  file's text raw: a field name is shown only after escape sequences and controls are removed.
+- **Shared composer keys.** The background task bar (#384) also uses Up from an idle composer, and Shift+Up, which is
+  not bindable here. When the bar is wired, `COMPOSER_MEANINGS.up` must name it ("recalls history, or focuses a shown
+  agent shelf or task bar"), so a `"replaces": true` binding on Up says what it takes away.
 
 Integration: the keymap file lives beside NMSh's other configuration (`keymap.json` in the config directory), is read
 at start and on `/keys reload`, and `/keys` shows `describeKeymap` plus problems and host notes. Those commands are

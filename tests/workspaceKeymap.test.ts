@@ -57,6 +57,7 @@ test('conflicts and malformed keymaps are reported; the defaults stand where an 
   assert.deepEqual(errors(applyKeymap({version: 2})), ['unsupported keymap version; expected 1']);
   assert.deepEqual(errors(applyKeymap([])), ['the keymap must be an object']);
   assert.deepEqual(errors(applyKeymap({version: 1, bind: {}, extra: 1})), ['unknown field "extra"', '"bind" must be a list']);
+  assert.deepEqual(errors(applyKeymap({version: 1, '\u001b]0;PWNED\u0007\u001b[2Jx': 1})), ['unknown field "x"'], 'a field name from the file is shown as text only');
   assert.deepEqual(errors(applyKeymap({version: 1, bind: [{key: 'x', context: 'sidebar', action: 'shell.exec'}, {key: 'x', context: 'nowhere', action: 'panel.close'}]})),
     ['unknown action', 'context must be one of composerEmpty, sidebar, panel']);
   const many = applyKeymap({version: 1, bind: Array.from({length: 500}, () => ({key: 'z', context: 'panel', action: 'panel.close'}))});

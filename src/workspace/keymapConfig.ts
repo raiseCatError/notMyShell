@@ -1,4 +1,5 @@
 import type {Key} from '../terminal/keys.js';
+import {resourceText} from './resources.js';
 import {chordLabel, DEFAULT_BINDINGS, WORKSPACE_ACTIONS, type Binding, type KeyChord, type KeymapContext, type WorkspaceActionId} from './keymap.js';
 
 /**
@@ -81,7 +82,8 @@ export function applyKeymap(input: unknown, defaults: readonly Binding[] = DEFAU
   if (input === undefined) return {bindings, problems};
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return {bindings, problems: [{severity: 'error', message: 'the keymap must be an object'}]};
   const data = input as Record<string, unknown>;
-  for (const key of Object.keys(data)) if (!['version', 'bind', 'unbind'].includes(key)) problems.push({severity: 'error', message: `unknown field "${key.slice(0, 32)}"`});
+  // A field name is the file's text, shown by /keys: displayable only after escape sequences and controls are removed.
+  for (const key of Object.keys(data)) if (!['version', 'bind', 'unbind'].includes(key)) problems.push({severity: 'error', message: `unknown field "${resourceText(key, 32)}"`});
   if (data.version !== KEYMAP_VERSION) return {bindings, problems: [...problems, {severity: 'error', message: `unsupported keymap version; expected ${KEYMAP_VERSION}`}]};
   const list = (value: unknown, name: string): Record<string, unknown>[] => {
     if (value === undefined) return [];
