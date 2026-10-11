@@ -1,6 +1,7 @@
 import type {InputOwner} from '../agents/input/controller.js';
 import type {Key} from '../terminal/keys.js';
 import {DEFAULT_BINDINGS, resolveBinding, type Binding, type WorkspaceActionId} from './keymap.js';
+import {planWorkspaceColumns, type FocusRegion} from './layout.js';
 
 /**
  * Regional keyboard ownership for the workspace (#330 regional focus
@@ -45,12 +46,30 @@ export interface WorkspaceFocusState {
   panelOpen: boolean;
 }
 
+/** The column-plan region an owner types into: a workspace region, or the center for every other owner. */
+export function regionOf(owner: WorkspaceOwner): FocusRegion {
+  return owner === 'LEFT_SIDEBAR' ? 'sidebar' : owner === 'RIGHT_PANEL' ? 'panel' : 'center';
+}
+
 /**
  * Focus transitions for the focus/visibility actions. Region-internal actions (moving, scrolling, activating) belong to
  * the sidebar and panel controllers and leave focus unchanged. Closing a focused region returns focus to the
  * composer, so the keyboard never belongs to something that is not drawn.
+ *
+ * Opening a docked region does not take focus. With `columns`, opening a region that can only be a drawer at that
+ * width focuses it: an unfocused drawer is not drawn (the column plan tucks it away), so opening it without focus
+ * would show nothing.
  */
-export function applyFocusAction(state: WorkspaceFocusState, action: WorkspaceActionId): WorkspaceFocusState {
+export function applyFocusAction(state: WorkspaceFocusState, action: WorkspaceActionId, columns?: number): WorkspaceFocusState {
+  const next = focusTransition(state, action);
+  if (columns === undefined) return next;
+  const plan = planWorkspaceColumns({columns, sidebarOpen: next.sidebarOpen, panelOpen: next.panelOpen});
+  if (!state.sidebarOpen && next.sidebarOpen && plan.sidebar.mode === 'drawer') return {...next, owner: 'LEFT_SIDEBAR'};
+  if (!state.panelOpen && next.panelOpen && plan.panel.mode === 'drawer') return {...next, owner: 'RIGHT_PANEL'};
+  return next;
+}
+
+function focusTransition(state: WorkspaceFocusState, action: WorkspaceActionId): WorkspaceFocusState {
   switch (action) {
     case 'sidebar.toggle': {
       const sidebarOpen = !state.sidebarOpen;
