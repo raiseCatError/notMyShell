@@ -177,3 +177,22 @@ test('suite runner honors explicit temporary storage without silently falling ba
     if (previous === undefined) delete process.env.NMSH_TEST_TMPDIR; else process.env.NMSH_TEST_TMPDIR = previous;
   }
 });
+
+
+test('suite runner confines home-directory caches to its private temporary storage', async () => {
+  const fixture = mkdtempSync(join(tmpdir(), 'runner-home-'));
+  const file = join(fixture, 'home.test.mjs');
+  try {
+    writeFileSync(file, [
+      "import assert from 'node:assert/strict';",
+      "import {existsSync, writeFileSync} from 'node:fs';",
+      "import {join} from 'node:path';",
+      "assert.equal(process.env.HOME, join(process.env.TMPDIR, 'home'));",
+      "assert.ok(existsSync(process.env.HOME));",
+      "writeFileSync(join(process.env.HOME, '.owned-test-cache'), 'fixture');",
+    ].join('\n'));
+    const result = await runTestFiles([file], [], {stdio: 'ignore'});
+    assert.equal(result.code, 0, 'home caches stay inside the owned suite root');
+    assert.ok(!existsSync(result.root), 'home caches are removed with that root');
+  } finally { rmSync(fixture, {recursive: true, force: true}); }
+});
