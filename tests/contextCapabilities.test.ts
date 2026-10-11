@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import type {CapabilityDefinition} from '../src/context/capability.js';
 import {projectPackage} from '../src/context/capabilities/project.js';
-import {denoRuntime, dotnetRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
+import {dartRuntime, denoRuntime, dotnetRuntime, elixirRuntime, flutterRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
 import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
 import {aws, azure, gcp} from '../src/context/capabilities/cloud.js';
@@ -487,4 +487,104 @@ test('Ruby install layouts: RVM and chruby/ruby-install rubies', () => {
   assert.deepEqual(versionFromInstallPath('/Users/me/.rvm/rubies/ruby-3.2.2/bin/ruby'), {version: '3.2.2', manager: 'RVM'});
   assert.deepEqual(versionFromInstallPath('/Users/me/.rubies/ruby-3.3.5/bin/ruby'), {version: '3.3.5', manager: 'chruby'});
   assert.equal(versionFromInstallPath('/Users/me/.rubies/truffleruby-24.1.0/bin/ruby'), undefined, 'other implementations stay unknown');
+});
+
+test('runtime facts: Elixir, Dart and Flutter from the project\'s own files and the SDK\'s metadata, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    // Elixir: mix.exs requirement; a distribution layout (/usr/lib/elixir) is identified by its elixir.app, not by running bin/elixir.
+    const elixirHome = join(tools, 'usr', 'lib', 'elixir');
+    await mkdir(join(elixirHome, 'bin'), {recursive: true});
+    await mkdir(join(elixirHome, 'lib', 'elixir', 'ebin'), {recursive: true});
+    await sentinelExecutable(join(elixirHome, 'bin', 'elixir'), join(tools, 'ELIXIR_RAN'), 'Elixir 9.9.9');
+    await writeFile(join(elixirHome, 'lib', 'elixir', 'ebin', 'elixir.app'), '{application,elixir,\n [{description,"elixir"},\n  {vsn,"1.17.3"},\n  {modules,[]}]}.\n');
+    await writeFile(join(root, 'mix.exs'), 'defmodule App.MixProject do\n  use Mix.Project\n  def project do\n    [app: :app, version: "0.1.0", elixir: "~> 1.17", deps: deps()]\n  end\nend\n');
+    // The requirement is on a keyword line inside project/0: `elixir:` at the start of a line or after `[`.
+    await writeFile(join(root, 'mix.exs'), 'defmodule App.MixProject do\n  def project do\n    [\n      app: :app,\n      elixir: "~> 1.17",\n    ]\n  end\nend\n');
+    assert.deepEqual(await resolve(elixirRuntime, {cwd: root, root, env: {PATH: join(elixirHome, 'bin')}}),
+      {requested: '~> 1.17', requestedFrom: 'mix.exs', active: '1.17.3', buildTool: 'mix'});
+    await writeFile(join(root, '.tool-versions'), 'elixir 1.16.3-otp-26\nerlang 26.2\n');
+    resetServiceCaches();
+    const asdf = join(tools, '.asdf', 'installs', 'elixir', '1.17.3-otp-27', 'bin');
+    await mkdir(asdf, {recursive: true});
+    await sentinelExecutable(join(asdf, 'elixir'), join(tools, 'ELIXIR_RAN'), 'Elixir 9.9.9');
+    await writeFile(join(root, 'mix.exs'), 'defmodule App.MixProject do\nend\n');
+    assert.deepEqual(await resolve(elixirRuntime, {cwd: root, root, env: {PATH: asdf}}),
+      {requested: '1.16.3-otp-26', requestedFrom: '.tool-versions', active: '1.17.3-otp-27', manager: 'asdf', buildTool: 'mix'}, 'mix.exs without a requirement falls back to .tool-versions; an OTP-qualified pin is not judged');
+    await rm(join(root, '.tool-versions'));
+
+    // Dart: pubspec constraint; the SDK's own version file. Flutter's bin/dart wrapper reads the bundled SDK, not Flutter's version.
+    const dartSdk = join(tools, 'dart-sdk');
+    await mkdir(join(dartSdk, 'bin'), {recursive: true});
+    await sentinelExecutable(join(dartSdk, 'bin', 'dart'), join(tools, 'DART_RAN'), 'Dart SDK version: 9.9.9');
+    await writeFile(join(dartSdk, 'version'), '3.5.4\n');
+    await writeFile(join(root, 'pubspec.yaml'), 'name: app\nenvironment:\n  sdk: ^3.5.0\n  flutter: ">=3.24.0"\ndependencies:\n  flutter:\n    sdk: flutter\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(dartRuntime, {cwd: root, root, env: {PATH: join(dartSdk, 'bin')}}),
+      {requested: '^3.5.0', requestedFrom: 'pubspec.yaml', active: '3.5.4', buildTool: 'pub'});
+    const flutterRoot = join(tools, 'fvm', 'versions', '3.24.3');
+    await mkdir(join(flutterRoot, 'bin', 'cache', 'dart-sdk'), {recursive: true});
+    await sentinelExecutable(join(flutterRoot, 'bin', 'flutter'), join(tools, 'FLUTTER_RAN'), 'Flutter 9.9.9');
+    await sentinelExecutable(join(flutterRoot, 'bin', 'dart'), join(tools, 'DART_RAN'), 'Dart 9.9.9');
+    await writeFile(join(flutterRoot, 'version'), '3.24.3\n');
+    await writeFile(join(flutterRoot, 'bin', 'cache', 'dart-sdk', 'version'), '3.5.3\n');
+    await writeFile(join(flutterRoot, 'bin', 'cache', 'flutter.version.json'), JSON.stringify({frameworkVersion: '3.24.3', channel: 'stable', dartSdkVersion: '3.5.3'}));
+    resetServiceCaches();
+    assert.equal((await resolve(dartRuntime, {cwd: root, root, env: {PATH: join(flutterRoot, 'bin')}}))?.active, '3.5.3', 'the bundled Dart SDK, not Flutter\'s version');
+
+    // Flutter: .fvmrc wins over pubspec; the install's flutter.version.json; FVM layout names the manager.
+    await writeFile(join(root, '.fvmrc'), JSON.stringify({flutter: '3.22.0'}));
+    resetServiceCaches();
+    assert.deepEqual(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: join(flutterRoot, 'bin')}}),
+      {requested: '3.22.0', requestedFrom: '.fvmrc', active: '3.24.3', manager: 'FVM', mismatch: true});
+    await rm(join(root, '.fvmrc'));
+    await mkdir(join(root, '.fvm'));
+    await writeFile(join(root, '.fvm', 'fvm_config.json'), JSON.stringify({flutterSdkVersion: '3.24.3'}));
+    assert.deepEqual(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}), {requested: '3.24.3', requestedFrom: 'fvm_config.json'});
+    await rm(join(root, '.fvm'), {recursive: true});
+    assert.deepEqual(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}), {requested: '>=3.24.0', requestedFrom: 'pubspec.yaml'});
+    // A pure Dart package is not a Flutter project.
+    await writeFile(join(root, 'pubspec.yaml'), 'name: cli\nenvironment:\n  sdk: ^3.5.0\n');
+    assert.equal(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}), undefined);
+
+    // An FVM SDK linked inside the project is workspace-controlled: never inspected.
+    await writeFile(join(root, '.fvmrc'), JSON.stringify({flutter: '3.24.3'}));
+    const local = join(root, '.fvm', 'flutter_sdk', 'bin');
+    await mkdir(local, {recursive: true});
+    await sentinelExecutable(join(local, 'flutter'), join(root, 'PLANTED_RAN'), 'Flutter 1.0.0');
+    await mkdir(join(local, 'cache'));
+    await writeFile(join(local, 'cache', 'flutter.version.json'), JSON.stringify({frameworkVersion: '6.6.6'}));
+    resetServiceCaches();
+    // home is outside the workspace, as it is for a real project, so the workspace boundary applies.
+    const planted = await resolve(flutterRuntime, {cwd: root, root, home: tools, env: {PATH: local}});
+    assert.equal(planted?.active, undefined);
+    assert.match(planted?.note ?? '', /inside this workspace/u);
+    for (const name of ['ELIXIR', 'DART', 'FLUTTER']) assert.equal(await exists(join(tools, `${name}_RAN`)), false, `${name} was never run`);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('pubspec.yaml and mix.exs are data: aliases, tags and huge or hostile values are not expanded or trusted', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    const bomb = 'a: &a ["x","x","x","x","x","x","x","x","x"]\n' + Array.from({length: 12}, (_, i) => `l${i}: &l${i} [${Array(9).fill(i ? `*l${i - 1}` : '*a').join(',')}]`).join('\n');
+    await writeFile(join(root, 'pubspec.yaml'), `${bomb}\nenvironment:\n  sdk: !!js/function "function(){}"\n  flutter: *l11\n`);
+    const started = performance.now();
+    const dart = await resolve(dartRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    assert.ok(performance.now() - started < 500);
+    assert.equal(dart?.requested, undefined, 'a tagged or aliased value is not a version');
+    await writeFile(join(root, 'mix.exs'), `${'\n \t'.repeat(20_000)}x\n`);
+    const elixirStarted = performance.now();
+    assert.equal((await resolve(elixirRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}))?.requested, undefined);
+    assert.ok(performance.now() - elixirStarted < 250);
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('install layouts: FVM and Homebrew casks', () => {
+  assert.deepEqual(versionFromInstallPath('/Users/me/fvm/versions/3.24.3/bin/flutter'), {version: '3.24.3', manager: 'FVM'});
+  assert.deepEqual(versionFromInstallPath('/opt/homebrew/Caskroom/flutter/3.24.3/flutter/bin/flutter'), {version: '3.24.3', manager: 'Homebrew'});
+  assert.deepEqual(versionFromInstallPath('/opt/homebrew/Caskroom/dotnet-sdk/8.0.404,abc123/dotnet'), {version: '8.0.404', manager: 'Homebrew'});
 });
