@@ -278,7 +278,7 @@ export const rubyRuntime = runtimeCapability('runtime.ruby', 'Ruby version', ['.
   let requested = await versionFile(context, ['.ruby-version']);
   const gemfile = await findNearest(context, ['Gemfile']);
   if (!requested && gemfile) {
-    const declared = /^\s*ruby\s+['"](\d[\w.+-]{0,31})['"]/mu.exec(await readMetadataText(gemfile.path, 64 * 1024) ?? '')?.[1];
+    const declared = /^[ \t]*ruby[ \t]+['"](\d[\w.+-]{0,31})['"]/mu.exec(await readMetadataText(gemfile.path, 64 * 1024) ?? '')?.[1];
     if (declared) requested = {version: declared, from: 'Gemfile'};
   }
   requested ??= await toolRequest(context, ['ruby']);

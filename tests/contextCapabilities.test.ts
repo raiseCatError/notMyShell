@@ -343,6 +343,20 @@ test('vcs.git reads stash depth and upstream from Git files, including linked wo
   } finally { await rm(root, {recursive: true, force: true}); }
 });
 
+test('Ruby manifest whitespace stays bounded and declarations never span lines', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    await writeFile(join(root, 'Gemfile'), `${'\n \t'.repeat(20_000)}ruby\n"3.3.0"\n`);
+    const started = Date.now();
+    const result = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    assert.equal(result?.requested, undefined, 'a different line is not a literal Ruby version declaration');
+    assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+    await writeFile(join(root, 'Gemfile'), ' \truby "3.3.0"\n');
+    assert.equal((await resolve(rubyRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested']}))?.requested, '3.3.0');
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
 test('runtime facts: Ruby and PHP from the project\'s own files and the install location, never by running them', async () => {
   resetServiceCaches();
   const root = await workspace();
