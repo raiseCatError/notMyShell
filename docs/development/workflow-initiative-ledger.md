@@ -10,13 +10,13 @@ has been merged to master or the release branch. Physical terminal QA remains ou
 | PR | Published head | Local additive candidate | Gate |
 | --- | --- | --- | --- |
 | #345 | 7122468 | unchanged | stack base |
-| #348 | 684a3fb | fix/workflow-cedar / 9465eb5 | published Actions green; candidate canonical running |
-| #357 | 7fb6b5a | fix/workflow-birch / 8b25ad0 | final canonical/CI pending |
-| #358 | 790fd74 | fix/workflow-amber / 05f8b03 | final canonical/CI pending |
-| #360 | afe7f69 | fix/workflow-coral / 768183b | final canonical/CI pending |
-| #361 | b1cdfbe | fix/workflow-indigo / ce6f2f5 | final canonical/CI pending |
-| #367 | 66e164d | fix/workflow-willow / 0b2e886 | independent sibling; final canonical/CI pending |
-| #368 | 5a795ed | fix/workflow-maple / be101eb | final canonical/CI pending |
+| #348 | 684a3fb | fix/workflow-cedar / 86fb4e4 | published Actions green; parent canonical and final fixture checks passed; final CI pending |
+| #357 | 7fb6b5a | fix/workflow-birch / f081c42 | final canonical/CI pending |
+| #358 | 790fd74 | fix/workflow-amber / fd2f0e9 | final canonical/CI pending |
+| #360 | afe7f69 | fix/workflow-coral / d51e80f | final canonical/CI pending |
+| #361 | b1cdfbe | fix/workflow-indigo / eb4fdf9 | final canonical/CI pending |
+| #367 | 66e164d | fix/workflow-willow / 25dfcae | independent sibling; final canonical/CI pending |
+| #368 | 5a795ed | fix/workflow-maple / 52650f8 | final canonical/CI pending |
 
 All candidates preserve their published ancestors through additive merges. Owned
 worktrees use neutral names: nmsh-cedar-input, nmsh-birch-queue, nmsh-amber-copy,
@@ -71,8 +71,14 @@ passed for storage correction 9465eb5.
 - **Module diagnostics (1a372fb, 06433f1):** details show capability/source, freshness TTL, invalidation and demand-refresh policy, retained-cache availability and measured collection wall time excluding queue delay. Details reuse fact snapshots and renderer conditions; they add no collectors. Exact last-frame width-compaction decisions are not recorded.
 - **Cross-feature queue fixture (4636672):** the combined workflow's optional batch action changes the paste-preview footer. The fixture accepts that optional action while still testing whole-paste insertion and explicit once-only queueing. The original regex failure reproduced, and corrected real-PTY cases passed for zsh, Bash and Fish.
 
+- **Report fixture (ee5483e):** the existing live Copy as Report assertion now expects the literal Markdown status added by the security fix. Its name accurately states that every report is reviewed. Review, cancellation and actual clipboard-byte tests passed.
+- **Linux prerequisites:** the disposable minimal Ubuntu VM initially lacked less and vim. Their command-not-found failures are recorded; both tools are now installed in that VM. This changes no application installer policy.
+- **Metadata/installer fixtures (86fb4e4):** identical size and timestamps after an immediate mise config edit reproduced even at nanosecond precision. The stat-only cache test now supplies a definite timestamp change and documents explicit refresh for unchanged metadata. Provider review tests supply their own fake executable installer; they do not require host Homebrew or run an installer.
+
 ## Verification recorded so far
 
+- macOS canonical verification passed at 9465eb5. Final fixture-only changes passed focused checks; final exact-head verification is pending.
+- The Ubuntu canonical run at 5756f7c failed the report assertion, two missing-tool fixtures, mise timestamp assertion, provider installer availability assertion and the unchanged suggestion timing threshold. The timing test passed an isolated rerun; the final canonical gate must pass before publication.
 - Typecheck and canonical verification of published #348: passed; exact Actions head `684a3fbc837be97f185cc938f4fb13cbccf1533b`.
 - Queue candidate canonical verification passed before the additional attach privacy finding; that later failed run
   is retained and must be superseded by a clean final run before pushing #357.
