@@ -174,7 +174,7 @@ test('live: narrow, NO_COLOR and Safe glyphs keep the picker and copy notes legi
   } finally { await sandbox.dispose(); }
 });
 
-test('live: Copy as Report: /copy --report copies Markdown at once; a sensitive report is reviewed first, redacted, and Esc copies nothing', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+test('live: Copy as Report always reviews before copying; sensitive reports are redacted and Esc preserves the clipboard', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
   const {sandbox, frontend, copied, reset, read} = withClipboard();
   try {
     await ready(frontend);
@@ -187,7 +187,7 @@ test('live: Copy as Report: /copy --report copies Markdown at once; a sensitive 
       return copied(frontend, '');
     };
     const report = await reviewed('/cp -2 --report');
-    assert.match(report, /^# Command report\n\n2 commands, oldest first\.\n\n## 1\. `true`[\s\S]*_No output\._[\s\S]*## 2\. `echo omega`\n\n- \*\*Status:\*\* ✔ Completed · [^\n]+\n- \*\*Exit code:\*\* 0[\s\S]*```text\nomega\n```\n$/u, report);
+    assert.match(report, /^# Command report\n\n2 commands, oldest first\.\n\n## 1\. `true`[\s\S]*_No output\._[\s\S]*## 2\. `echo omega`\n\n- \*\*Status:\*\* `✔ Completed · [^`\n]+`\n- \*\*Exit code:\*\* 0[\s\S]*```text\nomega\n```\n$/u, report);
     assert.match(await reviewed('/copy 3 --report=plain'), /^Command report · 1 command, oldest first\n\n=== 1\. \$ sh -c 'echo boom >&2; exit 3'\nStatus: ✘ Command failed · exit 3[\s\S]*Exit code: 3[\s\S]*--- output ---\nboom\n--- end ---/u);
     // Something that looks like a secret: the review opens and says so; nothing is copied yet.
     await frontend.run('echo GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789', /ghp_/u);
