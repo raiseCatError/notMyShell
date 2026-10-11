@@ -363,6 +363,9 @@ export class SessionService {
   private onInputState(session: ManagedSession, state: InputState): void {
     const before = session.input?.request;
     session.input = state;
+    // Preserve explicit reader ownership for detach/reattach and transcript cuts,
+    // even on Fish versions that send no terminal input-mode escape.
+    if (state.terminalOwner) session.screen.interactive = true;
     if (session.controllerFeatures?.has('input-state')) session.controller?.(inputStateMessage(state));
     const request = state.request;
     if (!request) {

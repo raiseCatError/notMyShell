@@ -22,6 +22,23 @@ function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T 
 
 // ------------------------------------------------------------------ open line
 
+test('a shell reader owns input until the command returns, without claiming a wait', () => {
+  const watch = new InputWatch();
+  watch.onExec('read -s -P Password: value', 10);
+  watch.onReader();
+  assert.equal(watch.ownsTerminal, true);
+  assert.equal(watch.state.terminalOwner, true);
+  assert.equal(watch.state.request, undefined);
+  const decoded = decodeMessage(encodeMessage(inputStateMessage(watch.state)).trimEnd());
+  assert.ok(decoded.ok);
+  assert.deepEqual(inputStateFrom(decoded.message as ReturnType<typeof inputStateMessage>), watch.state);
+  watch.onPrompt(20);
+  assert.equal(watch.state.terminalOwner, undefined);
+  watch.onExec('sleep 1', 30);
+  assert.equal(watch.ownsTerminal, false);
+  watch.dispose();
+});
+
 test('open line: a prompt left without a newline is open; a finished line, a rewrite or cursor drawing is not', () => {
   const line = new OpenLine();
   line.push('Pass 1: Checking inodes\r\nPadding at end of inode bitmap is not set. Fix<y>? ');
