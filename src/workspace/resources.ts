@@ -1,3 +1,5 @@
+import {stripTerminalControls} from '../util/terminalControls.js';
+
 /**
  * Workspace resources (#330/#331): what the Workspace Sidebar lists and how it
  * may be reached. A resource is a description of something another owner
@@ -53,9 +55,15 @@ export const MAX_LABEL_CELLS = 80;
 export const MAX_RESOURCES = 512;
 export const MAX_DEPTH = 4;
 
-/** External names (session titles, branch names, pane commands) are hostile text: controls, format characters and newlines become spaces. */
+/**
+ * External names (session titles, branch names, pane commands) are hostile text. Whole escape sequences go first, so
+ * `evil ESC ] 0 ; PWNED BEL` shows as `evil`, not `evil ]0;PWNED`; remaining controls, format characters and newlines
+ * become spaces.
+ */
 export function resourceText(value: string, limit = MAX_LABEL_CELLS): string {
-  const clean = value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/gu, ' ').trim();
+  // Newlines and tabs separate words; stripping would join them, so they are spaces before sequences are removed.
+  const words = stripTerminalControls(value.slice(0, Math.max(limit, 1) * 8).replace(/[\t\n\r\v\f]/gu, ' '), Math.max(limit, 1) * 8);
+  const clean = words.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, ' ').replace(/\s+/gu, ' ').trim();
   return clean.length > limit ? `${clean.slice(0, limit - 1)}…` : clean;
 }
 

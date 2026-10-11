@@ -9,8 +9,10 @@
  *
  *   docked   the region takes its own columns; the center (and the PTY) is narrower
  *   compact  a narrower docked sidebar (markers and short labels)
- *   drawer   the region is drawn over the center while it is open; the center and
- *            the PTY keep their width, so opening or closing it never resizes the shell
+ *   drawer   the region is drawn over the center while it is open and focused; the
+ *            center and the PTY keep their width, so opening or closing it never
+ *            resizes the shell. An open drawer without the keyboard is tucked away
+ *            (not drawn), so it never covers the composer someone is typing in
  *   hidden   closed, or suppressed (fullscreen/raw passthrough, idle screens own the pane)
  *
  * The center never drops below CENTER_MIN_COLUMNS because of a docked region:
@@ -44,12 +46,21 @@ export interface WorkspaceColumnsInput {
   panelWidth?: number;
   /** Fullscreen/raw passthrough or an idle screen owns the whole pane: no workspace chrome. */
   suppressed?: boolean;
+  /**
+   * Which region has the keyboard (`regionOf(owner)`). Given, an open drawer is drawn only while it is focused, so at
+   * most one drawer shows and it never hides the region typing goes to. Omitted, every open drawer is drawn.
+   */
+  focus?: FocusRegion;
 }
+
+export type FocusRegion = 'sidebar' | 'panel' | 'center';
 
 export interface WorkspaceRegion {
   mode: DockMode;
   /** Absent while hidden. A drawer's region overlaps the center. */
   region?: ColumnRegion;
+  /** Open, but a drawer without the keyboard: not drawn until it is focused again (it stays open). */
+  tucked?: boolean;
 }
 
 export interface WorkspaceColumns {
@@ -113,7 +124,9 @@ export function planWorkspaceColumns(input: WorkspaceColumnsInput): WorkspaceCol
   const right: WorkspaceRegion = panelMode === 'hidden' ? {mode: 'hidden'}
     : rightDocked ? {mode: 'docked', region: {x: columns - panel, width: panel}}
       : (() => { const width = drawerWidth(columns, panel); return {mode: 'drawer' as const, region: {x: columns - width, width}}; })();
-  return {columns, sidebar, panel: right, center, ptyColumns: centerWidth, dividers};
+  const tuck = (region: WorkspaceRegion, name: FocusRegion): WorkspaceRegion =>
+    input.focus !== undefined && region.mode === 'drawer' && input.focus !== name ? {mode: 'hidden', tucked: true} : region;
+  return {columns, sidebar: tuck(sidebar, 'sidebar'), panel: tuck(right, 'panel'), center, ptyColumns: centerWidth, dividers};
 }
 
 export type ColumnHit = 'sidebar' | 'panel' | 'center' | 'divider';

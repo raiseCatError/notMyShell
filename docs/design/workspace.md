@@ -33,7 +33,7 @@ center keep using ScreenPlan; `planWorkspaceColumns` is its column counterpart.
 | --- | --- | --- |
 | `docked` | own columns, one divider cell from the center | center width |
 | `compact` | a narrower docked sidebar (markers, short labels) | center width |
-| `drawer` | drawn over the center while open | **unchanged**: opening/closing never resizes the shell |
+| `drawer` | drawn over the center while open **and focused** | **unchanged**: opening/closing never resizes the shell |
 | `hidden` | closed, or suppressed by fullscreen/raw passthrough or an idle screen | full width |
 
 Constants (cells): center minimum 60, sidebar docked 28 / compact 18, panel 36–72 (default about 38% of the width),
@@ -42,6 +42,14 @@ drawer minimum 24 (narrower terminals give a drawer the whole width). A docked r
 fit, the sidebar narrows to compact before the panel becomes a drawer. The plan is a pure function of its input, so
 resizing back restores the earlier layout. `columnAt` gives pointer hits (drawers win where they overlap);
 `frameColumn` maps a center-relative column to the frame.
+
+**Drawers follow the keyboard.** Below about 80 columns a drawer covers the center, composer included, and at 40
+columns both regions would be full-width drawers on top of each other. With `focus` (`regionOf(owner)`) in the input,
+an open drawer is drawn only while it has the keyboard; otherwise it is `tucked` (open, not drawn, mode `hidden`).
+So at most one drawer shows, and nothing covers the region typing goes to. Tucking is not a resize and keeps the
+region open: focusing it again, or widening the terminal until it docks, shows it again. `applyFocusAction(state,
+action, columns)` focuses a region opened where it can only be a drawer (an unfocused drawer would show nothing);
+docked regions still open without taking focus.
 
 These thresholds are a starting point chosen so an 80-column shell stays usable; they still need physical
 measurement in Ghostty and Terminal.app (see QA).
@@ -60,7 +68,8 @@ dispatcher. Exactly one owner holds the keyboard.
 - Region defaults: sidebar ↑ ↓ Home End, → expand, ← collapse, Enter open, `/` filter, Tab next region, Esc composer;
   panel ↑ ↓ PgUp PgDn, `q` close, Tab, Esc.
 - `applyFocusAction` handles focus/visibility actions. Closing a focused region returns focus to the composer;
-  opening a region does not steal focus; Tab cycles composer → sidebar → panel, skipping closed regions.
+  opening a docked region does not steal focus (a drawer opens focused, see the column plan); Tab cycles composer →
+  sidebar → panel, skipping closed regions.
 - `resumeFocus` restores the previous owner after passthrough or an idle screen if its region is still open.
 - Help rows come from the bindings in effect (`bindingHelp`), so help cannot drift from behavior.
 
@@ -80,10 +89,21 @@ explicit support level:
 
 Selected, focused, active, attention (`input`, `approval`, `failed`, `finished`) and stale are separate. An unknown
 observation time is stale, never fresh. Trees are bounded: 512 resources, four levels, 80-cell labels; external text
-has controls, format characters and newlines removed.
+has whole escape sequences removed (NMSh's `stripTerminalControls`, so no `]0;title` debris), then controls, format
+characters and newlines.
 
 Selection never activates. Moving the selection may ask for a **cached, read-only** preview in the detail panel; only
 Enter/→ (or the same semantic action from the pointer) activates.
+
+## Slices
+
+Each slice has its own design document, delivered with its PR, so the slices do not edit the same file:
+
+| Slice | Issue | Document |
+| --- | --- | --- |
+| Workspace Sidebar, tmux navigation | #331, #333 | [workspace-sidebar.md](workspace-sidebar.md) |
+| Detail panel | #332 | [workspace-panel.md](workspace-panel.md) |
+| Keymap | #335 | [workspace-keymap.md](workspace-keymap.md) |
 
 ## Integration contract
 
@@ -93,8 +113,9 @@ published, the adoption is:
 
 1. **State.** The app holds one `WorkspaceFocusState` and the sidebar/panel controllers (later slices). Persisted:
    only `sidebarOpen`/`panelOpen` preferences and the panel width.
-2. **Geometry.** Each frame computes `planWorkspaceColumns({columns, sidebarOpen, panelOpen, suppressed})` beside
-   ScreenPlan. Transcript and composer render into `center` (center-relative columns); `ptyColumns` replaces the
+2. **Geometry.** Each frame computes `planWorkspaceColumns({columns, sidebarOpen, panelOpen, suppressed,
+   focus: regionOf(owner)})` beside ScreenPlan, and focus actions pass the width: `applyFocusAction(state, action,
+   columns)`. Transcript and composer render into `center` (center-relative columns); `ptyColumns` replaces the
    terminal width when sizing the PTY. A change in `ptyColumns` is the only workspace event that resizes the shell.
 3. **Keys.** Before the existing owner-specific handling, call `routeWorkspaceKey`. `undefined` means continue
    unchanged. A focus action goes to `applyFocusAction`; a region action goes to that region's controller.

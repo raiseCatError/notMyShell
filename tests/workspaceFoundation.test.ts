@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {CENTER_MIN_COLUMNS, columnAt, frameColumn, planWorkspaceColumns, SIDEBAR_COMPACT_COLUMNS, SIDEBAR_DOCKED_COLUMNS} from '../src/workspace/layout.js';
 import {isStale, normalizeResource, resourceIds, resourceText, visibleRows, type WorkspaceResource} from '../src/workspace/resources.js';
-import {applyFocusAction, resumeFocus, routeWorkspaceKey, type WorkspaceOwner} from '../src/workspace/focus.js';
+import {applyFocusAction, regionOf, resumeFocus, routeWorkspaceKey, type WorkspaceOwner} from '../src/workspace/focus.js';
 import {bindingHelp, DEFAULT_BINDINGS, resolveBinding, type Binding} from '../src/workspace/keymap.js';
 import type {Key} from '../src/terminal/keys.js';
 
@@ -85,6 +85,10 @@ test('resources: hostile names are inert, bounded in length, count and depth', (
   for (const text of [hostile.label, hostile.detail!, hostile.reason!]) assert.doesNotMatch(text, /[\u0000-\u001f\u007f-\u009f‮]/u);
   assert.ok(hostile.label.length <= 80);
   assert.equal(resourceText('  a \n\t b  '), 'a b');
+  // Whole sequences go, not just their ESC: no `]0;PWNED` or `[31m` debris that reads like part of the name.
+  assert.equal(resourceText('evil\u001b]0;PWNED\u0007 session'), 'evil session');
+  assert.equal(resourceText('\u001b[31mred\u001b[0m window'), 'red window');
+  assert.equal(resourceText('\u009b2Jclear\u009d8;;https://x\u009clink'), 'clearlink');
   let deep: WorkspaceResource = {id: 'leaf', kind: 'tmuxPane', label: 'leaf', support: 'informational'};
   for (let i = 0; i < 10; i++) deep = {id: `n${i}`, kind: 'section', label: `n${i}`, support: 'informational', children: [deep]};
   const normalized = normalizeResource(deep)!;
@@ -140,4 +144,32 @@ test('help derives from the bindings in effect', () => {
   assert.deepEqual(bindingHelp(DEFAULT_BINDINGS, 'panel').map(([chord]) => chord), ['↑', '↓', 'PgUp', 'PgDn', 'Esc', 'Tab', 'q']);
   assert.equal(resolveBinding(DEFAULT_BINDINGS, 'sidebar', key('escape')), 'focus.return');
   assert.deepEqual(bindingHelp(DEFAULT_BINDINGS, 'composerEmpty'), []);
+});
+
+test('drawers follow the keyboard: only a focused drawer is drawn, and opening one that can only be a drawer focuses it', () => {
+  // 40 columns: both regions can only be full-width drawers.
+  const both = {columns: 40, sidebarOpen: true, panelOpen: true};
+  assert.deepEqual([planWorkspaceColumns(both).sidebar.mode, planWorkspaceColumns(both).panel.mode], ['drawer', 'drawer'], 'without focus every open drawer is drawn (as before)');
+  const typing = planWorkspaceColumns({...both, focus: 'center'});
+  assert.deepEqual([typing.sidebar, typing.panel], [{mode: 'hidden', tucked: true}, {mode: 'hidden', tucked: true}], 'nothing covers the composer being typed in');
+  assert.equal(columnAt(typing, 5), 'center');
+  const panel = planWorkspaceColumns({...both, focus: 'panel'});
+  assert.deepEqual([panel.sidebar.mode, panel.panel.mode], ['hidden', 'drawer'], 'one drawer at a time: the focused one');
+  assert.equal(columnAt(panel, 5), 'panel');
+  assert.equal(panel.ptyColumns, 40, 'tucking is not a resize');
+  // Docked regions are drawn whatever has focus.
+  const wide = planWorkspaceColumns({columns: 160, sidebarOpen: true, panelOpen: true, focus: 'center'});
+  assert.deepEqual([wide.sidebar.mode, wide.panel.mode], ['docked', 'docked']);
+
+  const composer = {owner: 'COMPOSER' as WorkspaceOwner, sidebarOpen: false, panelOpen: false};
+  assert.equal(applyFocusAction(composer, 'sidebar.toggle', 160).owner, 'COMPOSER', 'a docked region opens without taking focus');
+  assert.equal(applyFocusAction(composer, 'sidebar.toggle', 40).owner, 'LEFT_SIDEBAR', 'a drawer opens focused, or it would not be drawn');
+  assert.equal(applyFocusAction({...composer, sidebarOpen: true}, 'panel.toggle', 120).owner, 'RIGHT_PANEL', 'beside a docked sidebar at 120 the panel is a drawer');
+  assert.equal(applyFocusAction(composer, 'sidebar.toggle').owner, 'COMPOSER', 'without the width, focus is unchanged (as before)');
+  // Leaving a drawer keeps it open (tucked); focusing it again shows it where it was.
+  const inDrawer = applyFocusAction(composer, 'sidebar.toggle', 40);
+  const back = applyFocusAction(inDrawer, 'focus.return', 40);
+  assert.deepEqual(back, {owner: 'COMPOSER', sidebarOpen: true, panelOpen: false});
+  assert.equal(planWorkspaceColumns({columns: 40, sidebarOpen: back.sidebarOpen, panelOpen: back.panelOpen, focus: regionOf(back.owner)}).sidebar.tucked, true);
+  assert.equal(regionOf('APPROVAL'), 'center');
 });
