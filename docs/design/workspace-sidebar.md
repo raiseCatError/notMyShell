@@ -16,6 +16,10 @@ toggles it. Sections open the first time they appear; afterwards a person's expa
 After a refresh the selection follows its id; if it vanished, the row now in its place is selected. `/` starts a
 filter: matches show with their ancestors, the selection moves to the first direct match, Esc clears.
 
+Key order while filtering: while `searching` is true the frontend offers each key to `handleSearchKey` **before**
+`routeWorkspaceKey`, and routes it only when `handleSearchKey` returns false. Otherwise Esc would reach `focus.return`
+and leave the filter half-typed, and typed letters would never reach it.
+
 `renderSidebar` returns exactly `rows` lines of at most `width` cells. Marks (Unicode / Safe): focused title
 `▸`/`>`, selected row `›`/`>`, active resource `●`/`*`, expanded `▾`/`-`, collapsed `▸`/`+`, attention `!input`,
 `!approval`, `!failed`, an exited pane `(exited)`, an old listing `(stale)`. Color only reinforces them. Compact mode
@@ -34,7 +38,10 @@ Sections in this slice:
   tmux the section says so and offers nothing.
 - **Worktrees** (`sources.ts`). From the `/worktrees` snapshot: opening a worktree changes the persistent shell's
   directory (the manager's own `cd` intent); a missing path or bare repository is listed with its reason. Creation and
-  removal stay in `/worktrees`.
+  removal stay in `/worktrees`. Only the innermost worktree holding the shell's directory is `active` (worktrees may
+  live inside another's directory). At integration the `changeDirectory` intent is performed exactly as `/worktrees`
+  performs its `cd`: `directoryCommand(path)` (which refuses paths it cannot quote safely) is staged in an empty
+  composer, never run directly and never typed over a draft.
 - **Open**: links to the managers that own deep control (`/github`, `/agents`, `/sessions`).
 
 Not in this slice: NMSh live sessions and Managed Targets as first-class rows (they need the session service and

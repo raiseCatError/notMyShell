@@ -33,7 +33,7 @@ test('tmux listing: rows parse into panes; malformed rows and invalid ids are dr
     paneId: '%5', paneIndex: 2, paneActive: false, paneDead: true, command: 'zsh'});
   const odd = parseTmuxPanes(row('$1', 'qa', '1', '@1', '0', 'a\\ b\\\\\\\\c', '1', '%1', '0', '1', '0', 'we\\|ird\\\\033[31m'));
   assert.equal(odd[0]!.windowName, 'a b\\c', 'q: escaping and tmux\'s own backslash escaping are both undone');
-  assert.equal(odd[0]!.command, 'we|ird [31m', 'an escaped separator stays in its field; an escaped control character is made inert');
+  assert.equal(odd[0]!.command, 'we|ird', 'an escaped separator stays in its field; an escaped escape sequence is removed whole, not left as "[31m"');
   assert.deepEqual(splitTmuxRow('a\\|b|c'), ['a|b', 'c']);
   assert.equal(parseTmuxPanes(`${row('$1', 'qa', '1', '@1', '0', 'code', '1', '%1', '0', '1', '0', 'sh')}|extra`).length, 0, 'a row with too many fields is dropped');
   assert.equal(parseTmuxPanes(Array.from({length: 400}, (_, i) => row('$1', 'qa', '1', '@1', '0', 'code', '1', `%${i}`, `${i}`, '0', '0', 'sh')).join('\n')).length, MAX_PANES);
@@ -214,5 +214,9 @@ test('worktree and manager sections: opening a worktree changes directory; a mis
   assert.deepEqual(section.children![0]!.activation, {kind: 'changeDirectory', path: '/r'});
   assert.match(section.children![1]!.reason!, /missing/u);
   assert.equal(worktreeSection(undefined, '/').support, 'informational');
+  // A worktree inside another's directory: only the innermost one holding the shell's directory is current.
+  const nested = worktreeSection({commonDir: '/r/.git', truncated: false, discoveredAt: 5, worktrees: [record('/r', {main: true}), record('/r/.worktrees/feature', {branch: 'feature'}), record('/r2', {branch: 'other'})]}, '/r/.worktrees/feature/src');
+  assert.deepEqual(nested.children!.map(child => [child.label, child.active]), [['main', false], ['feature', true], ['other', false]]);
+  assert.equal(worktreeSection({commonDir: '/r/.git', truncated: false, discoveredAt: 5, worktrees: [record('/r'), record('/r2', {branch: 'other'})]}, '/r2').children![0]!.active, false, 'a sibling path with the same prefix is not inside');
   assert.ok(managerLinks().children!.every(link => link.support === 'activatable' && link.activation?.kind === 'openManager'));
 });

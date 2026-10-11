@@ -16,13 +16,17 @@ import type {WorkspaceResource} from './resources.js';
  */
 export function worktreeSection(snapshot: WorktreeSnapshot | undefined, cwd: string): WorkspaceResource {
   if (!snapshot) return {id: 'worktrees', kind: 'section', label: 'Worktrees', support: 'informational', reason: 'not in a Git repository, or not listed yet'};
+  // Worktrees can live inside another's directory (`.worktrees/feature` in the main checkout): the current one is the
+  // innermost that holds the shell's directory, so only one is marked active.
+  const current = snapshot.worktrees.filter(worktree => cwd === worktree.path || cwd.startsWith(`${worktree.path}/`))
+    .reduce<string | undefined>((best, worktree) => (best === undefined || worktree.path.length > best.length ? worktree.path : best), undefined);
   const children: WorkspaceResource[] = snapshot.worktrees.map(worktree => {
     const present = worktree.pathState === 'present' && !worktree.bare;
     return {
       id: `worktree:${worktree.id}`, kind: 'worktree', label: checkoutLabel(worktree), detail: [basename(worktree.path), ...stateWords(worktree)].join(' · '),
       ...(present ? {support: 'activatable' as const, activation: {kind: 'changeDirectory' as const, path: worktree.path}}
         : {support: 'unsupported' as const, reason: worktree.bare ? 'a bare repository has no working directory' : 'the worktree path is missing'}),
-      active: cwd === worktree.path || cwd.startsWith(`${worktree.path}/`),
+      active: worktree.path === current,
       observedAt: snapshot.discoveredAt,
     };
   });
