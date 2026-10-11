@@ -110,7 +110,11 @@ export function diffContent(id: string, title: string, diff: string, source: str
     ...(cut ? {partial: `diff shown up to ${budget} lines; open it in your diff tool for the rest`} : {}), lines: lines.slice(0, MAX_PANEL_LINES)};
 }
 
-/** A Context Engine fact as a module's detail: its displayable value, provenance, freshness and policy (#305 explain view). */
+/**
+ * A Context Engine fact as a module's detail: its displayable value, provenance, freshness and policy. Only what the fact
+ * carries; diagnostics (why a module shows, timings, engine health) are #365's explain view, which the panel should
+ * present instead at integration.
+ */
 export function factDetail(capabilityId: string, title: string, reads: readonly string[], fact: ContextFact<unknown> | undefined, now: number): PanelContent {
   const lines: PanelLine[] = [];
   const value = fact ? projectFactValue(fact, 'display') : undefined;

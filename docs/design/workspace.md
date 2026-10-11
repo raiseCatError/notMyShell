@@ -104,6 +104,10 @@ returns exactly rows × width: title with the focus mark, a source/age row (`sta
 `time unknown` without an observation), an optional partial row, wrapped text, cut (not wrapped) diff lines keeping
 their `+`/`-`/`\` marker, and, while focused, the position and key help.
 
+Module diagnostics (why a module shows or not, collection timings, engine health) belong to #365, implemented on the
+workflow track in #368 (`ModulesPanel`, `/doctor`). `factDetail` only presents what a `ContextFact` already carries;
+at integration the panel should show #365's explain output for a module rather than grow a second diagnostics view.
+
 Not in this slice: provider task/plan presentation (needs #339's normalized, provider-owned task state), approval
 details (owned by the Managed Target approval flow), GitHub PR detail (the `/github` manager renders it today), and
 editor hand-off commands.
