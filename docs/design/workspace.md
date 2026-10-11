@@ -85,6 +85,16 @@ has controls, format characters and newlines removed.
 Selection never activates. Moving the selection may ask for a **cached, read-only** preview in the detail panel; only
 Enter/→ (or the same semantic action from the pointer) activates.
 
+## Slices
+
+Each slice has its own design document, delivered with its PR, so the slices do not edit the same file:
+
+| Slice | Issue | Document |
+| --- | --- | --- |
+| Workspace Sidebar, tmux navigation | #331, #333 | [workspace-sidebar.md](workspace-sidebar.md) |
+| Detail panel | #332 | [workspace-panel.md](workspace-panel.md) |
+| Keymap | #335 | [workspace-keymap.md](workspace-keymap.md) |
+
 ## Integration contract
 
 Integration into `TerminalApp.ts` is deliberately a separate, later step: that file is under active input-routing
