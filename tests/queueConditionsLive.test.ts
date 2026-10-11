@@ -22,8 +22,14 @@ async function start(shell: Shell) {
   const frontend = sandbox.launch([], {cols: 100, rows: 30}, {});
   try {
     await frontend.waitFor(/notMyShell|zsh|bash|fish/u);
+    await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined),
+      20_000, 'the shell authenticated prompt');
     await frontend.run('echo READY', /READY/u);
-  } catch (error) { await sandbox.dispose().catch(() => {}); throw error; }
+  } catch (error) {
+    try { await sandbox.dispose(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'startup and cleanup failed'); }
+    throw error;
+  }
   return {sandbox, frontend};
 }
 
