@@ -4,6 +4,7 @@ import {spawnSync} from 'node:child_process';
 import {existsSync, writeFileSync} from 'node:fs';
 import {join, resolve} from 'node:path';
 import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.js';
+import {inForeground, uniqueSleep} from './helpers/processState.js';
 
 /**
  * The command queue through the real composer, PTY and session service, with harmless commands only (sleep, echo,
@@ -23,11 +24,14 @@ async function start(shell: Shell, options: {size?: {cols: number; rows: number}
   const frontend = sandbox.launch([], options.size ?? {cols: 100, rows: 30}, options.env ?? {});
   try {
     await frontend.waitFor(/notMyShell|zsh|bash|fish/u);
+    await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined),
+      20_000, 'the shell authenticated prompt');
     await frontend.run('echo READY', /READY/u);
   } catch (error) {
     // A start that never became ready is not inside the test's try/finally: end its processes here, or they keep
     // the test file (and the suite) running.
-    await sandbox.dispose().catch(() => {});
+    try { await sandbox.dispose(); }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], 'startup and cleanup failed'); }
     throw error;
   }
   return {sandbox, frontend};
@@ -54,16 +58,21 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
     try {
       await frontend.run('mkdir -p sub', /❯/u);
       const mark = frontend.mark;
-      frontend.pty.write('sleep 8\r');
-      await frontend.waitFor(/Running sleep 8/u, mark);
+      const release = join(sandbox.home, 'queue-state-release');
+      // A file gate keeps command ownership stable until every queue assertion has run.
+      // Assemble the output marker at run time so the command echo cannot satisfy readiness.
+      const holding = `sh -c 'printf "STATE-%s\\n" HOLD; until test -f "$1"; do sleep 0.05; done' nmsh-fixture "${release}"`;
+      frontend.pty.write(`${holding}\r`);
+      await frontend.waitFor(/STATE-HOLD/u, mark);
       for (const line of [...SET_STATE[shell], CHECK_STATE[shell]]) {
         frontend.pty.write(`${line}\r`);
         await pause(80);
       }
       await frontend.waitFor(/≡ Queued \(5\) · next: cd sub/u, mark);
-      assert.match(drawn(frontend, mark), /Enter queues the next command · Ctrl\+S sends to sleep/u, 'the empty composer says what Enter does');
+      assert.match(drawn(frontend, mark), /Enter queues the next command · Ctrl\+S sends to sh/u, 'the empty composer says what Enter does');
+      writeFileSync(release, '');
       await frontend.waitFor(/STATE sub kept fn-x (?:opt|on)/u, mark, 30_000);
-      const commands = ['sleep 8', ...SET_STATE[shell], CHECK_STATE[shell]];
+      const commands = [holding, ...SET_STATE[shell], CHECK_STATE[shell]];
       const records = async () => (await sandbox.transcripts().list()).flatMap(session => session.transcript.records).filter(record => commands.includes(record.command));
       await until(async () => (await records()).length >= commands.length, 20_000, 'every command recorded');
       const recorded = (await records()).reverse();
@@ -184,15 +193,17 @@ test('live: after Ctrl+Z or Ctrl+C, what you type next is for the shell prompt, 
   const {sandbox, frontend} = await start('zsh');
   try {
     const mark = frontend.mark;
-    frontend.pty.write('sleep 177\r');
-    await frontend.waitFor(/Running sleep 177/u, mark);
+    const suspended = uniqueSleep(71);
+    const interrupted = uniqueSleep(72);
+    frontend.pty.write(`sleep ${suspended}\r`);
+    await until(() => inForeground(suspended), 20_000, 'sleep owns the foreground before Ctrl+Z');
     // Typed at once, before NMSh sees the prompt the stop brings back (as the GNU screen test does).
     frontend.pty.write('\u001a');
     frontend.pty.write('jobs\r');
-    await frontend.waitFor(/suspended\s+sleep 177[\s\S]*suspended\s+sleep 177/u, mark, 20_000);
+    await frontend.waitFor(/suspended\s+sleep 30[\s\S]*suspended\s+sleep 30/u, mark, 20_000);
     await frontend.run('kill %1; echo JOB-GONE', /JOB-GONE/u);
-    frontend.pty.write('sleep 178\r');
-    await frontend.waitFor(/Running sleep 178/u, mark);
+    frontend.pty.write(`sleep ${interrupted}\r`);
+    await until(() => inForeground(interrupted), 20_000, 'sleep owns the foreground before Ctrl+C');
     frontend.pty.write('\u0003');
     frontend.pty.write('echo AFTER-STOP\r');
     await frontend.waitFor(/AFTER-STOP[\s\S]*Completed/u, mark, 20_000);
