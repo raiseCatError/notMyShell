@@ -120,12 +120,14 @@ test('panel: the previous run is suggested; Enter compares; n/N move between cha
 
 test('panel text is drawn, never interpreted: hostile output and commands cannot reach the terminal', async () => {
   const {createComparePanel, renderComparePanel} = await import('../src/ui/ComparePanel.js');
-  const hostile = '\u001b]52;c;Zm9v\u0007\u001b[2J';
+  const hostile = '\u001b]52;c;Zm9v\u0007\u001b[2J\u202e\u200b\u2028\u2029';
   const a = Object.assign(record(`echo ${hostile}`, 'a\n'), {output: `ok${hostile}\n`});
   const b = Object.assign(record(`echo ${hostile}`, 'b\n'), {output: `changed${hostile}\n`});
-  const panel = createComparePanel(b, [b, a], a);
-  const rendered = renderComparePanel(panel, 100, 24).join('\n').replace(/\u001b\[[\d;]*m/gu, '');
-  assert.doesNotMatch(rendered, /[\u0007\u001b]/u);
+  for (const partner of [undefined, a]) for (const columns of [24, 100, 160]) {
+    const panel = createComparePanel(b, [b, a], partner);
+    const rendered = renderComparePanel(panel, columns, 24).join('\n').replace(/\u001b\[[\d;]*m/gu, '');
+    assert.doesNotMatch(rendered, /[\u0007\u001b\p{Cf}\p{Zl}\p{Zp}]/u, `chooser and diff at ${columns} columns keep hostile text visible and inert`);
+  }
 });
 
 test('/compare parses numbers as /copy does and refuses anything else', async () => {

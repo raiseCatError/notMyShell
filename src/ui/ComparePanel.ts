@@ -140,7 +140,7 @@ export function renderComparePanel(state: ComparePanelState, columns: number, he
   const width = Math.max(10, columns - 4);
   const out: string[] = [];
   if (!state.comparison) {
-    out.push(`  ${primary}Compare output${reset}  ${subtle}${truncateText(`with ${sideLabel(state.base)}`, Math.max(4, width - 16))}${reset}`, '');
+    out.push(`  ${primary}Compare output${reset}  ${subtle}${truncateText(`with ${displaySafe(sideLabel(state.base))}`, Math.max(4, width - 16))}${reset}`, '');
     if (!state.candidates.length) out.push(`  ${secondary}No other completed command to compare with.${reset}`);
     const controls = renderControlRows([['↑↓', 'choose'], ['Enter', 'compare'], ['Esc', 'cancel']], width);
     const room = Math.max(1, height - out.length - controls.length - 1);

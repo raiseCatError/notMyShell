@@ -28,19 +28,39 @@ type Shell = 'zsh' | 'bash' | 'fish';
 async function start(shell: Shell, options: {size?: {cols: number; rows: number}; env?: Record<string, string>; args?: string[]; sandbox?: LiveSandbox} = {}) {
   const sandbox = options.sandbox ?? new LiveSandbox({provider: 'none', shellBackend: shell, themeBridge: {enabled: true, targets: {pager: {mode: 'follow'}}}},
     shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
-  const started = Date.now();
   const frontend = sandbox.launch(options.args ?? [], options.size ?? {cols: 100, rows: 30}, options.env ?? {});
   try {
     await frontend.waitFor(/Vespyr|notMyShell|zsh|bash|fish/u);
-    await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge', `environment.${shell}`)) || frontend.output.length > 0 && Date.now() - started > 8000, 20_000, 'the managed shell');
+    // A banner or generated bridge file can appear before the shell prompt.
+    // The service records lastExit only from an authenticated prompt; journals
+    // need not checkpoint a fresh idle shell before its first command.
+    await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined), 20_000, 'the first authenticated shell prompt');
     await frontend.run('echo READY', /READY/u);
+    return {sandbox, frontend};
   } catch (error) {
-    // Not inside the test's try/finally yet: a sandbox given by the caller is the caller's to end.
-    if (!options.sandbox) await sandbox.dispose().catch(() => {});
+    // The caller never receives the sandbox when startup fails. Dispose here
+    // so the original deadline is reported instead of leaving the test worker
+    // held open by a live PTY; retain cleanup failures as additional evidence.
+    try { await sandbox.dispose(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'input fixture startup and cleanup failed'); }
     throw error;
   }
-  return {sandbox, frontend};
 }
+
+test('fixture: failed startup disposes its sandbox and preserves both deadline and cleanup evidence', async () => {
+  for (const cleanupFails of [false, true]) {
+    let disposed = false;
+    const startup = new Error('startup deadline');
+    const cleanup = new Error('cleanup deadline');
+    const sandbox = {launch: () => ({waitFor: async () => { throw startup; }}), dispose: async () => {
+      disposed = true;
+      if (cleanupFails) throw cleanup;
+    }} as unknown as LiveSandbox;
+    await assert.rejects(start('fish', {sandbox}), error => cleanupFails
+      ? error instanceof AggregateError && error.errors[0] === startup && error.errors[1] === cleanup
+      : error === startup);
+    assert.equal(disposed, true, 'the caller never received the sandbox, so startup must dispose it');
+  }
+});
 
 /** Text the frontend drew after `from`, without escapes. */
 const drawn = (frontend: Frontend, from: number) => strip(frontend.output.slice(from));
