@@ -370,9 +370,15 @@ test('runtime facts: Ruby and PHP from the project\'s own files and the install 
     const planted = join(root, 'bin');
     await mkdir(planted);
     await sentinelExecutable(join(planted, 'ruby'), join(root, 'PLANTED_RAN'), 'ruby 1.0.0');
+    // An rbenv-shaped layout inside the workspace would report 6.6.6 if the boundary did not hold; home is outside it, as for a real project.
+    const layout = join(root, '.rbenv', 'versions', '6.6.6', 'bin');
+    await mkdir(layout, {recursive: true});
+    await sentinelExecutable(join(layout, 'ruby'), join(root, 'PLANTED_RAN'), 'ruby 6.6.6');
     resetServiceCaches();
-    const refused = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: planted}});
+    const refused = await resolve(rubyRuntime, {cwd: root, root, home: tools, env: {PATH: layout}});
     assert.equal(refused?.active, undefined);
+    assert.match(refused?.note ?? '', /inside this workspace/u);
+    assert.equal((await resolve(rubyRuntime, {cwd: root, root, home: tools, env: {PATH: planted}}))?.active, undefined);
     assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
   } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
@@ -412,8 +418,13 @@ test('runtime facts: .NET, Swift, Zig and Deno from the project\'s own files and
     const planted = join(root, 'planted');
     await mkdir(planted);
     await sentinelExecutable(join(planted, 'deno'), join(root, 'PLANTED_RAN'), 'deno 1.0.0');
+    const layout = join(root, 'opt', 'Cellar', 'deno', '6.6.6', 'bin');
+    await mkdir(layout, {recursive: true});
+    await sentinelExecutable(join(layout, 'deno'), join(root, 'PLANTED_RAN'), 'deno 6.6.6');
     resetServiceCaches();
-    assert.equal((await resolve(denoRuntime, {cwd: root, root, env: {PATH: planted}}))?.active, undefined);
+    const refused = await resolve(denoRuntime, {cwd: root, root, home: tools, env: {PATH: layout}});
+    assert.equal(refused?.active, undefined, 'a Homebrew-shaped layout inside the workspace is not inspected');
+    assert.match(refused?.note ?? '', /inside this workspace/u);
     assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
   } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
 });
