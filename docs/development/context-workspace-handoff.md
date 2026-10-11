@@ -33,8 +33,14 @@ only; nothing depends on them.
 | #379 | #341 | `feature/portable-mod-gate` | `release/v0.18.0` | `fccf68e` | executable Portable Mods stay disabled: threat model + regression gate |
 | #380 | #339, #340 | `feature/codex-app-server-adapter` | `release/v0.18.0` | `8854bb7` | Codex app-server adapter (not wired); provider evidence; Remote Control go/no-go; approval-target security fix (Claude + Codex) |
 | #381 | #337, #338 | `feature/worktree-pr-evidence` | `release/v0.18.0` | `8a40b76` | related PR evidence for `/worktrees`; PR summaries carry head repository and SHA |
-| #383 | #382 | `feature/background-tasks-core` | `release/v0.18.0` | `fd49bfa` | background task supervisor, detector, preferences, output |
-| #384 | #382 | `feature/background-task-ui` | #383 | `b4f48a2` | task bar, keys, suggestion strip, manager, output views |
+| #383 | #382 | `feature/background-tasks-core` | `release/v0.18.0` | `6884cf0` | background task supervisor, detector, preferences, output |
+| #384 | #382 | `feature/background-task-ui` | #383 | `5d0a92e` | task bar, keys, suggestion strip, manager, output views |
+
+Every head above had a green CI run (Ubuntu and macOS shards, Node 22, Quality, Verify) on 2026-10-11. Reruns were
+needed for jobs that failed in tests outside these branches' files: #372 (a cancelled job), #378 (a live
+reattach/fullscreen test) and #383 (`typingAfterRead`, the input race on the workflow track). Linux CI found three
+real issues that are fixed: tmux 3.4 escaping its output (#376), dash not exec'ing the task's command (#383), and the
+terminal hangup after a wrapper shell exits (#383 test fixture).
 
 CI and local verification per head are recorded in each PR description and in the #330 / #382 checkpoint comments.
 Local full-suite runs on this machine were affected by load (load average 24–48 from concurrent suites) and by a full
