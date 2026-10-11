@@ -378,7 +378,7 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
     return capability ? capability.reads.map(read => `${capability.title}: ${read}`) : LEGACY_READS[id] ? [LEGACY_READS[id]!] : [];
   });
   rows.push(`${SUBTLE}Reads${RESET}`, ...[...new Set(reads)].flatMap(read => wrapped(read, columns - 2, SECONDARY, '  ', 4).map((text, index) => index ? `  ${text}` : text.replace(/^ {2}/u, '  · '))));
-  rows.push(...wrapped('Nothing is executed from the workspace, no network is used, and secret values are never read.', columns, SECONDARY, '  '));
+  rows.push(...wrapped('Nothing is executed from the workspace and no network is used. Only approved metadata is exposed; secret values do not belong in module output or history.', columns, SECONDARY, '  '));
   const capabilities = [...definition.facts.keys()].map(id => coreCapability(id)).filter(Boolean);
   const history = capabilities.length && capabilities.every(capability => capability!.persistence === 'snapshot-safe');
   const privateFields = capabilities.flatMap(capability => Object.entries(capability!.fieldPolicy ?? {}).filter(([, policy]) => policy.persistence !== 'snapshot-safe').map(([field]) => field));
@@ -389,7 +389,7 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
     if (!status) continue;
     const age = status.collectedAt !== undefined && context.now !== undefined ? ` · ${Math.max(0, Math.round((context.now - status.collectedAt) / 1000))}s ago` : '';
     const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refreshing` : status.state === 'absent' ? 'nothing to show here'
-      : status.state === 'pending' ? 'checking…' : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.error ?? status.state})` : 'not checked (module not in use)';
+      : status.state === 'pending' ? 'checking…' : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.state})` : 'not checked (module not in use)';
     // How long the last collection took is measured by the engine; nothing is collected to show it.
     const took = status.durationMs === undefined ? '' : ` · took ${status.durationMs < 1 ? '<1' : Math.round(status.durationMs)} ms`;
     rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${took}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
@@ -409,7 +409,7 @@ export function whyText(module: ContextModuleConfig, surface: string, statuses: 
   if (!module.visible) return 'turned off in Modules';
   if (surface === 'hidden') return 'routed to Hidden';
   if (statuses.some(status => status.state === 'timeout')) return 'its data timed out, so nothing is shown (the last good value is not reused)';
-  if (statuses.some(status => status.state === 'failed')) return `its data could not be read (${statuses.find(status => status.state === 'failed')?.error ?? 'failed'})`;
+  if (statuses.some(status => status.state === 'failed')) return 'its data could not be read; collection failed';
   if (statuses.length && statuses.every(status => status.state === 'absent')) return 'there is nothing for it to show in this directory';
   if (statuses.length && statuses.every(status => status.state === 'idle') && module.condition === 'onCommand') {
     return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; none has run here yet`;

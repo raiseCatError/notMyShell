@@ -22,15 +22,15 @@ slice, not now) or **reject**.
 
 | Tool | Already in NMSh | Decision | Why |
 | --- | --- | --- | --- |
-| **Atuin** | Curated in `/tools`; usable as the explicit history provider (`/providers`); NMSh reads its metadata for suggestions | **Adopt as is** | NMSh keeps shell history authority and uses Atuin as an optional source. Project/session-aware ranking is already NMSh's own (directory affinity, frecency); do not add a second history store |
-| **fzf** | Curated in `/tools`; picker provider; keybinding integration offered by its own installer | **Adopt as is** | The existing picker provider covers selection. No new picker subsystem |
-| **Television** | Curated in `/tools`; picker provider choice | **Adopt as is** | Same provider slot as fzf. Preview/select actions for output references (#353) already use NMSh's own palette, which is enough |
-| **zoxide** | Curated in `/tools`; directory provider behind `/dirs` | **Adopt as is** | NMSh's directory navigation already asks zoxide when it is the chosen provider. Nothing to add |
-| **bat** | Curated in `/tools`; Ask knows it; Theme Bridge offers an owned theme and explicitly reviewed cache build | **Adopt as is** | No dedicated source-preview launcher is implemented. Users can invoke bat in their shell; Compare and reports use native plain text |
-| **delta** | Curated in `/tools` as optional Git diff presentation | **Adopt as is; do not use for Compare** | Native Compare keeps exact bytes, a bounded edit distance and a safe, redactable copy path. Piping outputs through delta would add a process, colours that the copy path must strip, and no new information |
-| **Pueue** | None | **Defer** | Durable detached jobs are useful (long builds, transfers that outlive the window). But it is a separate runner with its own state and output, so integrating it means a second place where "what ran" lives. If built: an explicit *Send to Pueue* action on a reviewed command, a read-only status row, and no change to the queue. Needs a design for output capture and for how finished jobs appear in the transcript. Not started |
-| **Yazi** | None | **Defer** | A file-selection handoff that returns paths to the composer is the one slice with clear value. It needs a safe protocol (yazi's `--chooser-file`, quoting for the active shell, no auto-execution) and a passthrough hand-over like other full-screen programs. Not built; it would be a small, isolated feature |
-| **Gum** | None | **Reject** | It is a toolkit for scripts to draw prompts. NMSh already hands the terminal to any program that wants it (passthrough) and keeps input ownership; adding gum-specific behaviour would imitate a forms framework. A script that uses gum simply works |
+| **[Atuin](https://github.com/atuinsh/atuin/blob/main/docs/docs/configuration/config.md)** | Curated in `/tools`; usable as the explicit history provider (`/providers`); NMSh reads local commands and metadata for suggestions | **Adopt as is** | NMSh keeps shell history authority and uses Atuin as an optional source. Project/session-aware ranking is already NMSh's own (directory affinity, frecency); do not add a second history store |
+| **[fzf](https://github.com/junegunn/fzf#usage)** | Curated in `/tools`; selection provider; shell keybindings remain external configuration | **Adopt as is** | The existing picker provider covers selection. No new picker subsystem |
+| **[Television](https://github.com/alexpasmantier/television#readme)** | Curated in `/tools`; picker provider choice | **Adopt as is** | Same provider slot as fzf. Preview/select actions for output references (#353) already use NMSh's own palette, which is enough |
+| **[zoxide](https://github.com/ajeetdsouza/zoxide#readme)** | Curated in `/tools`; directory provider behind `/dirs`, queried through a private database copy | **Adopt as is** | zoxide can write while querying. NMSh protects the original database and falls back to Native when it cannot obtain a bounded snapshot |
+| **[bat](https://github.com/sharkdp/bat#adding-new-themes)** | Curated in `/tools`; Ask knows it; Theme Bridge offers an owned theme and explicitly reviewed cache build | **Adopt as is** | No dedicated source-preview launcher is implemented. Users can invoke bat in their shell; Compare and reports use native plain text |
+| **[delta](https://github.com/dandavison/delta#readme)** | Curated in `/tools`; Theme Bridge offers optional Git diff colours and bat-backed syntax theme support | **Adopt as is; do not use for Compare** | Native Compare uses a bounded edit distance, reviewed reports and a sanitized plain diff copy. Sending output to an external renderer creates another presentation/copy boundary without addressing the accepted workflow needs |
+| **[Pueue](https://github.com/Nukesor/pueue#readme)** | No Pueue adapter | **Defer** | Its separate daemon provides durable jobs, but it owns independent execution and persisted output. A reviewed handoff would need output capture and transcript provenance. The same-shell queue stays native. Workspace background-task work (#383/#384) belongs to the other track; adding a second adapter before that handoff is premature |
+| **[Yazi](https://yazi-rs.github.io/docs/tips/)** | No chooser adapter | **Defer** | Returning paths through `--chooser-file` is plausible, but needs a bounded private result file, validated shell quoting, passthrough handoff and explicit insertion. No accepted implementation slice supersedes the existing deferral |
+| **[Gum](https://github.com/charmbracelet/gum#readme)** | No Gum-specific adapter | **Reject** | Gum provides script prompts. NMSh retains ordinary passthrough and input ownership rather than adding a forms framework. Gum-specific physical interoperability has not been validated |
 
 ## What stays native, and why
 
@@ -44,3 +44,15 @@ slice, not now) or **reject**.
 
 1. Yazi chooser handoff (isolated, high value).
 2. Pueue *send to background* with status (needs the output-capture design first).
+
+## Implementation evidence and limits
+
+Re-audited 2026-10-11. Existing optional-provider behavior is implemented in
+[`historyProviders.ts`](../../src/shell/historyProviders.ts),
+[`HistoryService.ts`](../../src/shell/HistoryService.ts),
+[`Picker.ts`](../../src/pickers/Picker.ts),
+[`DirectoryService.ts`](../../src/shell/DirectoryService.ts) and
+[`Theme Bridge runtime`](../../src/themeBridge/runtime.ts).
+Provider and bridge tests cover bounded reads, absent dependencies, native fallbacks and owned configuration;
+live queue, alternate-screen and report/diff acceptance covers the retained native paths. No new CLI adapter is
+claimed by this audit. Host-specific picker visuals and physical interoperability remain human QA.

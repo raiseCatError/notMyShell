@@ -9,7 +9,7 @@ test('"Why" says in one sentence why a module is or is not on screen', () => {
   assert.match(whyText(module({visible: false}), 'contextRail', []), /turned off/u);
   assert.match(whyText(module(), 'hidden', []), /routed to Hidden/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'timeout'}]), /timed out/u);
-  assert.match(whyText(module(), 'contextRail', [{state: 'failed', error: 'denied'}]), /could not be read \(denied\)/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'failed', error: 'denied'}]), /could not be read/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'absent'}, {state: 'absent'}]), /nothing for it to show/u);
   assert.match(whyText(module({condition: 'onCommand'}), 'contextRail', [{state: 'idle'}], ['go', 'gofmt']), /after a command that uses it \(go, gofmt…\)/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'pending'}]), /being collected/u);
@@ -21,6 +21,7 @@ test('module explanations do not invent collection or visibility evidence', () =
   assert.match(whyText(module(), 'contextRail', [{state: 'idle'}]), /not collected/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'stale'}]), /last known.*refreshing/u);
   assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'fresh'}]), /conditions are met/u);
+  assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'failed', error: 'EACCES /Users/demo/private/config token=do-not-display'}]), /private|token|Users/u);
 });
 
 test('/doctor reports prompt-data health from the engine counters, and only complains with enough evidence', () => {

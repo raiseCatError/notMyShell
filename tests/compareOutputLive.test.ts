@@ -23,16 +23,17 @@ test('live: /compare shows what changed between two runs of a command; c copies 
     const props = join(sandbox.home, 'props.txt');
     writeFileSync(props, Array.from({length: 40}, (_, index) => `[ro.prop.${index}]: [${index === 7 ? 'before' : 'same'}]`).join('\n') + '\n');
     await frontend.run(`cat ${props}`, /ro\.prop\.39/u);
-    writeFileSync(props, Array.from({length: 40}, (_, index) => `[ro.prop.${index}]: [${index === 7 ? 'after' : 'same'}]`).join('\n') + '\n[ro.prop.new]: [1]\n');
+    writeFileSync(props, Array.from({length: 40}, (_, index) => `[ro.prop.${index}]: [${index === 7 ? 'after\u202e\u200b\u001b[31m\u001b[0m' : 'same'}]`).join('\n') + '\n[ro.prop.new]: [1]\n');
     await frontend.run('echo between', /between/u);
     await frontend.run(`cat ${props}`, /ro\.prop\.new/u);
     // /compare 1 3: the latest cat and the earlier one (echo between is 2).
     let mark = frontend.mark;
     frontend.pty.write('/compare 1 3\r');
-    await frontend.waitFor(/Compare output[\s\S]*1 changed · 1 added · 39 unchanged[\s\S]*- \[ro\.prop\.7\]: \[before\][\s\S]*\+ \[ro\.prop\.7\]: \[after\]/u, mark);
+    await frontend.waitFor(/Compare output[\s\S]*1 changed · 1 added · 39 unchanged[\s\S]*- \[ro\.prop\.7\]: \[before\][\s\S]*\+ \[ro\.prop\.7\]: \[after··\]/u, mark);
     frontend.pty.write('c');
     await until(() => existsSync(clip) && readFileSync(clip, 'utf8').length > 0, 15_000, 'the diff on the clipboard');
     const diff = readFileSync(clip, 'utf8');
+    assert.doesNotMatch(diff, /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\p{Cf}]/u, 'hostile program controls never reach final clipboard bytes');
     assert.match(diff, /^--- A: cat [^\n]+· exit 0\n\+\+\+ B: cat [^\n]+· exit 0\n@@ -5,7 \+5,7 @@\n[\s\S]*-\[ro\.prop\.7\]: \[before\]\n\+\[ro\.prop\.7\]: \[after\]\n[\s\S]*\+\[ro\.prop\.new\]: \[1\]\n$/u, diff);
     await frontend.waitFor(/Copied diff · \d+ lines/u, mark);
     frontend.pty.write('\u001b');

@@ -8,7 +8,7 @@ import {queueRow} from '../src/status/queueStatus.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 
 function harness() {
-  const target: QueueShell & {submitted: string[]} = {submitted: [], isReady: true, submit(command: string) { this.submitted.push(command); }};
+  const target: QueueShell & {submitted: string[]} = {adapter: {id: 'zsh'}, submitted: [], isReady: true, submit(command: string) { this.submitted.push(command); }};
   const dispatcher = new QueueDispatcher(target);
   const finish = (exitCode = 0) => { dispatcher.onExec(target.submitted.at(-1) ?? 'manual'); dispatcher.onPrompt(exitCode); };
   return {target, dispatcher, finish};

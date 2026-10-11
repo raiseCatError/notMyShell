@@ -160,6 +160,17 @@ test('at 50 columns details wrap instead of truncating, keep Reads/History/statu
   assert.match(listRows.join('\n'), /Modules {2}Catalog {2}Packs|Modules.*Catalog.*Packs/u, 'tab labels stay recognisable');
 });
 
+test('module details show measured time and safe failure state without raw exception paths or values', () => {
+  const s = state();
+  s.context = {status: () => ({state: 'failed', durationMs: 4.2, error: 'EACCES /Users/demo/private/config token=do-not-display', evidence: 'AWS config'})};
+  s.selectedIndex = listedModules(s).findIndex(module => module.id === 'nmsh.cloud:aws');
+  handlePromptPanelKey(ENTER, s);
+  const shown = renderPromptPanel(s, 50, [], [], Infinity).map(stripAnsi).join('\n');
+  assert.match(shown, /unavailable \(failed\).*took 4 ms/su);
+  assert.match(shown, /AWS config/u);
+  assert.doesNotMatch(shown, /Users|private|token=|do-not-display/u);
+});
+
 test('external prompt providers keep the manager useful: unavailable surfaces say why, settings are kept, the Status Strip still works', async () => {
   const {surfaceAvailability} = await import('../src/context/surfaceRouter.js');
   const starship = {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider: 'starship' as const};

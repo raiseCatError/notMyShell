@@ -51,6 +51,11 @@ merged into the queue candidate without rewriting history.
   collection metadata does not prove conditional visibility. Starship/Oh My Posh previews disclose loss, save only
   after a second explicit action, and preserve source files. External-tool decisions describe bat's actual Theme
   Bridge support; dedicated source-preview launching is not implemented.
+- **Fish parse-only transport:** Fish 3.7 on Linux rejects Node's socket-backed stdin with “Unable to read input
+  file: Is a directory”. Paste verification supplies Fish's script through `--no-execute -c` instead; failed/oversized
+  argv submission refuses the split. Regression checks prove neither commands nor substitutions execute.
+- **Diagnostic privacy:** module details show safe collection failure states, rather than raw exception paths or
+  values. Measured durations remain available; no new collector is invoked by opening details.
 
 ## Verification recorded so far
 
@@ -73,6 +78,21 @@ merged into the queue candidate without rewriting history.
 independent heads and remaining frontend wiring. It explicitly waits for the #359 stabilization checkpoint.
 Do not modify its handoff or branches. Ruby/PHP duplication is security-patched locally; reconcile against canonical
 #370 after its verified freeze, retaining module diagnostics, theme imports and independent workflow behavior.
+
+The overlap is localized and deliberately retained until the canonical native heads are frozen:
+
+| File | Integration decision |
+| --- | --- |
+| `src/context/capabilities/runtimes.ts` | #368's duplicate Ruby/PHP remains patched by `18e94d9`; take canonical #370's stronger runtime implementation at integration |
+| `src/context/packs/builtin/nmsh.project.json` | take the highest frozen native stack's catalog once, not both variants |
+| `tests/contextCapabilities.test.ts` | preserve workflow-independent tests; retain malicious-whitespace/declaration regressions and canonical runtime tests |
+| `tests/moduleManager.test.ts` | reconcile expected catalog contents with the highest native stack, preserving workflow diagnostics |
+| `docs/design/native-module-coverage.md` | retain #368's coverage research; update adoption status against the exact integrated native heads |
+
+No destructive revert of the published runtime commit is needed. Removing the duplicate before the native handoff
+would remove currently tested functionality from the standalone workflow PR; resolve these known file overlaps on
+the acceptance integration branch while preserving both security regressions. #370 owns additional install-layout
+support in `services.ts`, which this track has not changed.
 
 Next: finish attach privacy verification, propagate fixes through each published workflow branch, verify security
 and grammar acceptance on #368, audit vocabulary/theme/diagnostics/tool decisions, then publish an exact-head CI

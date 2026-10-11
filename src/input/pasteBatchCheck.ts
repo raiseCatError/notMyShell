@@ -27,13 +27,17 @@ function parses(shell: BatchShell, command: string): Promise<'yes' | 'no' | 'una
     let settled = false;
     const finish = (result: 'yes' | 'no' | 'unavailable') => { if (!settled) { settled = true; clearTimeout(timer); resolve(result); } };
     let child;
-    try { child = spawn(file!, args, {stdio: ['pipe', 'ignore', 'ignore']}); }
+    // Fish 3.7 on Linux cannot read Node's socket-backed stdin in parse-only mode.
+    // -c supplies data under --no-execute; it never evaluates the command. An OS argv
+    // size refusal fails closed through the ordinary unavailable path.
+    const script = shellSubmission(command, shell);
+    try { child = spawn(file!, shell === 'fish' ? [...args, '-c', script] : args, {stdio: ['pipe', 'ignore', 'ignore']}); }
     catch { resolve('unavailable'); return; }
     const timer = setTimeout(() => { child.kill('SIGKILL'); finish('unavailable'); }, TIMEOUT_MS);
     child.once('error', () => finish('unavailable'));
     child.once('close', code => finish(code === 0 ? 'yes' : 'no'));
     child.stdin.once('error', () => { /* the shell may exit before reading it all; its status decides */ });
-    child.stdin.end(`${shellSubmission(command)}\n`);
+    child.stdin.end(shell === 'fish' ? undefined : `${script}\n`);
   });
 }
 

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {MAX_BATCH_CHARACTERS, splitBatch, type BatchShell} from '../src/input/pasteBatch.js';
+import {shellSubmission} from '../src/shell/submission.js';
+import {mkdtemp, access, rm} from 'node:fs/promises';
+import {join} from 'node:path';
 
 const texts = (input: string, shell: BatchShell) => {
   const result = splitBatch(input, shell);
@@ -158,8 +161,9 @@ test('the commands are the paste, in order: joined back they hold every non-blan
 
 /** Parse-check each chunk with the real shell (never runs it): every command the splitter produces must be valid on its own. */
 const parses = (shell: BatchShell, code: string) => {
-  const args = shell === 'fish' ? ['--no-execute'] : ['-n'];
-  const result = spawnSync(shell, args, {input: code, encoding: 'utf8', timeout: 5000});
+  const args = shell === 'fish' ? ['--no-config', '--no-execute', '-c', code] : ['-n'];
+  const result = spawnSync(shell, args, {input: shell === 'fish' ? undefined : code, encoding: 'utf8', timeout: 5000});
+  if (result.status !== 0) console.error(`${shell} parse status ${result.status}: ${result.error?.message ?? result.stderr}`);
   return result.error ? undefined : result.status === 0;
 };
 const FIXTURES: Record<BatchShell, string> = {
@@ -178,10 +182,9 @@ for (const shell of ['bash', 'zsh', 'fish'] as const) {
 
 /**
  * The differential check: run a paste whole, and run the commands the splitter made of it one after another, each
- * submitted the way the queue does (a multi-line command as one brace group). Both must do exactly the same thing.
+ * submitted the way the queue does (one native shell group). Both must do exactly the same thing.
  * Only echo, printf, variables and control flow run here; nothing touches the disk or the network.
  */
-const submission = (command: string) => command.includes('\n') ? `{ ${command}\n}` : command;
 const PIECES: Record<BatchShell, string[]> = {
   bash: ['cat <<E"O"F\nbody\nEOF', 'echo one', 'x=$((1 << 3)); echo "x=$x"', 'echo "multi\nline"', 'for i in 1 2; do\n  echo "loop-$i"\ndone', 'if [ -z "$x" ]; then\n  echo empty\nelse\n  echo "has-$x"\nfi',
     'cat <<EOF\nbody $HOME-free\nEOF', 'cat <<\'RAW\'\n$x not expanded\nRAW', 'echo a &&\n  echo b', 'echo "p" |\n  cat', 'f() {\n  echo "in-f-$1"\n}\nf arg', 'case "$x" in\n  8) echo eight ;;\n  *) echo other ;;\nesac',
@@ -216,8 +219,8 @@ for (const shell of ['bash', 'zsh', 'fish'] as const) {
       const result = splitBatch(paste, shell);
       if (!result.ok) continue;
       compared += 1;
-      const whole = execute(shell, submission(paste));
-      const parts = execute(shell, result.commands.map(command => submission(command.text)).join('\n'));
+      const whole = execute(shell, paste);
+      const parts = execute(shell, result.commands.map(command => shellSubmission(command.text, shell)).join('\n'));
       assert.equal(parts, whole, `${shell}: ${JSON.stringify(paste)} split into ${JSON.stringify(result.commands.map(command => command.text))}`);
     }
     assert.ok(compared >= Math.floor(rounds * 0.6), `only ${compared} comparable pastes`);
@@ -238,4 +241,18 @@ test('the real shell checks every command on its own before a split is shown; a 
     }
     assert.deepEqual(await verifyCommands([], shell), {ok: true});
   }
+});
+
+test('parse-only checks never execute commands or substitutions, including Fish -c transport', async () => {
+  const {verifyCommands} = await import('../src/input/pasteBatchCheck.js');
+  const directory = await mkdtemp(join(tmpdir(), 'nmsh-astra-parse-only-'));
+  const marker = join(directory, 'must-not-exist');
+  try {
+    for (const shell of ['bash', 'zsh', 'fish'] as const) {
+      if (parses(shell, 'true') === undefined) continue;
+      const substitution = shell === 'fish' ? `(touch '${marker}')` : `$(touch '${marker}')`;
+      assert.deepEqual(await verifyCommands([`echo ${substitution}\ntouch '${marker}'`], shell), {ok: true});
+      await assert.rejects(access(marker), {code: 'ENOENT'}, shell);
+    }
+  } finally { await rm(directory, {recursive: true, force: true}); }
 });
