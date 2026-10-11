@@ -58,10 +58,10 @@ export class LiveSandbox {
   /** The journals frontends in this sandbox wrote. */
   transcripts() { return new TranscriptStore(join(this.config, 'nmsh', 'sessions')); }
 
-  launch(args: string[] = [], size = {cols: 100, rows: 30}, attachmentEnv: Record<string, string> = {}): Frontend {
+  launch(args: string[] = [], size = {cols: 100, rows: 30}, attachmentEnv: Record<string, string> = {}, entry = ENTRY): Frontend {
     // Run outside the repository: a SIGKILLed frontend must never leave git
     // state (index.lock from a prompt's git status) behind in the checkout.
-    return this.trackFrontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, ENTRY, ...args],
+    return this.trackFrontend(nodePty.spawn(process.execPath, [`--import=${TSX}`, entry, ...args],
       {cwd: this.home, ...size, env: {...this.env, ...attachmentEnv} as Record<string, string>}));
   }
 

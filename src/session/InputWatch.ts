@@ -62,6 +62,7 @@ const defaultTimer = (callback: () => void, ms: number) => {
 
 export class InputWatch extends EventEmitter<InputWatchEvents> {
   private running?: {command: string; since: number};
+  private reader = false;
   private readonly line = new OpenLine();
   private readonly screen = new AlternateScreenTracker();
   private request?: InputRequest;
@@ -101,15 +102,24 @@ export class InputWatch extends EventEmitter<InputWatchEvents> {
   }
 
   get state(): InputState {
-    return {...(this.request ? {request: {...this.request}} : {}), timing: {waitedMs: this.waitedMs, waits: this.waits}};
+    return {...(this.reader && this.running ? {terminalOwner: true as const} : {}), ...(this.request ? {request: {...this.request}} : {}), timing: {waitedMs: this.waitedMs, waits: this.waits}};
   }
 
   /** Whether the current command's program owns the terminal (and so its own input). */
   get ownsTerminal(): boolean {
-    return Boolean(this.running && (this.screen.ownsTerminal || shouldPassthrough(this.running.command)));
+    return Boolean(this.running && (this.reader || this.screen.ownsTerminal || shouldPassthrough(this.running.command)));
+  }
+
+  /** Authenticated shell event, emitted before Fish's builtin reader draws its prompt. */
+  onReader(at = this.now()): void {
+    if (!this.running) return;
+    this.closeWait(at, true);
+    this.reader = true;
+    this.emit('change', this.state);
   }
 
   onExec(command: string, at = this.now()): void {
+    this.reader = false;
     this.closeWait(at, false);
     this.running = {command, since: at};
     this.waitedMs = 0;
