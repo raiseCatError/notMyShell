@@ -106,3 +106,16 @@ test('task output: line endings, progress lines, splitting and bounds', () => {
   assert.deepEqual(output.lines().map(line => line.text), ['no newli', 'ne at al', 'l'], 'finish flushes the unfinished line');
   assert.equal(clean('\u001b]0;title\u0007\u001b[1mbold\u001b[0m\t‮end', 100), 'bold    end');
 });
+
+test('task output: a hostile run of carriage returns is handled in linear time', () => {
+  // `/\r+$/` retried from every \r of the run: 64 Ki of them took seconds and froze NMSh while a task printed them.
+  const output = new TaskOutput({lines: 100, bytes: 1024 * 1024});
+  const hostile = `${'\r'.repeat(64 * 1024)}x\n`;
+  const started = performance.now();
+  output.append(hostile);
+  output.append(hostile);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 250, `took ${elapsed.toFixed(0)} ms`);
+  assert.deepEqual(output.lines().map(line => line.text), ['x', 'x'], 'the progress overwrite still keeps the last state');
+  assert.equal(clean(`done${'\r'.repeat(5000)}`, 100), 'done', 'trailing carriage returns end the line');
+});

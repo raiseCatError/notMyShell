@@ -40,8 +40,9 @@ export interface TaskRecord {
   state: TaskState;
   exitCode?: number;
   signal?: number;
-  /** The strongest stop request made so far. */
+  /** The strongest stop request made so far, and when the latest one was made (a view paces escalation by it). */
   stopRequested?: StopLevel;
+  stopRequestedAt?: number;
   /** Processes of the task's group still running after its leader exited. */
   leftovers?: boolean;
 }
@@ -74,13 +75,17 @@ interface LiveTask {
   record: TaskRecord;
   output: TaskOutput;
   pty?: IPty;
-  /** The process group the PTY made: the leader's pid. */
+  /** The process group the PTY made: the leader's pid. Forgotten once the group is observed empty. */
   group?: number;
   pending?: ReturnType<typeof setTimeout>;
+  /** Watches a finished task's leftover group until it is gone. */
+  watch?: ReturnType<typeof setInterval>;
 }
 
 const SIGNALS: Record<StopLevel, NodeJS.Signals> = {interrupt: 'SIGINT', terminate: 'SIGTERM', kill: 'SIGKILL'};
 const ORDER: readonly StopLevel[] = ['interrupt', 'terminate', 'kill'];
+/** How often a finished task's leftover group is probed: also the longest a dead group's id is remembered. */
+const LEFTOVER_PROBE_MS = 250;
 
 export class BackgroundTaskSupervisor {
   private readonly tasks = new Map<string, LiveTask>();
@@ -140,6 +145,7 @@ export class BackgroundTaskSupervisor {
     catch (error) { return {ok: false, reason: (error as NodeJS.ErrnoException).code === 'ESRCH' ? 'the task already ended' : 'the signal could not be delivered'}; }
     const previous = task.record.stopRequested;
     task.record.stopRequested = previous && ORDER.indexOf(previous) > ORDER.indexOf(level) ? previous : level;
+    task.record.stopRequestedAt = this.now();
     task.record.state = 'stopping';
     this.changed(task, true);
     return {ok: true};
@@ -160,11 +166,16 @@ export class BackgroundTaskSupervisor {
     }
   }
 
-  /** Remove a finished task from the list (its output goes with it). Running tasks are never removed; stop them first. */
+  /**
+   * Remove a finished task from the list (its output goes with it). Running tasks are never removed; stop them first.
+   * Neither is a finished task whose processes are still running: removing it would leave them with nothing that can
+   * stop them.
+   */
   remove(id: string): boolean {
     const task = this.tasks.get(id);
-    if (!task || task.record.state === 'running' || task.record.state === 'stopping') return false;
+    if (!task || task.record.state === 'running' || task.record.state === 'stopping' || task.record.leftovers) return false;
     clearTimeout(task.pending);
+    clearInterval(task.watch);
     this.tasks.delete(id);
     return true;
   }
@@ -221,20 +232,38 @@ export class BackgroundTaskSupervisor {
     record.state = record.stopRequested ? 'stopped' : record.signal || record.exitCode !== 0 ? 'failed' : 'exited';
     record.leftovers = groupAlive(task.group);
     this.changed(task, true);
-    // The kernel hangs up the group when its leader exits; members that obey it are gone a moment later.
-    if (record.leftovers) for (const delay of [100, 1000]) {
-      setTimeout(() => {
-        if (!record.leftovers) return;
-        record.leftovers = groupAlive(task.group);
-        if (!record.leftovers) this.changed(task, true);
-      }, delay).unref?.();
-    }
+    if (record.leftovers) this.watchLeftovers(task); else task.group = undefined;
+  }
+
+  /**
+   * The kernel hangs up the group when its leader exits; members that obey it are gone a moment later, others may run
+   * for hours. The group is probed until it is empty, then forgotten: its id is free for reuse once its last member
+   * exits, so a later kill request must find nothing to signal rather than a recycled group.
+   */
+  private watchLeftovers(task: LiveTask): void {
+    clearInterval(task.watch);
+    task.watch = setInterval(() => {
+      if (groupAlive(task.group)) return;
+      clearInterval(task.watch);
+      task.watch = undefined;
+      task.group = undefined;
+      task.record.leftovers = false;
+      this.changed(task, true);
+    }, LEFTOVER_PROBE_MS);
+    task.watch.unref?.();
   }
 
   private killLeftovers(task: LiveTask): {ok: true} | {ok: false; reason: string} {
-    if (!task.group || !groupAlive(task.group)) { task.record.leftovers = false; this.changed(task, true); return {ok: false, reason: 'nothing is left running'}; }
+    if (!task.group || !groupAlive(task.group)) {
+      clearInterval(task.watch);
+      task.group = undefined;
+      task.record.leftovers = false;
+      this.changed(task, true);
+      return {ok: false, reason: 'nothing is left running'};
+    }
     try { process.kill(-task.group, 'SIGKILL'); } catch { /* raced with their exit */ }
-    task.record.leftovers = groupAlive(task.group);
+    task.record.stopRequested = 'kill';
+    task.record.stopRequestedAt = this.now();
     this.changed(task, true);
     return {ok: true};
   }

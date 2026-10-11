@@ -39,6 +39,7 @@ test('a logcat-like stream: output arrives live; stop is SIGINT to its own group
     await waitFor(() => supervisor.output(id)!.lines().length >= 5, 'streamed lines');
     assert.match(text(supervisor, id), /I\/ActivityManager\(\s*\d+\): line 1/u);
     assert.deepEqual(supervisor.stop(id), {ok: true});
+    assert.equal(typeof supervisor.get(id)!.stopRequestedAt, 'number', 'the request time paces escalation in views');
     assert.equal(supervisor.get(id)!.state === 'stopping' || supervisor.get(id)!.state === 'stopped', true, 'never "stopped" before the exit is observed');
     await waitFor(() => supervisor.get(id)!.state === 'stopped', 'stopped');
     const task = supervisor.get(id)!;
@@ -110,6 +111,19 @@ test('processes left in the group after the leader exits are reported, and kille
     assert.deepEqual(supervisor.stop(task.id), {ok: false, reason: 'the task is not running'}, 'a plain stop does not reach leftovers');
     assert.deepEqual(supervisor.stop(task.id, 'kill'), {ok: true});
     await waitFor(() => supervisor.get(task.id)!.leftovers === false, 'leftovers gone');
+  });
+});
+
+test('a leftover group that ends later is noticed and forgotten: no stale "processes left", no kill aimed at a reused group id', async () => {
+  await withSupervisor(async (supervisor, cwd) => {
+    // The member outlives the leader by more than a second, past any one-off check after the exit.
+    const {task} = supervisor.start({command: `${node(SLEEPER, '1600')} & sleep 0.2; exit 0`, cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
+    await waitFor(() => supervisor.get(task.id)!.state === 'exited', 'leader exited');
+    await waitFor(() => supervisor.get(task.id)!.leftovers === true, 'leftovers reported');
+    assert.equal(supervisor.remove(task.id), false, 'a task whose processes still run is not removed: nothing could stop them afterwards');
+    await waitFor(() => supervisor.get(task.id)!.leftovers === false, 'the late exit noticed', 5000);
+    assert.deepEqual(supervisor.stop(task.id, 'kill'), {ok: false, reason: 'the task is not running'}, 'nothing is signalled once the group is gone');
+    assert.equal(supervisor.remove(task.id), true);
   });
 });
 
