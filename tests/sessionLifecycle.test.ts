@@ -85,10 +85,16 @@ test('SIGHUP detaches; Ctrl+D ends the session; /zsh detaches it for the ordinar
     await until(async () => (await sandbox.sessions()).length === 0, 15000, 'Ctrl+D to end the session');
     await until(() => !processAlive(pid), 15000, 'zsh to exit');
 
+    const release = join(sandbox.home, 'third-startup-release');
+    writeFileSync(join(sandbox.home, '.zshrc'), 'until test -f "$HOME/third-startup-release"; do sleep 0.05; done\n');
     const third = sandbox.launch();
     await third.waitFor(/❯/);
     const {pid: thirdPid} = await onlySession(sandbox);
-    // The composer appears before the shell's first prompt; /zsh is refused while it starts, so wait for readiness.
+    assert.equal((await sandbox.sessions()).find(session => session.pid === thirdPid)?.lastExit, undefined,
+      'a visible composer does not prove the gated shell is ready');
+    writeFileSync(release, '');
+    await until(async () => (await sandbox.sessions()).some(session => session.pid === thirdPid && session.lastExit !== undefined),
+      20_000, 'the third shell authenticated prompt');
     await third.run('echo READY', /READY/);
     third.pty.write('/zsh\r');
     // A deliberate handoff keeps the session: detached, its shell still alive, waiting for `nmsh`.
