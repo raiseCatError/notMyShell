@@ -10,11 +10,11 @@ and says when it is **partial**. Providers are pure functions over data the call
 | --- | --- | --- |
 | `resourceDetail` | a sidebar resource | what Enter would do, in words, or why it cannot be opened |
 | `worktreeDetail` | a `/worktrees` record | Git's facts only; an unknown status is never shown as clean |
-| `diffContent` | local `git diff` text | hunks through the GitHub review diff's `parsePatch` and line sanitizer; binary and rename-only files named; a line budget with an explicit "cut here" |
+| `diffContent` | local `git diff` text | hunks through the GitHub review diff's `parsePatch` and line sanitizer; binary and rename-only files named; a line budget with an explicit "cut here"; the `diff --git` heading read from its own line in linear time (a name containing ` b/` stays whole; quoted headers show as `diff`) |
 | `factDetail` | a Context Engine fact | the displayable value under its privacy policy, evidence, collection age, freshness, policy and what the capability reads (#305 explain view) |
 
-`PanelController` keeps scroll (kept when the same content id is refreshed) and a bounded cache of recent content by
-id, so moving the sidebar selection can show a **cached preview** without asking any owner again. `renderPanel`
+`PanelController` keeps scroll per content id (kept when the same content is refreshed, and restored when the
+person goes back to content still in the cache) and a bounded cache of recent content by id, so moving the sidebar selection can show a **cached preview** without asking any owner again. `renderPanel`
 returns exactly rows × width: title with the focus mark, a source/age row (`stale` past the freshness window,
 `time unknown` without an observation), an optional partial row, wrapped text, cut (not wrapped) diff lines keeping
 their `+`/`-`/`\` marker, and, while focused, the position and key help.

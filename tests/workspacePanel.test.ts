@@ -53,6 +53,33 @@ test('local diff: hostile content is inert and bounded; a cut diff says so', () 
   assert.deepEqual(diffContent('d', 'x', '', 'git diff').lines, [{kind: 'muted', text: 'no changes'}]);
 });
 
+test('diff headings: a name containing " b/" stays whole; hostile headers are read in linear time', () => {
+  const heading = (diff: string) => (diffContent('d', 'x', diff, 'git diff').lines[0] as {text: string}).text;
+  assert.equal(heading('diff --git a/my b/file b/my b/file\nold mode 100644\nnew mode 100755\n'), 'my b/file');
+  assert.equal(heading('diff --git a/old name b/new name\nsimilarity index 100%\n'), 'old name → new name');
+  assert.equal(heading('diff --git "a/tab\\there" "b/tab\\there"\n'), 'diff', 'a quoted header is not guessed at');
+  const name = ' b/'.repeat(400);
+  const hostile = Array.from({length: 1000}, (_, i) => `diff --git a/${name}${i} b/${name}${i}x${'y'.repeat(1100)}\nold mode 100644\nnew mode 100755\n`).join('');
+  const started = performance.now();
+  diffContent('d', 'x', hostile, 'git diff');
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 400, `took ${elapsed.toFixed(0)} ms`);
+});
+
+test('the panel returns to where each content was scrolled', () => {
+  const panel = new PanelController();
+  const long = (id: string) => ({id, title: id, source: 'test', lines: Array.from({length: 100}, (_, i) => ({kind: 'text' as const, text: `${id} ${i}`}))});
+  panel.show(long('a'));
+  panel.dispatch('panel.pageDown', 20); panel.dispatch('panel.pageDown', 20);
+  const scrolled = panel.scroll;
+  panel.show(long('b'));
+  assert.equal(panel.scroll, 0, 'new content starts at its top');
+  panel.show(long('a'));
+  assert.equal(panel.scroll, scrolled, 'going back keeps the place');
+  panel.show({...long('a'), lines: long('a').lines.slice(0, 50)});
+  assert.equal(panel.scroll, scrolled, 'a refresh of the same content keeps its place (render clamps it)');
+});
+
 test('resource and worktree details say what opening would do, or why it cannot; nothing is inferred', () => {
   const tmux = resourceDetail({id: 'tmux:$1:@2', kind: 'tmuxWindow', label: '1 servers', support: 'activatable', activation: {kind: 'tmux', scope: 'window', target: '@2'}, observedAt: 5, children: []});
   assert.ok(tmux.lines.some(line => line.kind === 'text' && line.text === 'Enter: tmux selects this window and switches your client to it.'));

@@ -83,6 +83,24 @@ export function worktreeDetail(worktree: WorktreeRecord, observedAt: number): Pa
 }
 
 /**
+ * The file a `diff --git a/X b/Y` section is about, read from that one line. Same name on both sides (the common case)
+ * is recognized by its two equal halves, so a name containing ` b/` stays whole; a rename splits at the first ` b/`.
+ * Linear: a lazy `a\/(.+?) b\/(.+)$` pattern retried across names full of ` b/` took about 2 ms per header.
+ */
+function diffHeading(section: string): string {
+  const end = section.indexOf('\n');
+  const line = end === -1 ? section : section.slice(0, end);
+  const prefix = 'diff --git a/';
+  if (!line.startsWith(prefix) || line.length > 4096) return 'diff';
+  const rest = line.slice(prefix.length - 2).replace(/\r$/u, '');
+  const half = (rest.length - 5) / 2;
+  if (Number.isInteger(half) && half > 0 && rest.slice(2 + half, 5 + half) === ' b/' && rest.slice(2, 2 + half) === rest.slice(5 + half)) return text(rest.slice(2, 2 + half));
+  const split = rest.indexOf(' b/', 2);
+  const from = split === -1 ? '' : rest.slice(2, split), to = split === -1 ? '' : rest.slice(split + 3);
+  return from && to ? (from === to ? text(to) : `${text(from)} → ${text(to)}`) : 'diff';
+}
+
+/**
  * A local unified diff (`git diff` output) as bounded, read-only lines. Hunks go through the same parser and line
  * sanitizer as the GitHub review diff; file headers become headings. Binary and over-budget content is named, not shown.
  */
@@ -92,8 +110,7 @@ export function diffContent(id: string, title: string, diff: string, source: str
   const sections = diff.split(/^(?=diff --git )/mu).filter(section => section.trim());
   for (const section of sections) {
     if (lines.length >= MAX_PANEL_LINES || used >= budget) { cut = true; break; }
-    const header = /^diff --git a\/(.{1,1024}?) b\/(.{1,1024})$/mu.exec(section);
-    lines.push({kind: 'heading', text: header ? (header[1] === header[2] ? text(header[2]!) : `${text(header[1]!)} → ${text(header[2]!)}`) : 'diff'});
+    lines.push({kind: 'heading', text: diffHeading(section)});
     if (/^Binary files .* differ$/mu.test(section)) { lines.push({kind: 'muted', text: 'binary file: not shown'}); continue; }
     const start = section.search(/^@@ /mu);
     if (start === -1) { lines.push({kind: 'muted', text: 'no content changes (mode or rename only)'}); continue; }
@@ -139,13 +156,22 @@ export class PanelController {
   scroll = 0;
   /** Recently shown content by id, so moving the sidebar selection can show a preview without asking anyone again. */
   private readonly cache = new Map<string, PanelContent>();
+  /** Where each cached content was scrolled to, so going back to it returns to the same place. */
+  private readonly positions = new Map<string, number>();
 
   show(content: PanelContent): void {
-    if (this.content?.id !== content.id) this.scroll = 0;
+    if (this.content?.id !== content.id) {
+      if (this.content) this.positions.set(this.content.id, this.scroll);
+      this.scroll = this.positions.get(content.id) ?? 0;
+    }
     this.content = {...content, lines: content.lines.slice(0, MAX_PANEL_LINES)};
     this.cache.delete(content.id);
     this.cache.set(content.id, this.content);
-    while (this.cache.size > 32) this.cache.delete(this.cache.keys().next().value!);
+    while (this.cache.size > 32) {
+      const oldest = this.cache.keys().next().value!;
+      this.cache.delete(oldest);
+      this.positions.delete(oldest);
+    }
   }
 
   /** Cached content for an id (a preview), or undefined: the caller decides whether fetching is worth it. */
