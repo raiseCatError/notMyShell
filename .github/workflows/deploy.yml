@@ -1,26 +1,21 @@
 name: Deploy Documentation Site to GitHub Pages
 
 on:
-  # Trigger the workflow every time you push to the `docs/github-pages-site` branch
   push:
-    branches: [ docs/github-pages-site ]
-  # Allows you to run this workflow manually from the Actions tab
+    branches: [ master, docs/github-pages-site ]
   workflow_dispatch:
 
-# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 env:
-  BUILD_PATH: "./site" # Path to the Astro project
+  BUILD_PATH: "./site"
 
 jobs:
   build:
@@ -55,6 +50,8 @@ jobs:
       - name: Setup Pages
         id: pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - name: Install dependencies
         run: ${{ steps.detect-package-manager.outputs.manager }} ${{ steps.detect-package-manager.outputs.command }}
         working-directory: ${{ env.BUILD_PATH }}
