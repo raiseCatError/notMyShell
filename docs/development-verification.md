@@ -105,7 +105,9 @@ reruns and final bounded-worker verification passed without assertion changes.
 
 For verification on another disk, set `NMSH_TEST_TMPDIR` to an existing short
 absolute directory on a filesystem supporting Unix sockets and permissions.
-The runner creates and cleans its private `nt-*` directories there. An invalid
+The runner creates and cleans its private `nt-*` directories there. Test children
+receive a private home inside that root so shell completion caches and other
+home-relative test artifacts cannot write to the host home. An invalid
 directory fails instead of falling back to the system disk. Keep paths short:
 nested PTY/session socket names still have the operating system's length limit.
 
