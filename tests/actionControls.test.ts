@@ -84,3 +84,23 @@ test('keys can be shown after each control and are kept in the measured width', 
   assert.equal(row.plain[0], '[>Apply<] Enter [ Cancel ] Esc');
   for (const columns of [30, 16, 8]) for (const text of renderActionRow([{...control('focused', 'Apply'), key: 'Enter'}, {...control('default', 'Cancel'), key: 'Esc'}], {columns, color: false, safe: true, keys: true}).plain) assert.ok(displayWidth(text) <= columns, `${columns}: ${text}`);
 });
+
+test('a disabled control\'s reason fits the width and is only listed for a control that is drawn', () => {
+  const remove: ActionControl = {id: 'Action.Remove', label: 'Remove worktree feature/very-long-branch-name', state: 'disabled', reason: 'the worktree has uncommitted changes that would be lost'};
+  const cancel: ActionControl = {id: 'Action.Cancel', label: 'Cancel', state: 'focused', essential: true};
+  for (const columns of [80, 40, 30, 16, 8, 4]) {
+    const row = renderActionRow([remove, cancel], {columns, color: true, safe: true});
+    for (const text of row.plain) assert.ok(displayWidth(text) <= columns, `${columns}: ${text}`);
+    for (const text of row.rows) assert.ok(displayWidth(stripAnsi(text)) <= columns, `${columns} (colored): ${stripAnsi(text)}`);
+    const drawn = row.regions.some(region => region.id === 'Action.Remove');
+    assert.equal(row.plain.some(text => text.includes(': the')), drawn, `${columns}: a reason line only with its control`);
+  }
+  assert.match(renderActionRow([remove, cancel], {columns: 120, color: false, safe: true}).plain[1]!, /^Remove worktree feature\/very-long-branch-name: the worktree has/u);
+  // Help still explains the folded control.
+  assert.deepEqual(describeActions([remove]), ['Remove worktree feature/very-long-branch-name (unavailable: the worktree has uncommitted changes that would be lost)']);
+});
+
+test('the tightest layout keeps a letter of the label, never only an ellipsis', () => {
+  const row = renderActionRow([{id: 'Action.Cancel', label: 'Cancel', state: 'focused', essential: true}, {id: 'Action.Other', label: 'Other', state: 'default'}], {columns: 8, color: false, safe: true});
+  assert.match(row.plain[0]!, /^>C</u);
+});

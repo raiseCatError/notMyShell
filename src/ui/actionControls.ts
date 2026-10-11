@@ -104,7 +104,9 @@ export function renderActionRow(controls: readonly ActionControl[], options: Act
     return {parts, width: parts.reduce((sum, part) => sum + displayWidth(part.text), 0) + gap * Math.max(0, parts.length - 1)};
   };
   const words = (control: ActionControl) => truncateText(clean(control.label), 24) || (control.key ?? control.id);
-  const keysOnly = (control: ActionControl) => control.key ?? truncateText(clean(control.label), 1);
+  // The tightest forms keep a recognizable letter rather than an ellipsis: `C` for Cancel, never `…`.
+  const initial = (control: ActionControl) => Array.from(clean(control.label))[0] ?? control.id.slice(0, 1);
+  const keysOnly = (control: ActionControl) => control.key ? clean(control.key) : initial(control);
   const essential = shown.filter(control => control.essential || control.state === 'focused' || control.state === 'destructiveFocused');
   const kept = essential.length ? essential : shown.slice(0, 1);
   const first = kept.slice(0, 1);
@@ -143,8 +145,14 @@ export function renderActionRow(controls: readonly ActionControl[], options: Act
   // The count of folded controls is shown when there is room for it; the control itself always comes first.
   if (folded && displayWidth(plainLine) + displayWidth(` +${folded}`) <= columns) { const more = ` +${folded}`; line += more; plainLine += more; }
   flush();
-  for (const control of shown) {
-    if (control.state === 'disabled' && control.reason) { const reason = `${clean(control.label)}: ${truncateText(clean(control.reason), Math.max(8, columns - displayWidth(clean(control.label)) - 2))}`; rows.push(color ? `${foreground(UI_COLORS.subtle)}${reason}\u001b[0m` : reason); plain.push(reason); }
+  // A reason belongs to a control that is drawn: a folded one is explained by describeActions (help), not by an orphan line.
+  // The line fits the width: when it is too long the label yields first (down to half the width), then the whole line is cut.
+  for (const {control} of layout.parts) {
+    if (control.state !== 'disabled' || !control.reason) continue;
+    const room = Math.max(Math.floor(columns / 2), columns - 2 - displayWidth(clean(control.reason)));
+    const label = truncateText(clean(control.label), Math.max(1, room));
+    const reason = truncateText(`${label}: ${clean(control.reason)}`, columns);
+    rows.push(color ? `${foreground(UI_COLORS.subtle)}${reason}\u001b[0m` : reason); plain.push(reason);
   }
   return {rows, regions, plain};
 }
