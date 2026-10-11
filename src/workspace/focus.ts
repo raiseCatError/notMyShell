@@ -58,9 +58,15 @@ export function regionOf(owner: WorkspaceOwner): FocusRegion {
  *
  * Opening a docked region does not take focus. With `columns`, opening a region that can only be a drawer at that
  * width focuses it: an unfocused drawer is not drawn (the column plan tucks it away), so opening it without focus
- * would show nothing.
+ * would show nothing. Toggling a tucked drawer brings it forward rather than closing it.
  */
 export function applyFocusAction(state: WorkspaceFocusState, action: WorkspaceActionId, columns?: number): WorkspaceFocusState {
+  if (columns !== undefined && (action === 'sidebar.toggle' || action === 'panel.toggle')) {
+    // Toggling a tucked drawer (open, not drawn) brings it forward; closing what cannot be seen would look like nothing.
+    const current = planWorkspaceColumns({columns, sidebarOpen: state.sidebarOpen, panelOpen: state.panelOpen});
+    if (action === 'sidebar.toggle' && state.sidebarOpen && state.owner !== 'LEFT_SIDEBAR' && current.sidebar.mode === 'drawer') return {...state, owner: 'LEFT_SIDEBAR'};
+    if (action === 'panel.toggle' && state.panelOpen && state.owner !== 'RIGHT_PANEL' && current.panel.mode === 'drawer') return {...state, owner: 'RIGHT_PANEL'};
+  }
   const next = focusTransition(state, action);
   if (columns === undefined) return next;
   const plan = planWorkspaceColumns({columns, sidebarOpen: next.sidebarOpen, panelOpen: next.panelOpen});
