@@ -186,7 +186,7 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
 import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
-import {selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
+import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
 import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
@@ -970,11 +970,13 @@ export class TerminalApp {
     this.presentationStartCwd = journal.startCwd;
     if (journal.live) {
       this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
+      this.lastActivityPair = ACTIVITY_VERBS[journal.live.previousActivityIndex ?? -1];
       const running = journal.live.running;
       if (running) {
         const {cleared} = this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
         this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared,
           startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
+          activity: ACTIVITY_VERBS[running.activityIndex ?? -1],
           // A submission checkpoint can precede the very first shell event.
           // Its replayed readiness prompt must not complete the queued command.
           awaitingExec: this.streamSeq === 0};
@@ -1063,6 +1065,7 @@ export class TerminalApp {
     if (this.running) {
       this.running.awaitingExec = false;
       this.running.historyAllowed = historyAllowed;
+      this.chooseActivityPair(this.running);
       if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
         this.cancelPresentation();
         this.passthrough = true;
@@ -1087,6 +1090,7 @@ export class TerminalApp {
       this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed, ...(queued !== undefined ? {queued: true} : {})};
+    this.chooseActivityPair(this.running);
     this.scheduleJournal();
     if (!this.replaying) this.render();
   }
@@ -1101,9 +1105,13 @@ export class TerminalApp {
     if (!this.sessionId || this.shellEnded) return undefined;
     const running = this.running;
     const outputStartId = this.output.activeOutputStartId;
+    const previousActivityIndex = this.lastActivityPair ? ACTIVITY_VERBS.indexOf(this.lastActivityPair) : -1;
+    const activityIndex = running?.activity ? ACTIVITY_VERBS.indexOf(running.activity) : -1;
     return {sessionId: this.sessionId, seq: this.streamSeq,
+      ...(previousActivityIndex < 0 ? {} : {previousActivityIndex}),
       ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
-        cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
+        cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed,
+        ...(activityIndex < 0 ? {} : {activityIndex})}} : {})};
   }
 
   async run(): Promise<number> {
@@ -9417,17 +9425,19 @@ export class TerminalApp {
   /** This command's phrase pair under Expressive wording: chosen once from the command and its start, so it never changes while it runs. */
   private activityPair(): ActivityVerbPair | undefined {
     if (!this.running || this.promptConfiguration.liveActivity.style !== 'expressive') return undefined;
-    if (!this.running.activity) {
-      this.running.activity = selectActivityVerb(this.running.command, this.running.startedAt, this.lastActivityPair);
-      this.lastActivityPair = this.running.activity;
-    }
-    return this.running.activity;
+    return this.chooseActivityPair(this.running);
+  }
+
+  private chooseActivityPair(command: {command: string; startedAt: number; activity?: ActivityVerbPair}): ActivityVerbPair {
+    if (!command.activity) command.activity = selectActivityVerb(command.command, command.startedAt, this.lastActivityPair);
+    this.lastActivityPair = command.activity;
+    return command.activity;
   }
 
   /** The pair for a command that just finished: the one it showed while running, or the same deterministic choice if it never drew. */
   private activityPairFor(command: {command: string; startedAt: number; activity?: ActivityVerbPair}): ActivityVerbPair | undefined {
     if (this.promptConfiguration.liveActivity.style !== 'expressive') return undefined;
-    return command.activity ?? selectActivityVerb(command.command, command.startedAt, this.lastActivityPair);
+    return this.chooseActivityPair(command);
   }
 
   private currentActivity(): string {

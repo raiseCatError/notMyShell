@@ -1,12 +1,43 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {completedActivity, liveActivityParts} from '../src/status/activity.js';
-import {DEFAULT_LIVE_ACTIVITY, normalizeLiveActivity} from '../src/prompt/configuration.js';
+import {DEFAULT_LIVE_ACTIVITY, DEFAULT_PROMPT_CONFIGURATION, loadPromptConfiguration, savePromptConfiguration, normalizeLiveActivity, normalizePromptConfiguration} from '../src/prompt/configuration.js';
 import {ACTIVITY_VERBS} from '../src/status/activityVerbs.js';
 import {stripAnsi} from '../src/util/text.js';
+import {TerminalApp} from '../src/app/TerminalApp.js';
+import {selectActivityVerb} from '../src/status/activityVerbs.js';
+import {isolateConfig} from './support/isolatedConfig.js';
+import {join} from 'node:path';
+import {exportSettings, parsePortableDocument, planImport} from '../src/configuration/portability.js';
 
 const cooking = {active: 'Cooking', complete: 'Cooked'};
 const at = new Date(2026, 9, 10, 14, 46, 0);
+
+test('a pair is chosen before rendering and its collision-avoiding choice survives the live journal', () => {
+  const {restore} = isolateConfig();
+  const first = new TerminalApp();
+  const second = new TerminalApp();
+  first['render'] = second['render'] = (() => {}) as never;
+  try {
+    const started = 1_700_000_000_000;
+    // Force the case where the previous phrase changes this command's deterministic base choice.
+    first['lastActivityPair'] = selectActivityVerb('echo stable', started);
+    first['onShellExec']('echo stable', started, 1);
+    const selected = first['running']?.activity;
+    assert.ok(selected, 'short commands must select a pair even if never drawn');
+    assert.notEqual(selected, selectActivityVerb('echo stable', started));
+    first['sessionId'] = 'stable-session';
+    const live = first['liveLink']()!;
+    assert.equal(live.running?.activityIndex, ACTIVITY_VERBS.indexOf(selected));
+    second['beginReattach']({cwd: '/tmp', ackedSeq: 0} as never, {startCwd: '/tmp', transcript: first['output'].transcript(), live} as never);
+    assert.deepEqual(second['activityPair'](), selected);
+    assert.deepEqual(second['activityPairFor'](second['running']!), selected);
+    assert.deepEqual(second['lastActivityPair'], selected, 'the next command also avoids the resumed phrase');
+  } finally {
+    for (const app of [first, second]) { app['stop'](0); app['session'].kill(); }
+    restore();
+  }
+});
 
 test('Expressive is the default and old settings without a style migrate to it', () => {
   assert.equal(DEFAULT_LIVE_ACTIVITY.style, 'expressive');
@@ -15,6 +46,20 @@ test('Expressive is the default and old settings without a style migrate to it',
   assert.equal(normalizeLiveActivity({style: 'classic'}).style, 'classic');
   assert.equal(normalizeLiveActivity({style: 'chatty'}).style, 'expressive');
   assert.equal(normalizeLiveActivity({style: 7}).style, 'expressive');
+});
+
+test('Classic and Expressive wording persist and survive settings transfer', () => {
+  const {directory, restore} = isolateConfig();
+  try {
+    for (const style of ['classic', 'expressive'] as const) {
+      const config = normalizePromptConfiguration({liveActivity: {style}});
+      const file = join(directory, 'wording.json');
+      savePromptConfiguration(config, file);
+      assert.equal(loadPromptConfiguration(file).liveActivity.style, style);
+      const transferred = parsePortableDocument(JSON.stringify(exportSettings(config, ['idle'])));
+      assert.equal(planImport(structuredClone(DEFAULT_PROMPT_CONFIGURATION), transferred, ['idle']).next.liveActivity.style, style);
+    }
+  } finally { restore(); }
 });
 
 test('the working line: the phrase and the real elapsed time; Classic still names the command', () => {
