@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync, statSync, utimesSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {detectMiseProject, MiseProjectService, miseTaskCommand, parseMiseMetadata} from '../src/tools/MiseProject.js';
@@ -137,7 +137,11 @@ test('local mise config files change project identity and are markers', () => {
       const localPath = join(f.root, name);
       const localFact = (identity: string) => (JSON.parse(identity) as string[]).find(fact => fact.startsWith(localPath + ':'));
       assert.ok(localFact(after.identity), 'identity includes the local marker itself');
-      writeFileSync(join(f.root, name), '[tools]\nnode = "24"\n');
+      const previous = statSync(localPath);
+      writeFileSync(localPath, '[tools]\nnode = "24"\n');
+      // Metadata-only detection requires a changed stat. An immediate same-size
+      // write may retain both mtime and ctime, even at nanosecond precision.
+      utimesSync(localPath, previous.atime, new Date(previous.mtimeMs + 1000));
       const edited = detectMiseProject(f.root, f.binary);
       assert.notEqual(localFact(edited.identity), localFact(after.identity), `${name} file identity changes on edit`);
     }

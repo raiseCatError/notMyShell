@@ -19,8 +19,9 @@ command and 128 KiB combined stdout/stderr limit. stderr is discarded; failures
 are generic. JSON parsing retains tool names/versions and task names only.
 Unknown fields, including `env`, `run`, descriptions and source paths, never
 enter UI/cache/persistence. Metadata remains in memory, bounded to 32 identities
-keyed by canonical cwd, binary and ancestor marker/project stat identity. Config
-changes invalidate an identity; explicit refresh reruns inspection. No typing or
+keyed by canonical cwd, binary and ancestor marker/project stat identity. Changes to marker filesystem metadata invalidate an identity. A same-size edit
+with unchanged timestamps can retain it; NMSh does not read config content to
+detect this. Explicit refresh requires renewed consent and reruns inspection. No typing or
 rendering invocation exists. A failed inspection is cached factually.
 
 Task Enter inserts a quoted visible `mise run '<task>'` into the composer. A
@@ -39,7 +40,8 @@ Task listing may fetch remote task files and evaluates resolved task directories
 The consent screen therefore does not describe metadata as side-effect-free.
 
 Standard marker coverage is conservative, not a full reimplementation of mise
-config selection: `mise.toml`, `.mise.toml`, `.mise/config.toml`,
+config selection: `mise.toml`, `.mise.toml`, `mise.local.toml`, `.mise.local.toml`,
+`.mise/config.toml`,
 `.config/mise/config.toml`, `.tool-versions`. Environment-specific/custom config
 may exist without a detected marker. Metadata inspection remains explicitly
 available when installed. There is no automatic task argument editor, active
