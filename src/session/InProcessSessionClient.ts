@@ -69,7 +69,8 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
 
   private queueShell(): QueueShell {
     const client = this;
-    return {submit: command => client.shell.submit(command), get isReady() { return client.shell.isReady ?? true; }};
+    return {submit: command => client.shell.submit(command), get isReady() { return client.shell.isReady ?? true; },
+      get adapter() { return {id: client.shellId}; }};
   }
   endInput(): void { this.shell.endInput(); }
   resize(columns: number, rows: number): void { this.size = {columns, rows}; this.shell.resize(columns, rows); }
