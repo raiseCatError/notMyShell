@@ -5,7 +5,7 @@ import {QueueDispatcher, type QueueEvent, type QueueShell} from '../src/session/
 import type {QueueState} from '../src/session/CommandQueue.js';
 
 function shell(): QueueShell & {submitted: string[]} {
-  return {submitted: [], isReady: true, submit(command: string) { this.submitted.push(command); }};
+  return {submitted: [], isReady: true, adapter: {id: 'zsh'}, submit(command: string) { this.submitted.push(command); }};
 }
 
 function harness() {
@@ -109,6 +109,15 @@ test('multi-line entries are submitted whole, exactly as prepared', () => {
   const script = "for f in a b; do\n  echo \"$f\"\ndone\ncat <<'EOF'\nliteral $HOME\nEOF";
   dispatcher.request({op: 'add', text: script});
   assert.deepEqual(target.submitted, [`{ ${script}\n}`], 'one block, exactly as the composer submits it');
+});
+
+test('Fish queue entries use a native begin/end block, including after a shell switch', () => {
+  const {dispatcher} = harness();
+  const fish = {...shell(), adapter: {id: 'fish' as const}};
+  dispatcher.onShellSwitched(fish);
+  dispatcher.onPrompt(0);
+  dispatcher.request({op: 'add', text: 'set -gx QUEUED kept\necho $QUEUED'});
+  assert.deepEqual(fish.submitted, ['begin\nset -gx QUEUED kept\necho $QUEUED\nend']);
 });
 
 test('a shell switch pauses the queue for the new shell; a shell exit drops and reports what is left', () => {

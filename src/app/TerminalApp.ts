@@ -2706,7 +2706,7 @@ export class TerminalApp {
       this.noteForeignScreen();
       this.handOverTerminal();
     }
-    this.session.submit(shellSubmission(command));
+    this.session.submit(shellSubmission(command, this.shellId));
     // After the command is on its way: one sweep acknowledging the submission (never delays it).
     if (!this.passthrough) this.startSweep('prompt', 'vivid');
     this.render();
