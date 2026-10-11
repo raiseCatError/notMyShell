@@ -125,6 +125,7 @@ test('fish\'s read is answered like its prompt: its queries never reach the host
       const started = Date.now();
       while (!output.includes('Name: ') && Date.now() - started < 10_000) await new Promise(done => setTimeout(done, 5));
       assert.ok(output.includes('Name: '), `fish ${secret}read drew its prompt`);
+      assert.equal(shell.inputWatch.state.terminalOwner, true, `reader event precedes the prompt: ${JSON.stringify(output)}`);
       // Nothing answers on the host side here; before, fish waited for the host's answer and dropped keys meanwhile.
       const prompt = once(shell, 'prompt');
       shell.write('abc\r');

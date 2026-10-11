@@ -2,6 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {MAX_MARKER_PAYLOAD, ShellProtocolDecoder} from '../src/shell/ShellProtocol.js';
 
+test('only an authenticated reader marker transfers terminal ownership, including split markers', () => {
+  const decoder = new ShellProtocolDecoder('token');
+  const foreign = '\u001b]777;nmsh;other;reader\u0007';
+  assert.deepEqual(decoder.push(foreign), [{kind: 'data', data: foreign}]);
+  assert.deepEqual(decoder.push('\u001b]777;nmsh;token;rea'), []);
+  assert.deepEqual(decoder.push('der\u0007Name: '), [{kind: 'reader'}, {kind: 'data', data: 'Name: '}]);
+});
+
 test('extracts split shell markers without leaking them into output', () => {
   const decoder = new ShellProtocolDecoder('token');
   assert.deepEqual(decoder.push('hello\u001B]777;nmsh;tok'), [{kind: 'data', data: 'hello'}]);

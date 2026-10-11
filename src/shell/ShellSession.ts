@@ -225,6 +225,8 @@ export class ShellSession extends EventEmitter<SessionEvents> {
           const data = this.answerEditor(this.commandStart && this.adapter.scrubCommandStart ? this.adapter.scrubCommandStart(event.data) : event.data);
           if (data) { this.commandStart = false; this.inputWatch.onOutput(data); this.emit('data', data); }
         }
+      } else if (event.kind === 'reader') {
+        if (this.ready && !this.atPrompt) this.inputWatch.onReader();
       } else if (event.kind === 'exec') {
         this.atPrompt = false;
         this.commandStart = true;

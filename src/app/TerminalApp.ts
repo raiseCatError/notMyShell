@@ -9149,6 +9149,10 @@ export class TerminalApp {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
     this.inputState = state;
+    if (state.terminalOwner) {
+      this.onActiveModeChange('PASSTHROUGH');
+      return;
+    }
     const request = state.request;
     const draft = this.runningDraft;
     // Keys typed after the program wrote its question, in the moment before NMSh could tell how it reads, were
