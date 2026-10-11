@@ -11,24 +11,24 @@ While NMSh is **not an AI-first terminal**, it offers powerful integrations with
 
 ## Local Guidance (`/btw` / `/ask`)
 
-NMSh provides a built-in assistant to help you navigate its commands and settings. 
+NMSh provides a built-in assistant to help you navigate its commands and settings.
 
 - Type `/btw` (or `/ask`) followed by a question to get local guidance mapped to typed NMSh actions.
-- By default, this uses a deterministic local engine. 
+- By default, this uses a deterministic local engine.
 - You can opt-in to using a local model (Qwen Local Understanding) through `/llm`. **Models are never downloaded without explicit Yes confirmation.**
 
 ## Claude Code Agent Context
 
-<Availability status="unreleased" pr="305" />
+<Availability status="unreleased" issue="305" />
 
-If you use Claude Code, NMSh can display its session context in your prompt or Context Rail. 
+If you use Claude Code, NMSh can display its session context in your prompt or Context Rail.
 
-NMSh uses Claude Code's official status-line interface, **never terminal scraping**. 
+NMSh uses Claude Code's official status-line interface, **never terminal scraping**.
 
 To set it up:
 1. Run `nmsh agent-status setup`. This shows the exact change to Claude Code's `settings.json`.
 2. Apply the change.
-3. NMSh will keep an allowlisted, private record per NMSh session. 
+3. NMSh will keep an allowlisted, private record per NMSh session.
 4. Modules can now show model, effort, context-window use, and 5-hour/7-day limits.
 
 > **Privacy:** Prompts, transcripts, and terminal output are never read by NMSh's agent status bridge. The data is display-only and is not kept in history.

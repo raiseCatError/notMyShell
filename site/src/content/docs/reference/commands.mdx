@@ -1,44 +1,82 @@
 ---
-title: Commands & Shortcuts
-description: Reference for NMSh slash-commands and keyboard shortcuts.
+title: Commands & Flags
+description: Complete reference for NMSh CLI flags, maintenance commands, and slash-commands.
 ---
 
 import Availability from '../../../components/Availability.astro';
 
 <Availability status="released" version="v0.17.0" />
 
-NMSh uses **slash commands** for its internal actions, keeping them entirely separate from your shell's namespace. Type `/` in the composer for the full list, or `/help` for everything grouped by area.
+notMyShell separates its own control surface from your shell's namespace. The `nmsh` executable is used to launch the frontend, manage sessions, and perform maintenance outside of a running session. Once inside, you use **slash commands** (`/`) to interact with NMSh.
 
-## Core Commands
+## CLI Flags
 
+When launching NMSh from a terminal, you can control session attachment and initialization behavior:
+
+| Flag / Argument | Description |
+|---|---|
+| `nmsh` | Default launch. Automatically attaches to an available detached session, or opens the Startup Picker if multiple exist. If no sessions exist, starts a new one. |
+| `nmsh --new` | Start a completely new session, bypassing the Startup Picker and ignoring any existing detached sessions. |
+| `nmsh --sessions` | List all running live sessions and their current attachment status (attached vs. detached). |
+| `nmsh --attach <id>` | Attach directly to the specified session ID. Fails if the session is already attached elsewhere. |
+| `nmsh --presets` | List configured startup session presets and their working directories. |
+| `nmsh --preset <name>` | Launch a new session using the specified preset name (e.g. executing its predefined startup commands). |
+| `nmsh --version` | Print the current NMSh version and platform architecture. |
+
+<div class="mt-4 border-l-4 border-purple-400 pl-4 bg-purple-50 dark:bg-purple-900/20 py-2 pr-4 rounded-r">
+  <p class="text-sm"><strong>Note:</strong> You cannot run <code>nmsh</code> recursively. Launching <code>nmsh</code> from within an already NMSh-managed shell will print a warning and refuse to nest the frontend.</p>
+</div>
+
+## Maintenance Commands
+
+These commands manage configuration and integrity without launching the terminal UI. They can safely be run from within an active NMSh session.
+
+### Configuration Management
+
+Configuration exports are human-readable, versioned JSON. They never include history, transcripts, credentials, onboarding progress, or machine-specific paths.
+
+- `nmsh config path`: Prints the absolute path to your `config.json`.
+- `nmsh config categories`: Lists available categories for selective export/import (e.g. `appearance`, `behavior`, `keybindings`).
+- `nmsh config export [--categories a,b] [--output FILE [--force]]`: Exports settings. If `--output` is omitted, prints to stdout.
+- `nmsh config import FILE [--categories a,b] [--yes]`: Imports settings. Previews changes and asks for confirmation unless `--yes` is passed.
+
+### Diagnostics and Cleanup
+
+- `nmsh doctor`: Runs integrity checks on the installation, binary extensions, environment variables, and ownership ledgers.
+- `nmsh uninstall`: Initiates the safe uninstallation wizard to clean up application data directories and configuration.
+- `nmsh packs`: Manage declarative Context Engine packs.
+
+## Slash Commands (Internal UI)
+
+Type `/` anywhere in the NMSh composer to open the command palette, or press `F1` / `Ctrl+Shift+P`.
+
+### Configuration & Setup
 | Command | Description |
 |---|---|
 | `/settings` | Open the central configuration panel. |
 | `/setup` | Launch the interactive Setup Cat onboarding. |
 | `/theme` | Open Theme Studio to manage your palette. |
-| `/prompt` | Configure prompt styles, geometry, and modules. |
-| `/layout` | Configure composer position and transcript presentation. |
-| `/shell` | Switch between zsh, Bash, and Fish in place. |
-| `/tools` | Open the curated tools browser for shell utilities. |
-| `/providers` | Select backend providers for history, pickers, etc. |
+| `/prompt` | Configure prompt styles, geometry, and Context Modules. |
+| `/layout` | Configure composer position (Bottom, Top, Flow) and transcript presentation. |
+| `/tools` | Open the curated tools browser to discover shell utilities. |
+| `/providers` | Select backend providers (e.g., Oh My Posh vs. Starship, system pickers). |
 | `/tmux` | Open the tmux Config Studio. |
-| `/dotfiles` | Import dotfiles from Git or local paths. |
-| `/history` | View structured command history. |
-| `/find` | Search the transcript. |
-| `/filter` | Filter transcript rows matching a string. |
-| `/copy` | Enter copy mode for clean text extraction. |
-| `/clear` | Clear the current viewport. |
-| `/resume` | View and attach to live and archived sessions. |
-| `/zoomies` | Keep the machine or display awake (also `/caffeinate`, `/awake`). |
-| `/zsh` | Escape to an ordinary interactive shell. |
+| `/dotfiles` | Import and apply dotfiles from Git or local paths. |
 
-## Important Shortcuts
-
-| Shortcut | Action |
+### Session & Environment
+| Command | Description |
 |---|---|
-| `F1`, `Ctrl+Shift+P` | Open the Command Palette. |
-| `Alt + Right Arrow` | Accept next word of a suggestion. |
-| `Right Arrow`, `End` | Accept full suggestion. |
-| `Ctrl + N` / `Ctrl + P` | Cycle through suggestion alternatives. |
-| `Esc` | Dismiss suggestion or close panel. |
-| `Ctrl + O` | Expand a folded output block. |
+| `/shell` | Switch between zsh, Bash, and Fish in place without restarting. |
+| `/resume` | View the Session Manager to attach to live sessions or browse archives. |
+| `/zoomies` | Keep the machine or display awake (aliases: `/caffeinate`, `/awake`). |
+| `/zsh`, `/bash`, `/fish` | Escape the frontend and hand off the terminal to an ordinary interactive shell. |
+| `/exit` | Terminate the current session completely. |
+
+### Transcript Interaction
+| Command | Description |
+|---|---|
+| `/history` | View structured command history with elapsed time and status. |
+| `/find` | Search the transcript buffer. |
+| `/filter` | Filter transcript rows matching a specific string or regex. |
+| `/copy` | Enter copy mode for clean, plaintext extraction without ANSI escapes. |
+| `/clear` | Clear the current viewport (keeps history intact). |

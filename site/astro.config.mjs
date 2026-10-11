@@ -1,56 +1,60 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
-
 import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
+  site: 'https://raisecaterror.github.io',
+  base: '/notMyShell',
   integrations: [
       starlight({
-          title: 'notMyShell (NMSh)',
+          title: 'notMyShell',
           customCss: [
               './src/styles/global.css',
               './src/custom.css',
           ],
           logo: {
-              src: './src/assets/houston.webp', // We will keep the default for now until we have Vespyr
+              src: './src/assets/nmsh-lockup.svg',
           },
           sidebar: [
               {
                   label: 'Learn',
                   items: [
-                      { label: 'What is NMSh?', link: '/notMyShell/guides/getting-started/' },
-                      { label: 'Fundamental Concepts', link: '/notMyShell/guides/concepts/' },
+                      { label: 'What is NMSh?', slug: 'guides/getting-started' },
+                      { label: 'Fundamental Concepts', slug: 'guides/concepts' },
                   ],
               },
               {
                   label: 'Guides',
                   items: [
-                      { label: 'Composer and Interaction', link: '/notMyShell/guides/composer/' },
-                      { label: 'Transcripts and Workflows', link: '/notMyShell/guides/transcripts/' },
-                      { label: 'Themes and Customization', link: '/notMyShell/guides/customization/' },
-                      { label: 'Context Engine', link: '/notMyShell/guides/context-engine/' },
-                      { label: 'Sessions and Workspaces', link: '/notMyShell/guides/sessions/' },
-                      { label: 'Tool Integrations', link: '/notMyShell/guides/tools/' },
-                      { label: 'Managed Agents', link: '/notMyShell/guides/agents/' },
+                      { label: 'Composer and Interaction', slug: 'guides/composer' },
+                      { label: 'Transcripts and Workflows', slug: 'guides/transcripts' },
+                      { label: 'Themes and Customization', slug: 'guides/customization' },
+                      { label: 'Context Engine', slug: 'guides/context-engine' },
+                      { label: 'Sessions and Workspaces', slug: 'guides/sessions' },
+                      { label: 'Tool Integrations', slug: 'guides/tools' },
+                      { label: 'Managed Agents', slug: 'guides/agents' },
                   ],
               },
               {
                   label: 'Reference',
                   items: [
-                      { label: 'Commands & Shortcuts', link: '/notMyShell/reference/commands/' },
+                      { label: 'Commands & Flags', slug: 'reference/commands' },
+                      { label: 'Configuration', slug: 'reference/configuration' },
+                      { label: 'Keyboard Shortcuts', slug: 'reference/keyboard-shortcuts' },
                   ],
               },
               {
                   label: 'Project',
                   items: [
-                      { label: 'Architecture', link: '/notMyShell/project/architecture/' },
-                      { label: 'Roadmap & Releases', link: '/notMyShell/project/roadmap/' },
+                      { label: 'Architecture', slug: 'project/architecture' },
+                      { label: 'Roadmap & Releases', slug: 'project/roadmap' },
+                      { label: 'Troubleshooting', slug: 'guides/troubleshooting' },
+                      { label: 'Contributing', slug: 'guides/contributing' },
                   ],
               },
           ],
       }),
-	],
-
+  ],
   vite: {
     plugins: [tailwindcss()],
   },

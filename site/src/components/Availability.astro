@@ -1,15 +1,17 @@
 ---
 interface Props {
-  status: 'released' | 'unreleased' | 'planned';
+  status: 'released' | 'unreleased' | 'in-progress' | 'planned';
   version?: string;
   pr?: string;
+  issue?: string;
 }
 
-const { status, version, pr } = Astro.props;
+const { status, version, pr, issue } = Astro.props;
 
 const statusConfig = {
-  released: { label: 'Released', class: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' },
-  unreleased: { label: 'Unreleased (Development)', class: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300' },
+  released: { label: 'Released', class: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' },
+  unreleased: { label: 'Unreleased (v0.18 Dev)', class: 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300' },
+  'in-progress': { label: 'In Progress', class: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300' },
   planned: { label: 'Planned', class: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300' }
 };
 
@@ -17,21 +19,28 @@ const config = statusConfig[status];
 ---
 
 <div class="not-content my-4 p-3 border rounded-md flex items-center gap-3 text-sm" class:list={[{
-  'border-green-200 dark:border-green-800': status === 'released',
-  'border-yellow-200 dark:border-yellow-800': status === 'unreleased',
+  'border-green-200 dark:border-green-800/50': status === 'released',
+  'border-purple-200 dark:border-purple-800/50': status === 'unreleased',
+  'border-yellow-200 dark:border-yellow-800/50': status === 'in-progress',
   'border-gray-200 dark:border-gray-700': status === 'planned',
 }]}>
-  <span class="font-medium px-2 py-0.5 rounded text-xs" class:list={[config.class]}>
+  <span class="font-medium px-2 py-0.5 rounded text-xs whitespace-nowrap" class:list={[config.class]}>
     {config.label}
   </span>
   <span class="flex-1 opacity-90">
     {status === 'released' && version && `Available in stable release ${version}.`}
-    {status === 'unreleased' && `This feature is implemented on the development branch but not yet part of a stable release.`}
+    {status === 'unreleased' && `This feature is implemented on the development branch and planned for v0.18.`}
+    {status === 'in-progress' && `This feature is currently being implemented.`}
     {status === 'planned' && `This feature is planned for a future release.`}
   </span>
   {pr && (
-    <a href={`https://github.com/raiseCatError/notMyShell/pull/${pr}`} target="_blank" rel="noopener noreferrer" class="text-xs underline hover:no-underline opacity-80 hover:opacity-100 transition-opacity">
-      View PR #{pr}
+    <a href={`https://github.com/raiseCatError/notMyShell/pull/${pr}`} target="_blank" rel="noopener noreferrer" class="text-xs font-mono underline hover:no-underline opacity-80 hover:opacity-100 transition-opacity">
+      PR #{pr}
+    </a>
+  )}
+  {issue && (
+    <a href={`https://github.com/raiseCatError/notMyShell/issues/${issue}`} target="_blank" rel="noopener noreferrer" class="text-xs font-mono underline hover:no-underline opacity-80 hover:opacity-100 transition-opacity">
+      Issue #{issue}
     </a>
   )}
 </div>

@@ -32,9 +32,9 @@ You can configure where modules appear by typing `/prompt` and opening the **Mod
 
 ## Declarative Context Packs
 
-<Availability status="unreleased" pr="305" />
+<Availability status="unreleased" issue="305" />
 
-The first-party catalog adds modules through bundled Context Packs (`nmsh.project`, `nmsh.environment`, `nmsh.cloud`, etc.). 
+The first-party catalog adds modules through bundled Context Packs (`nmsh.project`, `nmsh.environment`, `nmsh.cloud`, etc.).
 
 **Packs are data, not plugins.** A pack cannot contain or reference shell text, commands, argv, JavaScript, executable or file paths, templates, includes, hooks or URLs. Parsing is strict and bounded.
 
@@ -48,9 +48,55 @@ nmsh packs remove ID [--yes]
 nmsh packs enable ID | disable ID
 ```
 
+## First-Party Module Catalog
+
+NMSh bundles 7 first-party Context Packs. Each module specifies exactly what facts it reads, its privacy level, and its default surface routing.
+
+### 1. Project (`nmsh.project`)
+Identifies and surfaces metadata about the current directory's workspace.
+- **Modules**: Node Package, Rust Crate, Go Module, Python Package.
+- **Sources**: Fast bounded reads of `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`.
+- **Default Surface**: Right Context.
+
+### 2. Environment (`nmsh.environment`)
+Surfaces active runtime versions and virtual environments.
+- **Modules**: Python venv, Node version, Ruby version, active toolchain versions.
+- **Sources**: Environment variables (`VIRTUAL_ENV`), dotfiles (`.nvmrc`, `.node-version`).
+- **Default Surface**: Right Context.
+
+### 3. Infrastructure (`nmsh.infrastructure`)
+Surfaces container and orchestration context.
+- **Modules**: Docker Context, Kubernetes Context (`kubeContext`).
+- **Sources**: Environment variables (`DOCKER_CONTEXT`, `KUBECONFIG`), default kubeconfig parse.
+- **Default Surface**: Status Strip.
+
+### 4. Cloud (`nmsh.cloud`)
+Displays active cloud provider profiles and regions.
+- **Modules**: AWS Profile, GCP Project, Azure Subscription.
+- **Sources**: Environment variables (`AWS_PROFILE`, `GOOGLE_CLOUD_PROJECT`).
+- **Default Surface**: Status Strip.
+
+### 5. System (`nmsh.system`)
+Machine-level telemetrics and environment identity.
+- **Modules**: Battery, Load Average, Memory, Exit Status (`exitStatus`).
+- **Sources**: Fixed system API paths (never running arbitrary executables).
+- **Default Surface**: Status Strip / Context Rail.
+
+### 6. VCS (`nmsh.vcs`)
+Version control tracking.
+- **Modules**: Git Branch (`gitBranch`), Git Status (`gitStatus`).
+- **Sources**: Sandboxed `git` commands (trusted executable, hooks and `fsmonitor` explicitly disabled).
+- **Default Surface**: Main Prompt.
+
+### 7. Agents (`nmsh.agents`)
+Integrations with AI agents interacting with or observing the shell.
+- **Modules**: Claude Code, Aider, local managed agents.
+- **Sources**: Well-known session variables.
+- **Default Surface**: Context Rail.
+
 ## Security and Discovery
 
-**Entering a repository never executes repository-controlled code through NMSh context discovery, contacts the network, or exposes secrets.** 
+**Entering a repository never executes repository-controlled code through NMSh context discovery, contacts the network, or exposes secrets.**
 
 - Metadata reads refuse leaf symlinks and special files and are size-bounded.
 - Executables found on PATH are evidence, never permission: NMSh does not run them for context.

@@ -3,11 +3,11 @@
   --sl-color-accent-low: #28164b;
   --sl-color-accent: #a67cf3;
   --sl-color-accent-high: #dfccfe;
-  
+
   /* Text adjustments for better contrast with the accent */
   --sl-color-white: #ffffff;
   --sl-color-black: #000000;
-  
+
   /* Dark mode specific tweaks if needed */
 }
 

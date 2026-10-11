@@ -1,0 +1,70 @@
+---
+title: Contributing
+description: Guidelines for developing notMyShell and maintaining the documentation.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+Thank you for your interest in improving notMyShell. NMSh is an open-source terminal frontend, and development happens entirely on GitHub.
+
+## Project Structure
+
+- `src/`: The core TypeScript application (UI, PTY orchestration, semantic parser, configuration).
+- `site/`: The Astro/Starlight documentation website (where you are now).
+- `tests/`: Automated test suite asserting correctness and observability.
+- `assets/`: Official branding, vectors, and design lockups.
+- `docs/`: In-repository architecture and design decision records.
+
+## Branching Strategy
+
+- **`master`**: The stable branch, representing the latest released version of NMSh. Do not commit here unless resolving a critical hotfix for a stable release.
+- **`dev`**: The active development branch. All feature PRs and bug fixes must target `dev`.
+- **Feature Branches**: Should be created off `dev` and cleanly merge back into it.
+
+## Development Loop
+
+To work on NMSh locally:
+
+1. Clone the repository and checkout `dev`.
+2. Run `npm ci` to install dependencies.
+3. Build the core application: `npm run build`.
+4. Launch your local build in development mode using `npm run start` or `./bin/nmsh`.
+
+### Verification & Testing
+
+Do not hardcode test totals in documentation, as they change with every merge.
+
+- `npm run verify:fast`: Runs the build, a focused test subset, and diff checks. Ideal for rapid iteration.
+- `npm run verify`: Runs the full canonical test suite and linter. **Must pass before pushing.**
+- `npm run verify:release`: Includes benchmark script typechecking and bounded timing smoke tests. Used for release qualification.
+
+### Physical Terminal Validation
+
+"All tests passed" is not equivalent to "human terminal validation passed." Features involving visual geometry, PTY resizing, keyboard protocols (e.g., Kitty `CSI u`), or system integration must be physically verified in terminal hosts (Ghostty, Terminal.app, iTerm2, etc.) before closure.
+
+## Documentation Website
+
+The documentation website lives in the `site/` directory and is built with Astro and Starlight.
+
+- **No existing screenshots**: Do not embed legacy screenshots or generated AI UI mockups. Use only official vector branding (`assets/brand/nmsh-lockup.svg`, `assets/readme/vespyr-divider.svg`).
+- **Feature Provenance**: Use the `<Availability />` component to distinctly mark features that are `released`, `unreleased` (on the dev branch), `in-progress`, or `planned`.
+- **Local Docs Dev**:
+  ```bash
+  cd site
+  npm install
+  npm run dev
+  ```
+
+## AI Agent Directives
+
+If you are a coding agent or AI assistant contributing to NMSh:
+- **Read `AGENTS.md`** first. It contains standing authorization, strict constraints on project boards, and workflow rules.
+- Do not commit directly to `master`.
+- Do not falsely claim human validation has occurred. Leave issues requiring manual terminal verification open with a "Needs Human Test" label.
+- Do not attribute commits to AI or use AI co-author trailers.
+
+## Issue Tracking
+
+GitHub is the durable source of truth. Refer to the [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) and the [ROADMAP](https://github.com/raiseCatError/notMyShell/blob/master/ROADMAP.md) before starting new work.
