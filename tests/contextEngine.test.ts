@@ -47,11 +47,15 @@ test('new explicit surface settings survive normalization without a dead Status 
   value.modules[1].surface = 'contextRail';
   value.modules[2].surface = 'hidden';
   value.modules[3].surface = 'statusStrip';
+  value.modules[4].surface = 'statusStrip';
+  const exit = value.modules.findIndex((module: {id: string}) => module.id === 'exitStatus');
+  value.modules[exit].surface = 'statusStrip';
   value.contextRail = {mode: 'always', rows: 2, theme: 'choose', palette: 'ocean', style: 'minimal', overflow: 'wrap'};
   const migrated = normalizePromptConfiguration(value);
   assert.equal(migrated.modules[1]!.surface, 'contextRail');
   assert.equal(migrated.modules[2]!.surface, 'hidden');
-  assert.equal(migrated.modules[3]!.surface, undefined);
+  assert.equal(migrated.modules[3]!.surface, 'statusStrip', 'built-in context may route to the Status Strip');
+  assert.equal(migrated.modules.find(module => module.id === 'exitStatus')!.surface, undefined, 'the exit status cannot: no dead choice');
   assert.deepEqual(migrated.contextRail, {...DEFAULT_CONTEXT_RAIL, spacing: 'attached', mode: 'always', rows: 2, theme: 'choose', palette: 'ocean', style: 'minimal', overflow: 'priority'});
 });
 

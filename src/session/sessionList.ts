@@ -1,10 +1,18 @@
 import {homedir} from 'node:os';
 import type {SessionInfo} from './SessionProtocol.js';
 import {liveStatusParts} from './liveStatus.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
+
+/**
+ * Text a session reports (its cwd, running command, a program's title) is hostile terminal data: whole escape
+ * sequences are removed before it is displayed. A directory named evil ESC]0;PWNED BEL can reach NMSh without its
+ * BEL, and written raw that unterminated OSC swallowed the rest of the screen.
+ */
+export const sessionText = (text: string): string => stripTerminalControls(text);
 
 /** A path under the home directory as ~/…, so status stays visible in narrow rows. */
 export function tildePath(path: string, home = homedir()): string {
-  return home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
+  return sessionText(home && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path);
 }
 
 export function formatAge(ms: number): string {

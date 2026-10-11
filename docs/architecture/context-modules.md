@@ -8,7 +8,7 @@ without taking over shell execution or running anything the workspace chose.
 > **Release status.** v0.17.0 shipped the foundation: typed fact metadata,
 > native module routing and the Context Rail. Everything else described here —
 > capability scheduling, the first-party module catalog, declarative Context
-> Packs, Status Strip routing and Claude Code agent context — is on the
+> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — is on the
 > development line after v0.17.0 and is **not part of any published release yet**.
 
 ## From capability to presentation
@@ -95,7 +95,7 @@ large repository, with generous p95 budgets enforced in CI.
 | `infra.kubernetes`, `infra.docker` | `current-context` and contexts of KUBECONFIG files (users and `exec` entries are never read); the Docker CLI's current context |
 | `infra.terraform`, `infra.helm`, `infra.pulumi` | `*.tf` names and the selected workspace; `Chart.yaml`; `Pulumi.yaml` and the CLI's selected stack |
 | `cloud.aws`, `cloud.gcp`, `cloud.azure` | profile, region and SSO metadata from AWS config (the credentials file only for an expiry time); the active gcloud configuration; the default Azure subscription |
-| `system.os`, `session.user`, `session.jobs`, `session.duration`, `system.time`, `system.memory`, `system.battery` | OS release files; user, host and SSH presence (never the client address); the shell's job count; the clock; fixed system tools at absolute paths (`/usr/bin/vm_stat`, `/usr/bin/pmset`) or `/proc` and `/sys` on Linux |
+| `system.os`, `session.user`, `session.jobs`, `session.duration`, `system.time`, `system.memory`, `system.battery`, `system.cpu`, `system.uptime` | OS release files; user, host and SSH presence (never the client address); the shell's job count; the clock; fixed system tools at absolute paths (`/usr/bin/vm_stat`, `/usr/bin/pmset`) or `/proc` and `/sys` on Linux; kernel CPU counters and uptime through Node (no process). The Status Strip's own items use these same capabilities |
 | `vcs.git` | stash depth and upstream from Git's own files, alongside the existing Git branch/status collector |
 | `agent.claude` | the private record Claude Code's status line hands to NMSh (see Agent context) |
 
@@ -142,7 +142,7 @@ priority on narrow screens.
 | Main Prompt | Stable identity and navigation context, such as directory, project and Git |
 | Right Context | Independently anchored context at the right edge of the prompt area |
 | Context Rail | Live contextual modules attached to the composer, with their own geometry and priority fitting |
-| Status Strip | Persistent low-attention state; modules join its existing items at a lower priority, so the strip's own items keep their room |
+| Status Strip | One persistent row at the Top or Bottom of the NMSh pane with Left, Center and Right groups; routed modules carry a strip group and outrank the strip's own items when space runs out |
 
 Choices per module: **Auto** (the module's preferred surface), **Main Prompt**,
 **Right Context**, **Context Rail**, **Status Strip** where the module supports

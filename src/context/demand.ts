@@ -29,8 +29,29 @@ export function moduleRelevantToCommand(id: string, words: readonly string[]): b
   return matchesCommand(moduleDefinition(id)?.triggers ?? [], words);
 }
 
-export function contextDemand(configuration: Pick<PromptConfiguration, 'modules'>, input: DemandInput): ContextDemand {
+/**
+ * The Status Strip's own items (clock, CPU, RAM, battery, uptime) are Context
+ * Engine facts like any module's: demanded only while the strip row is showing
+ * and only for the items switched on, so a hidden strip collects nothing.
+ */
+export function statusStripDemand(strip: PromptConfiguration['statusStrip'] | undefined, visible: boolean): Array<[string, readonly string[]]> {
+  if (!strip?.enabled || !visible) return [];
+  return [
+    ...(strip.clock ? [['system.time', ['now']] as [string, string[]]] : []),
+    ...(strip.cpu ? [['system.cpu', ['percent']] as [string, string[]]] : []),
+    ...(strip.ram ? [['system.memory', ['usedPercent', 'usedBytes', 'totalBytes']] as [string, string[]]] : []),
+    ...(strip.battery ? [['system.battery', ['percent', 'charging']] as [string, string[]]] : []),
+    ...(strip.uptime ? [['system.uptime', ['seconds']] as [string, string[]]] : []),
+  ];
+}
+
+export function contextDemand(configuration: Pick<PromptConfiguration, 'modules'> & Partial<Pick<PromptConfiguration, 'statusStrip'>>, input: DemandInput): ContextDemand {
   const demand = new Map<string, Set<string>>();
+  for (const [capability, fields] of statusStripDemand(configuration.statusStrip, input.statusStripVisible)) {
+    const set = demand.get(capability) ?? new Set<string>();
+    for (const field of fields) set.add(field);
+    demand.set(capability, set);
+  }
   for (const module of configuration.modules) {
     const definition = moduleDefinition(module.id);
     if (!definition || !module.visible || !definition.facts.size) continue;

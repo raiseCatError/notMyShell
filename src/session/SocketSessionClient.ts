@@ -123,6 +123,19 @@ export async function dismissNotice(socketPath: string, sessionId: string, timeo
   socket.end();
 }
 
+/**
+ * The session service creates every shell, including its bootstrap, with the
+ * code it loaded when it started. It outlives frontends (it exits only once
+ * no sessions or frontends remain), so after NMSh is updated an older service
+ * keeps creating shells the old way. Restarting it would end live sessions,
+ * so NMSh says so instead. Undefined when the builds match or are unknown.
+ */
+export function serviceBuildNotice(serviceBuild: string | undefined, own: {version: string; commit: string}): string | undefined {
+  if (own.commit === 'unknown' || serviceBuild === `${own.version} ${own.commit}`) return undefined;
+  return `This shell was started by an older NMSh session service (${serviceBuild ?? 'build not reported'}; this window is ${own.version} ${own.commit}), `
+    + 'so fixes to how shells start are not in it yet. The service restarts by itself once every NMSh window and live session has ended.';
+}
+
 export const OLDER_SERVICE_SWITCH = 'The session service running this session is an older NMSh build without shell switching. '
   + 'Its live sessions keep running; once they end, the next nmsh launch starts the current service.';
 

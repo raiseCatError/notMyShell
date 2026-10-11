@@ -1,3 +1,4 @@
+import {stripTerminalControls} from '../util/terminalControls.js';
 import {homedir} from 'node:os';
 import {colorLevel} from '../presentation/capabilities.js';
 import {getCurrentGlyphMode} from '../ui/glyphs.js';
@@ -16,7 +17,6 @@ const BRAND_ACCENT = {red: 166, green: 124, blue: 243};
 const DIVIDER = {red: 105, green: 98, blue: 130};
 const BOLD = '\u001B[1m';
 const NORMAL_WEIGHT = '\u001B[22m';
-const CONTROLS = /[\u0000-\u001f\u007f-\u009f]/gu;
 
 export interface WelcomeSnapshot {
   identity: BuildIdentity;
@@ -41,7 +41,7 @@ export function createWelcomeSnapshot(identity: BuildIdentity, cwd: string, shel
 }
 
 function safe(value: string): string {
-  return value.replace(CONTROLS, '�');
+  return stripTerminalControls(value);
 }
 
 function shortCwd(cwd: string): string {

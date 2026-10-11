@@ -2,7 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import {clearProviderDetection, type ProviderStatus, type ProviderInstall} from '../providers/providers.js';
 import {TaskProgress, renderTaskProgress} from '../status/TaskProgress.js';
 import {createConfirm, editText, handleConfirmKey, renderConfirm, type ConfirmState} from '../ui/formControls.js';
-import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand, fullWidthRowBand} from '../ui/PanelShell.js';
+import {renderTabStrip, framePanel, onSelectedBand, selectedRowBand, fullWidthRowBand, cycleTab, tabCycleDelta} from '../ui/PanelShell.js';
 import {colorLevel} from '../presentation/capabilities.js';
 import {foregroundOf} from '../chroma/chroma.js';
 import {languageIdentity} from '../languages/linguistLanguageColors.js';
@@ -235,9 +235,8 @@ export function toolsKey(state: ToolsPanel, key: Key): ToolsAction | undefined {
     } else if (key.value.toLowerCase() === 'c' && state.detail.configuration && state.statuses[state.detail.id]?.state === 'installed') return 'configure';
     else if (key.value.toLowerCase() === 'p' && state.detail.providerFamily) return 'provider';
     else if (key.value.toLowerCase() === 'r') return 'refresh';
-  } else if (key.kind === 'left' || key.kind === 'right') {
-    const index = TABS.indexOf(state.tab);
-    state.tab = TABS[(index + (key.kind === 'left' ? TABS.length - 1 : 1)) % TABS.length]!;
+  } else if (key.kind === 'left' || key.kind === 'right' || tabCycleDelta(key)) {
+    state.tab = cycleTab(TABS, state.tab, tabCycleDelta(key) ?? (key.kind === 'left' ? -1 : 1));
     state.selected = 0;
   } else if (key.kind === 'up' || key.kind === 'down') {
     state.selected = Math.max(0, Math.min(visibleTools(state).length - 1, state.selected + (key.kind === 'up' ? -1 : 1)));
@@ -439,7 +438,7 @@ export function renderTools(state: ToolsPanel, columns: number, height: number):
   resolveColors();
   const tabsRow = renderTabStrip(['Discover', 'Installed', 'Local', 'Configure', 'Errors'], TABS.indexOf(state.tab), columns);
   const rows: string[] = [`${PRIMARY}  Tools${RESET}  ${SUBTLE}optional · NMSh is complete without them; switch providers anytime${RESET}`, tabsRow, ''];
-  let footer: Array<[string, string]> = [['↑↓', 'select'], ['←→', 'tabs'], ...(state.tab === 'discover' ? [['Space', state.selection?.size ? `select · ${state.selection.size} chosen` : 'select'] as [string, string]] : []), ['Enter', state.selection?.size ? 'review install' : 'details'], ['type', 'search'], ['U', 'check updates'], ['Esc', state.query ? 'clear search' : 'close']];
+  let footer: Array<[string, string]> = [['↑↓', 'select'], ['Tab/←→', 'tabs'], ...(state.tab === 'discover' ? [['Space', state.selection?.size ? `select · ${state.selection.size} chosen` : 'select'] as [string, string]] : []), ['Enter', state.selection?.size ? 'review install' : 'details'], ['type', 'search'], ['U', 'check updates'], ['Esc', state.query ? 'clear search' : 'close']];
   if (state.onboarding !== undefined) {
     rows.push(`${PRIMARY}  NMSh is complete out of the box. No external shell tools are required.${RESET}`,
       `${SUBTLE}  Optional tools can be added now or later; browsing changes nothing and each install asks first.${RESET}`,

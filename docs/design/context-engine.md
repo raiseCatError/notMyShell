@@ -159,10 +159,21 @@ explicit Auto uses the definition's preference. Hidden suppresses presentation
 are appended (only show-on-command cloud, infrastructure and agent modules start
 visible).
 
-**Status Strip routing** is implemented because it fits without changing the
-strip's semantics: routed modules render through the same painter and join the
-strip's existing items at a lower priority than every native strip item, so
-CPU/memory/battery/branch items keep their room and modules drop first.
+**Status Strip** (development line, Status Strip 2.0). The strip is one row at
+the Top or Bottom edge of the NMSh pane (inside tmux, Bottom sits above tmux's
+own status line, which is outside the pane) with independent Left, Center and
+Right groups. Routed modules render through the same painter as every surface
+and carry a strip-only group (`stripZone`, separate from Main Prompt
+left/right; absent means Right, where strip modules always sat). The strip's
+own clock, CPU, RAM, battery and uptime are the `system.time`, `system.cpu`,
+`system.memory`, `system.battery` and `system.uptime` capabilities, demanded
+only while the strip row shows and only for the items switched on; there is no
+second sampler. Fitting is deterministic in display cells: compact forms first,
+then the lowest priority drops (the Center group before the edge groups), Keep
+Awake narrows last, and the row is hidden below 30 columns or 8 rows. Routed
+modules outrank the strip's own items. Rendering is pure; the aggregate is never
+persisted. `/strip` is the Studio (presets Minimal, Developer, System; Custom
+after edits; previewed before applying and undoable), `/modules` routes.
 
 ## Context Rail
 

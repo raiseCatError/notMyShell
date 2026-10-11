@@ -1,5 +1,6 @@
 import {safeContextText} from '../context/facts.js';
 import {terminalProfile} from './capabilities.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 
 /**
  * Opt-in terminal title ownership (OSC 2).
@@ -32,7 +33,20 @@ export function titleSupport(env: NodeJS.ProcessEnv = process.env): TitleSupport
 
 /** Printable, single-line, bounded: an OSC payload can never be terminated or extended from inside. */
 export function sanitizeTitle(text: string): string {
-  return safeContextText(text.replace(/\s+/gu, ' ').trim(), 80).replace(/[\u0007\u001b\u009c]/gu, '');
+  // Whole sequences go first (no `]0;PWNED` debris); safeContextText still bounds width and neutralizes anything left.
+  return safeContextText(stripTerminalControls(text.replace(/\s+/gu, ' ')).replace(/\s+/gu, ' ').trim(), 80).replace(/[\u0007\u001b\u009c]/gu, '');
+}
+
+/** The title NMSh wants: Project shows the project only; Project and session adds the session's display name. */
+export function composeTitle(mode: TerminalTitleMode, project: string, session: string | undefined, running?: string): string | undefined {
+  if (mode === 'off') return undefined;
+  const identity = mode === 'session' && session ? `${project} — ${session}` : project;
+  return running ? `${running} · ${identity}` : identity;
+}
+
+/** The person's own name, else the familiar signature, else whatever label notices last knew. */
+export function sessionTitleName(identity: {name?: string; signature?: string} | undefined, fallback?: string): string | undefined {
+  return identity?.name || identity?.signature || fallback || undefined;
 }
 
 export const osc2 = (title: string): string => `\u001B]2;${sanitizeTitle(title)}\u001B\\`;

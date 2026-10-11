@@ -273,7 +273,9 @@ test('/prompt Main Prompt and Rich Git views: arrows switch views and edit every
   press(state, 'right');
   assert.equal(state.view, 'git');
   press(state, 'complete');
-  assert.equal(state.view, 'git', 'Tab does not switch views');
+  assert.equal(state.view, 'chroma', 'Tab cycles the visual view tabs');
+  press(state, 'focusPrevious');
+  assert.equal(state.view, 'git', 'Shift+Tab goes back');
   press(state, 'down');
   press(state, 'text', ' ');
   assert.equal(state.draft.nmsh.gitEnabled, false, 'Space toggles Enabled');

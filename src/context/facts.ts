@@ -1,5 +1,6 @@
 import type {PromptContext, GitStatus, ToolchainId} from '../shell/ShellContext.js';
 import {truncateText} from '../util/text.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 
 export type FactTrust = 'session' | 'workspace' | 'user-metadata' | 'local-inventory';
 export type FactSensitivity = 'public' | 'private' | 'secret';
@@ -49,11 +50,16 @@ export const FACT_CAPABILITIES = {
 } as const satisfies Record<FactId, string>;
 export type ContextCapabilityId = typeof FACT_CAPABILITIES[FactId];
 
-const DISPLAY_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]/gu;
 
-/** Literal contextual data only. Bound work before cell measurement; neutralize bidi overrides/isolates too. */
+/**
+ * Literal contextual data only. Bound work before cell measurement. Whole
+ * terminal control sequences (OSC/DCS/APC to BEL or ST, CSI, C1 forms,
+ * unterminated ones) are removed rather than leaving printable debris such as
+ * `]0;PWNED`, and remaining controls and bidi overrides/isolates are dropped:
+ * the same scrubber terminal titles use.
+ */
 export function safeContextText(value: string, maxCells = 512): string {
-  return truncateText(value.slice(0, 1024).replace(DISPLAY_CONTROLS, '�'), maxCells);
+  return truncateText(stripTerminalControls(value, 1024), maxCells);
 }
 
 const MAX_FACT_STRING = 512;
@@ -69,7 +75,7 @@ const MAX_FACT_DEPTH = 4;
  * every consumer, including /prompt disclosure and tests.
  */
 export function sanitizeFactValue(value: unknown, depth = 0): unknown {
-  if (typeof value === 'string') return value.slice(0, MAX_FACT_STRING).replace(DISPLAY_CONTROLS, '�');
+  if (typeof value === 'string') return stripTerminalControls(value, MAX_FACT_STRING);
   if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
   if (typeof value === 'boolean') return value;
   if (depth >= MAX_FACT_DEPTH || value === null || typeof value !== 'object') return undefined;

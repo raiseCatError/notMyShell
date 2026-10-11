@@ -1,6 +1,6 @@
 import type {TranscriptSummary} from './TranscriptStore.js';
 import type {SessionInfo} from '../session/SessionProtocol.js';
-import {formatAge, tildePath} from '../session/sessionList.js';
+import {formatAge, sessionText, tildePath} from '../session/sessionList.js';
 import {ACTIVE_OUTPUT_MS, liveStatusParts} from '../session/liveStatus.js';
 import {detectAgentCommand, detectAgentProcess, type AgentDescriptor} from '../agents/agents.js';
 
@@ -147,9 +147,9 @@ export function describeLiveRow(session: SessionInfo, now: number): string {
   const where = tildePath(session.cwd);
   const attached = session.state === 'attached' ? 'open in another window' : 'detached';
   const what = session.running
-    ? `${session.running.replace(/\s+/gu, ' ').slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
+    ? `${sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
     : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}${session.lastExit !== undefined && session.lastExit !== 0 ? ` · last exit ${session.lastExit}` : ''}`;
-  const extra = session.title && session.running ? ` · “${session.title.slice(0, 32)}”` : '';
+  const extra = session.title && session.running ? ` · “${sessionText(session.title).slice(0, 32)}”` : '';
   const name = session.name || session.signature;
   return `${name ? `${name} · ` : ''}${where} · ${what}${extra} · ${attached} · age ${formatAge(now - session.createdAt)}`;
 }

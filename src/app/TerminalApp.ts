@@ -45,7 +45,8 @@ import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
 import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
-import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
 import {createTmuxPanel, describeTmuxChange, pendingChanges, renderTmuxPanel, tmuxPanelKey, type TmuxPanelState} from '../tools/config/TmuxPanel.js';
@@ -72,7 +73,7 @@ import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
 import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
-import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
+import {framePanel, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
 import {providerExplanation} from '../setup/providerExplanations.js';
 import {liveActivityPaint} from '../status/liveActivityColors.js';
 import {renderControls} from '../ui/controls.js';
@@ -110,7 +111,7 @@ import {isPrivateCommand, ignorePatternFromEnv, SUGGESTION_PROVIDERS} from '../s
 import {CommandEditor} from '../input/CommandEditor.js';
 import {authoredLink, closeAuthoredLinks} from '../output/Hyperlinks.js';
 import {HostSemantics, semanticSupport} from '../host/semanticMarks.js';
-import {HostTitle, titleSupport} from '../host/terminalTitle.js';
+import {HostTitle, composeTitle, sessionTitleName, titleSupport} from '../host/terminalTitle.js';
 import {OutputBuffer, renderHistoricalContext, serializeCopyPayload, type CompletedCommand, type HistoricalContextSnapshot} from '../output/OutputBuffer.js';
 import {createWelcomeSnapshot, renderWelcome, vespyrSprite, WELCOME_BLINK_CLOSED_MS, welcomeBlinkDelay} from '../output/Welcome.js';
 import {captureWelcome, WELCOME_PROVIDERS, welcomeProvider} from '../output/WelcomeProviders.js';
@@ -142,7 +143,7 @@ import {recommendModules, type Recommendation} from '../context/packs/recommend.
 import {listNames, workspaceRoots} from '../context/services.js';
 import {choosePager, pagerDocument, pagerProcessEnvironment, runPager} from '../output/BlockPager.js';
 import {pagerEnvironment as bridgePagerColors} from '../themeBridge/targets.js';
-import type {ModulesContext, PackListing} from '../prompt/ModulesPanel.js';
+import {moduleSettingsSignature, type ModulesContext, type PackListing} from '../prompt/ModulesPanel.js';
 import {applyClaudeBridge, applyClaudeBridgeRemoval, inspectClaudeBridge, planClaudeBridge, planClaudeBridgeRemoval} from '../agents/claudeStatusLine.js';
 import {currentLauncher} from '../cli/agentStatus.js';
 import {frontendEnvironment, parseShellEnvironment, type ShellEnvironment} from '../context/shellEnvironment.js';
@@ -162,6 +163,8 @@ import {parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, ty
 import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
+import {QueryExtractor, ReplyRouter} from '../passthrough/TerminalQueries.js';
+import {TerminalOutputProcessing} from '../terminal/outputProcessing.js';
 import {layoutInput, graphemes} from '../input/inputLayout.js';
 import {editText} from '../ui/formControls.js';
 import {helpMarkdown} from '../help/helpContent.js';
@@ -172,7 +175,8 @@ import {mixRgb} from '../chroma/chroma.js';
 import type {Rgb} from '../chroma/escape.js';
 import {isDeterministicPresentation, isReducedMotion, presentationAnimationElapsed, presentationCompletionTime, presentationNow} from '../presentation/environment.js';
 import {TaskProgress} from '../status/TaskProgress.js';
-import {LocalStats, renderStatusStrip, STRIP_REFRESH_MS, stripVisible, type StatsSource, type SystemStats} from '../status/StatusStrip.js';
+import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
+import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
@@ -233,7 +237,7 @@ import {appearanceHubKey, createAppearanceHub, hubMotionPreview, renderAppearanc
 import {diffModules, progress, transitionPaint, Transitions, type MotionGate} from '../motion/transitions.js';
 import {overlayRow, type CellPaint} from '../presentation/cellOverlay.js';
 import {chooseBackend, hostCursorFacts, nativeBackendFor, setCursorHostProvider, type BackendChoice, type HostCursorFacts} from '../cursor/backends.js';
-import {includeLine, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
+import {includeLine, installedNativeHost, nativeCursorIntegrated, nativeHostLabel, reloadInstruction, setupPlan, writeManagedFiles, type ManagedWrite} from '../cursor/native.js';
 import {createCursorPanel, cursorPanelKey, renderCursorPanel, type CursorPanelEnv, type CursorPanelOptions, type CursorPanelState} from '../cursor/CursorPanel.js';
 import {contextFor, resolveCursorSettings} from '../cursor/colors.js';
 import {renderCursorPreview} from '../cursor/CursorPreview.js';
@@ -282,7 +286,7 @@ import {liveSessionRows} from '../sessions/LiveSessionView.js';
 import {createResumeBrowser, describeArchivedRow, describeLiveRow, LIVE_ROW_LABELS, liveRowAgent, liveRowState, navigateResume, resumeDayLabel, resumeRowCount, resumeSelection,
   visibleLiveSessions, visibleResumeSessions, type ResumeBrowserState} from '../sessions/ResumeBrowser.js';
 import {dismissSessionNotice, listLiveSessions, listSessionNotices} from '../session/connectSession.js';
-import {OLDER_SERVICE_SWITCH} from '../session/SocketSessionClient.js';
+import {OLDER_SERVICE_SWITCH, serviceBuildNotice} from '../session/SocketSessionClient.js';
 import {killAndArchive} from '../session/liveSessions.js';
 import {recoverEndedSessions} from '../session/recovery.js';
 import {AgentSessions} from '../agents/sessions/manager.js';
@@ -484,9 +488,8 @@ export class TerminalApp {
   /** What command words resolve to in the configured zsh, filled off the keypress path for the inspector. */
   private readonly commandSources = new Map<string, CommandSource | null>();
   /** Status strip data: sampled from local OS counters on its own modest timer, only while enabled. */
-  private statsSource: StatsSource = new LocalStats();
-  private stripStats: SystemStats = {};
-  private stripTimer?: () => void;
+  /** Whether the strip's own facts were last demanded; a change re-derives Context Engine demand. */
+  private stripDemanded = false;
   /** Cross-session notices from the session service; frontend chrome only. */
   private noticeView: NoticeView = {notices: [], hidden: 0};
   /** Every notice the service reported at the last poll; visibility (TTL) is applied on top, never stored. */
@@ -517,7 +520,6 @@ export class TerminalApp {
   private cachedPlatform?: PlatformInfo;
   private get shellEnvironment(): ShellEnvironmentReport { return this.cachedEnvironment ??= detectShellEnvironment(); }
   private cachedEnvironment?: ShellEnvironmentReport;
-  private stripSampling = false;
   /** Frontend PATH and recipe lookups for install offers; replaceable in tests. */
   private installProbe = {onPath: (name: string) => resolveCommand(name, this.shellPath()) !== undefined, recipe: (tool: Tool) => planPackageInstall(tool) ?? toolInstall(tool)};
   private misePanel?: MisePanel;
@@ -788,6 +790,8 @@ export class TerminalApp {
     if (connection?.attached) this.beginReattach(connection.attached, connection.journal);
     // After any restored transcript, or reattaching would erase the launch notice.
     if (connection?.notice) this.output.addFrontendInteraction('session', connection.notice, ERROR);
+    const stale = connection?.mode === 'service' ? serviceBuildNotice(this.session.serviceBuild, this.buildIdentity) : undefined;
+    if (stale) this.output.addFrontendInteraction('session', stale, INFO);
     this.beginStartupWatch(connection?.attached);
     this.session.start();
     void this.loadInstalledPacks();
@@ -930,9 +934,26 @@ export class TerminalApp {
   private enterAttachedPassthrough(): void {
     // Reattached into a fullscreen app: hand it the whole terminal again,
     // including the mouse/paste/cursor-key modes it set before the detach.
-    this.terminalFocus = 'unknown';
-    this.renderer.suspendForPassthrough(this.attachedModes);
+    this.handOverTerminal(this.attachedModes);
     this.attachedModes = '';
+  }
+
+  /**
+   * The foreground program takes the terminal: NMSh stops drawing, and nothing half-decoded on NMSh's side
+   * (an Escape awaiting its flush, part of a sequence) can later turn into composer input; from here every
+   * byte goes to the program. Reclaimed in onShellPrompt.
+   */
+  private handOverTerminal(restore = ''): void {
+    // Before any of the program's bytes are forwarded: they must reach the terminal untranslated.
+    this.outputProcessing.set(true);
+    // A reply still arriving belongs to the program, which now receives every byte anyway.
+    const held = this.replyRouter.stop();
+    if (held) this.session.write(held);
+    this.queryExtractor.reset();
+    if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
+    this.keyDecoder.reset();
+    this.terminalFocus = 'unknown';
+    this.renderer.suspendForPassthrough(restore);
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
   }
@@ -945,10 +966,7 @@ export class TerminalApp {
       this.passthrough = true;
       this.noteForeignScreen();
       // Modes the program set in earlier output never reached the terminal; hand them over with it.
-      this.terminalFocus = 'unknown';
-      this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
-      const dimensions = this.dimensions();
-      this.session.resize(dimensions.columns, dimensions.rows);
+      this.handOverTerminal(this.commandModes.restoreSequence());
     }
     this.render();
   }
@@ -964,12 +982,9 @@ export class TerminalApp {
       this.running.historyAllowed = historyAllowed;
       if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
         this.cancelPresentation();
-        this.terminalFocus = 'unknown';
         this.passthrough = true;
         this.noteForeignScreen();
-        this.renderer.suspendForPassthrough();
-        const dimensions = this.dimensions();
-        this.session.resize(dimensions.columns, dimensions.rows);
+        this.handOverTerminal();
       }
       return;
     }
@@ -1056,6 +1071,7 @@ export class TerminalApp {
       }
     });
     this.presentationStarted = true;
+    void this.loadSessionIdentity();
     this.refreshAwake();
     // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
     this.scheduleThemeBridge(500);
@@ -1074,6 +1090,10 @@ export class TerminalApp {
     return exitCode;
   }
 
+  private readonly outputProcessing = new TerminalOutputProcessing();
+  private readonly queryExtractor = new QueryExtractor();
+  private readonly replyRouter = new ReplyRouter();
+
   private readonly onInput = (data: string): void => {
     if (process.env.NMSH_DEBUG_KEYS === '1') {
       const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
@@ -1083,6 +1103,13 @@ export class TerminalApp {
     if (this.passthrough && !this.startupPending) {
       this.session.write(data);
       return;
+    }
+    // The terminal's answers to queries a running program asked (see TerminalQueries) are the program's.
+    if (this.replyRouter.expecting) {
+      const {replies, rest} = this.replyRouter.split(data, Date.now());
+      if (replies && this.running) this.session.write(replies);
+      if (!rest) return;
+      data = rest;
     }
     const keys = this.keyDecoder.push(data);
     this.scheduleEscapeFlush();
@@ -1176,6 +1203,7 @@ export class TerminalApp {
     this.terminalFocus = 'unknown';
     this.renderer.leave();
     if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+    this.outputProcessing.reapplied();
     process.stdin.pause();
     process.kill(process.pid, 'SIGSTOP');
   };
@@ -1185,8 +1213,12 @@ export class TerminalApp {
     this.frontendSuspended = false;
     this.terminalFocus = 'unknown';
     this.renderer.enter();
-    if (this.passthrough) this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
     if (process.stdin.isTTY) process.stdin.setRawMode(true);
+    this.outputProcessing.reapplied();
+    if (this.passthrough) {
+      this.outputProcessing.set(true);
+      this.renderer.suspendForPassthrough(this.commandModes.restoreSequence());
+    }
     process.stdin.resume();
     this.keyDecoder.reset();
     this.onResize();
@@ -1279,6 +1311,13 @@ export class TerminalApp {
       const action = rowPanelKey(this.rowPanel, key, this.promptConfiguration);
       if (action?.kind === 'close') { this.rowPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'change') { this.applySettingsConfiguration(action.configuration); this.syncStatusStrip(); }
+      this.render();
+      return;
+    }
+    if (this.stripStudio) {
+      const action = stripStudioKey(this.stripStudio, key, this.promptConfiguration);
+      if (action?.kind === 'close') { this.stripStudio = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'change') { this.applySettingsConfiguration(action.configuration); this.syncStatusStrip(); this.requestContextDemand(); }
       this.render();
       return;
     }
@@ -1432,8 +1471,15 @@ export class TerminalApp {
         return;
       }
       if (this.promptPanelState.step === 'modules') this.promptPanelState.context = this.modulesContext();
+      if ((key.kind === 'escape' || key.kind === 'interrupt') && this.promptPanelState.standalone && !promptPanelOwnsKey(this.promptPanelState, key)) {
+        // /modules saved each change as it was made: Esc only closes.
+        this.promptPanelState = undefined;
+        this.returnFromPanel();
+        this.render();
+        return;
+      }
       if (key.kind === 'escape' && this.promptPanelState.step === 'modules' && !promptPanelOwnsKey(this.promptPanelState, key)) {
-        // Esc leaves the module manager, keeping its draft edits for the final save.
+        // Esc leaves the module manager, keeping its draft edits for the final save (or A saved them already).
         this.promptPanelState.step = 'appearance';
         this.promptPanelState.selectedIndex = appearanceModulesRow(this.promptPanelState.draft);
         this.render();
@@ -1454,6 +1500,7 @@ export class TerminalApp {
         void this.advancePromptPanel();
       } else if (handlePromptPanelKey(key, this.promptPanelState)) this.render();
       if (this.promptPanelState?.request) void this.handleModulesRequest(this.promptPanelState);
+      else if (this.promptPanelState?.standalone) { this.persistModuleSettings(this.promptPanelState); this.render(); }
       return;
     }
     if (this.findState?.editing && !this.settingsPanelActive && this.handleFindKey(key)) return;
@@ -2234,6 +2281,7 @@ export class TerminalApp {
         this.renderer.invalidate();
       }
       this.externalPassthrough = false;
+      this.noteForeignScreen();
       this.render();
     }
   }
@@ -2303,6 +2351,7 @@ export class TerminalApp {
       if (this.appearanceHub) { this.appearanceHub.view = 'motion'; this.appearanceHub.selected = 0; this.appearanceHub.previewStart = Date.now(); }
     }
     else if (slash.kind === 'prompt') { this.panelOrigin = undefined; await this.startPromptSettings(false); }
+    else if (slash.kind === 'modules') { this.panelOrigin = undefined; this.openModulesManager(); }
     else if (slash.kind === 'chroma') { this.panelOrigin = undefined; this.startChromaSettings(); }
     else if (slash.kind === 'screensaver') {
       this.panelOrigin = undefined;
@@ -2378,6 +2427,10 @@ export class TerminalApp {
       else {
         try {
           const info = await renameSession(socketPathFor(defaultRuntimeDir(process.env)), this.sessionId, slash.name);
+          if (info) {
+            this.noticeLabels.set(this.sessionId, info.name || info.signature || this.noticeLabels.get(this.sessionId) || '');
+            this.noteSessionIdentity(info);
+          }
           this.output.addFrontendInteraction(command, info ? `This session is ${info.name || info.signature || 'unnamed'}${info.name && info.signature ? ` (signature ${info.signature})` : ''}.` : 'The session service did not answer.', INFO);
         } catch { this.output.addFrontendInteraction(command, 'The session service did not answer; nothing changed.', ERROR); }
       }
@@ -2512,10 +2565,7 @@ export class TerminalApp {
         this.cancelPresentation();
         this.passthrough = true;
         this.noteForeignScreen();
-        this.terminalFocus = 'unknown';
-        this.renderer.suspendForPassthrough();
-        const dimensions = this.dimensions();
-        this.session.resize(dimensions.columns, dimensions.rows);
+        this.handOverTerminal();
       }
       this.render();
     }, this.historicalContext(this.shellCwd, contextAtSubmission, command));
@@ -2534,10 +2584,8 @@ export class TerminalApp {
     // Initial static heuristic, but dynamic can override
     this.passthrough = !this.startupPending && shouldPassthrough(command);
     if (this.passthrough) {
-      this.terminalFocus = 'unknown';
-      this.renderer.suspendForPassthrough();
-      const dimensions = this.dimensions();
-      this.session.resize(dimensions.columns, dimensions.rows);
+      this.noteForeignScreen();
+      this.handOverTerminal();
     }
     if (command.includes('\n')) {
       this.session.submit(`{ ${command}\n}`);
@@ -2999,6 +3047,9 @@ export class TerminalApp {
         this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
+        // Queries the program asked before taking the screen go to the terminal; they paint nothing.
+        const queries = this.running ? this.queryExtractor.push(data) : '';
+        if (queries) { process.stdout.write(queries); this.replyRouter.expect(Date.now()); }
         this.render();
       }
     }
@@ -3091,9 +3142,16 @@ export class TerminalApp {
     void this.journal?.flush().catch(() => {
       this.output.addFrontendInteraction('/resume', 'Could not persist the completed command.', ERROR);
     });
+    this.replyRouter.stop();
+    this.queryExtractor.reset();
     if (this.passthrough) {
       this.passthrough = false;
+      // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
+      this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
+      this.outputProcessing.set(false);
+      // Bytes the program owned (its keys, the terminal's replies to it) never continue as NMSh input.
+      if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
       this.keyDecoder.reset();
       this.lastPtyRows = 0;
       this.lastPtyColumns = 0;
@@ -3369,19 +3427,22 @@ export class TerminalApp {
         const result = await setPackEnabled(request.id, request.enabled);
         state.message = result.ok ? `${request.id} ${request.enabled ? 'enabled' : 'disabled'}.` : result.reason;
         await this.loadInstalledPacks();
+      } else if (request.kind === 'saveModules') {
+        this.persistModuleSettings(state);
       } else if (request.kind === 'packRemove') {
         const result = await removePack(request.id);
         if (result.ok) {
           state.draft.modules = state.draft.modules.filter(module => !module.id.startsWith(`${request.id}:`));
           state.detail = undefined;
         }
-        state.message = result.ok ? `Removed ${request.id}. Save to update your prompt settings.` : result.reason;
+        state.message = result.ok ? `Removed ${request.id}.${state.standalone ? '' : ' Save to update your prompt settings.'}` : result.reason;
         await this.loadInstalledPacks();
       }
     } catch (error) {
       state.message = error instanceof Error ? error.message : String(error);
     }
     // Results can quote settings paths and file content: displayed, never trusted as terminal text.
+    if (state.standalone) this.persistModuleSettings(state);
     if (state.message) state.message = safeContextText(state.message, 400);
     await this.refreshModulesContext();
   }
@@ -3412,6 +3473,41 @@ export class TerminalApp {
     }
     if (this.promptConfiguration.provider !== 'nmsh') await this.refreshPanelPreview(this.promptPanelState);
     this.render();
+  }
+
+  /** /modules: the same module manager /prompt embeds, opened directly; each change is saved as it is made. */
+  private openModulesManager(): void {
+    this.promptPanelState = {onboarding: false, step: 'modules', selectedIndex: 0, standalone: true,
+      draft: structuredClone(this.promptConfiguration), saved: structuredClone(this.promptConfiguration)};
+    this.panelExternalPrompt = undefined;
+    void this.loadInstalledPacks();
+    void this.refreshModulesContext();
+    this.render();
+  }
+
+  /**
+   * Persists only the module settings (order, visibility, surfaces, conditions,
+   * mirroring) from a module-manager draft onto the saved configuration. /modules
+   * calls it after every change; inside /prompt, A calls it and leaves the rest
+   * of the /prompt draft unsaved.
+   */
+  private persistModuleSettings(state: PromptPanelState): void {
+    if (moduleSettingsSignature(state.draft) === moduleSettingsSignature(this.promptConfiguration)) return;
+    const previous = this.promptConfiguration;
+    const next = structuredClone(previous);
+    next.modules = structuredClone(state.draft.modules);
+    next.nmsh.mirrorRight = state.draft.nmsh.mirrorRight;
+    try {
+      savePromptConfiguration(next, undefined, previous);
+    } catch (error) {
+      state.message = `Could not save module settings: ${error instanceof Error ? error.message : String(error)}`;
+      return;
+    }
+    this.promptConfiguration = next;
+    if (state.saved) { state.saved.modules = structuredClone(next.modules); state.saved.nmsh.mirrorRight = next.nmsh.mirrorRight; }
+    state.message = state.message ? `${state.message} Saved.` : 'Saved.';
+    if (this.gitStatusDemanded(previous) !== this.gitStatusDemanded(next)) void this.refreshContext(this.shellCwd);
+    this.requestContextDemand();
   }
 
   /** /chroma: the /prompt Chroma view directly, editing the same presentation settings. */
@@ -3751,7 +3847,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -3783,6 +3879,8 @@ export class TerminalApp {
     if (this.installPrompt) return renderInstallPrompt(this.installPrompt, columns);
     if (this.themeStudio) return this.renderThemeStudioRows(this.themeStudio, columns);
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
+    if (this.stripStudio) return renderStripStudio(this.stripStudio, this.promptConfiguration, columns, this.dimensions().rows,
+      (configuration, width) => this.statusStripRow(width, configuration));
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
     if (this.tmuxPanel) return renderTmuxPanel(this.tmuxPanel, columns, this.dimensions().rows);
@@ -3992,6 +4090,8 @@ export class TerminalApp {
       state.contentIndex = 0;
     } else if (key.kind === 'text' && view === 'config' && state.focus !== 'tabs' && !state.searchFocused && key.value.toLowerCase() === 'r' && row) {
       if (settingsRowChanged(row, this.promptConfiguration)) this.applySettingsConfiguration(resetSettingsRow(row, this.promptConfiguration));
+    } else if (tabCycleDelta(key) && !state.searchFocused) {
+      switchSettingsView(state, tabCycleDelta(key)!);
     } else if (key.kind === 'text' && key.value === '/' && view === 'config') {
       state.searchFocused = true;
       state.focus = 'rows';
@@ -4377,10 +4477,27 @@ export class TerminalApp {
     const mode = this.promptConfiguration.terminalTitle;
     if (mode === 'off') return undefined;
     const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
-    const session = mode === 'session' && this.sessionId ? this.noticeLabels.get(this.sessionId) : undefined;
-    const identity = session ? `${project} — ${session}` : project;
+    const session = this.sessionId ? sessionTitleName(this.sessionIdentity, this.noticeLabels.get(this.sessionId)) : undefined;
     const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
-    return running ? `${running} · ${identity}` : identity;
+    return composeTitle(mode, project, session, running);
+  }
+
+  /** This session's own name and signature, as the service last reported them (attach, /rename, notice refresh). */
+  private sessionIdentity?: {name?: string; signature?: string};
+
+  private noteSessionIdentity(info: {name?: string; signature?: string} | undefined): void {
+    if (!info) return;
+    const next = {name: info.name, signature: info.signature};
+    if (this.sessionIdentity?.name === next.name && this.sessionIdentity?.signature === next.signature) return;
+    this.sessionIdentity = next;
+    this.render();
+  }
+
+  /** One request at launch/reattach (never polled): the title and notices know who this session is without waiting for a refresh. */
+  private async loadSessionIdentity(): Promise<void> {
+    if (this.sessionMode !== 'service' || !this.sessionId) return;
+    const sessions = await listLiveSessions().catch(() => []);
+    if (!this.stopped) this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
   }
   private themeBridgePanel?: ThemeBridgePanelState;
   private bridgeReports: TargetReport[] = [];
@@ -4597,9 +4714,12 @@ export class TerminalApp {
   /** The include plan shown in the tmux review, applied exactly if confirmed. */
   private tmuxIncludePlan?: {plan: FileEditPlan; spec: HookSpec};
 
-  /** /strip and /status-strip: the canonical Status strip rows, with a live strip preview. */
+  private stripStudio?: StripStudioState;
+
+  /** /strip and /status-strip: the Status Strip Studio over the canonical strip settings, previewed by the real strip renderer. */
   private openStatusStrip(): void {
-    this.rowPanel = createRowPanel('Status strip', 'compact NMSh status row, top right · same settings as Config', ['statusStrip', 'stripClock', 'stripBattery', 'stripCpu', 'stripRam', 'stripRamDisplay', 'stripUptime']);
+    this.stripStudio = createStripStudio();
+    this.requestContextDemand();
   }
 
   /** /configure [tool] and /tmux: the registered adapter's editor, or a factual answer. */
@@ -4885,7 +5005,6 @@ export class TerminalApp {
     this.presentationSubscription?.(); this.presentationSubscription = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
-    this.stripTimer?.(); this.stripTimer = undefined;
     this.noticeTimer?.(); this.noticeTimer = undefined;
   }
 
@@ -5028,7 +5147,7 @@ export class TerminalApp {
       case 'welcomeScreen': {
         rows.push(`  ${SUBTLE}${providerExplanation('welcome', draft.welcome)}${RESET}`);
         if (draft.welcome === 'vespyr') rows.push(...vespyrSprite().map(line => `  ${line}${RESET}`));
-        if (draft.statusStrip.enabled) rows.push(`${label('Strip')}${stripAnsi(renderStatusStrip(draft.statusStrip, this.stripStats, Math.min(60, width - 12))).trim()}`);
+        if (draft.statusStrip.enabled) rows.push(`${label('Strip')}${stripAnsi(renderStatusStrip(draft.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), Math.min(60, width - 12))).trim()}`);
         break;
       }
       case 'idle': {
@@ -5920,7 +6039,9 @@ export class TerminalApp {
   private renderPromptPanelRows(state: PromptPanelState, columns: number): string[] {
     const now = Date.now();
     if (state.step === 'modules') state.context = this.modulesContext();
-    const preview = state.step.startsWith('install') ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
+    // Module facts win over the prompt preview: details, confirmations and narrow panels drop it first.
+    const modulesWithoutPreview = state.step === 'modules' && (Boolean(state.detail || state.confirm) || columns < 72 || this.dimensions().rows < 30);
+    const preview = state.step.startsWith('install') || modulesWithoutPreview ? [] : this.chromaPanelActive(state) ? this.chromaPanelPreview(columns, now) : this.promptPanelPreview(columns);
     const stops = themeChromaStops(state.draft.nmsh.palette, state.draft.nmsh.vibrance);
     const full = renderPromptPanel(state, columns, preview, this.promptThemePreviews(columns, now), this.dimensions().rows - 1,
       this.promptGitShowcase(columns), stops);
@@ -6268,7 +6389,7 @@ export class TerminalApp {
     panelRows = this.settingsPanelActive ? this.settingsPanelRows(columns).length : undefined,
   ): ScreenPlan {
     // The status strip owns one top row only when it is on, fits, and no panel owns the screen.
-    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planWithNotices(columns, rows - 1, fullInput, suggestions, panelRows));
+    if (panelRows === undefined && this.stripActive(columns, rows)) return withStatusRow(this.planWithNotices(columns, rows - 1, fullInput, suggestions, panelRows), this.promptConfiguration.statusStrip.edge);
     return this.planWithNotices(columns, rows, fullInput, suggestions, panelRows);
   }
 
@@ -6409,6 +6530,7 @@ export class TerminalApp {
       const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
       // The person's own name, else the familiar signature, else the old ordinal label.
       this.noticeLabels = new Map(ordered.map((session, index) => [session.id, session.name || session.signature || sessionLabel(session.id, index + 1)]));
+      this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
       this.noticeSource = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
       this.applyNotices();
     } catch { /* notices are best effort */ } finally { this.noticePolling = false; }
@@ -6442,39 +6564,33 @@ export class TerminalApp {
     return stripVisible(this.promptConfiguration.statusStrip, columns, rows);
   }
 
-  private statusStripRow(columns: number): string {
+  /** The live strip row, from resolved facts only (the same function paints the /strip preview). */
+  private statusStripRow(columns: number, configuration = this.promptConfiguration): string {
     // Active Keep Awake is always part of an enabled strip (no per-item switch); the strip itself is never forced on.
     const record = this.awakeRecord;
-    const display = this.promptConfiguration.keepAwake.display;
+    const display = configuration.keepAwake.display;
     // Modules routed to the strip are resolved facts like every other surface; the strip never collects anything itself.
-    const modules = statusStripModules(this.promptContext(), this.promptConfiguration).map(module => ({text: module.text, failure: module.role === 'failure', priority: module.priority}));
-    return renderStatusStrip(this.promptConfiguration.statusStrip, this.stripStats, columns, undefined,
-      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined, modules);
+    return renderStatusStrip(configuration.statusStrip, stripStatsFromFacts(this.contextEngine.facts()), columns, undefined,
+      record ? {full: awakeLabel(record, display, 'full'), short: awakeLabel(record, display, 'short'), glyph: awakeLabel(record, display, 'glyph')} : undefined,
+      this.statusStripModuleItems(configuration));
   }
 
-  /** One timer while the strip is on and NMSh owns the screen; none otherwise. */
+  /** Strip-routed modules with their group and, for the path, a shorter form the fitter may use first. */
+  private statusStripModuleItems(configuration = this.promptConfiguration): StripModuleItem[] {
+    const context = this.promptContext();
+    const compact = new Map(statusStripModules(context, configuration, PATH_DISPLAY_LEVELS - 1).map(module => [module.id, module.text]));
+    return statusStripModules(context, configuration).map(module => ({id: module.id, text: module.text, failure: module.role === 'failure', priority: module.priority,
+      zone: configuration.modules.find(item => item.id === module.id)?.stripZone ?? 'right',
+      ...(compact.get(module.id) && compact.get(module.id) !== module.text ? {compact: [compact.get(module.id)!]} : {})}));
+  }
+
+  /** The strip's own facts are Context Engine demand: re-derive it when the row appears or goes (passthrough, resize, Off). */
   private syncStatusStrip(): void {
-    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && this.promptConfiguration.statusStrip.enabled;
-    if (wanted && !this.stripTimer) {
-      this.stripTimer = presentationClock.subscribe(() => void this.sampleStrip(), STRIP_REFRESH_MS);
-      void this.sampleStrip();
-    } else if (!wanted && this.stripTimer) {
-      this.stripTimer(); this.stripTimer = undefined;
-    }
-  }
-
-  private async sampleStrip(): Promise<void> {
-    if (this.stripSampling) return;
-    this.stripSampling = true;
-    try {
-      const {columns} = this.dimensions();
-      const before = this.statusStripRow(columns);
-      this.stripStats = await this.statsSource.sample();
-      // The clock also moves without new stats; repaint only when the row text changes.
-      if (this.stripTimer && !this.stopped && this.statusStripRow(columns) !== before) this.render();
-    } catch { /* A failed sample keeps the previous values. */ }
-    finally { this.stripSampling = false; }
+    const {columns, rows} = this.dimensions();
+    const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended && this.stripActive(columns, rows);
+    if (wanted === this.stripDemanded) return;
+    this.stripDemanded = wanted;
+    this.requestContextDemand();
   }
 
   private openPanel?: OpenPanelState;
@@ -6752,7 +6868,7 @@ export class TerminalApp {
   private cursorEnv(draft: PromptConfiguration['cursor'], config: PromptConfiguration): CursorPanelEnv {
     const facts = this.cursorFacts();
     return {choice: chooseBackend(draft, facts), facts, context: {...contextFor(config), chrome: UI_COLORS.accent},
-      still: !this.decorativeMotionAllowed() || colorLevel() === 'none', level: colorLevel()};
+      still: !this.decorativeMotionAllowed() || colorLevel() === 'none', level: colorLevel(), ...(process.env.TMUX ? {multiplexed: true} : {})};
   }
 
   private cursorFacts(): HostCursorFacts {
@@ -6831,10 +6947,13 @@ export class TerminalApp {
    */
   private syncCursorNative(next: PromptConfiguration): void {
     const facts = this.cursorFacts();
-    if (facts.host === 'other' || !facts.integrated) { this.cursorReload = undefined; return; }
+    // Inside a multiplexer the outer terminal is hidden, but NMSh's own managed files may still be installed there.
+    const host = facts.host !== 'other' ? (facts.integrated ? facts.host : undefined)
+      : installedNativeHost();
+    if (!host) { this.cursorReload = undefined; return; }
     try {
-      const written = writeManagedFiles(facts.host, resolveCursorSettings(next.cursor, contextFor(next)));
-      this.cursorReload = reloadInstruction(facts.host, written);
+      const written = writeManagedFiles(host, resolveCursorSettings(next.cursor, contextFor(next)));
+      this.cursorReload = reloadInstruction(host, written);
     } catch { this.cursorReload = 'Could not update the managed cursor files.'; }
   }
   private understandingPanel?: UnderstandingPanelState;
@@ -8306,7 +8425,6 @@ export class TerminalApp {
     this.stopIdleFrames();
     this.idle = undefined;
     this.screensaverAnimation?.(); this.screensaverAnimation = undefined;
-    this.stripTimer?.(); this.stripTimer = undefined;
     this.awakeTimer?.(); this.awakeTimer = undefined;
     this.noticeTimer?.(); this.noticeTimer = undefined;
     this.panelAnimation?.(); this.panelAnimation = undefined;

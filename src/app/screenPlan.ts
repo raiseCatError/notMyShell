@@ -28,7 +28,7 @@ export type RegionKind =
   | 'prompt'
   | 'input'
   | 'separator'
-  /** The optional NMSh status strip: one owned row at the top. */
+  /** The optional NMSh status strip: one owned row at the top or bottom edge of the NMSh pane. */
   | 'status'
   /** Cross-session notices: frontend chrome immediately above the composer, never transcript. */
   | 'notices'
@@ -341,11 +341,14 @@ function build(
 }
 
 /**
- * A plan with one owned status row above everything else. Every region moves
- * down by one, so hit-testing, cursor placement and viewport math stay in
- * agreement; the transcript keeps its own height.
+ * A plan with one owned status row at an edge of the NMSh pane. At the top
+ * every region moves down by one; at the bottom nothing moves and the row is
+ * the pane's last (inside tmux that is above tmux's own status line, which
+ * lies outside the pane). Hit-testing, cursor placement and viewport math stay
+ * in agreement either way; the transcript keeps its own height.
  */
-export function withStatusRow(plan: ScreenPlan): ScreenPlan {
+export function withStatusRow(plan: ScreenPlan, edge: 'top' | 'bottom' = 'top'): ScreenPlan {
+  if (edge === 'bottom') return {...plan, rows: plan.rows + 1, regions: [...plan.regions, {kind: 'status', top: plan.rows, height: 1}]};
   const shift = (region: Region): Region => ({...region, top: region.top + 1});
   return {...plan, rows: plan.rows + 1, regions: [{kind: 'status', top: 0, height: 1}, ...plan.regions.map(shift)], transcript: shift(plan.transcript)};
 }

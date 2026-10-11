@@ -206,3 +206,34 @@ test('live cursor frames never paint a background behind text; only the travelli
   assert.equal(withBackground, 0, 'a Bar caret and every effect draw with foreground colors only');
   presenter.dispose();
 });
+
+test('idle repaints (animated Chroma rules, clock) with an unchanged logical caret never start trail movement', () => {
+  const presenter = new CursorPresenter(() => settings({motion: 'smear', effect: 'fire'}), () => {}, seededRandom(9));
+  const caret = {row: 1, column: 4};
+  presenter.apply(['── a', '> ls', '── a'], caret, bounds, 'jump', true, 0);
+  presenter.apply(['── a', '> ls', '── a'], {row: 1, column: 5}, bounds, 'typing', true, 10);
+  for (let now = 1000; now < 3000; now += 100) presenter.apply([`── ${now}`, '> ls', `── ${now}`], {row: 1, column: 5}, bounds, 'jump', true, now);
+  assert.equal(presenter.engine.phase, 'idle', 'the trail settled and stays settled while only other rows repaint');
+  assert.ok(!presenter.scheduled, 'no animation clock keeps running for an idle caret');
+  presenter.apply(['── x', '> lsx', '── x'], {row: 1, column: 6}, bounds, 'typing', true, 3100);
+  assert.equal(presenter.engine.phase, 'movement', 'a real caret move still animates');
+  presenter.dispose();
+});
+
+test('Renderer Portable leaves Ghostty\'s shader off (never two trails); Auto and Native keep it', () => {
+  const env = {NMSH_CONFIG_HOME: '/nonexistent-nmsh'} as NodeJS.ProcessEnv;
+  for (const renderer of ['auto', 'native'] as const) assert.match(fragmentContent('ghostty', settings({motion: 'smear', renderer}), env), /custom-shader = /u, renderer);
+  assert.doesNotMatch(fragmentContent('ghostty', settings({motion: 'smear', renderer: 'portable'}), env), /custom-shader/u);
+});
+
+test('/cursor says, only inside tmux, that a native trail follows tmux\'s drawing cursor and Portable stays steady', async () => {
+  const {TMUX_NATIVE_TRAIL_NOTE} = await import('../src/cursor/CursorPanel.js');
+  const draft = settings({motion: 'smear'});
+  const text = (multiplexed: boolean) => {
+    const state = createCursorPanel(draft, 0);
+    state.selected = 2; // Renderer
+    return renderCursorPanel(state, 400, 400, panelEnv(multiplexed ? {multiplexed} : {}, draft)).map(stripAnsi).join('\n');
+  };
+  assert.ok(text(true).includes(TMUX_NATIVE_TRAIL_NOTE.slice(0, 60)), 'inside tmux');
+  assert.ok(!text(false).includes('Inside tmux'), 'not elsewhere');
+});

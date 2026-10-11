@@ -1,3 +1,4 @@
+import {stripTerminalControls} from '../util/terminalControls.js';
 import {askFoldLabel} from '../ask/transcriptSummary.js';
 import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
 import {HyperlinkPresenter} from './Hyperlinks.js';
@@ -29,7 +30,6 @@ const shippedChrome = () => UI_COLORS.separator.red === SHIPPED_SEPARATOR.red &&
   && UI_COLORS.separator.blue === SHIPPED_SEPARATOR.blue;
 /** History divider tones of the UI separator role (Follow UI theme); Chroma dividers use the shared divider source. */
 const archiveDividerRgb = () => shippedChrome() ? {red: 162, green: 151, blue: 190} : mixRgb(UI_COLORS.separator, UI_COLORS.primary, 0.22);
-const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/gu;
 const PRIMARY = lazyForeground(UI_COLORS.primary);
 const SECONDARY = lazyForeground(UI_COLORS.secondary);
 const SUBTLE = lazyForeground(UI_COLORS.subtle);
@@ -426,14 +426,14 @@ function historyColor(color: Rgb | undefined, fallback: Rgb, part: 'foreground' 
 }
 
 function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[] {
-  const cwd = context.cwd.replace(CONTROL_CHARACTERS, '�');
+  const cwd = stripTerminalControls(context.cwd);
   const home = homedir().replace(/\/$/u, '');
   const cwdLabel = cwd === home ? '~' : cwd.startsWith(`${home}/`) ? `~${cwd.slice(home.length)}` : cwd;
-  const project = context.project?.replace(CONTROL_CHARACTERS, '�');
+  const project = context.project === undefined ? undefined : stripTerminalControls(context.project);
   const segments: HistoricalSegment[] = [];
   if (project) segments.push({text: project, role: 'project'});
   if (!project || project !== cwdLabel) segments.push({text: cwdLabel, role: 'cwd'});
-  const branch = context.branch?.replace(CONTROL_CHARACTERS, '�');
+  const branch = context.branch === undefined ? undefined : stripTerminalControls(context.branch);
   if (branch) segments.push({text: `${GLYPHS.branch} ${branch}`, role: 'gitBranch'});
   return segments.map(segment => ({...segment, foreground: LEGACY_FOREGROUND, background: LEGACY_BACKGROUNDS[segment.role!], preMuted: true}));
 }
@@ -446,7 +446,8 @@ function legacySegments(context: HistoricalContextSnapshot): HistoricalSegment[]
 function condensedPrompt(context: HistoricalContextSnapshot, level: 'compact' | 'minimal', width: number): string {
   const marker = `${foreground(UI_COLORS.accent)}${GLYPHS.prompt}\u001B[0m`;
   if (level === 'minimal') return truncateAnsi(marker, width);
-  const clean = (text: string) => text.replace(CONTROL_CHARACTERS, '�');
+  // Stored snapshots are hostile data: whole escape sequences go, not just their control bytes.
+  const clean = (text: string) => stripTerminalControls(text);
   const cwd = clean(context.cwd);
   const home = homedir().replace(/\/$/u, '');
   const place = context.project ? clean(context.project) : cwd === home ? '~' : cwd.split('/').filter(Boolean).pop() ?? cwd;

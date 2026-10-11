@@ -216,33 +216,33 @@ test('status strip owns one plan row: regions shift together and hit-testing agr
   assert.equal(regionAt(plan, plan.rows - 1)?.region.kind, regionAt(base, base.rows - 1)?.region.kind);
 });
 
-test('app: the strip has no timer while Off or during passthrough and never enters the transcript', () => {
+test('app: the strip demands its facts only while showing (never Off or in passthrough) and never enters the transcript', () => {
   const isolation = isolateConfig();
   const app = new TerminalApp();
   try {
     app['render'] = () => {};
+    Object.defineProperty(app, 'dimensions', {value: () => ({columns: 100, rows: 30})});
     app['presentationStarted'] = true;
-    app['statsSource'] = {sample: async () => ({battery: {percent: 50, charging: false}})};
+    const demanded = () => [...(app['contextEngine'] as unknown as {current: Map<string, Set<string>>}).current.keys()].filter(id => id.startsWith('system.'));
     app['syncStatusStrip']();
-    assert.equal(app['stripTimer'], undefined, 'Off: no timer');
+    assert.deepEqual(demanded(), [], 'Off: nothing demanded');
     app['configuration'] = {...app['configuration'], statusStrip: {...app['configuration'].statusStrip, enabled: true}};
     app['syncStatusStrip']();
-    assert.ok(app['stripTimer'], 'On: one timer');
+    assert.deepEqual(demanded().sort(), ['system.battery', 'system.time'], 'On: only the enabled items (Minimal: clock and battery)');
     app['passthrough'] = true;
     app['cancelPresentation']();
     app['syncStatusStrip']();
-    assert.equal(app['stripTimer'], undefined, 'passthrough: no timer');
+    assert.deepEqual(demanded(), [], 'passthrough: nothing demanded');
     app['passthrough'] = false;
     app['syncStatusStrip']();
-    assert.ok(app['stripTimer']);
+    assert.deepEqual(demanded().sort(), ['system.battery', 'system.time']);
+    assert.equal(app['statsSource' as never], undefined, 'no second, strip-owned stats poller');
     assert.doesNotMatch(JSON.stringify(app['output'].transcript().records), /50%/u, 'nothing in the transcript');
-    assert.equal(app['statusStripRow'](80).includes('50%'), false, 'strip text only appears in the frame row');
   } finally {
     app['stop'](0);
     app['session'].kill();
     isolation.restore();
   }
-  assert.equal(app['stripTimer'], undefined, 'stop cleans up the timer');
 });
 
 test('separators: every built-in renders, styles offer only their own, Safe mode stays ASCII', () => {

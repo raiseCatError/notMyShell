@@ -19,6 +19,8 @@ import {
 import {
   applyHook, applyHookRemoval, artifactPath, hookSpec, ledgerPath, loadLedger, ownership, planHook, planHookRemoval, removeArtifact, saveLedger, writeArtifact,
 } from '../src/themeBridge/artifacts.js';
+import {resolveCommand} from '../src/providers/providers.js';
+import {execFileSync} from 'node:child_process';
 import {applyThemeBridge, bridgeColorLevel, bridgeEnvironment, deltaSyntaxTheme, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
 import {themeBridgeKey} from '../src/themeBridge/runtime.js';
 import {writeTmuxManaged} from '../src/tools/config/tmuxManaged.js';
@@ -31,7 +33,9 @@ function sandbox(): {env: NodeJS.ProcessEnv; home: string; root: string; done: (
   const root = mkdtempSync(join(tmpdir(), 'nmsh-bridge-'));
   const home = join(root, 'home');
   mkdirSync(home);
-  return {root, home, env: {HOME: home, XDG_CONFIG_HOME: join(root, 'config'), PATH: ''}, done: () => rmSync(root, {recursive: true, force: true})};
+  // TMUX_TMPDIR keeps every tmux the product resolves (PATH falls back to standard tool directories) on a
+  // socket directory this test owns: it can never reach the person's own tmux server.
+  return {root, home, env: {HOME: home, XDG_CONFIG_HOME: join(root, 'config'), PATH: '', TMUX_TMPDIR: root}, done: () => rmSync(root, {recursive: true, force: true})};
 }
 
 function configWith(targets: Partial<Record<BridgeTargetId, {mode: 'independent' | 'follow' | 'choose'; theme?: string}>>, active = 'builtin:lavender'): PromptConfiguration {
@@ -368,7 +372,13 @@ test('applyThemeBridge: isolated per target; independent targets get nothing; fa
     await applyThemeBridge(context(config, box.env));
     assert.equal(existsSync(artifactPath('vim', box.env)), false);
     assert.doesNotMatch(readFileSync(bridgeEnvPath('bash', box.env), 'utf8'), /nmsh_bridge_apply/u);
-    assert.equal((await reloadTmux(box.env)).ok, false, 'no reload without an owned fragment (and no tmux on this PATH)');
+    const missing = await reloadTmux(box.env, join(box.root, 'no-such-fragment.conf'));
+    assert.equal(missing.ok, false, 'no reload without an owned fragment');
+    if (resolveCommand('tmux', box.env.PATH)) {
+      assert.match(missing.message, /no NMSh-managed tmux file/u);
+      writeFileSync(join(box.root, 'owned.conf'), 'set -g @nmsh_test 1\n');
+      assert.equal((await reloadTmux(box.env, join(box.root, 'owned.conf'))).ok, false, 'no running server in the test-owned namespace: nothing reloads');
+    } else assert.match(missing.message, /not installed/u);
   } finally { box.done(); }
 });
 
@@ -466,4 +476,23 @@ test('reports: factual statuses; bat needs a reviewed setup; delta is detected o
   assert.equal(by('pager').status, 'Not installed');
   const colorless = reportTargets({...context(config, {PATH: '', NO_COLOR: '1'}, installed('fzf'))}).find(report => report.target === 'fzf')!;
   assert.match(colorless.notes.join(' '), /NO_COLOR/u);
+});
+
+test('reloadTmux reaches only the tmux server of its own environment (an isolated test server here), never the person\'s', async t => {
+  const box = sandbox();
+  const tmux = resolveCommand('tmux', box.env.PATH);
+  if (!tmux) { box.done(); t.skip('tmux is not installed'); return; }
+  const env = {...box.env, TMUX: ''};
+  const run = (...args: string[]) => execFileSync(tmux, ['-f', '/dev/null', ...args], {env: {...env, PATH: '/usr/bin:/bin'}, encoding: 'utf8', timeout: 5000});
+  try {
+    run('new-session', '-d', '-s', 'nmsh-bridge-test');
+    const fragment = join(box.root, 'owned.conf');
+    writeFileSync(fragment, 'set -g @nmsh_bridge_test reloaded\n');
+    const result = await reloadTmux(env, fragment);
+    assert.equal(result.ok, true, result.message);
+    assert.equal(run('show', '-gv', '@nmsh_bridge_test').trim(), 'reloaded', 'the test-owned server loaded the file');
+  } finally {
+    try { run('kill-server'); } catch { /* already gone */ }
+    box.done();
+  }
 });

@@ -15,6 +15,21 @@ const INDENT = '  ';
  * The widest contiguous run of tabs around `selected` that fits `columns`,
  * with room reserved for the `‹` / `›` overflow markers it needs.
  */
+/**
+ * Tab / Shift+Tab over a visual tab bar: the step to take (+1 next, -1
+ * previous), or undefined when the key is not tab cycling. Callers do not ask
+ * while focus is in a text field where Tab edits or completes.
+ */
+export function tabCycleDelta(key: {kind: string}): 1 | -1 | undefined {
+  return key.kind === 'complete' ? 1 : key.kind === 'focusPrevious' ? -1 : undefined;
+}
+
+/** The neighbouring tab, wrapping around both ends. */
+export function cycleTab<T>(tabs: readonly T[], current: T, delta: number): T {
+  const index = Math.max(0, tabs.indexOf(current));
+  return tabs[(index + delta + tabs.length) % tabs.length]!;
+}
+
 export function tabWindow(widths: readonly number[], selected: number, columns: number): {start: number; end: number} {
   const fits = (start: number, end: number) => {
     let used = INDENT.length + (end < widths.length - 1 ? 2 : 0);

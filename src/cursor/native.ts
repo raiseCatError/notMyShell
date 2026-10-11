@@ -88,7 +88,9 @@ export function fragmentContent(host: NativeHost, settings: CursorSettings, env:
   const header = '# Managed by NMSh (/cursor). Edits here are replaced; your own config is never changed by NMSh after setup.\n';
   if (host === 'ghostty') {
     // Only what NMSh's shader really draws counts: Smooth, Lightning, Railgun, Wireframe and idle effects leave the shader off.
-    const active = GHOSTTY_BACKEND.support.motion.includes(settings.motion) || GHOSTTY_BACKEND.support.effect.includes(settings.effect);
+    // Renderer Portable means NMSh draws everything itself, so Ghostty's shader is off too (never two trails).
+    const active = settings.renderer !== 'portable'
+      && (GHOSTTY_BACKEND.support.motion.includes(settings.motion) || GHOSTTY_BACKEND.support.effect.includes(settings.effect));
     return `${header}${active ? `custom-shader = ${shaderPath(env)}\ncustom-shader-animation = true\n` : ''}`;
   }
   const palette = effectPalette(settings);
@@ -203,4 +205,9 @@ export function reloadInstruction(host: NativeHost, write: ManagedWrite, platfor
     return `Cursor shader updated · if it does not apply, reload Ghostty config: ${mac ? '⌘⇧,' : 'Ctrl+Shift+,'}`;
   }
   return `Reload Kitty config: ${mac ? '⌃⌘,' : 'Ctrl+Shift+F5'}`;
+}
+
+/** The host whose NMSh-managed cursor files are installed, for when the running terminal is hidden (inside tmux). */
+export function installedNativeHost(env: NodeJS.ProcessEnv = process.env): NativeHost | undefined {
+  return (['ghostty', 'kitty'] as const).find(host => nativeCursorIntegrated(host, env));
 }

@@ -171,5 +171,6 @@ test('prompt context sanitizes terminal controls and duplicate HOME paths stay c
   const rendered = stripAnsi(buildPromptLine({cwd: '/tmp/repo\u001B[2J', project: 'repo\u0007', branch: 'main\nbranch'}, 80));
   assert.ok(!rendered.includes('\u001B'));
   assert.ok(!rendered.includes('\u0007'));
-  assert.ok(rendered.includes('�'));
+  assert.match(rendered, /\/tmp\/repo/u, 'whole escape sequences are removed, leaving the readable name');
+  assert.ok(!rendered.includes('[2J'), 'no CSI debris');
 });

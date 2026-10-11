@@ -10,7 +10,7 @@ import {THEME_PALETTE_IDS, type NativePaletteId} from '../prompt/configuration.j
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {editText} from '../ui/formControls.js';
-import {framePanel, renderTabStrip} from '../ui/PanelShell.js';
+import {framePanel, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
 import {focusForeground, foreground, UI_COLORS} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
@@ -434,6 +434,9 @@ export function studioKey(state: ThemeStudioState, key: Key, level: ColorLevel, 
     return undefined;
   }
   state.message = undefined;
+  // Tab cycles the bar except inside the import path, which is a text field.
+  const tabStep = tabCycleDelta(key);
+  if (tabStep && !(state.tab === 'import' && state.focus !== 'tabs' && state.importField === 'path')) { switchTab(state, tabStep); return undefined; }
   if (state.tab === 'import') return importKey(state, key, cwd);
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
   if (key.kind === 'left' || key.kind === 'right') { switchTab(state, key.kind === 'left' ? -1 : 1); return undefined; }

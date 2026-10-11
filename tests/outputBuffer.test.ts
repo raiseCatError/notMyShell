@@ -231,3 +231,68 @@ test('clear sequence (2J/3J) triggers onClear callback, 0J/1J do not', () => {
   output.write('\u001B[3J');
   assert.equal(clears, 2);
 });
+
+test('a program\'s screen paint never becomes transcript text, even in the same read as its ordinary output', () => {
+  // agy's real startup: queries, then the alternate screen, modifyOtherKeys and a truecolor drawing in one read.
+  const output = new OutputBuffer();
+  output.beginCommand('agy', ['❯ agy']);
+  output.write('before\r\n\u001B[>q\u001B[c');
+  output.write('\u001B[>4m\u001B[?1049h\u001B[?25l\u001B[?2004h\u001B[>4;2m\u001B[>1u\u001B[H\u001B[2J\u001B[38;2;219;177;49mLOGO\u001B[m Welcome');
+  output.write('\u001B[38;2;0;0;0mmore paint\u001B[>4m\u001B[<1u\u001B[?1049l');
+  assert.equal(output.complete(0)?.output, 'before');
+  assert.deepEqual(output.wrapped(80).map(row => row.plain), ['❯ agy', 'before'], 'the command header survives the program\'s clear screen');
+
+  // The evidence split across reads still cuts at the right byte.
+  const split = new OutputBuffer();
+  split.beginCommand('tui', ['❯ tui']);
+  split.write('kept\r\n\u001B[?10');
+  split.write('49hPAINT');
+  assert.equal(split.complete(0)?.output, 'kept');
+
+  // An inline UI that only turns on an input mode is the program's too; ordinary output keeps a trailing escape.
+  const inline = new OutputBuffer();
+  inline.beginCommand('agent', ['❯ agent']);
+  inline.write('line\r\n\u001B[?2004h> prompt');
+  assert.equal(inline.complete(0)?.output, 'line');
+  const plain = new OutputBuffer();
+  plain.beginCommand('printf', ['❯ printf']);
+  plain.write('a\u001B[');
+  plain.write('31mred\u001B[0m\n');
+  assert.equal(plain.complete(0)?.output, 'ared');
+});
+
+test('the transcript parser never prints the bytes of sequences it does not draw', () => {
+  const cases: Array<[string[], string, string]> = [
+    [['a\u001B(Bb'], 'ab', 'charset designation (tmux writes ESC ( B)'],
+    [['a\u001B(', 'Bb'], 'ab', 'charset designation split across reads'],
+    [['a\u001B#8b\u001B%Gc\u001B)0d'], 'abcd', 'other nF escapes'],
+    [['a\u001BP>|tmux 3.5\u001B\\b\u001B_Gi=1;AAAA\u001B\\c'], 'abc', 'DCS and APC strings'],
+    [['a\u001B[>4;2mb\u001B[>4mc'], 'abc', 'modifyOtherKeys is not SGR'],
+    [['a\u001B[38;2;', '72;129;244mb'], 'ab', 'truecolor split across reads'],
+    [['a\u001B[38;2;\u001B[1mb'], 'ab', 'a CSI interrupted by ESC is abandoned'],
+  ];
+  for (const [chunks, expected, label] of cases) {
+    const output = new OutputBuffer();
+    output.beginCommand('x', ['❯ x']);
+    for (const chunk of chunks) output.write(chunk);
+    assert.equal(output.complete(0)?.output, expected, label);
+  }
+  const styled = new OutputBuffer();
+  styled.beginCommand('x', ['❯ x']);
+  styled.write('\u001B[>4;2m\u001B[38;2;0;10;0mgreen\n');
+  styled.complete(0);
+  const ansi = styled.transcript().lines.flat().map(cell => (cell && 'style' in cell ? cell.style : '')).join('');
+  assert.ok(!ansi.includes('NaN'), 'no NaN style');
+  assert.match(ansi, /38;2;0;10;0/u, 'a zero colour component keeps the colour instead of resetting it');
+});
+
+test('an unterminated DCS or APC string is discarded past the bound instead of growing without limit', () => {
+  for (const opener of ['\u001BP', '\u001B_']) {
+    const output = new OutputBuffer();
+    output.beginCommand('x', ['❯ x']);
+    output.write(`a${opener}`);
+    for (let i = 0; i < 100; i += 1) output.write('x'.repeat(1000));
+    output.write('\u001B\\b\n');
+    assert.equal(output.complete(0)?.output, 'ab');
+  }
+});

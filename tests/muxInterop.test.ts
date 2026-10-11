@@ -6,7 +6,7 @@ import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import nodePty from 'node-pty';
 import {detectTerminalHost} from '../src/host/terminalHost.js';
-import {LiveSandbox, until} from './helpers/liveFrontend.js';
+import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
 import {inForeground, uniqueSleep} from './helpers/processState.js';
 
 /**
@@ -308,4 +308,51 @@ test('real tmux: a foreground program SIGKILLed with terminal modes enabled leav
       await pane.run('echo AFTER-KILL', /AFTER-KILL/);
       assert.equal(flags(), baseline, 'tmux pane modes equal NMSh\'s own state from before the program ran');
     } finally { pane.kill(); await sandbox.dispose(); }
+  });
+
+test('tmux launched from the NMSh composer is an ordinary tmux client; detaching gives NMSh the terminal back',
+  {skip: hasTmux ? false : 'tmux is not installed'}, async () => {
+    const sandbox = new LiveSandbox();
+    const socket = `nmsh-launch-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
+    const tmux = (...args: string[]) => spawnSync('tmux', ['-L', socket, '-f', '/dev/null', ...args], {encoding: 'utf8', env: cleanEnv()});
+    const app = sandbox.launch([], {cols: 100, rows: 30}, {TMUX: '', STY: '', ZELLIJ: ''});
+    try {
+      await app.waitFor(/❯/);
+      const mark = app.mark;
+      app.pty.write(`tmux -L ${socket} -f /dev/null new -s qa\r`);
+      await until(() => tmux('list-clients', '-F', '#{client_width}x#{client_height}').stdout.trim() === '100x30', 20000, 'a tmux client with the whole terminal');
+      await until(() => strip(app.output.slice(mark)).includes('[qa]'), 20000, 'tmux draws its own status line on the real terminal');
+      // The pane's shell is an ordinary zsh: it draws a prompt (blank before: it loaded NMSh's own bootstrap through an inherited ZDOTDIR).
+      await until(() => tmux('capture-pane', '-p', '-t', 'qa').stdout.trim().length > 0, 20000, () => `the tmux pane shell drew a prompt; pane: ${JSON.stringify(tmux('capture-pane', '-p', '-t', 'qa').stdout)}`);
+      const paneEnv = tmux('show-environment', '-g').stdout;
+      assert.doesNotMatch(paneEnv, /^ZDOTDIR=.*nmsh-zdotdir/mu, 'tmux did not inherit NMSh\'s private ZDOTDIR');
+      assert.doesNotMatch(paneEnv, /^XDG_CACHE_HOME=.*nmsh-disabled/mu, 'nor the startup-only cache redirect');
+      assert.doesNotMatch(paneEnv, /^POWERLEVEL9K_DISABLE_PROMPT=/mu, 'nor the prompt override');
+      app.pty.write('echo FROM_TMUX_$((6*7))\r');
+      await until(() => /FROM_TMUX_42/u.test(tmux('capture-pane', '-p', '-t', 'qa').stdout), 20000, 'raw keys reach the tmux pane');
+      await until(() => strip(app.output.slice(mark)).includes('FROM_TMUX_42'), 20000, 'tmux draws on the real terminal');
+      const back = app.mark;
+      app.pty.write('\u0002d'); // Ctrl-b d: detach
+      await app.waitFor(/❯/, back);
+      await app.run('echo BACK_IN_NMSH', /BACK_IN_NMSH/);
+      // Nothing of tmux's output or the detach keys comes back as text (ESC ( B used to print a lone "B").
+      const reclaimed = app.output.slice(app.output.indexOf('\u001b[?2004h', back));
+      assert.doesNotMatch(strip(reclaimed).replace(/\u001b./gu, ''), /(?<![A-Za-z])B(?![A-Za-z])|\u0002|(?<![A-Za-z])d(?![A-Za-z])/u, 'no stray bytes after detach');
+      assert.equal(tmux('has-session', '-t', 'qa').status, 0, 'the detached tmux session keeps running');
+      const again = app.mark;
+      app.pty.write(`tmux -L ${socket} -f /dev/null attach -t qa\r`);
+      await until(() => tmux('list-clients').stdout.trim().length > 0, 20000, 'attach starts a client');
+      await until(() => strip(app.output.slice(again)).includes('[qa]'), 20000, 'attach is handed the terminal too');
+      app.pty.write('echo ATTACHED_$((7*6))\r');
+      await until(() => /ATTACHED_42/u.test(tmux('capture-pane', '-p', '-t', 'qa').stdout), 20000, 'keys reach the reattached pane');
+      const back2 = app.mark;
+      app.pty.write('\u0002d');
+      await app.waitFor(/❯/, back2);
+      tmux('kill-server');
+      await app.run('tmux -L ' + socket + ' ls; echo LISTED', /LISTED/);
+    } finally {
+      tmux('kill-server');
+      app.pty.kill();
+      await sandbox.dispose();
+    }
   });

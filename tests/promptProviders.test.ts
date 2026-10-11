@@ -380,7 +380,8 @@ test('/prompt module manager toggles, reorders, and sets options without losing 
   const rows = renderPromptPanel(state, 120, []).map(stripAnsi);
   assert.ok(rows.some(row => /○ Path +left +hidden/u.test(row)));
   assert.ok(rows.some(row => /› ● Exit status +right +‹ always ›/u.test(row)));
-  assert.equal(rows.at(-1), '↑↓ move · Space show/hide · Shift+↑↓ reorder · ←→ option · P side · S surface · M mirror: On · Enter details · Esc done');
+  // The footer wraps at control boundaries rather than being cut at 120 columns.
+  assert.equal(rows.slice(-2).join(' · '), '↑↓ move · Space show/hide · ←→ option · S surface · Shift+↑↓ reorder · P side · M mirror: On · Enter details · / search · Tab tabs · A save modules now · Esc back to /prompt');
   assert.ok(rows.some(row => /Catalog; Tab to switch/u.test(row)), 'the Catalog/Packs tabs are named on screen');
   assert.ok(promptDraftChanged(state), 'module edits count as unsaved changes');
   const path = join(tmpdir(), `nmsh-modules-${process.pid}.json`);

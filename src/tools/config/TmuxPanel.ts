@@ -1,5 +1,5 @@
 import type {Key} from '../../terminal/keys.js';
-import {framePanel, renderTabStrip} from '../../ui/PanelShell.js';
+import {cycleTab, framePanel, renderTabStrip, tabCycleDelta} from '../../ui/PanelShell.js';
 import {renderControls} from '../../ui/controls.js';
 import {focusForeground, foreground, background, UI_COLORS} from '../../ui/palette.js';
 import {GLYPHS} from '../../ui/glyphs.js';
@@ -170,6 +170,8 @@ export function tmuxPanelKey(state: TmuxPanelState, key: Key): TmuxPanelAction |
     return undefined;
   }
   if (key.kind === 'escape' || key.kind === 'interrupt') return {kind: 'close'};
+  const tabStep = tabCycleDelta(key);
+  if (tabStep) { state.tab = cycleTab(TAB_IDS, state.tab, tabStep); return undefined; }
   if (state.focus === 'tabs') {
     if (key.kind === 'left' || key.kind === 'right') state.tab = TAB_IDS[(TAB_IDS.indexOf(state.tab) + (key.kind === 'left' ? -1 : 1) + TAB_IDS.length) % TAB_IDS.length]!;
     else if (key.kind === 'down' || key.kind === 'enter') state.focus = 'list';

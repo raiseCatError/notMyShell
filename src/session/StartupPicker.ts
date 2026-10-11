@@ -1,14 +1,14 @@
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import type {SessionInfo} from './SessionProtocol.js';
-import {formatAge, tildePath} from './sessionList.js';
+import {formatAge, sessionText, tildePath} from './sessionList.js';
 
 // Launch-time restore screens, shown before any session is attached. Each has
 // one destructive key, X, which only opens a confirmation; the kill itself is
 // the same confirmed termination path /resume uses (killAndArchive), and the
 // transcript is archived, never discarded.
 
-const clipTo = (columns: number) => (text: string) => (text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text);
-const activity = (session: SessionInfo) => session.running?.replace(/\s+/gu, ' ').slice(0, 60) ?? 'zsh';
+const clipTo = (columns: number) => (raw: string) => { const text = sessionText(raw); return text.length > columns - 1 ? `${text.slice(0, Math.max(0, columns - 2))}…` : text; };
+const activity = (session: SessionInfo) => (session.running === undefined ? undefined : sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 60)) ?? 'zsh';
 const age = (session: SessionInfo, now: number) => formatAge(now - (session.runningSince ?? session.idleSince ?? session.createdAt));
 
 // ── One detached session ─────────────────────────────────────────────────────
