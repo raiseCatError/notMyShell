@@ -777,6 +777,7 @@ export class TerminalApp {
   private lastPtyColumns = 0;
   private stopped = false;
   private originalRawMode = false;
+  private rawInputPrepared = false;
   private shellHandoffCwd?: string;
   private shellHandoffRequested = false;
   private presentationStartCwd = process.cwd();
@@ -1088,12 +1089,26 @@ export class TerminalApp {
         cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
   }
 
+  /** Protect input before any program prompt is visible, including synchronous attach replay. */
+  private prepareRawInput(): void {
+    if (!process.stdin.isTTY || this.rawInputPrepared) return;
+    this.originalRawMode = process.stdin.isRaw;
+    process.stdin.setRawMode(true);
+    this.rawInputPrepared = true;
+  }
+
   async run(): Promise<number> {
+    this.prepareRawInput();
+    process.once('exit', () => {
+      if (!this.stopped) {
+        if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+        this.terminalFocus = 'unknown';
+        this.renderer.leave();
+      }
+    });
     let earlyInput = '';
     // A reattached interactive program owns terminal queries and replies.
     if (!this.passthrough && process.stdin.isTTY && process.stdout.isTTY) {
-      this.originalRawMode = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
       process.stdin.setEncoding('utf8');
       const resolved = await probeHost(this.host.capabilities, {
         write: data => process.stdout.write(data),
@@ -1103,7 +1118,6 @@ export class TerminalApp {
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
       }, undefined, {graphics: shouldProbeGraphics(process.env)});
-      process.stdin.setRawMode(this.originalRawMode);
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
       earlyInput = resolved.input;
@@ -1123,10 +1137,7 @@ export class TerminalApp {
     this.startOnboarding();
     // Restored terminal modes are a visible handoff: keys can arrive at once.
     // Install raw input first so the host cannot echo or translate those keys.
-    if (process.stdin.isTTY) {
-      this.originalRawMode = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
-    }
+    this.prepareRawInput();
     process.stdin.setEncoding('utf8');
     process.stdin.resume();
     process.stdin.on('data', this.onInput);
@@ -1139,13 +1150,6 @@ export class TerminalApp {
     process.on('SIGCONT', this.onContinue);
     process.once('SIGTERM', this.onTerminate);
     process.once('SIGHUP', this.onTerminate);
-    process.on('exit', () => {
-      if (!this.stopped) {
-        if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
-        this.terminalFocus = 'unknown';
-        this.renderer.leave();
-      }
-    });
     this.presentationStarted = true;
     void this.loadSessionIdentity();
     this.refreshAwake();
@@ -1170,12 +1174,16 @@ export class TerminalApp {
   private readonly queryExtractor = new QueryExtractor();
   private readonly replyRouter = new ReplyRouter();
 
+  private logEditorKeyInput(data: string): void {
+    const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
+  }
+
   private readonly onInput = (data: string): void => {
-    // Key debugging never records what a program reads with echo off (or single keys it asked for).
-    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.directInputRequest()) {
-      const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-      const escaped = JSON.stringify(data);
-      appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
+    // Before probes classify a read, or inside a native reader, input can already be sensitive.
+    // Key diagnostics therefore observe only the idle composer, never startup or running-program input.
+    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.running && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
+      this.logEditorKeyInput(data);
     }
     if (this.passthrough && !this.startupPending) {
       this.session.write(data);
@@ -3151,6 +3159,7 @@ export class TerminalApp {
     // New output is activity: it ends idle visuals and restarts the inactivity timer.
     this.noteActivity();
     if (this.passthrough) {
+      this.prepareRawInput();
       this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
@@ -3162,6 +3171,7 @@ export class TerminalApp {
       this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
+        this.prepareRawInput();
         this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {

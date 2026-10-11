@@ -96,7 +96,8 @@ test('live fish: a hidden reader inside a function keeps ownership across detach
     const [session] = await sandbox.sessions();
     frontend.pty.kill('SIGKILL');
     await until(async () => (await sandbox.sessions()).find(item => item.id === session!.id)?.state === 'detached', 15_000, 'reader detached');
-    const back = sandbox.launch(['--attach', session!.id]);
+    const back = sandbox.launch(['--attach', session!.id], {cols: 100, rows: 30}, {}, resolve('tests/fixtures/slowJournalAttach.ts'));
+    await back.waitFor(/TEST-JOURNAL-WAIT/u);
     await back.waitFor(/Password: /u);
     const reply = back.mark;
     back.pty.write('never-a-command\r');
