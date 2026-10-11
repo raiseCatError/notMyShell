@@ -1,0 +1,66 @@
+---
+title: Platform Troubleshooting
+description: Solutions for common NMSh issues across macOS, Linux, WSL 2, and various terminal hosts.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+notMyShell interacts closely with your OS, PTY, and terminal emulator. This guide covers common edge cases and platform-specific resolutions.
+
+## Terminal Hosts
+
+NMSh runs *inside* your terminal emulator. It requires a host with standard VT sequence support.
+
+### Ghostty & Kitty
+**Status: Excellent.**
+These terminals support the Kitty Keyboard Protocol natively. NMSh will automatically negotiate `CSI > 1 u` flags to receive unambiguous modifier keys (e.g., distinguishing `Shift+Enter` from standard `Enter`).
+- **Issue**: Themes mismatch.
+- **Fix**: Use `/theme` and ensure Theme Bridge is enabled to synchronize NMSh's internal palette with your host.
+
+### macOS Terminal.app & iTerm2
+**Status: Fully Supported.**
+- **Issue (Word navigation/deletion fails)**: Pressing `Option+Left` or `Option+Backspace` prints characters (like `[D` or `∫`) instead of navigating or deleting words.
+- **Fix (Terminal.app)**: Go to Terminal > Settings > Profiles > Keyboard. Check **"Use Option as Meta key"**.
+- **Fix (iTerm2)**: Go to Settings > Profiles > Keys. Set Left/Right Option Key to **"Esc+"**.
+
+### Zed
+**Status: Supported (Integrated Terminal).**
+- **Issue**: Complex keyboard shortcuts (like `Cmd+Up`) are intercepted by the editor rather than passed to NMSh.
+- **Fix**: Use standard fallback editing keys (`Alt+f`, `Alt+b`, `Ctrl+k`) which are universally passed through to the PTY.
+
+### WezTerm
+**Status: Supported.**
+- **Issue**: Ligatures or special glyphs are cut off in the powerline prompt.
+- **Fix**: Ensure your font supports powerline glyphs (e.g., Nerd Fonts), and check your WezTerm config for `custom_block_glyphs = true`.
+
+## macOS
+
+### Homebrew PATH Issues
+- **Issue**: `nmsh` is installed via Homebrew (`brew install raiseCatError/tap/nmsh`), but the command is not found.
+- **Fix**: Ensure `/opt/homebrew/bin` (Apple Silicon) or `/usr/local/bin` (Intel) is correctly exported in your `~/.zshrc` or `~/.bash_profile`.
+
+### Terminal Title Conflicts
+- **Issue**: The window title flickers or shows raw shell prompts.
+- **Fix**: Disable your shell's internal title injection (e.g., `DISABLE_AUTO_TITLE="true"` in Oh My Zsh) and let NMSh manage the title via `/settings > Terminal Title`.
+
+## Linux
+
+### Keep Awake (Systemd Inhibitor)
+- **Issue**: Running `/zoomies` or `/caffeinate` on Linux fails to prevent sleep.
+- **Fix**: NMSh's Linux Keep Awake attempts to use the `systemd-inhibit` API. This requires an active D-Bus session and user privileges to request sleep inhibitors. Under Wayland, some compositors (like Sway) have their own idle managers (e.g., `swayidle`). You may need to configure your compositor to respect `systemd-inhibit`.
+
+### Headless Environments & X11
+- **Issue**: Launching NMSh in a pure TTY (no X11/Wayland) or SSH session without proper terminfo.
+- **Fix**: NMSh checks `process.stdin.isTTY` and `process.stdout.isTTY`. Ensure `$TERM` is set to a reasonable fallback (e.g., `xterm-256color`) if `nmsh` complains about terminal support.
+
+## WSL 2 (Windows Subsystem for Linux)
+
+### Windows Terminal Symlinks
+- **Issue**: Importing dotfiles (`/dotfiles`) or reading Context Engine metadata fails on paths shared with the Windows `C:` drive via `/mnt/c/`.
+- **Fix**: NMSh refuses to traverse unsafe filesystem boundaries or follow symlinks that cross into Windows mounts for metadata reads. Keep your active development projects natively inside the WSL 2 ext4 filesystem (`~/`) rather than `/mnt/c/` for full Context Engine support and faster performance.
+
+### Clipboard/Paste Issues
+- **Issue**: Pasting large blocks of text is extremely slow or loses characters.
+- **Fix**: Windows Terminal generally supports Bracketed Paste. Ensure your Windows Terminal is up to date. NMSh intercepts bracketed paste and triggers the `Paste Guard` for safe multiline review.

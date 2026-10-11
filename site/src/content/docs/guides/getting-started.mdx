@@ -1,0 +1,57 @@
+---
+title: Getting Started
+description: How to install and set up notMyShell on macOS, Linux, and WSL.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+notMyShell (NMSh) is a terminal frontend that operates over a persistent, real shell session (zsh, Bash, or Fish). Instead of replacing the shell or running commands as isolated subprocesses, NMSh orchestrates a hidden pseudo-terminal (PTY) running that shell.
+
+## Installation
+
+### Homebrew (macOS)
+
+Homebrew is the recommended install method on macOS.
+
+```sh
+brew install raiseCatError/tap/nmsh
+nmsh
+```
+
+To update, use `brew upgrade raiseCatError/tap/nmsh`.
+
+### Build from source (macOS, Linux, WSL 2)
+
+You need:
+- Node.js 22 or newer
+- zsh (default), Bash 4.4+, or Fish
+
+```sh
+git clone https://github.com/raiseCatError/notMyShell.git
+cd notMyShell
+npm install
+npm run build
+npm link
+nmsh
+```
+
+> **Note on GUI terminals:** To start NMSh from a GUI terminal like Ghostty or Zed, use absolute paths so macOS `PATH` differences cannot break startup: `command = direct:/absolute/path/to/node /absolute/path/to/nmsh`.
+> **Never** set `nmsh` as your system/login shell with `chsh`.
+
+## First Launch
+
+When you first run `nmsh`, you will be greeted by **Setup Cat**. Setup Cat guides you through the initial customization, including choosing a layout (Bottom, Top, or Flow), a prompt style, and a theme.
+
+If you skip setup or want to change it later, type `/setup` in the composer.
+
+## Switching Shells
+
+NMSh uses a shared ShellAdapter for zsh, Bash, and Fish. To switch the shell of your *current session*, type:
+
+```sh
+/shell
+```
+
+To set the default shell for *new sessions*, go to `/settings` and navigate to the Sessions tab.
