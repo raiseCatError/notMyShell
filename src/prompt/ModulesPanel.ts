@@ -44,7 +44,11 @@ export interface ModulesManagerState {
   search?: {query: string; editing: boolean};
   /** Pack modules shown or hidden during this visit stay listed under Modules, so a row never vanishes under the cursor. */
   touched?: string[];
-  detail?: {kind: 'module' | 'pack'; id: string};
+  detail?: {
+    kind: 'module' | 'pack'; id: string; scroll?: number;
+    /** Ephemeral bounds from the rendered detail window; never saved as settings. */
+    viewport?: {maxScroll: number; page: number};
+  };
   /** A reviewed change awaiting Enter (Claude Code settings edit, pack removal). */
   confirm?: {request: ModulesRequest; title: string; lines: string[]};
   request?: ModulesRequest;
@@ -259,6 +263,13 @@ export function handleModulesManagerKey(key: Key, state: ModulesState, context: 
   }
   if (state.detail) {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.detail = undefined; return true; }
+    if (key.kind === 'up' || key.kind === 'down' || key.kind === 'pageUp' || key.kind === 'pageDown') {
+      const detail = state.detail;
+      const amount = key.kind === 'pageUp' || key.kind === 'pageDown' ? detail.viewport?.page ?? 1 : 1;
+      const direction = key.kind === 'up' || key.kind === 'pageUp' ? -1 : 1;
+      detail.scroll = Math.max(0, Math.min(detail.viewport?.maxScroll ?? 0, (detail.scroll ?? 0) + direction * amount));
+      return true;
+    }
     if (state.detail.kind === 'pack') {
       const pack = context.packs?.find(item => item.id === state.detail!.id);
       if (pack && !pack.builtIn && key.kind === 'text' && /^[eE]$/u.test(key.value)) { state.request = {kind: 'packEnabled', id: pack.id, enabled: pack.state !== 'enabled'}; return true; }
@@ -473,17 +484,34 @@ function whereText(module: ContextModuleConfig, configuration: PromptConfigurati
 const label = (id: string) => clean(moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`, 64);
 
 /** A window of list rows around the selection, with counts of what is above and below. */
-function windowed(rows: string[], selectedRow: number, budget: number): string[] {
-  if (rows.length <= budget || budget < 5) return rows;
+function windowed(rows: string[], selectedRow: number, budget: number, fromStart = false): string[] {
+  if (rows.length <= budget) return rows;
+  if (budget < 5) {
+    const start = Math.max(0, Math.min(rows.length - Math.max(0, budget), selectedRow));
+    return rows.slice(start, start + Math.max(0, budget));
+  }
   const size = budget - 2;
-  const start = Math.max(0, Math.min(rows.length - size, selectedRow - Math.floor(size / 2)));
+  const start = Math.max(0, Math.min(rows.length - size, selectedRow - (fromStart ? 0 : Math.floor(size / 2))));
   const end = start + size;
   return [start ? `${SUBTLE}  ↑ ${start} more${RESET}` : '', ...rows.slice(start, end), end < rows.length ? `${SUBTLE}  ↓ ${rows.length - end} more${RESET}` : ''];
 }
 
 export function renderModulesManager(state: ModulesState, columns: number, context: ModulesContext = state.context ?? {}, budget = Infinity): string[] {
   const all = renderManagerRows(state, columns, context);
-  if (state.detail || state.confirm || all.rows.length <= budget) return all.rows;
+  if (state.detail) {
+    // Only ephemeral view bounds change here. Facts, preferences and demand do
+    // not change when the terminal is resized or the reader pages through data.
+    const head = Math.min(all.head, Math.max(0, budget - 1));
+    const content = all.rows.slice(head);
+    const available = Math.max(0, budget - head);
+    const page = Math.max(1, Math.min(content.length, available < 5 ? available : available - 2));
+    const maxScroll = Math.max(0, content.length - page);
+    const scroll = state.detail.scroll ?? 0;
+    state.detail.scroll = Number.isSafeInteger(scroll) ? Math.max(0, Math.min(maxScroll, scroll)) : 0;
+    state.detail.viewport = {maxScroll, page};
+    return [...all.rows.slice(0, head), ...windowed(content, state.detail.scroll, available, true)];
+  }
+  if (state.confirm || all.rows.length <= budget) return all.rows;
   return [...all.rows.slice(0, all.head), ...windowed(all.rows.slice(all.head), all.selectedRow - all.head, budget - all.head)];
 }
 
@@ -509,6 +537,7 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
     return {rows, head: rows.length, selectedRow: 0};
   }
   if (state.detail) {
+    const head = rows.length;
     if (state.detail.kind === 'pack') {
       const pack = context.packs?.find(item => item.id === state.detail!.id);
       rows.push(...(pack ? packDetailRows(pack, columns) : [`${SECONDARY}That pack is no longer available.${RESET}`]));
@@ -516,7 +545,7 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
       const module = state.draft.modules.find(item => item.id === state.detail!.id);
       rows.push(...(module ? moduleDetailRows(module, context, columns, state.draft) : [`${SECONDARY}That module is no longer configured.${RESET}`]));
     }
-    return {rows, head: rows.length, selectedRow: 0};
+    return {rows, head: Math.min(rows.length, head + 1), selectedRow: head};
   }
   const item = (index: number, text: string) => {
     if (index === state.selectedIndex) selectedRow = rows.length;
@@ -573,9 +602,10 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
 
 export function modulesManagerControls(state: ModulesState, context: ModulesContext = state.context ?? {}): Array<[string, string]> {
   if (state.confirm) return [['Enter', 'apply'], ['Esc', 'cancel']];
+  const read: Array<[string, string]> = state.detail?.viewport?.maxScroll ? [['↑↓', 'scroll'], ['PgUp/PgDn', 'page']] : [];
   if (state.detail?.kind === 'pack') {
     const pack = context.packs?.find(item => item.id === state.detail!.id);
-    return pack && !pack.builtIn ? [['E', pack.state === 'enabled' ? 'disable' : 'enable'], ['D', 'remove'], ['Esc', 'back']] : [['Esc', 'back']];
+    return pack && !pack.builtIn ? [...read, ['E', pack.state === 'enabled' ? 'disable' : 'enable'], ['D', 'remove'], ['Esc', 'back']] : [...read, ['Esc', 'back']];
   }
   const done: [string, string] = ['Esc', state.standalone ? 'close' : 'back to /prompt'];
   const apply: Array<[string, string]> = !state.standalone && modulesDirty(state) ? [['A', 'save modules now']] : [];
@@ -585,7 +615,7 @@ export function modulesManagerControls(state: ModulesState, context: ModulesCont
     const module = state.draft.modules.find(item => item.id === state.detail!.id);
     if (!module || !moduleDefinition(module.id)) return [['Esc', 'back']];
     const claude = moduleDefinition(state.detail.id)?.facts.has('agent.claude');
-    return [['Space', 'show/hide'], ...(conditionChoosable(module) ? [['←→', 'option'] as [string, string]] : []), ['S', 'surface'],
+    return [...read, ['Space', 'show/hide'], ...(conditionChoosable(module) ? [['←→', 'option'] as [string, string]] : []), ['S', 'surface'],
       ...(claude ? [['B', 'Claude Code bridge'] as [string, string]] : []), ...apply, ['Esc', 'back']];
   }
   const tab = state.modulesTab ?? 'modules';

@@ -56,7 +56,8 @@ Repeat relevant steps at 40, 50, 80 and 120 columns, Safe glyphs and `NO_COLOR=1
   Reattach a running command and check its phrase stays paired when its live journal is available.
 - Import a local Starship/Oh My Posh theme in `/theme`. Preview must disclose unsupported/lossy mappings before
   saving. Cancel stores nothing. Saving changes only the NMSh theme library; provider source files remain unchanged.
-- `/modules` details explain reads, routing, collection state and measured time. Opening details or `/doctor` must
+- `/modules` details explain reads, routing, collection state and measured time. In a short window,
+  use Up/Down and PageUp/PageDown to reach Source, Cache, Timing and Why; resize and confirm the view stays bounded. Opening details or `/doctor` must
   not trigger unrelated expensive collection. Unknown/uncollected states must not claim available data or proven
   visibility.
 

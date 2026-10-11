@@ -169,6 +169,10 @@ fullscreen programs hide it, and it is never written to the transcript.
 - **Packs** — bundled and installed Context Packs with their verified state;
   installed packs can be enabled, disabled or removed (with confirmation).
 
+Short detail panels keep the module title visible and scroll through existing rows
+with Up/Down or PageUp/PageDown. Resize clamps that temporary view; scrolling
+does not edit settings or demand data.
+
 A module's details show what it reads, whether its value may be kept with
 commands in history, and each fact's current state ("fresh · 3s ago", "last
 known, refresh waits for demand", "unavailable (timeout)", "not checked"). Trusted source IDs,

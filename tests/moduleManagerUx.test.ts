@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import {handlePromptPanelKey, promptPanelControls, promptPanelOwnsKey, renderPromptPanel, type PromptPanelState} from '../src/prompt/PromptPanel.js';
-import {catalogEntries, listedModules, modulesDirty, modulesItemCount, packEntries, type PackListing} from '../src/prompt/ModulesPanel.js';
+import {renderModulesManager, catalogEntries, listedModules, modulesDirty, modulesItemCount, packEntries, type PackListing} from '../src/prompt/ModulesPanel.js';
 import {parseSlashCommand, slashCommands} from '../src/commands/slashCommands.js';
 import {paletteItems} from '../src/ui/CommandPalette.js';
 import {firstPartyPacks} from '../src/context/modules.js';
@@ -272,4 +272,33 @@ test('/prompt → Modules: A saves module settings only, leaving other draft edi
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
     rmSync(root, {recursive: true, force: true});
   }
+});
+
+test('short module details expose every diagnostic row through bounded scrolling without editing settings', () => {
+  const s = state(true);
+  s.context = {status: () => ({state: 'failed', durationMs: 4.2, hasValue: false, error: 'private-do-not-show'}), now: 4000};
+  s.selectedIndex = listedModules(s).findIndex(module => module.id === 'nmsh.cloud:aws');
+  handlePromptPanelKey(ENTER, s);
+  const before = JSON.stringify(s.draft);
+  const full = renderModulesManager(s, 50).map(stripAnsi);
+  const first = renderModulesManager(s, 50, s.context, 12).map(stripAnsi);
+  assert.ok(first.length <= 12, 'details honor the actual panel budget');
+  const seen = new Set(first);
+  for (let step = 0; step < full.length; step++) {
+    handlePromptPanelKey({kind: 'down'}, s);
+    for (const row of renderModulesManager(s, 50, s.context, 12).map(stripAnsi)) seen.add(row);
+  }
+  for (const row of full) assert.ok(seen.has(row), 'every source/cache/timing/why row is reachable: ' + row);
+  assert.match([...seen].join('\n'), /Source[\s\S]*Cache[\s\S]*Timing[\s\S]*Why/u);
+  assert.doesNotMatch([...seen].join('\n'), /private-do-not-show/u);
+  assert.equal(JSON.stringify(s.draft), before, 'reading does not edit or persist preferences');
+  const bottom = renderModulesManager(s, 50, s.context, 12);
+  handlePromptPanelKey({kind: 'down'}, s);
+  assert.deepEqual(renderModulesManager(s, 50, s.context, 12), bottom, 'scroll stops at the final row');
+  handlePromptPanelKey({kind: 'pageUp'}, s);
+  assert.notDeepEqual(renderModulesManager(s, 50, s.context, 12), bottom, 'PageUp reads earlier details');
+  renderModulesManager(s, 120, s.context, 1000);
+  assert.equal(renderModulesManager(s, 50, s.context, 12).length, 12, 'resize clamps the viewport');
+  handlePromptPanelKey(ESC, s);
+  assert.equal(s.detail, undefined, 'Esc returns to the same module selection');
 });
