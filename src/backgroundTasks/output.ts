@@ -99,7 +99,10 @@ export class TaskOutput {
 /** One raw line → display text: `\r\n` ends a line, a lone `\r` overwrites it (progress output), escapes and controls go. */
 export function clean(raw: string, maxLength: number): string {
   // A PTY turns a program's "\r\n" into "\r\r\n": every trailing \r belongs to the line ending, not to a progress overwrite.
-  const line = raw.replace(/\r+$/u, '');
+  // Trimmed by hand: `/\r+$/` retries from every \r of a long run, which is quadratic on hostile output.
+  let end = raw.length;
+  while (end > 0 && raw.charCodeAt(end - 1) === 13) end -= 1;
+  const line = raw.slice(0, end);
   const last = line.lastIndexOf('\r');
   const visible = last === -1 ? line : line.slice(last + 1);
   return stripTerminalControls(visible.replace(/\t/gu, '    '), maxLength);

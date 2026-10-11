@@ -81,13 +81,21 @@ settings, never commands, arguments or output.
   `/bin/sh`) dies of SIGINT while a program that ignores SIGINT keeps running, so the task stays `stopping`, and
   escalation still reaches the group, until the group is gone (found by Linux CI; reproduced on macOS in tests).
 - When the leader exits on its own while members of its group still run (they ignored the hangup), the task says so
-  (`leftovers`) and they are killed only on an explicit request.
-- **Remove** deletes a finished task and its output; a running task is never removed. **Dismissing** a view is a
-  presentation matter and touches no task. These are three different operations.
+  (`leftovers`) and they are killed only on an explicit request. The group is probed every 250 ms until it is empty,
+  however long that takes, and then forgotten, so `leftovers` never goes stale and a later kill request finds nothing
+  to signal.
+- **Remove** deletes a finished task and its output; a running task is never removed, and neither is a finished task
+  whose processes still run (nothing could stop them afterwards). **Dismissing** a view is a presentation matter and
+  touches no task. These are three different operations.
+- Each stop request records when it was made (`stopRequestedAt`), so a view can pace escalation: a repeated or held
+  key does not turn an interrupt into SIGKILL before the program had a moment to exit.
 - `shutdown` ends every task (interrupt, terminate, kill, with a grace period) for an explicit session exit.
 - Output notifications are coalesced to at most one per 50 ms per task; state changes are immediate.
-- Signals are sent only while the task's leader has not been reaped, so a recycled pid cannot be hit; the leftover
-  check is a signal-0 probe of the group.
+- Group ids and reuse: a process group's id cannot be reused while any member exists. Signals go to the group while
+  its leader is unreaped, or after the leader exited while the supervisor's probe (signal 0, at most 250 ms old) says
+  the group still has members; a group seen empty is forgotten. The residual window is a group that empties and whose
+  id is reused within one probe interval, just as a kill is requested; NMSh cannot close it without a process
+  handle for groups (none is portable).
 
 ## Output (`output.ts`)
 
@@ -97,7 +105,8 @@ OSC titles and hyperlinks, cursor movement, C0/C1 controls and bidi overrides ar
 restyle NMSh, move its cursor or pose as another task. `\r\r\n` (a program's `\r\n` through a PTY) ends a line; a
 lone `\r` overwrites it, so progress lines keep their last state. Lines are numbered (`seq`), so a view knows what is
 new; the stream is bounded by lines and bytes, counts what it dropped and what it received, and splits endless lines.
-An 8 MiB hostile burst stays within a 64 KiB bound in tests.
+An 8 MiB hostile burst stays within a 64 KiB bound in tests, and line handling is linear: a 64 Ki run of carriage
+returns, which a trailing-`\r` regular expression took seconds over, is a test.
 
 ## Lifecycle and ownership (integration)
 
@@ -156,7 +165,8 @@ Conflict-prone paths: `src/app/TerminalApp.ts`, `src/session/SessionService.ts`,
 `tests/backgroundSupervisor.test.ts` (real PTYs and controlled programs): a logcat-like stream stopped by SIGINT and
 reported only after exit; a program ignoring SIGINT stays `stopping` until an explicit SIGTERM, one ignoring both
 until SIGKILL; a pipeline stopped as a whole while a detached adb-server-like helper and another task keep running;
-leftover group members reported and killed only on request; exact quoting; exit status; environment never on records;
+leftover group members reported and killed only on request, a leftover group that ends later noticed and forgotten
+and never removed while it runs; exact quoting; exit status; environment never on records;
 refusals; an 8 MiB hostile burst. `tests/backgroundDetector.test.ts`: recognition and refusal tables, timing,
 decisions, preference normalization and private storage, output line handling.
 
