@@ -104,3 +104,18 @@ test('the palette offers failure navigation only when there is a failure', () =>
     assert.equal(instance['paletteState']!.items.filter(item => item.action.kind === 'failure').length, 2);
   } finally { dispose(instance); }
 });
+
+test('failure keys preserve the composer and are inactive while a program owns input', () => {
+  const instance = app();
+  try {
+    run(instance['output'], 'false', '', 1);
+    instance['editor'].insert('echo draft');
+    instance['handleKey']({kind: 'previousFailure'});
+    assert.equal(instance['focusedCommandIndex'], 0);
+    assert.equal(instance['editor'].text, 'echo draft');
+    instance['focusedCommandIndex'] = undefined;
+    instance['onShellExec']('sleep 30');
+    instance['handleKey']({kind: 'previousFailure'});
+    assert.equal(instance['focusedCommandIndex'], undefined);
+  } finally { dispose(instance); }
+});

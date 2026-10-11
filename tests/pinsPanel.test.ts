@@ -27,6 +27,8 @@ function app() {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
   Object.defineProperty(app, 'dimensions', {value: () => ({columns: 100, rows: 30})});
+  // Assert on accepted entries without racing or executing the first recipe step.
+  app['session'].queue({op: 'pause'});
   return app;
 }
 function dispose(app: TerminalApp) { app['stop'](0); app['session'].kill(); }
@@ -133,6 +135,29 @@ test('from a block: Pin command keeps the command, refuses secrets, and runs not
     assert.equal(readFileSync(pinsPath(), 'utf8').includes('ghp_'), false);
     assert.deepEqual(submitted, []);
   } finally { dispose(instance); }
+});
+
+test('history selection: palette pins the selected record with its own cwd, never the search text', async () => {
+  reset();
+  const a = app();
+  try {
+    a['editor'].insert('/history selected');
+    a['historyQuery'] = 'selected';
+    a['historyResults'] = [{id: 'history-1', source: 'nmsh', command: 'echo selected', cwd: '/original/project'}];
+    a['openPalette']();
+    const item = a['paletteState']!.items.find(item => item.id === 'history:pin:history-1');
+    assert.ok(item);
+    await a['runPaletteItem'](item);
+    assert.equal(data().pins[0]?.command, 'echo selected');
+    assert.equal(data().pins[0]?.cwd, '/original/project');
+    assert.equal(a['editor'].text, '/history selected');
+    assert.equal(a['queueState'].entries.length, 0);
+    // A deleted/refreshed history entry must not be confused with another selection.
+    a['historyResults'] = [];
+    reset();
+    await a['runPaletteItem'](item);
+    assert.equal(data().pins.length, 0);
+  } finally { dispose(a); }
 });
 
 test('staging a pin puts it in an empty composer for review and never over typed text', async () => {

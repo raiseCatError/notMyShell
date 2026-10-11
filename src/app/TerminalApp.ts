@@ -251,6 +251,8 @@ import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, render
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
+import {ClipStore, type Clip} from '../clipboard/ClipStore.js';
+import {clipboardCounter, ClipboardChangeWatch} from '../clipboard/ClipboardChanges.js';
 import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
 import {splitBatch} from '../input/pasteBatch.js';
 import {verifyCommands} from '../input/pasteBatchCheck.js';
@@ -774,6 +776,10 @@ export class TerminalApp {
   private queueEdit?: {id: number; draft: string};
   private queuePanel?: QueuePanelState;
   private pinsPanel?: PinsPanelState;
+  private readonly clips = new ClipStore();
+  private readonly clipboardChangeCounter = clipboardCounter();
+  private clipboardChangeWatch?: ClipboardChangeWatch;
+  private clipboardChangeSuggested = false;
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -1755,6 +1761,7 @@ export class TerminalApp {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
       const outcome = pasteReviewKey(this.pasteReview, key, this.dimensions().rows - 4);
       if (outcome === 'batch') void this.openBatchReview(this.pastePreview.text);
+      else if (outcome === 'clip') this.keepClip(this.pastePreview.text, 'paste', this.shellCwd);
       else if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
       else if (outcome === 'back') { this.pasteReview = undefined; if (!this.pasteCompactFits()) this.pastePreview = undefined; }
       else if (outcome === 'cancel') { this.pasteReview = undefined; this.pastePreview = undefined; }
@@ -1766,6 +1773,7 @@ export class TerminalApp {
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
       else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
       else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'c') this.keepClip(preview.text, 'paste', this.shellCwd);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
       this.render();
       return;
@@ -2017,6 +2025,10 @@ export class TerminalApp {
     if (key.kind === 'escape') this.clearBlockFocus();
     if (FLOW_EDIT_KEYS.has(key.kind) && key.kind !== 'enter') this.clearBlockFocus();
 
+    if (key.kind === 'previousFailure' || key.kind === 'nextFailure') {
+      if (!this.running) this.goToFailure(key.kind === 'previousFailure' ? 'previous' : 'next');
+      return;
+    }
     if (key.kind === 'historyDelete' && this.historySearchActive) {
       const entry = this.historyQuery === this.editor.text.substring(HISTORY_SEARCH.length) ? this.historyResults[this.selectedSuggestion] : undefined;
       if (entry) void this.historyService.index.delete(entry.id).then(() => {
@@ -2551,6 +2563,10 @@ export class TerminalApp {
     }
     else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
     else if (slash.kind === 'pasteClipboard') await this.pasteClipboard(command);
+    else if (slash.kind === 'clips') {
+      if (slash.suggestions === undefined) this.openClips();
+      else this.configureClipboardChanges(slash.suggestions);
+    }
     else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
     else if (slash.kind === 'compare') {
       if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
@@ -2671,7 +2687,15 @@ export class TerminalApp {
   private openPalette(): void {
     if (this.settingsPanelActive) return;
     const record = this.focusedCommandIndex === undefined ? this.output.recent(1) : this.output.recent(this.focusedCommandIndex + 1);
-    this.paletteState = createPalette([...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
+    const history = this.historySearchActive && this.historyQuery === this.editor.text.substring(HISTORY_SEARCH.length)
+      ? this.historyResults[this.selectedSuggestion] : undefined;
+    const historyItems: PaletteItem[] = history ? [{id: `history:pin:${history.id}`, label: 'Pin selected history command',
+      detail: displaySafe(history.command), category: 'Transcript', action: {kind: 'pinHistory', id: history.id}},
+      {id: `history:clip:${history.id}`, label: 'Keep selected history command as clip', detail: displaySafe(history.command),
+        category: 'Transcript', action: {kind: 'keepHistoryClip', id: history.id}}] : [];
+    const composerItems: PaletteItem[] = this.editor.text.trim() && !isSlashInput(this.editor.text)
+      ? [{id: 'clip:keep-composer', label: 'Keep composer draft as clip', detail: 'Keep text in memory without changing the draft or executing it', category: 'Transcript', action: {kind: 'keepComposerClip'}}] : [];
+    this.paletteState = createPalette([...historyItems, ...composerItems, ...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
   }
 
   /** Newest-first indexes of completed commands that did not exit 0 (a nonzero exit or an interrupt is authoritative; output text is not). */
@@ -2786,6 +2810,8 @@ export class TerminalApp {
     else if (action === 'compare') this.openCompare(record);
     else if (action === 'references') this.openReferences(record);
     else if (action === 'pin') this.pinCommand(record.command, record.historicalContext?.cwd ?? this.shellCwd);
+    else if (action === 'clipCommand' || action === 'clipOutput') this.keepClip(action === 'clipCommand' ? record.command : recordCopyText(record, false),
+      action === 'clipCommand' ? 'command' : 'output', record.historicalContext?.cwd, null);
     else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
     else if (action === 'copyCommand') {
       // The command text only: completion status never applies here.
@@ -2818,6 +2844,33 @@ export class TerminalApp {
         break;
       case 'failure':
         this.goToFailure(action.direction);
+        break;
+      case 'pinHistory': {
+        const entry = this.historyResults.find(entry => entry.id === action.id);
+        if (entry) this.pinCommand(entry.command, entry.cwd ?? this.shellCwd);
+        break;
+      }
+      case 'keepComposerClip':
+        if (!this.running && !isSlashInput(this.editor.text)) this.keepClip(this.editor.text, 'composer', this.shellCwd);
+        break;
+      case 'keepHistoryClip': {
+        const entry = this.historyResults.find(entry => entry.id === action.id);
+        if (entry) this.keepClip(entry.command, 'history', entry.cwd, entry.session ?? null);
+        break;
+      }
+      case 'clip': {
+        if (action.verb === 'remove') { this.clips.remove(action.id); this.openClips(); break; }
+        const clip = this.clips.get(action.id);
+        if (!clip || this.running) break;
+        if (this.editor.text.trim()) { this.output.addFrontendInteraction('/clips', 'The composer has text. Clear it before staging a clip.', INFO); break; }
+        const analysis = analyzePaste(clip.text);
+        const batch = this.batchAvailable(clip.text);
+        this.pastePreview = {text: clip.text, analysis, batch};
+        this.pasteReview = createPasteReview(clip.text, analysis, batch);
+        break;
+      }
+      case 'clearClips':
+        this.clips.clear(); this.openClips();
         break;
       case 'slash': {
         const slash = parseSlashCommand(action.command);
@@ -6932,7 +6985,9 @@ export class TerminalApp {
     // The agent shelf shares this chrome slot (and the screen plan's rows): hidden at rest, never a permanent row.
     const shelf = this.shelfRow(columns);
     const now = Date.now();
-    const rows = [...this.clipboardRows(columns), ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
+    const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
+      ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
     return shelf ? [...rows, shelf] : rows;
   }
 
@@ -6977,11 +7032,54 @@ export class TerminalApp {
     }
     if (this.stopped) return;
     if (!text.trim()) { this.output.addFrontendInteraction(command, 'The clipboard is empty.', INFO); return; }
+    this.clipboardChangeSuggested = false;
     const analysis = analyzePaste(text);
     const batch = this.batchAvailable(text);
     this.pastePreview = {text, analysis, batch};
     // An explicit /ps always shows the review first, whatever Paste Preview is set to.
     this.pasteReview = createPasteReview(text, analysis, batch);
+  }
+
+  /** Explicit staging only: never reads the clipboard, writes files or submits commands. */
+  private keepClip(text: string, source: Clip['source'], cwd?: string, session: string | null | undefined = this.sessionId): void {
+    const added = this.clips.add(text, {source, cwd, ...(session ? {session} : {})});
+    this.output.addFrontendInteraction('/clips', added.ok
+      ? `Kept clip ${added.clip.id} in memory for this frontend. /clips reviews it before insertion.${added.dropped ? ` Discarded ${added.dropped} oldest clip(s) to stay within the memory limit.` : ''}`
+      : added.reason, added.ok ? INFO : ERROR);
+  }
+
+  private openClips(): void {
+    const clips = this.clips.list();
+    if (!clips.length) { this.output.addFrontendInteraction('/clips', 'No clips kept. Use C in Paste Review, a block’s Actions, or Keep composer draft as clip in the palette. Clips disappear when this frontend exits.', INFO); return; }
+    const items: PaletteItem[] = clips.flatMap(clip => {
+      const detail = `${clip.source} · ${displaySafe(clip.text.replace(/[\r\n]/gu, ' ')).slice(0, 160)}`;
+      return [{id: `clip:${clip.id}:review`, label: `Review clip ${clip.id}`, detail, category: 'Transcript', action: {kind: 'clip', id: clip.id, verb: 'review'}},
+        {id: `clip:${clip.id}:remove`, label: `Discard clip ${clip.id}`, detail, category: 'Transcript', action: {kind: 'clip', id: clip.id, verb: 'remove'}}];
+    });
+    items.push({id: 'clips:clear', label: 'Discard all session clips', detail: 'Remove all staged text from this frontend’s memory', category: 'Transcript', action: {kind: 'clearClips'}});
+    this.paletteState = createPalette(items);
+  }
+
+  private configureClipboardChanges(enabled: boolean): void {
+    if (!enabled) {
+      this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
+      this.output.addFrontendInteraction('/clips', 'Clipboard-change suggestions off for this frontend.', INFO);
+      return;
+    }
+    if (!this.clipboardChangeCounter) {
+      this.output.addFrontendInteraction('/clips', 'Clipboard-change metadata is unavailable on this platform. /ps still reads text only when requested.', INFO);
+      return;
+    }
+    this.clipboardChangeWatch ??= new ClipboardChangeWatch({counter: this.clipboardChangeCounter,
+      idle: () => !this.stopped && !this.running && !this.externalPassthrough && !this.startupPending && !this.settingsPanelActive && !this.editor.text,
+      changed: () => { this.clipboardChangeSuggested = true; this.render(); },
+      failed: () => {
+        this.clipboardChangeSuggested = false;
+        this.output.addFrontendInteraction('/clips', 'Clipboard-change metadata became unavailable; suggestions disabled.', INFO); this.render();
+      }});
+    this.clipboardChangeSuggested = false;
+    this.clipboardChangeWatch.start();
+    this.output.addFrontendInteraction('/clips', 'Clipboard-change suggestions on for this frontend. Only a native change counter is read while idle; /ps explicitly reads text. /clips suggestions off stops them.', INFO);
   }
 
   // ---------------------------------------------------------------- pins and recipes
@@ -7112,7 +7210,7 @@ export class TerminalApp {
     if (hidden > 0 && summary.length) summary[summary.length - 1] += `${SUBTLE} · +${hidden} more${RESET}`;
     for (const item of summary) rows.push(`  ${item}`);
     if (analysis.commands.some(command => ['text', 'unknown'].includes(primaryKind(command.kinds)))) rows.push(`${SUBTLE}${PASTE_EXACT_NOTE}${RESET}`);
-    rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel${RESET}`);
+    rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel · C keep clip${RESET}`);
     return rows.map(row => truncateAnsi(row, columns));
   }
 
@@ -9862,6 +9960,8 @@ export class TerminalApp {
     if (this.stopped) return;
     this.hostTitle.end();
     this.stopped = true;
+    this.clips.clear();
+    this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();
     if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }

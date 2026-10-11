@@ -13,7 +13,14 @@ test('"Why" says in one sentence why a module is or is not on screen', () => {
   assert.match(whyText(module(), 'contextRail', [{state: 'absent'}, {state: 'absent'}]), /nothing for it to show/u);
   assert.match(whyText(module({condition: 'onCommand'}), 'contextRail', [{state: 'idle'}], ['go', 'gofmt']), /after a command that uses it \(go, gofmt…\)/u);
   assert.match(whyText(module(), 'contextRail', [{state: 'pending'}]), /being collected/u);
-  assert.match(whyText(module(), 'contextRail', [{state: 'fresh'}]), /conditions are met/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'fresh'}]), /data is available/u);
+});
+
+test('module explanations do not invent collection or visibility evidence', () => {
+  assert.match(whyText(module(), 'contextRail', []), /not available/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'idle'}]), /not collected/u);
+  assert.match(whyText(module(), 'contextRail', [{state: 'stale'}]), /last known.*refreshing/u);
+  assert.doesNotMatch(whyText(module(), 'contextRail', [{state: 'fresh'}]), /conditions are met/u);
 });
 
 test('/doctor reports prompt-data health from the engine counters, and only complains with enough evidence', () => {

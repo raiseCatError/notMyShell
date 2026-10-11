@@ -25,7 +25,7 @@ export interface PasteReviewState {
   batch: boolean;
 }
 
-export type PasteReviewResult = 'insert' | 'back' | 'cancel' | 'batch' | undefined;
+export type PasteReviewResult = 'insert' | 'back' | 'cancel' | 'batch' | 'clip' | undefined;
 
 export function createPasteReview(text: string, analysis: PasteAnalysis, batch = false): PasteReviewState {
   const lines = text.replace(/\r\n?/gu, '\n').split('\n');
@@ -60,6 +60,7 @@ export function pasteReviewKey(state: PasteReviewState, key: Key, height: number
   if (key.kind === 'escape') return 'back';
   if (key.kind === 'interrupt') return 'cancel';
   if (key.kind === 'text' && key.value.toLowerCase() === 'r') return 'back';
+  if (key.kind === 'text' && key.value.toLowerCase() === 'c') return 'clip';
   if (key.kind === 'text' && key.value.toLowerCase() === 'b' && state.batch) return 'batch';
   if (key.kind === 'up' || key.kind === 'wheelUp') move(state.top - (key.kind === 'wheelUp' ? 3 : 1));
   else if (key.kind === 'down' || key.kind === 'wheelDown') move(state.top + (key.kind === 'wheelDown' ? 3 : 1));
@@ -105,7 +106,7 @@ export function renderPasteReview(state: PasteReviewState, columns: number, heig
   }
   const exact = state.analysis.commands.some(command => primaryKind(command.kinds) === 'text' || primaryKind(command.kinds) === 'unknown');
   out.push(truncateAnsi(`  ${subtle}${exact ? PASTE_EXACT_NOTE : 'Nothing runs until you press Enter again.'}${reset}`, columns));
-  out.push(renderControls([['↑↓ PgUp PgDn', 'scroll'], ['Enter', 'insert'], ...(state.batch ? [['B', 'queue as commands'] as const] : []), ['Esc', 'back']]));
+  out.push(renderControls([['↑↓ PgUp PgDn', 'scroll'], ['Enter', 'insert'], ...(state.batch ? [['B', 'queue as commands'] as const] : []), ['Esc', 'back'], ['C', 'keep clip']]));
   // A very short terminal drops the note before the controls; the panel never exceeds its height.
   const fixed = Math.max(3, height);
   return out.length > fixed ? [...out.slice(0, fixed - 1), out[out.length - 1]!] : out;

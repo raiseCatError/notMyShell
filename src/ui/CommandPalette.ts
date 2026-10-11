@@ -27,7 +27,12 @@ export type PaletteAction =
   | {kind: 'block'; id: BlockActionId; startId: number}
   /** An action on one reference found in a block's output; resolved again from the block when it runs. */
   | {kind: 'reference'; startId: number; refId: string; verb: 'open' | 'copy' | 'stage'}
-  | {kind: 'failure'; direction: 'previous' | 'next'};
+  | {kind: 'failure'; direction: 'previous' | 'next'}
+  | {kind: 'pinHistory'; id: string}
+  | {kind: 'keepComposerClip'}
+  | {kind: 'keepHistoryClip'; id: string}
+  | {kind: 'clip'; id: number; verb: 'review' | 'remove'}
+  | {kind: 'clearClips'};
 
 export interface PaletteItem {
   id: string;

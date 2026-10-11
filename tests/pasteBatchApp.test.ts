@@ -13,6 +13,9 @@ function app() {
   const app = new TerminalApp();
   Object.defineProperty(app, 'render', {value: () => {}});
   Object.defineProperty(app, 'dimensions', {value: () => ({columns: 100, rows: 30})});
+  // These tests inspect the accepted queue, not execution. Keep it paused even
+  // if shell startup finishes while the asynchronous syntax check is pending.
+  app['session'].queue({op: 'pause'});
   return app;
 }
 /** B verifies every command with the real shell before the review appears. */
@@ -188,4 +191,74 @@ test('a quote the splitter loses track of cannot hide a later command from the l
   assert.ok(review.entries[1]!.kinds.includes('destructive'));
   assert.ok(review.entries[3]!.kinds.includes('privilege'));
   assert.ok(!review.entries[0]!.kinds.includes('destructive'));
+});
+test('a reviewed paste becomes an ephemeral clip only on C; reusing it reviews first and never queues', async () => {
+  const instance = app();
+  try {
+    const content = "printf '%s\\n' '$(kept as data)'\necho next";
+    Object.defineProperty(instance, 'readClipboardText', {value: async () => content});
+    await instance['pasteClipboard']('/ps');
+    assert.equal(instance['clips'].list().length, 0);
+    instance['handleKey'](text('c'));
+    const [clip] = instance['clips'].list();
+    assert.equal(clip?.text, content);
+    assert.equal(instance['pasteReview']?.text, content);
+    assert.equal(instance['queueState'].entries.length, 0);
+    instance['pasteReview'] = undefined;
+    instance['pastePreview'] = undefined;
+    instance['openClips']();
+    const item = instance['paletteState']!.items.find(item => item.id === `clip:${clip!.id}:review`)!;
+    instance['paletteState'] = undefined;
+    await instance['runPaletteItem'](item);
+    assert.equal(instance['pasteReview']?.text, content);
+    assert.equal(instance['editor'].text, '');
+    instance['handleKey']({kind: 'enter'});
+    assert.equal(instance['editor'].text, content);
+    assert.equal(instance['queueState'].entries.length, 0);
+  } finally { dispose(instance); }
+});
+
+test('composer clips preserve the draft, reject staging over text, and disappear with the frontend', async () => {
+  const instance = app();
+  try {
+    instance['editor'].insert('echo draft');
+    instance['openPalette']();
+    const keep = instance['paletteState']!.items.find(item => item.id === 'clip:keep-composer')!;
+    instance['paletteState'] = undefined;
+    await instance['runPaletteItem'](keep);
+    assert.equal(instance['editor'].text, 'echo draft');
+    instance['openClips']();
+    const use = instance['paletteState']!.items.find(item => item.id.endsWith(':review'))!;
+    instance['paletteState'] = undefined;
+    await instance['runPaletteItem'](use);
+    assert.equal(instance['pasteReview'], undefined);
+    assert.equal(instance['editor'].text, 'echo draft');
+    instance['stop'](0);
+    assert.deepEqual(instance['clips'].list(), []);
+  } finally { dispose(instance); }
+});
+
+test('clipboard-change suggestions are opt-in metadata only; /ps remains the explicit text read', async () => {
+  const instance = app();
+  let textReads = 0, metadataReads = 0;
+  try {
+    Object.defineProperty(instance, 'clipboardChangeCounter', {value: async () => { metadataReads++; return 3; }});
+    Object.defineProperty(instance, 'readClipboardText', {value: async () => { textReads++; return 'echo reviewed'; }});
+    assert.equal(instance['clipboardChangeWatch'], undefined);
+    assert.deepEqual(parseSlashCommand('/clips suggestions on'), {kind: 'clips', suggestions: true});
+    instance['configureClipboardChanges'](true);
+    await new Promise(done => setImmediate(done));
+    assert.equal(textReads, 0);
+    assert.ok(metadataReads <= 1);
+    instance['clipboardChangeWatch']!['options'].changed();
+    assert.equal(instance['clipboardChangeSuggested'], true);
+    assert.equal(instance['editor'].text, '');
+    assert.equal(instance['queueState'].entries.length, 0);
+    await instance['pasteClipboard']('/ps');
+    assert.equal(textReads, 1);
+    assert.equal(instance['clipboardChangeSuggested'], false);
+    assert.equal(instance['pasteReview']?.text, 'echo reviewed');
+    instance['configureClipboardChanges'](false);
+    assert.equal(instance['clipboardChangeWatch']?.enabled, false);
+  } finally { dispose(instance); }
 });

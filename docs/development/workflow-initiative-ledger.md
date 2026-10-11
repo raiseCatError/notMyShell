@@ -1,10 +1,91 @@
-# Terminal workflow initiative: ledger
+# Workflow initiative ledger
 
-The durable record for the "make the result of one command useful for the next" initiative (queue, copy,
-paste, reports, comparison, references, error navigation, pins/recipes, integrations). A fresh session resumes
-from this file and Git, not from a conversation. Update it with every slice.
+Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-11.
 
-Design and research: [docs/design/terminal-workflow.md](../design/terminal-workflow.md).
+## Current stabilization checkpoint
+
+The shared frontend is **not frozen**. This record supersedes the historical status claims below. No workflow PR
+has been merged to master or the release branch. Physical terminal QA remains outstanding.
+
+| PR | Published branch/head at audit | Current evidence |
+| --- | --- | --- |
+| #345 | `release/v0.18.0` / `7122468` | unchanged stack base |
+| #348 | `feature/input-awareness` / `684a3fb` | canonical local verification passed; [Actions 38122464924](https://github.com/raiseCatError/notMyShell/actions/runs/38122464924) green (Ubuntu/macOS shards, quality, Node 22); follow-up attach privacy fix pending |
+| #357 | `feature/command-queue` / `7fb6b5a` | original Ubuntu Fish failures reproduced; local candidate `97e4270` contains reader/native-group and reattach privacy fixes; final canonical verification running |
+| #358 | `feature/copy-selection` / `790fd74` | waiting for upstream propagation |
+| #360 | `feature/copy-report` / `afe7f69` | waiting for upstream propagation and final clipboard acceptance |
+| #361 | `feature/compare-output` / `b1cdfbe` | waiting for upstream propagation and final comparison acceptance |
+| #367 | `feature/expressive-activity-vocabulary` / `66e164d` | sibling of #368; final lifecycle audit pending |
+| #368 | `feature/output-references` / `5a795ed` | original CI includes independent paste, guide and fixture failures; local security commit `18e94d9`, workflow additions under verification |
+
+Owned isolated branches/worktrees: `fix/workflow-input-checkpoint` (`nmsh-astra-input`),
+`fix/workflow-fish-routing` (`nmsh-astra-queue`), and `fix/workflow-acceptance` (`nmsh-astra-workflow`). Existing
+worktrees and tracked modifications were preserved. Published updates are additive; the #348 checkpoint was
+merged into the queue candidate without rewriting history.
+
+## Confirmed findings and work
+
+- **Fish 3.7 reader ownership:** the native read editor deliberately does not enable bracketed paste. Waiting answers
+  remained in the composer/queue. The authenticated `fish_read` marker fixes handover before the prompt, including
+  hidden readers inside functions and detached readers. `answersByDefault` was not weakened. Details and exact
+  baseline evidence: [#356 comment](https://github.com/raiseCatError/notMyShell/issues/356#issuecomment-6106773236),
+  `docs/development/fish-typeahead.md`.
+- **Fish multiline submission:** use native `begin`/`end`; zsh/Bash use brace groups. Composer, dispatcher and parse
+  checks must use the real shell ID. Queue regressions verify persistence of shell variables and one logical record.
+- **Fixture synchronization:** unique runtime-built read prompts prevent historical redraws authorizing a reply;
+  the Ctrl+C survivor waits for trap installation, uses a timed-read-capable shell and an explicit release file.
+- **Attach privacy follow-up:** a final canonical run caught a password echoed by the outer PTY during journal I/O.
+  A slow-journal real-PTY fixture reproduces it. Raw input is now protected before passthrough output and throughout
+  probing/journaling; full verification is pending. Key diagnostics now exclude all running/startup input.
+- **Gemfile security:** `18e94d9` applies the bounded single-line Ruby declaration parser to the duplicate in #368.
+  Malicious-whitespace and cross-line declaration regressions pass. #370 remains the canonical runtime owner.
+- **Workflow additions (uncommitted):** clips deliberately kept in bounded frontend memory, reviewed through the
+  existing Paste Review/palette, history selection pinning with recorded cwd, and F8/Shift+F8 failure navigation.
+  Copy/folding remain independent. Clip and reference actions never submit commands automatically.
+- **Clipboard suggestions (local candidate):** off by default and frontend-only. macOS uses only NSPasteboard changeCount
+  while idle; contents are read only by explicit `/ps`. Linux has no supported metadata-only counter and fails closed.
+  The fixed native metadata query and lifecycle/privacy unit regressions passed.
+- **Guide/fixture corrections:** paste batches and pins are included in the guide; app fixtures pause the queue before
+  asserting accepted entries, preventing asynchronous parse checks from racing first-entry dispatch.
+- **Diagnostics/import audit:** module explanations distinguish uncollected/unknown/stale facts from known data;
+  collection metadata does not prove conditional visibility. Starship/Oh My Posh previews disclose loss, save only
+  after a second explicit action, and preserve source files. External-tool decisions describe bat's actual Theme
+  Bridge support; dedicated source-preview launching is not implemented.
+
+## Verification recorded so far
+
+- Typecheck and canonical verification of published #348: passed; exact Actions head `684a3fbc837be97f185cc938f4fb13cbccf1533b`.
+- Queue candidate canonical verification passed before the additional attach privacy finding; that later failed run
+  is retained and must be superseded by a clean final run before pushing #357.
+- Ubuntu 24.04 arm64 / Fish 3.7.0 / Node 26.10.0: published queue baseline fails both original Fish read tests; fixed
+  snapshot passes `inputAwarenessLive`, `typingAfterRead`, `queryOrder`, `commandQueueLive` including detach,
+  interruption, same-shell grouping and narrow/NO_COLOR/Safe presentation. Ubuntu amd64 CI remains an independent gate.
+- Focused report/diff sanitization, hostile pin rendering, clip/paste staging, recipe review, history pinning, failure
+  keys, clipboard failure/EPIPE/size bounds, and actual stand-in clipboard diff bytes passed.
+- Live Report cancellation and actual clipboard bytes passed on macOS with hostile controls, invisible Unicode,
+  tokens and fence content; Linux execution of this new regression is pending.
+- Early full local runs inherited disabled colors/dumb TERM and one hit ENOSPC. They are failed runs, not evidence
+  of passing behavior. Final fixture runs explicitly set their truecolor environment; explicit NO_COLOR tests remain.
+
+## Cross-track boundary and remaining work
+
+[Native/workspace handoff PR #385](https://github.com/raiseCatError/notMyShell/pull/385) documents the current
+independent heads and remaining frontend wiring. It explicitly waits for the #359 stabilization checkpoint.
+Do not modify its handoff or branches. Ruby/PHP duplication is security-patched locally; reconcile against canonical
+#370 after its verified freeze, retaining module diagnostics, theme imports and independent workflow behavior.
+
+Next: finish attach privacy verification, propagate fixes through each published workflow branch, verify security
+and grammar acceptance on #368, audit vocabulary/theme/diagnostics/tool decisions, then publish an exact-head CI
+checkpoint in #359. Acceptance integration follows both freezes in a separate `integration/nmsh-acceptance-*`
+branch/worktree; no master/release merge is authorized.
+
+Physical QA must cover Ghostty and Terminal.app, hidden input and immediate typing after completion/interrupt,
+queue/paste approval, clipboard/report/diff rendering, long-output folding, references, narrow/Safe/NO_COLOR,
+reattach, vocabulary and theme previews. Headless fixtures are not physical validation.
+
+---
+
+## Historical records (superseded; retained for context)
 
 ## Rules this work keeps
 

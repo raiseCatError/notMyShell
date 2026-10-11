@@ -6,12 +6,15 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'
+  | {kind: 'historySearch' | 'historyDelete' | 'find' | 'previousFailure' | 'nextFailure'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'
     /** Ctrl+Q: add the composer's command to the queue; Ctrl+S: send it to the running program's input. */
     | 'queueCommand' | 'sendToProgram'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
+  // F8 walks backwards through failures; Shift+F8 returns towards the newest.
+  ['\u001B[19~', 'previousFailure'], ['\u001B[19;1~', 'previousFailure'], ['\u001B[57371u', 'previousFailure'],
+  ['\u001B[19;2~', 'nextFailure'], ['\u001B[57371;2u', 'nextFailure'],
   ['\u001B[I', 'focusIn'],
   ['\u001B[O', 'focusOut'],
   // Kitty keyboard protocol (CSI > 1 u, enabled by TerminalRenderer on entry;

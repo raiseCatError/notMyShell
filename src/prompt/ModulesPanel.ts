@@ -415,7 +415,10 @@ export function whyText(module: ContextModuleConfig, surface: string, statuses: 
     return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; none has run here yet`;
   }
   if (statuses.some(status => status.state === 'pending')) return 'being collected now';
-  return 'its conditions are met and data is available';
+  if (statuses.some(status => status.state === 'stale')) return 'last known data is available while refreshing; visibility follows the module condition and available space';
+  if (statuses.length && statuses.every(status => status.state === 'idle')) return 'not collected yet; only modules in use demand collection';
+  if (statuses.some(status => status.state === 'fresh')) return 'data is available; visibility follows the module condition and available space';
+  return 'collection evidence is not available; visibility follows the module condition and available space';
 }
 
 function packDetailRows(pack: PackListing, columns: number): string[] {
