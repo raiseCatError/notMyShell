@@ -28,19 +28,39 @@ type Shell = 'zsh' | 'bash' | 'fish';
 async function start(shell: Shell, options: {size?: {cols: number; rows: number}; env?: Record<string, string>; args?: string[]; sandbox?: LiveSandbox} = {}) {
   const sandbox = options.sandbox ?? new LiveSandbox({provider: 'none', shellBackend: shell, themeBridge: {enabled: true, targets: {pager: {mode: 'follow'}}}},
     shell === 'bash' && bash ? {PATH: `${bash.replace(/\/bash$/u, '')}:${process.env.PATH}`} : {});
-  const started = Date.now();
   const frontend = sandbox.launch(options.args ?? [], options.size ?? {cols: 100, rows: 30}, options.env ?? {});
   try {
     await frontend.waitFor(/Vespyr|notMyShell|zsh|bash|fish/u);
-    await until(() => existsSync(join(sandbox.config, 'nmsh', 'theme-bridge', `environment.${shell}`)) || frontend.output.length > 0 && Date.now() - started > 8000, 20_000, 'the managed shell');
+    // A banner or generated bridge file can appear before the shell prompt.
+    // The service records lastExit only from an authenticated prompt; journals
+    // need not checkpoint a fresh idle shell before its first command.
+    await until(async () => (await sandbox.sessions()).some(session => session.lastExit !== undefined), 20_000, 'the first authenticated shell prompt');
     await frontend.run('echo READY', /READY/u);
+    return {sandbox, frontend};
   } catch (error) {
-    // Not inside the test's try/finally yet: a sandbox given by the caller is the caller's to end.
-    if (!options.sandbox) await sandbox.dispose().catch(() => {});
+    // The caller never receives the sandbox when startup fails. Dispose here
+    // so the original deadline is reported instead of leaving the test worker
+    // held open by a live PTY; retain cleanup failures as additional evidence.
+    try { await sandbox.dispose(); } catch (cleanup) { throw new AggregateError([error, cleanup], 'input fixture startup and cleanup failed'); }
     throw error;
   }
-  return {sandbox, frontend};
 }
+
+test('fixture: failed startup disposes its sandbox and preserves both deadline and cleanup evidence', async () => {
+  for (const cleanupFails of [false, true]) {
+    let disposed = false;
+    const startup = new Error('startup deadline');
+    const cleanup = new Error('cleanup deadline');
+    const sandbox = {launch: () => ({waitFor: async () => { throw startup; }}), dispose: async () => {
+      disposed = true;
+      if (cleanupFails) throw cleanup;
+    }} as unknown as LiveSandbox;
+    await assert.rejects(start('fish', {sandbox}), error => cleanupFails
+      ? error instanceof AggregateError && error.errors[0] === startup && error.errors[1] === cleanup
+      : error === startup);
+    assert.equal(disposed, true, 'the caller never received the sandbox, so startup must dispose it');
+  }
+});
 
 /** Text the frontend drew after `from`, without escapes. */
 const drawn = (frontend: Frontend, from: number) => strip(frontend.output.slice(from));
@@ -86,6 +106,29 @@ for (const shell of ['zsh', 'bash'] as const) {
  * Answer the terminal queries a program sends through NMSh (primary device attributes, cursor position), as a real
  * terminal does. Fish's reader waits for these answers; the test PTY alone never sends them.
  */
+test('live fish: a hidden reader inside a function keeps ownership across detach, then releases it at the prompt', {skip: supported && fish ? false : 'fish not installed', timeout: 90_000}, async () => {
+  const {sandbox, frontend} = await start('fish');
+  try {
+    await frontend.run("function ask; read -s -P (printf 'Pass%s: ' word) secret; echo; echo len=(string length -- $secret); end", /Completed/u);
+    const mark = frontend.mark;
+    frontend.pty.write('ask\r');
+    await frontend.waitFor(/Password: /u, mark);
+    const [session] = await sandbox.sessions();
+    frontend.pty.kill('SIGKILL');
+    await until(async () => (await sandbox.sessions()).find(item => item.id === session!.id)?.state === 'detached', 15_000, 'reader detached');
+    const back = sandbox.launch(['--attach', session!.id], {cols: 100, rows: 30}, {}, resolve('tests/fixtures/slowJournalAttach.ts'));
+    await back.waitFor(/TEST-JOURNAL-WAIT/u);
+    await back.waitFor(/Password: /u);
+    const reply = back.mark;
+    back.pty.write('never-a-command\r');
+    await back.waitFor(/len=15[\s\S]*Completed/u, reply);
+    assert.doesNotMatch(strip(back.output.slice(reply)), /never-a-command|Queued/u);
+    await back.run('echo AFTER-READER', /AFTER-READER/u);
+    const records = (await sandbox.transcripts().list()).flatMap(item => item.transcript.records);
+    assert.equal(records.some(record => record.command.includes('never-a-command')), false);
+  } finally { await sandbox.dispose(); }
+});
+
 function answerQueries(frontend: Frontend): () => void {
   let seen = frontend.mark;
   const timer = setInterval(() => {
@@ -103,7 +146,7 @@ test('live fish: read is fish\'s own line editor: handed the terminal, answered 
     let mark = frontend.mark;
     // The prompt is built by fish, so "Name: " is not in the command text NMSh echoes and shows while it runs.
     frontend.pty.write(`read -P (printf 'Na%s: ' me) x; echo got=$x\r`);
-    // Fish's reader turns on bracketed paste: NMSh hands it the terminal, as for any interactive program.
+    // Fish reports its reader before drawing; Fish 3 does not enable bracketed paste here.
     await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, 'fish draws its own prompt');
     frontend.pty.write('abc\r');
     await frontend.waitFor(/got=abc[\s\S]*Completed/u, mark);
