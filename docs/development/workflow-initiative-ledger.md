@@ -7,21 +7,29 @@ Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359
 The shared frontend is **not frozen**. This record supersedes the historical status claims below. No workflow PR
 has been merged to master or the release branch. Physical terminal QA remains outstanding.
 
-| PR | Published branch/head at audit | Current evidence |
-| --- | --- | --- |
-| #345 | `release/v0.18.0` / `7122468` | unchanged stack base |
-| #348 | `feature/input-awareness` / `684a3fb` | canonical local verification passed; [Actions 38122464924](https://github.com/raiseCatError/notMyShell/actions/runs/38122464924) green (Ubuntu/macOS shards, quality, Node 22); follow-up attach privacy fix pending |
-| #357 | `feature/command-queue` / `7fb6b5a` | original Ubuntu Fish failures reproduced; local candidate `97e4270` contains reader/native-group and reattach privacy fixes; final canonical verification running |
-| #358 | `feature/copy-selection` / `790fd74` | waiting for upstream propagation |
-| #360 | `feature/copy-report` / `afe7f69` | waiting for upstream propagation and final clipboard acceptance |
-| #361 | `feature/compare-output` / `b1cdfbe` | waiting for upstream propagation and final comparison acceptance |
-| #367 | `feature/expressive-activity-vocabulary` / `66e164d` | sibling of #368; final lifecycle audit pending |
-| #368 | `feature/output-references` / `5a795ed` | original CI includes independent paste, guide and fixture failures; local security commit `18e94d9`, workflow additions under verification |
+| PR | Published head | Local additive candidate | Gate |
+| --- | --- | --- | --- |
+| #345 | 7122468 | unchanged | stack base |
+| #348 | 684a3fb | fix/workflow-cedar / 9465eb5 | published Actions green; candidate canonical running |
+| #357 | 7fb6b5a | fix/workflow-birch / 8b25ad0 | final canonical/CI pending |
+| #358 | 790fd74 | fix/workflow-amber / 05f8b03 | final canonical/CI pending |
+| #360 | afe7f69 | fix/workflow-coral / 768183b | final canonical/CI pending |
+| #361 | b1cdfbe | fix/workflow-indigo / ce6f2f5 | final canonical/CI pending |
+| #367 | 66e164d | fix/workflow-willow / 0b2e886 | independent sibling; final canonical/CI pending |
+| #368 | 5a795ed | fix/workflow-maple / be101eb | final canonical/CI pending |
 
-Owned isolated branches/worktrees: `fix/workflow-input-checkpoint` (`nmsh-astra-input`),
-`fix/workflow-fish-routing` (`nmsh-astra-queue`), and `fix/workflow-acceptance` (`nmsh-astra-workflow`). Existing
-worktrees and tracked modifications were preserved. Published updates are additive; the #348 checkpoint was
-merged into the queue candidate without rewriting history.
+All candidates preserve their published ancestors through additive merges. Owned
+worktrees use neutral names: nmsh-cedar-input, nmsh-birch-queue, nmsh-amber-copy,
+nmsh-coral-report, nmsh-indigo-compare, nmsh-willow-vocabulary and nmsh-maple-workflow.
+They are on external scratch storage. Existing worktrees and modifications were preserved.
+
+Temporary resources disappeared during continuations and interrupted two full
+runs. Those runs are not passing evidence. Committed work survived and was restored.
+Verification logs and the Linux VM now use durable external storage.
+The test runner supports NMSH_TEST_TMPDIR; fixture and key-diagnostic writers
+respect the selected temporary directory. Invalid storage fails instead of falling
+back. Source typecheck, focused lifecycle/privacy/platform tests and verify:fast
+passed for storage correction 9465eb5.
 
 ## Confirmed findings and work
 
@@ -39,10 +47,10 @@ merged into the queue candidate without rewriting history.
   probing/journaling; full verification is pending. Key diagnostics now exclude all running/startup input.
 - **Gemfile security:** `18e94d9` applies the bounded single-line Ruby declaration parser to the duplicate in #368.
   Malicious-whitespace and cross-line declaration regressions pass. #370 remains the canonical runtime owner.
-- **Workflow additions (uncommitted):** clips deliberately kept in bounded frontend memory, reviewed through the
+- **Workflow additions (a16d556, 3097cbb):** clips deliberately kept in bounded frontend memory, reviewed through the
   existing Paste Review/palette, history selection pinning with recorded cwd, and F8/Shift+F8 failure navigation.
   Copy/folding remain independent. Clip and reference actions never submit commands automatically.
-- **Clipboard suggestions (local candidate):** off by default and frontend-only. macOS uses only NSPasteboard changeCount
+- **Clipboard suggestions (a16d556):** off by default and frontend-only. macOS uses only NSPasteboard changeCount
   while idle; contents are read only by explicit `/ps`. Linux has no supported metadata-only counter and fails closed.
   The fixed native metadata query and lifecycle/privacy unit regressions passed.
 - **Guide/fixture corrections:** paste batches and pins are included in the guide; app fixtures pause the queue before
@@ -56,6 +64,12 @@ merged into the queue candidate without rewriting history.
   argv submission refuses the split. Regression checks prove neither commands nor substitutions execute.
 - **Diagnostic privacy:** module details show safe collection failure states, rather than raw exception paths or
   values. Measured durations remain available; no new collector is invoked by opening details.
+
+- **Comparison UI trust boundary (5570d34):** restored command labels in the chooser header bypassed display sanitization. Both chooser and diff now use safe labels; format and separator controls become visible in authored review UI. Adversarial tests cover narrow layouts and actual clipboard bytes.
+- **Report Markdown status (25af5ba):** restored lifecycle text was a raw Markdown fact. It now uses the existing delimiter-sized inline-code representation, so HTML, links and backticks remain literal.
+- **Vocabulary (d4619e4):** selected activity pairs survive live detach/reattach, including previous-choice collision avoidance. Optional journal indices are validated; factual status still derives from lifecycle and exit code.
+- **Module diagnostics (1a372fb, 06433f1):** details show capability/source, freshness TTL, invalidation and demand-refresh policy, retained-cache availability and measured collection wall time excluding queue delay. Details reuse fact snapshots and renderer conditions; they add no collectors. Exact last-frame width-compaction decisions are not recorded.
+- **Cross-feature queue fixture (4636672):** the combined workflow's optional batch action changes the paste-preview footer. The fixture accepts that optional action while still testing whole-paste insertion and explicit once-only queueing. The original regex failure reproduced, and corrected real-PTY cases passed for zsh, Bash and Fish.
 
 ## Verification recorded so far
 
@@ -94,9 +108,7 @@ would remove currently tested functionality from the standalone workflow PR; res
 the acceptance integration branch while preserving both security regressions. #370 owns additional install-layout
 support in `services.ts`, which this track has not changed.
 
-Next: finish attach privacy verification, propagate fixes through each published workflow branch, verify security
-and grammar acceptance on #368, audit vocabulary/theme/diagnostics/tool decisions, then publish an exact-head CI
-checkpoint in #359. Acceptance integration follows both freezes in a separate `integration/nmsh-acceptance-*`
+Next: complete final canonical verification and exact-head GitHub CI for every owned PR, then publish the frontend freeze checkpoint in #359. Acceptance integration follows both freezes in a separate `integration/nmsh-acceptance-*`
 branch/worktree; no master/release merge is authorized.
 
 Physical QA must cover Ghostty and Terminal.app, hidden input and immediate typing after completion/interrupt,
