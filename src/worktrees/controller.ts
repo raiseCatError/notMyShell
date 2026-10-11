@@ -1,3 +1,5 @@
+import type {PrSummary} from '../githubWorkspace/model.js';
+import {relatedPullRequests, type RelatedPr} from './relatedPr.js';
 import type {Key} from '../terminal/keys.js';
 import type {GitRunner} from './git.js';
 import {discoverWorktrees, type DiscoveryOptions} from './discovery.js';
@@ -37,7 +39,9 @@ export type KeyOutcome =
   | {readonly kind: 'requestNewWorktree'}
   | {readonly kind: 'removed'; readonly path: string}
   | {readonly kind: 'created'; readonly path: string}
-  | {readonly kind: 'back'};
+  | {readonly kind: 'back'}
+  /** Open the related pull request in /github (the host decides how). */
+  | {readonly kind: 'openPullRequest'; readonly pr: PrSummary};
 
 export type Review =
   | {readonly kind: 'remove'; readonly plan: RemovalPlan}
@@ -63,6 +67,11 @@ export interface ControllerOptions {
   readonly currentPath?: () => string | undefined;
   readonly resources?: ResourceResolver;
   readonly discovery?: DiscoveryOptions;
+  /**
+   * Pull requests the host already holds (the /github service's cached listing; never fetched here), for related-PR
+   * evidence. Without it the related-PR action stays unavailable.
+   */
+  readonly pullRequests?: () => {readonly repository: string; readonly prs: readonly PrSummary[]} | undefined;
 }
 
 export function searchText(worktree: WorktreeRecord): string {
@@ -131,6 +140,12 @@ export class WorktreeManagerController {
     return {kind: 'diff', repository, worktreePath: worktree.path, ref: worktree.ref, head: worktree.head};
   }
 
+  /** Related pull requests for the selected worktree, from the host's cached listing (see relatedPullRequests). */
+  relatedPrs(worktree = this.selected()): RelatedPr[] {
+    const listing = this.options.pullRequests?.();
+    return worktree && listing ? relatedPullRequests(worktree, listing.repository, listing.prs) : [];
+  }
+
   /** Availability from current facts only; drives footers and key dispatch alike. */
   actions(): ActionState[] {
     const worktree = this.selected();
@@ -141,7 +156,7 @@ export class WorktreeManagerController {
       this.navigationIntent() ? {id: 'navigate', available: true} : none('navigate', 'Path is not available'),
       this.current.snapshot && !stale ? {id: 'new', available: true} : none('new', 'Refresh first'),
       this.diffIntent() ? {id: 'diff', available: true} : none('diff', 'No HEAD or path'),
-      none('relatedPr', 'No pull request evidence yet'),
+      this.relatedPrs().length ? {id: 'relatedPr', available: true} : none('relatedPr', this.options.pullRequests?.() ? 'No pull request has this branch as its head' : 'No pull request evidence yet'),
       stale ? none('remove', 'List is stale; refresh first') : removal.available ? {id: 'remove', available: true} : none('remove', removal.reason),
       {id: 'refresh', available: true},
       this.current.snapshot ? {id: 'search', available: true} : none('search', 'Nothing loaded'),
@@ -188,7 +203,7 @@ export class WorktreeManagerController {
   cancelReview(): void { this.set({review: undefined}); }
 
   /**
-   * Keyboard model: ↑/↓ select, Enter navigate, n new, x preview removal,
+   * Keyboard model: ↑/↓ select, Enter navigate, n new, x preview removal, p related pull request,
    * r refresh, / search, Esc clears search, then review, then goes back.
    */
   async handleKey(key: Key): Promise<KeyOutcome> {
@@ -222,6 +237,7 @@ export class WorktreeManagerController {
         if (value === 'r') { await this.refresh(); return {kind: 'changed'}; }
         if (value === 'n') return this.available('new') ? {kind: 'requestNewWorktree'} : {kind: 'none'};
         if (value === 'x') { await this.previewRemoval(); return {kind: 'changed'}; }
+        if (value === 'p') { const related = this.relatedPrs()[0]; return related ? {kind: 'openPullRequest', pr: related.pr} : {kind: 'none'}; }
         if (value === '/' && this.available('search')) { this.set({searching: true}); return {kind: 'changed'}; }
         return {kind: 'none'};
       }

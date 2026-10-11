@@ -84,6 +84,8 @@ function mapPrSummary(node: Json): PrSummary | undefined {
     state: mapPrState(node.state),
     draft: node.isDraft === true,
     headRef: optionalLine(node.headRefName, LIMITS.nameLength * 2),
+    headRepository: optionalLine(obj(node.headRepository).nameWithOwner, 200),
+    headSha: /^[0-9a-f]{40}$/u.test(String(node.headRefOid)) ? String(node.headRefOid) : undefined,
     baseRef: optionalLine(node.baseRefName, LIMITS.nameLength * 2),
     updatedAt: str(node.updatedAt),
     reviewDecision: 'reviewDecision' in node ? mapReviewDecision(node.reviewDecision) : 'unknown',
