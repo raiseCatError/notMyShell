@@ -29,11 +29,29 @@ export interface TmuxPane {
 /** The server NMSh runs inside, from $TMUX (`socket,pid,session`) and $TMUX_PANE. */
 export interface TmuxServer {socket: string; pane?: string}
 
-const SEP = '\u001f';
 const FIELDS = ['session_id', 'session_name', 'session_attached', 'window_id', 'window_index', 'window_name', 'window_active',
   'pane_id', 'pane_index', 'pane_active', 'pane_dead', 'pane_current_command'] as const;
-/** tmux rejects control characters in session and window names, so the unit separator cannot occur in them; rows are still validated. */
-export const LIST_FORMAT = FIELDS.map(field => `#{${field}}`).join(SEP);
+const NAMES: ReadonlySet<string> = new Set(['session_name', 'window_name', 'pane_current_command']);
+/**
+ * Fields separated by `|`. Names may contain `|`, so they are requested with tmux's `q:` modifier, which escapes shell
+ * specials (`|` becomes `\|`); ids and numbers never contain it. tmux also escapes its output itself on some builds
+ * (`\\` for a backslash, `\ooo` for a control character), so a control-character separator is not reliable.
+ */
+export const LIST_FORMAT = FIELDS.map(field => (NAMES.has(field) ? `#{q:${field}}` : `#{${field}}`)).join('|');
+
+/** One listing row into fields: split on unescaped `|`, undo `q:` escaping, then tmux's own `\\` and `\ooo` escapes. */
+export function splitTmuxRow(line: string): string[] {
+  const fields: string[] = [];
+  let current = '';
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index]!;
+    if (char === '\\' && index + 1 < line.length) { current += line[++index]!; continue; }
+    if (char === '|') { fields.push(current); current = ''; continue; }
+    current += char;
+  }
+  fields.push(current);
+  return fields.map(field => field.replace(/\\(\\|[0-7]{3})/gu, (_, code: string) => code === '\\' ? '\\' : String.fromCharCode(parseInt(code, 8))));
+}
 export const MAX_PANES = 256;
 
 const SESSION_ID = /^\$\d{1,9}$/u, WINDOW_ID = /^@\d{1,9}$/u, PANE_ID = /^%\d{1,9}$/u;
@@ -51,11 +69,9 @@ export function parseTmuxPanes(output: string): TmuxPane[] {
   const panes: TmuxPane[] = [];
   for (const line of output.split('\n')) {
     if (!line || panes.length >= MAX_PANES) continue;
-    const parts = line.split(SEP);
-    if (parts.length < FIELDS.length) continue;
-    // The command is last: a process name is not validated by tmux, so anything after the eleventh separator belongs to it.
-    const [sessionId, sessionName, attached, windowId, windowIndex, windowName, windowActive, paneId, paneIndex, paneActive, paneDead] = parts;
-    const command = parts.slice(FIELDS.length - 1).join(' ');
+    const parts = splitTmuxRow(line);
+    if (parts.length !== FIELDS.length) continue;
+    const [sessionId, sessionName, attached, windowId, windowIndex, windowName, windowActive, paneId, paneIndex, paneActive, paneDead, command = ''] = parts;
     if (!SESSION_ID.test(sessionId!) || !WINDOW_ID.test(windowId!) || !PANE_ID.test(paneId!)) continue;
     if (!/^\d{1,6}$/u.test(windowIndex!) || !/^\d{1,6}$/u.test(paneIndex!)) continue;
     panes.push({sessionId: sessionId!, sessionName: resourceText(sessionName!), sessionAttached: Number(attached) > 0,

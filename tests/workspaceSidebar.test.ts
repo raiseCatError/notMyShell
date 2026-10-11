@@ -5,7 +5,7 @@ import {existsSync} from 'node:fs';
 import {mkdtemp, rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {createTmuxRunner, LIST_FORMAT, listTmuxPanes, MAX_PANES, parseTmuxPanes, tmuxNavigationArgs, tmuxResources, tmuxServer, type TmuxPane} from '../src/workspace/tmux.js';
+import {createTmuxRunner, LIST_FORMAT, listTmuxPanes, MAX_PANES, parseTmuxPanes, splitTmuxRow, tmuxNavigationArgs, tmuxResources, tmuxServer, type TmuxPane} from '../src/workspace/tmux.js';
 import {renderSidebar, SidebarController} from '../src/workspace/sidebar.js';
 import {managerLinks, worktreeSection} from '../src/workspace/sources.js';
 import type {WorkspaceResource} from '../src/workspace/resources.js';
@@ -13,7 +13,7 @@ import type {WorktreeRecord} from '../src/worktrees/model.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 import type {Key} from '../src/terminal/keys.js';
 
-const S = '\u001f';
+const S = '|';
 const row = (...fields: string[]) => fields.join(S);
 // One session (qa) with two windows and five panes, plus a detached session.
 const LISTING = [
@@ -22,7 +22,7 @@ const LISTING = [
   row('$1', 'qa', '1', '@2', '1', 'servers', '0', '%3', '0', '1', '0', 'npm'),
   row('$1', 'qa', '1', '@2', '1', 'servers', '0', '%4', '1', '0', '0', 'tail'),
   row('$1', 'qa', '1', '@2', '1', 'servers', '0', '%5', '2', '0', '1', 'zsh'),
-  row('$2', 'notes|old', '0', '@3', '0', 'main', '1', '%6', '0', '1', '0', 'vim'),
+  row('$2', 'notes\\|old', '0', '@3', '0', 'main', '1', '%6', '0', '1', '0', 'vim'),
 ].join('\n');
 
 test('tmux listing: rows parse into panes; malformed rows and invalid ids are dropped, never guessed', () => {
@@ -31,10 +31,13 @@ test('tmux listing: rows parse into panes; malformed rows and invalid ids are dr
   assert.equal(panes[5]!.sessionName, 'notes|old', 'a pipe in a name is just text');
   assert.deepEqual(panes[4], {sessionId: '$1', sessionName: 'qa', sessionAttached: true, windowId: '@2', windowIndex: 1, windowName: 'servers', windowActive: false,
     paneId: '%5', paneIndex: 2, paneActive: false, paneDead: true, command: 'zsh'});
-  const odd = parseTmuxPanes(row('$1', 'qa', '1', '@1', '0', 'code', '1', '%1', '0', '1', '0', 'we\u001fird\u001b[31m'));
-  assert.equal(odd[0]!.command, 'we ird [31m', 'a process name with separators or controls stays one inert field');
+  const odd = parseTmuxPanes(row('$1', 'qa', '1', '@1', '0', 'a\\ b\\\\\\\\c', '1', '%1', '0', '1', '0', 'we\\|ird\\\\033[31m'));
+  assert.equal(odd[0]!.windowName, 'a b\\c', 'q: escaping and tmux\'s own backslash escaping are both undone');
+  assert.equal(odd[0]!.command, 'we|ird [31m', 'an escaped separator stays in its field; an escaped control character is made inert');
+  assert.deepEqual(splitTmuxRow('a\\|b|c'), ['a|b', 'c']);
+  assert.equal(parseTmuxPanes(`${row('$1', 'qa', '1', '@1', '0', 'code', '1', '%1', '0', '1', '0', 'sh')}|extra`).length, 0, 'a row with too many fields is dropped');
   assert.equal(parseTmuxPanes(Array.from({length: 400}, (_, i) => row('$1', 'qa', '1', '@1', '0', 'code', '1', `%${i}`, `${i}`, '0', '0', 'sh')).join('\n')).length, MAX_PANES);
-  assert.match(LIST_FORMAT, /#\{session_id\}\u001f/u);
+  assert.match(LIST_FORMAT, /^#\{session_id\}\|#\{q:session_name\}\|/u);
 });
 
 test('tmux hierarchy: one session with two windows and five panes is one session; NMSh\'s own pane is the active one', () => {

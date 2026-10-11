@@ -25,8 +25,9 @@ Sections in this slice:
 
 - **tmux** (`tmux.ts`). Only the server NMSh runs inside (`$TMUX`), through the trusted tmux executable, with one
   `list-panes -a -F` call per explicit refresh: 1.5 s and 256 KiB bounds, a minimal environment, no shell. Fields are
-  separated by U+001F (tmux refuses control characters in names); every row is validated, and a row with a wrong
-  shape or id is dropped. Session → window → pane: one session with two windows and five panes is one session.
+  separated by `|`; names are requested with tmux's `q:` modifier (which escapes `|`), and both that escaping and
+  tmux's own output escaping (`\\`, `\ooo`, used by older builds such as Ubuntu 24.04's) are undone. Every row is
+  validated, and a row with a wrong shape or id is dropped. Session → window → pane: one session with two windows and five panes is one session.
   NMSh's own pane (`$TMUX_PANE`) and the window/session holding it are `active`; tmux's own active window and pane
   are named in the detail. Activation uses tmux's own commands on ids (`$1`, `@2`, `%3`), never names, as one argv:
   `select-pane`/`select-window`, then `switch-client`. NMSh never creates panes or PTYs or changes layout. Outside
