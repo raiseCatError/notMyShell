@@ -5,6 +5,7 @@ import {mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdir
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {prepareNativeCompletionHome} from './helpers/nativeCompletion.js';
 import {NativeCompletionSource} from '../src/shell/CompletionService.js';
 import {until, processAlive} from './helpers/liveFrontend.js';
 
@@ -78,10 +79,39 @@ test('native cancellation reaps a PTY before it can process the initialization c
 test('bounded nonblocking capture preserves native filesystem candidates', async () => {
   const root = mkdtempSync(join(tmpdir(), 'nmsh-native-files-'));
   writeFileSync(join(root, 'capture-file'), '');
+  const previousHome = process.env.HOME;
+  process.env.HOME = root;
   try {
+    await prepareNativeCompletionHome(root);
     const values = await new NativeCompletionSource().query({buffer: 'ls cap', cwd: root}, new AbortController().signal);
     assert.ok(values.some(value => value.value === 'capture-file'));
-  } finally { rmSync(root, {recursive: true, force: true}); }
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('native startup expiry returns no candidates and does not poison the next capture', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'nmsh-capture-retry-'));
+  const previousHome = process.env.HOME, previousFpath = process.env.FPATH;
+  process.env.HOME = root;
+  try {
+    writeFileSync(join(root, 'capture-file'), '');
+    await prepareNativeCompletionHome(root);
+    const slow = join(root, 'slow'); mkdirSync(slow);
+    writeFileSync(join(slow, 'compinit'), 'sleep 20\n');
+    process.env.FPATH = slow;
+    const source = new NativeCompletionSource();
+    const context = {buffer: 'ls cap', cwd: root};
+    assert.deepEqual(await source.query(context, new AbortController().signal), [], 'expired capture has no usable candidates');
+    if (previousFpath === undefined) delete process.env.FPATH; else process.env.FPATH = previousFpath;
+    const recovered = await source.query(context, new AbortController().signal);
+    assert.ok(recovered.some(value => value.value === 'capture-file'), 'same context is captured again after expiry');
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
+    if (previousFpath === undefined) delete process.env.FPATH; else process.env.FPATH = previousFpath;
+    rmSync(root, {recursive: true, force: true});
+  }
 });
 
 /** The helpers' own startup deadline (capture.zsh, configured-completion.zsh default). */

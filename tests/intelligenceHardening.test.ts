@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp, mkdir, writeFile, rm, readdir} from 'node:fs/promises';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
+import {prepareNativeCompletionHome} from './helpers/nativeCompletion.js';
 import {NativeCompletionSource} from '../src/shell/CompletionService.js';
 import {HistoryIndex, historyId} from '../src/shell/HistoryIndex.js';
 import {HistoryService, indexImportedHistory} from '../src/shell/HistoryService.js';
@@ -13,6 +14,9 @@ test('native fuzzy filtering preserves nested path capture context and cached in
   process.env.HOME = home;
   try {
     await mkdir(join(home, 'src')); await writeFile(join(home, 'src', 'alpha.ts'), '');
+    // Capture has its own startup deadline. This test concerns path context and
+    // cached insertion ranges; cold-start expiry is exercised separately.
+    await prepareNativeCompletionHome(home);
     const source = new NativeCompletionSource();
     const context = {buffer: 'ls src/al', cwd: home};
     const items = await source.query(context, new AbortController().signal);
