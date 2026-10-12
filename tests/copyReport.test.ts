@@ -247,3 +247,15 @@ test('a report too short to show a document refuses copy until resized', () => {
   assert.ok(frame.split('\n').length <= 3);
   assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 8), {kind: 'copy', text: review.text});
 });
+
+
+test('extremely narrow report wrapping keeps every copied character reachable', () => {
+  const review = createReportReview([record('env', 'ABCDEFGH9\n', 0, 'Completed')], DEFAULT_REPORT_OPTIONS, false);
+  const shown: string[] = [];
+  for (let scroll = 0; scroll < 100; scroll++) {
+    shown.push(...renderReportReview(review, 10, 8).map(stripAnsi));
+    reportReviewKey(review, {kind: 'down'}, 8);
+  }
+  assert.ok(shown.some(row => row.includes('H9')), 'the final characters are reachable rather than clipped');
+  assert.equal(reportReviewKey(review, {kind: 'enter'}, 8, 3), undefined, 'an unrenderable body cannot be approved');
+});

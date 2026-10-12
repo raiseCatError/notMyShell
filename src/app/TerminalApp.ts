@@ -1412,7 +1412,8 @@ export class TerminalApp {
       return;
     }
     if (this.reportReview) {
-      const action = reportReviewKey(this.reportReview, key, this.dimensions().rows - 4);
+      const {columns, rows} = this.dimensions();
+      const action = reportReviewKey(this.reportReview, key, rows - 4, columns);
       const review = this.reportReview;
       if (action?.kind === 'close') { this.reportReview = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'copy') { this.reportReview = undefined; this.returnFromPanel(); void this.copyReportText(action.text, review.records); }
