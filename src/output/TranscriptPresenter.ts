@@ -1,3 +1,4 @@
+import {colorLevel} from '../presentation/capabilities.js';
 import {stripTerminalControls} from '../util/terminalControls.js';
 import {askFoldLabel} from '../ask/transcriptSummary.js';
 import {paintDivider, DEFAULT_TREATMENT_SETTINGS, type TreatmentSettings} from '../chroma/treatment.js';
@@ -98,7 +99,12 @@ export class TranscriptPresenter {
   private wrap(view: TranscriptView, index: number, width: number): WrappedRow[] {
     const owner = view.ownerOf(index);
     const context = owner === undefined ? undefined : view.historicalContexts.get(owner);
-    const line = view.lines[index] ?? [];
+    const stored = view.lines[index] ?? [];
+    // Saved NMSh chrome belongs to the current frontend's presentation policy.
+    // Program cells keep their original SGR, including across reattach.
+    const line = view.lineTypes.has(index) && colorLevel() === 'none'
+      ? stored.map(cell => cell ? {...cell, style: ''} : cell)
+      : stored;
     return wrapStyledLine(this.hyperlinks ? this.links.line(line, context?.cwd) : line, width, this.hyperlinks);
   }
 
