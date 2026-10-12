@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.18.0] - 2026-10-09
+## [0.18.0] - Unreleased
+
+Release candidate in [PR #345](https://github.com/raiseCatError/notMyShell/pull/345), not yet published. The release date is set when publication is approved.
 
 Context Engine platform, Status Strip 2.0, managed Claude Code, worktrees and a read-only GitHub workspace: demand-driven context modules and Context Packs, `/strip` and `/modules`, `/claude` with structured permissions and questions, `/mods`, `/worktrees`, `/github`, terminal-title ownership, and tmux, passthrough and cursor fixes.
 
@@ -74,7 +76,9 @@ Context Engine platform, Status Strip 2.0, managed Claude Code, worktrees and a 
 - Managed targets are Claude Code only. Codex and OpenCode routing say the adapter is not available; live attach to a Claude session started outside NMSh is not supported.
 - The GitHub workspace is read-only: no merging, reviewing, commenting or closing from NMSh.
 - `/worktrees` navigates by staging `cd` in the composer; focusing an NMSh session or tmux pane for a worktree is not implemented.
-- `/worktrees` and `/github` are covered by automated tests and real headless terminal recordings; a hands-on pass in a physical terminal is still pending.
+- `/worktrees` and `/github` are the first delivered slices of [#337](https://github.com/raiseCatError/notMyShell/issues/337) and [#338](https://github.com/raiseCatError/notMyShell/issues/338). Both issues stay open for the remaining work (session and tmux focus, PR evidence, supported remote actions).
+- Physical terminal QA for this release is still pending. `/worktrees`, `/github`, the managed agent view and `/mods` are covered by automated tests and real headless terminal recordings; the fixes for absolute paths, `/copy`, folding after a screen clear and Fish keystrokes by automated real-PTY tests. None has had a hands-on pass in Ghostty or Terminal.app yet. The checklist is [docs/testing/v018-physical-qa.md](docs/testing/v018-physical-qa.md).
+- A lone `ESC[3J` (erase scrollback, without `ESC[2J`) empties NMSh's whole transcript, where a real terminal keeps the screen. `clear` and `clear -x` are unaffected. This dates from the first release; the planned fix is to treat a lone `ESC[3J` as clearing nothing NMSh shows.
 - Physical checks in iTerm2, Kitty, WezTerm, Linux and WSL 2 remain open follow-ups.
 
 ## [0.17.0] - 2026-10-06
