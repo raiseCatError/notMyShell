@@ -145,9 +145,10 @@ function timestamp(at: number | undefined): string | undefined {
 }
 
 /** A Markdown code fence longer than any backtick run inside the text, so output can never close it early. */
-function fence(text: string): string {
-  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(match => match[0].length));
-  return '`'.repeat(Math.max(3, longest + 1));
+export function markdownDelimiter(text: string, minimum = 3): string {
+  let longest = minimum - 1;
+  for (const match of text.matchAll(/`+/gu)) longest = Math.max(longest, match[0].length);
+  return '`'.repeat(longest + 1);
 }
 
 /** Control characters (escape sequences, carriage returns) are not text a report should carry. */
@@ -171,8 +172,7 @@ const clean = reportText;
  */
 export function inlineCode(text: string): string {
   const value = clean(text).replace(/\s*\n\s*/gu, ' ').trim();
-  const longest = Math.max(0, ...[...value.matchAll(/`+/gu)].map(match => match[0].length));
-  const ticks = '`'.repeat(longest + 1);
+  const ticks = markdownDelimiter(value, 1);
   const pad = value.startsWith('`') || value.endsWith('`') ? ' ' : '';
   return `${ticks}${pad}${value}${pad}${ticks}`;
 }
@@ -209,14 +209,14 @@ export function buildReport(records: readonly CompletedCommand[], options: Repor
     sections.push(`# Command report\n\n${count} command${count === 1 ? '' : 's'}, oldest first.`);
     records.forEach((record, index) => {
       const command = content.text(record.command);
-      const title = command.includes('\n') || command.includes('`') ? `## ${index + 1}. Command\n\n${fence(command)}sh\n${command}\n${fence(command)}`
+      const title = command.includes('\n') || command.includes('`') ? `## ${index + 1}. Command\n\n${markdownDelimiter(command)}sh\n${command}\n${markdownDelimiter(command)}`
         : `## ${index + 1}. \`${command}\``;
       const lines = facts(record, options).map(fact => {
         const value = content.text(fact.value);
         return `- **${fact.label}:** ${fact.code ? inlineCode(value) : value}`;
       });
       const output = content.text(record.output).replace(/\n+$/u, '');
-      const body = output ? `${fence(output)}text\n${output}\n${fence(output)}` : '_No output._';
+      const body = output ? `${markdownDelimiter(output)}text\n${output}\n${markdownDelimiter(output)}` : '_No output._';
       sections.push(`${title}\n\n${lines.join('\n')}\n\n${body}`);
     });
   } else {
