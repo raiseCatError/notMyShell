@@ -101,6 +101,23 @@ export function redactText(text: string, home?: string): {text: string; findings
   return {text: result, findings: [...counts].map(([kind, count]) => ({kind, count}))};
 }
 
+/** A report document assembled only after its source fragments have been sanitized/redacted. */
+export interface ReportResult {text: string; findings: ReportFinding[]}
+
+/** Redact data before adding Markdown or plain-report structure; patterns never see authored delimiters. */
+export function createReportContent(options: Pick<ReportOptions, 'redact' | 'home'>) {
+  const counts = new Map<FindingKind, number>();
+  return {
+    text(value: string): string {
+      if (!options.redact) return reportText(value);
+      const result = redactText(value, options.home);
+      for (const finding of result.findings) counts.set(finding.kind, (counts.get(finding.kind) ?? 0) + finding.count);
+      return result.text;
+    },
+    findings(): ReportFinding[] { return [...counts].map(([kind, count]) => ({kind, count})); },
+  };
+}
+
 /** 1-based line numbers of `text` that carry a redaction marker (what the review points the reader at). */
 export function redactedLines(text: string): number[] {
   return text.split('\n').flatMap((line, index) => /\[REDACTED[^\]]*\]|(?:^|[\s=:"'(`])~(?=\/|[\s"'`)]|$)|\/(?:Users|home)\/<user>/u.test(line) ? [index + 1] : []);
@@ -187,28 +204,32 @@ function facts(record: CompletedCommand, options: ReportOptions): Fact[] {
 export function buildReport(records: readonly CompletedCommand[], options: ReportOptions): {text: string; findings: ReportFinding[]} {
   const count = records.length;
   const sections: string[] = [];
+  const content = createReportContent(options);
   if (options.format === 'markdown') {
     sections.push(`# Command report\n\n${count} command${count === 1 ? '' : 's'}, oldest first.`);
     records.forEach((record, index) => {
-      const command = clean(record.command);
+      const command = content.text(record.command);
       const title = command.includes('\n') || command.includes('`') ? `## ${index + 1}. Command\n\n${fence(command)}sh\n${command}\n${fence(command)}`
         : `## ${index + 1}. \`${command}\``;
-      const lines = facts(record, options).map(fact => `- **${fact.label}:** ${fact.code ? inlineCode(fact.value) : fact.value}`);
-      const output = clean(record.output).replace(/\n+$/u, '');
+      const lines = facts(record, options).map(fact => {
+        const value = content.text(fact.value);
+        return `- **${fact.label}:** ${fact.code ? inlineCode(value) : value}`;
+      });
+      const output = content.text(record.output).replace(/\n+$/u, '');
       const body = output ? `${fence(output)}text\n${output}\n${fence(output)}` : '_No output._';
       sections.push(`${title}\n\n${lines.join('\n')}\n\n${body}`);
     });
   } else {
     sections.push(`Command report · ${count} command${count === 1 ? '' : 's'}, oldest first`);
     records.forEach((record, index) => {
-      const output = clean(record.output).replace(/\n+$/u, '');
-      const lines = [`=== ${index + 1}. $ ${clean(record.command).split('\n').join('\n    ')}`, ...facts(record, options).map(fact => `${fact.label}: ${fact.value}`),
+      const output = content.text(record.output).replace(/\n+$/u, '');
+      const lines = [`=== ${index + 1}. $ ${content.text(record.command).split('\n').join('\n    ')}`, ...facts(record, options).map(fact => `${fact.label}: ${content.text(fact.value)}`),
         '--- output ---', output || '(no output)', '--- end ---'];
       sections.push(lines.join('\n'));
     });
   }
   const text = `${sections.join('\n\n')}\n`;
-  return options.redact ? redactText(text, options.home) : {text, findings: []};
+  return {text, findings: content.findings()};
 }
 
 /** `--report`, `--report=markdown|md|plain|text`: undefined when the token is not a report flag. */
