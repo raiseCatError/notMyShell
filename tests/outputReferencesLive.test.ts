@@ -15,7 +15,8 @@ test('live: failure keys and reference copies use restored command records and p
     writeFileSync(clipboard, 'UNCHANGED');
     for (const name of ['pbcopy', 'wl-copy', 'xclip']) {
       const path = join(bin, name);
-      writeFileSync(path, `#!/bin/sh\ncat > "${clipboard}"\n`);
+      // Publish complete clipboard bytes in one rename; truncation is not completion.
+      writeFileSync(path, `#!/bin/sh\ntemporary="${clipboard}.pending.$$"\ntrap 'rm -f "$temporary"' EXIT\ncat > "$temporary" && mv "$temporary" "${clipboard}"\n`);
       chmodSync(path, 0o755);
     }
     const env = {PATH: `${bin}:${process.env.PATH}`, NO_COLOR: '1', NMSH_ICONS: 'safe',
