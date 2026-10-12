@@ -1,8 +1,16 @@
 # Workflow initiative ledger
 
-Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-11.
+Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-12.
 
 ## Current stabilization checkpoint
+
+Fresh-session recovery: [workflow stabilization handoff](workflow-stabilization-handoff.md).
+Development is stopped at a preservation checkpoint. Cedar/Birch host canonical passed;
+Amber full verification failed three compatibility cases. Elm commit 5447eb9 preserves
+incomplete acceptance tests (15 focused passed, 4 failed). Input 48a0ded Actions
+38157687343 failed macOS flowComposer PTY spawning; Ubuntu shards passed.
+No frontend freeze or final integration is claimed. Exact heads/commands/failures are
+in the handoff above.
 
 The shared frontend is **not frozen**. This record supersedes the historical status claims below. No workflow PR
 has been merged to master or the release branch. Physical terminal QA remains outstanding.
@@ -10,9 +18,9 @@ has been merged to master or the release branch. Physical terminal QA remains ou
 | PR | Published head | Local additive candidate | Gate |
 | --- | --- | --- | --- |
 | #345 | 7122468 | unchanged | stack base |
-| #348 | 86fb4e4 | fix/workflow-cedar / 48a0ded | published canonical/Actions green; home/readiness follow-up final gates pending |
-| #357 | 7fb6b5a | fix/workflow-birch / 3adc451 | final canonical/CI pending |
-| #358 | 790fd74 | fix/workflow-amber / 000736d | final canonical/CI pending |
+| #348 | 48a0ded | fix/workflow-cedar / 48a0ded | host canonical passed; current Actions failed macOS PTY spawn |
+| #357 | 7fb6b5a | fix/workflow-birch / 3adc451 | host canonical passed; final CI pending |
+| #358 | 790fd74 | fix/workflow-amber / 000736d | host canonical failed three compatibility cases; final CI pending |
 | #360 | afe7f69 | fix/workflow-coral / 80bd0cf | final canonical/CI pending |
 | #361 | b1cdfbe | fix/workflow-indigo / 0117a34 | final canonical/CI pending |
 | #367 | 66e164d | fix/workflow-willow / be037a0 | independent sibling; final canonical/CI pending |
@@ -81,6 +89,9 @@ passed for storage correction 9465eb5. The runner also isolates child HOME in th
 - **Short module details (52db115):** diagnostic rows now honor the panel's height and remain reachable through arrows/PageUp/PageDown. The viewport is ephemeral; reading and resizing do not change settings or demand collectors. Focused unit and real-PTY tests in a 50-column NO_COLOR Safe terminal, direct typecheck and verify:fast passed. Exact last-frame module width-compaction explanations remain an acceptance-integration follow-up.
 
 ## Verification recorded so far
+
+Newest exact-head evidence is in the handoff above. Historical statements below
+apply to their recorded commits, not later head acceptance.
 
 - macOS canonical verification passed at 566c321 with the isolated child home. Its later startup-gate fixture commit needs a new exact-head gate.
 - The macOS queue run at 2dd8b80 failed five cases: a transient five-entry assertion after the holding sleep expired, signalling before actual foreground ownership, two no-output frontend startup deadlines and the bounded zoxide query fixture. The first two assumptions are corrected above. At inspection this 8 GiB/8 CPU host had load averages 18.05/50.35/59.36 and unrelated Xcode/xctest work active. Their processes are preserved. Host verification now runs one test worker with this track's Linux VM stopped; resource pressure is evidence, not a blanket explanation for remaining failures.
