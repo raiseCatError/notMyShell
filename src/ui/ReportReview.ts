@@ -63,10 +63,10 @@ function rebuild(state: ReportReviewState): void {
 
 export type ReportReviewAction = {kind: 'close'} | {kind: 'copy'; text: string} | {kind: 'edit'};
 
-export function reportReviewKey(state: ReportReviewState, key: Key, height: number): ReportReviewAction | undefined {
+export function reportReviewKey(state: ReportReviewState, key: Key, height: number, columns = 80): ReportReviewAction | undefined {
   const page = Math.max(1, height - 8);
   if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value === 'q')) return {kind: 'close'};
-  if (key.kind === 'enter') return height >= 4 ? {kind: 'copy', text: state.text} : undefined;
+  if (key.kind === 'enter') return height >= 4 && columns >= 4 ? {kind: 'copy', text: state.text} : undefined;
   if (key.kind === 'up' || key.kind === 'down') { state.scroll += key.kind === 'up' ? -1 : 1; }
   else if (key.kind === 'pageUp' || key.kind === 'pageDown') { state.scroll += key.kind === 'pageUp' ? -page : page; }
   else if (key.kind === 'text') {
@@ -116,14 +116,14 @@ export function applyReportEdit(state: ReportReviewState, text: string): void {
 }
 
 export function renderReportReview(state: ReportReviewState, columns: number, height: number): string[] {
-  if (height < 4) return height > 0 ? [truncateText('  Resize to review · Esc cancels', columns)] : [];
+  if (height < 4 || columns < 4) return height > 0 ? [truncateText('  Resize to review · Esc cancels', columns)] : [];
   const primary = foreground(UI_COLORS.primary);
   const secondary = foreground(UI_COLORS.secondary);
   const subtle = foreground(UI_COLORS.subtle);
   const accent = foreground(UI_COLORS.accent);
   const warning = foreground(UI_COLORS.failure);
   const reset = '\u001b[0m';
-  const width = Math.max(10, columns - 4);
+  const width = Math.max(1, columns - 4);
   const count = state.records.length;
   const format = state.options.format === 'markdown' ? 'Markdown' : 'plain text';
   const title = state.source?.title ?? 'Copy as report';
@@ -145,7 +145,7 @@ export function renderReportReview(state: ReportReviewState, columns: number, he
   const room = Math.max(1, height - out.length - controls.length - 1);
   const markedSet = new Set(marked);
   // Every line wrapped to the panel: a long line is shown in full, never truncated out of sight.
-  const rows = state.text.split('\n').flatMap((line, index) => wrapRows(line, width - 1).map((text, part) => ({text, marked: part === 0 && markedSet.has(index + 1)})));
+  const rows = state.text.split('\n').flatMap((line, index) => wrapRows(line, Math.max(2, width - 1)).map((text, part) => ({text, marked: part === 0 && markedSet.has(index + 1)})));
   const more = rows.length > room;
   const visible = more && room > 1 ? room - 1 : room;
   state.scroll = Math.max(0, Math.min(state.scroll, Math.max(0, rows.length - visible)));
