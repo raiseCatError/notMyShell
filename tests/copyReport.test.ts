@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {OutputBuffer, type CompletedCommand} from '../src/output/OutputBuffer.js';
-import {buildReport, DEFAULT_REPORT_OPTIONS, describeFindings, parseReportFlag, redactedLines, redactText, scanSensitive} from '../src/clipboard/report.js';
+import {buildReport, inlineCode, DEFAULT_REPORT_OPTIONS, describeFindings, parseReportFlag, redactedLines, redactText, scanSensitive} from '../src/clipboard/report.js';
 import {parseCopyArgs} from '../src/clipboard/copySelection.js';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {applyReportEdit, createReportReview, renderReportReview, reportReviewKey} from '../src/ui/ReportReview.js';
@@ -258,4 +258,15 @@ test('extremely narrow report wrapping keeps every copied character reachable', 
   }
   assert.ok(shown.some(row => row.includes('H9')), 'the final characters are reachable rather than clipped');
   assert.equal(reportReviewKey(review, {kind: 'enter'}, 8, 3), undefined, 'an unrenderable body cannot be approved');
+});
+
+
+test('large backtick-rich output and restored facts do not exceed the JavaScript argument limit', () => {
+  const payload = '` '.repeat(150_000);
+  const item = record('printf', '', 0, payload, {output: payload});
+  const {text} = buildReport([item], {...DEFAULT_REPORT_OPTIONS, redact: false});
+  assert.ok(text.includes('```text\n' + payload + '\n```'));
+  const literal = inlineCode(payload);
+  assert.ok(literal.startsWith('`` '));
+  assert.ok(literal.endsWith(' ``'));
 });
