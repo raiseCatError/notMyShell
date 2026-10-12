@@ -14,7 +14,7 @@ const suites = {
   fast: ['testSharding', 'input', 'keys', 'highlighter', 'shellProtocol', 'sessionProtocol', 'completionModel', 'pathDisplay', 'linuxPlatform'],
   // Minimum-runtime gate: actual launcher, persistent shell backends, protocol,
   // platform discovery and build/version behavior without long detach scenarios.
-  node22: ['testSharding', 'buildInfo', 'startupLaunch', 'shellAdapters', 'sessionProtocol', 'shellProtocol', 'linuxPlatform', 'hostProfiles', 'serviceCompat'],
+  node22: ['testSharding', 'buildInfo', 'startupLaunch', 'shellAdapters', 'sessionProtocol', 'shellProtocol', 'linuxPlatform', 'hostProfiles', 'serviceCompat', 'socketClientLifecycle'],
   fedora: ['linuxPlatform', 'tools', 'update', 'hostProfiles', 'portabilityUninstall'],
 };
 
