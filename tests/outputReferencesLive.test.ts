@@ -68,6 +68,15 @@ test('live: failure keys and reference copies use restored command records and p
     assert.equal(readFileSync(clipboard, 'utf8'), 'src/latest.ts:42:7');
     assert.doesNotMatch(back.output, /\u001b\[38;[25];/u, 'NO_COLOR stays plain');
 
+    // Enter belongs to the focused historical block until Esc returns to the composer.
+    // Assert that opening its menu cannot execute the preserved draft.
+    const focusMark = back.mark;
+    back.pty.write('\r');
+    await back.waitFor(/Command palette/u, focusMark);
+    assert.equal((await sandbox.transcripts().list()).flatMap(item => item.transcript.records)
+      .some(record => record.command === 'echo DRAFT-UNCHANGED'), false);
+    back.pty.write('\u001b[27u'); // close the block menu
+    back.pty.write('\u001b[27u'); // return focus to the composer
     back.pty.write('\r');
     await until(async () => (await sandbox.transcripts().list()).some(item =>
       item.transcript.records.some(record => record.command === 'echo DRAFT-UNCHANGED')),
