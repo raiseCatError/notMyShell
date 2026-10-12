@@ -23,7 +23,8 @@ Use Ghostty and Terminal.app where available, with zsh, Bash 4.4+ and Fish 3.7 o
    quoting, substitutions and strings. Pasting, opening review and choosing a recipe must execute nothing. Explicit
    queue confirmation submits the reviewed text in order; variables and cwd remain in the same shell.
 5. Set an entry to “asks first”, approve it, then edit it before dispatch. The edit withdraws approval. “Runs even
-   after a failure” permits the reviewed follow-up after failure, but does not bypass an interrupt.
+   after a failure” permits the reviewed follow-up after failure, but does not bypass an interrupt. Repeat in each shell,
+   detach with an entry awaiting approval, and reattach: it must keep waiting until you approve that exact entry.
 6. Open `less` or another alternate-screen program; keys and terminal selection belong to it. Exit and immediately
    type a command. Repeat after Ctrl+C, Ctrl+Z and resize.
 
@@ -34,7 +35,8 @@ Use Ghostty and Terminal.app where available, with zsh, Bash 4.4+ and Fish 3.7 o
    `/clips suggestions on` offers a neutral change hint while idle; `/ps` remains the content read. Disable with
    `/clips suggestions off`. Unsupported platforms should explain that metadata suggestions are unavailable.
 2. Pin a selected history command from the palette. Check its recorded cwd, command text and recipe review. A
-   stale history selection must not pin a different command. Placeholder values must stay shell-quoted data.
+   stale history selection must not pin a different command. Keep that selected history command as a clip and review
+   it without running it; after closing/reattaching, the saved pin remains and the clip is gone. Placeholder values must stay shell-quoted data.
 3. Run a failure between successful commands. F8/Shift+F8 navigate actual failed records while idle, preserving
    the draft. Program input and passthrough must retain their keys. Check files, URLs, commits and device references
    through Actions; output-derived choices must not execute automatically.
