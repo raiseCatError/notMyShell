@@ -1,5 +1,7 @@
 import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
+import {dirname} from 'node:path';
+import {ensurePrivateRuntimeDir} from './runtimeDir.js';
 import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
@@ -33,6 +35,9 @@ interface Established<T> {
 function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage | undefined,
   onMessage: (message: ServerMessage) => T | undefined): Promise<Established<T>> {
   return new Promise((resolve, reject) => {
+    // Every request, including listings and best-effort notices, crosses the
+    // same ownership boundary as create/attach before any handshake is sent.
+    ensurePrivateRuntimeDir(dirname(socketPath));
     const socket = connect(socketPath);
     socket.setEncoding('utf8');
     const decoder = new FrameDecoder();
