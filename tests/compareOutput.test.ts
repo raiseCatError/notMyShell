@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {OutputBuffer, type CompletedCommand} from '../src/output/OutputBuffer.js';
-import {compareRecords, comparisonNotes, comparisonReport, diffLines, previousRun, summary, unifiedDiff, MAX_EDIT_DISTANCE} from '../src/output/compare.js';
+import {compareRecords, comparisonNotes, comparisonReport, buildComparisonReport, diffLines, previousRun, summary, unifiedDiff, MAX_EDIT_DISTANCE} from '../src/output/compare.js';
 
 let clock = Date.UTC(2026, 9, 10, 8, 0, 0);
 function record(command: string, output: string, exitCode = 0): CompletedCommand {
@@ -144,7 +144,8 @@ test('the comparison report is reviewed like any report: redacted, wrapped, and 
   const {stripAnsi} = await import('../src/util/text.js');
   const before = record('env', 'API_TOKEN=old\n');
   const after = record('env', 'API_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n');
-  const review = createTextReview('Copy comparison report', comparisonReport(compareRecords(before, after)), [before, after], DEFAULT_REPORT_OPTIONS, false);
+  const comparison = compareRecords(before, after);
+  const review = createTextReview('Copy comparison report', options => buildComparisonReport(comparison, options), [before, after], DEFAULT_REPORT_OPTIONS, false);
   const shown = stripAnsi(renderReportReview(review, 100, 40).join('\n'));
   assert.match(shown, /^ {2}Copy comparison report {2}Markdown/u);
   assert.match(shown, /Looks sensitive/u);

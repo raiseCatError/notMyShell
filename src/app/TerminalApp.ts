@@ -53,7 +53,7 @@ import {DEFAULT_REPORT_OPTIONS, describeFindings, scanSensitive, type ReportForm
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
-import {comparisonReport, copyableDiff, previousRun} from '../output/compare.js';
+import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
@@ -1432,7 +1432,8 @@ export class TerminalApp {
       } else if (action?.kind === 'copy') {
         // A comparison report is a report: the same review (exact text, wrapped, redaction) before it is copied.
         this.comparePanel = undefined;
-        this.reportReview = createTextReview('Copy comparison report', comparisonReport(action.comparison), [action.comparison.a, action.comparison.b],
+        const comparison = structuredClone(action.comparison);
+        this.reportReview = createTextReview('Copy comparison report', options => buildComparisonReport(comparison, options), [comparison.a, comparison.b],
           {...DEFAULT_REPORT_OPTIONS, home: homedir()}, Boolean(configuredEditor(process.env)));
       }
       this.render();
