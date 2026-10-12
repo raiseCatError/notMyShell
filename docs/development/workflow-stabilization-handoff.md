@@ -384,3 +384,28 @@ were claimed.
 
 All implementation and incomplete acceptance source is recoverable from the eight
 checkpoint refs. Final verification/CI/freeze/integration remain incomplete.
+
+## Retained local recovery refs
+
+These inactive refs have no active owned worktree. Every head below was verified to
+be an ancestor of Maple, Willow or Elm, so pushing the active leaves preserves all
+these commits on GitHub. The inactive branch names themselves remain local; do not
+merge them again. No recovery ref has unique work absent from the published leaves.
+
+| Local recovery ref | Exact head | Preserved in active leaf ancestry |
+| --- | --- | --- |
+| fix/workflow-acceptance | 372bd5a4b58b5f010dee438f3c67b54927641b17 | fix/workflow-maple, fix/workflow-elm |
+| fix/workflow-acceptance-durable | 7d29d2b7371cf5914018ac96b385a30aa348b79a | fix/workflow-maple, fix/workflow-elm |
+| fix/workflow-acceptance-resume | 7d29d2b7371cf5914018ac96b385a30aa348b79a | fix/workflow-maple, fix/workflow-elm |
+| fix/workflow-compare-checkpoint | 82726ae9fb4edd171d57b3b2af10c31dc20a55b7 | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-compare-resume | 1489b8f03ec8f4a2b9dcc4e8b21a288ab5c9453a | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-copy-checkpoint | 59e77a0050c8585cc1cd1046e978fb841babd946 | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-copy-resume | 0af5116c6b4a9917422d9060412c38892a8c712d | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-fish-routing | 2d24743c903e5e9e8c5c1afb1f3efca3bbb02f15 | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-input-checkpoint | 2d96b25a38806029f5c9ea685bba2bed6c52d89d | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-input-resume | 2d96b25a38806029f5c9ea685bba2bed6c52d89d | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-queue-resume | 463667209b957f7f6465ff72ad948749ab9fec5f | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-report-checkpoint | 25af5ba6ff06e027c983f777c30d13704ee5e16a | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-report-resume | 7173b46f05953792d06865d91842b40bc7103897 | fix/workflow-maple, fix/workflow-willow, fix/workflow-elm |
+| fix/workflow-vocabulary-checkpoint | d016545942c5558cf41a6be9b15abf9d43b072d8 | fix/workflow-willow |
+| fix/workflow-vocabulary-resume | fdf6eb3baa14d4ac7a3f3be444731931fd69f6fb | fix/workflow-willow |
