@@ -10,6 +10,12 @@ import {NativeCompletionSource} from '../src/shell/CompletionService.js';
 import {until, processAlive} from './helpers/liveFrontend.js';
 
 const capture = fileURLToPath(new URL('../src/shell/capture.zsh', import.meta.url));
+function publishedPid(path: string): number | undefined {
+  if (!existsSync(path)) return undefined;
+  const pid = Number(readFileSync(path, 'utf8'));
+  return Number.isSafeInteger(pid) && pid > 1 ? pid : undefined;
+}
+
 const groupEnded = (pid: number): boolean => spawnSync('pgrep', ['-g', String(pid)], {timeout: 2000}).status === 1;
 
 test('native capture bounds its own startup and cleans the separate PTY process group', async () => {
@@ -21,8 +27,7 @@ test('native capture bounds its own startup and cleans the separate PTY process 
     env: {...process.env, HOME: root, FPATH: root, NMSH_CAPTURE_ROOT: transport}, stdio: 'ignore'});
   let inner = 0;
   try {
-    await until(() => existsSync(join(transport, 'pid')), 2000, 'capture PID');
-    inner = Number(readFileSync(join(transport, 'pid'), 'utf8'));
+    await until(() => { inner = publishedPid(join(transport, 'pid')) ?? 0; return inner > 1; }, 2000, 'capture PID');
     assert.ok(inner > 1);
     await until(() => child.exitCode !== null || child.signalCode !== null, 2500, 'capture self deadline');
     await until(() => !processAlive(inner), 2000, 'inner PTY cleanup');
@@ -63,8 +68,7 @@ test('native cancellation reaps a PTY before it can process the initialization c
   });
   let inner = 0;
   try {
-    await until(() => existsSync(join(root, 'early-pid')), 3000, 'inner before initialization');
-    inner = Number(readFileSync(join(root, 'early-pid'), 'utf8'));
+    await until(() => { inner = publishedPid(join(root, 'early-pid')) ?? 0; return inner > 1; }, 3000, 'inner before initialization');
     await until(() => owner.exitCode !== null || owner.signalCode !== null, 2000, 'cancelled owner');
     assert.equal(owner.exitCode, 0);
     await until(() => !processAlive(inner) && groupEnded(inner), 2000, 'early PTY cleanup');
@@ -114,6 +118,21 @@ test('native startup expiry returns no candidates and does not poison the next c
   }
 });
 
+/** Read one published capture identity before the fixture signals or observes its process. */
+async function publishedCapture(root: string, prefix: string): Promise<{transport: string; pid: number}> {
+  let identity: {transport: string; pid: number} | undefined;
+  await until(() => {
+    const name = readdirSync(root).find(name => name.startsWith(prefix));
+    if (!name || !existsSync(join(root, name, 'pid'))) return false;
+    const transport = join(root, name);
+    const pid = publishedPid(join(transport, 'pid'));
+    if (pid === undefined) return false;
+    identity = {transport, pid};
+    return true;
+  }, 3000, 'owned inner shell');
+  return identity!;
+}
+
 /** The helpers' own startup deadline (capture.zsh, configured-completion.zsh default). */
 const HELPER_DEADLINE_MS = 1500;
 
@@ -140,14 +159,9 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
   owner.stderr!.on('data', data => { ownerError = (ownerError + String(data)).slice(-4096); });
   let inner = 0;
   try {
-    let transport = '';
-    await until(() => {
-      const name = readdirSync(root).find(name => name.startsWith(prefix));
-      if (!name || !existsSync(join(root, name, 'pid'))) return false;
-      transport = join(root, name);
-      return true;
-    }, 3000, 'owned inner shell');
-    inner = Number(readFileSync(join(transport, 'pid'), 'utf8'));
+    const identity = await publishedCapture(root, prefix);
+    const transport = identity.transport;
+    inner = identity.pid;
     owner.kill('SIGKILL');
     // With the frontend gone, the helper cleans up on its own startup deadline (1.5 s in capture.zsh and the configured
     // helper); the window is that deadline plus scheduling margin for a loaded machine running the suite in parallel.
@@ -157,7 +171,7 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
     } catch (error) {
       // Failure-only diagnostics distinguish an unreaped zombie from a live
       // helper or a leftover transport, without weakening the cleanup deadline.
-      const state = {elapsedMs: Date.now() - killedAt, transportExists: existsSync(transport), innerAlive: processAlive(inner)};
+      const state = {innerPid: inner, elapsedMs: Date.now() - killedAt, transportExists: existsSync(transport), innerAlive: processAlive(inner)};
       const processState = spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', String(inner)], {encoding: 'utf8', timeout: 2000});
       if (error instanceof Error) error.message += `; ${JSON.stringify(state)}; inner process: ${processState.stdout?.trim() || 'unavailable'}`;
       throw error;
@@ -176,6 +190,52 @@ for (const configured of [false, true]) test(`${configured ? 'configured' : 'nat
   } finally {
     if (owner.pid) { try { process.kill(-owner.pid, 'SIGKILL'); } catch {} }
     if (inner) { try { process.kill(-inner, 'SIGKILL'); } catch {} }
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+
+test('abrupt capture cleanup waits through a PID-file rewrite rather than observing process group zero', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'nmsh-capture-pid-'));
+  const bin = join(root, 'bin'); mkdirSync(bin);
+  const release = join(root, 'release');
+  const marker = join(root, 'rewriting');
+  writeFileSync(join(root, 'compinit'), 'sleep 20\n');
+  writeFileSync(join(bin, 'zsh'), `#!/bin/zsh -f
+if [[ $2 != -i ]]; then exec /bin/zsh "$@"; fi
+while [[ ! -s $NMSH_CAPTURE_ROOT/pid ]]; do sleep 0.005; done
+print -r -- $$ > "$HOME/inner-pid"
+: > "$NMSH_CAPTURE_ROOT/pid"
+print ready > "$HOME/rewriting"
+while [[ ! -f $HOME/release ]]; do sleep 0.005; done
+exec /bin/zsh "$@"
+`);
+  chmodSync(join(bin, 'zsh'), 0o700);
+  const module = new URL('../src/shell/CompletionService.ts', import.meta.url).href;
+  const program = `import {NativeCompletionSource} from ${JSON.stringify(module)};
+await new NativeCompletionSource().query({buffer:'g',cwd:${JSON.stringify(root)}},new AbortController().signal);`;
+  const owner = spawn(process.execPath, ['--import=tsx', '--input-type=module', '-e', program], {
+    env: {...process.env, HOME: root, FPATH: root, TMPDIR: root, PATH: `${bin}:${process.env.PATH}`}, stdio: 'ignore', detached: true,
+  });
+  let inner = 0;
+  try {
+    await until(() => existsSync(marker), 3000, 'controlled PID rewrite');
+    inner = Number(readFileSync(join(root, 'inner-pid'), 'utf8'));
+    assert.ok(Number.isSafeInteger(inner) && inner > 1);
+    let observed = false;
+    const pending = publishedCapture(root, 'nmsh-capture-').then(identity => { observed = true; return identity; });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    writeFileSync(release, '');
+    const identity = await pending;
+    assert.equal(observed, true);
+    assert.ok(identity.pid > 1, 'only a valid process identity authorizes cleanup');
+    assert.equal(identity.pid, inner);
+    owner.kill('SIGKILL');
+    await until(() => !existsSync(identity.transport) && !processAlive(inner), 8000, 'controlled capture cleanup');
+    await until(() => groupEnded(inner), 4000, 'controlled capture descendants');
+  } finally {
+    if (owner.pid) { try { process.kill(-owner.pid, 'SIGKILL'); } catch {} }
+    if (inner > 1) { try { process.kill(-inner, 'SIGKILL'); } catch {} }
     rmSync(root, {recursive: true, force: true});
   }
 });
