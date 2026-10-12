@@ -3149,6 +3149,12 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    // The authenticated prompt owns the command directory. Async workspace
+    // collection may still describe the previous prompt when the next command
+    // is submitted; refresh this cheap fact now without weakening its policy.
+    this.context.cwd = cwd;
+    const cwdFact = promptFacts({cwd, project: ''}, at).cwd;
+    this.context.facts = {...this.context.facts, cwd: updateFact(cwdFact, this.context.facts?.cwd)};
     this.endStartupWatch();
     this.switchedShellStarting = false;
     const initialPrompt = !this.presetShellReady;

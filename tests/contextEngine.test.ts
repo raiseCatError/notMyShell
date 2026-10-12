@@ -542,3 +542,27 @@ test('saved Rail routing reaches the real frontend renderer and command-context 
       'live Rail context stays out of PTY command output');
   } finally { await box.dispose(); }
 });
+
+test('authenticated prompt cwd reaches history before asynchronous context refresh, preserving privacy', () => {
+  for (const provider of ['none', 'nmsh'] as const) {
+    for (const persistence of ['snapshot-safe', 'display-only', 'never-store'] as const) {
+      const app = new TerminalApp();
+      try {
+        app['promptConfiguration'] = normalizePromptConfiguration({...config(), provider});
+        app['effectivePromptProvider'] = provider;
+        const previous = {cwd: '/previous', project: 'previous'};
+        const facts = promptFacts(previous);
+        app['context'] = {...previous, facts: {...facts, cwd: {...facts.cwd!, persistence}}};
+        app['refreshContext'] = async () => {};
+        app['render'] = () => {};
+        app['onShellPrompt'](0, '/authenticated/origin');
+        const historical = app['historicalContext'](app['shellCwd'], app['context'], 'printf original');
+        assert.equal(historical.cwd, persistence === 'snapshot-safe' ? '/authenticated/origin' : '',
+          `${provider}/${persistence}: command directory cannot come from the previous prompt`);
+        if (provider === 'nmsh') assert.equal(historical.prompt?.cwd, historical.cwd,
+          'Native prompt and command metadata agree on the same permitted directory');
+        assert.equal(app['context'].facts?.cwd?.persistence, persistence, 'refresh keeps the directory privacy policy');
+      } finally { app['stop'](0); app['session'].kill(); }
+    }
+  }
+});
