@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {OutputBuffer, type CompletedCommand} from '../src/output/OutputBuffer.js';
-import {compareRecords, buildComparisonReport, unifiedDiff, copyableDiff} from '../src/output/compare.js';
+import {compareRecords, comparisonReport, buildComparisonReport, unifiedDiff, copyableDiff} from '../src/output/compare.js';
 import {DEFAULT_REPORT_OPTIONS} from '../src/clipboard/report.js';
 import {createTextReview, reportReviewKey} from '../src/ui/ReportReview.js';
 
@@ -93,4 +93,13 @@ test('an unfinished private key in compared output cannot consume the generated 
   assert.ok(review.text.endsWith('\n```\n'));
   assert.doesNotMatch(review.text, /secret without an end marker/u);
   assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 40), {kind: 'copy', text: review.text});
+});
+
+
+test('a large backtick-rich comparison sizes its diff fence without an argument spread', () => {
+  const a = record('printf', 'before\n');
+  const b = record('printf', 'after\n', {output: '` '.repeat(150_000)});
+  const text = comparisonReport(compareRecords(a, b));
+  assert.ok(text.includes('```diff\n'));
+  assert.ok(text.endsWith('\n```\n'));
 });
