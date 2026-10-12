@@ -3302,6 +3302,22 @@ export class TerminalApp {
     this.resumeBrowser = createSessionsView(live, this.sessionId);
   }
 
+  /** Refresh live facts without moving the person's selection, query or composer. */
+  private refreshSessionsView(live: SessionInfo[]): boolean {
+    const browser = this.resumeBrowser;
+    if (!browser?.liveOnly) return false;
+    const selected = resumeSelection(browser);
+    browser.live = live;
+    const visible = visibleLiveSessions(browser);
+    const index = selected?.kind === 'live' ? visible.findIndex(session => session.id === selected.session.id) : -1;
+    browser.selectedIndex = index >= 0 ? index : Math.max(0, Math.min(browser.selectedIndex, visible.length - 1));
+    if (browser.confirmKill) {
+      const target = live.find(session => session.id === browser.confirmKill);
+      if (!target || target.state !== 'detached' || target.id === browser.currentId) browser.confirmKill = undefined;
+    }
+    return true;
+  }
+
   private sessionsViewRows(browser: ResumeBrowserState, columns: number): string[] {
     const now = Date.now();
     const safe = getCurrentGlyphMode() === 'safe';
@@ -7289,10 +7305,10 @@ export class TerminalApp {
     return rows;
   }
 
-  /** Poll the service's session list on a slow cadence while notices are on and NMSh owns the screen. */
+  /** Poll while notices or the explicit live session view need facts and NMSh owns the screen. */
   private syncNotices(): void {
     const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && this.sessionMode === 'service' && this.promptConfiguration.sessionNotices;
+      && this.sessionMode === 'service' && (this.promptConfiguration.sessionNotices || Boolean(this.resumeBrowser?.liveOnly));
     if (wanted && !this.noticeTimer) {
       this.noticeTimer = presentationClock.subscribe(() => void this.refreshNotices(), NOTICE_REFRESH_MS);
       void this.refreshNotices();
@@ -7306,30 +7322,34 @@ export class TerminalApp {
     if (this.noticePolling) return;
     this.noticePolling = true;
     try {
-      const {sessions, ended} = await listSessionNotices();
+      const {sessions, ended} = await listSessionNotices({throwOnError: true});
       if (this.stopped) return;
       const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
       // The person's own name, else the familiar signature, else the old ordinal label.
       this.noticeLabels = new Map(ordered.map((session, index) => [session.id, session.name || session.signature || sessionLabel(session.id, index + 1)]));
       this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
       this.noticeSource = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
-      this.applyNotices();
+      const refreshedView = this.refreshSessionsView(sessions);
+      const noticesChanged = this.applyNotices();
+      if (refreshedView && !noticesChanged) this.render();
     } catch { /* notices are best effort */ } finally { this.noticePolling = false; }
   }
 
   /** Select what is visible now (expired notices drop out) and wake exactly when the next one expires. */
-  private applyNotices(now = Date.now()): void {
-    const next = selectNotices(this.noticeSource, this.sessionId, this.dismissedNotices, now);
+  private applyNotices(now = Date.now()): boolean {
+    const enabled = this.promptConfiguration.sessionNotices;
+    const next = enabled ? selectNotices(this.noticeSource, this.sessionId, this.dismissedNotices, now) : {notices: [], hidden: 0};
     const changed = JSON.stringify(next) !== JSON.stringify(this.noticeView);
     this.noticeView = next;
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
-    const soonest = this.noticeSource.filter(notice => selectNotices([notice], this.sessionId, this.dismissedNotices, now).notices.length)
-      .map(notice => noticeExpiresAt(notice)).filter((at): at is number => at !== undefined).sort((a, b) => a - b)[0];
+    const soonest = enabled ? this.noticeSource.filter(notice => selectNotices([notice], this.sessionId, this.dismissedNotices, now).notices.length)
+      .map(notice => noticeExpiresAt(notice)).filter((at): at is number => at !== undefined).sort((a, b) => a - b)[0] : undefined;
     if (soonest !== undefined && !this.stopped) {
       this.noticeExpiry = setTimeout(() => { this.noticeExpiry = undefined; this.applyNotices(); if (!this.stopped) this.render(); }, Math.max(50, soonest - now + 50));
       this.noticeExpiry.unref();
     }
     if (changed) this.render();
+    return changed;
   }
 
   /** Clear every visible notice, for every attached frontend where the service supports it. */
