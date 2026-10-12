@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {AnsiOutputParser} from '../src/output/AnsiOutputParser.js';
 import {TranscriptPresenter, type TranscriptView} from '../src/output/TranscriptPresenter.js';
-import type {CompletedCommand} from '../src/output/OutputBuffer.js';
+import {OutputBuffer, type CompletedCommand} from '../src/output/OutputBuffer.js';
 import {DEFAULT_TRANSCRIPT_APPEARANCE} from '../src/prompt/configuration.js';
 
 /** A synthetic view built straight from records, with no OutputBuffer involved. */
@@ -83,4 +83,34 @@ test('decorate paints command surface, hover and focus without touching stored t
   assert.match(presenter.decorate(hint, undefined, {now: 0, hoveredLineIndex: hint.lineIndex}), /^\u001B\[48;2;45;45;55m/u);
   assert.match(presenter.decorate(hint, undefined, {now: 0, focusedCommandIndex: 0}), /^\u001B\[48;2;60;60;80m/u);
   assert.match(presenter.stickyHeaderSurface('cmd'), /^\u001B\[48;2;38;38;48mcmd\u001B\[K/u);
+});
+
+test('NO_COLOR reattach suppresses saved authored styles while preserving raw program styles and transcript bytes', () => {
+  const buffer = new OutputBuffer();
+  buffer.beginCommand('echo colored', ['\u001b[38;2;166;124;243mecho colored\u001b[0m']);
+  buffer.write('\u001b[31mRAW-RED\u001b[0m\n');
+  buffer.complete(0);
+  buffer.addHistoryLine('\u001b[38;2;116;181;154mCompleted\u001b[0m');
+  const saved = buffer.transcript();
+  const restored = new OutputBuffer();
+  restored.restoreTranscript(saved);
+  const previous = {NO_COLOR: process.env.NO_COLOR, NMSH_COLOR: process.env.NMSH_COLOR};
+  process.env.NO_COLOR = '1';
+  delete process.env.NMSH_COLOR;
+  try {
+    const rows = restored.wrapped(12);
+    const authored = rows.filter(row => row.lineIndex !== undefined && restored.lineTypes.has(row.lineIndex));
+    assert.ok(authored.some(row => row.plain.includes('echo colored')));
+    assert.ok(authored.some(row => row.plain.includes('Completed')));
+    for (const row of authored) assert.doesNotMatch(row.ansi, /\u001b\[(?:38|48);/u);
+    const raw = rows.find(row => row.plain === 'RAW-RED');
+    assert.ok(raw);
+    assert.match(raw.ansi, /\u001b\[31m/u, 'program SGR remains raw');
+    assert.doesNotMatch(restored.presenter.stickyHeaderRow(restored.view(), 0, 40)!, /\u001b\[38;/u);
+    assert.deepEqual(restored.transcript(), saved, 'presentation never rewrites stored styles');
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+  }
 });
