@@ -269,14 +269,25 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
   resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }
+  private endStream(): void {
+    // Before start(), discard withheld output rather than exposing it during
+    // cancellation. Drain the paused readable half so peer EOF closes it.
+    if (this.pending) {
+      this.pending = undefined;
+      this.socket.removeAllListeners('data');
+    }
+    this.socket.end();
+    this.socket.resume();
+  }
+
   kill(): void {
     this.send({type: 'terminate'});
-    this.socket.end();
+    this.endStream();
   }
   ack(seq: number, journalId: string): void { this.send({type: 'ack', seq, journalId}); }
   detach(): void {
     this.detaching = true;
     this.send({type: 'detach'});
-    this.socket.end();
+    this.endStream();
   }
 }
