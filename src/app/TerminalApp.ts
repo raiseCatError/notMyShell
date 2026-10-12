@@ -1132,13 +1132,21 @@ export class TerminalApp {
       () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR),
       // Durable now: the service may forget these stream events.
       saved => { if (saved.live) this.session.ack(saved.live.seq, saved.id); });
-    try {
-      if (this.continuedJournal) await this.journal.continue(this.continuedJournal);
-      else await this.journal.start();
+    // Initialize the journal before input can schedule snapshots, but do not wait
+    // for disk IO before restoring a fullscreen program's terminal and size.
+    // The journal serializes saves and acknowledges only durable checkpoints.
+    const journalStarted = (this.continuedJournal
+      ? this.journal.continue(this.continuedJournal)
+      : this.journal.start()).then(() => {
       this.journalActive = true;
-    } catch {
+    }, () => {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
-    }
+      this.render();
+    });
+    // A fresh ordinary frontend must first publish its journal identity so an
+    // immediate detach can continue that journal. An already-owned terminal
+    // must instead restore its raw input and full size without waiting on IO.
+    if (!this.passthrough) await journalStarted;
     this.startOnboarding();
     // Restored terminal modes are a visible handoff: keys can arrive at once.
     // Install raw input first so the host cannot echo or translate those keys.
@@ -1169,6 +1177,7 @@ export class TerminalApp {
     this.presetFrontendReady = true;
     if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
     const exitCode = await this.done;
+    await journalStarted;
     try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
     }
