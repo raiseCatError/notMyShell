@@ -1,5 +1,5 @@
 import type {CompletedCommand} from './OutputBuffer.js';
-import {inlineCode, reportText} from '../clipboard/report.js';
+import {createReportContent, inlineCode, reportText, type ReportOptions, type ReportResult} from '../clipboard/report.js';
 
 /**
  * Compare output: two executions' stored output, line by line, computed only when asked. Faithful by default (every
@@ -210,14 +210,20 @@ export function copyableDiff(comparison: Comparison): string {
 
 /** The comparison as a Markdown report: both sides, the summary, notes, and the diff. */
 export function comparisonReport(comparison: Comparison): string {
+  return buildComparisonReport(comparison, {redact: false}).text;
+}
+
+/** Sanitize/redact data first so generated Markdown boundaries cannot be consumed by credential matching. */
+export function buildComparisonReport(comparison: Comparison, options: Pick<ReportOptions, 'redact' | 'home'>): ReportResult {
+  const content = createReportContent(options);
   // Cleaned before the fence is sized: removing hidden characters can join backtick runs or start new lines.
-  const diff = copyableDiff(comparison);
+  const diff = content.text(copyableDiff(comparison));
   const longest = Math.max(0, ...[...diff.matchAll(/`+/gu)].map(match => match[0].length));
   const fence = '`'.repeat(Math.max(3, longest + 1));
-  const lines = ['# Output comparison', '', `- **A (older):** ${inlineCode(sideLabel(comparison.a))}`, `- **B (newer):** ${inlineCode(sideLabel(comparison.b))}`,
+  const lines = ['# Output comparison', '', `- **A (older):** ${inlineCode(content.text(sideLabel(comparison.a)))}`, `- **B (newer):** ${inlineCode(content.text(sideLabel(comparison.b)))}`,
     `- **Result:** ${summary(comparison)}`, ...comparisonNotes(comparison).map(note => `- **Note:** ${note}`), ''];
   lines.push(comparison.identical ? '_No differences._' : `${fence}diff\n${diff.replace(/\n$/u, '')}\n${fence}`);
-  return `${lines.join('\n')}\n`;
+  return {text: `${lines.join('\n')}\n`, findings: content.findings()};
 }
 
 /**

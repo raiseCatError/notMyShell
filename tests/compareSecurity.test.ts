@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {OutputBuffer, type CompletedCommand} from '../src/output/OutputBuffer.js';
-import {compareRecords, comparisonReport, unifiedDiff, copyableDiff} from '../src/output/compare.js';
+import {compareRecords, buildComparisonReport, unifiedDiff, copyableDiff} from '../src/output/compare.js';
 import {DEFAULT_REPORT_OPTIONS} from '../src/clipboard/report.js';
-import {createTextReview} from '../src/ui/ReportReview.js';
+import {createTextReview, reportReviewKey} from '../src/ui/ReportReview.js';
 
 let clock = Date.UTC(2026, 9, 10, 8, 0, 0);
 function record(command: string, output: string, extra: Partial<CompletedCommand> = {}): CompletedCommand {
@@ -18,8 +18,10 @@ function record(command: string, output: string, extra: Partial<CompletedCommand
 /** A record whose stored output is exactly this, whatever the buffer would have kept. */
 const hostile = (output: string) => Object.defineProperty(record('x', 'b\n'), 'output', {value: output});
 
-const reviewed = (a: CompletedCommand, b: CompletedCommand) =>
-  createTextReview('Copy comparison report', comparisonReport(compareRecords(a, b)), [a, b], {...DEFAULT_REPORT_OPTIONS, home: '/Users/alex'}, false).text;
+const reviewed = (a: CompletedCommand, b: CompletedCommand) => {
+  const comparison = compareRecords(a, b);
+  return createTextReview('Copy comparison report', options => buildComparisonReport(comparison, options), [a, b], {...DEFAULT_REPORT_OPTIONS, home: '/Users/alex'}, false).text;
+};
 
 test('a plain diff copy carries no terminal controls, paste-end markers or bidi/invisible characters', () => {
   const comparison = compareRecords(record('x', 'a\n'), hostile('b \u001b[201~ \u202e evil \u200b\u0007\n'));
@@ -60,4 +62,35 @@ test('a secret only in compared output is redacted in the reviewed comparison re
 test('the sides keep their unified-diff text for tools: unifiedDiff stays raw, only the copy is cleaned', () => {
   const comparison = compareRecords(record('x', 'a\n'), record('x', 'b\n'));
   assert.equal(copyableDiff(comparison), unifiedDiff(comparison));
+});
+
+test('comparison redaction cannot expose a hostile label by removing its generated inline delimiter', () => {
+  const command = '[open](https://example.invalid/leak) cookie: x';
+  const a = record(command, 'before\n');
+  const b = record(command, 'after\n');
+  const comparison = compareRecords(a, b);
+  const review = createTextReview('Copy comparison report', options => buildComparisonReport(comparison, options), [a, b], DEFAULT_REPORT_OPTIONS, false);
+  const labels = review.text.split('\n').filter(line => /^- \*\*[AB] /u.test(line));
+  assert.equal(labels.length, 2);
+  for (const label of labels) {
+    assert.match(label, /`[^`]+cookie: \[REDACTED\]`$/u, label);
+  }
+  assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 40), {kind: 'copy', text: review.text});
+  reportReviewKey(review, {kind: 'text', value: 'r'}, 40);
+  assert.match(review.text, /`[^\n]*cookie: x[^\n]*`/u);
+  reportReviewKey(review, {kind: 'text', value: 'r'}, 40);
+  assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 40), {kind: 'copy', text: review.text});
+  for (const label of review.text.split('\n').filter(line => /^- \*\*[AB] /u.test(line))) assert.match(label, /`$/u);
+});
+
+
+test('an unfinished private key in compared output cannot consume the generated diff fence', () => {
+  const a = record('env', 'before\n');
+  const b = record('env', '-----BEGIN OPENSSH PRIVATE KEY-----\nsecret without an end marker\n');
+  const comparison = compareRecords(a, b);
+  const review = createTextReview('Copy comparison report', options => buildComparisonReport(comparison, options), [a, b], DEFAULT_REPORT_OPTIONS, false);
+  assert.match(review.text, /\[REDACTED PRIVATE KEY\]/u);
+  assert.ok(review.text.endsWith('\n```\n'));
+  assert.doesNotMatch(review.text, /secret without an end marker/u);
+  assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 40), {kind: 'copy', text: review.text});
 });
