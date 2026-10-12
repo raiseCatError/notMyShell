@@ -198,3 +198,52 @@ test('restored status text stays literal Markdown rather than injecting links, H
   assert.equal(line, '- **Status:** ````Completed ``` [open](javascript:alert(1)) <img src=x onerror=alert(1)> # forged heading````');
   assert.equal(text.split('\n').includes('# forged heading'), false);
 });
+
+test('redaction cannot consume the Markdown boundaries around hostile commands, status or directory facts', () => {
+  const payload = '<img src="https://example.invalid/leak"> password=hunter2';
+  const item = record(payload, 'safe\n', 1, payload, {historicalContext: {cwd: payload}});
+  const review = createReportReview([item], {...DEFAULT_REPORT_OPTIONS, directory: true}, false);
+  const literal = '<img src="https://example.invalid/leak"> password=[REDACTED]';
+  assert.ok(review.text.includes('## 1. `' + literal + '`\n'));
+  assert.ok(review.text.includes('- **Status:** `' + literal + '`\n'));
+  assert.ok(review.text.includes('- **Directory:** `' + literal + '`\n'));
+  assert.doesNotMatch(review.text, /hunter2/u);
+  assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 40), {kind: 'copy', text: review.text});
+  assert.deepEqual(review.redacted, [{kind: 'credential', count: 3}]);
+});
+
+test('redaction cannot consume generated command/output fences or a later report section', () => {
+  const dangling = record('echo', 'safe\n', 0, 'Completed', {command: 'echo\npassword=', output: 'safe\npassword=\n'});
+  const privateKey = record('cat key', '-----BEGIN OPENSSH PRIVATE KEY-----\nsecret without an end marker', 0, 'Completed');
+  const next = record('echo NEXT', 'NEXT\n', 0, 'Completed');
+  const {text} = buildReport([dangling, privateKey, next], DEFAULT_REPORT_OPTIONS);
+  assert.ok(text.includes('```sh\necho\npassword=\n```'));
+  assert.ok(text.includes('```text\nsafe\npassword=\n```'));
+  assert.ok(text.includes('```text\n[REDACTED PRIVATE KEY]\n```'));
+  assert.ok(text.includes('## 3. `echo NEXT`'));
+  assert.doesNotMatch(text, /secret without an end marker/u);
+});
+
+
+test('a short sensitive report keeps every document row reachable before approval', () => {
+  const review = createReportReview([record('env', 'TOKEN=abc123\nTAIL\n', 0, 'Completed')], DEFAULT_REPORT_OPTIONS, false);
+  const seen: string[] = [];
+  for (let scroll = 0; scroll < 80; scroll++) {
+    seen.push(stripAnsi(renderReportReview(review, 40, 8).join('\n')));
+    reportReviewKey(review, {kind: 'down'}, 8);
+  }
+  assert.ok(seen.some(frame => frame.includes('# Command report')));
+  assert.ok(seen.some(frame => frame.includes('TOKEN=[REDACTED]')));
+  assert.ok(seen.some(frame => frame.includes('TAIL')));
+  for (const frame of seen) assert.ok(frame.split('\n').length <= 8, frame);
+});
+
+
+test('a report too short to show a document refuses copy until resized', () => {
+  const review = createReportReview([devices()], DEFAULT_REPORT_OPTIONS, false);
+  assert.equal(reportReviewKey(review, {kind: 'enter'}, 3), undefined);
+  const frame = stripAnsi(renderReportReview(review, 40, 3).join('\n'));
+  assert.match(frame, /Resize to review/u);
+  assert.ok(frame.split('\n').length <= 3);
+  assert.deepEqual(reportReviewKey(review, {kind: 'enter'}, 8), {kind: 'copy', text: review.text});
+});
