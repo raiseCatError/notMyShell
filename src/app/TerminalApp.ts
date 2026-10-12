@@ -1151,6 +1151,10 @@ export class TerminalApp {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
       this.render();
     });
+    // A fresh ordinary frontend must first publish its journal identity so an
+    // immediate detach can continue that journal. An already-owned terminal
+    // must instead restore its raw input and full size without waiting on IO.
+    if (!this.passthrough) await journalStarted;
     this.startOnboarding();
     // Restored terminal modes are a visible handoff: keys can arrive at once.
     // Install raw input first so the host cannot echo or translate those keys.
