@@ -1,43 +1,16 @@
 # Workflow initiative ledger
 
-Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-12.
+Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-13.
 
 ## Current stabilization checkpoint
 
-Fresh-session recovery: [workflow stabilization handoff](workflow-stabilization-handoff.md).
-Development is stopped at a preservation checkpoint. Cedar/Birch host canonical passed;
-Amber full verification failed three compatibility cases. Elm commit 5447eb9 preserves
-incomplete acceptance tests (15 focused passed, 4 failed). Input 48a0ded Actions
-38157687343 failed macOS flowComposer PTY spawning; Ubuntu shards passed.
-No frontend freeze or final integration is claimed. Exact heads/commands/failures are
-in the handoff above.
+The [current durable handoff](workflow-stabilization-handoff.md) supersedes historical tables below. **Frontend freeze is PENDING; no integration or release/master merge has begun.** Initial inspection confirmed the original pushed handoff; no recovery/reimplementation was necessary.
 
-The shared frontend is **not frozen**. This record supersedes the historical status claims below. No workflow PR
-has been merged to master or the release branch. Physical terminal QA remains outstanding.
+Source candidates now contain the independently confirmed `9cfdf9a` stopped-prompt correction, promoted additively through the chain with independent Maple/Willow siblings. Focused and fast/build/diff checks pass; new exact-head canonical verification is running serially. Earlier Cedar/Birch/Amber/Coral canonical runs passed but do not accept these newer heads. Original feature publication remains held at the historical input Node 22 retention; exact current source/published heads and continuation commands are in the handoff.
 
-| PR | Published head | Local additive candidate | Gate |
-| --- | --- | --- | --- |
-| #345 | 7122468 | unchanged | stack base |
-| #348 | 48a0ded | fix/workflow-cedar / 48a0ded | host canonical passed; current Actions failed macOS PTY spawn |
-| #357 | 7fb6b5a | fix/workflow-birch / 3adc451 | host canonical passed; final CI pending |
-| #358 | 790fd74 | fix/workflow-amber / 000736d | host canonical failed three compatibility cases; final CI pending |
-| #360 | afe7f69 | fix/workflow-coral / 80bd0cf | final canonical/CI pending |
-| #361 | b1cdfbe | fix/workflow-indigo / 0117a34 | final canonical/CI pending |
-| #367 | 66e164d | fix/workflow-willow / be037a0 | independent sibling; final canonical/CI pending |
-| #368 | 5a795ed | fix/workflow-maple / this checkpoint | final canonical/CI pending |
+The old retained worker remains unattributed. Isolated observed CI `2510d22` and bounded-five `2eb70c7` pass all gates; snapshots show service workers and tracked PTY children exiting. These observations do not prove the failed worker's cause. Full latest Linux/Fish 3.7, current-head security/clipboard acceptance, final unobserved CI and physical QA remain distinct pending gates.
 
-All candidates preserve their published ancestors through additive merges. Owned
-worktrees use neutral names: nmsh-cedar-input, nmsh-birch-queue, nmsh-amber-copy,
-nmsh-coral-report, nmsh-indigo-compare, nmsh-willow-vocabulary and nmsh-maple-workflow.
-They are on external scratch storage. Existing worktrees and modifications were preserved.
-
-Temporary resources disappeared during continuations and interrupted two full
-runs. Those runs are not passing evidence. Committed work survived and was restored.
-Verification logs and the Linux VM now use durable external storage.
-The test runner supports NMSH_TEST_TMPDIR; fixture and key-diagnostic writers
-respect the selected temporary directory. Invalid storage fails instead of falling
-back. Source typecheck, focused lifecycle/privacy/platform tests and verify:fast
-passed for storage correction 9465eb5. The runner also isolates child HOME in the chosen root.
+All branches/history and other owners' resources are preserved. New source heads must be canonically verified and deliberately promoted before the shared interface is declared ready. The frontend remains owned by this workflow track. Integration will use canonical #370 Ruby/PHP and staged verification rather than folding in the complete native/workspace backlog.
 
 ## Confirmed findings and work
 
