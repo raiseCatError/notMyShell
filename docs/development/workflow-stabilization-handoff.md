@@ -7,13 +7,13 @@ The original handoff at `cc853707cf6060bc4b8edc2c84313949075c557b` remains prese
 
 ## Exact source and publication state
 
-These are candidates, not accepted heads. The published column is the last observed original feature head; verify remote refs again before changing them. Corresponding `fix/workflow-*` refs initially matched those feature heads; the verification driver may publish the new Cedar fix candidate independently for unobserved CI.
+These are candidates, not accepted heads. The published column is the last observed original feature head; verify remote refs again before changing them. The first three corresponding `fix/workflow-*` refs now match the promoted feature heads. Later feature/fix refs remain held until their exact-head gates pass.
 
 | Track | Committed local source candidate | Last observed feature head |
 | --- | --- | --- |
-| Input #348 | `9cfdf9a145655abe158ec66d61dc05b3acae1722` | `5206db0615c0345937455fa2cc8f1120849854ec` |
-| Queue #357 | `b6fe785b3fa6c0d9dc51fcdc4c3f9dbd23074bb5` | `45a0c071ea390d8c01ad33c8eb55ab2012e40c94` |
-| Copy #358 | `940b85f267f23baa4ffd331a15091354d07e899d` | `5fb68e8881fde0741cd64621a58a40e2e83677a2` |
+| Input #348 | `9cfdf9a145655abe158ec66d61dc05b3acae1722` | `9cfdf9a145655abe158ec66d61dc05b3acae1722` |
+| Queue #357 | `b6fe785b3fa6c0d9dc51fcdc4c3f9dbd23074bb5` | `b6fe785b3fa6c0d9dc51fcdc4c3f9dbd23074bb5` |
+| Copy #358 | `940b85f267f23baa4ffd331a15091354d07e899d` | `940b85f267f23baa4ffd331a15091354d07e899d` |
 | Report #360 | `7bf0dbeaf15d4c09a9b49bbce0eef0996efd219f` | `9fb09c975d1f4e07d34265793c78d34b7eea6cdc` |
 | Compare #361 | `459d715af3e986bd92c857ac74eed03a39f90ecd` | `032365e2ffa9fd42563ae93e66fd487b41e66841` |
 | Vocabulary #367 | `949a367d90b4d114c91eb74845dce660c48693c1` | `99019ae3fad1c27f8233aa53d3314116a62df355` |
@@ -42,13 +42,15 @@ Isolated diagnostic branch `fix/workflow-cedar-lifecycle-probe` preserves opt-in
 
 Cedar `5206db0`, Birch `6ed34cd`, Amber `e823bc7` and Coral `623fc81` passed host canonical verification on official Node 26.11.1/macOS arm64 with one worker/private T7 roots. Those are **pre-9cfdf9a** evidence. The old remaining-head driver was paused without interrupting Coral's test child, then resumed after additive promotion; its expected-head guard stopped obsolete continuation. It left no paused workload.
 
-The newest source heads above require their own canonical and actual published-head CI gates. The pinned driver is `verification/verify-stopped-prompt-final-canonical.sh`, progress `post-handoff-stopped-prompt-final-canonical-progress.log`, manifest `post-handoff-stopped-prompt-final-candidates.json` on owned T7 storage. It serializes all seven heads, checks storage before each, and publishes only the canonically verified Cedar fix candidate for **unobserved** manual CI. Original feature publication remains held until appropriate actual-head gates pass. Inspect the dispatched CI URL and conclusions before promotion; do not rely on an older or observed run.
+Input `9cfdf9a`, Queue `b6fe785` and Copy `940b85f` passed their own canonical macOS arm64 / official Node 26.11.1 gates, including full runtime/ranking groups, build, cleanup and diff checks. Input's [unobserved comprehensive candidate CI](https://github.com/raiseCatError/notMyShell/actions/runs/38338108145) additionally passed both timing jobs and Fedora. The corresponding actual published PR runs also passed Quality, all macOS/Ubuntu shards, Node 22 compatibility and aggregate checks: [Input 38338657842](https://github.com/raiseCatError/notMyShell/actions/runs/38338657842), [Queue 38339335579](https://github.com/raiseCatError/notMyShell/actions/runs/38339335579), [Copy 38340368899](https://github.com/raiseCatError/notMyShell/actions/runs/38340368899). Timing/Fedora were skipped on these PR events. Each original feature and fix ref was advanced by a guarded atomic nonforce push after canonical and parent CI gates passed.
+
+Report `7bf0dbe`, Compare `459d715`, Vocabulary `949a367` and References `3518231` still require their latest canonical and actual published-head CI gates. The pinned driver is `verification/verify-stopped-prompt-final-canonical.sh`, progress `post-handoff-stopped-prompt-final-canonical-progress.log`, manifest `post-handoff-stopped-prompt-final-candidates.json` on owned T7 storage. It serializes all seven heads and checks storage before each. Report verification is active at this checkpoint. The primary deliberately promotes downstream branches after exact-head canonical and parent published CI acceptance; the driver only published Cedar's fix candidate for its unobserved manual CI.
 
 A host diagnostic invocation inherited `NO_COLOR=1` and failed color-specific goldens/Theme Bridge expectations. The failed log is retained. A one-variable preview reproduction and unchanged color-enabled Setup/Theme Bridge/monochrome selection checks passed, followed by a passing complete canonical run. No assertion, production color policy or deadline changed. Canonical color goldens use the established color-enabled baseline; explicit NO_COLOR regressions retain their own overrides.
 
 Full latest Linux/Fish 3.7 verification remains pending. The owned `cedar-fish37` VM is stopped during host verification (Ubuntu arm64, 2 CPUs/2 GB). The offline mirror is fast-forwarded to the new source heads. Prepared pinned script: `maple-linux/verify-stopped-prompt-final-linux.sh`; it runs the full Maple canonical suite, sibling vocabulary/live checks and the Node 22 minimum-runtime suite. Do not overlap it with heavy host verification. No timeout/assertion/ranking threshold was increased.
 
-Current-head #363 report/comparison unit and real-PTY clipboard-backend acceptance, final timing/portability evidence and exact-head CI must complete before freeze. Physical clipboard/terminal QA remains distinct. Private logs/caches/temporary roots are on `/Volumes/nmsh-t7`; do not delete other owners' resources. Last host observation: internal free about 2.9 GB, T7 free over 8 GB; per-head guards stop before internal falls below 2 GB or T7 below 3 GB. Recheck disk and competing workloads before more heavy work.
+Current-head #363 report/comparison unit and real-PTY clipboard-backend acceptance, final timing/portability evidence and exact-head CI must complete before freeze. Physical clipboard/terminal QA remains distinct. Private logs/caches/temporary roots are on `/Volumes/nmsh-t7`; do not delete other owners' resources. Last host observation: internal free about 6.8 GiB, T7 free about 8.4 GiB; per-head guards stop before internal falls below 2 GB or T7 below 3 GB. Recheck disk and competing workloads before more heavy work.
 
 ## Provisional integration boundaries — not a freeze signal
 
@@ -59,7 +61,7 @@ Current-head #363 report/comparison unit and real-PTY clipboard-backend acceptan
 - Task output stays in a bounded task-ID view, separate from normal transcript/copy/failure/compare. Background task IDs and graceful termination remain authoritative at the session service, with bounded private IPC, feature negotiation, session membership and spawn-time environment. Do not adopt unknown/restarted processes or infer foreground shell state into fresh background processes.
 - #370 `417d105e3f513e36bf35d0efb7c0b79574a31f9b` is the final Ruby/PHP module implementation; preserve its catalog/regressions instead of #368's older duplicate. Native/workspace heads were rechecked unchanged. Read #385 at `c9a368663fc334304f6631f664bbdf5e5459dc59`, `docs/development/context-workspace-handoff.md`; components remain standalone and disconnected from the frontend.
 
-After accepted stabilization, begin a bounded nonrelease acceptance branch: reconcile the vocabulary sibling and canonical parser/catalog first, verify, then a separate geometry/focus slice, then direct-composer background submission. Do not merge the entire native/workspace backlog at once.
+Current authorization is stabilization and a durable checkpoint only. **Do not start integration in this session**, even after automated stabilization acceptance; integration and v0.19 planning are separate. Future integration should reconcile the vocabulary sibling and canonical parser/catalog, then verify geometry/focus and direct-composer background submission in separate bounded slices. This is a proposed sequence, not authorization to begin or combine the native/workspace backlog.
 
 ## Remaining physical QA
 

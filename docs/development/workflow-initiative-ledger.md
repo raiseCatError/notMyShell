@@ -6,11 +6,11 @@ Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359
 
 The [current durable handoff](workflow-stabilization-handoff.md) supersedes historical tables below. **Frontend freeze is PENDING; no integration or release/master merge has begun.** Initial inspection confirmed the original pushed handoff; no recovery/reimplementation was necessary.
 
-Source candidates now contain the independently confirmed `9cfdf9a` stopped-prompt correction, promoted additively through the chain with independent Maple/Willow siblings. Focused and fast/build/diff checks pass; new exact-head canonical verification is running serially. Earlier Cedar/Birch/Amber/Coral canonical runs passed but do not accept these newer heads. Original feature publication remains held at the historical input Node 22 retention; exact current source/published heads and continuation commands are in the handoff.
+Source candidates contain the independently confirmed `9cfdf9a` stopped-prompt correction, propagated additively through the chain with independent Maple/Willow siblings. Input `9cfdf9a`, Queue `b6fe785` and Copy `940b85f` passed their own canonical and actual published-head PR CI gates. Four later candidates remain in serial canonical verification, followed by deliberate feature/fix promotion and actual-head CI. Earlier canonical/diagnostic evidence does not accept these newer heads. Exact source/published heads and continuation commands are in the handoff.
 
 The old retained worker remains unattributed. Isolated observed CI `2510d22` and bounded-five `2eb70c7` pass all gates; snapshots show service workers and tracked PTY children exiting. These observations do not prove the failed worker's cause. Full latest Linux/Fish 3.7, current-head security/clipboard acceptance, final unobserved CI and physical QA remain distinct pending gates.
 
-All branches/history and other owners' resources are preserved. New source heads must be canonically verified and deliberately promoted before the shared interface is declared ready. The frontend remains owned by this workflow track. Integration will use canonical #370 Ruby/PHP and staged verification rather than folding in the complete native/workspace backlog.
+All branches/history and other owners' resources are preserved. New source heads must be canonically verified and deliberately promoted before the shared interface is declared ready. The frontend remains owned by this workflow track. Integration is outside the current session authorization and will be planned separately after stabilization. Future integration must use canonical #370 Ruby/PHP and bounded verified slices.
 
 ## Confirmed findings and work
 
