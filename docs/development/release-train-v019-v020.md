@@ -175,6 +175,26 @@ resolved as in the table above.
   satisfies the v0.19 real-terminal gate is recorded explicitly with the run; direct-keyboard Ghostty/Terminal.app
   use remains maintainer physical QA either way.
 
+### v0.20 wiring design notes (from the candidate frontend, read-only)
+
+Candidate `TerminalApp.ts` (References + Vocabulary) is ~10.1k lines. Render path (`render()` → `planFrame` →
+`frameRows` by `ScreenPlan` regions → `presentationFrame` → `paintPresentation` → `renderer.render`) takes the
+width once from `this.dimensions()` and resizes the PTY from that width.
+
+- **Workspace columns, smallest change:** split `terminalDimensions()` (real size) from `dimensions()`, which returns
+  `planWorkspaceColumns(...).center` width whenever a region is docked, so wrapping, ScreenPlan, panels and PTY size
+  follow it unchanged; drawers do not change it (no reflow on open). Compose sidebar/panel/drawer cells only at the
+  final `renderer.render` call (after transitions and cursor effects), offset `cursorColumn` by `center.start`, keep
+  `frame.columns` the terminal width, and render the Status Strip row at full width. Pointer: `columnAt` first, then
+  translate x into center-relative columns for the existing handlers. Suppress (hidden) during passthrough,
+  external passthrough and idle visuals, as the contract says.
+- **Keys:** `routeWorkspaceKey` before owner-specific handling, only for non-protected owners; sidebar filter keys
+  before it. Up precedence from an idle composer: opt-in keymap binding, agent shelf, task bar, history.
+- **Background tasks:** service protocol (`task-start/stop/remove/output`, `tasks` on attach/change, feature
+  `background-tasks` in `SERVICE_FEATURES`) plus an in-process supervisor when the window runs its shell
+  in-process; submission hook only for direct composer submissions; task bar via `withNoticeRows`; `/background`.
+  Touches `SessionService.ts`/`SessionProtocol.ts`, also Codex-stabilized files: after the freeze only.
+
 ## Coordination rules
 
 - Never edit Codex-owned worktrees (`/Volumes/nmsh-t7/*`, `fix/workflow-*`, `feature/*` of the workflow stack), its
