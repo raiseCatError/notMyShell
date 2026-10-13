@@ -157,11 +157,12 @@ export class LiveSandbox {
 export class Frontend {
   output = '';
   exitCode: number | undefined;
+  exitSignal: number | undefined;
   readonly exited: Promise<number>;
 
   constructor(readonly pty: IPty, private readonly completedCount: (command: string) => Promise<number>) {
     pty.onData(data => { this.output += data; });
-    this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; resolve(event.exitCode); }));
+    this.exited = new Promise(resolve => pty.onExit(event => { this.exitCode = event.exitCode; this.exitSignal = event.signal; resolve(event.exitCode); }));
   }
 
   get mark(): number { return this.output.length; }
@@ -174,7 +175,7 @@ export class Frontend {
     } catch (error) {
       const state = spawnSync('ps', ['-o', 'pid=,ppid=,pgid=,state=,comm=', '-p', String(this.pty.pid)], {encoding: 'utf8', timeout: 2000});
       if (error instanceof Error) error.message += `; frontend=${JSON.stringify({pid: this.pty.pid, elapsedMs: Date.now() - started,
-        exitCode: this.exitCode, outputBytes: this.output.length, alive: processAlive(this.pty.pid),
+        exitCode: this.exitCode, exitSignal: this.exitSignal, outputBytes: this.output.length, alive: processAlive(this.pty.pid),
         state: state.stdout?.trim(), stateStatus: state.status, stateError: state.error?.message})}`;
       throw error;
     }
