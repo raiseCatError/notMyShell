@@ -221,3 +221,8 @@ below and stop cleanly with no background processes left.
 - 2026-10-13 09:35 IST — v0.19 changelog draft pushed (`docs/development/v019-changelog-draft.md`). Smoke harness
   ready; legible window capture blocked by Mission Control + pending dialog (see above). Unless the display
   state changes, the v0.19 real-terminal gate cannot be met unattended, and v0.19 will stop as a release candidate.
+- 2026-10-13 10:01 IST — Check: freeze pending; no feature head moved; Codex started
+  `verify-late-replay-final-canonical.sh` (09:40) with the Fish 3.7 VM. No action taken.
+- 2026-10-13 10:56 IST — Check: freeze pending; all seven PR heads unchanged (`9cfdf9a` `b6fe785` `940b85f`
+  `9fb09c9` `032365e` `99019ae` `5993218`); `docs/workflow-oak-checkpoint` still `d4a13c6`; no new #359 comment.
+  Codex's late-replay driver still running. Window bounds still thumbnail-scale (Mission Control).
