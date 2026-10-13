@@ -82,6 +82,30 @@ async function heldJournalApp(fullscreen: boolean, {replayOnStart = true, reatta
   };
 }
 
+test('stopped frontends release their exit cleanup across repeated session switches and preserve other owners', async () => {
+  const otherOwner = () => {};
+  process.once('exit', otherOwner);
+  const baseline = process.listeners('exit');
+  try {
+    for (let session = 0; session < 3; session += 1) {
+      const fixture = await heldJournalApp(false);
+      try {
+        await fixture.saving;
+        assert.ok(process.listeners('exit').length > baseline.length,
+          'an active frontend owns its terminal exit cleanup');
+        fixture.app['stop'](0);
+        assert.deepEqual(process.listeners('exit'), baseline,
+          'stop must release the old frontend before the next one opens, including while journaling waits');
+        assert.equal(fixture.finished(), false, 'exit cleanup ownership does not remove the durable save barrier');
+      } finally {
+        await fixture.cleanup();
+      }
+    }
+  } finally {
+    process.off('exit', otherOwner);
+  }
+});
+
 test('fullscreen reattachment hands off and resizes before its first journal save completes', async () => {
   const fixture = await heldJournalApp(true);
   const {app, client, phases} = fixture;
