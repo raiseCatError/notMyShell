@@ -1,6 +1,6 @@
 # Workflow initiative ledger
 
-Current gate (2026-10-14): **freeze PENDING**. Input `5053677` passes canonical/comprehensive/actual PR CI; Queue `7b3a79e` passes canonical/actual PR CI; Copy `2206a49` passes canonical and is published after parent CI, with actual CI 38469299406 active. Serial canonical driver `33188` is on Report `0d092ac`. Guarded publisher `3395` advances only exact verified heads whose latest actual parent CI passes, and stops on real failure. Later originals/fix refs remain held; Linux/Fish and final security/physical handoff are pending. Exact heads and evidence are in the handoff.
+Current gate (2026-10-14): **freeze PENDING**. Input `5053677`, Queue `7b3a79e` and Copy `2206a49` pass exact canonical and actual published CI. Report `0d092ac` passes canonical and is published after Copy CI; actual Report CI 38470560401 is active. Serial canonical driver `33188` is on Compare `4b25770`; guarded publisher `3395` advances only verified heads after latest actual parent CI. The older failed Report CI remains retained, never retried for acceptance. Later heads, Linux/Fish, security reconciliation and physical QA handoff remain required. Exact source and limits are in the handoff.
 
 
 Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-13.
