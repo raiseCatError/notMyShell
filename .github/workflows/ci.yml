@@ -106,6 +106,17 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:node22 -- --test-timeout=120000
+        env:
+          NODE_OPTIONS: --import=${{ github.workspace }}/scripts/test-lifecycle-observer.mjs
+          NMSH_LIFECYCLE_DIAGNOSTICS: ${{ runner.temp }}/nmsh-lifecycle
+      - name: Retained worker evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: node22-worker-lifecycle
+          path: ${{ runner.temp }}/nmsh-lifecycle
+          if-no-files-found: error
+          retention-days: 7
       - name: Process leak check
         if: always()
         run: bash scripts/check-process-leaks.sh
