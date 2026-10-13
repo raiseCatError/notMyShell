@@ -2,11 +2,12 @@
 
 ## Status
 
-- **Automated (evidence, not acceptance):** `npm run verify` (unit and real-PTY tests), the bench type-check and the
-  timing smoke run pass locally on the release branch, and PR CI passes on its head. CI's Fedora and timing-smoke jobs
-  run only on push or manual dispatch, and the last dispatch predates the final fixes; run it again before merging.
-  VHS recordings of real NMSh cover the transcript folding fix, `/worktrees`, `/github`, the managed agent view and
-  `/mods`.
+- **Published without physical QA.** v0.18.0 was released on 2026-10-13 with this pass waived by the maintainer. The
+  checklist stays open as post-release follow-up; a regression found here is fixed in a later release.
+- **Automated (evidence, not acceptance):** the release gate was the full CI workflow (macOS and Ubuntu suites, Node 22
+  and 26, the Fedora subset and the timing smoke) dispatched on the final release-branch commit, then the push CI on
+  the master merge commit. VHS recordings of real NMSh cover the transcript folding fix, `/worktrees`, `/github`, the
+  managed agent view and `/mods`.
 - **Physical acceptance: not run.** No item below has passed yet. Every item needs a person at a real terminal. Mark a
   result only from an actual run, and record host and version, OS, font (Nerd or Safe), commit and any failure.
 - **Not covered by the maintainer's hosts:** Linux and WSL 2 on real machines (#18), and iTerm2, Kitty and WezTerm
