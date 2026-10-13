@@ -1,5 +1,6 @@
 import {spawnSync} from 'node:child_process';
 import {readFileSync, readlinkSync} from 'node:fs';
+import type {SessionInfo} from '../../src/session/SessionProtocol.js';
 import type {Frontend, LiveSandbox} from './liveFrontend.js';
 
 // Failure-only, read-only observations. No terminal input, resize, signals,
@@ -12,7 +13,9 @@ function probe(command: string, args: string[], deadline: number) {
     output: result.stdout?.trim().slice(0, 2048), stderr: result.stderr?.trim().slice(0, 512)};
 }
 
-function terminalSize(pid: number, deadline: number) {
+type TerminalObservation = {unavailable: string; ttyProbe?: ReturnType<typeof probe>} | {tty: string; size: ReturnType<typeof probe>};
+
+function terminalSize(pid: number, deadline: number): TerminalObservation {
   if (!Number.isSafeInteger(pid) || pid <= 1) return {unavailable: 'invalid owned PID'};
   if (process.platform === 'linux') {
     const fd = `/proc/${pid}/fd/0`;
@@ -51,7 +54,15 @@ function processState(pid: number, deadline: number) {
   } catch (error) { return {pid, state, unavailable: String(error)}; }
 }
 
-export async function fullscreenFailure(sandbox: LiveSandbox, id: string, backendPid: number, frontend: Frontend) {
+type FullscreenObservation = {unavailable: string} | {
+  session: Pick<SessionInfo, 'id' | 'pid' | 'state' | 'fullscreen' | 'lastExit'> & {runningPresent: boolean};
+  backend: TerminalObservation;
+  frontend: TerminalObservation;
+  children: ReturnType<typeof children>[];
+  processes: ReturnType<typeof processState>[];
+};
+
+export async function fullscreenFailure(sandbox: LiveSandbox, id: string, backendPid: number, frontend: Frontend): Promise<FullscreenObservation> {
   const deadline = Date.now() + 5000;
   try {
     const session = (await sandbox.sessions()).find(value => value.id === id);

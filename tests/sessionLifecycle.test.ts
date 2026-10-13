@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fullscreenFixture} from './helpers/fullscreenFixture.js';
 import {fullscreenFailure} from './helpers/fullscreenFailure.js';
 import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
 import {attachSession} from '../src/session/connectSession.js';
@@ -209,13 +210,7 @@ test('reattach into a fullscreen app resumes passthrough and makes it repaint at
   try {
     const fixture = join(sandbox.home, 'fullscreen.zsh');
     const stop = join(sandbox.home, 'stop');
-    writeFileSync(fixture, [
-      `printf '\\e[?1049h'`,
-      `trap 'printf "\\e[H\\e[2JREDRAW %s\\n" "$(stty size)"' WINCH`,
-      `printf 'TRAP-READY\\n'`,
-      `while [ ! -f ${stop} ]; do sleep 0.05; done`,
-      `printf '\\e[?1049l'`,
-    ].join('\n'));
+    writeFileSync(fixture, fullscreenFixture(stop));
     const first = sandbox.launch();
     await first.waitFor(/❯/);
     first.pty.write(`zsh ${fixture}\r`);

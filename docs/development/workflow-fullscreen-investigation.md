@@ -35,7 +35,14 @@ Node 26.11.1, one worker and private T7 roots, probe identity/geometry controls
 and unchanged real lifecycle tests passed. The full `npm run verify` gate
 passed afterward, including build, canonical runtime/ranking, cleanup and diff
 checks. These passing observations do not attribute the historical CI failure.
-Linux probe validation and observed CI remain pending.
+Linux arm64 probe/lifecycle validation also passed. The isolated diagnostic
+head `50ba4dc853cdbe2ca1b29575b22f1f22f3ef7b15` completed
+[comprehensive CI 38421963998](https://github.com/raiseCatError/notMyShell/actions/runs/38421963998):
+all required platform, Node 22, Fedora, timing and quality checks passed. Attempt
+1 lacked a macOS hosted runner and produced no steps/log; GitHub explicitly
+reported runner acquisition failure and arm64 capacity constraints. Only that
+unexecuted job was retried once. This is diagnostic evidence, not acceptance of
+the failed original Report head.
 
 ## Interpretation
 
@@ -56,3 +63,40 @@ are not claimed as retrospective attribution for this failure.
 Full latest Linux/Fish, remaining published-head CI, security acceptance and
 physical terminal/clipboard QA remain separate requirements. No integration or
 release/master merge is authorized by this investigation.
+
+## Confirmed fixture correction
+
+A standalone Linux control showed the original zsh WINCH trap printing only an
+older size while the final PTY was independently verified at 33×90. Signal state
+showed WINCH blocked and pending while the trap's external `stty` sample was held.
+The synchronized real-NMSh control confirmed the same defect after reattach:
+hold a 32-row sample, resize to 33 rows, verify both PTYs, mark the new output
+window, then release. The original trap missed the fresh 33-row repaint at its
+unchanged 20-second deadline. A trap-set flag consumed in the main loop repainted
+32 rows and then the current 33 rows under the same conditions.
+
+The durable regression is `tests/fullscreenResizeSampling.test.ts`, sharing the
+actual acceptance fixture with `tests/sessionLifecycle.test.ts`. It delegates
+non-size termios operations to real `stty`, holds only an explicitly armed older
+sample, verifies the current owned PTYs independently, and marks output after the
+held window so historical redraws cannot satisfy the assertion. It also verifies
+return to the composer and subsequent command execution. Sandbox teardown stays
+unchanged. An initial reattach failure remains separate evidence; only the fresh
+post-release failure proves this sampling regression.
+
+The repository regression failed against the original shared fixture on macOS
+arm64 at the expected 20-second repaint wait, despite both PTYs being 33×90. The
+minimal fixture correction sets a dirty flag in the signal handler and clears it
+before querying geometry in the main loop. A WINCH during that external query
+therefore survives for the next repaint. The unchanged regression, geometry
+controls, full lifecycle cases and real Vim/less repaint passed afterward.
+Direct strict TypeScript checking of the new test helpers also passes; explicit
+success/unavailable unions change no runtime observations.
+
+Production geometry and startup/input behavior are unchanged by this fixture
+correction. The original repaint assertion/deadline and real-program tests remain
+intact. The historical CI run did not capture actual PTY size, so its exact final
+geometry is still unknown. Earlier standalone synchronization and stale-output
+control attempts were inconclusive and remain recorded in the handoff; no retry
+of the genuine failed feature CI is used for acceptance. Fresh canonical and
+actual published-head CI gates are required after this correction.
