@@ -74,6 +74,10 @@ export interface PrSummary {
   state: PrState;
   draft: boolean;
   headRef?: string;
+  /** `owner/name` of the repository holding the head branch; differs from the PR's repository for a fork. */
+  headRepository?: string;
+  /** The head commit GitHub reports (40 hex), when reported. */
+  headSha?: string;
   baseRef?: string;
   updatedAt?: string;
   reviewDecision: ReviewDecision;
