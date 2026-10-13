@@ -14,7 +14,10 @@ adds `typecheck:bench` and `bench:smoke`. No aggregate recompiles the same sourc
 twice. The test runner caps default file workers at four (or the lower Node default
 on small runners), since each PTY worker also owns helper processes. Explicit
 Node `--test-concurrency` arguments override the cap. Assertions and budgets
-remain unchanged. Local commands reuse node_modules. Clean CI/release environments use
+remain unchanged. For a busy local host, `NMSH_TEST_CONCURRENCY=1 npm run verify:release`
+uses the same complete suite serially; the optional environment value must be 1–4.
+This changes resource fan-out, not test selection or timeouts.
+Local commands reuse node_modules. Clean CI/release environments use
 `npm ci`; setup-node caches npm downloads, never node_modules.
 
 ## Canonical suite and sharding

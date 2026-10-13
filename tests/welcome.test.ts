@@ -93,7 +93,7 @@ test('welcome scrolls with ordinary history and stays outside command copy', () 
   const viewport = new HistoryViewport();
   assert.ok(viewport.resolve(rows.length, 3) > 0);
   assert.ok(!rows.slice(viewport.start, viewport.start + 3).some(row => row.plain.includes('notMyShell')));
-  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello\nCompleted');
+  assert.equal(serializeCopyPayload(output.recent(1)!), 'hello');
   assert.ok(!output.transcript().lines.flat().some(cell => cell && 'text' in cell && cell.text.includes('notMyShell')));
 });
 

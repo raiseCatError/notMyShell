@@ -198,6 +198,9 @@ test('Oh My Posh selected but missing: NMSh Native is effective and the history 
   process.env.XDG_CONFIG_HOME = directory;
   const {TerminalApp} = await import('../src/app/TerminalApp.js');
   const app = new TerminalApp();
+  // This fixture supplies its own context. Shell bootstrap must not start a
+  // competing provider render and abort the explicitly awaited fake renderer.
+  Object.defineProperty(app, 'refreshContext', {value: async () => {}});
   try {
     app['context'] = {cwd: directory, project: 'p'};
     process.env.PATH = '/nonexistent-nmsh';

@@ -36,7 +36,7 @@ test('transcript snapshot restores command details, fold state, and plain-text c
   assert.equal(restored.recent(1)?.output, 'hello');
   assert.equal(restored.recent(1)?.expanded, false);
   assert.equal(restored.recent(1)?.lifecycleText, 'Completed · 0s');
-  assert.equal(serializeCopyPayload(restored.recent(1)!), 'hello\nCompleted · 0s');
+  assert.equal(serializeCopyPayload(restored.recent(1)!), 'hello', 'the lifecycle row is NMSh\'s, not the command\'s');
   assert.ok(restored.wrapped(80).some(row => row.isFoldHint));
 });
 
@@ -139,7 +139,7 @@ test('historical context stays frozen per command, uses muted dividers, and surv
   assert.match(headers[0]?.ansi ?? '', /\u001B\[0m\u001B\[49m\u001B\[38;2;[0-9]+;[0-9]+;[0-9]+m▓\u001B\[38;2;[0-9]+;[0-9]+;[0-9]+m▒\u001B\[38;2;[0-9]+;[0-9]+;[0-9]+m░ .*\u001B\[0m\u001B\[49m\u001B\[0m \u001B\[38;2;162;151;190m─/u,
     'archive fade uses per-cell colors on neutral background before its solid divider');
   assert.doesNotMatch(headers[0]?.ansi ?? '', /48;2;(?:52;105;98|72;152;100|194;98;99)m/u);
-  assert.equal(serializeCopyPayload(output.recent(2)!), '/Users/test/project\nCompleted · 7 ms');
+  assert.equal(serializeCopyPayload(output.recent(2)!), '/Users/test/project');
   assert.equal(output.recent(2)?.historicalContext?.branch, 'dev');
 
   const restored = new OutputBuffer();

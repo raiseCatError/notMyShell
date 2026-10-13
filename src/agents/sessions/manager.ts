@@ -3,6 +3,9 @@ import {basename, isAbsolute} from 'node:path';
 import {resolveCommand} from '../../providers/providers.js';
 import {harness, HARNESSES, type HarnessDescriptor} from '../harnesses.js';
 import {ClaudeSession} from './claudeAdapter.js';
+import type {TargetAdapter} from '../targets/adapter.js';
+import {capabilityFacts, updateCapabilities} from '../targets/capabilities.js';
+import {AgentTranscript} from '../transcript/model.js';
 import {scanAgents, type DiscoveredAgent} from './discovery.js';
 import {pushEvent, titleFromPrompt, type AgentEvent, type AgentSession} from './model.js';
 
@@ -60,7 +63,8 @@ let ordinal = 0;
 
 export class AgentSessions {
   readonly sessions: AgentSession[] = [];
-  private readonly controls = new Map<string, ClaudeSession>();
+  private readonly controls = new Map<string, TargetAdapter>();
+  private readonly profiles = new Map<string, AgentProfile>();
   private listeners = new Set<(session?: AgentSession, event?: AgentEvent) => void>();
   scanning = false;
 
@@ -95,17 +99,38 @@ export class AgentSessions {
     const session: AgentSession = {id, harness: descriptor.id, level: 'managed', cwd, signature: assignSignature(id, this.sessions.flatMap(item => item.signature ? [item.signature] : [])),
       title: options.profile?.label ?? `${basename(cwd) || descriptor.short} · ${descriptor.short} ${ordinal}`, startedAt: now, state: 'starting', events: [], attention: false, updatedAt: now};
     const profile = options.profile?.harness === descriptor.id ? options.profile : undefined;
-    const args = [...(profile?.model ? ['--model', profile.model] : []), ...(profile?.permissionMode ? ['--permission-mode', profile.permissionMode] : [])];
-    const control = new ClaudeSession({executable, cwd, args, ...(profile?.configDir ? {env: {...process.env, CLAUDE_CONFIG_DIR: profile.configDir}} : {}),
-      onEvent: event => { pushEvent(session, event, this.env.now()); if (event.kind === 'exited') this.controls.delete(session.id); this.emit(session, event); }}, this.env.claudeHelp);
-    const started = control.start();
-    if (!started.ok) return started;
-    session.pid = control.pid;
-    this.controls.set(session.id, control);
+    if (profile) session.profileId = profile.name;
+    session.capabilities = capabilityFacts(id, 'managed', descriptor.id);
+    try {session.transcript = new AgentTranscript();} catch {return {ok: false, reason: 'Cannot create private agent source storage.'};}
+    if (profile) this.profiles.set(id, profile);
+    const started = this.startControl(session, profile);
+    if (!started.ok) {session.transcript.dispose(); return started;}
     this.sessions.push(session);
     if (options.prompt) this.send(session.id, options.prompt);
     this.emit(session);
     return {ok: true, session};
+  }
+
+  private startControl(session: AgentSession, profile?: AgentProfile, resume?: string): {ok: true} | {ok: false; reason: string} {
+    const executable = this.env.resolve('claude');
+    if (!executable || !session.cwd) return {ok: false, reason: 'Claude executable or workspace unavailable'};
+    const args = [...(profile?.model ? ['--model', profile.model] : []), ...(profile?.permissionMode ? ['--permission-mode', profile.permissionMode] : [])];
+    const control = new ClaudeSession({executable, cwd: session.cwd, args, ...(resume ? {resume} : {}), ...(profile?.configDir ? {env: {...process.env, CLAUDE_CONFIG_DIR: profile.configDir}} : {}),
+      onEvent: event => { if (event.kind === 'incomplete') session.transcript?.source.markIncomplete(event.reason); pushEvent(session, event, this.env.now()); updateCapabilities(session.capabilities!, event, this.env.now()); if (event.kind === 'started') session.reconnectable = Boolean(event.harnessSessionId && control.capabilities.resume); if (event.kind === 'exited') this.controls.delete(session.id); this.emit(session, event); }}, this.env.claudeHelp);
+    const started = control.start();
+    if (!started.ok) return started;
+    session.pid = control.pid;
+    this.controls.set(session.id, control);
+    return {ok: true};
+  }
+
+  resume(id: string): {ok: true} | {ok: false; reason: string} {
+    const session = this.get(id);
+    if (this.controls.has(id)) return {ok: true};
+    if (!session?.reconnectable || !session.harnessSessionId || session.level !== 'managed') return {ok: false, reason: 'No supported reconnectable target'};
+    session.capabilities = capabilityFacts(id, session.level, session.harness);
+    session.state = 'starting';
+    return this.startControl(session, this.profiles.get(id), session.harnessSessionId);
   }
 
   /** Text for a managed session; observed sessions never accept input. */
@@ -123,6 +148,10 @@ export class AgentSessions {
     const pending = session?.pendingApproval;
     const control = this.controls.get(id);
     return Boolean(session && pending && control && control.answer(pending.requestId, allow));
+  }
+
+  choose(id: string, requestId: string, answers: Record<string, string>): boolean {
+    return this.get(id)?.pendingChoice?.requestId === requestId && Boolean(this.controls.get(id)?.choose?.(requestId, answers));
   }
 
   cancel(id: string): boolean { const control = this.controls.get(id); control?.cancel(); return Boolean(control); }
@@ -166,7 +195,7 @@ export class AgentSessions {
         const descriptor = harness(agent.harness)!;
         this.sessions.push({id: `observed-${agent.pid}`, harness: agent.harness, level: 'observed', title: descriptor.short,
           signature: assignSignature(`observed-${agent.pid}`, this.sessions.flatMap(item => item.signature ? [item.signature] : [])), ...(agent.cwd ? {cwd: agent.cwd} : {}),
-          startedAt: agent.startedAt, state: 'running', pid: agent.pid, ...(agent.tty ? {tty: agent.tty} : {}), events: [], attention: false, updatedAt: this.env.now()});
+          startedAt: agent.startedAt, state: 'running', pid: agent.pid, ...(agent.tty ? {tty: agent.tty} : {}), events: [], attention: false, updatedAt: this.env.now(), capabilities: capabilityFacts(`observed-${agent.pid}`, 'observed', agent.harness)});
         changed = true;
       }
       if (changed) this.emit();
@@ -176,6 +205,8 @@ export class AgentSessions {
   dispose(): void {
     for (const control of this.controls.values()) control.close();
     this.controls.clear();
+    for (const session of this.sessions) session.transcript?.dispose();
+    this.profiles.clear();
     this.listeners.clear();
   }
 }

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
-import {mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync} from 'node:fs';
+import {mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {applyPlan, inspectFile} from '../src/ask/fileEdit.js';
@@ -89,4 +89,19 @@ test('Ask (Local understanding Off): repair requests produce verified plans; big
   const py = resolveRequest('fix the missing bracket in list.py', context, {}, undefined, env);
   assert.ok(py.kind === 'answer' && /closes the "\[" opened on line 1/u.test(py.text));
   assert.notEqual(resolveRequest('fix my application', context, {}, undefined, env).kind, 'answer', 'not a verified repair');
+});
+
+test('inspectFile: a root reached through a symlink still contains its files; a symlink out of it is still refused', () => {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'nmsh-root-link-')));
+  try {
+    mkdirSync(join(base, 'real'));
+    mkdirSync(join(base, 'elsewhere'));
+    symlinkSync(join(base, 'real'), join(base, 'home'));
+    writeFileSync(join(base, 'real', 'config'), 'a = 1\n');
+    writeFileSync(join(base, 'elsewhere', 'secret'), 'b = 2\n');
+    symlinkSync(join(base, 'elsewhere', 'secret'), join(base, 'real', 'escape'));
+    const root = join(base, 'home');
+    assert.equal(inspectFile(join(root, 'config'), [root]).refusal, undefined);
+    assert.match(inspectFile(join(root, 'escape'), [root]).refusal ?? '', /outside your home folder/u);
+  } finally { rmSync(base, {recursive: true, force: true}); }
 });

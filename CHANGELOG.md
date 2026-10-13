@@ -2,41 +2,100 @@
 
 All notable changes to NMSh are documented in this file.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Notable user-visible changes are added under [Unreleased] as they land; see [CONTRIBUTING.md](CONTRIBUTING.md#changelog).
 
 ## [Unreleased]
 
-Not yet released; the package version stays 0.17.0 until a release is prepared.
+## [0.18.0] - 2026-10-13
 
-### Context Engine and modules
+**Context Engine, Managed Agents & Workspaces.** Context modules become a platform: facts are collected on demand by bounded, privacy-labelled capabilities, the first-party catalog ships as declarative Context Packs, and the Status Strip becomes a full second surface for modules. Claude Code can run as a managed target inside NMSh, with its permission requests and questions answered natively. `/worktrees` and a read-only `/github` workspace are the first delivered slices of the workspace work. The release also carries the fixes from the v0.17 Ghostty physical-QA pass and a set of passthrough, tmux, transcript and Fish correctness fixes.
+
+Verification: the release gate is automated CI (unit and real-PTY suites on macOS and Ubuntu, Node 22 and 26, a Fedora portability subset and the timing smoke). **Physical-terminal QA has not been performed**; see Known limitations below and the [v0.18 physical QA checklist](docs/testing/v018-physical-qa.md).
+
+### Added
+
+#### Context Engine and Context Packs ([#305](https://github.com/raiseCatError/notMyShell/issues/305), [#316](https://github.com/raiseCatError/notMyShell/issues/316)–[#320](https://github.com/raiseCatError/notMyShell/issues/320), [PR #326](https://github.com/raiseCatError/notMyShell/pull/326))
 - **Capability scheduler:** typed capabilities declare what they read, their environment, cost, timeout, cache lifetime and per-field privacy. Only facts that visible, routed modules demand are resolved, off the typing path, with bounded concurrency, coalescing, timeouts with backoff (and a cold-start allowance), cancellation on directory change, staged scopes that keep the old context visible until the new one settles, stale-while-revalidate caching and command-completion invalidation. Hidden modules cost nothing.
 - **Shell-reported environment:** each zsh, Bash and Fish prompt reports an allowlisted set of non-secret environment values (and only the presence of credential variables), so context follows the live shell, not NMSh's launch environment.
 - **First-party catalog** as bundled declarative packs: project package; Node, Python, Go, Rust and Java versions from pins and install layouts (never by running them); mise/asdf tool requests and direnv state (never reading `.envrc`); Terraform/OpenTofu, Helm, Pulumi; AWS, Google Cloud and Azure from local non-secret configuration (no API calls, no credentials); OS, user/host/SSH, jobs, session duration, time, memory and battery; Git stash and upstream. Every module has a deterministic preview, Safe-glyph labels and Theme/Neutral roles.
-- **Declarative Context Packs** (`nmsh.context-pack/v1`): bounded strict data naming core capabilities, with license, provenance, compatibility and recommendations. `nmsh packs` lists, inspects, installs (optionally pinned by `--sha256`), enables, disables and removes packs atomically; tampered packs report integrity failure. Packs cannot run commands or code and gain no authority by being installed; recommendations explain local evidence and never install or enable anything.
-- **Claude Code agent context** through Claude Code's official status line: `nmsh agent-status setup` shows and applies one reviewed settings change (and `remove` undoes exactly it); the bridge keeps an allowlisted, private record per NMSh session, and modules show model, effort, context-window use and 5-hour/7-day limits. No terminal scraping; prompts and transcripts are never read.
-- **Status Strip 2.0:** the strip is one row at the **Top** or **Bottom** of the NMSh pane (inside tmux, Bottom sits above tmux's own status line) with independent **Left, Center and Right** groups. Width fitting is deterministic in display cells: compact forms first, then lowest priority, the center before the edges; Keep Awake still narrows full → short → glyph; the row hides below 30 columns. Styles: Plain with a dot (Minimal), bar (Divided) or space separator, or Powerline using the prompt's own geometry; Safe glyphs and NO_COLOR stay readable. Every built-in module except the exit status can now be routed to the strip, with a strip-only group. Existing strips keep their place (Top, right-aligned); nothing is turned on or moved by the upgrade.
-- **One owner for strip facts:** the strip's clock, CPU, RAM, battery and uptime are Context Engine capabilities (new `system.cpu` and `system.uptime`), demanded only while the row shows and only for items switched on. The strip's separate stats poller is gone, and painting it performs no I/O.
-- **`/strip` Status Strip Studio:** on/off, edge, style, separator, where the system items sit, which show, and the group and order of modules on the strip, with a live preview from the real renderer at the panel width and at 50 columns. Presets Minimal, Developer and System (Custom after edits) are previewed with what they would change before Enter applies them, U undoes, and no preset touches cloud or agent modules or turns the strip on.
-- **`/modules`** opens the module manager directly and saves each change as it is made; inside `/prompt` it says it edits the draft and A saves module changes alone. `/` searches Modules, Catalog and Packs over loaded data, Tab/Shift+Tab switch tabs, footers only offer controls that can act, details wrap at narrow widths (the prompt preview yields first), and under Starship, Powerlevel10k, Oh My Posh or Prompt None the manager marks which surfaces cannot show modules and why, keeping their settings.
+- **Declarative Context Packs** (`nmsh.context-pack/v1`): bounded, strictly parsed data naming core capabilities, with license, provenance, compatibility and recommendations. `nmsh packs` lists, inspects, installs (optionally pinned by `--sha256`), enables, disables and removes local packs atomically; a tampered pack reports an integrity failure. Packs cannot run commands or code and gain no authority by being installed; recommendations explain local evidence and never install or enable anything.
+- **Claude Code agent context** through Claude Code's official status line: `nmsh agent-status setup` shows and applies one reviewed settings change, and `nmsh agent-status remove` undoes exactly that change. The bridge keeps an allowlisted, private record per NMSh session, and modules show model, effort, context-window use and 5-hour/7-day limits. No terminal scraping; prompts and transcripts are never read.
+- **`/modules`** opens the module manager directly and saves each change as it is made; inside `/prompt` it says it edits the draft, and `A` saves module changes alone. `/` searches Modules, Catalog and Packs over loaded data, footers only offer controls that can act, details wrap at narrow widths (the prompt preview yields first), and under Starship, Powerlevel10k, Oh My Posh or Prompt None the manager marks which surfaces cannot show modules and why, keeping their settings.
 - `/prompt` → Modules gains **Catalog** (every module by category, with local recommendations) and **Packs** tabs, and a details view saying what a module reads, how fresh each fact is and whether it may enter command history.
 
-### Theme Bridge, terminal and shell assistance
-- Fixed (physical QA, Ghostty): **Project and session** titles now show the session's name at once after `/rename` (and its signature after a reset) without a `cd` or notices; after Vim or another passthrough program sets its own title on exit ("Thanks for flying Vim"), NMSh writes its title back as soon as it has the screen; hostile directory names lose whole escape sequences instead of showing `]0;PWNED` debris.
-- Fixed (physical QA): inside **tmux**, the mouse wheel scrolls the NMSh transcript instead of cycling composer history; NMSh now asks tmux for button and SGR mouse reports, which tmux forwards with its `mouse` option on or off. Passthrough programs, copy mode and Shift selection are unchanged.
-- **Tab / Shift+Tab** switch tabs in every visual tab bar (/prompt views, Modules, Settings, Tools, tmux configuration, Theme Studio), wrapping at the ends; text fields keep Tab.
-- **Terminal title** (Settings → Sessions, Off by default): Project, or Project and session, written only while NMSh owns the screen; programs keep their own titles, hostile names cannot inject escapes, and hosts with a title stack get their previous title back on exit.
-- Host semantics: command start (OSC 133 `C`) is written at once even ahead of a fullscreen program, the directory is reported again after a program owned the screen, and a reattach replays no history to the host.
-- **Open in pager** block action: a command and its complete stored output in your pager on the host terminal, through stdin only (never shell source), with escape sequences shown inert.
-- delta's status says whether its syntax highlighting follows bat's NMSh theme or your git config pins it (read as data); diff colors stay in git config.
-- Theme Bridge colors are valid on 16- and 8-color terminals (theme ANSI slots instead of 256-color codes for less/man, listings and Vim).
-- Fixed: Apply themes Follow NMSh / Choose theme now themes NMSh's own fzf launches even when fzf's Manual setting is Independent.
-- Typo correction works in Bash and Fish, and Bash/Fish command recognition, correction and install offers use the live shell's `PATH`.
+#### Status Strip 2.0 ([PR #328](https://github.com/raiseCatError/notMyShell/pull/328))
+- The strip is one row at the **Top** or **Bottom** of the NMSh pane (inside tmux, Bottom sits above tmux's own status line) with independent **Left, Center and Right** groups. Width fitting is deterministic in display cells: compact forms first, then lowest priority, the center before the edges; Keep Awake still narrows full → short → glyph, and the row hides below 30 columns.
+- Styles: Plain with a dot (Minimal), bar (Divided) or space separator, or Powerline using the prompt's own geometry; Safe glyphs and NO_COLOR stay readable. Every built-in module except the exit status can be routed to the strip, with a strip-only group.
+- **`/strip` Status Strip Studio:** on/off, edge, style, separator, which system items show and where, and the group and order of modules on the strip, with a live preview from the real renderer at the panel width and at 50 columns. The Minimal, Developer and System presets (Custom after edits) preview what they would change before Enter applies them, `U` undoes, and no preset touches cloud or agent modules or turns the strip on.
 
-### Security and performance
-- Context discovery never runs a discovered executable; one inside the current workspace (followed through symlinks) is not even inspected. Pack metadata, workspace names and settings text cannot inject terminal escapes into `/prompt`, `nmsh packs` or `nmsh agent-status`.
-- Hostile-workspace coverage for control/bidi/OSC payloads, huge, malformed and symlinked files, fake executables, malicious PATH entries, `.envrc`, kubeconfig `exec`, hostile Git metadata and malicious packs.
-- Context Engine benchmarks (cold/warm collection, rapid directory changes, every module on every surface, hidden modules, a large repository) with budgets enforced by the timing smoke.
-- Fixed: a detached session's spooled prompt events are no longer dropped on replay when the shell's knowledge exceeds 64 KiB.
+#### Managed Claude Code and `/mods` ([PR #329](https://github.com/raiseCatError/notMyShell/pull/329), [PR #344](https://github.com/raiseCatError/notMyShell/pull/344), [PR #346](https://github.com/raiseCatError/notMyShell/pull/346))
+- **Managed Claude Code targets:** `/claude` focuses or resumes existing work, or opens a launcher listing targets under their launch profile with `+ New target`; `/claude new` always starts fresh, and `/ai` keeps the supervisor. Named launch profiles keep each Claude account's configuration and identity apart. NMSh drives Claude Code through its structured stdio interface, so tool permission requests (allow/deny) and AskUserQuestion questions are answered in NMSh, never by scraping a terminal. Turn results give the real reason ("authentication failed", "Interrupted"), and the model is shown only as Claude reports it.
+- **Target shelf:** live targets sit above the composer. Up from an idle composer focuses the shelf, Left/Right select, Enter opens, Down/Esc return.
+- **Agent view:** a full-height conversation workspace. A compact welcome (provider, reported model, identity, folder and branch) rests on the composer and gives way as turns arrive; the target's state rides the composer rule; your turns are marked and the agent's prose is the body; tool calls are quiet rows with failures in words. It follows the transcript's Normal or Chat presentation and the composer's Top or Bottom position. The agent draft uses the shell composer's editing geometry and the terminal's own caret, so `/cursor` shape and color apply; Up and Down move through multiline drafts, scrollback reaches the first turn, and a scrolled-back view stays put while new events arrive.
+- **`/mods`** (also `/extensions`, `/claude mods`, `/codex mods`): one searchable, keyboard-first inventory of portable mods, provider-native plugins and settings hooks, and Context Packs, in NMSh's own tabs, grouped lists and selection bands. Rows give one state word with scope and version; the selected entry's execution facts stay visible, and Enter opens its full execution and provenance record. Provider plugins are labelled as running inside the provider with no NMSh sandbox. Discovery reads files only and never runs mod code.
+
+#### Worktrees and GitHub (first slices of [#337](https://github.com/raiseCatError/notMyShell/issues/337) and [#338](https://github.com/raiseCatError/notMyShell/issues/338))
+- **`/worktrees`** ([PR #342](https://github.com/raiseCatError/notMyShell/pull/342)): this repository's Git worktrees with branch, HEAD, dirty/untracked, locked and prunable state. Enter stages `cd -- '<path>'` in an empty composer (it never runs it and never replaces a draft). `n` takes a branch name and shows the exact plan; nothing is created until Enter on that plan, and Git state is revalidated first. `x` previews removal; removal is never forced, keeps the branch, and is refused for the main, current, locked, prunable or dirty worktree and while a managed agent works inside it.
+- **`/github`, `/prs`, `/issues`** ([PR #343](https://github.com/raiseCatError/notMyShell/pull/343)): a read-only workspace for the `origin` repository through your own `gh` login: PR and issue lists with GitHub search syntax, PR overview, checks (with required flags), reviews and comments, commits, files and a bounded diff, and a merge *preview* that only describes what a merge would do. `o` opens the item on github.com and `w` jumps to the PR branch's worktree.
+- Ask knows `/worktrees`, `/github`, `/prs` and `/issues`.
+
+#### Terminal and shell ([#304](https://github.com/raiseCatError/notMyShell/issues/304))
+- **Terminal title** (Settings → Sessions, Off by default): Project, or Project and session, written only while NMSh owns the screen. Programs keep their own titles, and hosts with a title stack get their previous title back on exit.
+- **Open in pager** block action: a command and its complete stored output in your pager on the host terminal, through stdin only (never shell source), with escape sequences shown inert.
+- Typo correction works in Bash and Fish, and Bash/Fish command recognition, correction and install offers use the live shell's `PATH`.
+- delta's status says whether its syntax highlighting follows bat's NMSh theme or your git config pins it (read as data); diff colors stay in git config.
+
+### Changed
+- **One owner for strip facts:** the strip's clock, CPU, RAM, battery and uptime are Context Engine capabilities (new `system.cpu` and `system.uptime`), demanded only while the row shows and only for items switched on. The strip's separate stats poller is removed, and painting the strip performs no I/O.
+- **Tab / Shift+Tab** switch tabs in every visual tab bar (`/prompt` views, Modules, Settings, Tools, tmux configuration, Theme Studio), wrapping at the ends; text fields keep Tab.
+- Without color (NO_COLOR or Color None), the active tab in every NMSh tab strip is reverse video, matching selected rows; before, only its weight changed.
+- Host semantics: command start (OSC 133 `C`) is written at once, even ahead of a fullscreen program; the directory is reported again after a program owned the screen; a reattach replays no history to the host.
+- Renderer **Portable** leaves NMSh's managed Ghostty cursor shader off (NMSh draws the trail itself), and the managed shader files follow `/cursor` inside tmux.
+- Context Engine benchmarks (cold/warm collection, rapid directory changes, every module on every surface, hidden modules, a large repository) with budgets enforced by CI's timing smoke.
+
+### Fixed
+- **Absolute executable paths** typed in the composer (`/Volumes/tools/adb devices`, `/bin/zsh`, `/usr/bin/env …`) run in the shell exactly as typed instead of being refused as unknown NMSh commands, and keep shell completion and suggestions. A first word with a `/` after the leading one is a path (no NMSh command name contains one), so `/zsh` still switches shells while `/bin/zsh` runs; a directory used as a command gets the shell's own behavior.
+- **`/copy`** and `/copy N` copy only the command's own output (stdout and stderr, line breaks and spacing kept), never NMSh's completion row such as `✔ Completed · 21.6s · 15:42`, nor NMSh lines (such as a `/copy` confirmation) added inside a running command's block; output that merely looks like a completion row is kept. A command that printed nothing leaves the clipboard as it was and says so.
+- **Folding after a screen clear:** after `clear`, tmux, or any program writing `ESC[2J`/`ESC[3J`, fold rows such as `15 lines shown · Ctrl+O` no longer appear inside the next command's output, and Ctrl+O no longer folds another command's lines together with `/copy` and status rows. A clear now retires the records of the lines it removed; a command that clears the screen owns, and `/copy` copies, what it writes afterwards. Transcripts saved before this fix are repaired when opened: a record is kept only if its lines show it owns them, and older commands from before an unrecorded clear lose their fold control and `/copy N` while their lines stay visible. Full-screen programs, partial erases (`ESC[J`, `ESC[1J`, `ESC[K`) and progress redraws never clear the transcript.
+- **Fish keystrokes around `read`:** keys typed quickly around a fish `read` are no longer lost to NMSh's query round trip; NMSh answers fish's terminal queries itself, as it already did at fish's prompt, and input waits until fish has redrawn its prompt. For any program, keys never overtake the answer to a device-attributes query.
+- **Passthrough programs get their bytes exactly as written:** output processing (`ONLCR`) is off while a program owns the terminal, so raw-mode TUIs that move down with a bare LF no longer overwrite their own prompt or jump the cursor. Two-byte Alt+key prefixes are no longer held as possible terminal answers.
+- Terminal queries a program writes before it takes the screen (synchronized output, grapheme clustering, colors) reach the host, and the answers go back to the program instead of the key decoder.
+- Ownership handoff: output from the first sign a program owns the screen (alternate screen, an input mode, a kitty keyboard push) belongs to the program, so its paint no longer stays in the transcript after it exits; undrawn sequences no longer print debris (`ESC ( B` → `B`, `ESC[NaN;2m`), zero color components are kept, and half-decoded input is dropped at every handoff.
+- **tmux:** `tmux` typed in the composer opens ordinary panes again (tmux no longer inherits NMSh's private `ZDOTDIR` or `POWERLEVEL9K_DISABLE_PROMPT`, and children get the person's own `XDG_CACHE_HOME` back), and a window says when its session service is an older build that still writes the old bootstrap. The mouse wheel scrolls the NMSh transcript instead of cycling composer history (NMSh now asks tmux for button and SGR mouse reports, which tmux forwards with its `mouse` option on or off). NMSh no longer wraps frames in its own DEC 2026 synchronized-output block inside tmux, and repaints that leave the caret in place no longer toggle cursor visibility, so host cursor trails and blink stop jumping.
+- **Terminal title** (from the Ghostty QA pass, [#321](https://github.com/raiseCatError/notMyShell/issues/321)): Project and session titles show the session's name at once after `/rename` (and its signature after a reset); after Vim or another passthrough program sets its own title on exit, NMSh writes its title back as soon as it has the screen.
+- Theme Bridge colors are valid on 16- and 8-color terminals (theme ANSI slots instead of 256-color codes for less/man, listings and Vim).
+- Apply themes → Follow NMSh / Choose theme themes NMSh's own fzf launches even when fzf's Manual setting is Independent.
+- A detached session's spooled prompt events are no longer dropped on replay when the shell's knowledge exceeds 64 KiB.
+- Unmodified F1 in its kitty keyboard form (`CSI P`) opens the palette.
+- Ask's config edits no longer refuse files in a home folder or project reached through a symlink (macOS `/tmp` and `/var` are symlinks); a symlink leading out of them is still refused.
+
+### Security
+- Context discovery never runs a discovered executable; one inside the current workspace (followed through symlinks) is not even inspected. Hostile-workspace coverage spans control/bidi/OSC payloads, huge, malformed and symlinked files, fake executables, malicious PATH entries, `.envrc`, kubeconfig `exec`, hostile Git metadata and malicious packs.
+- Every NMSh display path (prompt, modules, path, Status Strip, `/prompt` and `/modules` disclosures, fact cache, historical prompt blocks, welcome, startup picker, `/resume` and live-session lists, `nmsh packs` and `nmsh agent-status` output) removes escape sequences whole instead of leaving visible debris; an unterminated OSC in a session-reported directory can no longer swallow the startup screen. Hostile directory names in the terminal title lose whole escape sequences instead of showing `]0;PWNED` debris.
+- Retained control sequences are bounded: the transcript parser keeps at most 8 KiB of one unfinished sequence (OSC, DCS, SOS, PM and APC are discarded to their terminator), NMSh's shell markers are capped at 1 MiB and the key decoder at 256 bytes.
+- Keys held behind a terminal answer are discarded by Ctrl+C before it is delivered, as a terminal discards pending input, so a cancelled line cannot still run; bracketed pastes are never searched, split or reordered by the hold.
+- `/github` writes nothing to GitHub and stores no credentials; IPv4 and IPv6 addresses in GitHub error text are shown as `[address]`.
+
+### Compatibility
+- Node.js 22 or newer, as before. CI covers Node 22 and 26 on Ubuntu, Node 26 on macOS, and a Linux portability subset on Fedora.
+- zsh, Bash 4.4+ and Fish, as in v0.17.0.
+- Managed targets need Claude Code installed. `/github` needs the GitHub CLI (`gh`) logged in and a github.com `origin` remote.
+
+### Upgrade notes
+- Homebrew: `brew upgrade raiseCatError/tap/nmsh` once the tap's formula reaches 0.18.0 (the tap's own automation bumps it). `/update` in a Homebrew install points to Homebrew instead of changing the keg; source checkouts update with `/update` as before.
+- Settings carry over: existing prompts, modules and Status Strip placement (Top, right-aligned) are kept, and nothing new is turned on by the upgrade. The terminal title stays Off until chosen in Settings → Sessions.
+- Claude Code agent context needs one reviewed settings change from `nmsh agent-status setup`; `nmsh agent-status remove` undoes exactly that change.
+- A session service started by an older NMSh keeps writing the old shell bootstrap until it restarts; new windows say when this is the case.
+
+### Known limitations
+- **Physical-terminal QA was not performed for this release.** `/worktrees`, `/github`, the managed agent view and `/mods` are covered by automated tests and headless terminal recordings; the fixes for absolute paths, `/copy`, folding after a screen clear and Fish keystrokes by automated real-PTY tests. None has had a hands-on pass in Ghostty or Terminal.app. The checklist stays open as post-release follow-up: [docs/testing/v018-physical-qa.md](docs/testing/v018-physical-qa.md). Physical checks in iTerm2, Kitty, WezTerm, Linux and WSL 2 also remain open.
+- A lone `ESC[3J` (erase scrollback, without `ESC[2J`) empties NMSh's whole transcript, where a real terminal keeps the screen. `clear` and `clear -x` are unaffected. This dates from the first release; the planned fix is to treat a lone `ESC[3J` as clearing nothing NMSh shows.
+- Type-ahead while a fish `read` is still running (the answer and the next command in one fast burst) can still be dropped by fish itself, as in any terminal ([docs/development/fish-typeahead.md](docs/development/fish-typeahead.md)).
+- Managed targets are Claude Code only. Codex, OpenCode and other agents' running sessions are shown, not controlled, and live attach to a Claude session started outside NMSh is not supported.
+- `/mods` is an inventory: enabling or disabling entries is done in the provider (or with `nmsh packs` for Context Packs), and NMSh does not run portable mod code.
+- `/worktrees` and `/github` are first slices; [#337](https://github.com/raiseCatError/notMyShell/issues/337) and [#338](https://github.com/raiseCatError/notMyShell/issues/338) stay open. `/worktrees` navigates by staging `cd` in the composer (focusing an NMSh session or tmux pane is not implemented), and the GitHub workspace is read-only: no merging, reviewing, commenting or closing from NMSh.
+- Context Packs install from local files only; a remote pack registry, downloads, signature trust and any executable extension tier are not implemented.
+- Still deferred from [#304](https://github.com/raiseCatError/notMyShell/issues/304): delta diff styles (git config) and terminal emulator or editor base-theme takeover.
 
 ## [0.17.0] - 2026-10-06
 
@@ -338,3 +397,15 @@ Session & Interaction UX, plus the appearance and customization system.
 
 ### Fixed
 - Process cleanup teardown to safely kill detached helper shells and delete temporary configuration directories during testing.
+
+[Unreleased]: https://github.com/raiseCatError/notMyShell/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/raiseCatError/notMyShell/compare/v0.17.0...v0.18.0
+[0.17.0]: https://github.com/raiseCatError/notMyShell/compare/v0.16.0...v0.17.0
+[0.16.0]: https://github.com/raiseCatError/notMyShell/compare/v0.7.0...v0.16.0
+[0.7.0]: https://github.com/raiseCatError/notMyShell/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/raiseCatError/notMyShell/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/raiseCatError/notMyShell/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/raiseCatError/notMyShell/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/raiseCatError/notMyShell/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/raiseCatError/notMyShell/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/raiseCatError/notMyShell/releases/tag/v0.1.0
