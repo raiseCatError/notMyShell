@@ -839,7 +839,8 @@ export class TerminalApp {
     });
     this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
     this.session.on('prompt', (marker, stamp) => {
-      if (this.inStream(stamp)) {
+      // Buffered prompts after shutdown cannot restart collection or queue work.
+      if (!this.stopped && this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
           // An older bootstrap reports no snapshot: keep the documented launch-environment fallback.
