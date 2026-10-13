@@ -928,6 +928,8 @@ export class TerminalApp {
   private attachedSession?: AttachedSession;
   private continuedJournal?: TranscriptSession;
   private rendererEntered = false;
+  /** Late replay can establish fullscreen ownership while startup awaits its journal. */
+  private attachedPassthroughReady?: () => void;
 
   /** Drop stream events the transcript already has (exactly-once replay). */
   private inStream(stamp: StreamStamp): boolean {
@@ -981,7 +983,7 @@ export class TerminalApp {
 
   private finishReplay(summary: {truncatedBytes: number}): void {
     const attached = this.attachedSession;
-    if (!this.replaying || !attached) return;
+    if (this.stopped || !this.replaying || !attached) return;
     this.replaying = false;
     const parts = [`Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid})`];
     const completed = this.replayedCompletions;
@@ -1003,6 +1005,7 @@ export class TerminalApp {
       this.noteForeignScreen();
       this.attachedModes = attached.modes ?? '';
       if (this.rendererEntered) this.enterAttachedPassthrough();
+      else this.attachedPassthroughReady?.();
     }
     this.scheduleJournal();
     this.render();
@@ -1105,13 +1108,14 @@ export class TerminalApp {
 
   /** Protect input before any program prompt is visible, including synchronous attach replay. */
   private prepareRawInput(): void {
-    if (!process.stdin.isTTY || this.rawInputPrepared) return;
+    if (this.stopped || !process.stdin.isTTY || this.rawInputPrepared) return;
     this.originalRawMode = process.stdin.isRaw;
     process.stdin.setRawMode(true);
     this.rawInputPrepared = true;
   }
 
   async run(): Promise<number> {
+    if (this.stopped) return this.done;
     this.prepareRawInput();
     process.once('exit', () => {
       if (!this.stopped) {
@@ -1155,36 +1159,44 @@ export class TerminalApp {
     // A fresh ordinary frontend must first publish its journal identity so an
     // immediate detach can continue that journal. An already-owned terminal
     // must instead restore its raw input and full size without waiting on IO.
-    if (!this.passthrough) await journalStarted;
-    this.startOnboarding();
-    // Restored terminal modes are a visible handoff: keys can arrive at once.
-    // Install raw input first so the host cannot echo or translate those keys.
-    this.prepareRawInput();
-    process.stdin.setEncoding('utf8');
-    process.stdin.resume();
-    process.stdin.on('data', this.onInput);
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
-    if (earlyInput) this.onInput(earlyInput);
-    process.stdout.on('resize', this.onResize);
-    process.on('SIGTSTP', this.onSuspend);
-    process.on('SIGCONT', this.onContinue);
-    process.once('SIGTERM', this.onTerminate);
-    process.once('SIGHUP', this.onTerminate);
-    this.presentationStarted = true;
-    void this.loadSessionIdentity();
-    this.refreshAwake();
-    // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
-    this.scheduleThemeBridge(500);
-    this.scheduleWelcomeBlink();
-    void this.loadHistory();
-    this.render();
-    void this.quietUpdateCheck();
-    void this.quietToolUpdateCheck();
-    this.armIdle();
-    this.presetFrontendReady = true;
-    if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
+    if (!this.passthrough) {
+      // Replay may establish ownership after this wait begins. Ordinary
+      // startup still waits for persistence; fullscreen input must not do so.
+      await Promise.race([journalStarted, new Promise<void>(resolve => { this.attachedPassthroughReady = resolve; })]);
+      this.attachedPassthroughReady = undefined;
+    }
+    // A shell exit or shutdown during startup cannot reinstall frontend input.
+    if (!this.stopped) {
+      this.startOnboarding();
+      // Restored terminal modes are a visible handoff: keys can arrive at once.
+      // Install raw input first so the host cannot echo or translate those keys.
+      this.prepareRawInput();
+      process.stdin.setEncoding('utf8');
+      process.stdin.resume();
+      process.stdin.on('data', this.onInput);
+      this.renderer.enter();
+      this.rendererEntered = true;
+      if (this.passthrough) this.enterAttachedPassthrough();
+      if (earlyInput) this.onInput(earlyInput);
+      process.stdout.on('resize', this.onResize);
+      process.on('SIGTSTP', this.onSuspend);
+      process.on('SIGCONT', this.onContinue);
+      process.once('SIGTERM', this.onTerminate);
+      process.once('SIGHUP', this.onTerminate);
+      this.presentationStarted = true;
+      void this.loadSessionIdentity();
+      this.refreshAwake();
+      // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
+      this.scheduleThemeBridge(500);
+      this.scheduleWelcomeBlink();
+      void this.loadHistory();
+      this.render();
+      void this.quietUpdateCheck();
+      void this.quietToolUpdateCheck();
+      this.armIdle();
+      this.presetFrontendReady = true;
+      if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
+    }
     const exitCode = await this.done;
     await journalStarted;
     try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
