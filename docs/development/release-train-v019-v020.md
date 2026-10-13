@@ -133,6 +133,38 @@ Base: the v0.19 integrated head. Branch `release/v0.20.0`, owned by this track.
    clipboard, sessions, managed Claude, worktrees, background tasks.
 6. Draft PR `release/v0.20.0` → `master`. Stop. No tag, no release.
 
+### v0.20 preparation branch (no frontend code)
+
+`integration/v020-modules` from `v0.18.0`, merging only the standalone PRs that do not touch `TerminalApp.ts`:
+#373 (contains #370, #372), #374, #369, #381, #379, #380, #376/#377/#378 (contain #375), #384 (contains #383).
+Head `8f07920`. #347 (edits `TerminalApp.ts`) and #349 (transcript presenter) wait for the freeze.
+
+- One conflict: #374 against the runtime lineage in `docs/architecture/context-modules.md`,
+  `tests/contextCapabilities.test.ts`, `tests/contextPacks.test.ts`, all additive (both sides append); resolved
+  by keeping both (`fe84476`).
+- Local: typecheck clean; 19 targeted files (context, packs, module manager, workspace, keymap, panel, sidebar,
+  background, worktrees, GitHub, providers, portable mods, Codex adapter): 182/182 pass.
+- [CI 38343182141](https://github.com/raiseCatError/notMyShell/actions/runs/38343182141) (`workflow_dispatch`,
+  full matrix incl. timing on both platforms and Fedora): **success** on `8f07920`.
+
+At v0.20 this branch merges into `release/v0.20.0` after the v0.19 head; the Ruby/PHP conflict against #368 is then
+resolved as in the table above.
+
+### Real-terminal smoke: what is available on this host
+
+- Screen capture of a single window works (`screencapture -l <id>`, window ids from a small CGWindowList helper at
+  `/Volumes/nmsh-opus/tools/winid`).
+- Terminal.app opens through LaunchServices (`open -a Terminal x.command`) without AppleScript.
+- AppleScript control of Terminal.app is **not** granted: the first attempt left a pending macOS dialog ("Zed.app
+  wants access to control Terminal.app"). It was not answered by this agent; granting it is the maintainer's call.
+- Keys can reach NMSh through a private tmux server (`tmux -L opus-smoke`) running inside the Terminal.app window;
+  the result is read from window captures. Direct keyboard input to Terminal.app or Ghostty is not available to
+  this agent (injecting into a terminal's input queue was refused by the session's permission policy and is not
+  pursued).
+- Therefore a smoke run here exercises real Terminal.app rendering through tmux with synthetic keys. Whether that
+  satisfies the v0.19 real-terminal gate is recorded explicitly with the run; direct-keyboard Ghostty/Terminal.app
+  use remains maintainer physical QA either way.
+
 ## Coordination rules
 
 - Never edit Codex-owned worktrees (`/Volumes/nmsh-t7/*`, `fix/workflow-*`, `feature/*` of the workflow stack), its
@@ -151,5 +183,8 @@ below and stop cleanly with no background processes left.
 
 ## Checkpoint log
 
-- 2026-10-13 09:40 IST — Stage 1 inspection complete. Freeze pending (Codex running remaining canonical verification
+- 2026-10-13 09:10 IST — Stage 1 inspection complete. Freeze pending (Codex running remaining canonical verification
   for Report). Dry runs recorded above. Scratch image `/Volumes/nmsh-opus` created. No integration started.
+  Coordination note posted on #359.
+- 2026-10-13 09:45 IST — `integration/v020-modules` `8f07920` built and green on full CI. Smoke-harness
+  feasibility recorded. Freeze still pending.
