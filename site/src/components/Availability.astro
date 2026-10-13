@@ -1,0 +1,53 @@
+---
+interface Props {
+  status: 'released' | 'unreleased' | 'in-progress' | 'planned';
+  version?: string;
+  branch?: string;
+  pr?: string;
+  issue?: string;
+}
+
+const { status, version, branch, pr, issue } = Astro.props;
+
+const statusLabel = () => {
+  if (status === 'released') return version ? `Released (${version})` : 'Released';
+  if (status === 'unreleased') return version ? `Unreleased (${version})` : branch ? `Unreleased (${branch})` : 'Unreleased (Development)';
+  if (status === 'in-progress') return 'In Progress';
+  if (status === 'planned') return version ? `Planned (${version})` : 'Planned';
+  return 'Status';
+};
+
+const badgeClass = () => {
+  if (status === 'released') return 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300';
+  if (status === 'unreleased') return 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300';
+  if (status === 'in-progress') return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300';
+  return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300';
+};
+---
+
+<div class="not-content my-4 p-3 border rounded-md flex items-center gap-3 text-sm" class:list={[{
+  'border-green-200 dark:border-green-800/50': status === 'released',
+  'border-purple-200 dark:border-purple-800/50': status === 'unreleased',
+  'border-yellow-200 dark:border-yellow-800/50': status === 'in-progress',
+  'border-gray-200 dark:border-gray-700': status === 'planned',
+}]}>
+  <span class="font-medium px-2 py-0.5 rounded text-xs whitespace-nowrap" class:list={[badgeClass()]}>
+    {statusLabel()}
+  </span>
+  <span class="flex-1 opacity-90">
+    {status === 'released' && version && `Available in stable release ${version}.`}
+    {status === 'unreleased' && (version ? `Implemented on the development line and slated for release in ${version}.` : branch ? `Implemented on ${branch}.` : `Implemented on the development branch, not yet published in a stable release.`)}
+    {status === 'in-progress' && `This feature is currently in active development.`}
+    {status === 'planned' && (version ? `This feature is planned for milestone ${version}.` : `This feature is planned for a future release.`)}
+  </span>
+  {pr && (
+    <a href={`https://github.com/raiseCatError/notMyShell/pull/${pr}`} target="_blank" rel="noopener noreferrer" class="text-xs font-mono underline hover:no-underline opacity-80 hover:opacity-100 transition-opacity">
+      PR #{pr}
+    </a>
+  )}
+  {issue && (
+    <a href={`https://github.com/raiseCatError/notMyShell/issues/${issue}`} target="_blank" rel="noopener noreferrer" class="text-xs font-mono underline hover:no-underline opacity-80 hover:opacity-100 transition-opacity">
+      Issue #{issue}
+    </a>
+  )}
+</div>

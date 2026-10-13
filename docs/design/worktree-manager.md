@@ -1,6 +1,6 @@
 # Worktree manager core (#337)
 
-Status: shipped in v0.18.0 as `/worktrees`. The core, controller and
+Status: included in v0.18.0 as `/worktrees`, the first slice of #337. The core, controller and
 presentation model live in `src/worktrees/`; TerminalApp hosts the panel (see
 [Host integration](#host-integration-v0180)). Session/tmux focus, the diff
 panel and PR evidence remain deferred (see the end of this document).

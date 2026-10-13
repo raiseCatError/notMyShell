@@ -1,6 +1,6 @@
 # GitHub workspace core (#338, phase 1)
 
-Status: **read-only**, shipped in v0.18.0 as `/github`, `/prs` and `/issues`.
+Status: **read-only**, included in v0.18.0 as `/github`, `/prs` and `/issues`.
 There is no remote mutation of any kind; the merge preview only describes what a
 merge would do. Physical terminal QA is **still pending**.
 
