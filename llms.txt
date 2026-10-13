@@ -1,6 +1,6 @@
 # notMyShell (NMSh)
 
-Latest published stable release: v0.17.0 (see CHANGELOG.md). Homebrew is the recommended macOS install: brew install raiseCatError/tap/nmsh. Source installation remains available.
+Latest published stable release: v0.18.0 (see CHANGELOG.md). Homebrew is the recommended macOS install: brew install raiseCatError/tap/nmsh. Source installation remains available.
 
 notMyShell is a terminal frontend that runs on top of a real persistent shell instead of replacing the shell.
 
@@ -66,7 +66,7 @@ freshness, trust, sensitivity and persistence policy. The Rail is live frontend
 geometry, separate from transcript snapshots and the right-context anchor.
 
 Released in v0.17.0: fact metadata, the module registry, surface routing and the
-Context Rail. On the development line (unreleased): a demand-driven capability
+Context Rail. Released in v0.18.0: a demand-driven capability
 scheduler (caps, timeouts, cancellation, stale-while-revalidate) fed by the live
 shell's allowlisted environment; a first-party catalog (project, Node/Python/Go/
 Rust/Java, mise/asdf, direnv, Terraform/Helm/Pulumi, AWS/GCP/Azure from local

@@ -126,7 +126,7 @@ Key references:
 - [GitHub Issues](https://github.com/raiseCatError/notMyShell/issues) — actionable work
 - [v0.18.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) — current stable release
 - [PR #303](https://github.com/raiseCatError/notMyShell/pull/303) — the merged cumulative v0.16 release
-- [PR #328](https://github.com/raiseCatError/notMyShell/pull/328) — merged checkpoint on master; included in the published v0.18.0 release
+- [PR #328](https://github.com/raiseCatError/notMyShell/pull/328) — merged checkpoint on master; included in the published v0.18.0 release through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345)
 - [GitHub Project](https://github.com/users/raiseCatError/projects/1) — live development status board
 - [docs/architecture/terminal-stack.md](docs/architecture/terminal-stack.md) — terminology and stack model
 - [docs/design/structured-execution.md](docs/design/structured-execution.md) — v0.2.0 design decisions

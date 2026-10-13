@@ -8,7 +8,7 @@ context, #321 security, performance and QA). User-facing guide:
 
 Status: v0.17.0 shipped the foundation (fact metadata, module routing, Context
 Rail). The capability scheduler, first-party catalog, declarative packs, Status
-Strip routing and agent context described here shipped in v0.18.0.
+Strip routing and agent context described here are included in v0.18.0.
 
 ## Vocabulary and ownership
 

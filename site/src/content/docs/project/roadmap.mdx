@@ -1,0 +1,66 @@
+---
+title: Roadmap & Releases
+description: Track the release history, unreleased integration scope, and future milestones of notMyShell.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+## Tracking
+
+| Milestone | Status |
+|---|---|
+| **Current Stable Release** | [v0.17.0 — Context Engine, Themes & Discovery](https://github.com/raiseCatError/notMyShell/releases/tag/v0.17.0) |
+| **macOS Distribution** | Homebrew: `brew install raiseCatError/tap/nmsh` |
+| **Active Integration Candidate** | [v0.18.0 (PR #345)](https://github.com/raiseCatError/notMyShell/pull/345) on `release/v0.18.0` |
+| **Development Branch** | `dev` |
+
+GitHub issues define actionable remaining work. Closed issues represent completed work, not a promise that future refinements are finished.
+
+---
+
+## Implemented, Unreleased — v0.18.0
+
+<Availability status="unreleased" version="v0.18.0" pr="345" />
+
+The upcoming v0.18.0 release unites the Context Engine platform, managed agents, and workspace tools into a cohesive integration candidate (PR #345 on `release/v0.18.0`).
+
+### Context Engine Platform & Module Ecosystem (#305)
+- **Capability Scheduling**: Demand-driven capability scheduler featuring concurrency caps, timeouts, backoff, and cancellation.
+- **First-Party Pack Catalog**: All 7 bundled declarative packs (`nmsh.project`, `nmsh.environment`, `nmsh.infrastructure`, `nmsh.cloud`, `nmsh.system`, `nmsh.vcs`, `nmsh.agents`) shipping under `nmsh.context-pack/v1`.
+- **Pack Lifecycle CLI**: `nmsh packs` subcommands (`list`, `inspect`, `install`, `remove`, `enable`, `disable`) with sha256 verification and automatic module discovery in `/prompt`.
+- **Coding Assistant Context**: Claude Code session telemetry via its official status line (`nmsh agent-status`), showing model, token usage, cost, and rate-limit countdowns without terminal scraping.
+- **Surface Routing**: Status Strip 2.0 routing, `/modules` management, and Context Rail fitting.
+
+### Managed Agents & Workspaces (#329, #342, #343, #344, #346)
+- **Worktree Manager (`/worktrees`)**: Interactive git worktree planning, branch switching, and safe removal safeguards.
+- **GitHub Workspaces (`/github`, `/prs`, `/issues`)**: Read-only repository telemetry over the local `gh` CLI.
+- **Managed Agent Workspaces (`/claude`, `/ai`)**: Full-height terminal workspace management for coding assistant sessions.
+- **Menu System (`/mods`)**: Native menu navigation with accessible styling for non-color terminals.
+
+### Semantic Terminal & Theme Bridge (#304)
+- **Terminal Title Ownership**: Clean window and tab title ownership via OSC 0/2 escapes; restores the host's prior title upon exit.
+- **Theme Bridge**: Truthful delta status and verified 16/8-color terminal correctness.
+- **Transcript Integrity**: Output boundary repairs after terminal clears and Fish editor keystroke protection.
+
+---
+
+## Recently Released — v0.17.0
+
+Released stable version. Includes:
+- **Theme Studio (`/theme`)**: Built-in, Imported, and Custom themes with live previews.
+- **Theme Bridge (`/theme-bridge`)**: Synchronize NMSh themes to `fzf`, `bat`, `tmux`, `less`, `vim`, `neovim`, and `helix`.
+- **Context Engine Foundation**: Typed fact metadata, trust levels, and the Context Rail.
+- **Curated Tools Browser (`/tools`)**: Detects tools and configures shell frameworks safely.
+- **Keep Awake (`/zoomies`, `/caffeinate`, `/awake`)**: OS-level sleep inhibition with configurable timeouts and composer edge presentation.
+
+---
+
+## Future Scope & Backlog
+
+These items are deferred to future milestones and are not part of the v0.18.0 release candidate:
+
+- **Remote Pack Registry**: Download, package repositories, and signature trust verification.
+- **Executable Extension Tier**: Arbitrary third-party executable extension execution (would require a sandboxing runtime).
+- **Additional Shell Backends**: Nushell and PowerShell implementations for the ShellAdapter.
+- **Lone Scrollback Clears**: Refining the handling of standalone `ESC[3J` escapes post-v0.18.
+- **Hosted SSH Demos**: Hosted demonstration environments (post-1.0).
