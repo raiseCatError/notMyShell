@@ -1082,13 +1082,7 @@ export class TerminalApp {
     process.once('SIGTERM', this.onTerminate);
     process.once('SIGHUP', this.onTerminate);
     this.prepareRawInput();
-    process.once('exit', () => {
-      if (!this.stopped) {
-        if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
-        this.terminalFocus = 'unknown';
-        this.renderer.leave();
-      }
-    });
+    process.once('exit', this.onProcessExit);
     let earlyInput = '';
     // A reattached interactive program owns terminal queries and replies.
     if (!this.passthrough && process.stdin.isTTY && process.stdout.isTTY) {
@@ -1273,6 +1267,14 @@ export class TerminalApp {
       return;
     }
     this.render();
+  };
+
+  private readonly onProcessExit = (): void => {
+    if (!this.stopped) {
+      if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+      this.terminalFocus = 'unknown';
+      this.renderer.leave();
+    }
   };
 
   // The frontend is going away (window closed, SIGHUP/SIGTERM); the shell was
@@ -9250,6 +9252,7 @@ export class TerminalApp {
     this.endSweep();
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
+    process.off('exit', this.onProcessExit);
     process.off('SIGTSTP', this.onSuspend);
     process.off('SIGCONT', this.onContinue);
     process.off('SIGTERM', this.onTerminate);
