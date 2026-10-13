@@ -161,6 +161,16 @@ resolved as in the table above.
   the result is read from window captures. Direct keyboard input to Terminal.app or Ghostty is not available to
   this agent (injecting into a terminal's input queue was refused by the session's permission policy and is not
   pursued).
+- Harness: `/Volumes/nmsh-opus/tools/smoke/smoke.sh` (`[HOST=terminal|ghostty] smoke.sh start <worktree> [shell]`,
+  `keys …`, `shot <name>`, `text`, `stop`). Isolated `HOME`, `XDG_CONFIG_HOME`, `NMSH_RUNTIME_DIR`; Ghostty runs as
+  a separate instance (`open -na`, `--title=nmsh-smoke`) that quits with its window. Dry run on `8f07920`: NMSh
+  starts (Setup on a fresh home), commands run, `text` returns the screen.
+- **Blocked on this host's display state (2026-10-13 09:30 IST):** Mission Control is open with the unanswered
+  Automation dialog on top, so every window is drawn as a scaled thumbnail (a 124×38 window captures at
+  330×239 px). Dismissing either needs keyboard/pointer input this agent does not have. Window captures are not
+  legible evidence until the maintainer closes Mission Control and answers the dialog.
+- Left behind deliberately: Terminal.app (started 09:15 by the AppleScript probe) with three idle windows; quitting it
+  was refused by the session's permission policy. Nothing else from the probes is running.
 - Therefore a smoke run here exercises real Terminal.app rendering through tmux with synthetic keys. Whether that
   satisfies the v0.19 real-terminal gate is recorded explicitly with the run; direct-keyboard Ghostty/Terminal.app
   use remains maintainer physical QA either way.
@@ -188,3 +198,6 @@ below and stop cleanly with no background processes left.
   Coordination note posted on #359.
 - 2026-10-13 09:45 IST — `integration/v020-modules` `8f07920` built and green on full CI. Smoke-harness
   feasibility recorded. Freeze still pending.
+- 2026-10-13 09:35 IST — v0.19 changelog draft pushed (`docs/development/v019-changelog-draft.md`). Smoke harness
+  ready; legible window capture blocked by Mission Control + pending dialog (see above). Unless the display
+  state changes, the v0.19 real-terminal gate cannot be met unattended, and v0.19 will stop as a release candidate.
