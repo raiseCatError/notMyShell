@@ -1,0 +1,28 @@
+:root {
+  /* NMSh Lavender: #A67CF3 */
+  --sl-color-accent-low: #28164b;
+  --sl-color-accent: #a67cf3;
+  --sl-color-accent-high: #dfccfe;
+
+  /* Text adjustments for better contrast with the accent */
+  --sl-color-white: #ffffff;
+  --sl-color-black: #000000;
+
+  /* Dark mode specific tweaks if needed */
+}
+
+/* Light mode overrides */
+:root[data-theme='light'] {
+  --sl-color-accent-low: #f3ecff;
+  --sl-color-accent: #8b55e8;
+  --sl-color-accent-high: #5821b0;
+}
+
+/* Custom font styles (optional, can be expanded later) */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+}
+
+code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}

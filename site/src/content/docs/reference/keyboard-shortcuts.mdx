@@ -1,0 +1,79 @@
+---
+title: Keyboard Shortcuts
+description: Comprehensive keyboard shortcuts reference for NMSh editing, navigation, and panel control.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh provides rich, native editor keybindings across macOS, Linux, and Windows terminal hosts. It natively supports the **Kitty keyboard protocol** (utilized by modern emulators like Ghostty and Kitty) for unambiguous modifier detection, while preserving traditional terminal escape sequences.
+
+## Input & Multiline Editing
+
+| Shortcut | Action | Notes |
+|---|---|---|
+| `Enter` | Submit command | Executes current buffer in the live shell. |
+| `Shift + Enter` | Insert newline | True multiline input support. |
+| `Ctrl + J` | Fallback newline | Alternate newline trigger for standard terminal configurations. |
+| `Backspace` | Delete character before caret | Standard backspace. |
+| `Option + Backspace` / `Alt + Backspace` | Delete word before caret | Deletes previous token/word. |
+| `Ctrl + U` | Delete line before caret | Clears from cursor back to the start of the current line. |
+| `Ctrl + K` | Delete line after caret | Clears from cursor forward to the end of the line. |
+| `Delete` | Delete character after caret | Forward deletion. |
+
+## Caret Movement & Text Navigation
+
+| Shortcut | Action | Notes |
+|---|---|---|
+| `Left` / `Right` Arrow | Move caret left / right | Single grapheme movement. |
+| `Alt + Left` / `Option + Left` / `Ctrl + Left` | Move word left | Word boundary navigation. |
+| `Alt + Right` / `Option + Right` / `Ctrl + Right` | Move word right | Word boundary navigation. |
+| `Home` / `Cmd + Left` | Move to start of line | Goes to first character on current row. |
+| `End` / `Cmd + Right` | Move to end of line | Goes to last character on current row. |
+| `Cmd + Up` | Move to buffer start | Jumps to beginning of entire multiline input. |
+| `Cmd + Down` | Move to buffer end | Jumps to end of entire multiline input. |
+
+## Text Selection
+
+NMSh supports terminal-native cursor-driven selection inside the composer:
+
+| Shortcut | Action | Notes |
+|---|---|---|
+| `Shift + Left` / `Shift + Right` | Select character left / right | Expands/contracts selection. |
+| `Shift + Up` / `Shift + Down` | Select row up / down | Multiline vertical selection. |
+| `Alt + Shift + Left` / `Option + Shift + Left` | Select word left | Selects whole word token to the left. |
+| `Alt + Shift + Right` / `Option + Shift + Right` | Select word right | Selects whole word token to the right. |
+| `Cmd + Shift + Left` | Select to line start | Selects everything to beginning of row. |
+| `Cmd + Shift + Right` | Select to line end | Selects everything to end of row. |
+| `Alt + A` / `Cmd + A` | Select entire buffer | Highlights all text in the composer. |
+
+## Autocomplete & Suggestions
+
+| Shortcut | Action | Notes |
+|---|---|---|
+| `Tab` | Accept top suggestion / cycle | Invokes shell tab-completion or accepts top ghost suggestion. |
+| `Right Arrow` / `End` | Accept ghost text | Fills in the suggested completion if caret is at end of input. |
+| `Alt + Right` / `Option + Right` | Accept next word of suggestion | Accepts a single token from ghost text. |
+| `Ctrl + N` | Next suggestion | Cycles downward through completion menu choices. |
+| `Ctrl + P` | Previous suggestion | Cycles upward through completion menu choices. |
+| `Escape` | Dismiss suggestion popup | Closes suggestion overlay without altering input text. |
+
+## Transcript & Viewport Control
+
+| Shortcut | Action | Notes |
+|---|---|---|
+| `PageUp` / `PageDown` | Scroll viewport | Detaches viewport from the bottom to inspect history. |
+| `Ctrl + O` | Toggle output folding | Expands or collapses long command output blocks. |
+| `Ctrl + R` | Interactive history search | Opens history picker with fuzzy filtering. |
+| `Ctrl + F` | Transcript search (`/find`) | Launches in-transcript search bar. |
+| `Ctrl + Shift + P` / `F1` | Command Palette | Launches the slash-command selector. |
+| `Shift + Tab` | Focus previous control | Cycles focus between composer, status bar, and active accessories. |
+
+## Terminal Host Integration Details
+
+### Ghostty & Kitty
+When running in Ghostty or Kitty, NMSh negotiates Kitty keyboard protocol flags (`CSI > 1 u`). This eliminates ambiguous escape sequences (such as distinguishing `Escape` from Alt-prefixed characters) and enables key combinations like `Cmd+Arrow` and `Shift+Enter` out of the box.
+
+### macOS Terminal.app & iTerm2
+In Terminal.app and iTerm2, ensure **"Use Option as Meta key"** or "Esc+" is enabled in your profile settings to allow `Option+Backspace` and word navigation keys to function properly.
