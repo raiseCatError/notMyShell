@@ -1,0 +1,126 @@
+---
+title: Configuration
+description: Complete reference for NMSh configuration paths, settings schema, and portable transfer format.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh avoids merging shell dotfiles, creating wrapper scripts, or silently modifying your environment. Everything about the frontend is configured through its internal UI, which serializes safely to a well-known JSON file.
+
+## Configuration File Locations
+
+Configuration paths adhere to platform standards via `src/configuration/paths.ts`:
+
+- **macOS (`darwin`)**:
+  ```text
+  ~/Library/Application Support/notMyShell/config.json
+  ```
+- **Linux & other platforms**:
+  ```text
+  ~/.config/nmsh/config.json
+  ```
+  *(If `$XDG_CONFIG_HOME` is set, `$XDG_CONFIG_HOME/nmsh/config.json` is used instead).*
+
+Run the following command at any time to print the exact path on your active system:
+```bash
+nmsh config path
+```
+
+> **Important**: Do not edit `config.json` while NMSh is running. Settings are managed through `/settings`, the Command Palette, and dedicated configuration studios (Theme Studio, tmux Config Studio).
+
+## Exporting & Importing
+
+Configuration is strictly typed, versioned (`nmsh-settings` format), and exportable via `nmsh config`.
+
+An export never contains machine-specific paths, credentials, shell history, transcripts, onboarding status, or third-party config paths (`starship`, `powerlevel10k`, `ohMyPosh`).
+
+### Exporting Settings
+
+Export all portable settings:
+```bash
+nmsh config export --output my-nmsh-settings.json
+```
+
+Export specific categories:
+```bash
+nmsh config export --categories prompt,theme,themeBridge --output theme-bundle.json
+```
+
+### Importing Settings
+
+Importing always inspects the file, validates every value, and presents an interactive diff preview showing exact before-and-after values before modifying disk:
+```bash
+nmsh config import my-nmsh-settings.json
+```
+
+Use `--yes` to accept the preview non-interactively:
+```bash
+nmsh config import my-nmsh-settings.json --yes
+```
+
+### Real Portable Category IDs
+
+NMSh defines 18 exact category IDs in `src/configuration/portability.ts`. You can list them anytime using `nmsh config categories`:
+
+| Category ID | Managed Configuration Properties |
+|---|---|
+| `prompt` | Prompt provider, symbol, powerline geometry, connectors, Rich Git colors/geometry, style profiles, and module placements. |
+| `theme` | Native palette (`lavender`, `brand`, etc.), Catppuccin accent, vibrance, active theme ID, custom theme, and imported themes. |
+| `themeBridge` | Theme Bridge integrations (`fzf`, `bat`, `tmux`, `less`, `ls`, `vim`, `neovim`, `helix`). |
+| `chroma` | Semantic color treatments and presentation settings. |
+| `chrome` | UI Chrome, glyph style (`nerd` vs `safe`), and cursor appearance. |
+| `syntax` | Semantic syntax highlighting toggle, color mode, and theme. |
+| `transcript` | Transcript block styling and output folding mode (`smart`). |
+| `layout` | Composer layout (`oneLine`, `twoLine`), position (`bottom`, `top`, `flow`), and transcript presentation (`normal`, `chat`). |
+| `suggestions` | Suggestion provider and empty-buffer suggestion toggle. |
+| `providers` | Backend providers for history, pickers, directory navigation, and welcome screen. |
+| `statusStrip` | Status Strip modules, groups, and presentation. |
+| `idle` | Idle scene visuals, screensavers, and live command activity indicators. |
+| `notifications` | Command completion notifications, threshold seconds, and session notices. |
+| `tools` | Tool update checks, install suggestions, ignored tools, and update check frequency. |
+| `sessions` | Live session startup policy (`ask`, `always`, `never`), multiple session policy, session retention count, and terminal title modes. |
+| `agents` | Agent activity tracking toggle. |
+| `shell` | Default shell backend (`zsh`, `bash`, `fish`). |
+| `editor` | File/URL launcher integration (`openWith`: `auto`, `open`, `xdg-open`, or host-specific). |
+
+## Core Settings & Defaults
+
+Default values are established in `src/prompt/configuration.ts`:
+
+- **Shell Backend (`shellBackend`)**: `zsh` (Bash 4.4+ and Fish 3.1+ supported).
+- **Prompt Provider (`provider`)**: `nmsh` (Native powerline prompt with Rich Git).
+- **Composer Position (`composerPosition`)**: `bottom` (Options: `bottom`, `top`, `flow`).
+- **Composer Layout (`composerLayout`)**: `twoLine` (Options: `oneLine`, `twoLine`).
+- **Transcript Presentation (`transcriptPresentation`)**: `normal` (Options: `normal`, `chat`).
+- **Output Folding (`outputFolding`)**: `smart` (Long outputs fold into expandable blocks).
+- **Suggestions Provider (`suggestions`)**: `nmsh` (Native shell-evaluated autocompletion).
+- **History Provider (`history`)**: `native` (Structured SQLite history).
+- **Picker Provider (`picker`)**: `native` (Terminal-native interactive picker).
+- **Navigation Provider (`navigation`)**: `native` (Directory stack tracking).
+- **Welcome Screen (`welcome`)**: `vespyr` (Options: `vespyr`, `fastfetch`, `neofetch`, `macchina`, `zigfetch`, `none`).
+- **Live Session Startup (`liveSessionStartup`)**: `ask` (Prompts to reattach detached sessions).
+- **Session Retention (`sessionRetention`)**: `1000` archived transcripts.
+- **Update Checks (`updateMode`, `updateFrequency`)**: `automatic`, `daily`.
+- **Paste Preview (`pastePreview`)**: `smart` (Multiline paste confirmation review).
+- **Glyph Style (`glyphStyle`)**: `nerd` (Fallback: `safe` Unicode glyphs).
+- **Terminal Title (`terminalTitle`)**: `off` (Options: `off`, `minimal`, `verbose` via OSC 0/2 escapes).
+- **Cursor Appearance (`cursor`)**: Shape: `host`, Blink: `host`, Motion: `off`, Effect: `none`.
+
+## Context Packs Storage
+
+Installed declarative Context Packs for the Context Engine are stored in the `context-packs/` directory under NMSh's configuration directory:
+
+- **macOS**: `~/Library/Application Support/notMyShell/context-packs/`
+- **Linux**: `~/.config/nmsh/context-packs/` (or `$XDG_CONFIG_HOME/nmsh/context-packs/`)
+
+Packs can be inspected, installed, enabled, disabled, and removed via the `nmsh packs` CLI.
+
+## Runtime Directory & Sockets
+
+NMSh runs a background session service daemon. Ephemeral session sockets and stream journals are stored in a private per-user runtime directory verified at launch:
+
+- **Linux**: `$XDG_RUNTIME_DIR/nmsh/` (or `/tmp/nmsh-<uid>/` if unset)
+- **macOS**: `$TMPDIR/nmsh-<uid>/`
+- Override with the `NMSH_RUNTIME_DIR` environment variable.
