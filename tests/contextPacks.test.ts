@@ -295,3 +295,20 @@ test('`nmsh packs`: list, inspect with disclosure, confirmed install adds hidden
     assert.match(err, /Invalid Context Pack/u);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
+
+test('first-party pack modules name core icons, and every runtime module is recommended from its own project files', async () => {
+  const {isModuleIcon} = await import('../src/context/icons.js');
+  for (const parsed of firstPartyPacks()) {
+    for (const module of parsed.pack.modules) {
+      if (module.icon) assert.ok(isModuleIcon(module.icon), `${parsed.pack.id}:${module.id} names a core icon (${module.icon})`);
+      for (const segment of module.segments) if (typeof segment.icon === 'string') assert.ok(isModuleIcon(segment.icon), `${parsed.pack.id}:${module.id} segment icon ${segment.icon}`);
+    }
+  }
+  const configuration = structuredClone(DEFAULT_PROMPT_CONFIGURATION);
+  configuration.modules = configuration.modules.map(module => ({...module, visible: false}));
+  const files = new Set(['Gemfile', 'composer.json', 'global.json', 'Package.swift', 'build.zig', 'deno.json']);
+  const byModule = new Map(recommendModules(configuration, {workspaceNames: files, executables: new Set(), facts: {}}, firstPartyPacks()).map(item => [item.module, item.reasons]));
+  for (const [module, file] of [['ruby', 'Gemfile'], ['php', 'composer.json'], ['dotnet', 'global.json'], ['swift', 'Package.swift'], ['zig', 'build.zig'], ['deno', 'deno.json']]) {
+    assert.deepEqual(byModule.get(`nmsh.project:${module}`), [`${file} in this project`]);
+  }
+});

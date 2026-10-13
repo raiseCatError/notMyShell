@@ -6,7 +6,8 @@ import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import type {CapabilityDefinition} from '../src/context/capability.js';
 import {projectPackage} from '../src/context/capabilities/project.js';
-import {goRuntime, javaRuntime, nodeRuntime, pythonRuntime, rustRuntime, versionMismatch} from '../src/context/capabilities/runtimes.js';
+import {projectBuild} from '../src/context/capabilities/build.js';
+import {dartRuntime, denoRuntime, dotnetRuntime, elixirRuntime, flutterRuntime, goRuntime, javaRuntime, nodeRuntime, phpRuntime, pythonRuntime, rubyRuntime, rustRuntime, swiftRuntime, versionMismatch, zigRuntime} from '../src/context/capabilities/runtimes.js';
 import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
 import {aws, azure, gcp} from '../src/context/capabilities/cloud.js';
@@ -340,5 +341,323 @@ test('vcs.git reads stash depth and upstream from Git files, including linked wo
     assert.deepEqual(await resolve(gitExtras, {cwd: worktree, root: worktree}), {stash: 2, upstream: 'origin/main'});
     await rm(worktree, {recursive: true, force: true});
     assert.equal(await resolve(gitExtras, {cwd: root}), undefined, 'outside a repository there is nothing to read');
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('runtime facts: Ruby and PHP from the project\'s own files and the install location, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    const rbenv = join(tools, '.rbenv', 'versions', '3.3.5', 'bin');
+    await mkdir(rbenv, {recursive: true});
+    await sentinelExecutable(join(rbenv, 'ruby'), join(tools, 'RUBY_RAN'), 'ruby 9.9.9');
+    await writeFile(join(root, '.ruby-version'), 'ruby-3.2.4\n');
+    await writeFile(join(root, 'Gemfile'), 'source "https://rubygems.org"\nruby "3.1.0"\n');
+    const ruby = await resolve(rubyRuntime, {cwd: root, root, env: {PATH: rbenv}});
+    assert.deepEqual(ruby, {requested: '3.2.4', requestedFrom: '.ruby-version', active: '3.3.5', manager: 'rbenv', buildTool: 'bundler', mismatch: true});
+    await rm(join(root, '.ruby-version'));
+    assert.deepEqual((await resolve(rubyRuntime, {cwd: root, root, env: {PATH: rbenv}, fields: ['requested', 'requestedFrom']})), {requested: '3.1.0', requestedFrom: 'Gemfile', buildTool: 'bundler'});
+    assert.equal(await exists(join(tools, 'RUBY_RAN')), false);
+
+    const cellar = join(tools, 'opt', 'Cellar', 'php', '8.3.12', 'bin');
+    await mkdir(cellar, {recursive: true});
+    await sentinelExecutable(join(cellar, 'php'), join(tools, 'PHP_RAN'), 'PHP 9.9.9');
+    await writeFile(join(root, 'composer.json'), JSON.stringify({require: {php: '^8.2'}}));
+    const php = await resolve(phpRuntime, {cwd: root, root, env: {PATH: cellar}});
+    assert.deepEqual(php, {requested: '^8.2', requestedFrom: 'composer.json', active: '8.3.12', manager: 'Homebrew', buildTool: 'composer'});
+    assert.equal(await exists(join(tools, 'PHP_RAN')), false);
+    // A ruby inside the workspace is never inspected.
+    const planted = join(root, 'bin');
+    await mkdir(planted);
+    await sentinelExecutable(join(planted, 'ruby'), join(root, 'PLANTED_RAN'), 'ruby 1.0.0');
+    // An rbenv-shaped layout inside the workspace would report 6.6.6 if the boundary did not hold; home is outside it, as for a real project.
+    const layout = join(root, '.rbenv', 'versions', '6.6.6', 'bin');
+    await mkdir(layout, {recursive: true});
+    await sentinelExecutable(join(layout, 'ruby'), join(root, 'PLANTED_RAN'), 'ruby 6.6.6');
+    resetServiceCaches();
+    const refused = await resolve(rubyRuntime, {cwd: root, root, home: tools, env: {PATH: layout}});
+    assert.equal(refused?.active, undefined);
+    assert.match(refused?.note ?? '', /inside this workspace/u);
+    assert.equal((await resolve(rubyRuntime, {cwd: root, root, home: tools, env: {PATH: planted}}))?.active, undefined);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('runtime facts: .NET, Swift, Zig and Deno from the project\'s own files and the install location, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    const cellar = (name: string, version: string) => join(tools, 'opt', 'Cellar', name, version, 'bin');
+    const install = async (name: string, version: string, binary = name) => {
+      const bin = cellar(name, version);
+      await mkdir(bin, {recursive: true});
+      await sentinelExecutable(join(bin, binary), join(tools, `${name.toUpperCase()}_RAN`), `${name} 9.9.9`);
+      return bin;
+    };
+    await writeFile(join(root, 'global.json'), JSON.stringify({sdk: {version: '8.0.100'}}));
+    assert.deepEqual(await resolve(dotnetRuntime, {cwd: root, root, env: {PATH: await install('dotnet', '8.0.404')}}), {requested: '≥8.0.100', requestedFrom: 'global.json', active: '8.0.404', manager: 'Homebrew'});
+
+    await writeFile(join(root, 'Package.swift'), '// swift-tools-version: 5.9\nimport PackageDescription\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(swiftRuntime, {cwd: root, root, env: {PATH: await install('swift', '5.10.1')}}), {requested: '≥5.9', requestedFrom: 'Package.swift', active: '5.10.1', manager: 'Homebrew', buildTool: 'swiftpm'});
+
+    await writeFile(join(root, 'build.zig.zon'), '.{ .name = "x", .version = "0.1.0", .minimum_zig_version = "0.13.0" }\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(zigRuntime, {cwd: root, root, env: {PATH: await install('zig', '0.13.0')}}), {requested: '≥0.13.0', requestedFrom: 'build.zig.zon', active: '0.13.0', manager: 'Homebrew'});
+
+    await writeFile(join(root, '.dvmrc'), '2.0.0\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(denoRuntime, {cwd: root, root, env: {PATH: await install('deno', '2.1.4')}}), {requested: '2.0.0', requestedFrom: '.dvmrc', active: '2.1.4', manager: 'Homebrew', mismatch: true});
+
+    for (const name of ['DOTNET', 'SWIFT', 'ZIG', 'DENO']) assert.equal(await exists(join(tools, `${name}_RAN`)), false, `${name} was never run`);
+    // Nothing is claimed when the project asks for nothing and the demand is only for the project's own request.
+    const empty = await workspace();
+    try { assert.equal(await resolve(zigRuntime, {cwd: empty, root: empty, env: {PATH: ''}, fields: ['requested']}), undefined); } finally { await rm(empty, {recursive: true, force: true}); }
+    // A binary planted in the workspace is never inspected.
+    const planted = join(root, 'planted');
+    await mkdir(planted);
+    await sentinelExecutable(join(planted, 'deno'), join(root, 'PLANTED_RAN'), 'deno 1.0.0');
+    const layout = join(root, 'opt', 'Cellar', 'deno', '6.6.6', 'bin');
+    await mkdir(layout, {recursive: true});
+    await sentinelExecutable(join(layout, 'deno'), join(root, 'PLANTED_RAN'), 'deno 6.6.6');
+    resetServiceCaches();
+    const refused = await resolve(denoRuntime, {cwd: root, root, home: tools, env: {PATH: layout}});
+    assert.equal(refused?.active, undefined, 'a Homebrew-shaped layout inside the workspace is not inspected');
+    assert.match(refused?.note ?? '', /inside this workspace/u);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('runtime manifests with huge whitespace runs are read in linear time', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    const timed = async <V>(capability: CapabilityDefinition<V>) => {
+      const started = performance.now();
+      const value = await resolve(capability, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+      return {value, ms: performance.now() - started};
+    };
+    // A pattern whose leading whitespace may span lines restarts at every line and rescans the rest: ~0.7 s for this Gemfile.
+    const hostile = '\n \t'.repeat(21_000);
+    await writeFile(join(root, 'Gemfile'), `${hostile}gem "rails"\n`);
+    const missing = await timed(rubyRuntime);
+    assert.equal(missing.value?.requested, undefined);
+    assert.ok(missing.ms < 250, `no declaration: ${Math.round(missing.ms)} ms`);
+    await writeFile(join(root, 'Gemfile'), `${hostile}ruby "3.3.0"\n`);
+    const found = await timed(rubyRuntime);
+    assert.deepEqual(found.value, {requested: '3.3.0', requestedFrom: 'Gemfile', buildTool: 'bundler'});
+    assert.ok(found.ms < 250, `declaration after the run: ${Math.round(found.ms)} ms`);
+
+    await writeFile(join(root, 'Package.swift'), `// swift-tools-version${' \n//'.repeat(20_000)}\n`);
+    const swift = await timed(swiftRuntime);
+    assert.equal(swift.value?.requested, undefined);
+    assert.ok(swift.ms < 250, `${Math.round(swift.ms)} ms`);
+    await writeFile(join(root, 'go.mod'), `module x\n${'go \n'.repeat(15_000)}`);
+    const go = await timed(goRuntime);
+    assert.equal(go.value, undefined);
+    assert.ok(go.ms < 250, `${Math.round(go.ms)} ms`);
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('runtime manifests: declarations are read only where their tools read them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    const requested = async <V>(capability: CapabilityDefinition<V>) => resolve(capability, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    // SwiftPM reads swift-tools-version from the first line only, and real manifests are often larger than a few KiB.
+    await writeFile(join(root, 'Package.swift'), `// swift-tools-version:5.10\nimport PackageDescription\n${'// padding\n'.repeat(1000)}`);
+    assert.equal((await requested(swiftRuntime))?.requested, '≥5.10');
+    await writeFile(join(root, 'Package.swift'), 'import PackageDescription\n// swift-tools-version:5.10\n');
+    assert.equal((await requested(swiftRuntime))?.requested, undefined, 'a later line is not the declaration');
+    await writeFile(join(root, 'Package.swift'), '//\n swift-tools-version:5.10\n');
+    assert.equal((await requested(swiftRuntime))?.requested, undefined, 'the declaration does not span lines');
+    // go.mod directives are single lines; a trailing comment is allowed, a line break is not.
+    await writeFile(join(root, 'go.mod'), 'module x\r\n\r\ngo 1.22 // minimum\r\n');
+    assert.equal((await requested(goRuntime))?.requested, '1.22');
+    await writeFile(join(root, 'go.mod'), 'module x\n\ngo\n1.22\n');
+    assert.equal(await requested(goRuntime), undefined);
+    // asdf's .NET plugin is dotnet-core.
+    await writeFile(join(root, '.tool-versions'), 'dotnet-core 8.0.404\n');
+    assert.deepEqual(await requested(dotnetRuntime), {requested: '8.0.404', requestedFrom: '.tool-versions'});
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('Ruby install layouts: RVM and chruby/ruby-install rubies', () => {
+  assert.deepEqual(versionFromInstallPath('/Users/me/.rvm/rubies/ruby-3.2.2/bin/ruby'), {version: '3.2.2', manager: 'RVM'});
+  assert.deepEqual(versionFromInstallPath('/Users/me/.rubies/ruby-3.3.5/bin/ruby'), {version: '3.3.5', manager: 'chruby'});
+  assert.equal(versionFromInstallPath('/Users/me/.rubies/truffleruby-24.1.0/bin/ruby'), undefined, 'other implementations stay unknown');
+});
+
+test('runtime facts: Elixir, Dart and Flutter from the project\'s own files and the SDK\'s metadata, never by running them', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  const tools = await workspace();
+  try {
+    // Elixir: mix.exs requirement; a distribution layout (/usr/lib/elixir) is identified by its elixir.app, not by running bin/elixir.
+    const elixirHome = join(tools, 'usr', 'lib', 'elixir');
+    await mkdir(join(elixirHome, 'bin'), {recursive: true});
+    await mkdir(join(elixirHome, 'lib', 'elixir', 'ebin'), {recursive: true});
+    await sentinelExecutable(join(elixirHome, 'bin', 'elixir'), join(tools, 'ELIXIR_RAN'), 'Elixir 9.9.9');
+    await writeFile(join(elixirHome, 'lib', 'elixir', 'ebin', 'elixir.app'), '{application,elixir,\n [{description,"elixir"},\n  {vsn,"1.17.3"},\n  {modules,[]}]}.\n');
+    await writeFile(join(root, 'mix.exs'), 'defmodule App.MixProject do\n  use Mix.Project\n  def project do\n    [app: :app, version: "0.1.0", elixir: "~> 1.17", deps: deps()]\n  end\nend\n');
+    // The requirement is on a keyword line inside project/0: `elixir:` at the start of a line or after `[`.
+    await writeFile(join(root, 'mix.exs'), 'defmodule App.MixProject do\n  def project do\n    [\n      app: :app,\n      elixir: "~> 1.17",\n    ]\n  end\nend\n');
+    assert.deepEqual(await resolve(elixirRuntime, {cwd: root, root, env: {PATH: join(elixirHome, 'bin')}}),
+      {requested: '~> 1.17', requestedFrom: 'mix.exs', active: '1.17.3', buildTool: 'mix'});
+    await writeFile(join(root, '.tool-versions'), 'elixir 1.16.3-otp-26\nerlang 26.2\n');
+    resetServiceCaches();
+    const asdf = join(tools, '.asdf', 'installs', 'elixir', '1.17.3-otp-27', 'bin');
+    await mkdir(asdf, {recursive: true});
+    await sentinelExecutable(join(asdf, 'elixir'), join(tools, 'ELIXIR_RAN'), 'Elixir 9.9.9');
+    await writeFile(join(root, 'mix.exs'), 'defmodule App.MixProject do\nend\n');
+    assert.deepEqual(await resolve(elixirRuntime, {cwd: root, root, env: {PATH: asdf}}),
+      {requested: '1.16.3-otp-26', requestedFrom: '.tool-versions', active: '1.17.3-otp-27', manager: 'asdf', buildTool: 'mix'}, 'mix.exs without a requirement falls back to .tool-versions; an OTP-qualified pin is not judged');
+    await rm(join(root, '.tool-versions'));
+
+    // Dart: pubspec constraint; the SDK's own version file. Flutter's bin/dart wrapper reads the bundled SDK, not Flutter's version.
+    const dartSdk = join(tools, 'dart-sdk');
+    await mkdir(join(dartSdk, 'bin'), {recursive: true});
+    await sentinelExecutable(join(dartSdk, 'bin', 'dart'), join(tools, 'DART_RAN'), 'Dart SDK version: 9.9.9');
+    await writeFile(join(dartSdk, 'version'), '3.5.4\n');
+    await writeFile(join(root, 'pubspec.yaml'), 'name: app\nenvironment:\n  sdk: ^3.5.0\n  flutter: ">=3.24.0"\ndependencies:\n  flutter:\n    sdk: flutter\n');
+    resetServiceCaches();
+    assert.deepEqual(await resolve(dartRuntime, {cwd: root, root, env: {PATH: join(dartSdk, 'bin')}}),
+      {requested: '^3.5.0', requestedFrom: 'pubspec.yaml', active: '3.5.4', buildTool: 'pub'});
+    const flutterRoot = join(tools, 'fvm', 'versions', '3.24.3');
+    await mkdir(join(flutterRoot, 'bin', 'cache', 'dart-sdk'), {recursive: true});
+    await sentinelExecutable(join(flutterRoot, 'bin', 'flutter'), join(tools, 'FLUTTER_RAN'), 'Flutter 9.9.9');
+    await sentinelExecutable(join(flutterRoot, 'bin', 'dart'), join(tools, 'DART_RAN'), 'Dart 9.9.9');
+    await writeFile(join(flutterRoot, 'version'), '3.24.3\n');
+    await writeFile(join(flutterRoot, 'bin', 'cache', 'dart-sdk', 'version'), '3.5.3\n');
+    await writeFile(join(flutterRoot, 'bin', 'cache', 'flutter.version.json'), JSON.stringify({frameworkVersion: '3.24.3', channel: 'stable', dartSdkVersion: '3.5.3'}));
+    resetServiceCaches();
+    assert.equal((await resolve(dartRuntime, {cwd: root, root, env: {PATH: join(flutterRoot, 'bin')}}))?.active, '3.5.3', 'the bundled Dart SDK, not Flutter\'s version');
+
+    // Flutter: .fvmrc wins over pubspec; the install's flutter.version.json; FVM layout names the manager.
+    await writeFile(join(root, '.fvmrc'), JSON.stringify({flutter: '3.22.0'}));
+    resetServiceCaches();
+    assert.deepEqual(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: join(flutterRoot, 'bin')}}),
+      {requested: '3.22.0', requestedFrom: '.fvmrc', active: '3.24.3', manager: 'FVM', mismatch: true});
+    await rm(join(root, '.fvmrc'));
+    await mkdir(join(root, '.fvm'));
+    await writeFile(join(root, '.fvm', 'fvm_config.json'), JSON.stringify({flutterSdkVersion: '3.24.3'}));
+    assert.deepEqual(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}), {requested: '3.24.3', requestedFrom: 'fvm_config.json'});
+    await rm(join(root, '.fvm'), {recursive: true});
+    assert.deepEqual(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}), {requested: '>=3.24.0', requestedFrom: 'pubspec.yaml'});
+    // A pure Dart package is not a Flutter project.
+    await writeFile(join(root, 'pubspec.yaml'), 'name: cli\nenvironment:\n  sdk: ^3.5.0\n');
+    assert.equal(await resolve(flutterRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}), undefined);
+
+    // An FVM SDK linked inside the project is workspace-controlled: never inspected.
+    await writeFile(join(root, '.fvmrc'), JSON.stringify({flutter: '3.24.3'}));
+    const local = join(root, '.fvm', 'flutter_sdk', 'bin');
+    await mkdir(local, {recursive: true});
+    await sentinelExecutable(join(local, 'flutter'), join(root, 'PLANTED_RAN'), 'Flutter 1.0.0');
+    await mkdir(join(local, 'cache'));
+    await writeFile(join(local, 'cache', 'flutter.version.json'), JSON.stringify({frameworkVersion: '6.6.6'}));
+    resetServiceCaches();
+    // home is outside the workspace, as it is for a real project, so the workspace boundary applies.
+    const planted = await resolve(flutterRuntime, {cwd: root, root, home: tools, env: {PATH: local}});
+    assert.equal(planted?.active, undefined);
+    assert.match(planted?.note ?? '', /inside this workspace/u);
+    for (const name of ['ELIXIR', 'DART', 'FLUTTER']) assert.equal(await exists(join(tools, `${name}_RAN`)), false, `${name} was never run`);
+    assert.equal(await exists(join(root, 'PLANTED_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); await rm(tools, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('pubspec.yaml and mix.exs are data: aliases, tags and huge or hostile values are not expanded or trusted', async () => {
+  resetServiceCaches();
+  const root = await workspace();
+  try {
+    const bomb = 'a: &a ["x","x","x","x","x","x","x","x","x"]\n' + Array.from({length: 12}, (_, i) => `l${i}: &l${i} [${Array(9).fill(i ? `*l${i - 1}` : '*a').join(',')}]`).join('\n');
+    await writeFile(join(root, 'pubspec.yaml'), `${bomb}\nenvironment:\n  sdk: !!js/function "function(){}"\n  flutter: *l11\n`);
+    const started = performance.now();
+    const dart = await resolve(dartRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']});
+    assert.ok(performance.now() - started < 500);
+    assert.equal(dart?.requested, undefined, 'a tagged or aliased value is not a version');
+    await writeFile(join(root, 'mix.exs'), `${'\n \t'.repeat(20_000)}x\n`);
+    const elixirStarted = performance.now();
+    assert.equal((await resolve(elixirRuntime, {cwd: root, root, env: {PATH: ''}, fields: ['requested', 'requestedFrom']}))?.requested, undefined);
+    assert.ok(performance.now() - elixirStarted < 250);
+  } finally { await rm(root, {recursive: true, force: true}); resetServiceCaches(); }
+});
+
+test('install layouts: FVM and Homebrew casks', () => {
+  assert.deepEqual(versionFromInstallPath('/Users/me/fvm/versions/3.24.3/bin/flutter'), {version: '3.24.3', manager: 'FVM'});
+  assert.deepEqual(versionFromInstallPath('/opt/homebrew/Caskroom/flutter/3.24.3/flutter/bin/flutter'), {version: '3.24.3', manager: 'Homebrew'});
+  assert.deepEqual(versionFromInstallPath('/opt/homebrew/Caskroom/dotnet-sdk/8.0.404,abc123/dotnet'), {version: '8.0.404', manager: 'Homebrew'});
+});
+
+test('project.build: the build system and the version the project pins for it, without running a wrapper or build file', async () => {
+  const root = await workspace();
+  try {
+    const at = (cwd = root) => resolve(projectBuild, {cwd, root});
+    assert.equal(await at(), undefined, 'no build files, no fact');
+    await writeFile(join(root, 'Makefile'), 'all:\n\ttouch MAKE_RAN\n');
+    assert.deepEqual(await at(), {tool: 'make', file: 'Makefile'});
+
+    // Gradle: the wrapper's distributionUrl names the version; gradlew is a sentinel that must never run.
+    await writeFile(join(root, 'settings.gradle.kts'), 'rootProject.name = "app"\n');
+    await sentinelExecutable(join(root, 'gradlew'), join(root, 'GRADLEW_RAN'), 'Gradle 9.9.9');
+    await mkdir(join(root, 'gradle', 'wrapper'), {recursive: true});
+    await writeFile(join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties'),
+      'distributionBase=GRADLE_USER_HOME\r\ndistributionUrl=https\\://services.gradle.org/distributions/gradle-8.10.2-bin.zip\r\nzipStorePath=wrapper/dists\r\n');
+    assert.deepEqual(await at(), {tool: 'gradle', file: 'settings.gradle.kts', version: '8.10.2', versionFrom: 'gradle-wrapper.properties'});
+    // A subproject finds the wrapper at the root.
+    await mkdir(join(root, 'app', 'src'), {recursive: true});
+    await writeFile(join(root, 'app', 'build.gradle.kts'), 'plugins { id("java") }\n');
+    assert.deepEqual(await at(join(root, 'app', 'src')), {tool: 'gradle', file: 'build.gradle.kts', version: '8.10.2', versionFrom: 'gradle-wrapper.properties'});
+    assert.equal(await exists(join(root, 'GRADLEW_RAN')), false);
+    await rm(join(root, 'app'), {recursive: true});
+    for (const name of ['settings.gradle.kts', 'gradlew']) await rm(join(root, name));
+    await rm(join(root, 'gradle'), {recursive: true});
+
+    // Maven wrapper.
+    await writeFile(join(root, 'pom.xml'), '<project><artifactId>app</artifactId></project>');
+    await mkdir(join(root, '.mvn', 'wrapper'), {recursive: true});
+    await writeFile(join(root, '.mvn', 'wrapper', 'maven-wrapper.properties'), 'wrapperVersion=3.3.2\ndistributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.9/apache-maven-3.9.9-bin.zip\n');
+    assert.deepEqual(await at(), {tool: 'maven', file: 'pom.xml', version: '3.9.9', versionFrom: 'maven-wrapper.properties'});
+    await rm(join(root, 'pom.xml')); await rm(join(root, '.mvn'), {recursive: true});
+
+    // CMake: a subdirectory without a declaration uses the nearest one that has it; the command is case-insensitive.
+    await writeFile(join(root, 'CMakeLists.txt'), '# top\nCMAKE_MINIMUM_REQUIRED(VERSION 3.20...3.28)\nproject(app)\nadd_subdirectory(lib)\n');
+    await mkdir(join(root, 'lib'));
+    await writeFile(join(root, 'lib', 'CMakeLists.txt'), 'add_library(lib lib.c)\n');
+    assert.deepEqual(await at(join(root, 'lib')), {tool: 'cmake', file: 'CMakeLists.txt', version: '≥3.20', versionFrom: 'CMakeLists.txt'});
+    await rm(join(root, 'lib'), {recursive: true}); await rm(join(root, 'CMakeLists.txt'));
+
+    await writeFile(join(root, 'meson.build'), "project('app', 'c',\n  version : '1.0',\n  meson_version : '>= 1.1.0')\n");
+    assert.deepEqual(await at(), {tool: 'meson', file: 'meson.build', version: '≥1.1.0', versionFrom: 'meson.build'});
+    await rm(join(root, 'meson.build'));
+
+    // Bazel: the nearest marker wins over a Makefile in the same directory; .bazelversion is Bazelisk's pin.
+    await writeFile(join(root, 'MODULE.bazel'), 'module(name = "app")\n');
+    await writeFile(join(root, '.bazelversion'), '7.4.1\n');
+    assert.deepEqual(await at(), {tool: 'bazel', file: 'MODULE.bazel', version: '7.4.1', versionFrom: '.bazelversion'});
+    assert.deepEqual(await resolve(projectBuild, {cwd: root, root, fields: ['tool']}), {tool: 'bazel', file: 'MODULE.bazel'}, 'versions only on demand');
+    assert.equal(await exists(join(root, 'MAKE_RAN')), false);
+  } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('project.build: hostile build metadata is bounded text, never a version it does not state', async () => {
+  const root = await workspace();
+  try {
+    await writeFile(join(root, 'settings.gradle'), '');
+    await mkdir(join(root, 'gradle', 'wrapper'), {recursive: true});
+    const properties = join(root, 'gradle', 'wrapper', 'gradle-wrapper.properties');
+    await writeFile(properties, `distributionUrl=https://evil.example/gradle-8.10.2-bin.zip\u001b]8;;x\u0007\n`);
+    assert.equal((await resolve(projectBuild, {cwd: root, root}))?.version, undefined, 'a value with trailing controls is not a version');
+    await writeFile(properties, `${'distributionUrl'.repeat(4000)}=${' '.repeat(4000)}\n`);
+    assert.equal((await resolve(projectBuild, {cwd: root, root}))?.version, undefined);
+    await rm(properties);
+    await symlink('/etc/passwd', properties);
+    assert.equal((await resolve(projectBuild, {cwd: root, root}))?.version, undefined, 'symlinked metadata is not read');
+    await rm(join(root, 'gradle'), {recursive: true}); await rm(join(root, 'settings.gradle'));
+    await writeFile(join(root, 'CMakeLists.txt'), `${'\n \t'.repeat(20_000)}x\n`);
+    const started = performance.now();
+    assert.deepEqual(await resolve(projectBuild, {cwd: root, root}), {tool: 'cmake', file: 'CMakeLists.txt'});
+    assert.ok(performance.now() - started < 250);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
