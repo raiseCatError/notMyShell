@@ -1,0 +1,128 @@
+---
+title: Commands & Flags
+description: Complete reference for NMSh CLI arguments, maintenance subcommands, and slash-commands.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+notMyShell maintains a clean boundary between its own control plane and your shell's namespace. The `nmsh` executable is used to launch the frontend, reattach daemon sessions, and run maintenance commands outside of an interactive terminal session. Inside an active session, **slash commands** (`/`) control the frontend.
+
+## CLI Flags & Arguments
+
+When launching `nmsh` from your terminal:
+
+| Invocation | Action |
+|---|---|
+| `nmsh` | Default launch. Attaches to an available detached session, or opens the interactive Startup Picker if multiple detached sessions exist. If none exist, launches a new session. |
+| `nmsh --new` | Start a fresh session, bypassing the Startup Picker and ignoring detached sessions. |
+| `nmsh --sessions` | List all live daemon sessions with their state (`attached` vs `detached`), session ID, and duration. |
+| `nmsh --attach <session-id>` | Explicitly attach to a specific live session ID. Fails with an exit code if the session is already attached elsewhere. |
+| `nmsh --presets` | List configured startup presets, their working directory, and startup commands. |
+| `nmsh --preset <name>` | Launch a new session initialized with the specified session preset. |
+| `nmsh --version` | Print NMSh build identity, version, commit, and platform architecture. |
+
+> **Recursive Protection**: Launching `nmsh` from within an already NMSh-managed shell is rejected (`NESTED_NMSH_MESSAGE`). NMSh refuses to nest frontend instances.
+
+---
+
+## Maintenance Subcommands
+
+These CLI subcommands run non-interactively or in maintenance mode, and can be safely executed from outside or inside an NMSh session:
+
+### `nmsh config` — Configuration Management
+- `nmsh config path`: Prints the absolute path to `config.json`.
+- `nmsh config categories`: Lists all 18 portable settings categories (`prompt`, `theme`, `themeBridge`, `chroma`, `chrome`, etc.).
+- `nmsh config export [--categories a,b] [--output FILE [--force]]`: Exports settings to JSON (stdout by default). Never exports sensitive paths, credentials, history, or transcripts.
+- `nmsh config import FILE [--categories a,b] [--yes]`: Validates and previews changes, showing an interactive diff before prompting to apply.
+
+### `nmsh doctor` — Environment Health Check
+Prints a short, pasteable diagnostic report for issue reports and troubleshooting. Contains no secrets, command history, or environment dumps:
+- Reports NMSh version and installation provenance (e.g. Homebrew tap vs npm global).
+- Node version, OS platform, architecture, and kernel support tier.
+- Terminal host identification and detected VT capabilities.
+- Active providers for prompt, suggestions, history, navigation, and pickers.
+- Default shell backend executable path, configuration path, and daemon runtime directory.
+
+### `nmsh uninstall` — Clean Removal
+```bash
+nmsh uninstall [--dry-run] [--delete-data] [--yes]
+```
+- Removes the `nmsh` launcher links created during installation after displaying an interactive preview.
+- Settings, transcripts, and telemetry are preserved unless `--delete-data` is specified.
+- **Shell configuration files (`~/.zshrc`, `~/.bashrc`, `~/.config/fish/config.fish`) are never modified.**
+
+### `nmsh packs` — Context Engine Packs
+- `nmsh packs` or `nmsh packs list`: List all bundled and installed declarative Context Packs.
+- `nmsh packs inspect FILE`: Validate a pack manifest and display what capabilities and files it reads.
+- `nmsh packs install FILE [--sha256 HEX] [--replace] [--yes]`: Installs a pack into `context-packs/`. Modules start hidden until toggled in `/prompt`.
+- `nmsh packs remove ID [--yes]`: Removes an installed pack and cleans up its module configuration entries.
+- `nmsh packs enable ID` / `disable ID`: Toggles an installed pack on or off.
+
+### `nmsh agent-status` — Coding Assistant Integration
+- `nmsh agent-status`: Shows whether Claude Code is configured to report to NMSh, along with the most recent status report.
+- `nmsh agent-status setup [--yes]`: Shows the exact setting modification before configuring NMSh as Claude Code's status line.
+- `nmsh agent-status remove [--yes]`: Cleanly removes the status line NMSh added.
+- `nmsh agent-status claude`: The bridge handler invoked by Claude Code with JSON on stdin.
+
+---
+
+## Slash Commands (Internal Frontend UI)
+
+Type `/` in the composer to open the Command Palette, or use `Ctrl+Shift+P` / `F1`.
+
+### Appearance & Themes
+| Command | Description |
+|---|---|
+| `/theme` | Open Theme Studio: choose, edit, import, or export themes. |
+| `/theme-bridge` | Open Theme Bridge: synchronize NMSh themes to `fzf`, `bat`, `tmux`, `less`, `vim`, `neovim`, and `helix`. |
+| `/appearance` | Configure terminal appearance, theme family, and colors. |
+| `/chroma` | Open Chroma: configure prompt palettes, motion, and custom gradients. |
+| `/chrome` | Configure UI Chrome: rules, frames, tabs, and accents. |
+| `/cursor` | Configure text caret shape, blink, and effects. |
+| `/motion` | Configure UI motion: context transitions, command launch, and completion effects. |
+| `/glyphs` | Configure glyph styles: switch between Nerd Font icons and Safe Unicode symbols. |
+| `/strip` (or `/status-strip`) | Status Strip Studio: configure bottom/top bar groups, telemetry, and live preview. |
+| `/screensaver` | Idle visuals: configure screensavers, timeouts, and colors (`/screensaver start` launches immediately). |
+| `/activity` | Live command activity indicators and colors. |
+
+### Composer, Prompt & Transcript
+| Command | Description |
+|---|---|
+| `/prompt` | Configure prompt styles, powerline connectors, and layout. |
+| `/modules` | Configure and route Context Engine modules to surfaces. |
+| `/layout` (or `/composer`) | Select composer docking (`bottom`, `top`, `flow`) and transcript format (`normal`, `chat`). |
+| `/syntax` | Configure syntax highlighting colors and token presentation. |
+| `/transcript` | Configure transcript formatting, dividers, and output folding. |
+| `/keyboard` | Configure keyboard protocol and shortcut handling. |
+| `/copy [N]` | Copy the latest output without ANSI escapes (`/copy N` copies Nth previous output). |
+| `/find [term]` | In-transcript search (`Ctrl+F`). Supports regex (`-r`), case-matching (`-c`), and term removal. |
+| `/filter [term]`| Filter transcript rows for focused output. Supports invert (`-v`) and context rows (`-C N`). |
+| `/clear` | Archive the current viewport and start a clean transcript buffer (history is preserved). |
+
+### Tools & Integrations
+| Command | Description |
+|---|---|
+| `/tools` | Browse curated shell tools, installation previews, and configuration. |
+| `/caffeinate` (or `/awake`, `/zoomies`) | Keep Awake: prevent computer or display from sleeping (`idle`, `display`, `system`, `all`; optional duration like `30m`). |
+| `/tmux` | tmux Config Studio: configure settings, status line, and pane integration. |
+| `/integrations` | Inspect health of managed integrations. |
+| `/dotfiles <path>` | Import settings from a dotfiles directory or Git repo (reviewed, never executed). |
+| `/configure <tool>`| Configure supported third-party tools. |
+
+### Shell & Session Control
+| Command | Description |
+|---|---|
+| `/shell [zsh|fish|bash]`| Switch the running session's shell backend in place without restarting NMSh. |
+| `/sessions` | View and manage live sessions; switch between detached sessions or kill a session. |
+| `/resume` | Browse and view archived session transcripts. |
+| `/presets` | Create, inspect, and launch named session presets. |
+| `/zsh`, `/fish`, `/bash` | Escape NMSh and hand off the terminal to an ordinary interactive shell. Running `nmsh` there returns back to this session. |
+| `/exit` | Exit NMSh and hand off to your configured default shell. |
+| `/rename <name>` | Rename the active live session for display identification. |
+| `/watch <cmd>` | Run a command repeatedly and highlight changes (`/watch git status --every 10s`). |
+| `/btw [question]` (or `/ask`) | Query local intelligence for command assistance. |
+| `/ai` | View or launch coding agent harnesses (`/ai claude`). |
+| `/doctor` | Run an in-session health check. |
+| `/update` | Check for updates (`/update apply` installs available releases). |

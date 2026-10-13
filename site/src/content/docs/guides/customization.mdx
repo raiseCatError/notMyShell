@@ -1,0 +1,64 @@
+---
+title: Themes and Customization
+description: How to customize NMSh appearance, Theme Studio, and Theme Bridge.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh is highly customizable, allowing you to tailor the prompt, colors, cursor, and more to your liking.
+
+## Theme Studio (`/theme`)
+
+The Theme Studio is your central hub for managing your palette. It contains tabs for:
+
+- **Built-in**: The standard themes shipped with NMSh (e.g., Lavender Native).
+- **Imported**: Themes imported from other formats.
+- **Custom**: Themes you have edited or created.
+- **Import**: Tools to bring in themes from external sources.
+
+You can preview any theme live against synthetic prompt data before applying it.
+
+### Imports
+
+NMSh supports importing colors (data only) from a wide variety of formats:
+
+- NMSh Theme JSON
+- Base16 / Base24
+- Windows Terminal
+- Oh My Posh (JSON, YAML, TOML)
+- Kitty
+- Ghostty (allowlist)
+- iTerm2 (`.itermcolors`)
+- WezTerm (TOML only, Lua is refused)
+
+## Theme Bridge (`/theme-bridge`)
+
+Theme Bridge extends your active NMSh theme to external tools. It is **opt-in** and strictly uses data configurations without sourcing arbitrary shell scripts.
+
+You can apply themes **Manually** (per tool) or **Follow NMSh** globally.
+
+Supported targets:
+- `fzf`
+- `less` / `man`
+- File listing colors (GNU `ls` with `vivid`, or BSD `ls` with `LSCOLORS`)
+- `tmux`
+- `Neovim`
+- `Vim`
+- `Helix`
+- `bat`
+
+> **Note on `delta`:** NMSh never manages `delta` directly (it does not modify git config). However, once `bat` is configured to follow NMSh, `delta` will automatically inherit the syntax highlighting colors.
+
+## Appearance Panel (`/appearance`)
+
+The `/appearance` command acts as a compact launcher for all visual settings:
+- Theme Studio
+- Prompt configuration
+- Cursor & effects
+- UI chrome
+- Chroma (color treatments)
+- Motion
+- Theme Bridge
+- Host window configuration

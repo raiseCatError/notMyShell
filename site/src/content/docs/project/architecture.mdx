@@ -1,0 +1,33 @@
+---
+title: Architecture
+description: How notMyShell works end-to-end.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh is a terminal frontend over a persistent real shell session. It intercepts input, provides its own UI for composition and history, and passes execution to a real shell running in a pseudo-terminal (PTY).
+
+## The Runtime Path
+
+1. **Terminal Host**: Your terminal emulator (Ghostty, Terminal.app, WezTerm, etc.) captures keystrokes and renders the cells that NMSh sends it.
+2. **NMSh Frontend**: Owns the composer, transcript, menus, and theming. It parses input for syntax highlighting and suggestions, but **never executes partial input**.
+3. **Session Service (`nmshd`)**: A small background daemon that holds the PTY. This is what allows sessions to detach and reattach.
+4. **ShellAdapter**: The abstraction layer that translates NMSh commands to the specific shell (zsh, Bash, or Fish) and manages shell state safely.
+5. **Real Shell**: The actual `zsh`, `bash`, or `fish` process executing commands.
+
+## Invariants
+
+The NMSh architecture strictly enforces several invariants:
+- **No replacement shell**: NMSh does not reimplement the shell. Job control, parsing, aliases, and environment variables are exactly what your real shell provides.
+- **Raw output remains raw**: PTY output is kept safe. NMSh does not semantically recolor arbitrary PTY output.
+- **Fullscreen Passthrough**: When a program requests the alternate screen or enables mouse reporting (like `vim` or `htop`), NMSh steps completely out of the way.
+- **Safety boundaries**: Theme imports and dotfiles are treated as data, parsed via bounded parsers. Shell config is executable and is never silently modified or sourced.
+
+## Supported Platforms
+
+NMSh is host-independent.
+- **Operating Systems**: macOS (Homebrew/source), Linux (beta), Windows (via WSL 2).
+- **Terminals**: Ghostty and Terminal.app are physically validated. Kitty, iTerm2, WezTerm, and Zed are supported via capability profiles.
+- **Shells**: zsh (default), Bash 4.4+, Fish.
