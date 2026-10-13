@@ -295,3 +295,16 @@ test('`nmsh packs`: list, inspect with disclosure, confirmed install adds hidden
     assert.match(err, /Invalid Context Pack/u);
   } finally { await rm(root, {recursive: true, force: true}); }
 });
+
+test('Mercurial and Jujutsu modules: a bookmark wins over the branch; jj states only what its directory shows', () => {
+  const now = Date.now();
+  const hg = moduleDefinition('nmsh.vcs:hg')!;
+  const jj = moduleDefinition('nmsh.vcs:jj')!;
+  const render = (definition: typeof hg, facts: ContextFacts) => declarativeSegments(definition, facts, {icons: 'nerd', glyphs: 'safe', now, purpose: 'display'}).map(segment => segment.text);
+  assert.deepEqual(render(hg, {'vcs.hg': fact({branch: 'stable', bookmark: 'feature-x'})} as ContextFacts), ['hg feature-x']);
+  assert.deepEqual(render(hg, {'vcs.hg': fact({branch: 'stable'})} as ContextFacts), ['hg stable']);
+  assert.deepEqual(render(jj, {'vcs.jj': fact({repository: true, colocated: true, workspace: 'main'})} as ContextFacts), ['jj · colocated']);
+  assert.deepEqual(render(jj, {'vcs.jj': fact({repository: true, colocated: false, workspace: 'secondary'})} as ContextFacts), ['jj · secondary workspace']);
+  assert.deepEqual(render(jj, {} as ContextFacts), [], 'nothing outside a Jujutsu repository');
+  assert.ok(!firstPartyDefaultModules().find(module => module.id === 'nmsh.vcs:hg')?.visible, 'new modules start hidden: no demand until chosen');
+});

@@ -90,6 +90,7 @@ large repository, with generous p95 budgets enforced in CI.
 |---|---|
 | `project.package` | the nearest declarative manifest up to the repository root (`package.json`, `Cargo.toml`, `pyproject.toml`, `go.mod`, `deno.json`, `composer.json`, `pubspec.yaml`, `pom.xml`, `Project.toml`, `setup.cfg`) and lockfile names |
 | `runtime.node`, `runtime.python`, `runtime.go`, `runtime.rust`, `runtime.java` | version pins (`.nvmrc`, `.python-version`, `go.mod`, `rust-toolchain.toml`, `.java-version`, `.tool-versions`, `mise.toml`, …), virtualenv/conda metadata, rustup settings, and the version of the executable the shell would run **from its install layout** (`node_version.h`, `GOROOT/VERSION`, the JDK `release` file, a versioned interpreter path) — never by running it |
+| `vcs.hg`, `vcs.jj` | the nearest `.hg` or `.jj` directory found upward from the working directory (stopping at home when below it): `.hg/branch` and `.hg/bookmarks.current`; whether `.jj/repo` is the store or a secondary workspace's pointer and whether Git is colocated. `hg` and `jj` are never run, hgrc/hooks and jj's binary operation log are never read |
 | `env.toolVersions` | the `[tools]` table of `mise.toml` or `.tool-versions` lines |
 | `env.direnv` | whether `.envrc` exists (never its content) and what direnv itself recorded in the shell (`DIRENV_FILE`) |
 | `infra.kubernetes`, `infra.docker` | `current-context` and contexts of KUBECONFIG files (users and `exec` entries are never read); the Docker CLI's current context |
@@ -125,7 +126,7 @@ first-party catalog adds modules through bundled Context Packs:
 | Infrastructure (`nmsh.infrastructure`) | Terraform/OpenTofu, Helm, Pulumi (show on command) |
 | Cloud (`nmsh.cloud`) | AWS, Google Cloud, Azure (show on command) |
 | System (`nmsh.system`) | OS, user/host/SSH, jobs, session duration, time, battery, memory |
-| VCS (`nmsh.vcs`) | Git stash, upstream (in a repository) |
+| VCS (`nmsh.vcs`) | Git stash, upstream (in a repository); Mercurial bookmark/branch and Jujutsu repository (start hidden) |
 | Agents (`nmsh.agents`) | Claude Code session, Claude Code limits (show on command) |
 
 Show-on-command modules appear while you type a related command (`kubectl`,
