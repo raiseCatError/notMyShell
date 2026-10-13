@@ -23,16 +23,18 @@ class FixtureClient extends EventEmitter<SessionClientEvents> implements Session
 }
 
 for (const mode of ['in-process', 'service'] as const) {
-  test(`stopped ${mode} frontend ignores a late prompt without restarting work or changing cwd`, () => {
+  test(`stopped ${mode} frontend ignores late prompt and exec events without restarting work or changing cwd`, () => {
     const isolation = isolateConfig();
     const client = new FixtureClient();
     const app = new TerminalApp({client, mode, shell: 'fish'});
     let collections = 0;
     let projections = 0;
+    let executions = 0;
     try {
       app['render'] = () => {};
       app['refreshContext'] = async () => { collections += 1; };
       app['hostSemantics'].prompt = () => { projections += 1; };
+      app['hostSemantics'].exec = () => { executions += 1; };
       const stamp = (seq: number) => mode === 'service' ? {seq, at: 1234} : {at: 1234};
       client.emit('prompt', {cwd: '/fixture/active', exitCode: 0}, stamp(1));
       assert.equal(collections, 1, 'an active prompt still requests context');
@@ -50,6 +52,11 @@ for (const mode of ['in-process', 'service'] as const) {
       assert.equal(app['context'], before.context);
       assert.equal(app['context'].cwd, '/fixture/active');
       assert.equal(app['streamSeq'], before.seq, 'a discarded prompt is not acknowledged');
+      client.emit('exec', 'vim notes.txt', stamp(3));
+      assert.equal(executions, 0, 'shutdown must not project another exec');
+      assert.equal(app['running'], undefined, 'shutdown must not claim another foreground command');
+      assert.equal(app['passthrough'], false, 'shutdown must not hand the terminal to a new owner');
+      assert.equal(app['streamSeq'], before.seq, 'a discarded exec is not acknowledged');
     } finally {
       app['stop'](0);
       client.kill();
@@ -82,7 +89,10 @@ for (const boundary of ['exit-before-run', 'late-passthrough-after-stop'] as con
       modes.length = 0; // Observe only attempted input ownership after shutdown.
       let saves = 0;
       app['transcriptStore'].save = async () => { saves += 1; };
+      let observations = 0;
+      app['renderer'].observePassthrough = () => { observations += 1; };
       if (boundary === 'late-passthrough-after-stop') client.emit('data', '', {});
+      assert.equal(observations, 0, 'shutdown must not accept more foreground terminal state');
       assert.equal(await app.run(), 17, 'the original session exit remains authoritative');
       assert.deepEqual(modes, [], 'shutdown cannot be followed by a new raw-mode transition');
       assert.equal(saves, 0, 'an already stopped launch starts no journal');
