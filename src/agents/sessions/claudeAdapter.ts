@@ -62,6 +62,20 @@ function toolTarget(input: unknown): string | undefined {
   return undefined;
 }
 
+/**
+ * What a permission prompt is about, in full enough that it cannot hide anything: a command shows every line (line
+ * breaks as ` ⏎ `, a cut says how much is not shown); other tools use their factual target. The complete input stays
+ * available in the approval's details.
+ */
+export function approvalTarget(input: unknown): string | undefined {
+  const command = input && typeof input === 'object' ? (input as Record<string, unknown>).command : undefined;
+  if (typeof command === 'string' && command.trim()) {
+    const flat = command.replace(/\r?\n/gu, ' ⏎ ');
+    return flat.length <= 600 ? flat : `${flat.slice(0, 600)}… (${flat.length - 600} more characters; see details)`;
+  }
+  return toolTarget(input);
+}
+
 const textOf = (content: unknown): string => typeof content === 'string' ? content
   : Array.isArray(content) ? content.map(part => (part && typeof part === 'object' && (part as {type?: unknown}).type === 'text' ? String((part as {text?: unknown}).text ?? '') : '')).join('') : '';
 
@@ -138,7 +152,7 @@ export function claudeEvents(line: string): {events: AgentEvent[]; control?: {re
     const request = message.request as {subtype?: unknown; tool_name?: unknown; input?: unknown} | undefined;
     const subtype = typeof request?.subtype === 'string' ? request.subtype : 'unknown';
     const tool = typeof request?.tool_name === 'string' ? request.tool_name : undefined;
-    const target = toolTarget(request?.input);
+    const target = approvalTarget(request?.input);
     const questions = tool === 'AskUserQuestion' ? claudeQuestions(request?.input) : undefined;
     return {events: subtype === 'can_use_tool' && tool ? tool === 'AskUserQuestion' ? questions ? [{kind: 'choice', requestId: message.request_id, questions}] : [] : [{kind: 'approval', requestId: message.request_id, tool, ...(target ? {target} : {}), ...(request?.input && typeof request.input === 'object' ? {input: request.input as Record<string, unknown>} : {})}] : [],
       control: {requestId: message.request_id, subtype, ...(tool ? {tool} : {}), input: request?.input}};
