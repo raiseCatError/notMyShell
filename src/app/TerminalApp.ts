@@ -789,7 +789,7 @@ export class TerminalApp {
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
-    this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
+    this.session.on('data', (data, stamp) => { if (!this.stopped && this.inStream(stamp)) this.onShellData(data); });
     this.session.on('prompt', (marker, stamp) => {
       // Buffered prompts after shutdown cannot restart collection or queue work.
       if (!this.stopped && this.inStream(stamp)) {
@@ -809,7 +809,7 @@ export class TerminalApp {
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
-    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
+    this.session.on('exec', (command, stamp) => { if (!this.stopped && this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('inputState', state => this.onInputState(state));
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
@@ -894,8 +894,8 @@ export class TerminalApp {
   private attachedSession?: AttachedSession;
   private continuedJournal?: TranscriptSession;
   private rendererEntered = false;
-  /** Late replay can establish fullscreen ownership while startup awaits its journal. */
-  private attachedPassthroughReady?: () => void;
+  /** Current fullscreen ownership can release startup while its journal awaits IO. */
+  private startupPassthroughReady?: () => void;
 
   /** Drop stream events the transcript already has (exactly-once replay). */
   private inStream(stamp: StreamStamp): boolean {
@@ -965,22 +965,19 @@ export class TerminalApp {
       this.cancelPresentation();
       this.passthrough = true;
       this.noteForeignScreen();
-      this.attachedModes = attached.modes ?? '';
+      this.commandModes.reset('alternate');
+      this.commandModes.observeModes(attached.modes ?? '');
       if (this.rendererEntered) this.enterAttachedPassthrough();
-      else this.attachedPassthroughReady?.();
+      else this.startupPassthroughReady?.();
     }
     this.scheduleJournal();
     this.render();
   }
 
-  /** The reattached fullscreen app's own terminal modes, which this terminal never received. */
-  private attachedModes = '';
-
   private enterAttachedPassthrough(): void {
     // Reattached into a fullscreen app: hand it the whole terminal again,
     // including the mouse/paste/cursor-key modes it set before the detach.
-    this.handOverTerminal(this.attachedModes);
-    this.attachedModes = '';
+    this.handOverTerminal(this.commandModes.restoreSequence());
   }
 
   /**
@@ -998,9 +995,16 @@ export class TerminalApp {
     if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
     this.keyDecoder.reset();
     this.terminalFocus = 'unknown';
+    if (!this.rendererEntered) {
+      // Entry clears the screen. Wake startup first, then resize exactly once
+      // after entry so the program's resulting repaint cannot be erased.
+      this.startupPassthroughReady?.();
+      return;
+    }
     this.renderer.suspendForPassthrough(restore);
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
+    this.startupPassthroughReady?.();
   }
 
   private onActiveModeChange(mode: PresentationMode): void {
@@ -1025,7 +1029,7 @@ export class TerminalApp {
     if (this.running) {
       this.running.awaitingExec = false;
       this.running.historyAllowed = historyAllowed;
-      if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
         this.cancelPresentation();
         this.passthrough = true;
         this.noteForeignScreen();
@@ -1039,6 +1043,12 @@ export class TerminalApp {
       this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed};
+    if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      this.cancelPresentation();
+      this.passthrough = true;
+      this.noteForeignScreen();
+      this.handOverTerminal();
+    }
     this.scheduleJournal();
     if (!this.replaying) this.render();
   }
@@ -1100,6 +1110,7 @@ export class TerminalApp {
     // Initialize the journal before input can schedule snapshots, but do not wait
     // for disk IO before restoring a fullscreen program's terminal and size.
     // The journal serializes saves and acknowledges only durable checkpoints.
+    let journalSettled = false;
     const journalStarted = (this.continuedJournal
       ? this.journal.continue(this.continuedJournal)
       : this.journal.start()).then(() => {
@@ -1107,15 +1118,19 @@ export class TerminalApp {
     }, () => {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
       this.render();
-    });
+    }).finally(() => { journalSettled = true; });
     // A fresh ordinary frontend must first publish its journal identity so an
     // immediate detach can continue that journal. An already-owned terminal
     // must instead restore its raw input and full size without waiting on IO.
-    if (!this.passthrough) {
-      // Replay may establish ownership after this wait begins. Ordinary
-      // startup still waits for persistence; fullscreen input must not do so.
-      await Promise.race([journalStarted, new Promise<void>(resolve => { this.attachedPassthroughReady = resolve; })]);
-      this.attachedPassthroughReady = undefined;
+    while (!this.stopped && !this.passthrough && !journalSettled) {
+      // Replay or the next foreground command can establish ownership while
+      // persistence waits. A completion in the same socket batch can withdraw
+      // it again, so each wakeup must check the current owner before proceeding.
+      try {
+        await Promise.race([journalStarted, new Promise<void>(resolve => { this.startupPassthroughReady = resolve; })]);
+      } finally {
+        this.startupPassthroughReady = undefined;
+      }
     }
     // A shell exit or shutdown during startup cannot reinstall frontend input.
     if (!this.stopped) {
@@ -3160,6 +3175,9 @@ export class TerminalApp {
     this.noteActivity();
     if (this.passthrough) {
       this.prepareRawInput();
+      // Raw bytes still reach the host now; retain only their bounded mode
+      // state so renderer entry cannot replace the current owner's modes.
+      if (!this.rendererEntered) this.commandModes.observeModes(data);
       this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
@@ -3293,6 +3311,7 @@ export class TerminalApp {
     this.queryExtractor.reset();
     if (this.passthrough) {
       this.passthrough = false;
+      this.commandModes.reset();
       // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
       this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
