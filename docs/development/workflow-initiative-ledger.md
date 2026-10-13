@@ -1,5 +1,8 @@
 # Workflow initiative ledger
 
+Current gate (2026-10-14): **freeze PENDING**. Input feature/fix `c350df5` passed exact-head canonical, comprehensive CI 38440579314 and actual PR CI 38441325243. Queue local `5bbc2f8` passed canonical; the driver stopped before Amber at a deliberate next-head guard, without interrupting a test. New unpublished production fix `5053677` handles SIGTERM/SIGHUP before probe/journal awaits and prevents journal creation after probe shutdown. Controlled original and registration-only regressions failed before the complete fix; focused checks, strict test typechecking, build/core/diff and read-only review pass. Fresh exact-commit canonical session `48373` is active. The remaining candidate heads, limitations and continuation are authoritative in the handoff. Older entries below are historical evidence, not current freeze acceptance.
+
+
 Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-13.
 
 ## Current stabilization checkpoint
