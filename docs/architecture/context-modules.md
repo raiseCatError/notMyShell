@@ -93,6 +93,7 @@ large repository, with generous p95 budgets enforced in CI.
 | `runtime.node`, `runtime.python`, `runtime.go`, `runtime.rust`, `runtime.java` | version pins (`.nvmrc`, `.python-version`, `go.mod`, `rust-toolchain.toml`, `.java-version`, `.tool-versions`, `mise.toml`, …), virtualenv/conda metadata, rustup settings, and the version of the executable the shell would run **from its install layout** (`node_version.h`, `GOROOT/VERSION`, the JDK `release` file, a versioned interpreter path) — never by running it |
 | `runtime.ruby`, `runtime.php`, `runtime.dotnet`, `runtime.swift`, `runtime.zig`, `runtime.deno` | `.ruby-version` and the Gemfile's `ruby "x"`, `.php-version` and `composer.json` `require.php`, `global.json` `sdk.version`, `.swift-version` and the first line of `Package.swift` (`swift-tools-version`), `build.zig.zon` `minimum_zig_version` and `.zigversion`, `.dvmrc`, plus `.tool-versions`/`mise.toml`; the active version only from the executable's install layout (Homebrew, mise, asdf, rbenv, RVM, chruby) — never by running it. Floors (`global.json` without `rollForward: disable`, `swift-tools-version`, `minimum_zig_version`) show as `≥x` and are never judged as a mismatch |
 | `runtime.elixir`, `runtime.dart`, `runtime.flutter` | `mix.exs`'s `elixir:` requirement (text, never evaluated), `pubspec.yaml` `environment.sdk`/`environment.flutter` (failsafe YAML), `.fvmrc`/`.fvm/fvm_config.json`, `.tool-versions`/`mise.toml`; the active version from the install layout (Homebrew, asdf, mise, FVM, casks) or the SDK's own metadata (`lib/elixir/ebin/elixir.app`, the Dart SDK's `version`, Flutter's `bin/cache/flutter.version.json`) — never by running `elixir`, `dart` or `flutter`. Flutter applies only to a package that depends on the Flutter SDK or pins one with FVM |
+| `vcs.hg`, `vcs.jj` | the nearest `.hg` or `.jj` directory found upward from the working directory (stopping at home when below it): `.hg/branch` and `.hg/bookmarks.current`; whether `.jj/repo` is the store or a secondary workspace's pointer and whether Git is colocated. `hg` and `jj` are never run, hgrc/hooks and jj's binary operation log are never read |
 | `env.toolVersions` | the `[tools]` table of `mise.toml` or `.tool-versions` lines |
 | `env.direnv` | whether `.envrc` exists (never its content) and what direnv itself recorded in the shell (`DIRENV_FILE`) |
 | `infra.kubernetes`, `infra.docker` | `current-context` and contexts of KUBECONFIG files (users and `exec` entries are never read); the Docker CLI's current context |
@@ -128,7 +129,7 @@ first-party catalog adds modules through bundled Context Packs:
 | Infrastructure (`nmsh.infrastructure`) | Terraform/OpenTofu, Helm, Pulumi (show on command) |
 | Cloud (`nmsh.cloud`) | AWS, Google Cloud, Azure (show on command) |
 | System (`nmsh.system`) | OS, user/host/SSH, jobs, session duration, time, battery, memory |
-| VCS (`nmsh.vcs`) | Git stash, upstream (in a repository) |
+| VCS (`nmsh.vcs`) | Git stash, upstream (in a repository); Mercurial bookmark/branch and Jujutsu repository (start hidden) |
 | Agents (`nmsh.agents`) | Claude Code session, Claude Code limits (show on command) |
 
 Show-on-command modules appear while you type a related command (`kubectl`,

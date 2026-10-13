@@ -12,7 +12,7 @@ import {direnv, toolVersions} from '../src/context/capabilities/environment.js';
 import {docker, helmChart, kubernetes, pulumi, terraform} from '../src/context/capabilities/infrastructure.js';
 import {aws, azure, gcp} from '../src/context/capabilities/cloud.js';
 import {clock, operatingSystem, sessionDuration, sessionJobs, sessionUser} from '../src/context/capabilities/system.js';
-import {gitExtras} from '../src/context/capabilities/vcs.js';
+import {gitExtras, jujutsu, mercurial} from '../src/context/capabilities/vcs.js';
 import {resetServiceCaches, versionFromInstallPath} from '../src/context/services.js';
 import {CORE_CAPABILITIES} from '../src/context/registry.js';
 
@@ -660,4 +660,47 @@ test('project.build: hostile build metadata is bounded text, never a version it 
     assert.deepEqual(await resolve(projectBuild, {cwd: root, root}), {tool: 'cmake', file: 'CMakeLists.txt'});
     assert.ok(performance.now() - started < 250);
   } finally { await rm(root, {recursive: true, force: true}); }
+});
+
+test('vcs.hg and vcs.jj: Mercurial and Jujutsu state from their own directories, found upward without Git, never by running hg or jj', async () => {
+  const home = await workspace();
+  try {
+    const repo = join(home, 'src', 'project');
+    const deep = join(repo, 'a', 'b');
+    await mkdir(join(repo, '.hg'), {recursive: true});
+    await mkdir(deep, {recursive: true});
+    // No .hg/branch: the default branch. The Git-derived root is absent, as it is in a Mercurial-only repository.
+    assert.deepEqual(await resolve(mercurial, {cwd: deep, home}), {branch: 'default'});
+    await writeFile(join(repo, '.hg', 'branch'), 'stable\n');
+    await writeFile(join(repo, '.hg', 'bookmarks.current'), 'feature-x');
+    assert.deepEqual(await resolve(mercurial, {cwd: deep, home}), {branch: 'stable', bookmark: 'feature-x'});
+    assert.deepEqual(await resolve(mercurial, {cwd: deep, home, fields: ['branch']}), {branch: 'stable'}, 'the bookmark is read only when demanded');
+    // Hostile names are bounded; control characters are removed at the fact boundary (sanitizeFactValue), not trusted here.
+    await writeFile(join(repo, '.hg', 'branch'), `${'x'.repeat(300)}\n`);
+    assert.equal((await resolve(mercurial, {cwd: repo, home}))?.branch, 'default', 'an oversized name is not a name');
+    await rm(join(repo, '.hg', 'branch'));
+    await symlink('/etc/passwd', join(repo, '.hg', 'branch'));
+    assert.equal((await resolve(mercurial, {cwd: repo, home}))?.branch, 'default', 'a symlinked branch file is not read');
+
+    // The search stops at home: a .hg above home is not this directory's repository.
+    const outerHome = join(home, 'users', 'me');
+    await mkdir(join(outerHome, 'work'), {recursive: true});
+    await mkdir(join(home, 'users', '.hg'));
+    assert.equal(await resolve(mercurial, {cwd: join(outerHome, 'work'), home: outerHome}), undefined);
+    await mkdir(join(outerHome, '.hg'));
+    assert.deepEqual(await resolve(mercurial, {cwd: join(outerHome, 'work'), home: outerHome}), {branch: 'default'}, 'a repository at home itself is found');
+
+    // Jujutsu: the main workspace holds .jj/repo as a directory, a secondary one as a file; Git may be colocated.
+    const jjRepo = join(home, 'jj');
+    await mkdir(join(jjRepo, '.jj', 'repo'), {recursive: true});
+    await mkdir(join(jjRepo, 'src'));
+    assert.deepEqual(await resolve(jujutsu, {cwd: join(jjRepo, 'src'), home}), {repository: true, colocated: false, workspace: 'main'});
+    await mkdir(join(jjRepo, '.git'));
+    assert.deepEqual(await resolve(jujutsu, {cwd: jjRepo, home}), {repository: true, colocated: true, workspace: 'main'});
+    const second = join(home, 'jj-second');
+    await mkdir(join(second, '.jj'), {recursive: true});
+    await writeFile(join(second, '.jj', 'repo'), join(jjRepo, '.jj', 'repo'));
+    assert.deepEqual(await resolve(jujutsu, {cwd: second, home}), {repository: true, colocated: false, workspace: 'secondary'});
+    assert.equal(await resolve(jujutsu, {cwd: join(home, 'src'), home}), undefined);
+  } finally { await rm(home, {recursive: true, force: true}); }
 });
