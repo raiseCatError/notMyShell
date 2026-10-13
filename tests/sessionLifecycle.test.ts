@@ -251,11 +251,17 @@ test('vim and less survive detach and repaint after reattach', async () => {
       const mark = first.mark;
       first.pty.write(`${command}\r`);
       await first.waitFor(visible, mark);
-      const {id} = (await sandbox.sessions())[0]!;
+      const {id, pid} = (await sandbox.sessions())[0]!;
       first.pty.kill('SIGKILL');
       await waitState(sandbox, 'detached');
       const second = sandbox.launch(['--attach', id], {cols: 110, rows: 35});
-      await second.waitFor(visible);
+      try {
+        await second.waitFor(visible);
+      } catch (error) {
+        const observation = await fullscreenFailure(sandbox, id, pid, second);
+        if (error instanceof Error) error.message += `; fullscreen failure=${JSON.stringify(observation)}; raw terminal tail=${JSON.stringify(second.output.slice(-512))}`;
+        throw error;
+      }
       second.pty.write(quit);
       await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15000, `${command} to quit`);
       await second.run('echo QUIT-OK', /QUIT-OK/);
