@@ -1,6 +1,6 @@
 # Workflow initiative ledger
 
-Current gate (2026-10-14): **freeze PENDING**. Input `5053677`, Queue `7b3a79e` and Copy `2206a49` pass exact canonical and actual published CI. Report `0d092ac` passes canonical and is published after Copy CI; actual Report CI 38470560401 is active. Serial canonical driver `33188` is on Compare `4b25770`; guarded publisher `3395` advances only verified heads after latest actual parent CI. The older failed Report CI remains retained, never retried for acceptance. Later heads, Linux/Fish, security reconciliation and physical QA handoff remain required. Exact source and limits are in the handoff.
+Current gate (2026-10-14): **freeze PENDING**. Input `5053677`, Queue `7b3a79e` and Copy `2206a49` pass exact canonical and actual published CI. Report `0d092ac` and Compare `4b25770` pass exact canonical, but actual Report CI [38470560401](https://github.com/raiseCatError/notMyShell/actions/runs/38470560401) failed macOS shard 1/2 waiting for `LESS-LINE-0` after reattach; cause is under investigation. Compare finished naturally, driver `33188` stopped at the prepared next-head guard before Willow, and publisher `3395` stopped before Compare promotion. The owned guard marker was removed. No failing CI rerun or test interruption occurred. Both failed Report CI logs are retained. Later heads, Linux/Fish, security reconciliation and physical QA handoff remain required.
 
 
 Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-13.
