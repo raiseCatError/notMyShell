@@ -1,6 +1,6 @@
 # Workflow initiative ledger
 
-Current gate (2026-10-14): **freeze PENDING**. New production fix `5053677` passed exact-commit canonical and is published only as an Input fix candidate; comprehensive CI 38465873271 is active. Original Input remains `c350df5` with its preceding canonical/candidate/actual PR CI passes. The new normal signal/probe fix propagated additively to all later local candidates with exact shared-delta and sibling-preservation checks. Actual-head canonical driver `33188` is active on Queue `7b3a79e`; later originals/fix refs are held. Source, interfaces, known limits, physical QA and exact continuation are authoritative in the handoff. Earlier entries below are historical evidence, not current freeze acceptance.
+Current gate (2026-10-14): **freeze PENDING**. Input `5053677` passes exact-head canonical, comprehensive CI 38465873271 and actual published PR CI 38466916176. Queue `7b3a79e` passes canonical and is published nonforcibly after parent CI; actual Queue PR CI 38467781093 is active. Serial canonical driver `33188` is now on Copy `2206a49`. Later originals/fix refs remain held. The new startup signal fix is propagated additively with per-track production-delta and sibling-preservation checks. Exact heads, interfaces, limits and remaining physical QA are in the handoff; earlier entries below are historical evidence.
 
 
 Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-13.
