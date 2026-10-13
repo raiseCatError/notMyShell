@@ -226,3 +226,9 @@ below and stop cleanly with no background processes left.
 - 2026-10-13 10:56 IST — Check: freeze pending; all seven PR heads unchanged (`9cfdf9a` `b6fe785` `940b85f`
   `9fb09c9` `032365e` `99019ae` `5993218`); `docs/workflow-oak-checkpoint` still `d4a13c6`; no new #359 comment.
   Codex's late-replay driver still running. Window bounds still thumbnail-scale (Mission Control).
+- 2026-10-13 14:17 IST — Check (the 11:51 timer fired late; the machine appears to have slept): freeze still
+  pending; all seven PR heads and `docs/workflow-oak-checkpoint` unchanged; no new #359 comment since 03:21Z.
+  Codex's `verify-late-replay-final-canonical.sh` (started 09:40) is still running.
+  **Monitoring stopped cleanly after ~5 h blocked on the freeze.** No release branch exists and nothing of the
+  release track is running. To resume: read this file, re-check #359 for an explicit freeze with exact SHAs,
+  then follow "v0.19 steps once frozen" above. `integration/v020-modules` `8f07920` remains the green v0.20 prep base.
