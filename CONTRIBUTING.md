@@ -20,8 +20,8 @@ Before starting work, check:
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — how the pieces fit together; start here before changing a subsystem
 - **[ROADMAP.md](ROADMAP.md)** — product direction and what is planned
 - **[GitHub Issues](https://github.com/raiseCatError/notMyShell/issues)** — concrete actionable work; acceptance criteria in each issue are authoritative
-- **[v0.18.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0)** — current stable release
-- **[PR #328](https://github.com/raiseCatError/notMyShell/pull/328)** — merged master checkpoint for the published v0.18.0 release (see [ROADMAP.md](ROADMAP.md))
+- **[v0.18.0 Release](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0)** — current stable release, merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (see [ROADMAP.md](ROADMAP.md))
+- **[CHANGELOG.md](CHANGELOG.md)** — the authoritative record of notable changes; see [Changelog](#changelog) below
 - **GitHub Project** — [NMSh Development](https://github.com/users/raiseCatError/projects/1) — live development status board
 
 ## Branch Model
@@ -94,6 +94,23 @@ When opening a Pull Request:
 - **Reproducibility**: Keep generated/demo assets reproducible using the scripts in `scripts/`.
 
 Commits do not need to follow an excessively strict convention (e.g. Conventional Commits), but clear, descriptive messages are preferred.
+
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) is the single, authoritative changelog. It follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and is written for people using NMSh, not as a list of commits.
+
+- **Update it in the same PR as the change.** Add notable user-visible changes under `## [Unreleased]` at the top, in `### Added`, `### Changed`, `### Fixed`, `### Security`, `### Deprecated` or `### Removed`. Internal refactors, test-only changes and doc typos need no entry.
+- **Say what changed for the user,** in one or two sentences, with the issue or PR link when it helps traceability. Describe only what is implemented and reachable; first slices, foundations and deferred work go under Known limitations or stay in the issue, not under Added.
+- **Keep verification honest.** Do not describe automated tests or headless recordings as physical-terminal acceptance.
+
+When releasing:
+
+1. Rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` using the publication date, add a one-paragraph overview, and add `### Compatibility`, `### Upgrade notes` and `### Known limitations` where they apply. Start a new empty `## [Unreleased]` above it.
+2. Update the link references at the bottom of the file: `[Unreleased]` compares the new tag with `HEAD`, and `[X.Y.Z]` compares the previous tag with the new one.
+3. Bump `package.json` and `package-lock.json` together (`npm version X.Y.Z --no-git-tag-version`), and point README, ROADMAP, SECURITY, AGENTS and `llms.txt` at the new release.
+4. Write the GitHub Release notes from the new changelog section (a shorter summary is fine) and link to the full CHANGELOG.md.
+
+Past release sections are history: correct factual errors in them, but do not rewrite them otherwise.
 
 ## Visual docs and demos
 

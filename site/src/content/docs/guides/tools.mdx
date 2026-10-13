@@ -1,0 +1,40 @@
+---
+title: Tool Integrations
+description: Using /tools, /providers, and shell frameworks safely with NMSh.
+---
+
+import Availability from '../../../components/Availability.astro';
+
+<Availability status="released" version="v0.17.0" />
+
+NMSh integrates with a curated list of shell tools and frameworks, explicitly detecting them and offering configuration options without silently modifying your shell initialization files.
+
+## The Tool Browser (`/tools`)
+
+Type `/tools` to open the Tool Browser. This panel shows a curated catalog of shell tools.
+
+- **Relevant here**: Suggests tools based on local evidence (e.g., suggesting Go if a `go.mod` is found).
+- **Bulk install**: Select multiple missing tools with `Space`, then press `Enter` to review a bulk install plan using your system's package manager.
+- **Safety**: Installs use explicit `sudo -n` for operations requiring privileges. Nothing elevates silently.
+
+## Providers (`/providers`)
+
+The Provider framework allows you to select which backend powers certain NMSh features.
+
+- **Prompt**: NMSh Native (default), Starship, Oh My Posh, or Powerlevel10k.
+- **Welcome**: Vespyr (default), Fastfetch, Neofetch, or None.
+- **Suggestions / Navigation / History**: Upcoming integrations for fzf, Atuin, zoxide, Television, etc.
+
+## Shell Frameworks
+
+NMSh respects your shell frameworks but treats them differently than prompt engines.
+
+- **Oh My Zsh**: Detected automatically. NMSh provides a guided install that keeps your `.zshrc` safe, offering to backup and restore `.zshrc.pre-oh-my-zsh` upon confirmation. It never runs the official installer silently.
+- **Prezto, Zim, zinit, Antidote**: Detected and shown as inspect-only.
+
+## Tool Configuration (`/configure`, `/tmux`, `/dotfiles`)
+
+NMSh can safely configure certain tools for you.
+
+- **`/tmux`**: Opens the tmux Config Studio. Customize settings, keymaps, and the status bar. Changes are saved to a single NMSh-managed file and included in your `.tmux.conf` only after your review.
+- **`/dotfiles [path]`**: Import settings from plain, Git, or GNU Stow sources. Repositories are cloned (depth 1) only after confirmation. Nothing is run, templates are not rendered, and all executable configs are inspect-only.
