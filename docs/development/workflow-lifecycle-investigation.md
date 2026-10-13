@@ -32,6 +32,8 @@ Input → Queue → Copy → Report → Compare retain additive ancestry. Vocabu
 
 ## Diagnostic procedure and limits
 
+The first observed amd64 CI compatibility job passed, and its artifact shows the worker exited with all tracked PTY children accounted for. The unobserved feature failure remains unresolved. The next diagnostic job runs at most five unchanged compatibility-suite iterations, stopping on the first failure and retaining separate per-iteration snapshots. The existing file and job deadlines remain unchanged.
+
 The Node 22 job preloads `scripts/test-lifecycle-observer.mjs`. Its timer is unreferenced; exit is never forced. It saves per-process resource/handle snapshots, native PTY creation/signal-attempt/exit records and Linux direct-child status/wait-channel data to the job's private runner temporary directory. The artifact is `node22-worker-lifecycle` and expires after seven days. It records no command arguments, environment values or output contents. Filesystem paths are included. Observation scans can perturb timing; only direct children and tracked PTYs are covered, not every descendant. The preload resolves dependencies from its own repository location even when a launcher changes cwd.
 
 Inspect the failed worker's actual snapshot before changing termination behavior. A passing observed run is diagnostic evidence, not acceptance of the unobserved feature head. If retention does not reproduce, retain the failure and collect another bounded observation rather than guessing a production change.

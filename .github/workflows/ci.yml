@@ -105,10 +105,15 @@ jobs:
       - uses: ./.github/actions/linux-shells
       - run: npm ci
       - run: npm run build
-      - run: npm run test:node22 -- --test-timeout=120000
+      - name: Bounded Node 22 lifecycle observations
+        run: |
+          for iteration in 1 2 3 4 5; do
+            echo "Node 22 lifecycle observation $iteration/5"
+            NMSH_LIFECYCLE_DIAGNOSTICS="$LIFECYCLE_ROOT/$iteration" npm run test:node22 -- --test-timeout=120000
+          done
         env:
           NODE_OPTIONS: --import=${{ github.workspace }}/scripts/test-lifecycle-observer.mjs
-          NMSH_LIFECYCLE_DIAGNOSTICS: ${{ runner.temp }}/nmsh-lifecycle
+          LIFECYCLE_ROOT: ${{ runner.temp }}/nmsh-lifecycle
       - name: Retained worker evidence
         if: always()
         uses: actions/upload-artifact@v4
