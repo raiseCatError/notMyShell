@@ -57,6 +57,7 @@ for (let i = 0; i < 20; i++) ISSUES.push({number: 100 - i, title: `Backlog item 
 function rawPr(pr: RawPr): Record<string, unknown> {
   return {__typename: 'PullRequest', number: pr.number, title: pr.title, url: `https://github.com/${OWNER}/${REPO}/pull/${pr.number}`, state: pr.state,
     isDraft: pr.isDraft ?? false, updatedAt: hoursAgo(pr.updated), headRefName: pr.head, baseRefName: pr.base ?? 'master',
+    headRepository: {nameWithOwner: pr.number === 315 ? 'contributor/notMyShell' : `${OWNER}/${REPO}`},
     additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changedFiles, reviewDecision: pr.review, mergeable: pr.mergeable,
     author: pr.author === null ? null : {login: pr.author ?? OWNER}, repository,
     commits: pr.rollup === undefined ? {nodes: []} : {nodes: [{commit: {statusCheckRollup: pr.rollup === null ? null : {state: pr.rollup}}}]}};

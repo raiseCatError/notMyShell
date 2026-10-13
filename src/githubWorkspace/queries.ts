@@ -13,7 +13,8 @@ export const SEARCH_QUERY = `query($q: String!, $first: Int!, $after: String) {
     nodes {
       __typename
       ... on PullRequest {
-        number title url state isDraft updatedAt headRefName baseRefName
+        number title url state isDraft updatedAt headRefName baseRefName headRefOid
+        headRepository { nameWithOwner }
         additions deletions changedFiles reviewDecision mergeable
         author { login }
         repository { name owner { login } }
