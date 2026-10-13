@@ -302,6 +302,8 @@ export function versionFromInstallPath(realpathValue: string): {version: string;
     [/\/\.pyenv\/versions\/(\d[^/]*)\//u, 'pyenv'],
     [/\/uv\/python\/c?python-(\d[^/-]*)-/u, 'uv'],
     [/\/\.rbenv\/versions\/(\d[^/]*)\//u, 'rbenv'],
+    [/\/\.rvm\/rubies\/ruby-(\d[^/]*)\//u, 'RVM'],
+    [/\/\.rubies\/ruby-(\d[^/]*)\//u, 'chruby'],
     [/\/\.goenv\/versions\/(\d[^/]*)\//u, 'goenv'],
     [/\/\.sdkman\/candidates\/[^/]+\/(\d[^/]*)\//u, 'SDKMAN!'],
     [/\/Python\.framework\/Versions\/(\d[^/]*)\//u, 'python.org'],
