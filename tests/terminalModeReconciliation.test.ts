@@ -103,3 +103,36 @@ for (const leaveSuspended of [false, true]) {
     assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7']});
   });
 }
+
+for (const leaveSuspended of [false, true]) {
+  test(`Kitty pushes forwarded before renderer entry preserve inherited stacks (suspended exit=${leaveSuspended})`, () => {
+    const model = new TerminalModeModel();
+    model.feed('\u001b[>9u\u001b[?1049h\u001b[>7u\u001b[?1049l');
+    const renderer = new TerminalRenderer(data => model.feed(data), resolveHostCapabilities({TERM_PROGRAM: 'ghostty'}));
+    const child = '\u001b[>5u';
+    renderer.observePassthrough(child);
+    model.feed(child); // live output before startup can enter the renderer, on MAIN
+    assert.deepEqual(model.snapshot().kittyStack, {main: ['9', '5'], alternate: ['7']});
+    renderer.enter();
+    renderer.suspendForPassthrough(child); // startup restores the current owner on ALTERNATE
+    if (!leaveSuspended) {
+      renderer.resumeAfterPassthrough();
+      assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7', '1']});
+    }
+    renderer.leave();
+    assert.equal(model.snapshot().screen, 'main');
+    assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7']});
+  });
+}
+
+test('shutdown before renderer entry releases only the forwarded child keyboard pushes', () => {
+  const model = new TerminalModeModel();
+  model.feed('\u001b[>9u\u001b[?1049h\u001b[>7u\u001b[?1049l');
+  const renderer = new TerminalRenderer(data => model.feed(data), resolveHostCapabilities({TERM_PROGRAM: 'ghostty'}));
+  const child = '\u001b[>5u';
+  renderer.observePassthrough(child);
+  model.feed(child);
+  renderer.leave();
+  assert.equal(model.snapshot().screen, 'main');
+  assert.deepEqual(model.snapshot().kittyStack, {main: ['9'], alternate: ['7']});
+});

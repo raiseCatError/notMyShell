@@ -48,6 +48,7 @@ export class TerminalRenderer {
   /** NMSh's caret style while it owns the composer; '' leaves the host's cursor alone. */
   private cursorStyle = '';
   private readonly childModes = new AlternateScreenTracker();
+  private preEntryPassthrough = false;
   constructor(private readonly write: (data: string) => unknown = data => process.stdout.write(data),
     private capabilities: Readonly<TerminalCapabilities> = BASELINE_CAPABILITIES) {}
 
@@ -108,6 +109,13 @@ export class TerminalRenderer {
 
   enter(): void {
     if (this.active) return;
+    if (this.preEntryPassthrough) {
+      // Raw startup output may have pushed a child keyboard mode on MAIN.
+      // Release those owned pushes before entry restores it on ALTERNATE.
+      this.write(this.childModes.releaseKeyboardSequence());
+      this.childModes.reset('alternate');
+      this.preEntryPassthrough = false;
+    }
     this.active = true;
     // Push alt screen FIRST, then push kitty mode onto the alt screen's stack
     this.suspended = false;
@@ -208,7 +216,10 @@ export class TerminalRenderer {
 
   /** Observe only bytes actually sent to the host terminal while the child owns it. */
   observePassthrough(data: string): void {
-    if (this.suspended) this.childModes.observeModes(data);
+    if (this.suspended || !this.active) {
+      this.childModes.observeModes(data);
+      if (!this.active) this.preEntryPassthrough = true;
+    }
   }
 
   resumeAfterPassthrough(): void {
@@ -229,7 +240,14 @@ export class TerminalRenderer {
   }
 
   leave(): void {
-    if (!this.active) return;
+    if (!this.active) {
+      if (this.preEntryPassthrough) {
+        this.write(`${this.reconcileModes(false)}\u001B[?25h\u001B[?1049l`);
+        this.childModes.reset();
+        this.preEntryPassthrough = false;
+      }
+      return;
+    }
     this.clearOverlay();
     this.active = false;
     this.previous = [];
