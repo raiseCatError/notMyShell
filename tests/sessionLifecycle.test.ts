@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fullscreenFailure} from './helpers/fullscreenFailure.js';
 import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
 import {attachSession} from '../src/session/connectSession.js';
 import {socketPathFor} from '../src/session/runtimeDir.js';
@@ -220,12 +221,18 @@ test('reattach into a fullscreen app resumes passthrough and makes it repaint at
     first.pty.write(`zsh ${fixture}\r`);
     // Detach only once the fixture's WINCH trap is installed, or the reattach resize can arrive before it.
     await first.waitFor(/TRAP-READY/);
-    const {id} = (await sandbox.sessions())[0]!;
+    const {id, pid} = (await sandbox.sessions())[0]!;
     first.pty.kill('SIGKILL');
     await waitState(sandbox, 'detached');
 
     const second = sandbox.launch(['--attach', id], {cols: 90, rows: 33});
-    await second.waitFor(/REDRAW 33 90/);
+    try {
+      await second.waitFor(/REDRAW 33 90/);
+    } catch (error) {
+      const observation = await fullscreenFailure(sandbox, id, pid, second);
+      if (error instanceof Error) error.message += `; fullscreen failure=${JSON.stringify(observation)}`;
+      throw error;
+    }
     writeFileSync(stop, '');
     await second.waitFor(/❯/, second.output.lastIndexOf('REDRAW'));
     await second.run('echo AFTER-FULLSCREEN', /AFTER-FULLSCREEN/);
