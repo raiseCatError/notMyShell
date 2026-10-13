@@ -1133,6 +1133,9 @@ export class TerminalApp {
 
   async run(): Promise<number> {
     if (this.stopped) return this.done;
+    // Catchable shutdown must own cleanup even while probes or persistence await.
+    process.once('SIGTERM', this.onTerminate);
+    process.once('SIGHUP', this.onTerminate);
     this.prepareRawInput();
     process.once('exit', () => {
       if (!this.stopped) {
@@ -1153,6 +1156,7 @@ export class TerminalApp {
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
       }, undefined, {graphics: shouldProbeGraphics(process.env)});
+      if (this.stopped) return this.done;
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
       earlyInput = resolved.input;
@@ -1203,8 +1207,6 @@ export class TerminalApp {
       process.stdout.on('resize', this.onResize);
       process.on('SIGTSTP', this.onSuspend);
       process.on('SIGCONT', this.onContinue);
-      process.once('SIGTERM', this.onTerminate);
-      process.once('SIGHUP', this.onTerminate);
       this.presentationStarted = true;
       void this.loadSessionIdentity();
       this.refreshAwake();
