@@ -8,9 +8,15 @@ TerminalApp.prototype.run = async function() {
   assert.equal(process.argv.includes('--attach'), false, 'fresh frontend fixture only');
   assert.equal(this['startupPending'], true);
   assert.equal(this['startupPanel'], undefined, 'submission precedes the startup notice');
-  this['editor'].insert('echo HELD-$((1+1))');
+  const command = process.env.NMSH_TEST_EARLY_COMMAND ?? 'echo HELD-$((1+1))';
+  assert.ok(['echo HELD-$((1+1))', 'less', 'vim'].includes(command), 'known fixture command only');
+  this['editor'].insert(command);
   await this['submit']();
+  assert.equal(this['running']?.command, command);
+  assert.equal(this['running']?.awaitingExec, true, 'command is held before first shell prompt');
+  assert.equal(this['passthrough'], false, 'early fullscreen command cannot take terminal ownership');
   process.stdout.write('TEST-EARLY-SUBMISSION\n');
   return run.call(this);
 };
-await import('../../src/index.js');
+if (process.env.NMSH_TEST_DELAY_EARLY_JOURNAL === '1') await import('./slowJournalAttach.js');
+else await import('../../src/index.js');
