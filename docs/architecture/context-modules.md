@@ -8,8 +8,8 @@ without taking over shell execution or running anything the workspace chose.
 > **Release status.** v0.17.0 shipped the foundation: typed fact metadata,
 > native module routing and the Context Rail. Everything else described here —
 > capability scheduling, the first-party module catalog, declarative Context
-> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — shipped in
-> v0.18.0.
+> Packs, Status Strip routing and Status Strip 2.0, `/modules` and Claude Code agent context — is in
+> the v0.18 development stack, pending acceptance and release.
 
 ## From capability to presentation
 
@@ -169,9 +169,28 @@ fullscreen programs hide it, and it is never written to the transcript.
 - **Packs** — bundled and installed Context Packs with their verified state;
   installed packs can be enabled, disabled or removed (with confirmation).
 
+Short detail panels keep the module title visible and scroll through existing rows
+with Up/Down or PageUp/PageDown. Resize clamps that temporary view; scrolling
+does not edit settings or demand data.
+
 A module's details show what it reads, whether its value may be kept with
 commands in history, and each fact's current state ("fresh · 3s ago", "last
-known, refreshing", "unavailable (timed out after 1500 ms)", "not checked").
+known, refresh waits for demand", "unavailable (timeout)", "not checked"). Trusted source IDs,
+scope, freshness TTL, event invalidation and demand-driven refresh policy come
+from the capability definition. Failure text excludes raw exception paths and
+values. A failed refresh can retain a previous value; the view distinguishes
+that from a failure with no cached value, without claiming that new data arrived.
+
+"Took" measures the last collection's wall time, starting when the scheduler
+dispatches it; it excludes time waiting in the queue. An unmeasured collection
+has no invented zero. Opening details reads existing snapshots and declarations,
+and does not demand collectors. `/doctor` summarizes bounded engine counters.
+Routing, provider availability, conditions and priority explain presentation
+policy. Enabled means the saved setting, not proof that the module is on screen.
+The live condition check is shared with Native rendering; it does not infer
+visibility from collection success. Width fitting can compact or omit lower
+priority modules; the detail view does not claim to record the last frame's
+exact compaction decisions.
 `/shell` edits the current-shell module's visibility and side.
 
 ## Context Packs

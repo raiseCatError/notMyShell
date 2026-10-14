@@ -73,6 +73,14 @@ Use /history with plain text or combine cwd:, project:, exit:, before:, after:, 
 
 Enter or Tab restores the selected command without executing it. Ctrl+X removes the selected record from NMSh search. Session transcripts and the original zsh/Atuin history remain intact; deletion is remembered locally.
 
+To keep the selected history command, open the palette (F1 or Ctrl+Shift+P) and choose **Pin selected history command**. It keeps the command and its recorded directory without executing it; /pins lists it later.
+
+At the prompt, F8 focuses the newest failed command, then walks to older failures. Shift+F8 returns to newer failures. These keys preserve your draft; the palette also offers Previous/Next failed command. Your terminal may reserve function keys.
+
+Use C in Paste Review to keep an ephemeral clip, or a block's Actions to keep its command or output. The palette can keep your composer draft or selected history command. /clips reviews kept text before insertion; B opens the existing batch review. No clip runs automatically or replaces a draft. Clips stay in this frontend's memory (up to 12 clips and 1 MiB total), can be discarded, and disappear when it exits, including detach.
+
+/clips suggestions on optionally checks macOS's native clipboard change counter while the composer is idle. It never reads clipboard contents. A changed counter suggests /ps; only that explicit command reads text for review. Suggestions default off, last only for this frontend, and stop with /clips suggestions off or if metadata fails. Linux clipboard tools have no supported metadata counter; background text polling is unsupported.
+
 ## Directory navigation
 
 Use /dirs or the command palette to find recorded directories. Native ranks frequency and recency from approved command history. Select with arrows and Enter or Tab to insert a literal cd command, then press Enter separately to run it in zsh. Ordinary cd keeps its normal behavior.

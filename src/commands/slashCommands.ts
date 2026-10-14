@@ -36,8 +36,14 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
 
 const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
-  {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
-  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
+  {name: '/copy', insertion: '/copy', description: 'Copy latest command output (or choose, per Settings → Copy)'},
+  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
+  {name: '/copy settings', insertion: '/copy settings', description: 'Quick Copy or Interactive Picker, and whether copies include completion status'},
+  {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
+  {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
+  {name: '/ps', insertion: '/ps', description: 'Paste from the clipboard, reviewed first: read when you run it, never in the background'},
+  {name: '/clips', insertion: '/clips', description: 'Text deliberately kept in memory for this frontend; review before inserting, remove or clear'},
+  {name: '/cp', insertion: '/cp', description: 'Same as /copy (every form: /cp 2, /cp -3, /cp ui, /cp latest, --status)'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
@@ -102,6 +108,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
+  {name: '/queue', insertion: '/queue', description: 'Commands queued to run after the current one: view, edit, reorder, pause or clear (/queue pause|resume|clear)'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
@@ -133,7 +140,16 @@ export const slashCommands: readonly SlashCommand[] = RAW_COMMANDS.map(command =
 
 export type ParsedSlashCommand =
   | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
-  | {kind: 'copy'; index: number}
+  /** `args` is everything after /copy, parsed by parseCopyArgs (so a mistake gets a precise answer). */
+  | {kind: 'copy'; args: string}
+  | {kind: 'copySettings'}
+  /** /ps: read the clipboard now and bring it to paste review. */
+  | {kind: 'pasteClipboard'}
+  | {kind: 'clips'; suggestions?: boolean}
+  /** /pins: the pins and recipes panel. */
+  | {kind: 'pins'}
+  /** /compare [A [B]]: outputs by /copy number; A defaults to the latest, B to A's previous run (or a choice). */
+  | {kind: 'compare'; first?: number; second?: number; error?: string}
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
@@ -189,6 +205,7 @@ export type ParsedSlashCommand =
   | {kind: 'llm'}
   | {kind: 'doctor'}
   | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
+  | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear'}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -207,8 +224,20 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
-  const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
-  if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
+  const compare = /^\/compare(?:\s+(.*?))?\s*$/u.exec(input);
+  if (compare) {
+    const words = (compare[1] ?? '').split(/\s+/u).filter(Boolean);
+    if (words.length > 2 || words.some(word => !/^[1-9]\d{0,2}$/u.test(word))) return {kind: 'compare', error: 'Use /compare, /compare N or /compare N M (numbers as /copy shows them, 1 is the latest).'};
+    return {kind: 'compare', ...(words[0] ? {first: Number(words[0])} : {}), ...(words[1] ? {second: Number(words[1])} : {})};
+  }
+  if (/^\/ps\s*$/u.test(input)) return {kind: 'pasteClipboard'};
+  const clips = /^\/clips(?:\s+suggestions\s+(on|off))?\s*$/u.exec(input);
+  if (clips) return {kind: 'clips', ...(clips[1] ? {suggestions: clips[1] === 'on'} : {})};
+  if (/^\/pins\s*$/u.test(input)) return {kind: 'pins'};
+  // /cp is /copy: one parser, one handler, every form.
+  if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
+  const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
+  if (copy) return {kind: 'copy', args: copy[1] ?? ''};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};
@@ -306,6 +335,8 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (family) return {kind: 'providers', family: (family === 'pickers' ? 'picker' : family) as 'prompt' | 'welcome' | 'suggestions' | 'history' | 'picker' | 'navigation'};
   if (/^\/(?:llm|localllm)\s*$/u.test(input)) return {kind: 'llm'};
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
+  const queue = /^\/queue(?:\s+(pause|resume|clear))?\s*$/u.exec(input);
+  if (queue) return {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
   if (watch) {
     const rest = (watch[1] ?? '').trim();

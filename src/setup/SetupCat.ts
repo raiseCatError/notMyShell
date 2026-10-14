@@ -308,6 +308,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('composerPosition')},
     {row: configRow('composerDividers')},
     {row: configRow('pastePreview')},
+    {row: configRow('copyMode'), note: draft => draft.copy.mode === 'picker' ? '/copy opens a list of recent outputs to choose from; /copy latest still copies at once' : '/copy copies the latest output at once; /copy ui opens the picker'},
+    {row: configRow('copyAutoExpand'), note: draft => draft.copy.autoExpand ? 'A copied block unfolds so you can see what was copied' : 'Copying never changes what is folded'},
+    {row: configRow('copyIncludeStatus'), note: draft => draft.copy.includeStatus ? 'Copies end each output with its completion status (✔ Completed · 1.4s · 10:04)' : 'Copies hold only what the command printed'},
     {row: configRow('syntaxHighlighting')},
     {row: configRow('syntaxColors'), note: draft => draft.syntax.colors === 'followPrompt' ? 'Follows the Native prompt theme, even with Starship or Powerlevel10k' : draft.syntax.colors === 'grayscale' ? 'Brightness and weight only; no hue' : undefined},
     {row: configRow('syntaxThemeFamily')},
@@ -351,6 +354,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     'Session notices are short events about another session (a finished command, a failure, a request for attention); /sessions keeps the state.'], rows: [
     {row: configRow('liveSessionStartup')},
     {row: configRow('liveSessionMultiple')},
+    {row: configRow('commandQueue'), note: draft => draft.commandQueue ? 'On: while a command runs, Enter queues the next one; a program waiting for input still gets your answer' : 'Off: Enter while a command runs goes to the program, as in a plain terminal'},
     {row: configRow('sessionNotices'), note: draft => draft.sessionNotices ? 'Brief: a success fades in seconds, a failure lingers a little, a request for attention stays until you look' : 'Off: other sessions never add lines above the composer'},
     {row: configRow('terminalTitle'), note: draft => draft.terminalTitle === 'off' ? 'Off: the terminal keeps its own window title'
       : 'NMSh titles the window while it owns the screen; programs keep their own title while they run'},

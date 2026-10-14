@@ -19,7 +19,7 @@ import {formatAge, tildePath} from './sessionList.js';
  * agent or program said.
  */
 
-export const NOTICE_KINDS = ['completed', 'failed', 'attention', 'ended', 'long-running'] as const;
+export const NOTICE_KINDS = ['completed', 'failed', 'attention', 'ended', 'long-running', 'input'] as const;
 export type NoticeKind = typeof NOTICE_KINDS[number];
 
 export interface SessionNotice {
@@ -34,9 +34,13 @@ export interface SessionNotice {
   exitCode?: number;
   durationMs?: number;
   cwd?: string;
+  /** For an input notice: how sure the service is that the program waits for input (see InputWatch). */
+  confidence?: string;
 }
 
 export const MAX_VISIBLE_NOTICES = 3;
+/** A wait shorter than this is someone answering, not news for another window. */
+export const INPUT_NOTICE_DELAY_MS = 3000;
 /** A command still running after this long is worth one notice. */
 export const LONG_RUNNING_MS = 15 * 60_000;
 /**
@@ -70,7 +74,7 @@ export function noticeVisibleMs(notice: SessionNotice): number | undefined {
     case 'failed': return NOTICE_VISIBLE_MS.failed;
     case 'long-running': return NOTICE_VISIBLE_MS.longRunning;
     case 'ended': return notice.exitCode ? NOTICE_VISIBLE_MS.endedAbnormal : NOTICE_VISIBLE_MS.ended;
-    case 'attention': return undefined;
+    case 'attention': case 'input': return undefined;
   }
 }
 
@@ -136,6 +140,21 @@ export class SessionNoticeTracker {
     if (!this.running || at <= this.clearedAt) return;
     if (this.current?.kind === 'attention' && this.current.at >= this.running.since) return;
     this.current = {sessionId: this.sessionId, kind: 'attention', at, ...programIdentity(this.running.command, this.running.process)};
+  }
+
+  /**
+   * The running program has been waiting for input (since `since`) long enough to be news. One notice per wait;
+   * sticky until the wait ends, the session is focused, or a newer transition replaces it.
+   */
+  onInputNeeded(since: number, confidence: string, program?: string): void {
+    if (!this.running || since <= this.clearedAt) return;
+    if (this.current?.kind === 'input' && this.current.at === since) return;
+    this.current = {sessionId: this.sessionId, kind: 'input', at: since, ...programIdentity(this.running.command, program ?? this.running.process), confidence};
+  }
+
+  /** The wait ended (answered, interrupted, or the program moved on): an input notice is no longer true. */
+  onInputResolved(): void {
+    if (this.current?.kind === 'input') this.current = undefined;
   }
 
   /** Raise one long-running notice per run, lazily when someone lists sessions; no timers. */
@@ -214,7 +233,7 @@ export function sessionLabel(sessionId: string, ordinal?: number): string {
 export interface NoticeLineParts {
   kind: NoticeKind;
   /** The glyph slot; the caller picks Nerd/Safe. */
-  symbol: 'done' | 'attention' | 'failed' | 'ended' | 'long';
+  symbol: 'done' | 'attention' | 'failed' | 'ended' | 'long' | 'input';
   text: string;
 }
 
@@ -232,6 +251,10 @@ export function describeNotice(notice: SessionNotice, label: string, now: number
       return {kind: notice.kind, symbol: 'failed', text: `${label} · ${who ?? 'command'} failed (exit ${notice.exitCode ?? '?'}) · ${age} ago`};
     case 'attention':
       return {kind: notice.kind, symbol: 'attention', text: `${label} · ${who ?? 'program'} asked for attention · ${age} ago`};
+    case 'input':
+      return {kind: notice.kind, symbol: 'input', text: `${label} · ${who ?? 'a command'} ${notice.confidence === 'likely' ? 'may be waiting for input' : 'is waiting for input'} · ${age} · /resume`};
+    case 'input':
+      return {kind: notice.kind, symbol: 'input', text: `${label} · ${who ?? 'a command'} ${notice.confidence === 'likely' ? 'may be waiting for input' : 'is waiting for input'} · ${age} · /resume`};
     case 'long-running':
       return {kind: notice.kind, symbol: 'long', text: `${label} · ${who ?? 'command'} still running · ${formatDuration(notice.durationMs ?? 0)}`};
     case 'ended':

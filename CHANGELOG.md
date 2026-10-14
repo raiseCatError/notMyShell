@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- **Input awareness:** a command that waits for an answer is no longer just "Running". NMSh reads the terminal's own state, without touching the program. A password or other no-echo read, or a single-key question such as `e2fsck`'s `Fix<y>?`, is confirmed; on Linux, any blocking read of the terminal is confirmed too. An ordinary line question left open by an idle process is shown as "Probably waiting for input". The question stays visible beside the composer however far the transcript has scrolled, and the window title, `/sessions`, `/resume` and a cross-session notice show the wait. Hidden and single-key input goes straight to the program, keystroke by keystroke, and is never shown or kept. A reply left unsent when the command ends is discarded, never run as a shell command. Waiting time is measured separately from wall-clock time and reported on completion. See `docs/design/input-awareness.md`.
+
+### Fixed
+- **Single-key prompts:** answering a single-key question through the composer no longer sends a stray Enter that answered the next question with its default.
+- **Passwords:** text typed at a password prompt is no longer drawn in the composer.
+
+
 ## [0.18.0] - 2026-10-13
 
 **Context Engine, Managed Agents & Workspaces.** Context modules become a platform: facts are collected on demand by bounded, privacy-labelled capabilities, the first-party catalog ships as declarative Context Packs, and the Status Strip becomes a full second surface for modules. Claude Code can run as a managed target inside NMSh, with its permission requests and questions answered natively. `/worktrees` and a read-only `/github` workspace are the first delivered slices of the workspace work. The release also carries the fixes from the v0.17 Ghostty physical-QA pass and a set of passthrough, tmux, transcript and Fish correctness fixes.

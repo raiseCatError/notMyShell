@@ -112,6 +112,7 @@ test('timeouts are failures with backoff; refresh retries; a previous value stay
   mode = 'hang'; now += 200;
   engine.demand(demand('slow.one')); await engine.settle(1000);
   assert.equal(engine.status('slow.one').state, 'timeout');
+  assert.equal(engine.status('slow.one').hasValue, true, 'diagnostics disclose the retained previous value');
   assert.match(engine.status('slow.one').error!, /timed out after 20 ms/);
   assert.equal(engine.facts()['slow.one']!.freshness, 'stale', 'old value kept, marked stale, never refreshed by invention');
   assert.equal(engine.stats.timedOut, 1);
@@ -138,6 +139,7 @@ test('a capability\'s first resolution gets a cold-start allowance; later ones k
   engine.stage(scope('/other')); engine.commit();
   engine.demand(demand('cold.one')); await engine.settle(2000);
   assert.equal(engine.status('cold.one').state, 'timeout', 'once warm, the declared limit applies');
+  assert.equal(engine.status('cold.one').hasValue, false, 'a different scope has no previous value to reuse');
   assert.match(engine.status('cold.one').error!, /timed out after 30 ms/u);
   delay = 0;
   engine.refresh(); await engine.settle(2000);
