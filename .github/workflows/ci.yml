@@ -85,7 +85,22 @@ jobs:
       - run: npm ci
       # Built-launcher tests must execute rather than silently skip on fresh runners.
       - run: npm run build
-      - run: npm test -- --shard=${{ matrix.shard }}/2 --test-timeout=120000
+      - name: Test shard with Ubuntu worker observations
+        env:
+          TEST_SHARD: ${{ matrix.shard }}
+        run: |
+          if [[ "${{ runner.os }}" == Linux && "$TEST_SHARD" == 1 ]]; then
+            python3 scripts/observe-ci-test-workers.py -- npm test -- --shard="$TEST_SHARD"/2 --test-timeout=120000
+          else
+            npm test -- --shard="$TEST_SHARD"/2 --test-timeout=120000
+          fi
+      - name: Preserve worker observations
+        if: always() && runner.os == 'Linux' && matrix.shard == 1
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-shard1-worker-observations
+          path: ${{ runner.temp }}/nmsh-worker-diagnostics
+          if-no-files-found: warn
       - name: Process leak check
         if: always()
         run: bash scripts/check-process-leaks.sh
