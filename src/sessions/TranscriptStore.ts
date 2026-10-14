@@ -41,8 +41,10 @@ export interface LiveLink {
   sessionId: string;
   /** Last shell stream event reflected in this transcript. */
   seq: number;
+  /** Presentation-only dictionary index; never execution status. */
+  previousActivityIndex?: number;
   /** The command in flight when this checkpoint was taken. */
-  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number};
+  running?: {command: string; startedAt: number; cwd: string; startId: number; outputStartId: number; historyAllowed?: number; activityIndex?: number};
 }
 
 function parseLive(value: unknown): LiveLink | undefined {
@@ -52,8 +54,13 @@ function parseLive(value: unknown): LiveLink | undefined {
   const running = live.running as Record<string, unknown> | undefined;
   const validRunning = running && typeof running.command === 'string' && typeof running.cwd === 'string'
     && ['startedAt', 'startId', 'outputStartId'].every(key => Number.isSafeInteger(running[key]));
+  const index = (value: unknown): number | undefined => Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) < 10_000 ? value as number : undefined;
+  const previousActivityIndex = index(live.previousActivityIndex);
+  const activityIndex = index(running?.activityIndex);
+  const {activityIndex: rawActivityIndex, ...runningFacts} = running ?? {};
   return {sessionId: live.sessionId, seq: live.seq as number,
-    ...(validRunning ? {running: running as unknown as NonNullable<LiveLink['running']>} : {})};
+    ...(previousActivityIndex === undefined ? {} : {previousActivityIndex}),
+    ...(validRunning ? {running: {...runningFacts, ...(activityIndex === undefined ? {} : {activityIndex})} as unknown as NonNullable<LiveLink['running']>} : {})};
 }
 
 export type TranscriptSummary = Omit<TranscriptSession, 'transcript' | 'preview' | 'live'> & {

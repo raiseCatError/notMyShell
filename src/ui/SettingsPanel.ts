@@ -4,7 +4,7 @@ import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {historicalPromptLevel} from '../output/TranscriptPanel.js';
-import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -507,6 +507,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: withIdleColorSource(c, colorSource)})}),
   {id: 'idleCustomColors', parent: 'idleColor', when: c => c.idleVisuals.colorSource === 'custom', label: 'Edit colors',
     description: 'The idle visuals\' own gradient stops, with a live preview', category: 'Idle visuals', control: 'action', actionLabel: 'Edit ›', destination: 'idleColors'},
+  enumRow({id: 'activityStyle', label: 'Activity wording', description: 'Expressive gives each command a playful working phrase and a matching finished one (Cooking… → Cooked for 18s). Classic says Running and Completed. Exit codes, failures, interrupts and waiting for input read the same in both', category: 'Live activity',
+    values: ACTIVITY_STYLES, labels: ACTIVITY_STYLES.map(style => ACTIVITY_STYLE_LABELS[style]),
+    get: c => c.liveActivity.style, set: (c, style) => ({...c, liveActivity: {...c.liveActivity, style}})}),
   enumRow({id: 'activityColors', label: 'Live activity colors', description: 'The running-command line. Follow appearance uses Chroma when it is on, otherwise the theme. Only live work moves; finished commands show their plain result', category: 'Live activity',
     values: LIVE_ACTIVITY_COLORS, labels: LIVE_ACTIVITY_COLORS.map(colors => LIVE_ACTIVITY_COLOR_LABELS[colors]),
     get: c => c.liveActivity.colors, set: (c, colors) => ({...c, liveActivity: {...c.liveActivity, colors,
@@ -634,7 +637,7 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
   'glyphStyle', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
-  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityColors',
+  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityStyle', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
   'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
   'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',

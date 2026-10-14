@@ -399,6 +399,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('idleRunBusy')},
     {row: configRow('idleColor')},
     routeRow('setupIdleColors', 'Edit idle colors', 'The idle visuals\' own gradient stops, with a live preview', 'idleColors', 'Idle visuals'),
+    {row: configRow('activityStyle'), note: draft => draft.liveActivity.style === 'expressive' ? 'Cooking… then Cooked for 18s; failures and interrupts keep their plain wording and exit code' : 'Running and Completed, as before'},
     {row: configRow('activityColors'), note: () => 'The running-command line only; finished commands show their plain result'},
     routeRow('setupActivityColors', 'Edit live activity colors', 'Gradient stops for the live activity line', 'activityColors', 'Live activity'),
   ]},

@@ -550,14 +550,20 @@ export function normalizeIdleVisuals(value: unknown): IdleVisualSettings {
 export const LIVE_ACTIVITY_COLORS = ['appearance', 'lavender', 'grayscale', 'custom'] as const;
 export type LiveActivityColors = typeof LIVE_ACTIVITY_COLORS[number];
 export const LIVE_ACTIVITY_COLOR_LABELS: Record<LiveActivityColors, string> = {appearance: 'Follow appearance', lavender: 'Native Lavender', grayscale: 'Grayscale', custom: 'Custom'};
-export interface LiveActivitySettings {colors: LiveActivityColors; customStops: string[]}
-export const DEFAULT_LIVE_ACTIVITY: LiveActivitySettings = {colors: 'appearance', customStops: []};
+/** Expressive: a playful working phrase and its past-tense counterpart on success. Classic: plain "Running" and "Completed". Failures and interrupts read the same in both. */
+export const ACTIVITY_STYLES = ['expressive', 'classic'] as const;
+export type ActivityStyle = typeof ACTIVITY_STYLES[number];
+export const ACTIVITY_STYLE_LABELS: Record<ActivityStyle, string> = {expressive: 'Expressive', classic: 'Classic'};
+
+export interface LiveActivitySettings {colors: LiveActivityColors; customStops: string[]; style: ActivityStyle}
+export const DEFAULT_LIVE_ACTIVITY: LiveActivitySettings = {colors: 'appearance', customStops: [], style: 'expressive'};
 
 export function normalizeLiveActivity(value: unknown): LiveActivitySettings {
   const v = isRecord(value) ? value : {};
   const customStops = validCustomStops(v.customStops) ? v.customStops.map(stop => stop.toLowerCase()) : [];
   const colors = LIVE_ACTIVITY_COLORS.includes(v.colors as LiveActivityColors) ? v.colors as LiveActivityColors : 'appearance';
-  return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops};
+  const style = ACTIVITY_STYLES.includes(v.style as ActivityStyle) ? v.style as ActivityStyle : DEFAULT_LIVE_ACTIVITY.style;
+  return {colors: colors === 'custom' && !customStops.length ? 'appearance' : colors, customStops, style};
 }
 
 export interface PromptConfiguration {

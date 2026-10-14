@@ -8,7 +8,7 @@ import type {TerminalFrame} from '../src/terminal/TerminalRenderer.js';
 test('one-line prompt and editor share a row inside composer boundaries for either legacy placement', () => {
   for (const placement of ['header', 'composer'] as const) {
     const app = new TerminalApp();
-    app['promptConfiguration'] = normalizePromptConfiguration({composerLayout: 'oneLine', placement});
+    app['promptConfiguration'] = normalizePromptConfiguration({composerLayout: 'oneLine', placement, liveActivity: {style: 'classic'}});
     app['context'] = {cwd: '/tmp/work', project: 'work', branch: 'dev', exitStatus: 7};
     app['editor'].insert('echo ready');
     app['running'] = {command: 'echo ready', startedAt: Date.now(), interrupted: false, cleared: false, startId: 0};
