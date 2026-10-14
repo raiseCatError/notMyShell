@@ -4,6 +4,8 @@ import type {AgentViewState} from '../sessions/AgentViews.js';
 import {AgentInputController, agentKeyAction} from './controller.js';
 import {applyEditingKey} from '../../input/editingKeys.js';
 import {projectObject} from '../transcript/projection.js';
+import {pickerArgument, pickerKey, selectedRow, type PickerKind, type PickerOpen, type PickerRow, type PickerState} from './pickers.js';
+import type {ControlResult} from '../sessions/claudeAdapter.js';
 
 export interface AgentSurfaceHost {
   shellEmpty: boolean;
@@ -13,11 +15,58 @@ export interface AgentSurfaceHost {
   copy(text: string): void;
   copyReply(session: AgentSession, index: number): void;
   choose?(id: string, requestId: string, answers: Record<string, string>): boolean;
+  /** NMSh's own pickers: built from what the provider published for this target; absent where unsupported. */
+  openPicker?(session: AgentSession, kind: PickerKind): PickerOpen;
+  /** Apply one picker row through the provider's control channel; the host re-renders when it settles. */
+  applyPicker?(session: AgentSession, picker: PickerState, row: PickerRow): void;
+  /** Show or hide the right panel; returns what the person sees, in words. */
+  togglePanel?(view: AgentViewState): string;
+  /** Ask the provider for its own context breakdown (shown in the right panel when it arrives). */
+  refreshContext?(session: AgentSession): void;
+}
+
+/** `/model`, `/model sonnet`, `/effort`, `/effort high`: NMSh's own commands in a managed agent composer. A leading space sends the text to the agent verbatim. */
+export function pickerCommand(text: string): {kind: PickerKind; argument: string} | undefined {
+  const match = /^\/(model|effort)(?:[ \t]+(\S{1,96}))?[ \t]*$/u.exec(text);
+  return match ? {kind: match[1] as PickerKind, argument: match[2] ?? ''} : undefined;
+}
+
+/**
+ * Apply a picker choice and say what happened: the provider's acknowledgement (and when it takes effect), or its
+ * refusal with the picker kept open. Never reports a change the provider did not acknowledge.
+ */
+export async function applyPickerChoice(view: AgentViewState, picker: PickerState, row: PickerRow, ops: {
+  setModel(model: string | undefined): Promise<ControlResult>; setEffort(level: string | null): Promise<ControlResult>; render(): void;
+}): Promise<boolean> {
+  const c = view.controller!;
+  picker.busy = true; picker.message = undefined; ops.render();
+  const result = picker.kind === 'model' ? await ops.setModel(row.value ?? undefined) : await ops.setEffort(row.value);
+  picker.busy = false;
+  if (!result.ok) {
+    // In the open picker the refusal stays beside the rows; a direct `/model x` reports it on the conversation.
+    if (c.owner === 'PICKER' && c.picker === picker) picker.message = `Not changed: ${result.reason}`;
+    else { view.message = `${picker.kind === 'model' ? 'Model' : 'Effort'} not changed: ${result.reason}`; if (c.picker === picker) c.picker = undefined; }
+    ops.render(); return false;
+  }
+  if (c.picker === picker) { c.picker = undefined; c.owner = 'AGENT_MESSAGE'; }
+  view.message = picker.kind === 'model'
+    ? `Model → ${row.label}. Claude acknowledged; it applies from the next model call and is confirmed when Claude reports it.`
+    : row.value === null ? 'Effort → model default. Claude acknowledged; applies from the next turn.' : `Effort → ${row.value}. Claude acknowledged; applies from the next turn (this session only).`;
+  ops.render();
+  return true;
 }
 /** Adapter operations are supplied by the host; this controller is never a portable API. */
 export function handleAgentInput(view: AgentViewState, session: AgentSession, key: Key, host: AgentSurfaceHost): boolean {
   const c = view.controller ??= new AgentInputController();
   if (c.editor.text !== view.input) c.editor.replaceText(view.input);
+  if (c.owner === 'PICKER') {
+    const picker = c.picker;
+    if (!picker || session.level !== 'managed') { c.picker = undefined; c.owner = 'AGENT_MESSAGE'; return false; }
+    const outcome = pickerKey(picker, key);
+    if (outcome === 'close') { c.picker = undefined; c.owner = 'AGENT_MESSAGE'; }
+    else if (outcome === 'apply') { const row = selectedRow(picker); if (row) host.applyPicker?.(session, picker, row); }
+    return false;
+  }
   const action = agentKeyAction(key, c.owner);
   if (!action) return false;
   if (session.level !== 'managed') {
@@ -63,6 +112,26 @@ export function handleAgentInput(view: AgentViewState, session: AgentSession, ke
     if (text.trim() === '/approval') {
       if (session.pendingApproval) {c.owner = 'APPROVAL'; c.approvalRequestId = session.pendingApproval.requestId; c.editor.clear(); view.input = '';}
       else view.message = 'No pending permission request.';
+      return false;
+    }
+    if (/^\/panel[ \t]*$/u.test(text)) { view.message = host.togglePanel?.(view) ?? 'The panel is not available here.'; c.editor.clear(); view.input = ''; return false; }
+    if (/^\/context[ \t]*$/u.test(text)) {
+      c.editor.clear(); view.input = '';
+      if (host.refreshContext) { host.refreshContext(session); view.panel = true; view.message = 'Asking Claude for its context breakdown…'; } else view.message = '/context needs a running managed Claude target.';
+      return false;
+    }
+    const command = pickerCommand(text);
+    if (command) {
+      const opened = host.openPicker?.(session, command.kind) ?? {ok: false as const, reason: `/${command.kind} is not available for this target.`};
+      c.editor.clear(); view.input = '';
+      if (!opened.ok) { view.message = opened.reason; return false; }
+      const picker = opened.picker;
+      if (command.argument) {
+        const row = pickerArgument(picker, command.argument);
+        if (row) { c.picker = picker; host.applyPicker?.(session, picker, row); return false; }
+        picker.message = `No ${command.kind === 'model' ? 'model' : 'effort level'} named "${command.argument}"; choose one below.`;
+      }
+      c.picker = picker; c.owner = 'PICKER';
       return false;
     }
     const copy = /^\/copy(?:\s+(\d+))?\s*$/u.exec(text.trim());
