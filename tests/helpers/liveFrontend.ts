@@ -42,7 +42,9 @@ export class LiveSandbox {
     mkdirSync(this.runtime, {mode: 0o700});
     chmodSync(this.runtime, 0o700);
     writeFileSync(join(this.config, 'nmsh', 'config.json'),
-      JSON.stringify({onboardingComplete: true, glyphChoiceComplete: true, updateChecks: false, ...config}));
+      JSON.stringify({onboardingComplete: true, glyphChoiceComplete: true, updateChecks: false, ...config,
+        // Most live tests read the plain wording; a test that is about Expressive wording asks for it.
+        liveActivity: {style: 'classic', ...(config.liveActivity as Record<string, unknown> | undefined)}}));
   }
 
   get env(): NodeJS.ProcessEnv {
