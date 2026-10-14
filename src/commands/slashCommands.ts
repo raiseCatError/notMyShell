@@ -39,6 +39,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/copy', insertion: '/copy', description: 'Copy latest command output (or choose, per Settings → Copy)'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
   {name: '/copy settings', insertion: '/copy settings', description: 'Quick Copy or Interactive Picker, and whether copies include completion status'},
+  {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
   {name: '/cp', insertion: '/cp', description: 'Same as /copy (every form: /cp 2, /cp -3, /cp ui, /cp latest, --status)'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
@@ -139,6 +140,8 @@ export type ParsedSlashCommand =
   /** `args` is everything after /copy, parsed by parseCopyArgs (so a mistake gets a precise answer). */
   | {kind: 'copy'; args: string}
   | {kind: 'copySettings'}
+  /** /compare [A [B]]: outputs by /copy number; A defaults to the latest, B to A's previous run (or a choice). */
+  | {kind: 'compare'; first?: number; second?: number; error?: string}
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
@@ -213,6 +216,12 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
+  const compare = /^\/compare(?:\s+(.*?))?\s*$/u.exec(input);
+  if (compare) {
+    const words = (compare[1] ?? '').split(/\s+/u).filter(Boolean);
+    if (words.length > 2 || words.some(word => !/^[1-9]\d{0,2}$/u.test(word))) return {kind: 'compare', error: 'Use /compare, /compare N or /compare N M (numbers as /copy shows them, 1 is the latest).'};
+    return {kind: 'compare', ...(words[0] ? {first: Number(words[0])} : {}), ...(words[1] ? {second: Number(words[1])} : {})};
+  }
   // /cp is /copy: one parser, one handler, every form.
   if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
   const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
