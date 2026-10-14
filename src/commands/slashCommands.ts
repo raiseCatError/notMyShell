@@ -103,6 +103,9 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/extensions', insertion: '/extensions', description: 'Alias of /mods'},
   {name: '/worktrees', insertion: '/worktrees', description: 'This repository\'s Git worktrees: open one, create or remove with a reviewed plan'},
   {name: '/github', insertion: '/github', description: 'Read-only GitHub workspace for this repository: PRs, issues, checks and diffs (uses gh)'},
+  {name: '/sidebar', insertion: '/sidebar', description: 'Workspace sidebar beside the transcript: tmux panes, worktrees and managers (/sidebar focus)'},
+  {name: '/panel', insertion: '/panel', description: 'Detail panel for what the sidebar selects (/panel focus); q or /panel closes it'},
+  {name: '/keys', insertion: '/keys', description: 'Workspace keys in effect, problems in keymap.json and host notes (/keys reload)'},
   {name: '/prs', insertion: '/prs', description: 'Open pull requests in the GitHub workspace'},
   {name: '/issues', insertion: '/issues', description: 'Open issues in the GitHub workspace'},
   {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
@@ -198,6 +201,8 @@ export type ParsedSlashCommand =
   | {kind: 'ai'; target?: string}
   | {kind: 'mods'; provider?: string}
   | {kind: 'worktrees'}
+  | {kind: 'workspace'; region: 'sidebar' | 'panel'; focus: boolean}
+  | {kind: 'keys'; reload: boolean}
   | {kind: 'github'; tab: 'prs' | 'issues' | 'search'}
   | {kind: 'managedTarget'; provider: 'claude' | 'codex'; action: 'open' | 'new'}
   | {kind: 'rawProvider'; command?: string}
@@ -316,6 +321,10 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   const mods = /^\/(?:mods|extensions)\s*$/u.exec(input);
   if (mods) return {kind: 'mods'};
   if (/^\/worktrees\s*$/u.test(input)) return {kind: 'worktrees'};
+  const region = /^\/(sidebar|panel)(?:\s+(focus))?\s*$/u.exec(input);
+  if (region) return {kind: 'workspace', region: region[1] as 'sidebar' | 'panel', focus: Boolean(region[2])};
+  const keys = /^\/keys(?:\s+(reload))?\s*$/u.exec(input);
+  if (keys) return {kind: 'keys', reload: Boolean(keys[1])};
   const github = /^\/(github|prs|issues)\s*$/u.exec(input);
   if (github) return {kind: 'github', tab: github[1] === 'issues' ? 'issues' : 'prs'};
   const providerMods = /^\/(claude|codex|opencode)\s+mods\s*$/u.exec(input);

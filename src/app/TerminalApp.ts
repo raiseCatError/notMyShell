@@ -97,7 +97,7 @@ import {
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {shouldProbeGraphics} from '../host/capabilities.js';
+import {shouldProbeGraphics, terminalProfile} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
@@ -327,7 +327,7 @@ import {discoverClaudeProfiles} from '../agents/profileDiscovery.js';
 import {ModsController, modsKeyAction} from '../agents/mods/controller.js';
 import {renderMods} from '../agents/mods/view.js';
 import {WorktreeManagerController} from '../worktrees/controller.js';
-import {repositoryIdentity} from '../worktrees/discovery.js';
+import {discoverWorktrees, repositoryIdentity} from '../worktrees/discovery.js';
 import {createGitRunner, succeeded, type GitRunner} from '../worktrees/git.js';
 import {newWorktreeRequest} from '../worktrees/host.js';
 import {displayText as worktreeText} from '../worktrees/model.js';
@@ -344,6 +344,14 @@ import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
 import {applyPickerChoice} from '../agents/input/surface.js';
 import {settingsEffort} from '../agents/claudeSettings.js';
 import {renderSidePanel, sidePanelShown, sidePanelWidth} from '../agents/workspace/sidePanel.js';
+import {WorkspaceHost} from './workspaceHost.js';
+import {composeWorkspaceRows} from './workspaceFrame.js';
+import type {WorkspaceOwner} from '../workspace/focus.js';
+import {columnAt, type WorkspaceColumns} from '../workspace/layout.js';
+import {createTmuxRunner, listTmuxPanes, tmuxServer, trustedTmux} from '../workspace/tmux.js';
+import {describeKeymap, hostNotes, type HostProfile} from '../workspace/keymapConfig.js';
+import type {WorkspaceEffect} from './workspaceHost.js';
+import type {ActivationIntent} from '../workspace/resources.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
@@ -389,6 +397,8 @@ const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(e
 const CONTEXT_SETTLE_MS = 150;
 
 export class TerminalApp {
+  /** Workspace regions (#330): sidebar, detail panel, their focus and keymap. Declared first: dimensions() reads it. */
+  private readonly workspace = new WorkspaceHost();
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
   /** The release version the last `/update` offered; `/update apply` installs only that. */
@@ -827,6 +837,8 @@ export class TerminalApp {
       this.presetStartup = new PresetStartup(preset);
     }
     setIconStyle(this.promptConfiguration.glyphStyle);
+    // keymap.json is validated once here and on /keys reload; a missing file is the defaults.
+    this.workspace.loadKeymap();
     // The backend this frontend manages, known before the first welcome is drawn.
     this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
     this.startWelcome(this.initialCwd);
@@ -1402,6 +1414,10 @@ export class TerminalApp {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
     }
+    // Workspace columns: pointer events on a region are the workspace's; center events continue center-relative.
+    const routed = this.routeWorkspacePointer(key);
+    if (!routed) return;
+    key = routed;
     if (this.startupPending && key.kind === 'interrupt') { this.abortStartup(); return; }
     if (this.startupPanel) {
       // The shell is not ready; it may be waiting on a startup file. Abort is explicit, and nothing the
@@ -1918,6 +1934,9 @@ export class TerminalApp {
       this.render();
       return;
     }
+    // Every panel, program and search above keeps its keys. Then a focused workspace region, or an opt-in keymap
+    // binding from an idle composer (it comes before the agent shelf, the task bar and history).
+    if (this.handleWorkspaceKey(key)) return;
     if (key.kind === 'mouseDrag' || key.kind === 'mouseRelease') { this.handleSelectionPointer(key.kind, key.y); return; }
     // Any other key or click ends a finished selection (its text is already on the clipboard).
     if (this.selection && !this.selection.dragging && key.kind !== 'wheelUp' && key.kind !== 'wheelDown' && key.kind !== 'mouseMove') {
@@ -2695,6 +2714,10 @@ export class TerminalApp {
     else if (slash.kind === 'ai') this.openAi(command, slash.target);
     else if (slash.kind === 'mods') this.openMods(slash.provider);
     else if (slash.kind === 'worktrees') await this.openWorktrees();
+    else if (slash.kind === 'workspace') {
+      await this.applyWorkspaceEffect(this.workspace.perform(slash.focus ? `${slash.region}.focus` : `${slash.region}.toggle`, this.terminalDimensions().columns));
+    }
+    else if (slash.kind === 'keys') this.showWorkspaceKeys(command, slash.reload);
     else if (slash.kind === 'github') await this.openGithub(slash.tab);
     else if (slash.kind === 'managedTarget') this.openManagedTarget(command, slash.provider, slash.action);
     else if (slash.kind === 'rawProvider') {
@@ -9550,7 +9573,7 @@ export class TerminalApp {
     // framePanel's frame line leads the panel (it moves below the panel under Dock Top), then title and spacer.
     const row = region.top + (plan.panelPosition === 'top' ? 0 : 1) + 2;
     if (row + size.rows > region.top + region.height) return undefined;
-    return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2, size);
+    return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2 + (this.workspace.open ? this.workspaceColumns().center.x : 0), size);
   }
 
   /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
@@ -9712,9 +9735,150 @@ export class TerminalApp {
       !this.passthrough && !this.externalPassthrough && this.decorativeMotionAllowed() && colorLevel() !== 'none', now, this.cursorBackend());
     const painted = cursor.rows;
     try {
-      this.renderer.render({...frame, ...(cursor.hideCaret ? {cursorVisible: false} : {}), rows: active && region
-        ? applyEffect(painted, active, region, columns, now, getCurrentGlyphMode() === 'safe', colorLevel()) : painted});
+      this.renderer.render(this.composeWorkspaceFrame({...frame, ...(cursor.hideCaret ? {cursorVisible: false} : {}), rows: active && region
+        ? applyEffect(painted, active, region, columns, now, getCurrentGlyphMode() === 'safe', colorLevel()) : painted}, plan));
     } catch (error) { this.onTerminate(); throw error; }
+  }
+
+  /**
+   * Workspace regions are composed last, beside (docked) or over (a focused drawer) the finished center rows, so every
+   * effect, transition and cursor decision above stays in center coordinates. The Status Strip row keeps the full
+   * width. While a region has the keyboard, the composer's caret is not shown.
+   */
+  private composeWorkspaceFrame(frame: TerminalFrame, plan: ScreenPlan): TerminalFrame {
+    if (!this.workspace.open) return frame;
+    const terminal = this.terminalDimensions();
+    const owner = this.workspaceOwner();
+    const columns = this.workspace.plan(terminal.columns, this.workspaceSuppressed(), owner);
+    if (columns.sidebar.mode === 'hidden' && columns.panel.mode === 'hidden') return frame;
+    const status = plan.regions.find(region => region.kind === 'status' && region.height > 0);
+    const spanned = frame.rows.length - (status ? 1 : 0);
+    const safe = getCurrentGlyphMode() === 'safe';
+    const style = {safe, color: colorLevel() !== 'none', now: Date.now()};
+    const glyph = safe ? '|' : '│';
+    const rows = composeWorkspaceRows({rows: frame.rows, plan: columns,
+      sidebar: this.workspace.sidebarRows(columns, spanned, owner, style), panel: this.workspace.panelRows(columns, spanned, owner, style),
+      ...(status ? {fullWidth: new Map([[status.top, this.statusStripRow(terminal.columns)]])} : {}),
+      divider: style.color ? `${SUBTLE}${glyph}${RESET}` : glyph});
+    const regionOwns = owner === 'LEFT_SIDEBAR' || owner === 'RIGHT_PANEL';
+    return {...frame, rows, columns: terminal.columns, cursorColumn: frame.cursorColumn + columns.center.x, ...(regionOwns ? {cursorVisible: false} : {})};
+  }
+
+  /**
+   * Pointer events before anything else sees them: the column plan decides the region. A click on the sidebar or panel
+   * focuses it (the same action as /sidebar focus or /panel focus); a click in the center while a region has the
+   * keyboard returns it to the composer. Center events continue with center-relative columns, so every existing hit
+   * test keeps working unchanged. Returns undefined when the event was the workspace's.
+   */
+  private routeWorkspacePointer(key: Key): Key | undefined {
+    const x = 'x' in key ? key.x : undefined;
+    const y = 'y' in key ? key.y : undefined;
+    if (x === undefined || !this.workspace.open) return key;
+    const owner = this.workspaceOwner();
+    const plan = this.workspace.plan(this.terminalDimensions().columns, this.workspaceSuppressed(), owner);
+    if (plan.center.x === 0 && plan.sidebar.mode === 'hidden' && plan.panel.mode === 'hidden') return key;
+    const status = this.presentationFrame?.plan.regions.find(region => region.kind === 'status' && region.height > 0);
+    const center = {...key, x: Math.max(1, x - plan.center.x)} as Key;
+    if (status && y !== undefined && screenRowFromTerminal(y) === status.top) return center;
+    const hit = columnAt(plan, x - 1);
+    const regionOwns = owner === 'LEFT_SIDEBAR' || owner === 'RIGHT_PANEL';
+    if (hit === 'center') {
+      if (key.kind === 'mouseClick' && regionOwns) void this.applyWorkspaceEffect(this.workspace.perform('focus.return', plan.columns));
+      return center;
+    }
+    // A protected owner (a panel, a program, the agent view) keeps the keyboard; a click beside it does nothing.
+    if (key.kind === 'mouseClick' && (owner === 'COMPOSER' || regionOwns)) {
+      if (hit === 'sidebar' && owner !== 'LEFT_SIDEBAR') void this.applyWorkspaceEffect(this.workspace.perform('sidebar.focus', plan.columns));
+      if (hit === 'panel' && owner !== 'RIGHT_PANEL') void this.applyWorkspaceEffect(this.workspace.perform('panel.focus', plan.columns));
+    }
+    return undefined;
+  }
+
+  /** Workspace keys after every panel and owner that comes first (they are protected anyway): true when consumed. */
+  private handleWorkspaceKey(key: Key): boolean {
+    if (!this.workspace.open && !this.workspace.bindings.some(binding => binding.context === 'composerEmpty')) return false;
+    const owner = this.workspaceOwner();
+    const {columns, rows} = this.terminalDimensions();
+    const effect = this.workspace.handleKey(key, {owner, columns, viewRows: Math.max(1, rows - 4),
+      composerIdle: owner === 'COMPOSER' && this.composerIdle() && !this.composerHistory.active});
+    if (!effect) return false;
+    void this.applyWorkspaceEffect(effect);
+    return true;
+  }
+
+  private async applyWorkspaceEffect(effect: WorkspaceEffect): Promise<void> {
+    if (effect.kind === 'none') return;
+    if (effect.kind === 'refresh') { this.render(); await this.refreshWorkspaceSources(); return; }
+    if (effect.kind === 'intent') await this.performWorkspaceIntent(effect.intent);
+    this.render();
+  }
+
+  private workspaceRefreshGeneration = 0;
+
+  /**
+   * One explicit listing per open or focus: tmux (only the server NMSh runs inside, through the trusted tmux
+   * executable) and this repository's worktrees. Nothing polls; a newer refresh wins.
+   */
+  /** `/keys`: every workspace binding in effect, problems in keymap.json, and keys this host may take first. */
+  private showWorkspaceKeys(command: string, reload: boolean): void {
+    if (reload) this.workspace.loadKeymap();
+    const profile: HostProfile = {host: process.env.TERM_PROGRAM === 'Apple_Terminal' ? 'apple-terminal' : terminalProfile(process.env) === 'ghostty' ? 'ghostty' : 'other',
+      tmux: Boolean(process.env.TMUX)};
+    const notes = [...new Set(this.workspace.bindings.flatMap(binding => hostNotes(binding.key, profile)))];
+    const lines = [...(reload ? ['keymap.json read again.'] : []), ...describeKeymap(this.workspace.bindings),
+      ...(this.workspace.problems.length ? ['Problems in keymap.json', ...this.workspace.problems.map(problem => `  ${problem.severity}${problem.entry === undefined ? '' : ` (entry ${problem.entry + 1})`}: ${problem.message}`)] : []),
+      ...(notes.length ? ['Host notes', ...notes.map(note => `  ${note}`)] : [])];
+    this.output.addFrontendInteraction(command, lines.join('\n'), this.workspace.problems.some(problem => problem.severity === 'error') ? ERROR : INFO);
+  }
+
+  private async refreshWorkspaceSources(): Promise<void> {
+    const generation = ++this.workspaceRefreshGeneration;
+    const cwd = this.canonicalShellCwd();
+    const server = tmuxServer(process.env);
+    const executable = server ? trustedTmux() : undefined;
+    const runner = server && executable ? createTmuxRunner(executable, server) : undefined;
+    const [listing, worktrees] = await Promise.all([
+      runner ? listTmuxPanes(runner) : Promise.resolve(server ? {panes: [], observedAt: Date.now(), error: 'tmux was not found in a trusted location'} : undefined),
+      (async () => {
+        try { const git = createGitRunner(); return await discoverWorktrees(git, await repositoryIdentity(git, cwd)); } catch { return undefined; }
+      })(),
+    ]);
+    if (generation !== this.workspaceRefreshGeneration || this.stopped) return;
+    this.workspace.setSources({...(server ? {tmux: {server, ...(listing ? {listing} : {}), ...(runner ? {runner} : {})}} : {}), ...(worktrees ? {worktrees} : {}), cwd});
+    this.render();
+  }
+
+  /**
+   * What activating a sidebar item does, through the paths NMSh already uses: a directory is staged as `cd` in an empty
+   * composer (never run, never typed over a draft), a manager opens as its own command does, tmux navigates by id.
+   */
+  private async performWorkspaceIntent(intent: ActivationIntent): Promise<void> {
+    const toComposer = () => { this.workspace.state = {...this.workspace.state, owner: 'COMPOSER'}; };
+    if (intent.kind === 'changeDirectory') {
+      if (this.editor.text.trim() || this.running) { this.workspace.message = this.running ? 'A command is running; stage the cd when it has finished.' : 'Your draft is kept. Clear the composer, then open this again.'; return; }
+      let command: string | undefined;
+      try { command = directoryCommand(intent.path); } catch { this.workspace.message = 'That path cannot be typed safely as a cd command.'; return; }
+      toComposer();
+      this.applySuggestion({insertion: command});
+      return;
+    }
+    if (intent.kind === 'openManager') {
+      const slash = parseSlashCommand(intent.command);
+      if (!slash) return;
+      toComposer();
+      await this.runSlash(intent.command, slash);
+      return;
+    }
+    if (intent.kind === 'tmux') {
+      const args = this.workspace.tmuxArgs(intent);
+      const runner = this.workspace.sources.tmux?.runner;
+      if ('error' in args || !runner) { this.workspace.message = 'error' in args ? args.error : 'tmux is not available here'; return; }
+      const result = await runner(args);
+      this.workspace.message = result.code === 0 ? undefined : 'tmux could not switch there';
+      if (result.code === 0) void this.refreshWorkspaceSources();
+      return;
+    }
+    this.workspace.message = 'This item cannot be opened here.';
   }
 
   private renderPresentation(now: number): void {
@@ -10062,11 +10226,47 @@ export class TerminalApp {
     return this.inputFirstLinePrefix(this.inputColumns(columns));
   }
 
-  private dimensions(): {columns: number; rows: number} {
+  /** The terminal's real size. Everything NMSh draws in the middle uses dimensions() instead (the workspace center). */
+  private terminalDimensions(): {columns: number; rows: number} {
     return {
       columns: Math.max(1, process.stdout.columns || 80),
       rows: Math.max(1, process.stdout.rows || 24),
     };
+  }
+
+  /**
+   * The size of the center: the whole terminal unless a workspace region is docked beside it. Transcript wrapping,
+   * ScreenPlan, panels, hit testing and the PTY all follow this one width, so they cannot disagree; a drawer never
+   * changes it (opening one never resizes the shell).
+   */
+  private dimensions(): {columns: number; rows: number} {
+    const terminal = this.terminalDimensions();
+    if (!this.workspace.open) return terminal;
+    return {columns: this.workspaceColumns(terminal.columns).center.width, rows: terminal.rows};
+  }
+
+  /** The workspace column plan for this frame (see WorkspaceHost.plan): the single geometry path for regions. */
+  private workspaceColumns(columns = this.terminalDimensions().columns): WorkspaceColumns {
+    return this.workspace.plan(columns, this.workspaceSuppressed(), this.workspaceOwner());
+  }
+
+  /** Fullscreen or raw passthrough and idle visuals own the whole pane: no workspace chrome, the PTY gets every column. */
+  private workspaceSuppressed(): boolean {
+    return Boolean(this.passthrough || this.externalPassthrough || this.idle || this.frontendSuspended);
+  }
+
+  /**
+   * Who has the keyboard, as the workspace sees it. Anything that owns input before the composer is protected and never
+   * intercepted: startup, a program reading hidden or single-key input, passthrough, the agent view, every panel and
+   * search. Only then a focused, open region, and otherwise the composer.
+   */
+  private workspaceOwner(): WorkspaceOwner {
+    let owner: WorkspaceOwner | undefined;
+    if (this.workspaceSuppressed() || this.startupPending || this.startupPanel || this.directInputRequest()) owner = 'PASSTHROUGH';
+    else if (this.agentView) owner = 'AGENT_MESSAGE';
+    else if (this.settingsPanelActive || this.presetPanel || this.batchReview || this.pastePreview || this.launcher || this.agentPanel || this.shelf.focused) owner = 'PANEL';
+    else if (this.historySearchActive || this.directorySearchActive || this.findState?.editing) owner = 'SEARCH';
+    return this.workspace.owner(owner);
   }
 
   /** Transcript row under a terminal row, clamped to the transcript region so a drag past its edge keeps selecting. */

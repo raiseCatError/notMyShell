@@ -81,6 +81,14 @@ Use C in Paste Review to keep an ephemeral clip, or a block's Actions to keep it
 
 /clips suggestions on optionally checks macOS's native clipboard change counter while the composer is idle. It never reads clipboard contents. A changed counter suggests /ps; only that explicit command reads text for review. Suggestions default off, last only for this frontend, and stop with /clips suggestions off or if metadata fails. Linux clipboard tools have no supported metadata counter; background text polling is unsupported.
 
+## Workspace sidebar and detail panel
+
+/sidebar opens a sidebar beside the transcript: tmux panes of the server NMSh runs inside, this repository's worktrees, and links to /github, /agents and /sessions. /panel opens a detail panel for the selected item. /sidebar focus and /panel focus give them the keyboard; Esc returns to the composer and Tab moves between regions. In the sidebar, arrows move, Right/Left expand or collapse, Enter opens and / filters; in the panel, arrows and Page Up/Down scroll and q closes it. A click focuses a region.
+
+On a wide terminal the regions dock beside the transcript and the shell is sized to the middle. On a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them. Opening a worktree stages its cd in an empty composer; it never runs by itself.
+
+The composer binds no workspace keys by default. keymap.json in NMSh's configuration directory can add them (for example Left with an empty draft to focus the sidebar, with "replaces": true); /keys lists the keys in effect, any problems in the file and notes about keys your terminal or tmux may take first. /keys reload reads the file again.
+
 ## Directory navigation
 
 Use /dirs or the command palette to find recorded directories. Native ranks frequency and recency from approved command history. Select with arrows and Enter or Tab to insert a literal cd command, then press Enter separately to run it in zsh. Ordinary cd keeps its normal behavior.

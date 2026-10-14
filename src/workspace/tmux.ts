@@ -1,4 +1,5 @@
 import {spawn} from 'node:child_process';
+import {accessSync, constants, realpathSync} from 'node:fs';
 import {homedir} from 'node:os';
 import {isAbsolute} from 'node:path';
 import type {ActivationIntent, WorkspaceResource} from './resources.js';
@@ -162,6 +163,21 @@ export function createTmuxRunner(executable: string, server: TmuxServer, {timeou
     child.once('error', () => finish(null));
     child.once('close', code => finish(code));
   });
+}
+
+/**
+ * The tmux executable from fixed system locations only (Homebrew, /usr/local, the OS), resolved through symlinks:
+ * never a PATH entry or anything inside the workspace, so a repository cannot plant the binary the sidebar runs.
+ */
+export function trustedTmux(candidates: readonly string[] = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/tmux', '/bin/tmux']): string | undefined {
+  for (const candidate of candidates) {
+    try {
+      const path = realpathSync(candidate);
+      accessSync(path, constants.X_OK);
+      if (isAbsolute(path)) return path;
+    } catch { /* not installed here */ }
+  }
+  return undefined;
 }
 
 export interface TmuxListing {panes: TmuxPane[]; observedAt: number; error?: string}

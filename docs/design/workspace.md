@@ -4,8 +4,8 @@ Program: [#330](https://github.com/raiseCatError/notMyShell/issues/330). This do
 (`src/workspace/`) that the Workspace Sidebar (#331), the contextual detail panel (#332) and the semantic keymap
 (#335) build on, and the narrow contract by which the frontend (`src/app/TerminalApp.ts`) adopts them.
 
-Status: **foundation modules and tests only.** Nothing here is wired into the running app yet; `TerminalApp.ts` is
-not modified by this slice (see [Integration contract](#integration-contract)).
+Status: **wired into the frontend on `release/v0.20.0`** (`src/app/workspaceHost.ts`, `src/app/workspaceFrame.ts`, and
+the glue in `TerminalApp.ts`), following the [integration contract](#integration-contract). Physical QA is pending.
 
 ## Boundary
 
@@ -131,6 +131,27 @@ published, the adoption is:
 
 Conflict-prone paths for the integration branch: `src/app/TerminalApp.ts` (key routing, render composition, PTY
 sizing), `src/commands/slashCommands.ts` (two commands) and `src/help/helpContent.ts`.
+
+## As integrated (v0.20)
+
+- **One geometry path.** `TerminalApp.dimensions()` returns the center's width whenever a region is open; the
+  terminal's own size is `terminalDimensions()`. Wrapping, ScreenPlan, every panel, hit testing and the PTY therefore
+  follow one plan. Sidebar, panel and drawer cells are composed only at the final paint (`composeWorkspaceFrame`),
+  after effects, transitions and caret placement; the Status Strip row stays full width; erase-in-line is removed
+  from center rows so it cannot wipe a neighbouring region.
+- **Owner.** Derived each time from the frontend's state: startup, a program reading hidden or single-key input,
+  passthrough and idle visuals are `PASSTHROUGH`; the agent view is `AGENT_MESSAGE`; every panel, review, picker and
+  the focused agent shelf are `PANEL`; history, directory and find editing are `SEARCH`. Only then a focused region,
+  otherwise the composer. Workspace keys are routed after every one of those handlers in `handleKey`, so none of them
+  can lose a key; a focused region keeps unbound keys except Ctrl+C/Ctrl+Z/Ctrl+D and the palette.
+- **Pointer.** One translation point at the top of `handleKey`: `columnAt` decides; a click focuses a region (or
+  returns from one to the composer) and center events continue with center-relative columns. Clicks do not select
+  sidebar rows, and the wheel carries no column, so it keeps scrolling the transcript.
+- **Sources.** Listed on open and on focus only: the tmux server NMSh runs inside, through tmux from fixed system
+  locations (`trustedTmux`), and this repository's worktrees. Nothing polls.
+- **Detail panel.** Shows the sidebar selection (`resourceDetail`). Module diagnostics stay in `/modules` details,
+  the canonical #365 explain view; the panel does not grow a second one.
+- **Commands.** `/sidebar [focus]`, `/panel [focus]`, `/keys [reload]`; `keymap.json` is read at start and on reload.
 
 ## QA still required
 
