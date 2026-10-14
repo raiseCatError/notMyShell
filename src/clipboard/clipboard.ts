@@ -88,10 +88,15 @@ export async function writeClipboard(text: string, options: ClipboardEnvironment
       if (code !== 0) finish(new Error(`${backend.command} exited with code ${code}`));
       else { exitedSuccessfully = true; if (inputDone) finish(); }
     });
-    // Writable 'finish' means all input was written successfully; end callbacks
-    // also run on write errors, potentially before the stream's error event.
-    child.stdin.once('finish', () => { inputDone = true; if (exitedSuccessfully) finish(); });
-    child.stdin.end(text);
+    // A successful write callback acknowledges the payload. Backend exit can
+    // destroy stdin before 'finish', even after EOF and all bytes were delivered.
+    // Write errors reach this callback before the stream's error event.
+    child.stdin.write(text, error => {
+      if (error) { finish(new Error(`${backend.command} stdin failed: ${error.message}`)); return; }
+      inputDone = true;
+      if (exitedSuccessfully) finish();
+    });
+    child.stdin.end();
   });
 }
 
