@@ -89,6 +89,14 @@ On a wide terminal the regions dock beside the transcript and the shell is sized
 
 The composer binds no workspace keys by default. keymap.json in NMSh's configuration directory can add them (for example Left with an empty draft to focus the sidebar, with "replaces": true); /keys lists the keys in effect, any problems in the file and notes about keys your terminal or tmux may take first. /keys reload reads the file again.
 
+## Background tasks
+
+/background run <command> (or /bg run) starts a long-running command such as adb logcat, tail -f or a dev server in its own terminal beside the shell. It runs in the shell's current directory with its PATH, but without this shell's aliases, functions or unexported variables. Its output never mixes with the transcript or the shell.
+
+The task bar above the composer shows running and recent tasks. Up from an empty, idle prompt (after the agent shelf, when one is shown) or Shift+Up focuses it: Enter opens a task's output, x stops it (pressed again later: terminate, then kill), Delete removes a finished task, Space expands the bar, Esc returns. /background lists every task with its details and preferences; /background t3 opens one task's output; /background stop|kill|remove t3 and /background clear act directly.
+
+Nothing runs in the background unless you ask. /background suggestions on makes NMSh offer it when you submit a recognized long-running command: b runs it in the background once, Enter runs it here as before, a always backgrounds that command family, n stops asking, Esc returns to your draft. Tasks keep running while the window is detached and end with the session.
+
 ## Directory navigation
 
 Use /dirs or the command palette to find recorded directories. Native ranks frequency and recency from approved command history. Select with arrows and Enter or Tab to insert a literal cd command, then press Enter separately to run it in zsh. Ordinary cd keeps its normal behavior.

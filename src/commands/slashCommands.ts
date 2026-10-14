@@ -106,6 +106,8 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/sidebar', insertion: '/sidebar', description: 'Workspace sidebar beside the transcript: tmux panes, worktrees and managers (/sidebar focus)'},
   {name: '/panel', insertion: '/panel', description: 'Detail panel for what the sidebar selects (/panel focus); q or /panel closes it'},
   {name: '/keys', insertion: '/keys', description: 'Workspace keys in effect, problems in keymap.json and host notes (/keys reload)'},
+  {name: '/background', insertion: '/background', description: 'Background tasks: list, output, stop and remove (/background run <command> · stop|kill|remove t3 · clear · suggestions on|off)'},
+  {name: '/bg', insertion: '/bg', description: 'Same as /background'},
   {name: '/prs', insertion: '/prs', description: 'Open pull requests in the GitHub workspace'},
   {name: '/issues', insertion: '/issues', description: 'Open issues in the GitHub workspace'},
   {name: '/nmsh', insertion: '/nmsh raw ', description: 'Raw provider escape: /nmsh raw claude or codex with native CLI args'},
@@ -203,6 +205,8 @@ export type ParsedSlashCommand =
   | {kind: 'worktrees'}
   | {kind: 'workspace'; region: 'sidebar' | 'panel'; focus: boolean}
   | {kind: 'keys'; reload: boolean}
+  /** /background and /bg: the text is parsed by parseBackgroundCommand (a run keeps its command byte for byte). */
+  | {kind: 'background'; input: string}
   | {kind: 'github'; tab: 'prs' | 'issues' | 'search'}
   | {kind: 'managedTarget'; provider: 'claude' | 'codex'; action: 'open' | 'new'}
   | {kind: 'rawProvider'; command?: string}
@@ -323,6 +327,7 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/worktrees\s*$/u.test(input)) return {kind: 'worktrees'};
   const region = /^\/(sidebar|panel)(?:\s+(focus))?\s*$/u.exec(input);
   if (region) return {kind: 'workspace', region: region[1] as 'sidebar' | 'panel', focus: Boolean(region[2])};
+  if (/^\/(?:background|bg)(?:[ \t]|$)/u.test(input)) return {kind: 'background', input};
   const keys = /^\/keys(?:\s+(reload))?\s*$/u.exec(input);
   if (keys) return {kind: 'keys', reload: Boolean(keys[1])};
   const github = /^\/(github|prs|issues)\s*$/u.exec(input);

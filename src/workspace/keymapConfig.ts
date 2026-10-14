@@ -42,7 +42,7 @@ const RESERVED: ReadonlySet<Key['kind']> = new Set(['interrupt', 'eof', 'suspend
 
 /** What a key already does in the shell composer with an empty draft (TerminalApp's composer dispatch). */
 export const COMPOSER_MEANINGS: Readonly<Partial<Record<Key['kind'], string>>> = {
-  left: 'opens the Sessions view', right: 'accepts the inline suggestion', up: 'recalls history (or focuses a shown agent shelf)',
+  left: 'opens the Sessions view', right: 'accepts the inline suggestion', up: 'recalls history (or focuses a shown agent shelf or background task bar)',
   down: 'reveals the agent shelf', complete: 'completes', focusPrevious: 'moves through transcript blocks', toggleDetails: 'toggles details',
   find: 'finds in the transcript', historySearch: 'searches history', historyDelete: 'deletes a history entry', latest: 'jumps to the newest output',
   pageUp: 'scrolls the transcript', pageDown: 'scrolls the transcript', bufferHome: 'moves to the start of the draft', bufferEnd: 'accepts the inline suggestion',

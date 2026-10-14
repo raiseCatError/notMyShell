@@ -4,7 +4,7 @@ import {mkdtemp, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {classifyCommand, isClassified, simpleStages} from '../src/backgroundTasks/detector.js';
-import {decide, DEFAULT_PREFERENCES, loadPreferences, normalizePreferences, preferencesPath, rememberFamily, savePreferences} from '../src/backgroundTasks/preferences.js';
+import {decide, DEFAULT_PREFERENCES, loadPreferences, normalizePreferences, preferencesPath, rememberFamily, savePreferences, type BackgroundPreferences} from '../src/backgroundTasks/preferences.js';
 import {clean, TaskOutput} from '../src/backgroundTasks/output.js';
 
 const family = (command: string) => { const result = classifyCommand(command); return isClassified(result) ? result.family : undefined; };
@@ -51,7 +51,8 @@ test('anything that needs a shell parser, live state, the terminal or elevated a
 test('decisions: only an explicit Always backgrounds; Never and forced foreground run normally; families are specific', () => {
   const logcat = classifyCommand('adb logcat');
   const classification = isClassified(logcat) ? logcat : undefined;
-  let preferences = DEFAULT_PREFERENCES();
+  assert.equal(decide(classification, DEFAULT_PREFERENCES()).action, 'foreground', 'by default nothing is suggested: Enter runs it here, as before');
+  let preferences: BackgroundPreferences = {...DEFAULT_PREFERENCES(), suggestions: 'ask'};
   assert.equal(decide(classification, preferences).action, 'suggest');
   assert.equal(decide(undefined, preferences).action, 'foreground');
   preferences = rememberFamily(preferences, 'adb logcat', 'always');
@@ -70,7 +71,8 @@ test('decisions: only an explicit Always backgrounds; Never and forced foregroun
 test('preferences are normalized, bounded and saved privately; commands and output are never stored', async () => {
   const normalized = normalizePreferences({suggestions: 'sometimes', families: {'adb logcat': 'always', 'rm -rf': 'maybe', '\u001b[31m': 'never', ...Object.fromEntries(Array.from({length: 400}, (_, i) => [`f${i}`, 'never']))},
     retention: {lines: 10, bytes: 1e12, finishedKept: -5}, notify: 'loud', bar: 'expanded', upArrow: 'off', extra: true});
-  assert.equal(normalized.suggestions, 'ask');
+  assert.equal(normalized.suggestions, 'off', 'an unknown value is the default: off');
+  assert.equal(normalizePreferences({suggestions: 'ask'}).suggestions, 'ask');
   assert.equal(normalized.families['adb logcat'], 'always');
   assert.equal(normalized.families['rm -rf'], undefined);
   assert.ok(Object.keys(normalized.families).length <= 256);

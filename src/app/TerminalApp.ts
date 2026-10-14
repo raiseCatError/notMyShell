@@ -345,6 +345,14 @@ import {applyPickerChoice} from '../agents/input/surface.js';
 import {settingsEffort} from '../agents/claudeSettings.js';
 import {renderSidePanel, sidePanelShown, sidePanelWidth} from '../agents/workspace/sidePanel.js';
 import {WorkspaceHost} from './workspaceHost.js';
+import {BackgroundHost} from './backgroundHost.js';
+import {entersBar, removalBlocked} from '../backgroundTasks/bar.js';
+import {BackgroundManager} from '../backgroundTasks/manager.js';
+import {rememberFamily} from '../backgroundTasks/preferences.js';
+import {nextLevel} from '../backgroundTasks/protocol.js';
+import {explicitRun, parseBackgroundCommand, suggestionKey} from '../backgroundTasks/suggestion.js';
+import type {TaskRecord} from '../backgroundTasks/supervisor.js';
+import {TaskOutputView} from '../backgroundTasks/view.js';
 import {composeWorkspaceRows} from './workspaceFrame.js';
 import type {WorkspaceOwner} from '../workspace/focus.js';
 import {columnAt, type WorkspaceColumns} from '../workspace/layout.js';
@@ -399,6 +407,10 @@ const CONTEXT_SETTLE_MS = 150;
 export class TerminalApp {
   /** Workspace regions (#330): sidebar, detail panel, their focus and keymap. Declared first: dimensions() reads it. */
   private readonly workspace = new WorkspaceHost();
+  /** Background tasks of this session (#382): what the task owner reported, never run by the frontend itself. */
+  private readonly background = new BackgroundHost();
+  /** Task ids this window has already announced (a reattach adopts the existing list silently). */
+  private backgroundSeen?: Set<string>;
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
   /** The release version the last `/update` offered; `/update apply` installs only that. */
@@ -883,6 +895,9 @@ export class TerminalApp {
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('inputState', state => this.onInputState(state));
     this.session.on('queueState', (state, news) => this.onQueueState(state, news));
+    this.session.on('tasks', records => this.onBackgroundTasks(records));
+    this.session.on('taskOutput', (taskId, update) => { this.background.onOutput(taskId, update); if (!this.passthrough && !this.externalPassthrough) this.render(); });
+    this.session.on('taskRefused', reason => { this.output.addFrontendInteraction('/background', `Not done: ${reason}`, ERROR); this.render(); });
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
@@ -1860,6 +1875,8 @@ export class TerminalApp {
       return;
     }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
+    if (this.background.panel) { this.handleBackgroundPanelKey(key); return; }
+    if (this.background.bar.focused && this.handleBackgroundBarKey(key)) return;
     if (this.launcher) { this.handleLauncherKey(key); return; }
     if (this.agentPanel) { this.handleAgentPanelKey(key); return; }
     if (this.askState) {
@@ -1937,6 +1954,7 @@ export class TerminalApp {
     // Every panel, program and search above keeps its keys. Then a focused workspace region, or an opt-in keymap
     // binding from an idle composer (it comes before the agent shelf, the task bar and history).
     if (this.handleWorkspaceKey(key)) return;
+    if (this.background.suggestion && this.handleBackgroundSuggestionKey(key)) return;
     if (key.kind === 'mouseDrag' || key.kind === 'mouseRelease') { this.handleSelectionPointer(key.kind, key.y); return; }
     // Any other key or click ends a finished selection (its text is already on the clipboard).
     if (this.selection && !this.selection.dragging && key.kind !== 'wheelUp' && key.kind !== 'wheelDown' && key.kind !== 'mouseMove') {
@@ -2348,9 +2366,12 @@ export class TerminalApp {
       // Spatial focus: the shelf sits above the composer. Only an already visible shelf, from a completely idle
       // composer; a hidden shelf is never revealed by ↑, which stays shell history.
       if (this.composerIdle() && !this.composerHistory.active && this.shelfShown()) { this.shelf.focused = true; this.shelf.selected = 0; this.render(); return; }
+      // Then the background task bar (only from an idle composer, only when tasks are shown), then history.
+      if (this.enterBackgroundBar(key)) return;
       if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
+      if (this.enterBackgroundBar(key)) return;
       this.editor.selectUp(this.inputColumns(columns), this.railInputPrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
@@ -2718,6 +2739,7 @@ export class TerminalApp {
       await this.applyWorkspaceEffect(this.workspace.perform(slash.focus ? `${slash.region}.focus` : `${slash.region}.toggle`, this.terminalDimensions().columns));
     }
     else if (slash.kind === 'keys') this.showWorkspaceKeys(command, slash.reload);
+    else if (slash.kind === 'background') this.runBackgroundCommand(command);
     else if (slash.kind === 'github') await this.openGithub(slash.tab);
     else if (slash.kind === 'managedTarget') this.openManagedTarget(command, slash.provider, slash.action);
     else if (slash.kind === 'rawProvider') {
@@ -3002,7 +3024,7 @@ export class TerminalApp {
     }
   }
 
-  private async submit(realShell = false, skipInstallCheck = false): Promise<void> {
+  private async submit(realShell = false, skipInstallCheck = false, fromComposer = false): Promise<void> {
     this.clearCorrection();
     const command = this.editor.text;
     const slash = realShell ? undefined : parseSlashCommand(command);
@@ -3027,6 +3049,13 @@ export class TerminalApp {
       await this.runSlash(command, slash);
       this.render();
       return;
+    }
+    // Background tasks: only for a command typed and submitted from an idle composer, never queued, startup or program
+    // input. A family the person set to Always runs in the background; with suggestions on, a recognized command asks.
+    if (fromComposer && this.backgroundAvailable() && !this.running && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
+      const decision = this.background.decide(command);
+      if (decision.action === 'background') { this.startBackgroundTask(command, decision.classification.family); this.render(); return; }
+      if (decision.action === 'suggest') { this.background.suggestion = {command, classification: decision.classification}; this.render(); return; }
     }
 
     const contextAtSubmission = this.context;
@@ -4503,7 +4532,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4541,6 +4570,8 @@ export class TerminalApp {
     if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
+    if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
+      {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
       : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
@@ -7119,7 +7150,8 @@ export class TerminalApp {
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
     const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
-    return shelf ? [...rows, shelf] : rows;
+    const background = this.backgroundRows(columns);
+    return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
 
   /** The shell grammar this session's shell speaks, for splitting a paste into commands (none for other shells). */
@@ -9831,6 +9863,187 @@ export class TerminalApp {
     this.output.addFrontendInteraction(command, lines.join('\n'), this.workspace.problems.some(problem => problem.severity === 'error') ? ERROR : INFO);
   }
 
+  /** Background tasks need an owner that offers them: this build in-process, or a session service from this release. */
+  private backgroundAvailable(): boolean {
+    return this.session.features.has('background-tasks') && typeof this.session.task === 'function';
+  }
+
+  /** The task bar and a waiting suggestion, above the composer; nothing while a program owns the screen. */
+  private backgroundRows(columns: number): string[] {
+    if (this.passthrough || this.externalPassthrough) return [];
+    return this.background.rows(columns, {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'})
+      .map(row => truncateAnsi(row, columns));
+  }
+
+  /**
+   * The task owner's list. The first list after this window attached is adopted silently (those tasks were announced
+   * where they started); later, a new task and an ending one each get one NMSh line, never the task's output.
+   */
+  private onBackgroundTasks(records: readonly TaskRecord[]): void {
+    const ended = this.background.onTasks(records);
+    if (!this.backgroundSeen) this.backgroundSeen = new Set(records.map(record => record.id));
+    else {
+      for (const record of records) if (!this.backgroundSeen.has(record.id)) {
+        this.backgroundSeen.add(record.id);
+        this.output.addFrontendInteraction('/background', BackgroundHost.startLine(record), INFO);
+      }
+      const notify = this.background.preferences.notify;
+      for (const record of ended) if (notify === 'always' || (notify === 'failure' && record.state === 'failed')) {
+        this.output.addFrontendInteraction('/background', BackgroundHost.endLine(record), record.state === 'failed' ? ERROR : INFO);
+      }
+    }
+    if (!this.passthrough && !this.externalPassthrough) this.render();
+  }
+
+  /** Start a task through the session's owner: the exact text, in the shell's current directory, with its live PATH. */
+  private startBackgroundTask(command: string, family?: string): void {
+    this.session.task?.({op: 'start', command, cwd: this.canonicalShellCwd(), path: this.shellPath(), ...(family ? {family} : {})});
+  }
+
+  /** Up (from an idle composer, when the preference allows) or Shift+Up enters the task bar: after the agent shelf, before history. */
+  private enterBackgroundBar(key: Key): boolean {
+    const composer = {empty: !this.editor.text && !this.editor.hasPasteAtoms, browsingHistory: this.composerHistory.active, foregroundBusy: Boolean(this.running),
+      otherOwner: this.workspaceOwner() !== 'COMPOSER' || !this.composerIdle()};
+    if (!entersBar(key, composer, this.background.records.length, this.background.preferences.upArrow)) return false;
+    this.background.bar.focused = true;
+    this.background.message = undefined;
+    this.render();
+    return true;
+  }
+
+  private handleBackgroundBarKey(key: Key): boolean {
+    const action = this.background.bar.handleKey(key, this.background.records, this.background.next);
+    this.background.message = undefined;
+    if (action.kind === 'leave') {
+      this.render();
+      if (action.forward) this.handleKey(action.forward);
+      return true;
+    }
+    if (action.kind === 'view') { this.background.bar.focused = false; this.background.panel = {kind: 'view', taskId: action.taskId, view: new TaskOutputView()}; }
+    else if (action.kind === 'stop') this.session.task?.({op: 'stop', id: action.taskId, level: action.level});
+    else if (action.kind === 'remove') this.session.task?.({op: 'remove', id: action.taskId});
+    else if (action.kind === 'toggle') this.background.setPreferences({...this.background.preferences, bar: this.background.bar.expanded ? 'expanded' : 'collapsed'});
+    else if (action.kind === 'none' && action.message) this.background.message = action.message;
+    this.render();
+    return true;
+  }
+
+  private handleBackgroundPanelKey(key: Key): void {
+    const panel = this.background.panel;
+    if (!panel) return;
+    const close = () => { this.background.panel = undefined; this.returnFromPanel(); };
+    if (panel.kind === 'manager') {
+      const outcome = panel.manager.handleKey(key, this.background.records, this.background.preferences, this.background.next);
+      if (outcome.kind === 'close') close();
+      else if (outcome.kind === 'view') this.background.panel = {kind: 'view', taskId: outcome.taskId, view: new TaskOutputView()};
+      else if (outcome.kind === 'stop') this.session.task?.({op: 'stop', id: outcome.taskId, level: outcome.level});
+      else if (outcome.kind === 'remove') this.session.task?.({op: 'remove', id: outcome.taskId});
+      else if (outcome.kind === 'clear') this.clearFinishedBackgroundTasks();
+      else if (outcome.kind === 'preferences') this.background.setPreferences(outcome.value);
+      this.render();
+      return;
+    }
+    const task = this.background.record(panel.taskId);
+    const output = this.background.output(panel.taskId);
+    const height = Math.max(1, this.dimensions().rows - 6);
+    if (!task || key.kind === 'escape' || (key.kind === 'text' && key.value === 'q')) close();
+    else if (key.kind === 'up' || key.kind === 'down') panel.view.scroll(key.kind === 'up' ? -1 : 1, output, height);
+    else if (key.kind === 'pageUp' || key.kind === 'pageDown') panel.view.scroll((key.kind === 'pageUp' ? -1 : 1) * Math.max(1, height - 1), output, height);
+    else if (key.kind === 'bufferEnd' || key.kind === 'latest') panel.view.end(output);
+    else if (key.kind === 'text' && key.value === 'x') {
+      const level = nextLevel(task);
+      if (level) this.session.task?.({op: 'stop', id: task.id, level});
+    }
+    this.render();
+  }
+
+  /** b / Enter / a / n / Esc on a waiting suggestion. Enter runs the command here exactly as it would have run. */
+  private handleBackgroundSuggestionKey(key: Key): boolean {
+    const suggestion = this.background.suggestion;
+    if (!suggestion) return false;
+    const choice = suggestionKey(key);
+    const {command, classification} = suggestion;
+    this.background.suggestion = undefined;
+    // Any other key: the draft comes back unchanged and the key acts on it as usual (nothing typed is lost).
+    if (!choice) { this.editor.replaceText(command); return false; }
+    const foreground = () => {
+      // The submission was already recorded for recall when it was first submitted.
+      if (this.sessionSubmissions.at(-1)?.text === command) this.sessionSubmissions.pop();
+      this.editor.replaceText(command);
+      void this.submit(false, true, false);
+    };
+    if (choice === 'edit') this.editor.replaceText(command);
+    else if (choice === 'foreground') foreground();
+    else if (choice === 'background') this.startBackgroundTask(command, classification.family);
+    else {
+      this.background.setPreferences(rememberFamily(this.background.preferences, classification.family, choice === 'always' ? 'always' : 'never'));
+      if (choice === 'always') this.startBackgroundTask(command, classification.family); else foreground();
+    }
+    this.render();
+    return true;
+  }
+
+  /** Remove every finished task whose processes are gone; say which were kept and why. */
+  private clearFinishedBackgroundTasks(): void {
+    const finished = this.background.records.filter(record => record.state !== 'running' && record.state !== 'stopping');
+    const kept = finished.filter(record => removalBlocked(record));
+    for (const record of finished) if (!removalBlocked(record)) this.session.task?.({op: 'remove', id: record.id});
+    if (kept.length) this.output.addFrontendInteraction('/background clear', `Kept ${kept.map(record => record.id).join(', ')}: their processes still run (x kills them).`, INFO);
+  }
+
+  /** `/background` (`/bg`): the manager, one task's output, or an explicit request. */
+  private runBackgroundCommand(command: string): void {
+    const parsed = parseBackgroundCommand(command);
+    const say = (text: string, tone = INFO) => this.output.addFrontendInteraction(command.trim(), text, tone);
+    if (!parsed) return;
+    if (!this.backgroundAvailable()) {
+      say('Background tasks need a session service from this NMSh release. Restart the session service (or start a new session) to use them.', ERROR);
+      return;
+    }
+    switch (parsed.kind) {
+      case 'open': this.background.panel = {kind: 'manager', manager: new BackgroundManager()}; return;
+      case 'view': {
+        if (!this.background.record(parsed.taskId)) { say(`No background task ${parsed.taskId}.`, ERROR); return; }
+        this.background.panel = {kind: 'view', taskId: parsed.taskId, view: new TaskOutputView()};
+        return;
+      }
+      case 'run': {
+        const run = explicitRun(command);
+        if (!run.ok) { say(run.reason, ERROR); return; }
+        if (this.startupPending) { say('The shell is still starting; run it once the prompt is ready.', ERROR); return; }
+        this.startBackgroundTask(run.command, run.classification?.family);
+        if (run.notes.length) say(run.notes.join('; '));
+        return;
+      }
+      case 'stop': {
+        const record = this.background.record(parsed.taskId);
+        if (!record) { say(`No background task ${parsed.taskId}.`, ERROR); return; }
+        // /background kill is the immediate explicit path; stop asks for the next level.
+        const level = parsed.force ? 'kill' : nextLevel(record);
+        if (!level) { say(`${parsed.taskId} was already killed; waiting for it to exit.`); return; }
+        this.session.task?.({op: 'stop', id: parsed.taskId, level});
+        return;
+      }
+      case 'remove': {
+        const record = this.background.record(parsed.taskId);
+        const blocked = record ? removalBlocked(record) : `no background task ${parsed.taskId}`;
+        if (blocked) { say(`Not removed: ${blocked}.`, ERROR); return; }
+        this.session.task?.({op: 'remove', id: parsed.taskId});
+        return;
+      }
+      case 'clear': this.clearFinishedBackgroundTasks(); return;
+      case 'suggestions':
+        this.background.setPreferences({...this.background.preferences, suggestions: parsed.value});
+        say(parsed.value === 'ask' ? 'NMSh will offer to run recognized long-running commands in the background.' : 'No background suggestions; Always rules still apply.');
+        return;
+      case 'forget':
+        this.background.setPreferences(rememberFamily(this.background.preferences, parsed.family, undefined));
+        say(`Forgot the decision for ${parsed.family.slice(0, 64)}.`);
+        return;
+      case 'invalid': say(parsed.reason, ERROR); return;
+    }
+  }
+
   private async refreshWorkspaceSources(): Promise<void> {
     const generation = ++this.workspaceRefreshGeneration;
     const cwd = this.canonicalShellCwd();
@@ -10063,7 +10276,8 @@ export class TerminalApp {
       return;
     }
     if (this.preparingCommand) return;
-    void this.submit();
+    // The one direct composer submission: the only path that may offer or start a background task.
+    void this.submit(false, false, true);
   }
 
   /** `/queue` opens the manager; `/queue pause|resume|clear` act at once. */
@@ -10264,7 +10478,8 @@ export class TerminalApp {
     let owner: WorkspaceOwner | undefined;
     if (this.workspaceSuppressed() || this.startupPending || this.startupPanel || this.directInputRequest()) owner = 'PASSTHROUGH';
     else if (this.agentView) owner = 'AGENT_MESSAGE';
-    else if (this.settingsPanelActive || this.presetPanel || this.batchReview || this.pastePreview || this.launcher || this.agentPanel || this.shelf.focused) owner = 'PANEL';
+    else if (this.settingsPanelActive || this.presetPanel || this.batchReview || this.pastePreview || this.launcher || this.agentPanel || this.shelf.focused
+      || this.background.bar.focused || this.background.suggestion) owner = 'PANEL';
     else if (this.historySearchActive || this.directorySearchActive || this.findState?.editing) owner = 'SEARCH';
     return this.workspace.owner(owner);
   }

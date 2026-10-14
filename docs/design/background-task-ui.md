@@ -3,6 +3,7 @@
 Issue [#382](https://github.com/raiseCatError/notMyShell/issues/382). Core architecture and integration contract:
 [background-tasks.md](background-tasks.md). This slice is pure presentation and input logic in `src/backgroundTasks/`
 (`bar.ts`, `suggestion.ts`, `view.ts`, `manager.ts`); it performs no I/O and changes nothing in the running app.
+It is wired into the frontend on `release/v0.20.0`; see "As integrated" in [background-tasks.md](background-tasks.md).
 
 ## Task bar (`bar.ts`)
 

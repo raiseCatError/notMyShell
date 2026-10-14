@@ -137,6 +137,8 @@ test('/background: explicit runs keep the command byte for byte; interactive pro
   assert.deepEqual(parseBackgroundCommand('/bg kill t3'), {kind: 'stop', taskId: 't3', force: true});
   assert.deepEqual(parseBackgroundCommand('/background stop 3'), {kind: 'invalid', reason: 'usage: /background stop t<number>'});
   assert.deepEqual(parseBackgroundCommand('/background suggestions off'), {kind: 'suggestions', value: 'off'});
+  assert.deepEqual(parseBackgroundCommand('/background t3'), {kind: 'view', taskId: 't3'});
+  assert.equal(parseBackgroundCommand('/background t3 now')?.kind, 'invalid');
   assert.deepEqual(parseBackgroundCommand('/background forget adb logcat'), {kind: 'forget', family: 'adb logcat'});
   assert.equal(parseBackgroundCommand('/backgrounds'), undefined, 'not this command');
   assert.equal(parseBackgroundCommand('/background frob')?.kind, 'invalid');
@@ -174,7 +176,8 @@ test('transcript block: labelled with its task, latest lines, folded and dropped
 test('manager: running first, stop/remove/clear rules, preferences changed and forgotten, exact size', () => {
   const manager = new BackgroundManager();
   assert.deepEqual(BackgroundManager.order(TASKS).map(item => item.id), ['t2', 't1', 't3'], 'running first, newest first');
-  const prefs = rememberFamily(DEFAULT_PREFERENCES(), 'adb logcat', 'always');
+  // Suggestions on, so Right in Preferences turns them off.
+  const prefs = rememberFamily({...DEFAULT_PREFERENCES(), suggestions: 'ask'}, 'adb logcat', 'always');
   const next = () => 'interrupt' as const;
   assert.deepEqual(manager.handleKey(k('text', 'x'), TASKS, prefs, next), {kind: 'stop', taskId: 't2', level: 'interrupt'});
   assert.equal(manager.handleKey(k('delete'), TASKS, prefs, next).kind, 'none');

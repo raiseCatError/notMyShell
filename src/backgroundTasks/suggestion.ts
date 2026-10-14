@@ -67,6 +67,8 @@ export function explicitRun(input: string): ExplicitRun {
 
 export type BackgroundCommand =
   | {kind: 'open'}
+  /** `/background t3`: that task's output. */
+  | {kind: 'view'; taskId: string}
   | {kind: 'run'; input: string}
   | {kind: 'stop'; taskId: string; force: boolean}
   | {kind: 'remove'; taskId: string}
@@ -83,6 +85,7 @@ export function parseBackgroundCommand(input: string): BackgroundCommand | undef
   const rest = (match[2] ?? '').trim();
   if (!rest) return {kind: 'open'};
   const [verb, ...args] = rest.split(/[ \t]+/u);
+  if (/^t\d{1,6}$/u.test(verb!) && !args.length) return {kind: 'view', taskId: verb!};
   switch (verb) {
     case 'run': return {kind: 'run', input};
     case 'stop': case 'kill': {

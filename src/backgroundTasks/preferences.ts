@@ -34,8 +34,13 @@ export interface BackgroundPreferences {
   upArrow: 'idle' | 'off';
 }
 
+/**
+ * Suggestions are off until the person turns them on (/background suggestions on): by default Enter on a recognized
+ * command runs it in the foreground exactly as before, and nothing starts in the background without an explicit
+ * /background run or a family the person set to Always.
+ */
 export const DEFAULT_PREFERENCES = (): BackgroundPreferences => ({
-  version: 1, suggestions: 'ask', families: {}, retention: {lines: 5000, bytes: 2 * 1024 * 1024, finishedKept: 20}, notify: 'failure', bar: 'collapsed', upArrow: 'idle',
+  version: 1, suggestions: 'off', families: {}, retention: {lines: 5000, bytes: 2 * 1024 * 1024, finishedKept: 20}, notify: 'failure', bar: 'collapsed', upArrow: 'idle',
 });
 
 const LIMITS = {lines: [100, 100_000], bytes: [64 * 1024, 32 * 1024 * 1024], finishedKept: [0, 200]} as const;
@@ -58,7 +63,7 @@ export function normalizePreferences(value: unknown): BackgroundPreferences {
   const retention = typeof data.retention === 'object' && data.retention !== null ? data.retention as Record<string, unknown> : {};
   return {
     version: 1,
-    suggestions: data.suggestions === 'off' ? 'off' : 'ask',
+    suggestions: data.suggestions === 'ask' ? 'ask' : 'off',
     families,
     retention: {
       lines: clamp(retention.lines, LIMITS.lines, defaults.retention.lines),

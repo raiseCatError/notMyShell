@@ -4,9 +4,9 @@ Issue: [#382](https://github.com/raiseCatError/notMyShell/issues/382). A core te
 long-running commands (`adb logcat`, `tail -f`, `journalctl -f`, `docker logs -f`, dev servers, watchers, `ping`,
 `scrcpy`) beside the normal shell instead of in front of it.
 
-Status: **core modules and tests** (`src/backgroundTasks/`: detector, preferences, output, supervisor). The task bar
-and `/background` manager are a stacked PR; wiring into the session service and the frontend is the integration step
-described below. Nothing here changes the running app yet.
+Status: **integrated on `release/v0.20.0`**: the session owns its tasks (`SessionTasks` in the session service and in
+the in-process client), the protocol carries them as the `background-tasks` feature, and the frontend wires the task
+bar, the suggestion, `/background` and the output view. Physical QA is pending (below).
 
 ## Why a separate, supervised process
 
@@ -145,6 +145,30 @@ background execution and says why.
 
 Conflict-prone paths: `src/app/TerminalApp.ts`, `src/session/SessionService.ts`, `src/session/SessionProtocol.ts`,
 `src/commands/slashCommands.ts`.
+
+## As integrated (v0.20)
+
+- **Owner.** `SessionTasks` (one per session) wraps the supervisor. Tasks keep running while a window is detached; a
+  reattached window receives the list and each task's recent output (at most 1 MiB per update, newest first) and
+  nothing is started again. Ending the session ends its tasks; a shell switch keeps them. A service restart ends its
+  tasks with it (they are its child processes) and none is adopted.
+- **Protocol.** Client `task {change}` (start, stop, remove as JSON); service `tasks {state}` and
+  `task-output {taskId, update}`, sent only to a frontend that listed `background-tasks` and only after
+  `created`/`attached` and the replay; a refusal is `error` with code `task`. Every request, record and update is
+  validated on arrival. Task output never travels in the shell's stream or reaches its PTY.
+- **Environment.** A start carries the live shell's PATH; the owner supplies the session's shell and its launch
+  environment, used for the spawn only. Output retention on the owner is the default (5,000 lines, 2 MiB); a window's
+  mirror applies the person's retention preference.
+- **Submission.** Only `routeComposer`'s direct submission (an idle composer, no running command, startup finished, no
+  passthrough) consults the detector. Queued entries, program input, history reruns, install retries and presets never
+  do. **Suggestions are off by default**: a recognized command runs in the foreground exactly as before unless the
+  person ran `/background suggestions on` or set its family to Always. `/background run` is the explicit path.
+- **Transcript.** A task gets one NMSh line when it starts and one when it ends (failures by default, per the notify
+  preference), never its output; the output lives in the bar, the view and `/background`. Copies, reports,
+  comparisons and failure navigation therefore never see task output.
+- **Keys.** Up from an idle composer: an opt-in keymap binding, then a shown agent shelf, then the task bar, then
+  history. Shift+Up enters the bar from an empty composer. The bar, the manager and the output view are protected
+  owners for the workspace router.
 
 ## Security review
 
