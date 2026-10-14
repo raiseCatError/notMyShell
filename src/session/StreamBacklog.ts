@@ -5,7 +5,7 @@ import {MAX_SHELL_KNOWLEDGE_BYTES} from '../shell/ShellKnowledge.js';
 /** One shell stream event as retained for replay. */
 export type BacklogEvent =
   | {kind: 'output'; seq: number; at: number; data: string}
-  | {kind: 'exec'; seq: number; at: number; command: string; historyAllowed?: number}
+  | {kind: 'exec'; seq: number; at: number; command: string; historyAllowed?: number; queued?: string}
   | {kind: 'prompt'; seq: number; at: number; exitCode: number; cwd: string; knowledge?: string; inputWaitMs?: number; inputWaits?: number};
 
 /** Non-event spool records: journal acknowledgements, truncation and the shell's end. */

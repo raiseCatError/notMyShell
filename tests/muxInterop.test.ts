@@ -182,7 +182,8 @@ test('a program that switches to the alternate screen gets the full terminal in 
     await app.waitFor(/❯/);
     const mark = app.mark;
     app.pty.write(`printf '\\e[?1049h'; until [ "$(stty size)" = "30 100" ]; do sleep 0.05; done; echo FULL-SIZE; printf '\\e[?1049l'\r`);
-    await app.waitFor(/FULL-SIZE/, mark);
+    // The next command is typed once this one has completed: while it runs, Enter would queue it.
+    await app.waitFor(/FULL-SIZE[\s\S]*Completed/, mark);
     await app.run('echo BACK-AT-COMPOSER', /BACK-AT-COMPOSER/);
   } finally {
     await sandbox.dispose();

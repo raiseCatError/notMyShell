@@ -6,7 +6,9 @@ export type Key =
   | {kind: 'left' | 'right' | 'up' | 'down' | 'lineHome' | 'lineEnd' | 'backspace' | 'delete' | 'enter' | 'newline' | 'complete' | 'escape' | 'selectAll'}
   | {kind: 'selectLeft' | 'selectRight' | 'selectUp' | 'selectDown' | 'selectLineHome' | 'selectLineEnd'}
   | {kind: 'bufferHome' | 'bufferEnd' | 'selectBufferHome' | 'selectBufferEnd'}
-  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'} & {x?: number; y?: number};
+  | {kind: 'historySearch' | 'historyDelete' | 'find'} | {kind: 'suggestNext' | 'suggestPrevious' | 'palette'} | {kind: 'pageUp' | 'pageDown' | 'latest' | 'interrupt' | 'suspend' | 'eof' | 'wheelUp' | 'wheelDown' | 'mouseMove' | 'mouseClick' | 'mouseDrag' | 'mouseRelease' | 'focusPrevious' | 'focusNext' | 'toggleDetails'
+    /** Ctrl+Q: add the composer's command to the queue; Ctrl+S: send it to the running program's input. */
+    | 'queueCommand' | 'sendToProgram'} & {x?: number; y?: number};
 
 
 const SEQUENCES: Array<[string, Key['kind']]> = [
@@ -99,6 +101,8 @@ const SEQUENCES: Array<[string, Key['kind']]> = [
   ['\u001B[P', 'palette'],
   ['\u001B[110;5u', 'suggestNext'], // Kitty Ctrl+N
   ['\u001B[112;5u', 'suggestPrevious'], // Kitty Ctrl+P
+  ['\u001B[113;5u', 'queueCommand'], // Kitty Ctrl+Q
+  ['\u001B[115;5u', 'sendToProgram'], // Kitty Ctrl+S
   ['\u001B[111;5u', 'toggleDetails'], // Kitty Ctrl+O (lowercase o)
   ['\u001B[79;5u', 'toggleDetails'], // Kitty Ctrl+O (uppercase O)
 ];
@@ -171,6 +175,8 @@ export function decodeKeys(input: string): Key[] {
     else if (value === '\u0012') keys.push({kind: 'historySearch'} as Key);
     else if (value === '\u0006') keys.push({kind: 'find'} as Key); // Ctrl+F: NMSh transcript find
     else if (value === '\u000F') keys.push({kind: 'toggleDetails'} as Key); // Ctrl+O
+    else if (value === '\u0011') keys.push({kind: 'queueCommand'} as Key); // Ctrl+Q: queue (the TTY is raw; no flow control)
+    else if (value === '\u0013') keys.push({kind: 'sendToProgram'} as Key); // Ctrl+S: send to the running program
     else if (value === '\u000E') keys.push({kind: 'suggestNext'} as Key); // Ctrl+N
     else if (value === '\u0010') keys.push({kind: 'suggestPrevious'} as Key); // Ctrl+P
     else if (codePoint >= 0x20 && codePoint !== 0x7f) keys.push({kind: 'text', value} as Key);

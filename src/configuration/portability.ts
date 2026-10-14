@@ -32,7 +32,7 @@ export const PORTABLE_CATEGORIES = {
   idle: ['idleVisuals', 'liveActivity'],
   notifications: ['notifications', 'sessionNotices'],
   tools: ['toolUpdateChecks', 'installSuggestions', 'ignoredInstallSuggestions', 'updateMode', 'updateFrequency'],
-  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention', 'terminalTitle'],
+  sessions: ['liveSessionStartup', 'liveSessionMultiple', 'sessionRetention', 'terminalTitle', 'commandQueue'],
   agents: ['agentActivity'],
   shell: ['shellBackend'],
   editor: ['openWith'],

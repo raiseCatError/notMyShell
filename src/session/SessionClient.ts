@@ -4,11 +4,21 @@ import type {TranscriptSession} from '../sessions/TranscriptStore.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {ServiceFeature} from './SessionProtocol.js';
 import type {InputState} from './inputState.js';
+import type {QueueOp, QueueState} from './CommandQueue.js';
+
+/** What happened with a queue change, by entry id (the text is in the previous state). */
+export interface QueueNews {
+  dispatched?: number;
+  refused?: string;
+  dropped?: number;
+}
 
 /** Position of an event in a service session's stream, when it has one. */
 export interface StreamStamp {
   /** Explicit zsh history eligibility; absent from older services. */
   historyAllowed?: number;
+  /** The command is this queued entry, run by the session's queue (its own text, as the person prepared it). */
+  queued?: string;
   seq?: number;
   /** When the service observed the event (epoch ms). */
   at?: number;
@@ -27,6 +37,8 @@ export interface SessionClientEvents {
   inputRejected: [data: string, submission: boolean];
   /** The running command's input state changed (see InputWatch); the one source for every input surface. */
   inputState: [InputState];
+  /** The session's command queue changed: its entries, and what just ran, was refused or was dropped. */
+  queueState: [QueueState, QueueNews];
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
@@ -63,6 +75,8 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
    * event); rejects with a factual reason when switching would lose anything.
    */
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}>;
+  /** Change this session's command queue (only when `features` has 'queue'). */
+  queue(change: QueueOp): void;
   /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
   readonly features: ReadonlySet<ServiceFeature>;
   /** Build of the session service, when it reported one. */
@@ -80,6 +94,8 @@ export interface AttachedSession {
   modes?: string;
   running?: string;
   runningSince?: number;
+  /** The running command is this queued entry (its own text). */
+  runningQueued?: string;
   /** Journal the previous frontend kept for this session, and how far it got. */
   journalId?: string;
   ackedSeq: number;
