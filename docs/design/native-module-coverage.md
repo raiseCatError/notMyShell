@@ -1,7 +1,7 @@
 # Native module coverage: Starship and Oh My Posh
 
 Issue [#364](https://github.com/raiseCatError/notMyShell/issues/364), under [#305](https://github.com/raiseCatError/notMyShell/issues/305).
-The goal is useful coverage, not a module count: NMSh had **10 built-in modules and 25 bundled Context Pack modules** (27 now that Ruby and PHP are added)
+The goal is useful coverage, not a module count: NMSh had **10 built-in modules and 25 bundled Context Pack modules** (37 in v0.20: Ruby and PHP, then .NET, Swift, Zig, Deno, Elixir, Dart, Flutter, `build`, Mercurial and Jujutsu)
 (`nmsh.agents`, `cloud`, `environment`, `infrastructure`, `project`, `system`, `vcs`). Anything below that is missing is
 either already covered by a generic mechanism, available through the external prompt providers NMSh already supports
 (Starship, Oh My Posh, Powerlevel10k), deliberately skipped, or a candidate.
@@ -24,10 +24,10 @@ module behaves identically to its upstream namesake.
 | --- | --- | --- | --- |
 | Directory, shell, OS, user, time, status, duration, jobs, battery, memory | `directory`, `os`, `username`, `time`, `status`, `cmd_duration`, `jobs`, `battery`, `memory_usage` / `path`, `os`, `session`, `time`, `executiontime`, `battery`, `sysinfo` | Native: built-ins `cwd`, `shell`, `exitStatus`; pack `nmsh.system` (`os`, `user`, `jobs`, `duration`, `time`, `battery`, `memory`) | Covered |
 | Git | `git_branch`, `git_status`, `git_commit`, `git_state`, `git_metrics` / `git` | Native: `gitBranch`, `gitStatus`; pack `nmsh.vcs` (`stash`, `upstream`) | Covered; commit/state/metrics are candidates only if requested |
-| Other VCS | `hg_branch`, `fossil_*`, `pijul_channel`, `vcsh` / `mercurial`, `fossil`, `jujutsu`, `sapling`, `svn`, `plastic`, `dvc` | None | **Candidate: Jujutsu and Mercurial** (declarative `.jj` / `.hg` metadata); the rest defer to a provider |
+| Other VCS | `hg_branch`, `fossil_*`, `pijul_channel`, `vcsh` / `mercurial`, `fossil`, `jujutsu`, `sapling`, `svn`, `plastic`, `dvc` | Pack `nmsh.vcs`: `hg` (bookmark/branch), `jj` (repository state) | **Done: Jujutsu and Mercurial** ([#374](https://github.com/raiseCatError/notMyShell/pull/374)), from declarative `.jj` / `.hg` metadata; the rest defer to a provider |
 | Core runtimes | `nodejs`, `python`, `golang`, `rust`, `java`, `package` / `node`, `python`, `golang`, `rust`, `java`, `project` | Native: pack `nmsh.project` (`package`, `node`, `python`, `go`, `rust`, `java`) with requested vs. active versions | Covered |
-| More language runtimes | `ruby`, `php`, `dotnet`, `swift`, `kotlin`, `zig`, `elixir`, `lua`, `haskell`, `dart`, `deno`, `bun`, `scala`, `perl`, `ocaml`, `nim`, `julia`, `r`, `crystal` | Only generic: built-in `toolchain` and `discoveredTools` show that a project uses a tool, not its version | **Done: Ruby, PHP (this branch). Next: .NET, Swift, Deno/Bun, Zig, Elixir, Dart/Flutter.** Same pattern as `runtimes.ts`: requested version from the project's own file, active version from the install path or the runtime's metadata, never by running it |
-| Build systems | `cmake`, `meson`, `gradle`, `maven`, `buf`, `xmake`, `bazel` / `cmake`, `gradle`, `mvn`, `bazel`, `nx` | Gradle/Maven appear as the `java` module's build tool; others only as discovered tools | Covered for Java; **candidate: a single `build` module** (CMake/Meson/Bazel/Make detection) rather than one module each |
+| More language runtimes | `ruby`, `php`, `dotnet`, `swift`, `kotlin`, `zig`, `elixir`, `lua`, `haskell`, `dart`, `deno`, `bun`, `scala`, `perl`, `ocaml`, `nim`, `julia`, `r`, `crystal` | Only generic: built-in `toolchain` and `discoveredTools` show that a project uses a tool, not its version | **Done: Ruby, PHP, .NET, Swift, Zig, Deno ([#370](https://github.com/raiseCatError/notMyShell/pull/370)); Elixir, Dart, Flutter ([#372](https://github.com/raiseCatError/notMyShell/pull/372)). Remaining candidates: Bun, Kotlin/Scala, Lua, Haskell.** Same pattern as `runtimes.ts`: requested version from the project's own file, active version from the install path or the runtime's metadata, never by running it |
+| Build systems | `cmake`, `meson`, `gradle`, `maven`, `buf`, `xmake`, `bazel` / `cmake`, `gradle`, `mvn`, `bazel`, `nx` | Gradle/Maven appear as the `java` module's build tool; others only as discovered tools | Covered for Java; **candidate: a single `build` module**: done ([#373](https://github.com/raiseCatError/notMyShell/pull/373): Bazel, Gradle, Maven, CMake, Meson, Make) rather than one module each |
 | Environment managers | `conda`, `direnv`, `mise`, `nix_shell`, `pixi`, `guix_shell`, `spack`, `singularity`, `container` / `nix-shell` | Native: `direnv` and `tools` (pack `nmsh.environment`); Python environments including conda/venv inside `python` | Covered for direnv/conda/venv; **candidates: mise, Nix shell, devcontainer/container** |
 | Cloud and infrastructure | `aws`, `gcloud`, `azure`, `kubernetes`, `terraform`, `helm`, `pulumi`, `docker_context`, `openstack`, `nats`, `opa` / `aws`, `az`, `gcp`, `kubectl`, `terraform`, `helm`, `pulumi`, `docker`, `argocd`, `cf`, `firebase` | Native: built-ins `kubeContext`, `dockerContext`; packs `nmsh.cloud` (`aws`, `gcp`, `azure`), `nmsh.infrastructure` (`terraform`, `helm`, `pulumi`) | Covered for the common set; ArgoCD, Firebase, Cloud Foundry, OpenStack, NATS, OPA: provider |
 | Frameworks and app tooling | `angular`, `react`, `svelte`, `tauri`, `flutter`, `unity`, `umbraco` (Oh My Posh) | None | **Do not duplicate.** These are project-type labels derived from the same files the runtimes read; they add chrome, not information |
@@ -40,11 +40,11 @@ module behaves identically to its upstream namesake.
 
 ## Recommended order of work
 
-1. **~~Ruby, PHP~~ (done), .NET, Swift**: highest daily-use gap, all have declarative version files (`.ruby-version`/`Gemfile`,
+1. **~~Ruby, PHP, .NET, Swift~~ (done)**: highest daily-use gap, all have declarative version files (`.ruby-version`/`Gemfile`,
    `composer.json`, `global.json`/`*.csproj`, `Package.swift`/`.swift-version`).
-2. **Deno/Bun, Zig, Elixir, Dart**: same pattern.
-3. **`build` and `env` summary modules** (CMake/Meson/Bazel; mise/Nix/devcontainer) instead of one module per tool.
-4. **Jujutsu / Mercurial** state in `nmsh.vcs`.
+2. **~~Deno, Zig, Elixir, Dart~~ (done); Bun**: same pattern.
+3. **~~`build`~~ (done) and an `env` summary module** (mise/Nix shell/devcontainer) instead of one module per tool.
+4. **~~Jujutsu / Mercurial~~** state in `nmsh.vcs` (done).
 
 Each addition ships with: the capability, its pack module, provenance and privacy metadata, tests against fixture
 directories (including hostile and symlinked files), and the explain/timings view from

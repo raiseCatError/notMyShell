@@ -1,8 +1,8 @@
 import {homedir} from 'node:os';
 import {basename, dirname, isAbsolute, join, normalize} from 'node:path';
 import {defineCapability, type CapabilityContext, type CapabilityDefinition} from '../capability.js';
-import {findNearest, workspaceRoots, LARGE_METADATA_BYTES, listNames, parseIniData, parseJsonData, parseTomlData, parseToolVersions,
-  readMetadataText, readVersionFile, record, resolveTrustedExecutable, text, versionFromInstallPath, within,
+import {findNearest, workspaceRoots, LARGE_METADATA_BYTES, isDirectory, listNames, parseIniData, parseJsonData, parseTomlData, parseToolVersions,
+  parseYamlData, readMetadataText, readVersionFile, record, resolveTrustedExecutable, text, versionFromInstallPath, within,
   type ExecutableIdentity} from '../services.js';
 
 /**
@@ -84,13 +84,19 @@ async function pythonInstallVersion(binary: ExecutableIdentity): Promise<string 
   return libraries.length === 1 ? libraries[0] : undefined;
 }
 
-async function activeVersion(context: CapabilityContext, names: readonly string[], metadata?: (binary: ExecutableIdentity) => Promise<string | undefined>): Promise<Active> {
+async function activeVersion(context: CapabilityContext, names: readonly string[], metadata?: (binary: ExecutableIdentity) => Promise<string | undefined>,
+  {metadataFirst = false} = {}): Promise<Active> {
   if (!context.fields.has('active') && !context.fields.has('manager')) return {};
   const binary = await trustedBinary(context, names);
   if (!binary) return {};
   if ('refused' in binary) return {note: binary.refused};
   if (binary.shim) return {manager: binary.shim};
   const layout = versionFromInstallPath(binary.realpath);
+  // A runtime bundled inside another SDK (Dart inside Flutter) sits in that SDK's install path: its own metadata is the authority.
+  if (layout && metadataFirst && metadata && context.fields.has('active')) {
+    const own = await metadata(binary);
+    if (own) return {active: own, manager: layout.manager};
+  }
   if (layout) return {active: layout.version, manager: layout.manager};
   const declared = metadata && context.fields.has('active') ? await metadata(binary) : undefined;
   return declared ? {active: declared} : {};
@@ -172,8 +178,9 @@ export const goRuntime = runtimeCapability('runtime.go', 'Go toolchain', ['go.mo
   const module = await findNearest(context, ['go.work', 'go.mod']);
   if (module) {
     const content = await readMetadataText(module.path) ?? '';
-    const toolchain = /^toolchain\s+go(\d[\w.+-]{0,31})\s*$/mu.exec(content)?.[1];
-    const go = /^go\s+(\d[\w.+-]{0,31})\s*$/mu.exec(content)?.[1];
+    // Directives are single lines: horizontal whitespace only, so a hostile file cannot make a match span lines.
+    const toolchain = /^toolchain[ \t]+go(\d[\w.+-]{0,31})[ \t]*(?:\/\/[^\n]*)?\r?$/mu.exec(content)?.[1];
+    const go = /^go[ \t]+(\d[\w.+-]{0,31})[ \t]*(?:\/\/[^\n]*)?\r?$/mu.exec(content)?.[1];
     if (toolchain || go) requested = {version: (toolchain ?? go)!, from: module.name};
   }
   requested ??= await versionFile(context, ['.go-version']);
@@ -305,4 +312,129 @@ export const phpRuntime = runtimeCapability('runtime.php', 'PHP version', ['.php
   return value ? {value, evidence: [requested?.from, manifest?.name, active.active ? 'php on PATH' : undefined].filter(Boolean).join(', ') || 'php'} : undefined;
 });
 
-export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime, rubyRuntime, phpRuntime] as CapabilityDefinition<unknown>[];
+
+/** The shared shape of the smaller runtimes: a requested version from the project's own files, an active one from the install path. */
+function simpleRuntime(id: string, title: string, binary: string, reads: readonly string[], preview: RuntimeFact,
+  requestedVersion: (context: CapabilityContext) => Promise<{version: string; from: string; tool?: string} | undefined>, present: readonly string[],
+  toolNames: readonly string[] = [binary], metadata?: (binary: ExecutableIdentity) => Promise<string | undefined>, metadataFirst = false): CapabilityDefinition<RuntimeFact> {
+  return runtimeCapability(id, title, [...reads, `the ${binary} executable the shell resolves: its install location (never run)`], [], preview, async context => {
+    const manifest = present.length ? await findNearest(context, present) : undefined;
+    // A manifest can name the build tool without stating a version (an empty `version`): the version file or .tool-versions may still say one.
+    const declared = await requestedVersion(context);
+    const fallback = declared?.version ? undefined : await toolRequest(context, toolNames);
+    const requested: {version: string; from: string; tool?: string} | undefined = fallback ? {...fallback, ...(declared?.tool ? {tool: declared.tool} : {})}
+      : declared?.version ? declared : undefined;
+    if (!requested && !manifest && !context.fields.has('active')) return undefined;
+    const active = await activeVersion(context, [binary], metadata, {metadataFirst});
+    const tool = requested?.tool ?? declared?.tool;
+    const value = compact({requested: requested?.version, requestedFrom: requested?.from, ...active, ...(tool ? {buildTool: tool} : {})});
+    return value ? {value, evidence: [requested?.from, manifest?.name, active.active ? `${binary} on PATH` : undefined].filter(Boolean).join(', ') || binary} : undefined;
+  });
+}
+
+export const dotnetRuntime = simpleRuntime('runtime.dotnet', '.NET SDK', 'dotnet', ['global.json (sdk.version)', '.tool-versions', 'mise.toml'],
+  {requested: '8.0.100', requestedFrom: 'global.json', active: '8.0.404', manager: 'Homebrew'}, async context => {
+    const found = await findNearest(context, ['global.json']);
+    const data = found ? parseJsonData(await readMetadataText(found.path, 64 * 1024)) : undefined;
+    const version = record(data) && record(data.sdk) ? text((data.sdk as Record<string, unknown>).version, 64) : undefined;
+    // global.json's version is a floor unless rollForward is "disable": a newer SDK satisfies it, so it is not judged as a mismatch.
+    const exact = record(data) && record(data.sdk) && (data.sdk as Record<string, unknown>).rollForward === 'disable';
+    return version ? {version: exact ? version : `≥${version}`, from: 'global.json'} : undefined;
+  }, ['global.json'], ['dotnet', 'dotnet-core']);
+
+export const swiftRuntime = simpleRuntime('runtime.swift', 'Swift toolchain', 'swift', ['.swift-version', 'Package.swift (swift-tools-version)', '.tool-versions', 'mise.toml'],
+  {requested: '5.9', requestedFrom: 'Package.swift', active: '5.10.1', manager: 'Homebrew', buildTool: 'swiftpm'}, async context => {
+    const file = await versionFile(context, ['.swift-version']);
+    if (file) return file;
+    const manifest = await findNearest(context, ['Package.swift']);
+    // SwiftPM reads the declaration from the first line only; swift-tools-version is the oldest toolchain that can build the package, not a pin.
+    const first = manifest ? (await readMetadataText(manifest.path, LARGE_METADATA_BYTES))?.split('\n', 1)[0] : undefined;
+    const tools = /^\/\/[ \t]*swift-tools-version[ \t]*:[ \t]*(\d+(?:\.\d+){0,2})/u.exec(first ?? '')?.[1];
+    return tools ? {version: `≥${tools}`, from: 'Package.swift', tool: 'swiftpm'} : undefined;
+  }, ['Package.swift']);
+
+export const zigRuntime = simpleRuntime('runtime.zig', 'Zig toolchain', 'zig', ['build.zig.zon (minimum_zig_version)', '.zigversion', '.tool-versions', 'mise.toml'],
+  {requested: '0.13.0', requestedFrom: 'build.zig.zon', active: '0.13.0', manager: 'Homebrew'}, async context => {
+    const file = await versionFile(context, ['.zigversion']);
+    if (file) return file;
+    const manifest = await findNearest(context, ['build.zig.zon']);
+    const minimum = manifest ? /\.minimum_zig_version\s*=\s*"(\d[\w.+-]{0,31})"/u.exec(await readMetadataText(manifest.path) ?? '')?.[1] : undefined;
+    // minimum_zig_version is a floor, not a pin.
+    return minimum ? {version: `≥${minimum}`, from: 'build.zig.zon'} : undefined;
+  }, ['build.zig', 'build.zig.zon']);
+
+export const denoRuntime = simpleRuntime('runtime.deno', 'Deno runtime', 'deno', ['.dvmrc', 'deno.json / deno.jsonc presence', '.tool-versions', 'mise.toml'],
+  {requested: '2.1.0', requestedFrom: '.dvmrc', active: '2.1.4', manager: 'Homebrew'}, async context => versionFile(context, ['.dvmrc']), ['deno.json', 'deno.jsonc', 'deno.lock']);
+
+/** A release version as an SDK's own version file states it (Dart's `version`, Flutter's `version`): one bounded line, nothing else. */
+const RELEASE = /^v?(\d+\.\d+(?:\.\d+)?(?:[-+][\w.]{1,32})?)$/u;
+async function releaseFile(path: string): Promise<string | undefined> {
+  const line = (await readMetadataText(path, 4096))?.split(/\r?\n/u, 1)[0]?.trim();
+  return line ? RELEASE.exec(line)?.[1] : undefined;
+}
+
+export const elixirRuntime = simpleRuntime('runtime.elixir', 'Elixir version', 'elixir', ['mix.exs (elixir: requirement)', '.tool-versions', 'mise.toml',
+  "the elixir install's lib/elixir/ebin/elixir.app"],
+{requested: '~> 1.17', requestedFrom: 'mix.exs', active: '1.17.3', manager: 'Homebrew', buildTool: 'mix'}, async context => {
+  const project = await findNearest(context, ['mix.exs']);
+  if (!project) return undefined;
+  // `elixir: "~> 1.17"` inside project/0: a requirement string, read as text and never evaluated.
+  const requirement = /^[ \t]*elixir:[ \t]*"([^"\n]{1,32})"/mu.exec(await readMetadataText(project.path) ?? '')?.[1];
+  return {version: requirement?.trim() ?? '', from: 'mix.exs', tool: 'mix'};
+}, ['mix.exs'], ['elixir'], async binary => {
+  // bin/elixir is a script; the application resource beside it states the release ({vsn,"1.17.3"}).
+  const app = await readMetadataText(join(dirname(dirname(binary.realpath)), 'lib', 'elixir', 'ebin', 'elixir.app'), 16 * 1024);
+  return /\{vsn,[ \t]*"(\d+\.\d+\.\d+(?:-[\w.]{1,16})?)"\}/u.exec(app ?? '')?.[1];
+});
+
+/** pubspec.yaml as data (failsafe YAML): the SDK constraints and whether the package depends on the Flutter SDK. */
+async function pubspec(context: CapabilityContext): Promise<{sdk?: string; flutter?: string; usesFlutter: boolean} | undefined> {
+  const found = await findNearest(context, ['pubspec.yaml']);
+  if (!found) return undefined;
+  const data = await parseYamlData(await readMetadataText(found.path));
+  if (!record(data)) return {usesFlutter: false};
+  const environment = record(data.environment) ? data.environment : {};
+  const dependencies = record(data.dependencies) ? data.dependencies : {};
+  const usesFlutter = record(dependencies.flutter) && dependencies.flutter.sdk === 'flutter';
+  return {sdk: text(environment.sdk, 64), flutter: text(environment.flutter, 64), usesFlutter};
+}
+
+export const dartRuntime = simpleRuntime('runtime.dart', 'Dart SDK', 'dart', ['pubspec.yaml (environment.sdk)', '.tool-versions', 'mise.toml',
+  "the Dart SDK's own version file (Flutter's bundled SDK under bin/cache/dart-sdk)"],
+{requested: '^3.5.0', requestedFrom: 'pubspec.yaml', active: '3.5.4', manager: 'Homebrew', buildTool: 'pub'}, async context => {
+  const spec = await pubspec(context);
+  return spec ? {version: spec.sdk ?? '', from: 'pubspec.yaml', tool: 'pub'} : undefined;
+}, ['pubspec.yaml'], ['dart'], async binary => {
+  // The SDK root holds `version`. Flutter's bin/dart is a wrapper in the Flutter root, whose `version` is Flutter's, not Dart's.
+  const root = dirname(dirname(binary.realpath));
+  const bundled = join(root, 'bin', 'cache', 'dart-sdk');
+  return await isDirectory(bundled) ? releaseFile(join(bundled, 'version')) : releaseFile(join(root, 'version'));
+}, true);
+
+export const flutterRuntime = runtimeCapability('runtime.flutter', 'Flutter SDK', ['.fvmrc / .fvm/fvm_config.json', 'pubspec.yaml (environment.flutter, a flutter SDK dependency)',
+  '.tool-versions', 'mise.toml', "the flutter install's bin/cache/flutter.version.json or version file (never run)"], [],
+{requested: '3.24.3', requestedFrom: '.fvmrc', active: '3.24.3', manager: 'FVM'}, async context => {
+  let requested: {version: string; from: string} | undefined;
+  const fvm = await findNearest(context, ['.fvmrc', join('.fvm', 'fvm_config.json')]);
+  if (fvm) {
+    const data = parseJsonData(await readMetadataText(fvm.path, 16 * 1024));
+    // FVM 3 writes {"flutter": "3.24.3"}; earlier releases {"flutterSdkVersion": "3.10.0"}.
+    const version = record(data) ? text(data.flutter, 64) ?? text(data.flutterSdkVersion, 64) : undefined;
+    if (version) requested = {version, from: fvm.name === '.fvmrc' ? '.fvmrc' : 'fvm_config.json'};
+  }
+  const spec = await pubspec(context);
+  requested ??= spec?.flutter ? {version: spec.flutter, from: 'pubspec.yaml'} : undefined;
+  requested ??= await toolRequest(context, ['flutter']);
+  if (!requested && !spec?.usesFlutter && !fvm) return undefined;
+  const active = await activeVersion(context, ['flutter'], async binary => {
+    const root = dirname(dirname(binary.realpath));
+    const cached = parseJsonData(await readMetadataText(join(root, 'bin', 'cache', 'flutter.version.json'), 16 * 1024));
+    const framework = record(cached) ? text(cached.frameworkVersion, 64) : undefined;
+    return framework && RELEASE.test(framework) ? framework : releaseFile(join(root, 'version'));
+  });
+  const value = compact({requested: requested?.version, requestedFrom: requested?.from, ...active});
+  return value ? {value, evidence: [requested?.from, active.active ? 'flutter on PATH' : undefined].filter(Boolean).join(', ') || 'flutter'} : undefined;
+});
+
+export const RUNTIME_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [nodeRuntime, pythonRuntime, goRuntime, rustRuntime, javaRuntime, rubyRuntime, phpRuntime, dotnetRuntime, swiftRuntime, zigRuntime, denoRuntime,
+  elixirRuntime, dartRuntime, flutterRuntime] as CapabilityDefinition<unknown>[];

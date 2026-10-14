@@ -1,5 +1,6 @@
 import type {CapabilityDefinition} from './capability.js';
 import {PROJECT_CAPABILITIES} from './capabilities/project.js';
+import {BUILD_CAPABILITIES} from './capabilities/build.js';
 import {RUNTIME_CAPABILITIES} from './capabilities/runtimes.js';
 import {ENVIRONMENT_CAPABILITIES} from './capabilities/environment.js';
 import {INFRASTRUCTURE_CAPABILITIES} from './capabilities/infrastructure.js';
@@ -15,7 +16,7 @@ import {AGENT_CAPABILITIES} from './capabilities/agents.js';
  * with review, never something a pack or repository can do.
  */
 export const CORE_CAPABILITIES: readonly CapabilityDefinition<unknown>[] = [
-  ...PROJECT_CAPABILITIES as CapabilityDefinition<unknown>[], ...RUNTIME_CAPABILITIES, ...ENVIRONMENT_CAPABILITIES, ...INFRASTRUCTURE_CAPABILITIES,
+  ...PROJECT_CAPABILITIES as CapabilityDefinition<unknown>[], ...BUILD_CAPABILITIES as CapabilityDefinition<unknown>[], ...RUNTIME_CAPABILITIES, ...ENVIRONMENT_CAPABILITIES, ...INFRASTRUCTURE_CAPABILITIES,
   ...CLOUD_CAPABILITIES, ...SYSTEM_CAPABILITIES, ...VCS_CAPABILITIES, ...AGENT_CAPABILITIES,
 ];
 
