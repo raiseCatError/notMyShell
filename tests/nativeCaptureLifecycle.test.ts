@@ -7,6 +7,7 @@ import {join} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {prepareNativeCompletionHome} from './helpers/nativeCompletion.js';
 import {NativeCompletionSource} from '../src/shell/CompletionService.js';
+import {resolveCommand} from '../src/providers/providers.js';
 import {until, processAlive} from './helpers/liveFrontend.js';
 
 const capture = fileURLToPath(new URL('../src/shell/capture.zsh', import.meta.url));
@@ -114,6 +115,88 @@ test('native startup expiry returns no candidates and does not poison the next c
   } finally {
     if (previousHome === undefined) delete process.env.HOME; else process.env.HOME = previousHome;
     if (previousFpath === undefined) delete process.env.FPATH; else process.env.FPATH = previousFpath;
+    rmSync(root, {recursive: true, force: true});
+  }
+});
+
+test('native capture recognizes readiness split across nonblocking PTY reads', async () => {
+  const realZsh = resolveCommand('zsh');
+  assert.ok(realZsh);
+  const root = mkdtempSync(join(tmpdir(), 'nmsh-ready-split-'));
+  const previousHome = process.env.HOME, previousPath = process.env.PATH;
+  const previousSplit = process.env.NMSH_CAPTURE_PROBE_SPLIT;
+  try {
+    const bin = join(root, 'bin'); mkdirSync(bin);
+    const shadow = join(root, 'capture-shadow.zsh');
+    // Forward real zpty calls. Split only the helper's actual readiness chunk,
+    // preserving every byte; successful nonblocking reads need not be whole lines.
+    const splitReadiness = [
+      "typeset -g nmsh_probe_pending='' nmsh_probe_seen='' nmsh_probe_split_done=0",
+      "zpty() {",
+      "  if [[ $1 == -r && $2 == z && $3 == line ]]; then",
+      "    if [[ -n $nmsh_probe_pending ]]; then",
+      "      line=$nmsh_probe_pending",
+      "      nmsh_probe_pending=''",
+      "      return 0",
+      "    fi",
+      "    builtin zpty \"$@\"",
+      "    local nmsh_probe_read_rc=$?",
+      "    if (( nmsh_probe_read_rc == 0 && nmsh_probe_split_done == 0 )) && [[ $NMSH_CAPTURE_PROBE_SPLIT == 1 ]]; then",
+      "      local nmsh_probe_original=$line",
+      "      local nmsh_probe_before=$nmsh_probe_seen",
+      "      (( ${#nmsh_probe_seen} + ${#line} > 65536 )) && exit 97",
+      "      nmsh_probe_seen+=$line",
+      "      # A naturally split marker is already a valid fragmentation witness.",
+      "      if [[ $nmsh_probe_before == o || $nmsh_probe_before == *$'\\no' ]] && [[ $line == k* ]]; then",
+      "        nmsh_probe_split_done=1",
+      "        print -r -- bytes-preserved > \"$HOME/split-witness\"",
+      "      elif [[ $line == ok* ]]; then",
+      "        nmsh_probe_pending=${line#o}",
+      "        line=o",
+      "      elif [[ $line == *$'\\nok'* ]]; then",
+      "        nmsh_probe_pending=k${line#*$'\\nok'}",
+      "        line=${line%%$'\\nok'*}$'\\no'",
+      "      fi",
+      "      if [[ -n $nmsh_probe_pending ]]; then",
+      "        [[ $nmsh_probe_original == \"$line$nmsh_probe_pending\" ]] || exit 97",
+      "        nmsh_probe_split_done=1",
+      "        print -r -- bytes-preserved > \"$HOME/split-witness\"",
+      "      fi",
+      "    fi",
+      "    return $nmsh_probe_read_rc",
+      "  fi",
+      "  builtin zpty \"$@\"",
+      "}",
+    ].join('\n');
+    const original = readFileSync(capture, 'utf8');
+    assert.equal(original.split('# spawn shell').length, 2);
+    writeFileSync(shadow, original.replace('# spawn shell', () => splitReadiness + '\n# spawn shell'));
+    const syntax = spawnSync(realZsh, ['-n', shadow], {encoding: 'utf8', timeout: 2000});
+    assert.equal(syntax.status, 0, syntax.stderr);
+    const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+    writeFileSync(join(bin, 'zsh'), '#!/bin/zsh -f\n'
+      + 'if [[ $1 == -f && $2 == ' + quote(capture) + ' ]]; then\n'
+      + '  shift 2\n  exec ' + quote(realZsh) + ' -f ' + quote(shadow) + ' "$@"\nfi\n'
+      + 'exec ' + quote(realZsh) + ' "$@"\n');
+    chmodSync(join(bin, 'zsh'), 0o700);
+    process.env.HOME = root;
+    process.env.PATH = `${bin}:${previousPath ?? ''}`;
+    writeFileSync(join(root, 'capture-file'), '');
+    await prepareNativeCompletionHome(root);
+    const context = {buffer: 'ls cap', cwd: root};
+    process.env.NMSH_CAPTURE_PROBE_SPLIT = '0';
+    const baseline = await new NativeCompletionSource().query(context, new AbortController().signal);
+    assert.ok(baseline.some(value => value.value === 'capture-file'), 'forwarding fixture preserves native capture');
+    process.env.NMSH_CAPTURE_PROBE_SPLIT = '1';
+    // A new source ensures the unsplit result cannot hide the split behind a cache hit.
+    const fragmented = await new NativeCompletionSource().query(context, new AbortController().signal);
+    assert.equal(readFileSync(join(root, 'split-witness'), 'utf8').trim(), 'bytes-preserved');
+    assert.ok(fragmented.some(value => value.value === 'capture-file'), 'split readiness still captures native candidates');
+    assert.equal(readdirSync(root).some(name => name.startsWith('nmsh-capture-')), false);
+  } finally {
+    for (const [key, value] of [['HOME', previousHome], ['PATH', previousPath], ['NMSH_CAPTURE_PROBE_SPLIT', previousSplit]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
     rmSync(root, {recursive: true, force: true});
   }
 });
