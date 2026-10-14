@@ -1,0 +1,365 @@
+{
+  "checkpoint": "FRONTEND FROZEN",
+  "recorded_at": "2026-10-14T16:46:14.683486+00:00",
+  "scope": "accepted automated frontend stabilization heads; integration and physical QA unperformed",
+  "accepted_heads": [
+    {
+      "track": "Input",
+      "pr": 348,
+      "head": "6aba63bd78f467af8aeaf60421faef05c608646b",
+      "original_branch": "feature/input-awareness",
+      "base": "release/v0.18.0",
+      "fix_branch": "fix/workflow-cedar",
+      "canonical": {
+        "head": "6aba63bd78f467af8aeaf60421faef05c608646b",
+        "head_after": "6aba63bd78f467af8aeaf60421faef05c608646b",
+        "started_at": null,
+        "finished_at": null,
+        "exit_code": 0,
+        "status_before": "",
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "cedar-input-native-readiness-6aba63bd78f467af8aeaf60421faef05c608646b-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38525959028,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38525959028",
+        "headSha": "6aba63bd78f467af8aeaf60421faef05c608646b",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38527326783,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38527326783",
+        "headSha": "6aba63bd78f467af8aeaf60421faef05c608646b",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    },
+    {
+      "track": "Queue",
+      "pr": 357,
+      "head": "5ab9892060fb0aed2d89f34842a9739c6e860163",
+      "original_branch": "feature/command-queue",
+      "base": "feature/input-awareness",
+      "fix_branch": "fix/workflow-birch",
+      "canonical": {
+        "head": "5ab9892060fb0aed2d89f34842a9739c6e860163",
+        "head_after": "5ab9892060fb0aed2d89f34842a9739c6e860163",
+        "started_at": "2026-10-14T07:09:01.277916+00:00",
+        "finished_at": null,
+        "exit_code": 0,
+        "status_before": null,
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "birch-queue-native-readiness-5ab9892060fb0aed2d89f34842a9739c6e860163-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38528656051,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38528656051",
+        "headSha": "5ab9892060fb0aed2d89f34842a9739c6e860163",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38529888852,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38529888852",
+        "headSha": "5ab9892060fb0aed2d89f34842a9739c6e860163",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    },
+    {
+      "track": "Copy",
+      "pr": 358,
+      "head": "839d23f3bfb780c164b3fa19137170944abe0d21",
+      "original_branch": "feature/copy-selection",
+      "base": "feature/command-queue",
+      "fix_branch": "fix/workflow-amber",
+      "canonical": {
+        "head": "839d23f3bfb780c164b3fa19137170944abe0d21",
+        "head_after": "839d23f3bfb780c164b3fa19137170944abe0d21",
+        "started_at": "2026-10-14T12:19:44.333701+00:00",
+        "finished_at": "2026-10-14T12:34:24.921284+00:00",
+        "exit_code": 0,
+        "status_before": "",
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "amber-copy-clipboard-startup-839d23f3bfb780c164b3fa19137170944abe0d21-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38565279297,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38565279297",
+        "headSha": "839d23f3bfb780c164b3fa19137170944abe0d21",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38566317316,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38566317316",
+        "headSha": "839d23f3bfb780c164b3fa19137170944abe0d21",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    },
+    {
+      "track": "Report",
+      "pr": 360,
+      "head": "cb28d4586197e563e4f98c1f0a96e9e3b8f95251",
+      "original_branch": "feature/copy-report",
+      "base": "feature/copy-selection",
+      "fix_branch": "fix/workflow-coral",
+      "canonical": {
+        "head": "cb28d4586197e563e4f98c1f0a96e9e3b8f95251",
+        "head_after": "cb28d4586197e563e4f98c1f0a96e9e3b8f95251",
+        "started_at": "2026-10-14T12:38:59.712768+00:00",
+        "finished_at": "2026-10-14T12:54:29.782506+00:00",
+        "exit_code": 0,
+        "status_before": "",
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "coral-report-clipboard-startup-cb28d4586197e563e4f98c1f0a96e9e3b8f95251-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38567509019,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38567509019",
+        "headSha": "cb28d4586197e563e4f98c1f0a96e9e3b8f95251",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38568288217,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38568288217",
+        "headSha": "cb28d4586197e563e4f98c1f0a96e9e3b8f95251",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    },
+    {
+      "track": "Compare",
+      "pr": 361,
+      "head": "f1abe217c6a27034a93182bf423dfb45e18ef73d",
+      "original_branch": "feature/compare-output",
+      "base": "feature/copy-report",
+      "fix_branch": "fix/workflow-indigo",
+      "canonical": {
+        "head": "f1abe217c6a27034a93182bf423dfb45e18ef73d",
+        "head_after": "f1abe217c6a27034a93182bf423dfb45e18ef73d",
+        "started_at": "2026-10-14T12:55:40.905361+00:00",
+        "finished_at": "2026-10-14T13:11:53.651252+00:00",
+        "exit_code": 0,
+        "status_before": "",
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "indigo-compare-clipboard-startup-f1abe217c6a27034a93182bf423dfb45e18ef73d-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38584973991,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38584973991",
+        "headSha": "f1abe217c6a27034a93182bf423dfb45e18ef73d",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38585746229,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38585746229",
+        "headSha": "f1abe217c6a27034a93182bf423dfb45e18ef73d",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    },
+    {
+      "track": "Vocabulary",
+      "pr": 367,
+      "head": "5009033c553c882c27a9aeb5a136323637ab302f",
+      "original_branch": "feature/expressive-activity-vocabulary",
+      "base": "feature/compare-output",
+      "fix_branch": "fix/workflow-willow",
+      "canonical": {
+        "head": "5009033c553c882c27a9aeb5a136323637ab302f",
+        "head_after": "5009033c553c882c27a9aeb5a136323637ab302f",
+        "started_at": "2026-10-14T13:13:02.076213+00:00",
+        "finished_at": "2026-10-14T13:28:23.110103+00:00",
+        "exit_code": 0,
+        "status_before": "",
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "willow-vocabulary-clipboard-startup-5009033c553c882c27a9aeb5a136323637ab302f-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38586511315,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38586511315",
+        "headSha": "5009033c553c882c27a9aeb5a136323637ab302f",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38587380619,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38587380619",
+        "headSha": "5009033c553c882c27a9aeb5a136323637ab302f",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    },
+    {
+      "track": "References",
+      "pr": 368,
+      "head": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "original_branch": "feature/output-references",
+      "base": "feature/compare-output",
+      "fix_branch": "fix/workflow-maple",
+      "canonical": {
+        "head": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+        "head_after": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+        "started_at": "2026-10-14T13:29:42.052460+00:00",
+        "finished_at": "2026-10-14T13:44:15.965420+00:00",
+        "exit_code": 0,
+        "status_before": "",
+        "status_after": "",
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "receipt": "maple-workflow-clipboard-startup-2395dad5b52895fe041d93d2c75123b25f6669fe-canonical-result.json"
+      },
+      "candidate_ci": {
+        "databaseId": 38588753923,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38588753923",
+        "headSha": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+        "event": "workflow_dispatch",
+        "attempt": 1,
+        "conclusion": "success"
+      },
+      "actual_pr_ci": {
+        "databaseId": 38589604854,
+        "url": "https://github.com/raiseCatError/notMyShell/actions/runs/38589604854",
+        "headSha": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+        "event": "pull_request",
+        "attempt": 1,
+        "conclusion": "success"
+      }
+    }
+  ],
+  "linux": {
+    "started_at": "2026-10-14T13:57:22.709899+00:00",
+    "maple": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+    "willow": "5009033c553c882c27a9aeb5a136323637ab302f",
+    "script_sha256": "5abccb9d23de7b6c0ad40fc3c678dd0b20ed6ae1637ef747cfaa18e664759494",
+    "memory_free_percent": 53,
+    "exit_code": 0,
+    "source_after": {
+      "maple": {
+        "head": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+        "status": ""
+      },
+      "willow": {
+        "head": "5009033c553c882c27a9aeb5a136323637ab302f",
+        "status": ""
+      }
+    },
+    "stop_exit_code": 0,
+    "final_vm_state": "Stopped",
+    "recorded_at": "2026-10-14T14:10:47.542390+00:00",
+    "receipt": "clipboard-startup-final-linux-result.json"
+  },
+  "siblings": "neither Vocabulary nor References is ancestor of the other",
+  "historical_failures": "preserved; unclassified failures are not attributed by later passing runs",
+  "failed_compare_run": 38569811366,
+  "observed_compare_control": 38583441554,
+  "physical_qa": "unperformed",
+  "optional_linux_skips": [
+    "installed zoxide",
+    "installed fzf",
+    "installed Powerlevel10k"
+  ],
+  "linux_platform_skips": [
+    "real macOS caffeinate",
+    "macOS window integration"
+  ],
+  "reconciliation_receipt": "frontend-final-head-reconciliation-20261014T164614Z.json",
+  "extra_gates": {
+    "bench-typecheck": {
+      "head": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "head_after": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "command": [
+        "npm",
+        "run",
+        "typecheck:bench"
+      ],
+      "started_at": "2026-10-14T13:44:16.348043+00:00",
+      "finished_at": "2026-10-14T13:44:16.936021+00:00",
+      "exit_code": 0,
+      "status_before": "",
+      "status_after": "",
+      "receipt": "maple-workflow-clipboard-startup-2395dad5b52895fe041d93d2c75123b25f6669fe-bench-typecheck-result.json"
+    },
+    "security-focused": {
+      "head": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "head_after": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "command": [
+        "node",
+        "--input-type=module",
+        "-e",
+        "import {runTestFiles} from './scripts/test.mjs';const r=await runTestFiles(['tests/copyReport.test.ts','tests/copyReportLive.test.ts','tests/compareSecurity.test.ts','tests/compareOutput.test.ts','tests/compareOutputLive.test.ts','tests/clipboard.test.ts','tests/clipboardLifecycle.test.ts','tests/clipboardChanges.test.ts','tests/clipboardRead.test.ts','tests/transcriptPresenter.test.ts','tests/copySelection.test.ts','tests/copySelectionLive.test.ts']);console.log(JSON.stringify(r));if(r.leftovers.length)throw Error('owned root leaked');process.exitCode=r.code;"
+      ],
+      "started_at": "2026-10-14T13:44:17.028852+00:00",
+      "finished_at": "2026-10-14T13:44:51.462632+00:00",
+      "exit_code": 0,
+      "status_before": "",
+      "status_after": "",
+      "receipt": "maple-workflow-clipboard-startup-2395dad5b52895fe041d93d2c75123b25f6669fe-security-focused-result.json"
+    },
+    "timing-smoke": {
+      "head": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "head_after": "2395dad5b52895fe041d93d2c75123b25f6669fe",
+      "command": [
+        "npm",
+        "run",
+        "bench:smoke"
+      ],
+      "started_at": "2026-10-14T13:44:51.904291+00:00",
+      "finished_at": "2026-10-14T13:45:04.729747+00:00",
+      "exit_code": 0,
+      "status_before": "",
+      "status_after": "",
+      "receipt": "maple-workflow-clipboard-startup-2395dad5b52895fe041d93d2c75123b25f6669fe-timing-smoke-result.json"
+    }
+  }
+}

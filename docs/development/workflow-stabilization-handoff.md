@@ -1,9 +1,14 @@
-# Workflow stabilization handoff — 2026-10-13
+# Workflow stabilization handoff — 2026-10-14
 
-Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359).
-**Frontend freeze is PENDING. No integration has begun.** This checkpoint records committed candidates and incomplete final verification, not accepted workflow heads.
+**FRONTEND FROZEN** at the seven accepted original PR heads in [the complete stable frontend handoff](workflow-frontend-freeze.md). The [machine-readable evidence](workflow-frontend-freeze-evidence.json) records exact heads, CI links and verification receipts. Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359).
 
-The original handoff at `cc853707cf6060bc4b8edc2c84313949075c557b` remains preserved in Git at this same path. Initial inspection confirmed its eight pushed heads; no lost-work recovery or reimplementation was needed. Its historical head/failure tables are superseded by this checkpoint and current #359 updates.
+All required automated stabilization gates pass on the accepted source. Physical terminal/clipboard QA remains unperformed, all PRs remain open drafts, and no integration or protected-branch merge occurred. Both siblings remain independent. See the stable handoff for interfaces, ownership guarantees, limitations and exact physical QA.
+
+The original `cc853707cf6060bc4b8edc2c84313949075c557b` handoff and all intermediate evidence remain preserved. Initial inspection confirmed its pushed heads; no lost-work recovery was needed.
+
+## Historical stabilization checkpoints
+
+The dated pending/running/failed states below describe earlier checkpoints and are superseded by the accepted freeze above. Failed evidence is retained, not rewritten as success.
 
 **Compare uninstrumented confirmation and publication (2026-10-14):** **frontend freeze PENDING**. [Hosted observed control 38583441554](https://github.com/raiseCatError/notMyShell/actions/runs/38583441554) passed every required job on attempt 1 at isolated diagnostic `31bf78714ef8504c2b4648e91d8dabb5dc6af2f4`; its x64 Ubuntu artifact records Node 26.11.1 and exit events for every observed worker and PTY child. The diagnostic branch changes no Compare runtime/test/dependency source and is not incorporated into the feature.
 

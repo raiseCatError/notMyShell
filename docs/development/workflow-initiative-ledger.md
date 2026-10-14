@@ -1,6 +1,10 @@
 # Workflow initiative ledger
 
-Current gate (2026-10-14): **freeze PENDING**. The current exact-head state is below; older source-family and investigation entries are retained historical evidence.
+Current gate (2026-10-14): **FRONTEND FROZEN**. Exact accepted heads, automated evidence, stable boundaries, limitations and unperformed physical QA are in [the complete stable handoff](workflow-frontend-freeze.md) and [evidence manifest](workflow-frontend-freeze-evidence.json). No integration or release/master merge occurred. Feature PRs remain open drafts and human QA remains outstanding.
+
+## Historical stabilization checkpoints
+
+Earlier pending/running/failed states below are historical and superseded by the accepted freeze. Failed evidence remains preserved.
 
 **Compare uninstrumented confirmation and publication (2026-10-14):** **frontend freeze PENDING**. [Hosted observed control 38583441554](https://github.com/raiseCatError/notMyShell/actions/runs/38583441554) passed every required job on attempt 1 at isolated diagnostic `31bf78714ef8504c2b4648e91d8dabb5dc6af2f4`; its x64 Ubuntu artifact records Node 26.11.1 and exit events for every observed worker and PTY child. The diagnostic branch changes no Compare runtime/test/dependency source and is not incorporated into the feature.
 
