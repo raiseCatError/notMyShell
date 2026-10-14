@@ -4,7 +4,7 @@ import {OPEN_WITH_IDS} from '../host/HostActions.js';
 import {TREATMENT_PRESETS, TREATMENT_PRESET_LABELS, TREATMENT_GEOMETRIES, TREATMENT_GEOMETRY_LABELS, TREATMENT_MOTIONS, TREATMENT_MOTION_LABELS,
   TREATMENT_SPEEDS, TREATMENT_SPEED_LABELS, TREATMENT_INFLUENCES, treatmentInfluence, SEMANTIC_MODES, SEMANTIC_MODE_LABELS, TREATMENT_SCOPES, TREATMENT_SCOPE_LABELS, TREATMENT_CURVES, TREATMENT_CURVE_LABELS, DIVIDER_LINES_HELP, dividerLinesLabel, PRESET_STOPS} from '../chroma/treatment.js';
 import {historicalPromptLevel} from '../output/TranscriptPanel.js';
-import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
+import {STRIP_EDGES, STRIP_SEPARATORS, STRIP_STYLES, STRIP_ZONES, PANEL_POSITIONS, DIVIDER_COLOR_LABELS, DIVIDER_COLOR_MODES, NATIVE_PALETTE_IDS, CURSOR_BLINKS, CURSOR_SHAPES, IDLE_COLOR_LABELS, IDLE_COLOR_SOURCES, IDLE_TIMEOUTS, ACTIVITY_STYLES, ACTIVITY_STYLE_LABELS, LIVE_ACTIVITY_COLORS, LIVE_ACTIVITY_COLOR_LABELS, RAM_DISPLAYS, LOCAL_UNDERSTANDING_LABELS, LOCAL_UNDERSTANDING_MODES, SHELL_MODULE_VISIBILITY, SHELL_MODULE_VISIBILITY_LABELS, applyShellModuleVisibility, shellModuleVisibility, type StatusStripSettings} from '../prompt/configuration.js';
 import {IDLE_MODES, IDLE_MODE_LABELS} from '../idle/scenes.js';
 import {MOTION_LABELS, MOTION_RENDERING_ITEM, MOTION_ROWS, MOTION_TUNING_ITEMS, type MotionItem} from '../motion/motionRows.js';
 import {NATIVE_PROMPT_THEMES} from '../prompt/prompt.js';
@@ -13,6 +13,7 @@ import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent}
 import {availabilityOf, availableValues, currentCursorHost, unavailableReason, type CursorFeature} from '../cursor/backends.js';
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
+import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
 import {librarySummary} from '../appearance/themeLibrary.js';
@@ -376,6 +377,13 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
   {id: 'composerDividers', label: 'Composer dividers', description: 'The horizontal lines around the composer; Off gives their rows back. Transcript dividers and prompt separators are separate', category: 'Layout',
     control: 'boolean', get: config => config.composerDividers, set: (config, composerDividers) => ({...config, composerDividers})},
+  enumRow({id: 'copyMode', label: '/copy without a number', description: 'Quick Copy copies the latest command output at once; Interactive Picker lists recent outputs to choose one or several. /copy N, -N, A-B and 1,3,5 always copy directly',
+    category: 'Copy', values: COPY_MODES, labels: COPY_MODES.map(mode => COPY_MODE_LABELS[mode]),
+    get: config => config.copy.mode, set: (config, mode) => ({...config, copy: {...config.copy, mode}})}),
+  {id: 'copyIncludeStatus', label: 'Include completion status', description: 'After each copied output, add the status NMSh showed when it finished (Completed or failed, exit code, time, waits for input). Off copies only the output. --status or --no-status overrides it once',
+    category: 'Copy', control: 'boolean', get: config => config.copy.includeStatus, set: (config, includeStatus) => ({...config, copy: {...config.copy, includeStatus}})},
+  {id: 'copyAutoExpand', label: 'Auto-expand copied output', description: 'After a successful copy, unfold the blocks whose output was copied. Off leaves folding as it was; what is copied is the same either way',
+    category: 'Copy', control: 'boolean', get: config => config.copy.autoExpand, set: (config, autoExpand) => ({...config, copy: {...config.copy, autoExpand}})},
   enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
@@ -396,6 +404,8 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   enumRow({id: 'terminalTitle', label: 'Terminal title', description: 'Set the window/tab title while NMSh owns the screen; programs set their own while they run and NMSh restores its title after them. Off leaves the title to the terminal', category: 'Sessions',
     values: ['off', 'project', 'session'] as const, labels: ['Off', 'Project', 'Project and session'],
     get: config => config.terminalTitle, set: (config, terminalTitle) => ({...config, terminalTitle})}),
+  {id: 'commandQueue', label: 'Queue commands', description: 'While a command runs, Enter queues the next one to run after it (Ctrl+Q always queues, Ctrl+S sends to the program); a program waiting for input still gets your answer. Off: Enter sends to the program', category: 'Sessions',
+    control: 'boolean', get: config => config.commandQueue, set: (config, commandQueue) => ({...config, commandQueue})},
   {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
     control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
   enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
@@ -497,6 +507,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: c => c.idleVisuals.colorSource, set: (c, colorSource) => ({...c, idleVisuals: withIdleColorSource(c, colorSource)})}),
   {id: 'idleCustomColors', parent: 'idleColor', when: c => c.idleVisuals.colorSource === 'custom', label: 'Edit colors',
     description: 'The idle visuals\' own gradient stops, with a live preview', category: 'Idle visuals', control: 'action', actionLabel: 'Edit ›', destination: 'idleColors'},
+  enumRow({id: 'activityStyle', label: 'Activity wording', description: 'Expressive gives each command a playful working phrase and a matching finished one (Cooking… → Cooked for 18s). Classic says Running and Completed. Exit codes, failures, interrupts and waiting for input read the same in both', category: 'Live activity',
+    values: ACTIVITY_STYLES, labels: ACTIVITY_STYLES.map(style => ACTIVITY_STYLE_LABELS[style]),
+    get: c => c.liveActivity.style, set: (c, style) => ({...c, liveActivity: {...c.liveActivity, style}})}),
   enumRow({id: 'activityColors', label: 'Live activity colors', description: 'The running-command line. Follow appearance uses Chroma when it is on, otherwise the theme. Only live work moves; finished commands show their plain result', category: 'Live activity',
     values: LIVE_ACTIVITY_COLORS, labels: LIVE_ACTIVITY_COLORS.map(colors => LIVE_ACTIVITY_COLOR_LABELS[colors]),
     get: c => c.liveActivity.colors, set: (c, colors) => ({...c, liveActivity: {...c.liveActivity, colors,
@@ -602,7 +615,7 @@ export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
   General: 'General', Updates: 'General',
   Appearance: 'Appearance', Presentation: 'Appearance', 'Idle visuals': 'Appearance', 'Live activity': 'Appearance',
   Prompt: 'Prompt & Composer', Layout: 'Prompt & Composer', 'Status strip': 'Prompt & Composer',
-  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor',
+  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor', Copy: 'Editor',
   Cursor: 'Cursor & Motion', Motion: 'Cursor & Motion',
   Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts',
   Tools: 'Shell & Providers', Welcome: 'Shell & Providers', History: 'Shell & Providers',
@@ -624,7 +637,7 @@ export function configGroup(row: SettingsRow): ConfigGroup {
 /** The order of root rows inside their groups (children follow their root); roots not listed keep their place after these. */
 const CONFIG_ORDER: readonly string[] = [
   'glyphStyle', 'panelPosition', 'liveSessionStartup', 'liveSessionMultiple', 'updateMode', 'updateFrequency',
-  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityColors',
+  'uiChrome', 'themeFamily', 'promptVibrance', 'treatmentPreset', 'shimmer', 'autoEffects', 'idleTimeout', 'activityStyle', 'activityColors',
   'provider', 'promptStyle', 'promptSymbol', 'composerPosition', 'composerDividers', 'divider', 'historicalPrompt', 'showShell', 'statusStrip',
   'syntaxHighlighting', 'pastePreview', 'transcriptPresentation', 'suggestionsOnEmpty', 'openWith',
   'cursorShape', 'cursorRenderer', 'cursorMotion', 'cursorEffect', 'cursorIdle', 'cursorColor', 'cursorSpeed', 'cursorIntensity', 'cursorTrail', 'cursorParticles', 'cursorAdvanced',

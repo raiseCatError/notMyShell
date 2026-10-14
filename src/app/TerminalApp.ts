@@ -1,3 +1,4 @@
+import {shellSubmission} from '../shell/submission.js';
 import {railNeedsPromptConversion, railPreviewConfiguration} from '../prompt/railLayout.js';
 import {prepareRail, paintRailComposition, railCompositionPreview, type PreparedRail} from '../prompt/railComposition.js';
 import {routeModule} from '../context/surfaceRouter.js';
@@ -17,13 +18,15 @@ import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.
 import {detectBackend, keepAwakePath, KeepAwakeController, type KeepAwakeRecord} from '../keepAwake/keepAwake.js';
 import {awakeDuration, awakeLabel, awakeStyle, awakeView, edgeAccessoryColumns, edgeFits, placeOnSaver, renderComposerEdge, resolveAccessorySlot, sliceAnsiCells} from '../keepAwake/presentation.js';
 import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
-import {homedir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
-import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
+import {blockAffordance, blockControlsLayout, blockPaletteItems, stickyControlsWidth, type BlockActionId, type BlockControls} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
 import {createConfigurationPanel, configurationKey, renderConfigurationPanel, type ConfigurationPanel} from '../tools/ConfigurationPanel.js';
 import {openSupportedConfiguration} from '../tools/SupportedConfiguration.js';
 import {selectOpener} from '../host/desktop.js';
+import {findOutputReferences, referenceFollowUp} from '../output/references.js';
+import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
@@ -45,7 +48,14 @@ import {resolveSemanticPalette} from '../appearance/semanticPalette.js';
 import {anyBridgeTargetActive, targetsPinnedTo, type BridgeTargetId} from '../themeBridge/model.js';
 import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fzfBridgeArgs, integrationHealth, reloadTmux, reportTargets, setupBat, targetPalette, themeBridgeKey, type ApplyOutcome, type BridgeContext, type TargetFacts, type TargetReport} from '../themeBridge/runtime.js';
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
-import {renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
+import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
+import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
+import {DEFAULT_REPORT_OPTIONS, describeFindings, scanSensitive, type ReportFormat} from '../clipboard/report.js';
+import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
+import {configuredEditor} from '../host/HostActions.js';
+import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
+import {buildComparisonReport, copyableDiff, previousRun} from '../output/compare.js';
 import {createStripStudio, renderStripStudio, stripStudioKey, type StripStudioState} from '../status/StripStudio.js';
 import {configureListKey, renderConfigureList, type ConfigureListState} from '../tools/config/ConfigureList.js';
 import {registryFacts, toolConfigEntry} from '../tools/config/registry.js';
@@ -86,7 +96,7 @@ import {
   SETTINGS_ROWS,
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
-import {accessSync, appendFileSync, constants, existsSync, readFileSync, realpathSync, rmSync, statSync} from 'node:fs';
+import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
 import {shouldProbeGraphics} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -120,7 +130,7 @@ import {createProviderPanel, handleProviderPanelKey, providerPanelEnterAction, p
   type ProviderPanelState} from '../providers/ProviderPanel.js';
 import {TapActivityObserver} from '../output/TapActivityObserver.js';
 import {HistoryViewport, stickyHeaderFor, type StickyHeader, type WrappedRow} from '../output/viewport.js';
-import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, statusStripModules, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
+import {NATIVE_PROMPT_THEMES, setThemeContext, themeContext, themeChromaStops, themeLabel, statusStripModules, buildContextLine, buildInlineContextPrefix, buildRightContext, isOnCommandRelevant, moduleConditionMet, buildRichGitShowcaseLine, buildThemePreviewLine, RICH_GIT_SHOWCASE, moduleShowcaseContext, nativePromptSnapshot, renderedModules, themePreviewContext} from '../prompt/prompt.js';
 import {foldingPreview, handleTranscriptPanelKey, renderTranscriptPanel, type TranscriptPanelState} from '../output/TranscriptPanel.js';
 import {tabCompletionAction} from '../input/tabBehavior.js';
 import {formatBuildIdentity, readBuildIdentity} from '../buildInfo.js';
@@ -160,7 +170,7 @@ import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
 import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
-import {ClipboardUnavailableError, copyFeedback, copyStats, writeClipboard} from '../clipboard/clipboard.js';
+import {ClipboardUnavailableError, copyFeedback, copyStats, readClipboard, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
 import {shouldPassthrough} from '../passthrough/PassthroughPolicy.js';
 import {QueryExtractor, ReplyRouter} from '../passthrough/TerminalQueries.js';
@@ -178,6 +188,15 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
 import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
+import {OpenLine, promptShaped} from '../session/openLine.js';
+import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
+import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
+import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
+import type {QueueNews} from '../session/SessionClient.js';
+import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
+import {directKeyBytes} from '../terminal/keyBytes.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
@@ -227,7 +246,17 @@ import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
+import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
+import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {QUEUE_LIMIT} from '../session/CommandQueue.js';
+import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
+import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
+import {ClipStore, type Clip} from '../clipboard/ClipStore.js';
+import {clipboardCounter, ClipboardChangeWatch} from '../clipboard/ClipboardChanges.js';
+import {expandSteps, quotedPlaceholder} from '../pins/recipes.js';
+import {splitBatch} from '../input/pasteBatch.js';
+import {verifyCommands} from '../input/pasteBatchCheck.js';
 import {WHY_FAILED} from '../ask/failure.js';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import {createDoctorPanel, doctorKey, renderDoctorPanel, type DoctorPanelState} from '../doctor/DoctorPanel.js';
@@ -338,6 +367,8 @@ const AGENT_DISCOVERY_MS = 15_000;
 const SHELF_IDLE_MS = 6000;
 const SUCCESS = lazyForeground(UI_COLORS.success);
 const ERROR = lazyForeground(UI_COLORS.failure);
+/** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
+const STOP_TYPE_AHEAD_MS = 2000;
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -703,7 +734,16 @@ export class TerminalApp {
   /** Terminal modes the running command has set, for handing the terminal to it mid-command. */
   private readonly commandModes = new AlternateScreenTracker();
   private settingsPanelState?: SettingsPanelState;
-  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean};
+  private running?: {command: string; startedAt: number; interrupted: boolean; cleared: boolean; startId: number; cwd: string; historyAllowed?: number; awaitingExec?: boolean;
+    /** The decorative phrase pair chosen for this command, once (Expressive activity wording). */
+    activity?: ActivityVerbPair;
+    /** Started from the command queue rather than typed at the prompt. */
+    queued?: boolean;
+    /** When you sent Ctrl+C or Ctrl+Z: for a moment the command is ending at your request, so what you type next is
+     * for the shell's prompt (type-ahead, as in any terminal), not a queue entry held behind the pause that stop
+     * causes. Only for STOP_TYPE_AHEAD_MS: a program that survives the signal (a REPL, a remote shell) gets the
+     * ordinary routing again, so later typing is never sent into it unasked. */
+    stoppedAt?: number};
   private hoveredLineIndex?: number;
   /** NMSh-owned transcript selection (plain drag); presentation only. */
   private selection?: TranscriptSelection;
@@ -719,6 +759,32 @@ export class TerminalApp {
   private readonly effects = new EffectState();
   private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number};
   private activityAnimationNow = Date.now();
+  /** The running command's input state, as the session's InputWatch reports it; never guessed here. */
+  private inputState?: InputState;
+  /** Waiting time the shell's completing prompt carried for the command that just finished. */
+  private completedInputTiming?: InputTiming;
+  /**
+   * A composer draft started while a command runs: when, and whether a request for input was already shown (an
+   * answer, discarded rather than run if the command ends first). Drafts started before the command's latest output
+   * are type-ahead for the shell and stay in the composer.
+   */
+  private runningDraft?: {startId: number; at: number; answering: boolean};
+  /** The previous command's phrase pair, so two commands in a row never get the same one. */
+  private lastActivityPair?: ActivityVerbPair;
+  /** This session's command queue as its owner (the session service or in-process client) last reported it. */
+  private queueState: QueueState = {entries: []};
+  /** Ctrl+Q while a program reads keys directly: the composer takes typing for one queue entry, never the program. */
+  private queueCompose = false;
+  /** The line the running command left the cursor on: a question there is answered before any probe confirms it. */
+  private readonly commandLine = new OpenLine();
+  /** A queued entry being edited in the composer: Enter saves it in place, Esc cancels. */
+  private queueEdit?: {id: number; draft: string};
+  private queuePanel?: QueuePanelState;
+  private pinsPanel?: PinsPanelState;
+  private readonly clips = new ClipStore();
+  private readonly clipboardChangeCounter = clipboardCounter();
+  private clipboardChangeWatch?: ClipboardChangeWatch;
+  private clipboardChangeSuggested = false;
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -740,6 +806,7 @@ export class TerminalApp {
   private lastPtyColumns = 0;
   private stopped = false;
   private originalRawMode = false;
+  private rawInputPrepared = false;
   private shellHandoffCwd?: string;
   private shellHandoffRequested = false;
   private presentationStartCwd = process.cwd();
@@ -775,9 +842,10 @@ export class TerminalApp {
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
-    this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
+    this.session.on('data', (data, stamp) => { if (!this.stopped && this.inStream(stamp)) this.onShellData(data); });
     this.session.on('prompt', (marker, stamp) => {
-      if (this.inStream(stamp)) {
+      // Buffered prompts after shutdown cannot restart collection or queue work.
+      if (!this.stopped && this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
           // An older bootstrap reports no snapshot: keep the documented launch-environment fallback.
@@ -790,11 +858,14 @@ export class TerminalApp {
         }
         // Host OSC 7 / OSC 133: a projection of this authoritative marker, never the other way round.
         this.hostSemantics.prompt(marker.cwd, marker.exitCode);
+        this.completedInputTiming = marker.inputWaits ? {waitedMs: marker.inputWaitMs ?? 0, waits: marker.inputWaits} : undefined;
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
-    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
+    this.session.on('exec', (command, stamp) => { if (!this.stopped && this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed, stamp.queued); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('inputState', state => this.onInputState(state));
+    this.session.on('queueState', (state, news) => this.onQueueState(state, news));
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
@@ -874,9 +945,13 @@ export class TerminalApp {
   lostServiceConnection = false;
   /** Commands the replay completed, for the reattach summary. */
   private replayedCompletions = 0;
+  /** Commands that completed during the current replay: marked incomplete if the replay lost output. */
+  private replayedRecords: CompletedCommand[] = [];
   private attachedSession?: AttachedSession;
   private continuedJournal?: TranscriptSession;
   private rendererEntered = false;
+  /** Current fullscreen ownership can release startup while its journal awaits IO. */
+  private startupPassthroughReady?: () => void;
 
   /** Drop stream events the transcript already has (exactly-once replay). */
   private inStream(stamp: StreamStamp): boolean {
@@ -916,11 +991,13 @@ export class TerminalApp {
     this.presentationStartCwd = journal.startCwd;
     if (journal.live) {
       this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
+      this.lastActivityPair = ACTIVITY_VERBS[journal.live.previousActivityIndex ?? -1];
       const running = journal.live.running;
       if (running) {
         const {cleared} = this.output.resumeActive(running.command, running.startId, running.outputStartId, mode => this.onActiveModeChange(mode));
         this.running = {command: running.command, startedAt: running.startedAt, interrupted: false, cleared,
           startId: running.startId, cwd: running.cwd, historyAllowed: running.historyAllowed,
+          activity: ACTIVITY_VERBS[running.activityIndex ?? -1],
           // A submission checkpoint can precede the very first shell event.
           // Its replayed readiness prompt must not complete the queued command.
           awaitingExec: this.streamSeq === 0};
@@ -930,37 +1007,39 @@ export class TerminalApp {
 
   private finishReplay(summary: {truncatedBytes: number}): void {
     const attached = this.attachedSession;
-    if (!this.replaying || !attached) return;
+    if (this.stopped || !this.replaying || !attached) return;
     this.replaying = false;
     const parts = [`Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid})`];
     const completed = this.replayedCompletions;
     if (completed > 0) parts.push(`${completed} command${completed === 1 ? '' : 's'} completed while detached`);
     this.output.addFrontendInteraction('session', `${parts.join(' · ')}.`, INFO);
+    // The spool keeps command boundaries but drops output past its limit: any command completed during this replay
+    // may be missing some, and says so wherever its output is used.
+    if (summary.truncatedBytes > 0) for (const record of this.replayedRecords) record.outputIncomplete = true;
+    this.replayedRecords = [];
     if (summary.truncatedBytes > 0) {
       this.output.addFrontendInteraction('session',
         `${formatBytes(summary.truncatedBytes)} of output produced while detached exceeded the retention limit and was not kept.`, ERROR);
     }
     // Without a journal the running command is known only from the service.
-    if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince);
+    if (!this.running && attached.running) this.onShellExec(attached.running, attached.runningSince, undefined, attached.runningQueued);
     if (!this.startupPending && this.running && (attached.fullscreen !== 0 || shouldPassthrough(this.running.command))) {
       this.cancelPresentation();
       this.passthrough = true;
       this.noteForeignScreen();
-      this.attachedModes = attached.modes ?? '';
+      this.commandModes.reset('alternate');
+      this.commandModes.observeModes(attached.modes ?? '');
       if (this.rendererEntered) this.enterAttachedPassthrough();
+      else this.startupPassthroughReady?.();
     }
     this.scheduleJournal();
     this.render();
   }
 
-  /** The reattached fullscreen app's own terminal modes, which this terminal never received. */
-  private attachedModes = '';
-
   private enterAttachedPassthrough(): void {
     // Reattached into a fullscreen app: hand it the whole terminal again,
     // including the mouse/paste/cursor-key modes it set before the detach.
-    this.handOverTerminal(this.attachedModes);
-    this.attachedModes = '';
+    this.handOverTerminal(this.commandModes.restoreSequence());
   }
 
   /**
@@ -978,9 +1057,16 @@ export class TerminalApp {
     if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
     this.keyDecoder.reset();
     this.terminalFocus = 'unknown';
+    if (!this.rendererEntered) {
+      // Entry clears the screen. Wake startup first, then resize exactly once
+      // after entry so the program's resulting repaint cannot be erased.
+      this.startupPassthroughReady?.();
+      return;
+    }
     this.renderer.suspendForPassthrough(restore);
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
+    this.startupPassthroughReady?.();
   }
 
   private onActiveModeChange(mode: PresentationMode): void {
@@ -1000,12 +1086,13 @@ export class TerminalApp {
    * zsh started a command line this frontend did not submit (it began while
    * detached, or came from type-ahead): give it its own transcript block.
    */
-  private onShellExec(command: string, at = Date.now(), historyAllowed?: number): void {
+  private onShellExec(command: string, at = Date.now(), historyAllowed?: number, queued?: string): void {
     this.effects.cancel();
     if (this.running) {
       this.running.awaitingExec = false;
       this.running.historyAllowed = historyAllowed;
-      if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      this.chooseActivityPair(this.running);
+      if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
         this.cancelPresentation();
         this.passthrough = true;
         this.noteForeignScreen();
@@ -1014,10 +1101,22 @@ export class TerminalApp {
       return;
     }
     this.commandModes.reset();
+    this.commandLine.reset();
+    this.inputState = undefined;
+    // A queued entry runs under its own text (a multi-line entry reaches the shell wrapped as one block); the session's
+    // queue says so on the exec itself, so a window that attached later shows it the same way.
+    if (queued !== undefined) command = queued;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
-    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed};
+    this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed, ...(queued !== undefined ? {queued: true} : {})};
+    if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      this.cancelPresentation();
+      this.passthrough = true;
+      this.noteForeignScreen();
+      this.handOverTerminal();
+    }
+    this.chooseActivityPair(this.running);
     this.scheduleJournal();
     if (!this.replaying) this.render();
   }
@@ -1032,17 +1131,33 @@ export class TerminalApp {
     if (!this.sessionId || this.shellEnded) return undefined;
     const running = this.running;
     const outputStartId = this.output.activeOutputStartId;
+    const previousActivityIndex = this.lastActivityPair ? ACTIVITY_VERBS.indexOf(this.lastActivityPair) : -1;
+    const activityIndex = running?.activity ? ACTIVITY_VERBS.indexOf(running.activity) : -1;
     return {sessionId: this.sessionId, seq: this.streamSeq,
+      ...(previousActivityIndex < 0 ? {} : {previousActivityIndex}),
       ...(running && outputStartId !== undefined ? {running: {command: running.command, startedAt: running.startedAt,
-        cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
+        cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed,
+        ...(activityIndex < 0 ? {} : {activityIndex})}} : {})};
+  }
+
+  /** Protect input before any program prompt is visible, including synchronous attach replay. */
+  private prepareRawInput(): void {
+    if (this.stopped || !process.stdin.isTTY || this.rawInputPrepared) return;
+    this.originalRawMode = process.stdin.isRaw;
+    process.stdin.setRawMode(true);
+    this.rawInputPrepared = true;
   }
 
   async run(): Promise<number> {
+    if (this.stopped) return this.done;
+    // Catchable shutdown must own cleanup even while probes or persistence await.
+    process.once('SIGTERM', this.onTerminate);
+    process.once('SIGHUP', this.onTerminate);
+    this.prepareRawInput();
+    process.once('exit', this.onProcessExit);
     let earlyInput = '';
     // A reattached interactive program owns terminal queries and replies.
     if (!this.passthrough && process.stdin.isTTY && process.stdout.isTTY) {
-      this.originalRawMode = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
       process.stdin.setEncoding('utf8');
       const resolved = await probeHost(this.host.capabilities, {
         write: data => process.stdout.write(data),
@@ -1052,7 +1167,7 @@ export class TerminalApp {
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
       }, undefined, {graphics: shouldProbeGraphics(process.env)});
-      process.stdin.setRawMode(this.originalRawMode);
+      if (this.stopped) return this.done;
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
       earlyInput = resolved.input;
@@ -1062,53 +1177,63 @@ export class TerminalApp {
       () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR),
       // Durable now: the service may forget these stream events.
       saved => { if (saved.live) this.session.ack(saved.live.seq, saved.id); });
-    try {
-      if (this.continuedJournal) await this.journal.continue(this.continuedJournal);
-      else await this.journal.start();
+    // Initialize the journal before input can schedule snapshots, but do not wait
+    // for disk IO before restoring a fullscreen program's terminal and size.
+    // The journal serializes saves and acknowledges only durable checkpoints.
+    let journalSettled = false;
+    const journalStarted = (this.continuedJournal
+      ? this.journal.continue(this.continuedJournal)
+      : this.journal.start()).then(() => {
       this.journalActive = true;
-    } catch {
+    }, () => {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
-    }
-    this.startOnboarding();
-    // Restored terminal modes are a visible handoff: keys can arrive at once.
-    // Install raw input first so the host cannot echo or translate those keys.
-    if (process.stdin.isTTY) {
-      this.originalRawMode = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.setEncoding('utf8');
-    process.stdin.resume();
-    process.stdin.on('data', this.onInput);
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
-    if (earlyInput) this.onInput(earlyInput);
-    process.stdout.on('resize', this.onResize);
-    process.on('SIGTSTP', this.onSuspend);
-    process.on('SIGCONT', this.onContinue);
-    process.once('SIGTERM', this.onTerminate);
-    process.once('SIGHUP', this.onTerminate);
-    process.on('exit', () => {
-      if (!this.stopped) {
-        if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
-        this.terminalFocus = 'unknown';
-        this.renderer.leave();
+      this.render();
+    }).finally(() => { journalSettled = true; });
+    // A fresh ordinary frontend must first publish its journal identity so an
+    // immediate detach can continue that journal. An already-owned terminal
+    // must instead restore its raw input and full size without waiting on IO.
+    while (!this.stopped && !this.passthrough && !journalSettled) {
+      // Replay or the next foreground command can establish ownership while
+      // persistence waits. A completion in the same socket batch can withdraw
+      // it again, so each wakeup must check the current owner before proceeding.
+      try {
+        await Promise.race([journalStarted, new Promise<void>(resolve => { this.startupPassthroughReady = resolve; })]);
+      } finally {
+        this.startupPassthroughReady = undefined;
       }
-    });
-    this.presentationStarted = true;
-    void this.loadSessionIdentity();
-    this.refreshAwake();
-    // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
-    this.scheduleThemeBridge(500);
-    this.scheduleWelcomeBlink();
-    void this.loadHistory();
-    this.render();
-    void this.quietUpdateCheck();
-    void this.quietToolUpdateCheck();
-    this.armIdle();
-    this.presetFrontendReady = true;
-    if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
+    }
+    // A shell exit or shutdown during startup cannot reinstall frontend input.
+    if (!this.stopped) {
+      this.startOnboarding();
+      // Restored terminal modes are a visible handoff: keys can arrive at once.
+      // Install raw input first so the host cannot echo or translate those keys.
+      this.prepareRawInput();
+      process.stdin.setEncoding('utf8');
+      process.stdin.resume();
+      process.stdin.on('data', this.onInput);
+      this.renderer.enter();
+      this.rendererEntered = true;
+      if (this.passthrough) this.enterAttachedPassthrough();
+      if (earlyInput) this.onInput(earlyInput);
+      process.stdout.on('resize', this.onResize);
+      process.on('SIGTSTP', this.onSuspend);
+      process.on('SIGCONT', this.onContinue);
+      this.presentationStarted = true;
+      void this.loadSessionIdentity();
+      this.refreshAwake();
+      // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
+      this.scheduleThemeBridge(500);
+      this.scheduleWelcomeBlink();
+      void this.loadHistory();
+      this.render();
+      void this.quietUpdateCheck();
+      void this.quietToolUpdateCheck();
+      this.armIdle();
+      this.presetFrontendReady = true;
+      if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
+    }
     const exitCode = await this.done;
+    await journalStarted;
     try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
     }
@@ -1119,11 +1244,16 @@ export class TerminalApp {
   private readonly queryExtractor = new QueryExtractor();
   private readonly replyRouter = new ReplyRouter();
 
+  private logEditorKeyInput(data: string): void {
+    const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    appendFileSync(join(tmpdir(), 'nmsh-key-debug.log'), `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
+  }
+
   private readonly onInput = (data: string): void => {
-    if (process.env.NMSH_DEBUG_KEYS === '1') {
-      const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-      const escaped = JSON.stringify(data);
-      appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
+    // Before probes classify a read, or inside a native reader, input can already be sensitive.
+    // Key diagnostics therefore observe only the idle composer, never startup or running-program input.
+    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.running && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
+      this.logEditorKeyInput(data);
     }
     if (this.passthrough && !this.startupPending) {
       this.session.write(data);
@@ -1209,6 +1339,14 @@ export class TerminalApp {
       return;
     }
     this.render();
+  };
+
+  private readonly onProcessExit = (): void => {
+    if (!this.stopped) {
+      if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+      this.terminalFocus = 'unknown';
+      this.renderer.leave();
+    }
   };
 
   // The frontend is going away (window closed, SIGHUP/SIGTERM); the shell was
@@ -1330,6 +1468,50 @@ export class TerminalApp {
     }
     if (this.themeBridgePanel) {
       void this.handleThemeBridgeKey(key, this.themeBridgePanel);
+      return;
+    }
+    if (this.copyPicker) {
+      const action = copyPickerKey(this.copyPicker, key);
+      const report = this.copyPickerReport;
+      if (action?.kind === 'close') { this.copyPicker = undefined; this.copyPickerReport = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy' || action?.kind === 'report') {
+        this.copyPicker = undefined;
+        this.copyPickerReport = undefined;
+        this.returnFromPanel();
+        if (action.kind === 'report' || report) this.startReport(action.records, report ?? 'markdown');
+        else void this.copyRecords(action.records, action.includeStatus);
+      }
+      this.render();
+      return;
+    }
+    if (this.comparePanel) {
+      const {columns, rows} = this.dimensions();
+      const action = comparePanelKey(this.comparePanel, key, columns, rows - 4);
+      if (action?.kind === 'close') { this.comparePanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy' && action.what === 'diff') {
+        const panel = this.comparePanel;
+        const diff = copyableDiff(action.comparison);
+        // The plain diff is copied as is, without the report review: say so when it looks like it holds secrets.
+        const sensitive = scanSensitive(diff, homedir());
+        void this.copyText(diff, 'Copied diff', sensitive.length ? ` · not redacted: ${describeFindings(sensitive)} (r reviews)` : '').then(note => { if (note && this.comparePanel === panel) { panel.note = note; this.render(); } });
+      } else if (action?.kind === 'copy') {
+        // A comparison report is a report: the same review (exact text, wrapped, redaction) before it is copied.
+        this.comparePanel = undefined;
+        const comparison = structuredClone(action.comparison);
+        this.reportReview = createTextReview('Copy comparison report', options => buildComparisonReport(comparison, options), [comparison.a, comparison.b],
+          {...DEFAULT_REPORT_OPTIONS, home: homedir()}, Boolean(configuredEditor(process.env)));
+      }
+      this.render();
+      return;
+    }
+    if (this.reportReview) {
+      const {columns, rows} = this.dimensions();
+      const action = reportReviewKey(this.reportReview, key, rows - 4, columns);
+      const review = this.reportReview;
+      if (action?.kind === 'close') { this.reportReview = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'copy') { this.reportReview = undefined; this.returnFromPanel(); void this.copyReportText(action.text, review.records); }
+      else if (action?.kind === 'edit') void this.editReport(review);
+      this.render();
       return;
     }
     if (this.rowPanel) {
@@ -1542,6 +1724,16 @@ export class TerminalApp {
       return;
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
+    if (this.pinsPanel) { void this.handlePinsKey(key); return; }
+    if (this.queuePanel) {
+      const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable());
+      if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'change') this.session.queue(action.change);
+      else if (action?.kind === 'edit') { this.queuePanel = undefined; this.returnFromPanel(); this.beginQueueEdit(action.id); }
+      else if (action?.kind === 'saveRecipe') { this.queuePanel = undefined; this.openPins({naming: this.queueState.entries.map(entry => entry.text)}); }
+      this.render();
+      return;
+    }
     if (this.watchPanel) {
       const panel = this.watchPanel;
       const action = watchPanelKey(panel, key, this.watches.active());
@@ -1598,10 +1790,37 @@ export class TerminalApp {
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
     if (this.githubPanel) { this.handleGithubKey(key); return; }
     if (this.agentView) { this.handleAgentViewKey(key); return; }
+    if (this.batchReview) {
+      const review = this.batchReview;
+      const action = batchReviewKey(review, key, this.dimensions().rows - 4);
+      const done = () => { this.batchReview = undefined; this.pasteReview = undefined; this.pastePreview = undefined; this.selectedSuggestion = 0; };
+      if (action?.kind === 'queue') {
+        // Enter on the reviewed list is the confirmation: exactly these commands, in this order, into this session's own queue.
+        const texts = batchTexts(review);
+        if (!this.queueAvailable() || texts.length > QUEUE_LIMIT - this.queueState.entries.length) {
+          this.output.addFrontendInteraction('/ps', 'The queue cannot take these commands now; nothing was queued.', ERROR);
+        } else {
+          for (const text of texts) {
+            this.session.queue({op: 'add', text});
+            this.sessionSubmissions.push({text, slash: false});
+            if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+          }
+          this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
+        }
+        done();
+      } else if (action?.kind === 'edit') { this.editor.insertPaste(batchTexts(review).join('\n')); done(); }
+      else if (action?.kind === 'text') { this.editor.insertPaste(review.source); done(); }
+      else if (action?.kind === 'back') { this.batchReview = undefined; if (review.title) this.openPins(); }
+      else if (action?.kind === 'cancel') done();
+      this.render();
+      return;
+    }
     if (this.pasteReview && this.pastePreview) {
       // The bounded review surface: Enter inserts the original text (nothing runs), Esc returns to the compact preview.
       const outcome = pasteReviewKey(this.pasteReview, key, this.dimensions().rows - 4);
-      if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
+      if (outcome === 'batch') void this.openBatchReview(this.pastePreview.text);
+      else if (outcome === 'clip') this.keepClip(this.pastePreview.text, 'paste', this.shellCwd);
+      else if (outcome === 'insert') { const text = this.pastePreview.text; this.pasteReview = undefined; this.pastePreview = undefined; this.editor.insertPaste(text); this.selectedSuggestion = 0; }
       else if (outcome === 'back') { this.pasteReview = undefined; if (!this.pasteCompactFits()) this.pastePreview = undefined; }
       else if (outcome === 'cancel') { this.pasteReview = undefined; this.pastePreview = undefined; }
       this.render();
@@ -1610,7 +1829,9 @@ export class TerminalApp {
     if (this.pastePreview) {
       const preview = this.pastePreview;
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'c') this.keepClip(preview.text, 'paste', this.shellCwd);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
       this.render();
       return;
@@ -1710,7 +1931,11 @@ export class TerminalApp {
         // The sticky header paints over the transcript region's first row.
         const sticky = localVisibleIndex === 0 ? this.stickyHeader(wrapped, viewStart) : undefined;
         if (sticky) {
-          // The sticky overlay owns the top row: a click jumps to the block's real header.
+          // The sticky overlay owns the top row: its controls act on that block; elsewhere a click jumps to its header.
+          const controls = key.kind === 'mouseClick' ? this.stickyControls(sticky.startId, columns)?.controls : undefined;
+          const x = key.x ?? 0;
+          if (controls?.copy && x >= controls.copy.column && x <= controls.copy.end) { void this.copyBlock(sticky.startId); return; }
+          if (controls && x >= controls.column) { this.openBlockPalette(sticky.startId); this.render(); return; }
           if (key.kind === 'mouseClick') {
             this.historyViewport.scrollLines(wrapped.length, outputHeight, sticky.targetIndex - viewStart);
             this.hoveredLineIndex = undefined;
@@ -1724,12 +1949,11 @@ export class TerminalApp {
           // A press may start a drag selection; a plain click still acts exactly as before.
           if (key.kind === 'mouseClick' && row && key.y) this.selection = beginSelection(viewStart + localVisibleIndex, key.y);
           if (row) {
-            const affordance = blockAffordance(row, columns);
-            if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex
-              && affordance && (key.x ?? 0) >= affordance.column && row.blockStartId !== undefined) {
-              this.openBlockPalette(row.blockStartId);
-              this.render();
-              return;
+            const affordance = blockAffordance(row, columns, this.controlOptions(row.blockStartId));
+            if (!this.running && key.kind === 'mouseClick' && row.lineIndex === this.hoveredLineIndex && affordance && row.blockStartId !== undefined) {
+              const x = key.x ?? 0;
+              if (affordance.copy && x >= affordance.copy.column && x <= affordance.copy.end) { this.selection = undefined; void this.copyBlock(row.blockStartId); return; }
+              if (x >= affordance.column) { this.selection = undefined; this.openBlockPalette(row.blockStartId); this.render(); return; }
             }
             if (key.kind === 'mouseClick' && row.isFoldHint && row.commandIndex !== undefined) {
               this.output.toggleExpanded(row.commandIndex);
@@ -1816,6 +2040,35 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    // A program reading a hidden line or single keys gets each key as it is typed, as in any terminal: the
+    // composer neither shows nor keeps it, and Enter is a key for the program, never a shell submission.
+    // Ctrl+Q while a program reads keys directly: the composer takes the next command for the queue; the program
+    // never sees those keys. Esc returns typing to the program.
+    if (key.kind === 'queueCommand' && this.directInputRequest() && this.queueAvailable()) {
+      this.queueCompose = true;
+      this.render();
+      return;
+    }
+    if (key.kind === 'escape' && this.queueCompose) {
+      this.queueCompose = false;
+      this.editor.clear();
+      this.render();
+      return;
+    }
+    if (key.kind === 'escape' && this.queueEdit) {
+      this.cancelQueueEdit();
+      this.render();
+      return;
+    }
+    if (this.directInputRequest()) {
+      this.sendDirectKey(key);
+      return;
+    }
+    // Typing that starts while a command waits for a line is an answer: if the command ends before it is sent, it
+    // is discarded rather than left to run as the next shell command.
+    if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault()};
+    }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
     if (this.promptConfiguration.composerPosition === 'flow' && this.historyViewport.detached && FLOW_EDIT_KEYS.has(key.kind)) {
@@ -1830,6 +2083,10 @@ export class TerminalApp {
     if (key.kind === 'escape') this.clearBlockFocus();
     if (FLOW_EDIT_KEYS.has(key.kind) && key.kind !== 'enter') this.clearBlockFocus();
 
+    if (key.kind === 'previousFailure' || key.kind === 'nextFailure') {
+      if (!this.running) this.goToFailure(key.kind === 'previousFailure' ? 'previous' : 'next');
+      return;
+    }
     if (key.kind === 'historyDelete' && this.historySearchActive) {
       const entry = this.historyQuery === this.editor.text.substring(HISTORY_SEARCH.length) ? this.historyResults[this.selectedSuggestion] : undefined;
       if (entry) void this.historyService.index.delete(entry.id).then(() => {
@@ -1860,6 +2117,7 @@ export class TerminalApp {
       this.clearCorrection();
       if (this.running) {
         this.running.interrupted = true;
+        this.running.stoppedAt = Date.now();
         this.editor.clear();
         this.session.interrupt();
       } else {
@@ -1879,7 +2137,7 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) this.session.write('\u001A');
+      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); }
       return;
     }
     if (key.kind === 'selectAll') {
@@ -1978,9 +2236,10 @@ export class TerminalApp {
       // Paste Guard: worth-a-look pastes are previewed first (never changed); ordinary ones insert at once.
       const analysis = analyzePaste(key.value);
       if (needsPreview(analysis, this.promptConfiguration.pastePreview)) {
-        this.pastePreview = {text: key.value, analysis};
+        const batch = this.batchAvailable(key.value);
+        this.pastePreview = {text: key.value, analysis, batch};
         // The compact strip never squeezes the composer: when this screen has no room for it, Review is the surface.
-        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis);
+        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch);
         this.render();
         return;
       }
@@ -2090,29 +2349,9 @@ export class TerminalApp {
     else if (key.kind === 'deleteLineAfter') this.editor.deleteLineAfter();
     else if (key.kind === 'delete') this.editor.delete();
     else if (key.kind === 'newline') this.editor.insert('\n');
-    else if (key.kind === 'enter') {
-      if (this.running) {
-        if (this.editor.text.trim() === '/zsh') {
-          this.editor.clear();
-          this.output.addFrontendInteraction('/zsh', 'Wait for the foreground command to finish or interrupt it, then run /zsh.', INFO);
-        } else if (this.editor.text.trim() === '/clear') {
-          this.editor.clear();
-          this.output.addFrontendInteraction('/clear', 'Wait for the foreground command to finish before archiving this transcript.', INFO);
-        } else if (this.editor.text.trim() === '/resume') {
-          this.editor.clear();
-          this.output.addFrontendInteraction('/resume', 'Wait for the foreground command to finish before switching transcripts.', INFO);
-        } else {
-          const input = this.editor.text;
-          this.editor.clear();
-          this.session.write(`${input}\r`);
-          return;
-        }
-        this.editor.clear();
-      } else {
-        if (this.preparingCommand) return;
-        void this.submit();
-      }
-    }
+    else if (key.kind === 'queueCommand') this.routeComposer('queue');
+    else if (key.kind === 'sendToProgram') this.routeComposer('send');
+    else if (key.kind === 'enter') this.routeComposer('enter');
   }
 
 
@@ -2380,7 +2619,25 @@ export class TerminalApp {
       }
       this.render();
     }
-    else if (slash.kind === 'copy') await this.copyRecent(slash.index);
+    else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
+    else if (slash.kind === 'pasteClipboard') await this.pasteClipboard(command);
+    else if (slash.kind === 'clips') {
+      if (slash.suggestions === undefined) this.openClips();
+      else this.configureClipboardChanges(slash.suggestions);
+    }
+    else if (slash.kind === 'pins') { this.panelOrigin = undefined; this.openPins(); }
+    else if (slash.kind === 'compare') {
+      if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
+      else {
+        const recent = this.output.recentShellCommands();
+        const first = recent[(slash.first ?? 1) - 1];
+        const second = slash.second === undefined ? undefined : recent[slash.second - 1];
+        if (!first || (slash.second !== undefined && !second)) this.output.addFrontendInteraction(command.trim(), `No completed command output at ${!first ? slash.first ?? 1 : slash.second}.`, ERROR);
+        else if (second === first) this.output.addFrontendInteraction(command.trim(), 'Choose two different outputs to compare.', ERROR);
+        else this.openCompare(first, second ?? (slash.first === undefined ? previousRun(first, recent) : undefined));
+      }
+    }
+    else if (slash.kind === 'copySettings') { this.panelOrigin = undefined; this.rowPanel = createRowPanel('Copy', '/copy and /cp', ['copyMode', 'copyIncludeStatus', 'copyAutoExpand']); }
     else if (slash.kind === 'appearance') { this.panelOrigin = undefined; await this.startAppearance(); }
     else if (slash.kind === 'motion') {
       // The same Motion screen and state as /appearance → Motion.
@@ -2468,6 +2725,7 @@ export class TerminalApp {
     else if (slash.kind === 'llm') this.openUnderstandingPanel();
     else if (slash.kind === 'doctor') void this.openDoctor();
     else if (slash.kind === 'watch') this.handleWatch(command, slash.op, slash.arguments);
+    else if (slash.kind === 'queue') this.handleQueueCommand(command, slash.op);
     else if (slash.kind === 'rename') {
       if (this.sessionMode !== 'service' || !this.sessionId) this.output.addFrontendInteraction(command, 'Renaming needs a live session (this one runs in-process).', INFO);
       else {
@@ -2487,7 +2745,103 @@ export class TerminalApp {
   private openPalette(): void {
     if (this.settingsPanelActive) return;
     const record = this.focusedCommandIndex === undefined ? this.output.recent(1) : this.output.recent(this.focusedCommandIndex + 1);
-    this.paletteState = createPalette([...paletteItems(), ...(record ? blockPaletteItems(record) : [])]);
+    const history = this.historySearchActive && this.historyQuery === this.editor.text.substring(HISTORY_SEARCH.length)
+      ? this.historyResults[this.selectedSuggestion] : undefined;
+    const historyItems: PaletteItem[] = history ? [{id: `history:pin:${history.id}`, label: 'Pin selected history command',
+      detail: displaySafe(history.command), category: 'Transcript', action: {kind: 'pinHistory', id: history.id}},
+      {id: `history:clip:${history.id}`, label: 'Keep selected history command as clip', detail: displaySafe(history.command),
+        category: 'Transcript', action: {kind: 'keepHistoryClip', id: history.id}}] : [];
+    const composerItems: PaletteItem[] = this.editor.text.trim() && !isSlashInput(this.editor.text)
+      ? [{id: 'clip:keep-composer', label: 'Keep composer draft as clip', detail: 'Keep text in memory without changing the draft or executing it', category: 'Transcript', action: {kind: 'keepComposerClip'}}] : [];
+    this.paletteState = createPalette([...historyItems, ...composerItems, ...paletteItems(), ...this.failureNavigationItems(), ...(record ? blockPaletteItems(record) : [])]);
+  }
+
+  /** Newest-first indexes of completed commands that did not exit 0 (a nonzero exit or an interrupt is authoritative; output text is not). */
+  private failedBlockIndexes(): number[] {
+    return this.output.view().completed.flatMap((record, index) => record.exitCode !== 0 ? [index] : []);
+  }
+
+  private failureNavigationItems(): PaletteItem[] {
+    const failed = this.failedBlockIndexes();
+    if (!failed.length) return [];
+    const count = `${failed.length} failed command${failed.length === 1 ? '' : 's'} in this transcript`;
+    return [
+      {id: 'failure:previous', label: 'Previous failed command', detail: `Older block that exited nonzero or was interrupted · ${count}`, category: 'Transcript', action: {kind: 'failure', direction: 'previous'}},
+      {id: 'failure:next', label: 'Next failed command', detail: `Newer block that exited nonzero or was interrupted · ${count}`, category: 'Transcript', action: {kind: 'failure', direction: 'next'}},
+    ];
+  }
+
+  /** Focus the previous (older) or next (newer) failed block, found by its command record and brought into view. */
+  private goToFailure(direction: 'previous' | 'next'): void {
+    const failed = this.failedBlockIndexes();
+    const current = this.focusedCommandIndex;
+    const target = direction === 'previous'
+      ? failed.find(index => current === undefined || index > current)
+      : [...failed].reverse().find(index => current !== undefined && index < current);
+    if (target === undefined) {
+      this.output.addFrontendInteraction('/failures', direction === 'previous' ? (failed.length ? 'No older failed command.' : 'No failed command in this transcript.') : (current === undefined ? 'Nothing is focused; use Previous failed command first.' : 'No newer failed command.'), INFO);
+      return;
+    }
+    const record = this.output.view().completed[target];
+    this.focusedLineIndex = undefined;
+    this.focusedActivityId = undefined;
+    this.focusedCommandIndex = target;
+    if (record) this.revealBlock(record.startId);
+  }
+
+  /** Scroll so a block's first row is in view (the same placement find uses for a match). */
+  private revealBlock(startId: number): void {
+    const {columns, rows} = this.dimensions();
+    const wrapped = this.output.wrapped(columns);
+    const row = wrapped.findIndex(item => item.blockStartId === startId);
+    if (row < 0) return;
+    const height = this.planFrame(columns, rows).viewportRows;
+    this.historyViewport.scrollLines(wrapped.length, height, revealStart(row, wrapped.length, height) - this.historyViewport.resolve(wrapped.length, height));
+  }
+
+  private openReferences(record: CompletedCommand): void {
+    const references = findOutputReferences(record);
+    if (!references.length) {
+      this.output.addFrontendInteraction('/references', 'No files, links, commits or devices found in this output.', INFO);
+      return;
+    }
+    this.paletteState = createPalette(referencePaletteItems(record.startId, references));
+  }
+
+  /** One action on one reference, resolved again from its block: nothing here runs a command. */
+  private async runReference(startId: number, refId: string, verb: 'open' | 'copy' | 'stage'): Promise<void> {
+    const say = (message: string, style = INFO) => { this.output.addFrontendInteraction('/references', message, style); this.render(); };
+    const record = this.output.view().completed.find(item => item.startId === startId);
+    const reference = record ? findOutputReferences(record).find(item => item.id === refId) : undefined;
+    if (!record || !reference) return say('That output is no longer available.', ERROR);
+    if (verb === 'copy') {
+      const text = referenceCopyText(reference);
+      try { await writeClipboard(text); this.noteClipboard(`Copied ${reference.kind === 'file' ? 'location' : reference.kind} · ${copyStats(text).characters.toLocaleString()} characters`, 'success'); }
+      catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
+      return;
+    }
+    if (reference.kind === 'file') {
+      const resolved = resolveLocation({path: reference.value, ...(reference.line ? {line: reference.line} : {}), ...(reference.column ? {column: reference.column} : {})}, record.historicalContext?.cwd ?? this.shellCwd);
+      if (!resolved.ok) return say(resolved.reason, ERROR);
+      const adapter = this.hostActions();
+      await this.performHostAction(resolved.kind === 'directory' ? adapter.openDirectory(resolved.location.path) : adapter.openFile(resolved.location), say);
+      return;
+    }
+    if (reference.kind === 'url') {
+      const opener = selectOpener();
+      if (!opener) return say(`No system URL opener is available here. The link is ${reference.value}`);
+      try { spawn(opener, [reference.value], {detached: true, stdio: 'ignore'}).unref(); say(`Opened ${reference.value}.`); } catch { say(`Couldn't open ${reference.value}.`, ERROR); }
+      return;
+    }
+    const argv = referenceFollowUp(reference);
+    if (!argv) return say(reference.kind === 'device' ? `${reference.value} is not ready (${reference.state ?? 'unknown state'}), so there is no follow-up for it.` : 'There is nothing to stage for this.');
+    // The composer is the person's: staged text never replaces what they have typed.
+    if (this.editor.text.trim()) return say('The composer has text. Clear it (or run it) first; nothing was staged.');
+    const quote = this.shellId === 'fish' ? fishQuote : posixQuote;
+    this.editor.insert(argv.map(arg => (/^[\w@%+=:,./-]+$/u.test(arg) ? arg : quote(arg))).join(' '));
+    this.clearBlockFocus();
+    this.historyViewport.latest();
+    say('Staged in the composer for you to review. Press Enter to run it.');
   }
 
   private clearBlockFocus(): void {
@@ -2508,10 +2862,19 @@ export class TerminalApp {
     const index = records.findIndex(item => item.startId === startId);
     const record = records[index];
     if (!record) return; // A clear/restore must never act on stale screen coordinates.
-    const payload = blockCopyPayload(record, action);
-    if (payload !== undefined) {
-      try { await writeClipboard(payload); }
-      catch (error) { this.output.addFrontendInteraction('/copy', clipboardFailure(error), ERROR); }
+    const includeStatus = this.promptConfiguration.copy.includeStatus;
+    if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
+    else if (action === 'copyReport') this.startReport([record], 'markdown');
+    else if (action === 'compare') this.openCompare(record);
+    else if (action === 'references') this.openReferences(record);
+    else if (action === 'pin') this.pinCommand(record.command, record.historicalContext?.cwd ?? this.shellCwd);
+    else if (action === 'clipCommand' || action === 'clipOutput') this.keepClip(action === 'clipCommand' ? record.command : recordCopyText(record, false),
+      action === 'clipCommand' ? 'command' : 'output', record.historicalContext?.cwd, null);
+    else if (action === 'copyBoth') await this.copyRecords([record], includeStatus, record.command);
+    else if (action === 'copyCommand') {
+      // The command text only: completion status never applies here.
+      try { await writeClipboard(record.command); this.noteClipboard(`Copied command · ${copyStats(record.command).characters.toLocaleString()} characters`, 'success'); }
+      catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); }
     } else if (action === 'fold') this.output.toggleExpanded(index);
     else if (action === 'pager') await this.openBlockInPager(record);
     else if (action === 'explain') { this.explainBlock = record.startId; this.openAsk('why did this fail'); }
@@ -2533,6 +2896,39 @@ export class TerminalApp {
     switch (action.kind) {
       case 'block':
         await this.runBlockAction(action.startId, action.id);
+        break;
+      case 'reference':
+        await this.runReference(action.startId, action.refId, action.verb);
+        break;
+      case 'failure':
+        this.goToFailure(action.direction);
+        break;
+      case 'pinHistory': {
+        const entry = this.historyResults.find(entry => entry.id === action.id);
+        if (entry) this.pinCommand(entry.command, entry.cwd ?? this.shellCwd);
+        break;
+      }
+      case 'keepComposerClip':
+        if (!this.running && !isSlashInput(this.editor.text)) this.keepClip(this.editor.text, 'composer', this.shellCwd);
+        break;
+      case 'keepHistoryClip': {
+        const entry = this.historyResults.find(entry => entry.id === action.id);
+        if (entry) this.keepClip(entry.command, 'history', entry.cwd, entry.session ?? null);
+        break;
+      }
+      case 'clip': {
+        if (action.verb === 'remove') { this.clips.remove(action.id); this.openClips(); break; }
+        const clip = this.clips.get(action.id);
+        if (!clip || this.running) break;
+        if (this.editor.text.trim()) { this.output.addFrontendInteraction('/clips', 'The composer has text. Clear it before staging a clip.', INFO); break; }
+        const analysis = analyzePaste(clip.text);
+        const batch = this.batchAvailable(clip.text);
+        this.pastePreview = {text: clip.text, analysis, batch};
+        this.pasteReview = createPasteReview(clip.text, analysis, batch);
+        break;
+      }
+      case 'clearClips':
+        this.clips.clear(); this.openClips();
         break;
       case 'slash': {
         const slash = parseSlashCommand(action.command);
@@ -2606,6 +3002,8 @@ export class TerminalApp {
     const contextAtSubmission = this.context;
     this.effects.cancel();
     this.commandModes.reset();
+    this.inputState = undefined;
+    this.runningDraft = undefined;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
@@ -2633,11 +3031,7 @@ export class TerminalApp {
       this.noteForeignScreen();
       this.handOverTerminal();
     }
-    if (command.includes('\n')) {
-      this.session.submit(`{ ${command}\n}`);
-    } else {
-      this.session.submit(command);
-    }
+    this.session.submit(shellSubmission(command, this.shellId));
     // After the command is on its way: one sweep acknowledging the submission (never delays it).
     if (!this.passthrough) this.startSweep('prompt', 'vivid');
     this.render();
@@ -2711,22 +3105,152 @@ export class TerminalApp {
     this.render();
   }
 
-  private async copyRecent(index: number): Promise<void> {
-    const command = index === 1 ? '/copy' : `/copy ${index}`;
-    const record = this.output.recentShell(index);
-    if (!record) {
-      this.output.addFrontendInteraction(command, `No completed command output at /copy ${index}`, ERROR);
+  /** Whether a block's Copy control currently confirms a copy. */
+  private controlOptions(startId: number | undefined): {copied: boolean; safe: boolean} {
+    const copied = this.copiedBlock;
+    return {copied: Boolean(copied && copied.startId === startId && Date.now() < copied.until), safe: getCurrentGlyphMode() === 'safe'};
+  }
+
+  /** Controls in muted text; a confirmed copy in the success color (words carry it under NO_COLOR). */
+  private styledControls(controls: BlockControls, width?: number): string {
+    const text = width === undefined ? controls.suffix : controls.suffix.slice(-width);
+    return `${SUBTLE}${text.replace(/\[[✓+] Copied\]/u, match => `${SUCCESS}${match}${SUBTLE}`)}${RESET}`;
+  }
+
+  /** The sticky row's controls for a completed block (none for a running one, or when NMSh is busy with a panel). */
+  private stickyControls(startId: number, columns: number): {controls: BlockControls; width: number} | undefined {
+    if (this.running) return undefined;
+    if (!this.output.view().completed.some(record => record.startId === startId)) return undefined;
+    const width = stickyControlsWidth(columns);
+    const controls = width ? blockControlsLayout(columns - width, columns, this.controlOptions(startId)) : undefined;
+    return controls ? {controls, width} : undefined;
+  }
+
+  /** A block's direct Copy: that command's full stored output (folded lines too), with the Copy settings. */
+  private async copyBlock(startId: number): Promise<void> {
+    if (this.running || this.stopped) return;
+    const record = this.output.view().completed.find(item => item.startId === startId);
+    if (!record) return; // A clear or restore must never act on stale coordinates.
+    if (!await this.copyRecords([record], this.promptConfiguration.copy.includeStatus)) return;
+    // Only after the clipboard accepted it: Copy reads "Copied" for a moment, in place.
+    this.copiedBlock = {startId, until: Date.now() + 1600};
+    if (this.copiedBlockTimer) clearTimeout(this.copiedBlockTimer);
+    this.copiedBlockTimer = setTimeout(() => { this.copiedBlock = undefined; this.copiedBlockTimer = undefined; if (!this.stopped) this.render(); }, 1600);
+    this.copiedBlockTimer.unref?.();
+    this.render();
+  }
+
+  /**
+   * Copy as Report. A report is made to be shared, and pattern-based redaction cannot promise to catch everything,
+   * so every report goes through its review (Enter copies): it never reaches the clipboard unseen. Oldest first.
+   */
+  private startReport(records: readonly CompletedCommand[], format: ReportFormat): void {
+    this.panelOrigin = undefined;
+    this.reportReview = createReportReview(records, {...DEFAULT_REPORT_OPTIONS, format, home: homedir()}, Boolean(configuredEditor(process.env)));
+    this.render();
+  }
+
+  /** The report's clipboard write: the same tool, feedback and Auto-expand rule as every other copy. */
+  private async copyReportText(text: string, records: readonly CompletedCommand[]): Promise<void> {
+    try { await writeClipboard(text); }
+    catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); return; }
+    if (this.promptConfiguration.copy.autoExpand) this.output.expandBlocks(records.filter(record => record.output.trim()).map(record => record.startId));
+    const stats = copyStats(text);
+    this.noteClipboard(`Copied report · ${records.length} command${records.length === 1 ? '' : 's'} · ${stats.characters.toLocaleString()} characters`, 'success');
+  }
+
+  /** e in the report review: the text in your editor (a private temporary file), back into the review when it exits. */
+  private async editReport(review: ReportReviewState): Promise<void> {
+    const editor = configuredEditor(process.env);
+    if (!editor || !this.hostTerminalFree()) return;
+    const directory = mkdtempSync(join(tmpdir(), 'nmsh-report-'));
+    const file = join(directory, review.options.format === 'markdown' ? 'report.md' : 'report.txt');
+    try {
+      writeFileSync(file, review.text, {mode: 0o600});
+      const code = await this.withHostTerminal(() => new Promise<number | null>(done => {
+        const child = spawn(editor[0]!, [...editor.slice(1), file], {stdio: 'inherit'});
+        child.once('error', () => done(null));
+        child.once('close', exit => done(exit));
+      }));
+      if (code === 0 && this.reportReview === review) applyReportEdit(review, readFileSync(file, 'utf8'));
+    } catch { /* The review keeps the text it had. */ }
+    finally { rmSync(directory, {recursive: true, force: true}); this.render(); }
+  }
+
+  /** Compare output…: straight to the difference when the other side is known, otherwise choose it (previous run first). */
+  private openCompare(base: CompletedCommand, partner?: CompletedCommand): void {
+    this.panelOrigin = undefined;
+    this.comparePanel = createComparePanel(base, this.output.recentShellCommands(), partner);
+    this.render();
+  }
+
+  /** A text copy that is not command output (a diff, a comparison report): the same tool and feedback. */
+  private async copyText(text: string, what: string, caution = ''): Promise<string | undefined> {
+    try { await writeClipboard(text); }
+    catch (error) { const note = clipboardFailure(error); this.noteClipboard(note, 'error'); return note; }
+    const stats = copyStats(text);
+    const note = `${what} · ${stats.lines.toLocaleString()} line${stats.lines === 1 ? '' : 's'} · ${stats.characters.toLocaleString()} characters${caution}`;
+    this.noteClipboard(note, 'success');
+    return note;
+  }
+
+  /** /copy and /cp: one parser, the configured default, and the same clipboard write as the picker and block Copy. */
+  private async copySlash(command: string, args: string): Promise<void> {
+    const parsed = parseCopyArgs(args);
+    if (!parsed.ok) { this.output.addFrontendInteraction(command.trim(), parsed.error, ERROR); return; }
+    const {selector, status, report} = parsed.request;
+    const includeStatus = status ?? this.promptConfiguration.copy.includeStatus;
+    if (selector.kind === 'picker' || (selector.kind === 'default' && this.promptConfiguration.copy.mode === 'picker')) {
+      this.panelOrigin = undefined;
+      this.copyPicker = createCopyPicker(this.output.recentShellCommands(), includeStatus);
+      this.copyPickerReport = report;
       return;
     }
-    const payload = serializeCopyPayload(record);
-    // Nothing printed: say so and leave the clipboard as it was (NMSh's status row is not output to copy).
-    if (!payload) { this.output.addFrontendInteraction(command, `Nothing to copy: ${record.command.split('\n')[0]!.slice(0, 80)} printed no output.`, INFO); return; }
-    try {
-      await writeClipboard(payload);
-      this.output.addFrontendInteraction(command, copyFeedback(copyStats(payload), index), INFO);
-    } catch (error) {
-      this.output.addFrontendInteraction(command, clipboardFailure(error), ERROR);
+    const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
+    if (!resolved.ok) { this.output.addFrontendInteraction(command.trim(), resolved.error, ERROR); return; }
+    if (report) { this.startReport(resolved.records, report); return; }
+    await this.copyRecords(resolved.records, includeStatus);
+  }
+
+  /**
+   * The one clipboard write for command output (/copy, /cp, the picker, block Copy and Copy output): the records'
+   * stored output, oldest first, each followed by its recorded completion status when asked. Nothing to copy leaves
+   * the clipboard as it was. Feedback is a brief note above the composer, given only after the write succeeded.
+   */
+  private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string): Promise<boolean> {
+    const payload = [before ?? '', copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
+    if (!payload.trim()) {
+      const what = records.length === 1 ? `${records[0]!.command.split('\n')[0]!.slice(0, 60)} printed no output` : 'the selected commands printed no output';
+      this.noteClipboard(`Nothing to copy: ${what}; the clipboard is unchanged`, 'info');
+      return false;
     }
+    try { await writeClipboard(payload); }
+    catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); return false; }
+    // Folding is presentation and copying reads stored data: only the explicit setting connects them, and only
+    // for the blocks whose text was copied (a silent block copied for nothing stays as it was).
+    if (this.promptConfiguration.copy.autoExpand) {
+      this.output.expandBlocks(records.filter(record => recordCopyText(record, includeStatus)).map(record => record.startId));
+    }
+    this.noteClipboard(copiedNote(records.length, copyStats(payload), includeStatus), 'success');
+    return true;
+  }
+
+  /** One transient clipboard note in the notice slot above the composer (never a transcript line). */
+  private noteClipboard(text: string, tone: 'success' | 'info' | 'error'): void {
+    const ms = tone === 'error' ? 6000 : 2600;
+    this.clipboardNote = {text, tone, until: Date.now() + ms};
+    if (this.clipboardNoteTimer) clearTimeout(this.clipboardNoteTimer);
+    this.clipboardNoteTimer = setTimeout(() => { this.clipboardNote = undefined; this.clipboardNoteTimer = undefined; if (!this.stopped) this.render(); }, ms);
+    this.clipboardNoteTimer.unref?.();
+    this.render();
+  }
+
+  private clipboardRows(columns: number): string[] {
+    const note = this.clipboardNote;
+    if (!note || this.passthrough || Date.now() > note.until) return [];
+    const glyph = note.tone === 'success' ? `${SUCCESS}${GLYPHS.success}` : note.tone === 'error' ? `${ERROR}${GLYPHS.failure}` : `${SUBTLE}·`;
+    // Notes can name a command: drawn as text, never interpreted.
+    return [truncateAnsi(`${glyph}${RESET} ${SECONDARY}${displaySafe(note.text)}${RESET}`, columns)];
   }
 
   private async archiveCurrentPresentation(): Promise<void> {
@@ -2817,6 +3341,22 @@ export class TerminalApp {
     this.resumeBrowser = createSessionsView(live, this.sessionId);
   }
 
+  /** Refresh live facts without moving the person's selection, query or composer. */
+  private refreshSessionsView(live: SessionInfo[]): boolean {
+    const browser = this.resumeBrowser;
+    if (!browser?.liveOnly) return false;
+    const selected = resumeSelection(browser);
+    browser.live = live;
+    const visible = visibleLiveSessions(browser);
+    const index = selected?.kind === 'live' ? visible.findIndex(session => session.id === selected.session.id) : -1;
+    browser.selectedIndex = index >= 0 ? index : Math.max(0, Math.min(browser.selectedIndex, visible.length - 1));
+    if (browser.confirmKill) {
+      const target = live.find(session => session.id === browser.confirmKill);
+      if (!target || target.state !== 'detached' || target.id === browser.currentId) browser.confirmKill = undefined;
+    }
+    return true;
+  }
+
   private sessionsViewRows(browser: ResumeBrowserState, columns: number): string[] {
     const now = Date.now();
     const safe = getCurrentGlyphMode() === 'safe';
@@ -2828,10 +3368,10 @@ export class TerminalApp {
     rows.forEach((row, index) => {
       const selected = index === browser.selectedIndex;
       const marker = row.current ? (safe ? '*' : '●') : row.session.state === 'detached' ? (safe ? '-' : '◌') : (safe ? 'o' : '○');
-      const color = row.state === 'failed' ? ERROR : row.state === 'attention' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
+      const color = row.state === 'failed' ? ERROR : row.state === 'attention' || row.state === 'input' || row.state === 'inputLikely' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
       const who = row.agent ? `${agentColor(row.agent.color)}${safe ? row.agent.safeGlyph : row.agent.glyph} ${row.agent.short}${RESET} ` : '';
       out.push(truncateAnsi(`${selected ? `${ACCENT}›` : ' '} ${marker} ${PRIMARY}${(row.current ? 'this' : `#${row.ordinal}`).padEnd(5)}${RESET}${SECONDARY}${row.shell.padEnd(5)}${RESET} `
-        + `${color}${row.stateLabel.padEnd(16)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
+        + `${color}${row.stateLabel.padEnd(18)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
     });
     const confirming = browser.live.find(session => session.id === browser.confirmKill);
     if (confirming) out.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
@@ -3082,16 +3622,22 @@ export class TerminalApp {
     // New output is activity: it ends idle visuals and restarts the inactivity timer.
     this.noteActivity();
     if (this.passthrough) {
+      this.prepareRawInput();
+      // Raw bytes still reach the host now; retain only their bounded mode
+      // state so renderer entry cannot replace the current owner's modes.
+      if (!this.rendererEntered) this.commandModes.observeModes(data);
       this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
       this.commandModes.observeModes(data);
+      if (this.running) this.commandLine.push(data);
       this.lastOutputTime = Date.now();
       const wasPassthrough = this.passthrough;
       this.output.write(data);
       this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
+        this.prepareRawInput();
         this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
@@ -3108,6 +3654,12 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    // The authenticated prompt owns the command directory. Async workspace
+    // collection may still describe the previous prompt when the next command
+    // is submitted; refresh this cheap fact now without weakening its policy.
+    this.context.cwd = cwd;
+    const cwdFact = promptFacts({cwd, project: ''}, at).cwd;
+    this.context.facts = {...this.context.facts, cwd: updateFact(cwdFact, this.context.facts?.cwd)};
     this.endStartupWatch();
     this.switchedShellStarting = false;
     const initialPrompt = !this.presetShellReady;
@@ -3147,10 +3699,14 @@ export class TerminalApp {
     const completedAt = new Date(at);
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
-    const completedRecord = this.output.complete(exitCode);
+    // Never collapse output under the reader: while scrolled back or selecting, the block finishes expanded.
+    const completedRecord = this.output.complete(exitCode, {holdOpen: this.historyViewport.detached || Boolean(this.selection)});
+    if (this.replaying && completedRecord) this.replayedRecords.push(completedRecord);
     if (completedRecord) {
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
+      // Wall-clock duration stays whole; the time spent waiting for the person is a separate, measured fact.
+      if (this.completedInputTiming) { completedRecord.inputWaitMs = this.completedInputTiming.waitedMs; completedRecord.inputWaits = this.completedInputTiming.waits; }
       completedRecord.historyEligible = command.historyAllowed === 1 && !isPrivateCommand(command.command, ignorePatternFromEnv());
       this.directoryQuery = undefined;
       this.directoryQueryAbort?.abort();
@@ -3166,11 +3722,19 @@ export class TerminalApp {
       const facts = extractFacts(command.command, outputText);
       const isInterrupted = command.interrupted || exitCode === 130;
       const displayCompletedAt = presentationCompletionTime(completedAt);
-      const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts);
       const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
-      if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
-      else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
-      this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
+      const finish = (pair?: ActivityVerbPair) => {
+        const parts = completedActivity(command.command, elapsed, displayCompletedAt, isInterrupted ? 0 : exitCode, isInterrupted, facts, pair);
+        if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
+        else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
+        parts.main += completionWaitFact(this.completedInputTiming);
+        if (command.queued) parts.main += ' · from queue';
+        return parts;
+      };
+      // What is stored (copies, reports, restored records) is always the factual wording; only the drawn row is playful.
+      const factual = finish();
+      this.output.setCompletionLifecycle(`${factual.main}${factual.detail}`);
+      const parts = agent || failure ? factual : finish(this.activityPairFor(command));
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
       // The raw shell error stays; a curated command NMSh knows gets a factual follow-up (identity only, no lookup or install).
@@ -3178,6 +3742,18 @@ export class TerminalApp {
       if (known) this.output.addHistoryLine(`${INFO}${known}${RESET}`);
     }
     this.running = undefined;
+    this.inputState = undefined;
+    this.queueCompose = false;
+    this.completedInputTiming = undefined;
+    // An answer typed for this command but never sent must not become the next shell command.
+    const draft = this.runningDraft;
+    this.runningDraft = undefined;
+    if (draft?.answering) {
+      if (this.editor.text) {
+        this.editor.clear();
+        this.output.addFrontendInteraction(commandWords(command.command)[0] ?? 'command', 'The command finished before your reply was sent; the reply was discarded, not run.', INFO);
+      }
+    }
     if (!this.replaying && !command.cleared && completedRecord) {
       const interrupted = command.interrupted || exitCode === 130;
       const now = Date.now();
@@ -3194,6 +3770,7 @@ export class TerminalApp {
     this.queryExtractor.reset();
     if (this.passthrough) {
       this.passthrough = false;
+      this.commandModes.reset();
       // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
       this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
@@ -3421,7 +3998,8 @@ export class TerminalApp {
 
   /** What /prompt's module manager shows beside the draft: live capability status, packs, recommendations, the Claude Code bridge. */
   private modulesContext(): ModulesContext {
-    return {status: id => this.contextEngine.status(id), packs: this.modulesListings, recommendations: this.moduleRecommendations,
+    const presentation = this.promptContext();
+    return {conditionMet: module => moduleConditionMet(module, presentation), status: id => this.contextEngine.status(id), packs: this.modulesListings, recommendations: this.moduleRecommendations,
       ...(this.claudeBridgeState ? {claudeBridge: this.claudeBridgeState} : {}), now: Date.now()};
   }
 
@@ -3895,8 +4473,8 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -3930,7 +4508,11 @@ export class TerminalApp {
     if (this.themeBridgePanel) return renderThemeBridgePanel(this.themeBridgePanel, this.themeBridgePanelContext(), columns, this.dimensions().rows);
     if (this.stripStudio) return renderStripStudio(this.stripStudio, this.promptConfiguration, columns, this.dimensions().rows,
       (configuration, width) => this.statusStripRow(width, configuration));
-    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
+    if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
+    if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
+    if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
+    if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
+      : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
     if (this.tmuxPanel) return renderTmuxPanel(this.tmuxPanel, columns, this.dimensions().rows);
     if (this.dotfiles) return renderDotfilesPanel(this.dotfiles, columns, this.dimensions().rows);
@@ -3989,7 +4571,10 @@ export class TerminalApp {
       const activity = this.askActivityLine();
       return framePanel(renderAsk(this.askState, columns, {presentation: this.promptConfiguration.askPresentation, height: this.dimensions().rows - 4, shell: this.shellId, ...(activity ? {activity} : {})}), columns);
     }
+    if (this.pinsPanel) return framePanel(renderPinsPanel(this.pinsPanel, columns, this.dimensions().rows - 4), columns);
+    if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
+    if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
     if (this.cursorPanel) return framePanel(this.cursorPanelRows(this.cursorPanel, columns, this.cursorEnv(this.cursorPanel.draft, this.promptConfiguration)), columns);
@@ -4013,12 +4598,13 @@ export class TerminalApp {
         live.forEach((session, index) => {
           const selected = index === browser.selectedIndex;
           const state = liveRowState(session, now);
-          const stateColor = state === 'failed' ? ERROR : state === 'attention' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
+          const stateColor = state === 'failed' ? ERROR : state === 'attention' || state === 'input' || state === 'inputLikely' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
           const agent = liveRowAgent(session);
           // Agent color only when identity is proven and color is allowed; generic otherwise.
           const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
           const signature = signatureAccent(session.signature);
-          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
+          const stateMark = state === 'input' ? (safe ? '!' : '◆') : state === 'inputLikely' ? (safe ? '?' : '◇') : (safe ? '*' : '●');
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${stateMark} ${LIVE_ROW_LABELS[state].padEnd(17)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
             + `${selected ? ACCENT : SECONDARY}${describeLiveRow(session, now)}${RESET}`, columns));
         });
         rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
@@ -4540,7 +5126,9 @@ export class TerminalApp {
     if (mode === 'off') return undefined;
     const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
     const session = this.sessionId ? sessionTitleName(this.sessionIdentity, this.noticeLabels.get(this.sessionId)) : undefined;
-    const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
+    const request = this.running && !this.passthrough ? this.inputState?.request : undefined;
+    const running = request ? `${inputGlyph(request)} ${inputProgram(request, this.running!.command)} needs input`
+      : this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
     return composeTitle(mode, project, session, running);
   }
 
@@ -4771,6 +5359,19 @@ export class TerminalApp {
   // ---- Status strip, /configure, /tmux, /integrations -------------------------------
 
   private rowPanel?: RowPanelState;
+  /** /copy as an Interactive Picker (Settings → Copy, or /copy ui). */
+  private copyPicker?: CopyPickerState;
+  /** /copy picks headed for a report (`/copy ui --report`). */
+  private copyPickerReport?: ReportFormat;
+  /** The review before a report is copied. */
+  private reportReview?: ReportReviewState;
+  /** Compare output…: choosing the other block, then the difference. */
+  private comparePanel?: ComparePanelState;
+  private clipboardNote?: {text: string; tone: 'success' | 'info' | 'error'; until: number};
+  private clipboardNoteTimer?: ReturnType<typeof setTimeout>;
+  /** The block whose Copy control just succeeded (by startId), shown as "Copied" until `until`. */
+  private copiedBlock?: {startId: number; until: number};
+  private copiedBlockTimer?: ReturnType<typeof setTimeout>;
   private configureList?: ConfigureListState;
   private tmuxPanel?: TmuxPanelState;
   /** The include plan shown in the tmux review, applied exactly if confirmed. */
@@ -5470,7 +6071,7 @@ export class TerminalApp {
     const customStops = editor.gradient.stops.length >= MIN_CUSTOM_STOPS ? [...editor.gradient.stops] : [...PRESET_STOPS.lavender];
     return editor.target === 'idle'
       ? {...config, idleVisuals: {...config.idleVisuals, colorSource: 'custom', customStops}}
-      : {...config, liveActivity: {colors: 'custom', customStops}};
+      : {...config, liveActivity: {...config.liveActivity, colors: 'custom', customStops}};
   }
 
   /** Shared stop editor keys; Esc (when not typing a hex) saves the stops and returns. */
@@ -6477,8 +7078,190 @@ export class TerminalApp {
     // The agent shelf shares this chrome slot (and the screen plan's rows): hidden at rest, never a permanent row.
     const shelf = this.shelfRow(columns);
     const now = Date.now();
-    const rows = [...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
+    const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
+      ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
+    const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
     return shelf ? [...rows, shelf] : rows;
+  }
+
+  /** The shell grammar this session's shell speaks, for splitting a paste into commands (none for other shells). */
+  private batchShell(): BatchShell | undefined {
+    return this.shellId === 'zsh' || this.shellId === 'bash' || this.shellId === 'fish' ? this.shellId : undefined;
+  }
+
+  /** A paste can be offered as a queue of commands: the queue is available and the shell's grammar says it splits cleanly. */
+  private batchAvailable(text: string): boolean {
+    const shell = this.batchShell();
+    return Boolean(shell && this.queueAvailable() && text.includes('\n') && createBatchReview(text, shell, 1));
+  }
+
+  /**
+   * B: split the paste, have the real shell parse-check every command on its own (it never runs them), and only then
+   * show the review. A boundary the shell does not accept means the paste stays one block of text.
+   */
+  private async openBatchReview(text: string): Promise<void> {
+    const shell = this.batchShell();
+    const review = shell ? createBatchReview(text, shell, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length)) : undefined;
+    if (!shell || !review) return;
+    const check = await verifyCommands(batchTexts(review), shell);
+    if (this.stopped || this.pastePreview?.text !== text) return;
+    if (check.ok) this.batchReview = review;
+    else {
+      this.output.addFrontendInteraction('/ps', check.reason, INFO);
+      this.pastePreview = {...this.pastePreview, batch: false};
+      if (this.pasteReview) this.pasteReview.batch = false;
+    }
+    this.render();
+  }
+
+  /** /ps: read the clipboard now, once, and bring it to paste review. Nothing is kept, inserted or run by reading it. */
+  private async pasteClipboard(command: string): Promise<void> {
+    if (this.running) { this.output.addFrontendInteraction(command, 'A command is running: /ps pastes at the prompt. Use your terminal\'s paste to send text to the program.', INFO); return; }
+    let text: string;
+    try { text = await this.readClipboardText(); }
+    catch (error) {
+      this.output.addFrontendInteraction(command, error instanceof ClipboardUnavailableError ? error.message : `Could not read the clipboard: ${error instanceof Error ? error.message : String(error)}`, ERROR);
+      return;
+    }
+    if (this.stopped) return;
+    if (!text.trim()) { this.output.addFrontendInteraction(command, 'The clipboard is empty.', INFO); return; }
+    this.clipboardChangeSuggested = false;
+    const analysis = analyzePaste(text);
+    const batch = this.batchAvailable(text);
+    this.pastePreview = {text, analysis, batch};
+    // An explicit /ps always shows the review first, whatever Paste Preview is set to.
+    this.pasteReview = createPasteReview(text, analysis, batch);
+  }
+
+  /** Explicit staging only: never reads the clipboard, writes files or submits commands. */
+  private keepClip(text: string, source: Clip['source'], cwd?: string, session: string | null | undefined = this.sessionId): void {
+    const added = this.clips.add(text, {source, cwd, ...(session ? {session} : {})});
+    this.output.addFrontendInteraction('/clips', added.ok
+      ? `Kept clip ${added.clip.id} in memory for this frontend. /clips reviews it before insertion.${added.dropped ? ` Discarded ${added.dropped} oldest clip(s) to stay within the memory limit.` : ''}`
+      : added.reason, added.ok ? INFO : ERROR);
+  }
+
+  private openClips(): void {
+    const clips = this.clips.list();
+    if (!clips.length) { this.output.addFrontendInteraction('/clips', 'No clips kept. Use C in Paste Review, a block’s Actions, or Keep composer draft as clip in the palette. Clips disappear when this frontend exits.', INFO); return; }
+    const items: PaletteItem[] = clips.flatMap(clip => {
+      const detail = `${clip.source} · ${displaySafe(clip.text.replace(/[\r\n]/gu, ' ')).slice(0, 160)}`;
+      return [{id: `clip:${clip.id}:review`, label: `Review clip ${clip.id}`, detail, category: 'Transcript', action: {kind: 'clip', id: clip.id, verb: 'review'}},
+        {id: `clip:${clip.id}:remove`, label: `Discard clip ${clip.id}`, detail, category: 'Transcript', action: {kind: 'clip', id: clip.id, verb: 'remove'}}];
+    });
+    items.push({id: 'clips:clear', label: 'Discard all session clips', detail: 'Remove all staged text from this frontend’s memory', category: 'Transcript', action: {kind: 'clearClips'}});
+    this.paletteState = createPalette(items);
+  }
+
+  private configureClipboardChanges(enabled: boolean): void {
+    if (!enabled) {
+      this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
+      this.output.addFrontendInteraction('/clips', 'Clipboard-change suggestions off for this frontend.', INFO);
+      return;
+    }
+    if (!this.clipboardChangeCounter) {
+      this.output.addFrontendInteraction('/clips', 'Clipboard-change metadata is unavailable on this platform. /ps still reads text only when requested.', INFO);
+      return;
+    }
+    this.clipboardChangeWatch ??= new ClipboardChangeWatch({counter: this.clipboardChangeCounter,
+      idle: () => !this.stopped && !this.running && !this.externalPassthrough && !this.startupPending && !this.settingsPanelActive && !this.editor.text,
+      changed: () => { this.clipboardChangeSuggested = true; this.render(); },
+      failed: () => {
+        this.clipboardChangeSuggested = false;
+        this.output.addFrontendInteraction('/clips', 'Clipboard-change metadata became unavailable; suggestions disabled.', INFO); this.render();
+      }});
+    this.clipboardChangeSuggested = false;
+    this.clipboardChangeWatch.start();
+    this.output.addFrontendInteraction('/clips', 'Clipboard-change suggestions on for this frontend. Only a native change counter is read while idle; /ps explicitly reads text. /clips suggestions off stops them.', INFO);
+  }
+
+  // ---------------------------------------------------------------- pins and recipes
+
+  private openPins(options: {naming?: string[]} = {}): void {
+    const loaded = loadPins();
+    if (!loaded.ok) { this.output.addFrontendInteraction('/pins', loaded.reason, ERROR); return; }
+    this.pinsPanel = createPinsPanel(loaded.value, this.shellCwd, {composerText: this.editor.text, canEdit: Boolean(configuredEditor(process.env)), ...(options.naming ? {naming: options.naming} : {})});
+  }
+
+  /** Pin from a block: kept as written, global until you scope it in /pins; nothing about its output is kept. */
+  private pinCommand(command: string, cwd: string): void {
+    const result = addPin({command, cwd});
+    this.output.addFrontendInteraction('/pins', result.ok ? `Pinned. /pins lists what you kept; it is stored in ${pinsPath()}.` : result.reason, result.ok ? INFO : ERROR);
+  }
+
+  private refreshPins(panel: PinsPanelState, message?: {text: string; error: boolean}): void {
+    const loaded = loadPins();
+    if (loaded.ok) panel.data = loaded.value as PinData;
+    panel.composerText = this.editor.text;
+    panel.message = loaded.ok ? message : {text: loaded.reason, error: true};
+  }
+
+  private async handlePinsKey(key: Key): Promise<void> {
+    const panel = this.pinsPanel!;
+    const action = pinsPanelKey(panel, key);
+    const done = (result: {ok: true} | {ok: false; reason: string}, text: string) => this.refreshPins(panel, result.ok ? {text, error: false} : {text: result.reason, error: true});
+    if (action?.kind === 'close') { this.pinsPanel = undefined; this.returnFromPanel(); }
+    else if (action?.kind === 'stage') {
+      // The composer is the person's: a pin never replaces what they have typed.
+      if (this.editor.text.trim()) panel.message = {text: 'The composer has text. Clear it (or run it) first; nothing was staged.', error: true};
+      else {
+        if (action.command.includes('\n')) this.editor.insertPaste(action.command); else this.editor.insert(action.command);
+        this.pinsPanel = undefined; this.returnFromPanel();
+        this.output.addFrontendInteraction('/pins', 'Staged in the composer for you to review. Press Enter to run it.', INFO);
+      }
+    } else if (action?.kind === 'use') await this.useRecipe(panel, action.recipe, action.values);
+    else if (action?.kind === 'rename') done(changeItem(action.id, {name: action.name}), 'Renamed.');
+    else if (action?.kind === 'scope') done(changeItem(action.id, {scope: action.scope}), action.scope === 'directory' ? 'Kept for this folder and the folders inside it.' : 'Kept for every folder.');
+    else if (action?.kind === 'delete') done(removeItem(action.id), 'Removed.');
+    else if (action?.kind === 'pinComposer') done(addPin({command: this.editor.text, cwd: this.shellCwd}), 'Pinned what is in the composer. It is not run.');
+    else if (action?.kind === 'saveRecipe') {
+      const quoted = action.steps.map(step => quotedPlaceholder(step)).find(Boolean);
+      if (quoted) { panel.message = {text: `{{${quoted}}} is inside quotes. Put placeholders outside quotes: NMSh quotes the value for you.`, error: true}; panel.mode = 'name'; panel.naming = {steps: action.steps}; panel.input = action.name; }
+      else done(addRecipe({name: action.name, steps: action.steps, cwd: this.shellCwd}), `Saved the recipe “${action.name}”. Enter on it asks for its values and shows the commands first.`);
+    } else if (action?.kind === 'edit') { await this.editRecipe(panel, action.recipe); }
+    this.render();
+  }
+
+  /** Enter on a recipe: its values are quoted into the steps, and the expanded commands are reviewed before anything is queued. */
+  private async useRecipe(panel: PinsPanelState, recipe: Recipe, values: Record<string, string>): Promise<void> {
+    if (!this.queueAvailable()) { panel.message = {text: 'The command queue is off or unavailable here, so a recipe cannot be queued.', error: true}; return; }
+    const expanded = expandSteps(recipe.steps, values, this.shellId === 'fish' ? fishQuote : posixQuote);
+    if (!expanded.ok) { panel.message = {text: expanded.reason, error: true}; return; }
+    const shell = this.batchShell();
+    const check = shell ? await verifyCommands(expanded.steps, shell) : {ok: false as const, reason: 'This shell cannot check recipes.'};
+    if (this.pinsPanel !== panel) return;
+    if (!check.ok) { panel.message = {text: check.reason.replace('so the paste was not split', 'so the recipe was not queued'), error: true}; return; }
+    const where = this.shellCwd;
+    const note = recipe.scope === 'directory' && recipe.cwd && recipe.cwd !== where ? `Saved for ${recipe.cwd}; this shell is in ${where}.` : `Runs in this shell, from ${where}.`;
+    this.pinsPanel = undefined;
+    this.batchReview = batchFromCommands(expanded.steps, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length), {title: `Recipe: ${recipe.name}`, note});
+  }
+
+  /** e on a recipe: its commands in your editor (a private temporary file); saved only if they still split into whole commands. */
+  private async editRecipe(panel: PinsPanelState, recipe: Recipe): Promise<void> {
+    const editor = configuredEditor(process.env);
+    const shell = this.batchShell();
+    if (!editor || !shell || !this.hostTerminalFree()) return;
+    const directory = mkdtempSync(join(tmpdir(), 'nmsh-recipe-'));
+    const file = join(directory, 'recipe.sh');
+    try {
+      writeFileSync(file, recipe.steps.join('\n'), {mode: 0o600});
+      const code = await this.withHostTerminal(() => new Promise<number | null>(finish => {
+        const child = spawn(editor[0]!, [...editor.slice(1), file], {stdio: 'inherit'});
+        child.once('error', () => finish(null));
+        child.once('close', exit => finish(exit));
+      }));
+      if (code !== 0) { this.refreshPins(panel, {text: 'The editor did not finish; the recipe is unchanged.', error: true}); return; }
+      const split = splitBatch(readFileSync(file, 'utf8'), shell);
+      if (!split.ok) { this.refreshPins(panel, {text: `Not saved: ${split.reason} The recipe is unchanged.`, error: true}); return; }
+      const steps = split.commands.map(command => command.text);
+      const quoted = steps.map(step => quotedPlaceholder(step)).find(Boolean);
+      const problem = quoted ? `{{${quoted}}} is inside quotes; put placeholders outside quotes.` : steps.map(step => keepProblem(step)).find(Boolean);
+      if (problem || !steps.length) { this.refreshPins(panel, {text: `Not saved: ${problem ?? 'a recipe needs at least one command.'}`, error: true}); return; }
+      const saved = changeItem(recipe.id, {steps});
+      this.refreshPins(panel, saved.ok ? {text: `Saved ${steps.length} command${steps.length === 1 ? '' : 's'}. A queued run keeps the commands it was reviewed with.`, error: false} : {text: saved.reason, error: true});
+    } catch { this.refreshPins(panel, {text: 'The editor could not be started; the recipe is unchanged.', error: true}); }
+    finally { rmSync(directory, {recursive: true, force: true}); }
   }
 
   /** Whether the compact preview fits above the composer on this screen (the same rule notices follow). */
@@ -6520,7 +7303,7 @@ export class TerminalApp {
     if (hidden > 0 && summary.length) summary[summary.length - 1] += `${SUBTLE} · +${hidden} more${RESET}`;
     for (const item of summary) rows.push(`  ${item}`);
     if (analysis.commands.some(command => ['text', 'unknown'].includes(primaryKind(command.kinds)))) rows.push(`${SUBTLE}${PASTE_EXACT_NOTE}${RESET}`);
-    rows.push(`${SUBTLE}Enter insert · R review · Esc cancel${RESET}`);
+    rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel · C keep clip${RESET}`);
     return rows.map(row => truncateAnsi(row, columns));
   }
 
@@ -6560,9 +7343,10 @@ export class TerminalApp {
     // Expired notices never paint, even between polls.
     const notices = this.noticeView.notices.filter(notice => noticeVisible(notice, now));
     const safe = getCurrentGlyphMode() === 'safe';
-    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷'};
+    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷', input: safe ? '?' : '◇'};
     const rows = notices.map(notice => {
       const parts = describeNotice(notice, this.noticeLabels.get(notice.sessionId) ?? sessionLabel(notice.sessionId), now);
+      if (parts.symbol === 'input') return truncateAnsi(`${ACCENT}${inputGlyph({confidence: notice.confidence === 'likely' ? 'likely' : 'confirmed'})}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
       const color = parts.symbol === 'failed' ? ERROR : parts.symbol === 'attention' ? ACCENT : parts.symbol === 'done' ? SUCCESS : SECONDARY;
       return truncateAnsi(`${color}${symbols[parts.symbol]}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
     });
@@ -6570,10 +7354,10 @@ export class TerminalApp {
     return rows;
   }
 
-  /** Poll the service's session list on a slow cadence while notices are on and NMSh owns the screen. */
+  /** Poll while notices or the explicit live session view need facts and NMSh owns the screen. */
   private syncNotices(): void {
     const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && this.sessionMode === 'service' && this.promptConfiguration.sessionNotices;
+      && this.sessionMode === 'service' && (this.promptConfiguration.sessionNotices || Boolean(this.resumeBrowser?.liveOnly));
     if (wanted && !this.noticeTimer) {
       this.noticeTimer = presentationClock.subscribe(() => void this.refreshNotices(), NOTICE_REFRESH_MS);
       void this.refreshNotices();
@@ -6587,30 +7371,34 @@ export class TerminalApp {
     if (this.noticePolling) return;
     this.noticePolling = true;
     try {
-      const {sessions, ended} = await listSessionNotices();
+      const {sessions, ended} = await listSessionNotices({throwOnError: true});
       if (this.stopped) return;
       const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
       // The person's own name, else the familiar signature, else the old ordinal label.
       this.noticeLabels = new Map(ordered.map((session, index) => [session.id, session.name || session.signature || sessionLabel(session.id, index + 1)]));
       this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
       this.noticeSource = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
-      this.applyNotices();
+      const refreshedView = this.refreshSessionsView(sessions);
+      const noticesChanged = this.applyNotices();
+      if (refreshedView && !noticesChanged) this.render();
     } catch { /* notices are best effort */ } finally { this.noticePolling = false; }
   }
 
   /** Select what is visible now (expired notices drop out) and wake exactly when the next one expires. */
-  private applyNotices(now = Date.now()): void {
-    const next = selectNotices(this.noticeSource, this.sessionId, this.dismissedNotices, now);
+  private applyNotices(now = Date.now()): boolean {
+    const enabled = this.promptConfiguration.sessionNotices;
+    const next = enabled ? selectNotices(this.noticeSource, this.sessionId, this.dismissedNotices, now) : {notices: [], hidden: 0};
     const changed = JSON.stringify(next) !== JSON.stringify(this.noticeView);
     this.noticeView = next;
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
-    const soonest = this.noticeSource.filter(notice => selectNotices([notice], this.sessionId, this.dismissedNotices, now).notices.length)
-      .map(notice => noticeExpiresAt(notice)).filter((at): at is number => at !== undefined).sort((a, b) => a - b)[0];
+    const soonest = enabled ? this.noticeSource.filter(notice => selectNotices([notice], this.sessionId, this.dismissedNotices, now).notices.length)
+      .map(notice => noticeExpiresAt(notice)).filter((at): at is number => at !== undefined).sort((a, b) => a - b)[0] : undefined;
     if (soonest !== undefined && !this.stopped) {
       this.noticeExpiry = setTimeout(() => { this.noticeExpiry = undefined; this.applyNotices(); if (!this.stopped) this.render(); }, Math.max(50, soonest - now + 50));
       this.noticeExpiry.unref();
     }
     if (changed) this.render();
+    return changed;
   }
 
   /** Clear every visible notice, for every attached frontend where the service supports it. */
@@ -6914,7 +7702,7 @@ export class TerminalApp {
         nmsh: {configurationLoaded: true, sessionMode: this.sessionMode, ...(serviceReachable !== undefined ? {serviceReachable} : {}), transcriptDirectory: join(nmshConfigDirectory(), 'sessions'),
           shell: {id: this.shellId, label: shellAdapter(this.shellId).label, ...(resolveCommand(this.shellId) ? {executable: resolveCommand(this.shellId)!} : {}), promptSeen: !this.startupPending},
           host: {name: this.host.name, truecolor: colorLevel() === 'truecolor', keyboard: this.host.capabilities.enhancedKeyboard || this.host.capabilities.kittyKeyboard}},
-        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows,
+        ...(git ? {git} : {}), ...(root ? {repoRoot: root} : {}), providers: providerRows, contextEngine: {...this.contextEngine.stats},
         understanding: {mode: configuration.localUnderstanding.mode, ...(model ? {model: {label: model.label, runtime: model.runtime, ...(model.path ? {path: model.path} : {}), owned: Boolean(model.owned)}} : {}),
           runtimeAvailable, ...(model ? {state: stateLabel(this.understanding.status, configuration.localUnderstanding)} : {})},
         agents: this.agents.harnesses().map(item => ({label: item.harness.name, installed: Boolean(item.executable)})),
@@ -7286,7 +8074,10 @@ export class TerminalApp {
   private readonly cursorPresenter = new CursorPresenter(() => resolveCursorSettings(this.promptConfiguration.cursor, {...contextFor(this.promptConfiguration), chrome: UI_COLORS.accent}), () => { if (!this.stopped) this.paintPresentation(Date.now()); });
   private caretCause: 'typing' | 'jump' = 'jump';
   /** A paste waiting for Insert / Review / Cancel (presentation and classification only; the text is never changed). */
-  private pastePreview?: {text: string; analysis: PasteAnalysis};
+  private pastePreview?: {text: string; analysis: PasteAnalysis; /** Splits into separate commands that can be queued. */ batch: boolean};
+  private batchReview?: BatchReviewState;
+  /** The one place the clipboard is read (only /ps calls it). */
+  private readClipboardText: () => Promise<string> = () => readClipboard();
   private pasteReview?: PasteReviewState;
   /** Short presentation transitions (launch, completion materialization, Block Seal, Semantic Echo, prompt morph). */
   private readonly transitions = new Transitions(() => this.promptConfiguration.motion,
@@ -8422,7 +9213,7 @@ export class TerminalApp {
       inputRows: fullInput.allRows.length,
       suggestions,
       inspectorRows: this.inspectorRows(columns).length,
-      running: Boolean(this.running),
+      running: Boolean(this.running) || Boolean(this.queueLine(80)),
       detached: this.historyViewport.detached,
       hasOutput: transcriptRows > 0,
       composerPosition: this.promptConfiguration.composerPosition,
@@ -8498,6 +9289,9 @@ export class TerminalApp {
       for (const [row, spans] of result.spans) findSpans.set(row, {spans, active: index === this.findState!.active});
     });
     this.visibleBlocks = wrapped.slice(viewStart, viewStart + outputHeight).map(row => row.blockStartId);
+    const sticky = this.stickyHeader(wrapped, viewStart);
+    // While the block's header is scrolled away, its controls ride on the sticky row instead: never both.
+    const stickyControls = sticky ? this.stickyControls(sticky.startId, columns) : undefined;
     const visible = wrapped.slice(viewStart, viewStart + outputHeight).map((row, offset) => {
       if (isRowSelected(this.selection, viewStart + offset)) return `${background(UI_COLORS.selection)}${PRIMARY}${row.plain}${RESET}`;
       const marked = findSpans.get(viewStart + offset);
@@ -8505,11 +9299,13 @@ export class TerminalApp {
         marked.active ? '' : '\u001b[4m');
       const ansi = presenter.decorate(row, row.lineIndex === undefined ? undefined : this.output.lineTypes.get(row.lineIndex), interaction);
       const focused = this.focusedCommandIndex !== undefined && row.lineIndex === this.output.recent(this.focusedCommandIndex + 1)?.startId;
-      const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) ? blockAffordance(row, columns) : undefined;
-      return controls ? `${ansi}${RESET}${controls.suffix}` : ansi;
+      const controls = !this.running && (focused || row.lineIndex === this.hoveredLineIndex) && !(stickyControls && row.blockStartId === sticky?.startId)
+        ? blockAffordance(row, columns, this.controlOptions(row.blockStartId)) : undefined;
+      return controls ? `${ansi}${RESET}${this.styledControls(controls)}` : ansi;
     });
-    const sticky = this.stickyHeader(wrapped, viewStart);
-    const stickyRow = sticky && this.output.presentSticky(sticky.startId, columns);
+    const stickyRow = sticky && (stickyControls
+      ? this.output.presentSticky(sticky.startId, columns, this.styledControls(stickyControls.controls, stickyControls.width), stickyControls.width)
+      : this.output.presentSticky(sticky.startId, columns));
     if (stickyRow && visible.length > 0) visible[0] = stickyRow;
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
@@ -8530,8 +9326,15 @@ export class TerminalApp {
       }
     }
 
+    const direct = this.directInputRequest();
     const inputRows = input.rows.map(row => {
       const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
+      if (direct) {
+        const queueHint = this.queueAvailable() ? ' · Ctrl+Q queues a command' : '';
+        return row === input.rows[0] ? truncateAnsi(`${prefix}${SUBTLE}${directInputPlaceholder(direct, inputProgram(direct, this.running!.command))}${queueHint}${RESET}`, this.inputColumns(columns)) : '';
+      }
+      const hint = row === input.rows[0] && !this.editor.text ? this.composerHint() : undefined;
+      if (hint) return truncateAnsi(`${prefix}${SUBTLE}${hint}${RESET}`, this.inputColumns(columns));
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
       for (let i = 0; i < glyphsInRow.length; i++) {
@@ -8585,11 +9388,7 @@ export class TerminalApp {
           );
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
-        case 'activity': {
-          if (!this.running) return [];
-          const activity = truncateAnsi(this.currentActivity(), columns);
-          return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
-        }
+        case 'activity': return this.activityRows(plan, columns);
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -8793,8 +9592,7 @@ export class TerminalApp {
     const rows = [...frame.rows];
     for (const region of plan.regions) {
       if (region.kind === 'activity' && this.running) {
-        const line = truncateAnsi(this.currentActivity(), frame.columns ?? 80);
-        const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
+        const content = this.activityRows(plan, frame.columns ?? 80);
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
       // Live composer divider lines move with Chroma only when Divider lines follow Chroma.
@@ -8864,18 +9662,262 @@ export class TerminalApp {
     }
   }
 
+  /**
+   * The live activity region (two rows, always reserved while a command runs). Ordinarily the working line and a
+   * spacer; while the command waits for input, the attention line and the prompt it left open, so the question
+   * stays in view however far the transcript scrolled or folded. Nothing extra is reserved and the PTY never resizes.
+   */
+  private activityRows(plan: ScreenPlan, columns: number): string[] {
+    const queue = this.queueLine(columns);
+    if (!this.running) return queue ? [queue, ''] : [];
+    const request = this.inputState?.request;
+    // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
+    if (request) {
+      const rows = inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns);
+      const count = this.queueAvailable() ? this.queueState.entries.length : 0;
+      // The question keeps both rows; the queue is a count at the end of the headline, when it fits.
+      const tail = count ? `${SUBTLE} · ${queueGlyph()} ${count} queued${RESET}` : '';
+      if (tail && rows[0] !== undefined && displayWidth(stripAnsi(rows[0])) + displayWidth(stripAnsi(tail)) <= columns) rows[0] += tail;
+      return rows.map(row => truncateAnsi(row, columns));
+    }
+    const activity = truncateAnsi(this.currentActivity(), columns);
+    // The queue reads after what runs now, in the row the region already reserves.
+    if (queue) return [activity, queue];
+    return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
+  }
+
+  /** While a command runs, the empty composer says what Enter will do with what you type. */
+  private composerHint(): string | undefined {
+    if (!this.running || this.passthrough || this.queueEdit || !this.queueAvailable() || this.justStopped()) return undefined;
+    // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
+    if (this.queueCompose) return 'Queue a command · Enter adds it · Esc returns to the program';
+    const request = this.inputState?.request;
+    const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
+    return this.answersByDefault() ? `Enter answers ${program} · Ctrl+Q queues a command` : `Enter queues the next command · Ctrl+S sends to ${program}`;
+  }
+
+  /** Ctrl+C or Ctrl+Z was sent moments ago: typing is type-ahead for the prompt the stop brings back. */
+  private justStopped(): boolean {
+    const at = this.running?.stoppedAt;
+    return at !== undefined && Date.now() - at < STOP_TYPE_AHEAD_MS;
+  }
+
+  /**
+   * Enter goes to the running program: it is known to wait for input, or it left a question open on its line
+   * ("Password: ", "Continue? [y/N] ") that no probe has looked at yet. A reply typed at a fresh prompt (a password
+   * most of all) must never become a queued shell command, so the open question wins until it is answered.
+   */
+  private answersByDefault(): boolean {
+    return Boolean(this.inputState?.request) || (this.commandLine.open && promptShaped(this.commandLine.line));
+  }
+
+  /** Queueing works when the setting is on and whatever owns the shell runs a queue (an older service does not). */
+  /** The session's service understands per-entry conditions and approval (older ones would ignore them, so they are never offered). */
+  private queueConditionsAvailable(): boolean {
+    return this.queueAvailable() && this.session.features.has('queue-conditions');
+  }
+
+  private queueAvailable(): boolean {
+    return this.promptConfiguration.commandQueue !== false && this.session.features.has('queue');
+  }
+
+  /** The queue's line: what is queued and what runs next, or why it waits; an edit in progress says how to finish. */
+  private queueLine(columns: number): string | undefined {
+    if (!this.queueAvailable()) return undefined;
+    if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
+    return queueRow(this.queueState, columns);
+  }
+
+  private onQueueState(state: QueueState, news: QueueNews): void {
+    const previous = this.queueState;
+    this.queueState = state;
+    if (news.refused) this.output.addFrontendInteraction('/queue', news.refused, INFO);
+    if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
+    const paused = state.paused;
+    // A pause NMSh decided (not the person's own) is a safety event: say it where the failure is.
+    if (paused && paused.reason !== 'user' && paused.at !== previous.paused?.at && state.entries.length) {
+      this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}${SECONDARY} ${state.entries.length} waiting · /queue to resume or clear${RESET}`);
+    }
+    if (this.queueEdit && !state.entries.some(entry => entry.id === this.queueEdit!.id)) {
+      this.queueEdit = undefined;
+      this.output.addFrontendInteraction('/queue', 'That queued command already ran or was removed; your edit is still in the composer.', INFO);
+    }
+    this.render();
+  }
+
+  /** Add the composer's text to the queue. */
+  private enqueue(text: string): void {
+    if (!this.queueAvailable()) {
+      this.output.addFrontendInteraction('/queue', this.session.features.has('queue')
+        ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
+      this.render();
+      return;
+    }
+    this.session.queue({op: 'add', text});
+    this.sessionSubmissions.push({text, slash: false});
+    if (this.sessionSubmissions.length > SESSION_SUBMISSION_LIMIT) this.sessionSubmissions.shift();
+    this.editor.clear();
+    this.composerHistory.reset();
+    this.runningDraft = undefined;
+    this.queueCompose = false;
+    this.render();
+  }
+
+  /**
+   * Enter, Ctrl+Q (queue) and Ctrl+S (send to the running program). Input ownership comes first: a program that is
+   * waiting for input (InputWatch's evidence) gets Enter, and only an explicit Ctrl+Q queues then. Otherwise, while
+   * a command runs, Enter queues; at idle it queues behind pending entries so nothing jumps the order.
+   */
+  private routeComposer(intent: 'enter' | 'queue' | 'send'): void {
+    // Composing a queue entry (Ctrl+Q during direct input): Enter adds it, and nothing typed here reaches the program.
+    if (this.queueCompose) {
+      if (intent === 'send') return;
+      intent = 'queue';
+    }
+    const text = this.editor.text;
+    if (this.queueEdit) {
+      if (intent === 'send') return;
+      const edit = this.queueEdit;
+      if (!text.trim()) { this.output.addFrontendInteraction('/queue', 'A queued command cannot be empty; remove it in /queue instead.', INFO); this.render(); return; }
+      this.queueEdit = undefined;
+      this.session.queue({op: 'edit', id: edit.id, text});
+      this.editor.replaceText(edit.draft);
+      this.render();
+      return;
+    }
+    const slash = isSlashInput(text) ? parseSlashCommand(text) : undefined;
+    if (this.running) {
+      if (intent !== 'send' && slash && slash.kind !== 'unknown') {
+        const refused = ({zsh: 'Wait for the foreground command to finish or interrupt it, then run /zsh.', clear: 'Wait for the foreground command to finish before archiving this transcript.',
+          resume: 'Wait for the foreground command to finish before switching transcripts.'} as Record<string, string>)[slash.kind === 'shell' && text.trim() === '/zsh' ? 'zsh' : slash.kind];
+        if (refused) { this.editor.clear(); this.output.addFrontendInteraction(text.trim(), refused, INFO); this.render(); return; }
+        void this.submit();
+        return;
+      }
+      const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
+      if (toProgram) {
+        this.editor.clear();
+        this.runningDraft = undefined;
+        this.session.write(`${text}\r`);
+        return;
+      }
+      if (!text.trim()) return;
+      this.enqueue(text);
+      return;
+    }
+    if (intent === 'send') return;
+    if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused))) {
+      this.enqueue(text);
+      return;
+    }
+    if (this.preparingCommand) return;
+    void this.submit();
+  }
+
+  /** `/queue` opens the manager; `/queue pause|resume|clear` act at once. */
+  private handleQueueCommand(command: string, op: 'open' | 'pause' | 'resume' | 'clear'): void {
+    if (!this.queueAvailable()) {
+      this.output.addFrontendInteraction(command, this.session.features.has('queue')
+        ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
+      return;
+    }
+    if (op === 'open') { this.panelOrigin = undefined; this.queuePanel = {selected: 0}; return; }
+    const count = this.queueState.entries.length;
+    if (op === 'clear') {
+      this.session.queue({op: 'clear'});
+      this.output.addFrontendInteraction(command, count ? `Cleared ${count} queued command${count === 1 ? '' : 's'}; none of them ran.` : 'The queue was already empty.', INFO);
+      return;
+    }
+    this.session.queue({op});
+    this.output.addFrontendInteraction(command, op === 'pause' ? `Queue paused${count ? ` with ${count} waiting` : ''}; /queue resume continues it.` : `Queue resumed${count ? `; ${count} will run in order` : ''}.`, INFO);
+  }
+
+  /** Load a queued entry into the composer to edit it in place; the queue holds at that entry until it is saved. */
+  private beginQueueEdit(id: number): void {
+    const entry = this.queueState.entries.find(item => item.id === id);
+    if (!entry) return;
+    this.queueEdit = {id, draft: this.editor.text};
+    this.session.queue({op: 'edit-begin', id});
+    this.editor.replaceText(entry.text);
+  }
+
+  private cancelQueueEdit(): void {
+    const edit = this.queueEdit;
+    if (!edit) return;
+    this.queueEdit = undefined;
+    this.session.queue({op: 'edit-cancel', id: edit.id});
+    this.editor.replaceText(edit.draft);
+  }
+
+  /** Keys go straight to the program (a hidden line or single keys) rather than through the composer. */
+  private directInputRequest() {
+    const request = this.inputState?.request;
+    return this.running && !this.passthrough && !this.startupPending && !this.queueCompose && directInput(request) ? request : undefined;
+  }
+
+  private onInputState(state: InputState): void {
+    // A state for a finished run (a late message) never resurrects it.
+    if (!this.running) return;
+    this.inputState = state;
+    if (state.terminalOwner) {
+      this.onActiveModeChange('PASSTHROUGH');
+      return;
+    }
+    const request = state.request;
+    const draft = this.runningDraft;
+    // Keys typed after the program wrote its question, in the moment before NMSh could tell how it reads, were
+    // meant for it: a terminal would already have delivered them. Hand them over now instead of hiding them.
+    if (request && directInput(request) && draft && draft.startId === this.running.startId && draft.at >= request.since && this.editor.text) {
+      const typed = this.editor.text;
+      this.editor.clear();
+      this.runningDraft = undefined;
+      this.session.write(typed);
+    } else if (request && draft && draft.at >= request.since && this.editor.text) draft.answering = true;
+    this.render();
+  }
+
+  /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
+  private sendDirectKey(key: Key): void {
+    if (key.kind === 'interrupt') {
+      if (this.running) { this.running.interrupted = true; this.running.stoppedAt = Date.now(); }
+      this.session.interrupt();
+      return;
+    }
+    if (key.kind === 'eof') { this.session.endInput(); return; }
+    const bytes = directKeyBytes(key);
+    if (bytes) this.session.write(bytes);
+  }
+
+  /** This command's phrase pair under Expressive wording: chosen once from the command and its start, so it never changes while it runs. */
+  private activityPair(): ActivityVerbPair | undefined {
+    if (!this.running || this.promptConfiguration.liveActivity.style !== 'expressive') return undefined;
+    return this.chooseActivityPair(this.running);
+  }
+
+  private chooseActivityPair(command: {command: string; startedAt: number; activity?: ActivityVerbPair}): ActivityVerbPair {
+    if (!command.activity) command.activity = selectActivityVerb(command.command, command.startedAt, this.lastActivityPair);
+    this.lastActivityPair = command.activity;
+    return command.activity;
+  }
+
+  /** The pair for a command that just finished: the one it showed while running, or the same deterministic choice if it never drew. */
+  private activityPairFor(command: {command: string; startedAt: number; activity?: ActivityVerbPair}): ActivityVerbPair | undefined {
+    if (this.promptConfiguration.liveActivity.style !== 'expressive') return undefined;
+    return this.chooseActivityPair(command);
+  }
+
   private currentActivity(): string {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
     const isActive = (Date.now() - this.lastOutputTime) < 750;
     const animationElapsed = this.decorativeMotionAllowed() ? presentationAnimationElapsed(elapsed) : 0;
-    const parts = liveActivityParts(this.running.command, elapsed, animationElapsed);
+    const parts = liveActivityParts(this.running.command, elapsed, animationElapsed, this.activityPair());
     // A soft light sweep over the working phrase: its own colors lifted in place, never moved; faster while output arrives.
     // Colors come from Live activity colors; the sweep is the same light sweep everywhere.
     const still = !this.decorativeMotionAllowed() || sweepStill(this.promptConfiguration);
     const {cells, style} = liveActivityPaint(parts.phrase, this.promptConfiguration, this.activityAnimationNow, still);
     const phrase = sweepCells(cells, animationElapsed * (isActive ? 1.4 : 1), style, colorLevel(), !this.decorativeMotionAllowed());
-    return `${phrase}${SECONDARY}${parts.duration}${RESET}`;
+    return `${phrase}${SECONDARY}${parts.duration}${waitedDetail(this.inputState, this.activityAnimationNow, elapsed)}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -8917,9 +9959,11 @@ export class TerminalApp {
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
+    // Direct input: the composer shows where typing goes, never a draft, so the caret sits at the start.
+    const direct = Boolean(this.directInputRequest());
     return layoutInput(
-      this.editor.displayText,
-      this.editor.displayCursorIndex,
+      direct ? '' : this.editor.displayText,
+      direct ? 0 : this.editor.displayCursorIndex,
       this.inputColumns(columns),
       maxVisibleRows,
       this.railInputPrefix(columns),
@@ -9035,6 +10079,8 @@ export class TerminalApp {
     if (this.stopped) return;
     this.hostTitle.end();
     this.stopped = true;
+    this.clips.clear();
+    this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();
     if (this.contextRefreshTimer) { clearTimeout(this.contextRefreshTimer); this.contextRefreshTimer = undefined; }
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
@@ -9070,6 +10116,7 @@ export class TerminalApp {
     this.endSweep();
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
+    process.off('exit', this.onProcessExit);
     process.off('SIGTSTP', this.onSuspend);
     process.off('SIGCONT', this.onContinue);
     process.off('SIGTERM', this.onTerminate);

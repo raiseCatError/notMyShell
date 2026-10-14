@@ -5,7 +5,7 @@ import {framePanel} from './PanelShell.js';
 import {renderControls} from './controls.js';
 import {focusForeground, foreground, UI_COLORS} from './palette.js';
 import {GLYPHS} from './glyphs.js';
-import {padCells, truncateAnsi} from '../util/text.js';
+import {displayWidth, padCells, truncateAnsi} from '../util/text.js';
 
 /**
  * A focused panel over a fixed set of the canonical Settings rows (for
@@ -50,11 +50,14 @@ export function renderRowPanel(state: RowPanelState, config: PromptConfiguration
   const reset = '\u001B[0m';
   const visible = rows(state, config);
   const out = [`  ${primary}${state.title}${reset}  ${subtle}${state.subtitle}${reset}`, ''];
+  // Labels get the room the longest one needs (at most half the panel), so none is cut where there is space.
+  const labelWidth = Math.max(22, Math.min(Math.floor(columns / 2), Math.max(0, ...visible.map(row => displayWidth(row.label.trim()) + (row.parent ? 2 : 0) + 2))));
   visible.forEach((row, index) => {
     const selected = index === state.selected;
-    const value = settingsRowValue(row, config) ?? '';
+    const raw = settingsRowValue(row, config) ?? '';
+    const value = row.control === 'boolean' ? (raw === 'true' ? 'On' : 'Off') : raw;
     const indent = row.parent ? '  ' : '';
-    out.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${indent}${focusForeground(selected)}${padCells(row.label.trim(), 22 - indent.length)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : value}`);
+    out.push(`${selected ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${indent}${focusForeground(selected)}${padCells(row.label.trim(), labelWidth - indent.length)}${reset}${selected ? `${accent}‹ ${value} ›${reset}` : value}`);
   });
   const description = visible[state.selected]?.description;
   if (description && height >= out.length + preview.length + 6) out.push('', `  ${subtle}${description}${reset}`);

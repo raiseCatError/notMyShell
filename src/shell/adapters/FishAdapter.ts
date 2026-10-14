@@ -48,6 +48,12 @@ ${bridgeEnvPath ? bridgeBootstrap('fish', bridgeEnvPath) : ''}
 function fish_right_prompt; end
 function fish_mode_prompt; end
 function fish_title; end
+# Fish 3's read editor does not advertise bracketed paste. Report its real
+# reader event before it draws or accepts input; never infer ownership from
+# command text, a prompt's appearance, or a delayed process probe.
+function __nmsh_reader --on-event fish_read
+  ${marker('reader')}
+end
 function __nmsh_knowledge
   begin
     printf 'jobs %d\\n' (count (jobs -p 2>/dev/null))

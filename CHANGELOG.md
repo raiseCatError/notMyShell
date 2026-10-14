@@ -6,6 +6,94 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.19.0] - Unreleased (release candidate)
+
+**Terminal workflow.** One command's result becomes useful for the next without NMSh taking execution away from the real shell. NMSh notices when a running command is waiting for you, lets you prepare the next commands while one runs, copies exactly what you choose, turns output into reviewed reports and comparisons, and keeps the commands you reuse. Nothing derived from output, the clipboard, a pin or a recipe runs without an explicit action, and every queued command still runs in your one persistent shell.
+
+Verification: automated CI (unit and real-PTY suites on macOS and Ubuntu, Node 22 and 26, a Fedora portability subset and the timing smoke) on the integrated head, plus the per-feature canonical, Linux/Fish 3.7 and report/compare/clipboard security gates recorded in [the frontend freeze handoff](https://github.com/raiseCatError/notMyShell/blob/ca26b9be62f2d7eb7f083e05bd6a2fcff9334811/docs/development/workflow-frontend-freeze.md). **Physical-terminal QA: not yet performed** — this section stays a release candidate until it is ([v0.19 physical QA checklist](docs/testing/v019-physical-qa.md)).
+
+### Added
+
+#### Input awareness ([#348](https://github.com/raiseCatError/notMyShell/pull/348))
+- **Input awareness:** a command that waits for an answer is no longer just "Running". NMSh reads the terminal's own state, without touching the program. A password or other no-echo read, or a single-key question such as `e2fsck`'s `Fix<y>?`, is confirmed; on Linux, any blocking read of the terminal is confirmed too. An ordinary line question left open by an idle process is shown as "Probably waiting for input". The question stays visible beside the composer however far the transcript has scrolled, and the window title, `/sessions`, `/resume` and a cross-session notice show the wait. Hidden and single-key input goes straight to the program, keystroke by keystroke, and is never shown or kept. A reply left unsent when the command ends is discarded, never run as a shell command. Waiting time is measured separately from wall-clock time and reported on completion. See `docs/design/input-awareness.md`.
+- Fish's own `read` and other builtin readers are recognized from authenticated terminal ownership, and input typed during startup, before the shell is ready, or while a hidden read is open goes only to the program that currently owns the terminal.
+
+#### Command queue ([#357](https://github.com/raiseCatError/notMyShell/pull/357))
+- Commands typed while another runs are **queued in the same shell** and run after it, one at a time, only when the shell reports it is ready, keeping the directory, variables and functions. Multiline entries keep their meaning (Fish `begin`/`end`, zsh and Bash brace groups). `/queue` shows, edits, reorders, pauses, resumes or clears them; queued command text is drawn, never interpreted.
+- When the running program is waiting for an answer, Enter answers it and **Ctrl+Q** composes a queue entry instead. While a program reads keys directly, Ctrl+Q takes the next command for the queue and **Ctrl+S** sends the composer's text to the program.
+- A failure or interrupt **pauses** the rest of the queue. Detach and reattach never submit an entry twice; switching shells pauses the queue, and a shell that exits drops its entries instead of replaying them in another shell. Silence is never taken as completion.
+
+#### Copy and Smart Folding ([#358](https://github.com/raiseCatError/notMyShell/pull/358), [#350](https://github.com/raiseCatError/notMyShell/issues/350))
+- `/copy N`, `/copy -N` (the latest N), ranges `A-B` and lists `1,3,5`; `--status` adds the completion row; `/cp` is the same command in every form.
+- `/copy ui` opens an interactive picker; `/copy settings` chooses Quick Copy or the picker by default and whether copies include status.
+- A sticky Copy control keeps block actions reachable while a long block's header is scrolled away.
+- **Smart Folding** keeps long diagnostics readable; the full output stays stored, and copies include folded lines.
+
+#### Copy as Report ([#360](https://github.com/raiseCatError/notMyShell/pull/360), [#351](https://github.com/raiseCatError/notMyShell/issues/351))
+- One or several command blocks as a Markdown or plain-text report with command, output, directory and exit status, always shown for review first. Enter copies exactly the reviewed text; cancel leaves the clipboard unchanged.
+- Likely secrets and private paths are **redacted** in the review before any Markdown is added; edited text is rescanned, changed lines are marked, and an unredacted choice is labelled. Redaction is best-effort (see Known limitations).
+
+#### Compare output ([#361](https://github.com/raiseCatError/notMyShell/pull/361), [#352](https://github.com/raiseCatError/notMyShell/issues/352))
+- `/compare` (the latest output with its previous run), `/compare N`, `/compare N M` (numbers as for `/copy`), or Actions → Compare output…: a line diff with counts, hunks and collapsed unchanged regions, side by side from 140 columns and unified below, with labelled whitespace normalization. Output lost while detached is marked incomplete.
+- In the comparison, `r` opens the diff as a reviewed, redacted report. `c` copies the sanitized plain diff **directly, without redaction** (it shows a caution when the detector flags a likely secret).
+
+#### References, paste review, clips, pins and recipes ([#368](https://github.com/raiseCatError/notMyShell/pull/368), [#353](https://github.com/raiseCatError/notMyShell/issues/353)–[#355](https://github.com/raiseCatError/notMyShell/issues/355))
+- Files, links, commits and device names in a block's output can be opened, copied or staged from its Actions; nothing runs by itself.
+- **F8 / Shift+F8** walk failed commands (by exit status, not text matching) and keep your draft; the palette offers Previous/Next failed command too.
+- **Paste review:** a pasted zsh, Bash or Fish sequence can be split into commands and parse-checked without running anything; confirming queues the reviewed list. `/ps` reads the clipboard only when you run it.
+- **Queue conditions:** an entry can wait for its own approval (withdrawn if the entry is edited) or be marked `always` to run even after a plain failure, never after an interrupt.
+- `/clips`: text deliberately kept in memory for this window, reviewed before insertion and gone when the window closes. Optional clipboard-change hints on macOS (`/clips suggestions on`, off by default) read only the pasteboard's change counter, never its contents.
+- `/pins`: pinned commands with their directory (palette → Pin selected history command) and recipes with quoted placeholders, staged or reviewed and queued, never run automatically.
+
+#### Activity wording ([#367](https://github.com/raiseCatError/notMyShell/pull/367), [#362](https://github.com/raiseCatError/notMyShell/issues/362))
+- **Expressive** (the new default) gives each running command one stable phrase from a curated 663-pair vocabulary (`✦ Cooking… · 18s`, then `✔ Cooked for 18.0s`), kept across detach and reattach; **Classic** keeps plain Running/Completed wording (Settings → Live activity → Activity wording, and Setup). Failures, interrupts, agents and queued runs keep factual wording, and copies, reports and restored records always store the factual form.
+
+#### Modules and themes
+- Module details explain where a fact came from, its freshness, cache retention and measured collection time, and say when a fact is uncollected or unknown rather than implying it; `/doctor` reports Context Engine health ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
+- Ruby and PHP version modules read the project's own files and the install location, never running an interpreter. The Gemfile `ruby` declaration is parsed in linear time.
+- `/theme` imports **Starship** configurations as Native themes from their static colors only; format strings and custom commands are never evaluated, and the preview lists what was not carried over.
+
+### Fixed
+- **Single-key prompts:** answering a single-key question through the composer no longer sends a stray Enter that answered the next question with its default.
+- **Passwords:** text typed at a password prompt is no longer drawn in the composer.
+- Startup and termination: a quit or termination signal at any point during startup cleans up the frontend; a prompt that arrives after the window has closed can no longer restart context collection or queue work.
+- Reattaching to a fullscreen program gives it the terminal and its size at once, before the session journal is written.
+- Native completion accepts readiness that arrives in fragments (LF or CRLF) within its existing bounds.
+- The command directory recorded with a command is the shell's authenticated directory at submission, even when asynchronous context collection still describes the previous prompt.
+- Restored command and status rows follow the attaching window's NO_COLOR setting.
+- `/sessions` refreshes live session facts without losing the selection, query, draft or focus.
+- A clipboard write is reported as complete only when the whole payload was delivered and the clipboard tool exited successfully.
+
+### Security
+- Every session socket request (listings, notices, dismiss, rename, kill), not only create and attach, verifies the private runtime directory's ownership before connecting.
+- A client cancelled before it started discards output withheld for it instead of exposing it.
+- Report and comparison text is redacted before Markdown is added; hostile command, status and directory text (line breaks, backticks) stays enclosed, with bounded delimiter sizing for backtick-rich data. Report review stays readable at extreme terminal widths.
+- Comparison chooser headings and pasted-text review show control, bidi and zero-width characters visibly instead of sending them to the terminal.
+- The pins panel shows control and bidi characters in labels and prompts instead of writing them to the terminal.
+
+### Compatibility
+- Node.js 22 or newer, as before. CI covers Node 22 and 26 on Ubuntu, Node 26 on macOS, and a Linux portability subset on Fedora.
+- zsh, Bash 4.4+ and Fish. Fish 3.7 on Linux is covered by the frontend freeze verification; automated Bash coverage is 5.x, so the 4.4 minimum was not exercised directly.
+- The command queue and queue conditions need a session service from this release: a service started by an older NMSh reports the queue as unavailable until it restarts.
+- Clipboard-change hints need macOS; Linux has no supported metadata-only clipboard counter.
+
+### Upgrade notes
+- Activity wording becomes **Expressive** by default, including for existing settings. Choose Classic in Settings → Live activity → Activity wording to keep the previous wording.
+- The command queue is on by default (Settings can turn it off). Existing session services keep running; restart them (or start a new session) to use the queue.
+- Settings, themes, modules and history carry over unchanged. Clipboard suggestions stay off until turned on.
+
+### Known limitations
+- **Physical-terminal QA has not been performed.** Every workflow feature is covered by automated tests, including real-PTY suites; none has had a hands-on pass in Ghostty, Terminal.app or a physical Linux terminal. This release is published only after that pass.
+- Redaction is pattern-based and can miss custom, encoded or unknown secret forms and private paths; review every report. Comparison `c` and plain `/copy` copy without redaction by design.
+- A clipboard tool that fails after it started writing may already have changed the clipboard; NMSh cannot roll it back.
+- Fish can drop type-ahead entered while its own `read` is still running, as in any terminal ([#356](https://github.com/raiseCatError/notMyShell/issues/356)).
+- Project and branch facts can lag a fast directory change while collection is pending; a failed `/sessions` poll keeps the last validated view.
+- A concurrent resize and quit key in native `less` can lose the quit key; synchronized automated tests do not prove arbitrary physical resize timing.
+- A forced SIGKILL of the frontend can bypass helper cleanup; normal stop, SIGTERM and SIGHUP clean up owned helpers.
+- Exact last-frame module width-compaction explanations and dedicated external source previews are not included ([#365](https://github.com/raiseCatError/notMyShell/issues/365)).
+- Ruby and PHP are the only new runtimes here; the full native runtime set (.NET, Swift, Zig, Deno, Elixir, Dart, Flutter, build systems) is planned for v0.20.
+
+
 ## [0.18.0] - 2026-10-13
 
 **Context Engine, Managed Agents & Workspaces.** Context modules become a platform: facts are collected on demand by bounded, privacy-labelled capabilities, the first-party catalog ships as declarative Context Packs, and the Status Strip becomes a full second surface for modules. Claude Code can run as a managed target inside NMSh, with its permission requests and questions answered natively. `/worktrees` and a read-only `/github` workspace are the first delivered slices of the workspace work. The release also carries the fixes from the v0.17 Ghostty physical-QA pass and a set of passthrough, tmux, transcript and Fish correctness fixes.

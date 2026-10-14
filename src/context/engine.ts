@@ -33,6 +33,8 @@ export interface CapabilityStatus {
   evidence?: string;
   error?: string;
   durationMs?: number;
+  /** A previous resolved value can survive a failed refresh; absence is not inferred from failure. */
+  hasValue?: boolean;
 }
 
 export interface EngineStats {
@@ -251,7 +253,7 @@ export class ContextEngine {
       : entry.status === 'failed' || entry.status === 'timeout' ? entry.status
         : entry.status === 'absent' ? 'absent'
           : entry.status === 'resolved' ? (entry.dirty || now - (entry.collectedAt ?? 0) > definition.ttlMs ? 'stale' : 'fresh') : 'idle';
-    return {id, state, ...(entry.collectedAt !== undefined ? {collectedAt: entry.collectedAt} : {}), ...(entry.evidence ? {evidence: entry.evidence} : {}),
+    return {id, state, hasValue: entry.present, ...(entry.collectedAt !== undefined ? {collectedAt: entry.collectedAt} : {}), ...(entry.evidence ? {evidence: entry.evidence} : {}),
       ...(entry.error ? {error: entry.error} : {}), ...(entry.durationMs !== undefined ? {durationMs: entry.durationMs} : {})};
   }
 

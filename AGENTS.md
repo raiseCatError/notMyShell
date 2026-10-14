@@ -65,6 +65,9 @@ Released (0.16.0): a real ShellAdapter with zsh, Fish and Bash 4.4+ backends ([d
 ## Current surfaces (released in v0.18.0)
 Theme Studio (`/theme`), Theme Bridge (`/theme-bridge`), `/providers`, `/tools` with filesystem-detected shell frameworks, `/configure`, `/tmux` Config Studio, `/integrations`, `/dotfiles`, the Oh My Posh provider, and Keep Awake (`/caffeinate`, `/awake`, `/zoomies`, with composer-edge, Status Strip, idle-reminder and screensaver presentation). Context Engine fact metadata, native module routing and Context Rail (v0.17.0), plus capability scheduling, the first-party module catalog, Context Packs (`nmsh packs`), Claude Code agent context (`nmsh agent-status`), `/modules` and Status Strip 2.0 (`/strip`) in v0.18.0. See CHANGELOG.md → 0.18.0.
 
+## Release candidate surfaces (v0.19.0, not published)
+Input awareness (waiting-for-input state, hidden and single-key input routed to the program), the command queue (`/queue`, Ctrl+Q, Ctrl+S, queue conditions), `/copy` selections, `/copy ui` and Smart Folding, Copy as Report, `/compare`, output references and F8/Shift+F8 failure navigation, paste review and `/ps`, `/clips`, `/pins` and recipes, Expressive/Classic activity wording, module explain diagnostics, Ruby/PHP modules and Starship theme import. Physical terminal QA is outstanding ([checklist](docs/testing/v019-physical-qa.md)).
+
 ## Testing / verification
 During implementation, run focused affected tests. Use `npm run verify:fast` for
 ordinary iteration (build, an explicit core test subset, and diff checks); it is

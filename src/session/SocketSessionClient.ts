@@ -1,6 +1,9 @@
 import {EventEmitter} from 'node:events';
 import {connect, type Socket} from 'node:net';
-import {FrameDecoder, PROTOCOL_VERSION, encodeMessage, parseFeatures, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
+import {dirname} from 'node:path';
+import {ensurePrivateRuntimeDir} from './runtimeDir.js';
+import type {QueueOp} from './CommandQueue.js';
+import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, queueStateFrom, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
 import {isShellId, type ShellId} from '../shell/adapters/ShellAdapter.js';
@@ -33,6 +36,9 @@ interface Established<T> {
 function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage | undefined,
   onMessage: (message: ServerMessage) => T | undefined): Promise<Established<T>> {
   return new Promise((resolve, reject) => {
+    // Every request, including listings and best-effort notices, crosses the
+    // same ownership boundary as create/attach before any handshake is sent.
+    ensurePrivateRuntimeDir(dirname(socketPath));
     const socket = connect(socketPath);
     socket.setEncoding('utf8');
     const decoder = new FrameDecoder();
@@ -78,7 +84,7 @@ function request<T>(socketPath: string, timeoutMs: number, first: ClientMessage 
     };
     const onError = (error: NodeJS.ErrnoException) => fail(`session service unreachable (${error.code ?? 'error'})`, error.code ?? 'error');
     const onClose = () => fail('session service closed the connection', 'closed');
-    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh'}));
+    socket.once('connect', () => send({type: 'hello', version: PROTOCOL_VERSION, client: 'nmsh', features: CLIENT_FEATURES.join(',')}));
     socket.on('error', onError);
     socket.on('close', onClose);
     socket.on('data', onData);
@@ -233,8 +239,15 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     }
     if (message.type === 'output') this.emit('data', message.data, {seq: message.seq, at: message.at});
     else if (message.type === 'prompt') this.emit('prompt', {exitCode: message.exitCode, cwd: message.cwd,
-      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge})}, {seq: message.seq, at: message.at});
-    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed});
+      ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
+      ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
+    else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
+    else if (message.type === 'queue-state') {
+      const state = queueStateFrom(message.state);
+      if (state) this.emit('queueState', state, {...(message.dispatched === undefined ? {} : {dispatched: message.dispatched}),
+        ...(message.refused ? {refused: message.refused} : {}), ...(message.dropped ? {dropped: message.dropped} : {})});
+    }
+    else if (message.type === 'exec') this.emit('exec', message.command, {seq: message.seq, at: message.at, historyAllowed: message.historyAllowed, ...(message.queued === undefined ? {} : {queued: message.queued})});
     else if (message.type === 'input-rejected') this.emit('inputRejected', message.data, message.submission === 1);
     else if (message.type === 'startup') this.emit('startup', message.output);
     else if (message.type === 'replayed') this.emit('replayed', {truncatedBytes: message.truncatedBytes});
@@ -259,17 +272,29 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
 
   submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
+  queue(change: QueueOp): void { if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
   resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }
+  private endStream(): void {
+    // Before start(), discard withheld output rather than exposing it during
+    // cancellation. Drain the paused readable half so peer EOF closes it.
+    if (this.pending) {
+      this.pending = undefined;
+      this.socket.removeAllListeners('data');
+    }
+    this.socket.end();
+    this.socket.resume();
+  }
+
   kill(): void {
     this.send({type: 'terminate'});
-    this.socket.end();
+    this.endStream();
   }
   ack(seq: number, journalId: string): void { this.send({type: 'ack', seq, journalId}); }
   detach(): void {
     this.detaching = true;
     this.send({type: 'detach'});
-    this.socket.end();
+    this.endStream();
   }
 }

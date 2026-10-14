@@ -41,6 +41,16 @@ export const OUTPUT_FOLDING_MODES: readonly OutputFoldingMode[] = ['never', 'sma
 
 /** Output at or below this many lines never auto-folds. */
 export const MIN_AUTO_FOLD_LINES = 30;
+/**
+ * Smart folds any block this long (logical lines, or rows at FOLD_REFERENCE_COLUMNS for long wrapped lines), whatever
+ * the command and whatever its exit status: a block of several screens is a burden to scroll past, and its important
+ * lines stay in view in the collapsed preview (foldHighlights). Below it, the content heuristics decide.
+ */
+export const LONG_OUTPUT_LINES = 120;
+/** The width long lines are measured at for LONG_OUTPUT_LINES (a decision made once, at completion, for any window). */
+export const FOLD_REFERENCE_COLUMNS = 120;
+/** Important lines (failures, diagnostics) kept visible from a collapsed block's hidden middle. */
+export const FOLD_HIGHLIGHT_LINES = 3;
 /** Score needed to fold; below it the block stays expanded. */
 export const FOLD_THRESHOLD = 3;
 
@@ -84,9 +94,24 @@ function normalize(line: string): string {
   return line.toLowerCase().replace(/[\da-f]{7,}/gu, 'h').replace(/\d+(?:\.\d+)?/gu, '#').replace(/\s+/gu, ' ').trim();
 }
 
+/** How many rows the output takes: logical lines, or more when long lines wrap at the reference width. */
+export function outputExtent(output: string, lineCount: number): number {
+  let rows = 0;
+  for (const line of output.split('\n')) {
+    rows += Math.max(1, Math.ceil(line.length / FOLD_REFERENCE_COLUMNS));
+    if (rows >= LONG_OUTPUT_LINES) return Math.max(rows, lineCount);
+  }
+  return Math.max(rows, lineCount);
+}
+
 export function evaluateFold(input: FoldInput): FoldDecision {
-  if (input.exitCode !== 0) return {fold: false, score: -Infinity, reasons: ['failed commands stay expanded']};
   if (input.lineCount <= MIN_AUTO_FOLD_LINES) return {fold: false, score: -Infinity, reasons: [`${input.lineCount} lines is short`]};
+  // Long output folds on its length alone; nothing else is scanned (thousands of lines stay cheap).
+  const extent = outputExtent(stripAnsi(input.output), input.lineCount);
+  if (extent >= LONG_OUTPUT_LINES) {
+    return {fold: true, score: Infinity, reasons: [`${extent >= input.lineCount + 10 ? `${extent} rows when wrapped` : `${input.lineCount} lines`} is long; important lines stay visible`]};
+  }
+  if (input.exitCode !== 0) return {fold: false, score: -Infinity, reasons: ['shorter failed commands stay expanded']};
 
   const lines = stripAnsi(input.output).split('\n').map(line => line.replace(/\r/gu, '')).filter(line => line.trim());
   const total = Math.max(1, lines.length);
@@ -126,6 +151,22 @@ export function evaluateFold(input: FoldInput): FoldDecision {
   if (hint.bias) add(hint.bias, hint.reason!);
 
   return {fold: score >= FOLD_THRESHOLD, score, reasons};
+}
+
+/**
+ * Lines worth keeping in view inside a collapsed block's hidden middle: failures and diagnostics (error-like lines,
+ * compiler locations, the first line of a stack trace), at most `limit`, preferring the last ones (a build's final
+ * error is usually the one that matters). Indexes into `lines`. Text evidence only: it never decides a failure.
+ */
+export function foldHighlights(lines: readonly string[], from: number, to: number, limit = FOLD_HIGHLIGHT_LINES): number[] {
+  const picked: number[] = [];
+  for (let index = to - 1; index >= from && picked.length < limit; index -= 1) {
+    const line = stripAnsi(lines[index] ?? '');
+    if (!line.trim()) continue;
+    if (ERRORS.test(line) || COMPILER.test(line)) picked.push(index);
+    else if (STACK_FRAME.test(line) && !STACK_FRAME.test(stripAnsi(lines[index - 1] ?? ''))) picked.push(index);
+  }
+  return picked.reverse();
 }
 
 /** Output long enough that the collapsed head/tail preview still hides lines. */

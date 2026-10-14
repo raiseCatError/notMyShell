@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp, readFile, rm, writeFile, mkdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
+import {setTimeout as delay} from 'node:timers/promises';
 import {TerminalApp} from '../src/app/TerminalApp.js';
 import type {Key} from '../src/terminal/keys.js';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
@@ -192,6 +193,12 @@ async function withApp(run: (app: TerminalApp, configPath: string) => Promise<vo
   const app = new TerminalApp();
   try {
     app['render'] = () => {};
+    // /setup is normally entered from the ready composer. Calling runSlash
+    // directly during startup bypasses that boundary; a slow shell's recovery
+    // panel correctly owns Enter until its first authenticated prompt.
+    const deadline = Date.now() + 20_000;
+    while (app['startupPending'] && Date.now() < deadline) await delay(10);
+    assert.equal(app['startupPending'], false, 'the shell reached its first prompt before panel interaction');
     await run(app, path);
   } finally {
     app['stop'](0);
@@ -201,6 +208,21 @@ async function withApp(run: (app: TerminalApp, configPath: string) => Promise<vo
     await rm(directory, {recursive: true, force: true});
   }
 }
+
+test('app: startup recovery holds Apply until the shell reaches its first prompt', () => withApp(async (app, path) => {
+  const before = await readFile(path, 'utf8');
+  await app['runSlash']('/setup', {kind: 'setup'});
+  const state = app['setupState']!;
+  state.section = SETUP_SECTIONS.length - 1;
+  app['startupPending'] = true;
+  app['startupPanel'] = {since: Date.now(), tail: 'waiting for startup'};
+  app['handleKey']({kind: 'enter'});
+  assert.equal(app['setupState'], state, 'startup recovery retains ownership of Enter');
+  assert.equal(await readFile(path, 'utf8'), before, 'nothing is applied while startup is blocked');
+  app['endStartupWatch']();
+  app['handleKey']({kind: 'enter'});
+  assert.equal(app['setupState'], undefined, 'the ready shell releases panel interaction');
+}, {onboardingComplete: true, glyphChoiceComplete: true, toolsSetupComplete: true}));
 
 test('app: /setup never writes on open or cancel; Apply persists through the normal path and keeps unknown fields', () => withApp(async (app, path) => {
   const before = await readFile(path, 'utf8');

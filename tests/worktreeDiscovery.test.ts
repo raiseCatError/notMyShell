@@ -249,20 +249,40 @@ test('bounds: worktree count cap and bounded status concurrency', async () => {
 test('performance: 100 linked worktrees come from one list call plus bounded status probes', {timeout: 120_000}, async () => {
   const fx = await createRepo();
   try {
+    const setupStarted = performance.now();
     for (let index = 0; index < 100; index += 1) fx.git('worktree', 'add', '-q', '--no-checkout', '-b', `perf/${index}`, '--', join(fx.root, `p${index}`), 'HEAD');
+    const setupMs = performance.now() - setupStarted;
     const calls: string[] = [];
+    const observations: {operation: string; elapsedMs: number; code: number | null; timedOut: boolean; truncated: boolean; stderr: string; list?: string}[] = [];
     let active = 0, peak = 0;
     const counting: GitRunner = async (cwd, args, options) => {
       calls.push(args[0]!); active += 1; peak = Math.max(peak, active);
-      try { return await git(cwd, args, options); } finally { active -= 1; }
+      const started = performance.now();
+      try {
+        const result = await git(cwd, args, options);
+        observations.push({operation: args[0]!, elapsedMs: performance.now() - started,
+          code: result.code, timedOut: result.timedOut, truncated: result.truncated, stderr: result.stderr.slice(0, 1000),
+          ...(args[0] === 'worktree' ? {list: result.stdout} : {})});
+        return result;
+      } finally { active -= 1; }
     };
     const started = performance.now();
     const snapshot = await discoverWorktrees(counting, fx.repo, {concurrency: 8});
     const elapsed = performance.now() - started;
-    assert.equal(snapshot.worktrees.length, 101);
-    assert.equal(calls.filter(call => call === 'worktree').length, 1);
-    assert.equal(calls.filter(call => call === 'status').length, 101);
-    assert.ok(peak <= 8, `peak concurrency ${peak}`);
-    assert.ok(elapsed < 60_000, `discovery took ${Math.round(elapsed)}ms`);
+    try {
+      assert.equal(snapshot.worktrees.length, 101);
+      assert.equal(calls.filter(call => call === 'worktree').length, 1);
+      assert.equal(calls.filter(call => call === 'status').length, 101);
+      assert.ok(peak <= 8, `peak concurrency ${peak}`);
+      assert.ok(elapsed < 60_000, `discovery took ${Math.round(elapsed)}ms`);
+    } catch (error) {
+      // Preserve the original assertion and deadlines. A successful list with
+      // missing records is different from a bounded per-worktree probe failure.
+      if (error instanceof Error) error.message += `; discovery observation=${JSON.stringify({setupMs, elapsedMs: elapsed,
+        records: snapshot.worktrees.length, peak, list: observations.find(item => item.operation === 'worktree'),
+        statusCalls: calls.filter(call => call === 'status').length,
+        failedProbes: observations.filter(item => item.timedOut || item.truncated || (item.code !== 0 && item.code !== 1))})}`;
+      throw error;
+    }
   } finally { await fx.dispose(); }
 });

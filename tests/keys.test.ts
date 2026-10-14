@@ -2,6 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {KeyDecoder, decodeKeys} from '../src/terminal/keys.js';
 
+test('F8 and Shift+F8 navigate failures in legacy and Kitty keyboard forms', () => {
+  for (const sequence of ['\u001b[19~', '\u001b[19;1~', '\u001b[57371u'])
+    assert.deepEqual(decodeKeys(sequence), [{kind: 'previousFailure'}]);
+  for (const sequence of ['\u001b[19;2~', '\u001b[57371;2u'])
+    assert.deepEqual(decodeKeys(sequence), [{kind: 'nextFailure'}]);
+});
+
 test('legacy raw Escape (0x1B) still decodes on non-Kitty terminals', () => {
   assert.deepEqual(decodeKeys('\u001B'), [{kind: 'escape'}]);
 });
