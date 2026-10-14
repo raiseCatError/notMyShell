@@ -28,44 +28,35 @@ Out of scope: new feature work, #386, #388, the website (`site/`, Pages workflow
 Homebrew: `raiseCatError/homebrew-tap` `Formula/nmsh.rb` still points at `v0.17.0`; the v0.18.0 bump is **pending** and
 needs the maintainer's approval. Not modified by this track.
 
-### Workflow stack (#359) — candidates, not accepted heads
+### Workflow stack (#359) — FROZEN 2026-10-14
 
-From Codex's handoff (`docs/workflow-oak-checkpoint` `d4a13c6`, `docs/development/workflow-stabilization-handoff.md`):
+Freeze: [#359 comment](https://github.com/raiseCatError/notMyShell/issues/359#issuecomment-6173699296), handoff
+[`ca26b9be`](https://github.com/raiseCatError/notMyShell/blob/ca26b9be62f2d7eb7f083e05bd6a2fcff9334811/docs/development/workflow-frontend-freeze.md)
+with `workflow-frontend-freeze-evidence.json`. Remote PR heads re-read before integration: all equal.
 
-| Track | Accepted / candidate | Published feature head | Status at last check |
+| Track | Accepted head | Candidate CI | PR CI |
 | --- | --- | --- | --- |
-| Input #348 | `9cfdf9a` | `9cfdf9a` | canonical + published PR CI passed; timing/Fedora passed on candidate CI |
-| Queue #357 | `b6fe785` | `b6fe785` | canonical + published PR CI passed |
-| Copy #358 | `940b85f` | `940b85f` | canonical + published PR CI passed |
-| Report #360 | `7bf0dbe` (local) | `9fb09c9` | canonical ranking p95 failed once (73.2 ms > 60 ms); rerun active |
-| Compare #361 | `459d715` (local) | `032365e` | pending canonical + CI |
-| Vocabulary #367 (Willow) | `949a367` (local) | `99019ae` | pending |
-| References #368 (Maple/Elm) | `3518231` (local) | `5993218` | pending |
+| Input #348 | `6aba63bd78f467af8aeaf60421faef05c608646b` | 38525959028 | 38527326783 |
+| Queue #357 | `5ab9892060fb0aed2d89f34842a9739c6e860163` | 38528656051 | 38529888852 |
+| Copy #358 | `839d23f3bfb780c164b3fa19137170944abe0d21` | 38565279297 | 38566317316 |
+| Report #360 | `cb28d4586197e563e4f98c1f0a96e9e3b8f95251` | 38567509019 | 38568288217 |
+| Compare #361 | `f1abe217c6a27034a93182bf423dfb45e18ef73d` | 38584973991 | 38585746229 |
+| Vocabulary #367 | `5009033c553c882c27a9aeb5a136323637ab302f` | 38586511315 | 38587380619 |
+| References #368 | `2395dad5b52895fe041d93d2c75123b25f6669fe` | 38588753923 | 38589604854 |
 
-Still gating the freeze per #359: latest-head canonical and published CI for the last four, full Linux/Fish 3.7 on
-Codex's VM, current-head #363 report/compare security and clipboard acceptance.
+Per-feature canonical, Linux/Fish 3.7, Node 22.23.3 and report/compare/clipboard security evidence is Codex's and is
+reused, not rerun. The 2026-10-13 candidate table and dry runs were on obsolete heads and are superseded (see this file's history at
+`9959d23`).
 
-**Freeze signal this track waits for:** an explicit statement on #359 (or a handoff document linked from it) that the
-frontend is frozen, with exact SHAs for every head above and the verification evidence for them. Until then nothing in
-the workflow stack is integrated.
+### Frozen-head dry runs (2026-10-14, read-only `git merge-tree`)
 
-### Pre-integration dry runs (read-only `git merge-tree`, no refs or worktrees)
+- `v0.18.0` + References `2395dad5`: **clean** (the stack now carries `release/v0.18.0` `8efcc14`; v0.18.0 differs from
+  it only in `site/`).
+- References + Vocabulary (merge base Compare `f1abe217`): **clean**. Only `src/app/TerminalApp.ts` is changed by both.
+- v0.19 RC `9e85a910` + `integration/v020-modules` `8f07920`: conflicts in `runtimes.ts`, `nmsh.project.json`,
+  `contextCapabilities.test.ts`, `moduleManager.test.ts` (the predicted Ruby/PHP duplicate). + #347 `ebdb1ad9`: clean.
+  + #349 `66b60f3c`: conflicts in `CHANGELOG.md`, `src/output/TranscriptPresenter.ts`.
 
-- `v0.18.0` + References candidate `3518231`: conflict only in `CHANGELOG.md`.
-- References `3518231` + Vocabulary `949a367`: **clean** (both contain Indigo `459d715`; neither contains the other).
-- The combined workflow candidate + each v0.20 PR head:
-
-| PR | Head | Result |
-| --- | --- | --- |
-| #370 / #372 / #373 native runtimes, build | `417d105` / `72775e6` / `029fac4` | conflict: `runtimes.ts`, `nmsh.project.json`, `contextCapabilities.test.ts`, `moduleManager.test.ts` (the Ruby/PHP duplicate #385 predicted) |
-| #374 Mercurial/Jujutsu | `d7d3488` | conflict: `contextCapabilities.test.ts` |
-| #369, #375–#381, #383, #384, #347 | see #385 | clean |
-
-The References candidate already carries the bounded Gemfile pattern (`[ \t]*`, commit `18e94d9`), the same linear
-form as #370, so v0.19 does not ship the quadratic parser #385 measured.
-
-All v0.20 candidate PRs (#347, #349, #369, #370, #372–#381, #383, #384) had green CI (CI, Verify 22.x, Verify 26.x) on
-their current heads on 2026-10-13.
 
 ## v0.19.0 plan
 
@@ -99,6 +90,42 @@ to v0.20 so that v0.19's diff is the accepted stack only.
          release candidate.
 5. **Publish** (only with every box ticked): PR `release/v0.19.0` → `master`, merge commit, tag `v0.19.0` on the merge,
    GitHub Release from the changelog section. No Homebrew change without approval.
+
+### v0.19 integration and exact-head evidence ledger
+
+Branch `release/v0.19.0` (release track), draft PR [#390](https://github.com/raiseCatError/notMyShell/pull/390).
+
+| Commit | What |
+| --- | --- |
+| `9ec0676` | `v0.18.0` |
+| `58749dbe` | merge References #368 `2395dad5` (carries #348 → #357 → #358 → #360 → #361) |
+| `9c5beff8` | merge Vocabulary #367 `5009033c` |
+| `9e85a910` | release metadata: CHANGELOG 0.19.0 (unreleased candidate), version 0.19.0, `docs/testing/v019-physical-qa.md`, RC notes in README/ROADMAP/AGENTS |
+
+Merge-resolution review: no conflicts. The merged tree equals References except Vocabulary's 13 files (byte-identical to
+Vocabulary) and `site/` (identical to v0.18.0); each side's `TerminalApp.ts` delta applies byte-identically. Vocabulary's
+TerminalApp change (decorative phrase choice, factual stored wording, optional journal fields) touches no References
+region. Typecheck clean.
+
+Gates on **`9e85a9100d1a377ccb3b270c99d98cbae0ff2605`**:
+
+| Gate | Result | Evidence |
+| --- | --- | --- |
+| Local canonical `npm run verify:release` (macOS arm64, Node 26.10.0, temp roots on `/Volumes/nmsh-opus/t`) | **pass**: 2431/2431, 0 skipped; bench typecheck and timing smoke pass | 17:30:09–17:38:41Z, clean before/after; `/Volumes/nmsh-opus/logs/receipts/verify-release-9e85a910….{log,json}` (log sha256 `511675d0…`) |
+| Report/compare/clipboard security subset (Codex's exact command) | **pass**: 77/77, no leaked roots | `security-focused-9e85a910….{log,json}` |
+| PR CI | **pass** (Fedora/timing skipped by design on PR) | [38607118484](https://github.com/raiseCatError/notMyShell/actions/runs/38607118484) |
+| `workflow_dispatch` CI: Ubuntu/macOS shards, Node 22, Quality, Fedora, both timing smokes | **pass**, every job, attempt 1 | [38607125000](https://github.com/raiseCatError/notMyShell/actions/runs/38607125000) |
+| Node 22 | **pass** in both CI runs (no local Node 22 outside Codex's read-only volume) | as above |
+| Linux/Fish 3.7 | Codex's frozen-source receipts (References + Vocabulary); CI Ubuntu on the integrated head | freeze evidence `linux` |
+| Physical terminal QA | **NOT PERFORMED** | `docs/testing/v019-physical-qa.md` |
+
+Failures: none on the integrated head. Retained historical failures are Codex's (see the freeze handoff); none is
+reattributed here.
+
+**v0.19.0 status: verified release candidate, unpublished.** The only outstanding gate is maintainer physical QA.
+Publication steps once it passes: set the CHANGELOG date and `[0.19.0]` link, flip the "latest published release"
+pointers (README, ROADMAP, AGENTS, SECURITY, `llms.txt`), rerun dispatch CI on that commit, mark #390 ready, merge with a
+merge commit, tag `v0.19.0` on the merge, GitHub Release from the changelog section. Homebrew needs separate approval.
 
 ### Real-terminal smoke (v0.19)
 
@@ -232,3 +259,10 @@ below and stop cleanly with no background processes left.
   **Monitoring stopped cleanly after ~5 h blocked on the freeze.** No release branch exists and nothing of the
   release track is running. To resume: read this file, re-check #359 for an explicit freeze with exact SHAs,
   then follow "v0.19 steps once frozen" above. `integration/v020-modules` `8f07920` remains the green v0.20 prep base.
+- 2026-10-14 22:55 IST — Freeze confirmed (#359 comment 6173699296); all seven remote heads equal the frozen SHAs.
+  Leftover release-track smoke services from 2026-10-13 (pids 94753, 95205, `/Volumes/nmsh-opus/tmp/smoke/run`) are still
+  running: stopping them was refused by this session's permission policy; harmless (idle, ~2 MB). Maintainer may stop them.
+- 2026-10-14 23:00 IST — `release/v0.19.0` created and integrated (`9e85a910`); ownership recorded on #359
+  (comment 6174328706); draft PR #390.
+- 2026-10-14 23:10 IST — All automated v0.19 gates pass on `9e85a910` (ledger above). v0.19 stops as a verified release
+  candidate pending physical QA. v0.20 integration starts on `release/v0.20.0` pinned to `9e85a910`.
