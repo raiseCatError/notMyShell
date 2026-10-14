@@ -68,6 +68,9 @@ Theme Studio (`/theme`), Theme Bridge (`/theme-bridge`), `/providers`, `/tools` 
 ## Release candidate surfaces (v0.19.0, not published)
 Input awareness (waiting-for-input state, hidden and single-key input routed to the program), the command queue (`/queue`, Ctrl+Q, Ctrl+S, queue conditions), `/copy` selections, `/copy ui` and Smart Folding, Copy as Report, `/compare`, output references and F8/Shift+F8 failure navigation, paste review and `/ps`, `/clips`, `/pins` and recipes, Expressive/Classic activity wording, module explain diagnostics, Ruby/PHP modules and Starship theme import. Physical terminal QA is outstanding ([checklist](docs/testing/v019-physical-qa.md)).
 
+## Release candidate surfaces (v0.20.0, on the v0.19 candidate, not published)
+Workspace sidebar and detail panel (`/sidebar`, `/panel`, `/keys`, `keymap.json`; one column plan in `src/app/workspaceHost.ts`/`workspaceFrame.ts`), background tasks (`/background`, `/bg`, task bar; session-owned `SessionTasks`, protocol feature `background-tasks`), native modules for .NET, Swift, Zig, Deno, Elixir, Dart, Flutter, build systems, Mercurial and Jujutsu, managed Claude `/model`, `/effort` and mod toggles, related PRs in `/worktrees`. Physical QA is outstanding ([checklist](docs/testing/v020-physical-qa.md)).
+
 ## Testing / verification
 During implementation, run focused affected tests. Use `npm run verify:fast` for
 ordinary iteration (build, an explicit core test subset, and diff checks); it is
