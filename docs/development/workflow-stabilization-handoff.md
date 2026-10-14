@@ -5,9 +5,17 @@ Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359
 
 The original handoff at `cc853707cf6060bc4b8edc2c84313949075c557b` remains preserved in Git at this same path. Initial inspection confirmed its eight pushed heads; no lost-work recovery or reimplementation was needed. Its historical head/failure tables are superseded by this checkpoint and current #359 updates.
 
-**Current new-source gate (2026-10-14):** Input `c9fcbf92701ef30d72a83e3cb75c31237dba160f` passed clean-head host canonical verification with one worker and the VM stopped. Its fix ref is pushed for [comprehensive CI 38510302856](https://github.com/raiseCatError/notMyShell/actions/runs/38510302856); that run is pending, so the original Input feature remains gated. The single test-file correction was incorporated additively through all eight local source refs; exact changed-file/blob checks passed and Vocabulary/References remain independent siblings above Compare. No production, dependency or CI source changed. All new exact heads are candidates, not accepted frontend heads.
+**Current new-source gate (2026-10-14):** **frontend freeze PENDING**. The following is captured exact-head evidence, not stack acceptance. Final reconciliation must read the latest actual CI again.
 
-Serialized host driver `74808` now runs every downstream lifecycle/resize focused gate, then every canonical gate, then References benchmark/security checks. Publisher `63480` requires each canonical result, complete candidate CI and actual parent PR CI before any original promotion, then waits for that actual PR CI. A new failure holds subsequent gates/publication without interrupting an active child. Linux waiter `27626` remains behind all host gates and storage/memory checks; the owned VM stays stopped meanwhile. The offline mirror was refreshed strictly forward, and fresh scripts are pinned to this source family. Older failed/stopped drivers are not restarted. Fresh full Linux/Fish 3.7 and final actual CI remain required. **Freeze is PENDING; no integration, release/master merge, tags or release.**
+- Input #348 `c9fcbf92701ef30d72a83e3cb75c31237dba160f`: local canonical **PASS**; captured candidate CI [SUCCESS 38510302856](https://github.com/raiseCatError/notMyShell/actions/runs/38510302856); captured actual PR CI [SUCCESS 38510689515](https://github.com/raiseCatError/notMyShell/actions/runs/38510689515).
+- Queue #357 `6739b30b5e4ed58389373185f44d361ec4c927e0`: local canonical **PASS**; captured candidate CI pending; captured actual PR CI pending.
+- Copy #358 `fe73f30ada1afa939e98860a96966e823dbb13ea`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
+- Report #360 `6dc44515e3561ec3480b87c6cbbf36cc7a28fb03`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
+- Compare #361 `4c744895b2d18cb9d191127df201de1d598573f3`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
+- Vocabulary #367 `7f4470e32a45158926d181f6b1e9bda8a997da77`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
+- References #368 `3908bc550c5373a39bd5edc5bdb599fe6fa6ed8c`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
+
+Serial verification and gated publication continue; no hold is recorded. All eight local source refs retain the reviewed single test-file correction additively, with exact changed-file/blob checks and independent Vocabulary/References siblings. Host driver `74808` serializes the downstream focused/canonical and References benchmark/security gates. Publisher `63480` requires canonical, full candidate CI and actual parent PR CI before original promotion, then awaits actual PR CI. Linux waiter `27626` remains behind all host gates and storage/memory guards; the owned VM stays stopped until that gate. A failure holds later work while any active child finishes naturally. Fresh full Linux/Fish, security reconciliation and final actual-head CI remain required. Physical QA is unperformed. No integration or protected-branch merge is authorized.
 
 **Pager investigation checkpoint (2026-10-14):** the unchanged Report `690ff65` fixture reproduced the less quit timeout on Ubuntu 24.04 arm64 with less 590, Node 26.11.1 and Fish 3.7 installed. Failure-only observations found a live foreground less process, both PTYs at 35×110 and a later complete repaint after the single quit key. A separate frontend observation confirmed `q` entered the active raw passthrough path and was written to the live client socket; this does not prove delivery through every later layer. Strict cleanup completed and the owned VM stopped normally after each control. Service/native instrumentation runs passed and therefore do not isolate the failed path.
 
@@ -29,8 +37,8 @@ These are candidates, not accepted heads. The publication columns record the las
 
 | Track | Committed local candidate | Last observed candidate fix head | Last observed original feature head |
 | --- | --- | --- | --- |
-| Input #348 | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` | `e601829983f90ee75453715228141a2dd376bc78` |
-| Queue #357 | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `473a7f24f54bd91fe669785d2e9f1fc156574707` | `473a7f24f54bd91fe669785d2e9f1fc156574707` |
+| Input #348 | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` |
+| Queue #357 | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `473a7f24f54bd91fe669785d2e9f1fc156574707` |
 | Copy #358 | `fe73f30ada1afa939e98860a96966e823dbb13ea` | `ce6cee16a53a44d03d906d0af6db41f796defa3d` | `ce6cee16a53a44d03d906d0af6db41f796defa3d` |
 | Report #360 | `6dc44515e3561ec3480b87c6cbbf36cc7a28fb03` | `690ff65f8b356f2a9d06b399bff17befbca57c4e` | `690ff65f8b356f2a9d06b399bff17befbca57c4e` |
 | Compare #361 | `4c744895b2d18cb9d191127df201de1d598573f3` | `4b25770ee5e7134e07f6f62d29cb01120a96b142` | `032365e2ffa9fd42563ae93e66fd487b41e66841` |
