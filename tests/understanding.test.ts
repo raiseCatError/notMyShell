@@ -40,7 +40,7 @@ class FakeRuntime implements ModelRuntime {
 }
 
 async function serviceFixture(options: Partial<ConstructorParameters<typeof ModelService>[0]> = {}) {
-  const dir = mkdtempSync(join('/tmp', 'nm-'));
+  const dir = mkdtempSync(join(tmpdir(), 'nm-'));
   let exited = 0;
   const service = new ModelService({runtimeFor: model => new FakeRuntime(model.label), idleMs: 150, graceMs: 100, onExit: () => { exited += 1; }, ...options});
   const server = (await serveModelService(modelSocketPath(dir), service))!;

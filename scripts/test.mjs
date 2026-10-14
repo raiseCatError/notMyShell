@@ -1,5 +1,5 @@
 import {spawn} from 'node:child_process';
-import {mkdtempSync, readdirSync, realpathSync, rmSync} from 'node:fs';
+import {mkdtempSync, mkdirSync, readdirSync, realpathSync, rmSync} from 'node:fs';
 import {availableParallelism, tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -7,12 +7,14 @@ import {discoverTestFiles, parseTestOptions, selectTestGroups, testConcurrency} 
 
 /** Short private temp roots keep Unix sockets below their path length limit. */
 export async function runTestFiles(files, args = [], {cwd = process.cwd(), stdio = 'inherit', report = message => console.error(message)} = {}) {
-  const root = realpathSync(mkdtempSync(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'nt-')));
+  const root = realpathSync(mkdtempSync(join(process.env.NMSH_TEST_TMPDIR ?? (process.platform === 'win32' ? tmpdir() : '/tmp'), 'nt-')));
   let leftovers = [];
   try {
+    const testHome = join(root, 'home');
+    mkdirSync(testHome, {mode: 0o700});
     // Existing presentation snapshots pin truecolor; baseline fixtures override this explicitly.
     // Tests never see the user's real NMSh settings: configuration lives under this run's private root.
-    const env = {...process.env, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config'), NMSH_DISABLE_UPDATES: '1'};
+    const env = {...process.env, HOME: testHome, COLORTERM: process.env.COLORTERM ?? 'truecolor', TMPDIR: root, TMP: root, TEMP: root, XDG_CONFIG_HOME: join(root, 'config'), NMSH_DISABLE_UPDATES: '1'};
     // A nested runner must not impersonate its parent's test worker.
     delete env.NODE_TEST_CONTEXT;
     // PTY workers also own shell/helper processes. Bound fan-out on larger

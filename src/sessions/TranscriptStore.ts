@@ -85,6 +85,8 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && transcript.records.every(record => record && (record.historyEligible === undefined || typeof record.historyEligible === 'boolean')
       && (record.startedAt === undefined || Number.isFinite(record.startedAt))
       && (record.durationMs === undefined || (Number.isFinite(record.durationMs) && record.durationMs >= 0))
+      && (record.inputWaitMs === undefined || (Number.isFinite(record.inputWaitMs) && record.inputWaitMs >= 0))
+      && (record.inputWaits === undefined || (Number.isSafeInteger(record.inputWaits) && record.inputWaits >= 0))
       && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'

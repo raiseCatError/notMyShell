@@ -29,9 +29,10 @@ function answerQueries(frontend: Frontend): () => void {
 }
 
 const READ = {
-  fish: (secret: boolean) => `read ${secret ? '-s ' : ''}-P 'Name: ' x; echo got=$x`,
-  zsh: (secret: boolean) => `read ${secret ? '-s ' : ''}'x?Name: '; echo got=$x`,
-  bash: (secret: boolean) => `read ${secret ? '-s ' : ''}-p 'Name: ' x; echo got=$x`,
+  // The prompt is built by the shell, so "Name: " is not in the command text that NMSh itself echoes and shows while it runs.
+  fish: (secret: boolean, tag: string) => `read ${secret ? '-s ' : ''}-P (printf 'Name-%s: ' ${tag}) x; echo got=$x`,
+  zsh: (secret: boolean, tag: string) => `printf 'Name-%s: ' ${tag}; read ${secret ? '-s ' : ''}x; echo got=$x`,
+  bash: (secret: boolean, tag: string) => `printf 'Name-%s: ' ${tag}; read ${secret ? '-s ' : ''}x; echo got=$x`,
 };
 
 for (const shell of ['fish', 'zsh', 'bash'] as const) {
@@ -48,10 +49,14 @@ for (const shell of ['fish', 'zsh', 'bash'] as const) {
         for (let run = 0; run < RUNS; run += 1) {
           const tag = `${mode}${run}`;
           const mark = frontend.mark;
-          frontend.pty.write(`${READ[shell](run % 2 === 1)}\r`);
-          await until(() => frontend.output.slice(mark).includes('Name: '), 15_000, `${shell} draws the read prompt`);
-          // zsh and Bash reads are composer-owned: let NMSh see the question before answering it.
-          if (shell !== 'fish') await frontend.waitFor(/Waiting for input|Name: /u, mark);
+          frontend.pty.write(`${READ[shell](run % 2 === 1, tag)}\r`);
+          // zsh and Bash print their prompt from the command text; wait for it past the echo and NMSh's own "Running" line.
+          // Each prompt is unique and assembled at runtime: historical redraws and the echoed command cannot satisfy it.
+          await frontend.waitFor(new RegExp(`Name-${tag}: `, 'u'), mark);
+          // zsh and Bash reads are composer-owned: let NMSh see the question before answering it. While a command runs
+          // with no visible question, Enter queues the next command (that is the queue); an answer is only an answer
+          // once the question is open.
+          if (shell !== 'fish') await frontend.waitFor(new RegExp(`[Ww]aiting for input[^\\n]*[\\s\\S]*Name-${tag}:`, 'u'), mark);
           frontend.pty.write(`v${tag}\r`);
           if (mode === 'after') await frontend.waitFor(new RegExp(`got=v${tag}[\\s\\S]*Completed`, 'u'), mark);
           frontend.pty.write(`echo NEXT-${tag}\r`);

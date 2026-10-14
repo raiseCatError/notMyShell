@@ -3,6 +3,7 @@ import type {ShellMarker} from '../shell/ShellProtocol.js';
 import type {TranscriptSession} from '../sessions/TranscriptStore.js';
 import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {ServiceFeature} from './SessionProtocol.js';
+import type {InputState} from './inputState.js';
 
 /** Position of an event in a service session's stream, when it has one. */
 export interface StreamStamp {
@@ -24,6 +25,8 @@ export interface SessionClientEvents {
   startup: [string];
   /** Input was not queued or written; the caller can restore it. */
   inputRejected: [data: string, submission: boolean];
+  /** The running command's input state changed (see InputWatch); the one source for every input surface. */
+  inputState: [InputState];
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */

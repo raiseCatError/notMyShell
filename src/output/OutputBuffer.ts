@@ -39,7 +39,11 @@ export interface CompletedCommand {
   /** Only explicitly eligible commands enter command history; transcript retention is separate. */
   historyEligible?: boolean;
   startedAt?: number;
+  /** Wall-clock time from start to completion, waiting included. */
   durationMs?: number;
+  /** Of durationMs, the time the command spent waiting for input, and how many waits (see InputWatch). */
+  inputWaitMs?: number;
+  inputWaits?: number;
   command: string;
   output: string;
   lifecycleText: string;

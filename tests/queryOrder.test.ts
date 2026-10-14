@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {once} from 'node:events';
 import {existsSync, mkdtempSync, rmSync} from 'node:fs';
 import {join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {QueryOrder} from '../src/shell/QueryOrder.js';
 import {ShellSession} from '../src/shell/ShellSession.js';
 
@@ -112,7 +113,7 @@ test('after NMSh answers an editor itself, input waits until the editor has draw
 const fish = ['/opt/homebrew/bin/fish', '/usr/local/bin/fish', '/usr/bin/fish'].find(existsSync);
 
 test('fish\'s read is answered like its prompt: its queries never reach the host, and it reads at once', {skip: fish ? false : 'fish not installed', timeout: 30_000}, async () => {
-  const home = mkdtempSync('/tmp/nt-qo-');
+  const home = mkdtempSync(join(tmpdir(), 'nt-qo-'));
   const shell = new ShellSession(home, 100, 30, home, {...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config'), XDG_DATA_HOME: join(home, 'data'),
     PATH: `${fish!.replace(/\/fish$/u, '')}:${process.env.PATH}`, TERM: 'xterm-256color'}, 'fish');
   let output = '';
@@ -125,6 +126,7 @@ test('fish\'s read is answered like its prompt: its queries never reach the host
       const started = Date.now();
       while (!output.includes('Name: ') && Date.now() - started < 10_000) await new Promise(done => setTimeout(done, 5));
       assert.ok(output.includes('Name: '), `fish ${secret}read drew its prompt`);
+      assert.equal(shell.inputWatch.state.terminalOwner, true, `reader event precedes the prompt: ${JSON.stringify(output)}`);
       // Nothing answers on the host side here; before, fish waited for the host's answer and dropped keys meanwhile.
       const prompt = once(shell, 'prompt');
       shell.write('abc\r');

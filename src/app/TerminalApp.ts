@@ -17,7 +17,7 @@ import {misePanelKey, renderMisePanel, type MisePanel} from '../tools/MisePanel.
 import {detectBackend, keepAwakePath, KeepAwakeController, type KeepAwakeRecord} from '../keepAwake/keepAwake.js';
 import {awakeDuration, awakeLabel, awakeStyle, awakeView, edgeAccessoryColumns, edgeFits, placeOnSaver, renderComposerEdge, resolveAccessorySlot, sliceAnsiCells} from '../keepAwake/presentation.js';
 import {createKeepAwakePanel, describeStart, keepAwakeKey, renderKeepAwakePanel, requestStart, statusLines, type KeepAwakePanel} from '../keepAwake/KeepAwakePanel.js';
-import {homedir} from 'node:os';
+import {homedir, tmpdir} from 'node:os';
 import {createNotificationService, formatCommandNotification, shouldNotify, type TerminalFocus} from '../notifications/commandNotifications.js';
 import {blockAffordance, blockCopyPayload, blockPaletteItems, type BlockActionId} from '../ui/BlockActions.js';
 import {paletteItems} from '../ui/CommandPalette.js';
@@ -178,6 +178,9 @@ import {TaskProgress} from '../status/TaskProgress.js';
 import {renderStatusStrip, stripStatsFromFacts, stripVisible, type StripModuleItem} from '../status/StatusStrip.js';
 import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
+import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
+import {directKeyBytes} from '../terminal/keyBytes.js';
 import {extractFacts} from '../status/adapters.js';
 import {focusForeground, foreground, background, UI_COLORS, lazyForeground} from '../ui/palette.js';
 import {AgentActivityStore} from '../agents/AgentActivityStore.js';
@@ -719,6 +722,16 @@ export class TerminalApp {
   private readonly effects = new EffectState();
   private presentationFrame?: {frame: TerminalFrame; plan: ScreenPlan; agentCaretRow?: number};
   private activityAnimationNow = Date.now();
+  /** The running command's input state, as the session's InputWatch reports it; never guessed here. */
+  private inputState?: InputState;
+  /** Waiting time the shell's completing prompt carried for the command that just finished. */
+  private completedInputTiming?: InputTiming;
+  /**
+   * A composer draft started while a command runs: when, and whether a request for input was already shown (an
+   * answer, discarded rather than run if the command ends first). Drafts started before the command's latest output
+   * are type-ahead for the shell and stay in the composer.
+   */
+  private runningDraft?: {startId: number; at: number; answering: boolean};
   /** One pending timeout at a time drives the welcome cat's occasional blink. */
   private welcomeBlinkTimer?: () => void;
   private welcomeBlinkCount = 0;
@@ -740,6 +753,7 @@ export class TerminalApp {
   private lastPtyColumns = 0;
   private stopped = false;
   private originalRawMode = false;
+  private rawInputPrepared = false;
   private shellHandoffCwd?: string;
   private shellHandoffRequested = false;
   private presentationStartCwd = process.cwd();
@@ -775,9 +789,10 @@ export class TerminalApp {
     this.done = new Promise(resolve => {
       this.finish = resolve;
     });
-    this.session.on('data', (data, stamp) => { if (this.inStream(stamp)) this.onShellData(data); });
+    this.session.on('data', (data, stamp) => { if (!this.stopped && this.inStream(stamp)) this.onShellData(data); });
     this.session.on('prompt', (marker, stamp) => {
-      if (this.inStream(stamp)) {
+      // Buffered prompts after shutdown cannot restart collection or queue work.
+      if (!this.stopped && this.inStream(stamp)) {
         if (marker.knowledge !== undefined) {
           this.shellJobs = knowledgeJobCount(marker.knowledge) ?? 0;
           // An older bootstrap reports no snapshot: keep the documented launch-environment fallback.
@@ -790,11 +805,13 @@ export class TerminalApp {
         }
         // Host OSC 7 / OSC 133: a projection of this authoritative marker, never the other way round.
         this.hostSemantics.prompt(marker.cwd, marker.exitCode);
+        this.completedInputTiming = marker.inputWaits ? {waitedMs: marker.inputWaitMs ?? 0, waits: marker.inputWaits} : undefined;
         this.onShellPrompt(marker.exitCode, marker.cwd, stamp.at);
       }
     });
-    this.session.on('exec', (command, stamp) => { if (this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
+    this.session.on('exec', (command, stamp) => { if (!this.stopped && this.inStream(stamp)) { this.hostSemantics.exec(); this.onShellExec(command, stamp.at, stamp.historyAllowed); } });
     this.session.on('replayed', summary => this.finishReplay(summary));
+    this.session.on('inputState', state => this.onInputState(state));
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
@@ -877,6 +894,8 @@ export class TerminalApp {
   private attachedSession?: AttachedSession;
   private continuedJournal?: TranscriptSession;
   private rendererEntered = false;
+  /** Current fullscreen ownership can release startup while its journal awaits IO. */
+  private startupPassthroughReady?: () => void;
 
   /** Drop stream events the transcript already has (exactly-once replay). */
   private inStream(stamp: StreamStamp): boolean {
@@ -930,7 +949,7 @@ export class TerminalApp {
 
   private finishReplay(summary: {truncatedBytes: number}): void {
     const attached = this.attachedSession;
-    if (!this.replaying || !attached) return;
+    if (this.stopped || !this.replaying || !attached) return;
     this.replaying = false;
     const parts = [`Reattached live session ${attached.sessionId.slice(0, 8)} (zsh pid ${attached.pid})`];
     const completed = this.replayedCompletions;
@@ -946,21 +965,19 @@ export class TerminalApp {
       this.cancelPresentation();
       this.passthrough = true;
       this.noteForeignScreen();
-      this.attachedModes = attached.modes ?? '';
+      this.commandModes.reset('alternate');
+      this.commandModes.observeModes(attached.modes ?? '');
       if (this.rendererEntered) this.enterAttachedPassthrough();
+      else this.startupPassthroughReady?.();
     }
     this.scheduleJournal();
     this.render();
   }
 
-  /** The reattached fullscreen app's own terminal modes, which this terminal never received. */
-  private attachedModes = '';
-
   private enterAttachedPassthrough(): void {
     // Reattached into a fullscreen app: hand it the whole terminal again,
     // including the mouse/paste/cursor-key modes it set before the detach.
-    this.handOverTerminal(this.attachedModes);
-    this.attachedModes = '';
+    this.handOverTerminal(this.commandModes.restoreSequence());
   }
 
   /**
@@ -978,9 +995,16 @@ export class TerminalApp {
     if (this.escapeFlushTimer) { clearTimeout(this.escapeFlushTimer); this.escapeFlushTimer = undefined; }
     this.keyDecoder.reset();
     this.terminalFocus = 'unknown';
+    if (!this.rendererEntered) {
+      // Entry clears the screen. Wake startup first, then resize exactly once
+      // after entry so the program's resulting repaint cannot be erased.
+      this.startupPassthroughReady?.();
+      return;
+    }
     this.renderer.suspendForPassthrough(restore);
     const dimensions = this.dimensions();
     this.session.resize(dimensions.columns, dimensions.rows);
+    this.startupPassthroughReady?.();
   }
 
   private onActiveModeChange(mode: PresentationMode): void {
@@ -1005,7 +1029,7 @@ export class TerminalApp {
     if (this.running) {
       this.running.awaitingExec = false;
       this.running.historyAllowed = historyAllowed;
-      if (!this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
         this.cancelPresentation();
         this.passthrough = true;
         this.noteForeignScreen();
@@ -1014,10 +1038,17 @@ export class TerminalApp {
       return;
     }
     this.commandModes.reset();
+    this.inputState = undefined;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), mode => this.onActiveModeChange(mode),
       this.historicalContext(this.shellCwd, this.context, command));
     this.tapActivityObserver.reset(this.output.activeOutputStartId ?? startId);
     this.running = {command, startedAt: at, interrupted: false, cleared: false, startId, cwd: this.shellCwd, historyAllowed};
+    if (!this.replaying && !this.startupPending && !this.passthrough && shouldPassthrough(command)) {
+      this.cancelPresentation();
+      this.passthrough = true;
+      this.noteForeignScreen();
+      this.handOverTerminal();
+    }
     this.scheduleJournal();
     if (!this.replaying) this.render();
   }
@@ -1037,12 +1068,24 @@ export class TerminalApp {
         cwd: running.cwd, startId: this.output.activeStartId ?? running.startId, outputStartId, historyAllowed: running.historyAllowed}} : {})};
   }
 
+  /** Protect input before any program prompt is visible, including synchronous attach replay. */
+  private prepareRawInput(): void {
+    if (this.stopped || !process.stdin.isTTY || this.rawInputPrepared) return;
+    this.originalRawMode = process.stdin.isRaw;
+    process.stdin.setRawMode(true);
+    this.rawInputPrepared = true;
+  }
+
   async run(): Promise<number> {
+    if (this.stopped) return this.done;
+    // Catchable shutdown must own cleanup even while probes or persistence await.
+    process.once('SIGTERM', this.onTerminate);
+    process.once('SIGHUP', this.onTerminate);
+    this.prepareRawInput();
+    process.once('exit', this.onProcessExit);
     let earlyInput = '';
     // A reattached interactive program owns terminal queries and replies.
     if (!this.passthrough && process.stdin.isTTY && process.stdout.isTTY) {
-      this.originalRawMode = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
       process.stdin.setEncoding('utf8');
       const resolved = await probeHost(this.host.capabilities, {
         write: data => process.stdout.write(data),
@@ -1052,7 +1095,7 @@ export class TerminalApp {
           return () => { process.stdin.off('data', receive); process.stdin.pause(); };
         },
       }, undefined, {graphics: shouldProbeGraphics(process.env)});
-      process.stdin.setRawMode(this.originalRawMode);
+      if (this.stopped) return this.done;
       this.host.capabilities = resolved.capabilities;
       this.renderer.setCapabilities(resolved.capabilities);
       earlyInput = resolved.input;
@@ -1062,53 +1105,63 @@ export class TerminalApp {
       () => this.output.addFrontendInteraction('/resume', 'Could not persist the current session; check local storage.', ERROR),
       // Durable now: the service may forget these stream events.
       saved => { if (saved.live) this.session.ack(saved.live.seq, saved.id); });
-    try {
-      if (this.continuedJournal) await this.journal.continue(this.continuedJournal);
-      else await this.journal.start();
+    // Initialize the journal before input can schedule snapshots, but do not wait
+    // for disk IO before restoring a fullscreen program's terminal and size.
+    // The journal serializes saves and acknowledges only durable checkpoints.
+    let journalSettled = false;
+    const journalStarted = (this.continuedJournal
+      ? this.journal.continue(this.continuedJournal)
+      : this.journal.start()).then(() => {
       this.journalActive = true;
-    } catch {
+    }, () => {
       this.output.addFrontendInteraction('/resume', 'Continuous session journaling could not start; check local storage.', ERROR);
-    }
-    this.startOnboarding();
-    // Restored terminal modes are a visible handoff: keys can arrive at once.
-    // Install raw input first so the host cannot echo or translate those keys.
-    if (process.stdin.isTTY) {
-      this.originalRawMode = process.stdin.isRaw;
-      process.stdin.setRawMode(true);
-    }
-    process.stdin.setEncoding('utf8');
-    process.stdin.resume();
-    process.stdin.on('data', this.onInput);
-    this.renderer.enter();
-    this.rendererEntered = true;
-    if (this.passthrough) this.enterAttachedPassthrough();
-    if (earlyInput) this.onInput(earlyInput);
-    process.stdout.on('resize', this.onResize);
-    process.on('SIGTSTP', this.onSuspend);
-    process.on('SIGCONT', this.onContinue);
-    process.once('SIGTERM', this.onTerminate);
-    process.once('SIGHUP', this.onTerminate);
-    process.on('exit', () => {
-      if (!this.stopped) {
-        if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
-        this.terminalFocus = 'unknown';
-        this.renderer.leave();
+      this.render();
+    }).finally(() => { journalSettled = true; });
+    // A fresh ordinary frontend must first publish its journal identity so an
+    // immediate detach can continue that journal. An already-owned terminal
+    // must instead restore its raw input and full size without waiting on IO.
+    while (!this.stopped && !this.passthrough && !journalSettled) {
+      // Replay or the next foreground command can establish ownership while
+      // persistence waits. A completion in the same socket batch can withdraw
+      // it again, so each wakeup must check the current owner before proceeding.
+      try {
+        await Promise.race([journalStarted, new Promise<void>(resolve => { this.startupPassthroughReady = resolve; })]);
+      } finally {
+        this.startupPassthroughReady = undefined;
       }
-    });
-    this.presentationStarted = true;
-    void this.loadSessionIdentity();
-    this.refreshAwake();
-    // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
-    this.scheduleThemeBridge(500);
-    this.scheduleWelcomeBlink();
-    void this.loadHistory();
-    this.render();
-    void this.quietUpdateCheck();
-    void this.quietToolUpdateCheck();
-    this.armIdle();
-    this.presetFrontendReady = true;
-    if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
+    }
+    // A shell exit or shutdown during startup cannot reinstall frontend input.
+    if (!this.stopped) {
+      this.startOnboarding();
+      // Restored terminal modes are a visible handoff: keys can arrive at once.
+      // Install raw input first so the host cannot echo or translate those keys.
+      this.prepareRawInput();
+      process.stdin.setEncoding('utf8');
+      process.stdin.resume();
+      process.stdin.on('data', this.onInput);
+      this.renderer.enter();
+      this.rendererEntered = true;
+      if (this.passthrough) this.enterAttachedPassthrough();
+      if (earlyInput) this.onInput(earlyInput);
+      process.stdout.on('resize', this.onResize);
+      process.on('SIGTSTP', this.onSuspend);
+      process.on('SIGCONT', this.onContinue);
+      this.presentationStarted = true;
+      void this.loadSessionIdentity();
+      this.refreshAwake();
+      // Re-apply (or clean up) Theme Bridge state once per launch; nothing happens when it was never used.
+      this.scheduleThemeBridge(500);
+      this.scheduleWelcomeBlink();
+      void this.loadHistory();
+      this.render();
+      void this.quietUpdateCheck();
+      void this.quietToolUpdateCheck();
+      this.armIdle();
+      this.presetFrontendReady = true;
+      if (this.presetShellReady) this.advancePresetStartup(0, this.shellCwd);
+    }
     const exitCode = await this.done;
+    await journalStarted;
     try { await this.journal.close(!this.detaching || this.shellEnded); } catch {
       process.stderr.write('NMSh could not finish persisting the current presentation session.\n');
     }
@@ -1119,11 +1172,16 @@ export class TerminalApp {
   private readonly queryExtractor = new QueryExtractor();
   private readonly replyRouter = new ReplyRouter();
 
+  private logEditorKeyInput(data: string): void {
+    const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    appendFileSync(join(tmpdir(), 'nmsh-key-debug.log'), `RAW hex=${hex} escaped=${JSON.stringify(data)}\n`);
+  }
+
   private readonly onInput = (data: string): void => {
-    if (process.env.NMSH_DEBUG_KEYS === '1') {
-      const hex = Array.from(Buffer.from(data)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-      const escaped = JSON.stringify(data);
-      appendFileSync('/tmp/nmsh-key-debug.log', `RAW hex=${hex} escaped=${escaped}\n`);
+    // Before probes classify a read, or inside a native reader, input can already be sensitive.
+    // Key diagnostics therefore observe only the idle composer, never startup or running-program input.
+    if (process.env.NMSH_DEBUG_KEYS === '1' && !this.running && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
+      this.logEditorKeyInput(data);
     }
     if (this.passthrough && !this.startupPending) {
       this.session.write(data);
@@ -1209,6 +1267,14 @@ export class TerminalApp {
       return;
     }
     this.render();
+  };
+
+  private readonly onProcessExit = (): void => {
+    if (!this.stopped) {
+      if (process.stdin.isTTY) process.stdin.setRawMode(this.originalRawMode);
+      this.terminalFocus = 'unknown';
+      this.renderer.leave();
+    }
   };
 
   // The frontend is going away (window closed, SIGHUP/SIGTERM); the shell was
@@ -1816,6 +1882,17 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    // A program reading a hidden line or single keys gets each key as it is typed, as in any terminal: the
+    // composer neither shows nor keeps it, and Enter is a key for the program, never a shell submission.
+    if (this.directInputRequest()) {
+      this.sendDirectKey(key);
+      return;
+    }
+    // Typing that starts while a command waits for a line is an answer: if the command ends before it is sent, it
+    // is discarded rather than left to run as the next shell command.
+    if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: Boolean(this.inputState?.request)};
+    }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
     if (this.promptConfiguration.composerPosition === 'flow' && this.historyViewport.detached && FLOW_EDIT_KEYS.has(key.kind)) {
@@ -2104,6 +2181,7 @@ export class TerminalApp {
         } else {
           const input = this.editor.text;
           this.editor.clear();
+          this.runningDraft = undefined;
           this.session.write(`${input}\r`);
           return;
         }
@@ -2606,6 +2684,8 @@ export class TerminalApp {
     const contextAtSubmission = this.context;
     this.effects.cancel();
     this.commandModes.reset();
+    this.inputState = undefined;
+    this.runningDraft = undefined;
     const startId = this.output.beginCommand(command, this.formatCommandAnsi(command, null), (mode) => {
       if (mode === 'PASSTHROUGH' && !this.passthrough && !this.startupPending) {
         this.cancelPresentation();
@@ -2817,6 +2897,22 @@ export class TerminalApp {
     this.resumeBrowser = createSessionsView(live, this.sessionId);
   }
 
+  /** Refresh live facts without moving the person's selection, query or composer. */
+  private refreshSessionsView(live: SessionInfo[]): boolean {
+    const browser = this.resumeBrowser;
+    if (!browser?.liveOnly) return false;
+    const selected = resumeSelection(browser);
+    browser.live = live;
+    const visible = visibleLiveSessions(browser);
+    const index = selected?.kind === 'live' ? visible.findIndex(session => session.id === selected.session.id) : -1;
+    browser.selectedIndex = index >= 0 ? index : Math.max(0, Math.min(browser.selectedIndex, visible.length - 1));
+    if (browser.confirmKill) {
+      const target = live.find(session => session.id === browser.confirmKill);
+      if (!target || target.state !== 'detached' || target.id === browser.currentId) browser.confirmKill = undefined;
+    }
+    return true;
+  }
+
   private sessionsViewRows(browser: ResumeBrowserState, columns: number): string[] {
     const now = Date.now();
     const safe = getCurrentGlyphMode() === 'safe';
@@ -2828,10 +2924,10 @@ export class TerminalApp {
     rows.forEach((row, index) => {
       const selected = index === browser.selectedIndex;
       const marker = row.current ? (safe ? '*' : '●') : row.session.state === 'detached' ? (safe ? '-' : '◌') : (safe ? 'o' : '○');
-      const color = row.state === 'failed' ? ERROR : row.state === 'attention' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
+      const color = row.state === 'failed' ? ERROR : row.state === 'attention' || row.state === 'input' || row.state === 'inputLikely' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
       const who = row.agent ? `${agentColor(row.agent.color)}${safe ? row.agent.safeGlyph : row.agent.glyph} ${row.agent.short}${RESET} ` : '';
       out.push(truncateAnsi(`${selected ? `${ACCENT}›` : ' '} ${marker} ${PRIMARY}${(row.current ? 'this' : `#${row.ordinal}`).padEnd(5)}${RESET}${SECONDARY}${row.shell.padEnd(5)}${RESET} `
-        + `${color}${row.stateLabel.padEnd(16)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
+        + `${color}${row.stateLabel.padEnd(18)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
     });
     const confirming = browser.live.find(session => session.id === browser.confirmKill);
     if (confirming) out.push('', truncateAnsi(`${ERROR}  Kill the live session in ${confirming.cwd}? Its shell and anything running in it will end. Enter kill · Esc cancel${RESET}`, columns));
@@ -3082,6 +3178,10 @@ export class TerminalApp {
     // New output is activity: it ends idle visuals and restarts the inactivity timer.
     this.noteActivity();
     if (this.passthrough) {
+      this.prepareRawInput();
+      // Raw bytes still reach the host now; retain only their bounded mode
+      // state so renderer entry cannot replace the current owner's modes.
+      if (!this.rendererEntered) this.commandModes.observeModes(data);
       this.renderer.observePassthrough(data);
       process.stdout.write(data);
     } else {
@@ -3092,6 +3192,7 @@ export class TerminalApp {
       this.journal?.schedule();
       this.output.setActiveActivities(this.tapActivityObserver.push(data, Date.now()));
       if (!wasPassthrough && this.passthrough) {
+        this.prepareRawInput();
         this.renderer.observePassthrough(data);
         process.stdout.write(data);
       } else if (!this.replaying) {
@@ -3108,6 +3209,12 @@ export class TerminalApp {
     this.shellSuggestions = [];
     this.lastSuggestionInput = '';
     this.shellCwd = cwd;
+    // The authenticated prompt owns the command directory. Async workspace
+    // collection may still describe the previous prompt when the next command
+    // is submitted; refresh this cheap fact now without weakening its policy.
+    this.context.cwd = cwd;
+    const cwdFact = promptFacts({cwd, project: ''}, at).cwd;
+    this.context.facts = {...this.context.facts, cwd: updateFact(cwdFact, this.context.facts?.cwd)};
     this.endStartupWatch();
     this.switchedShellStarting = false;
     const initialPrompt = !this.presetShellReady;
@@ -3151,6 +3258,8 @@ export class TerminalApp {
     if (completedRecord) {
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
+      // Wall-clock duration stays whole; the time spent waiting for the person is a separate, measured fact.
+      if (this.completedInputTiming) { completedRecord.inputWaitMs = this.completedInputTiming.waitedMs; completedRecord.inputWaits = this.completedInputTiming.waits; }
       completedRecord.historyEligible = command.historyAllowed === 1 && !isPrivateCommand(command.command, ignorePatternFromEnv());
       this.directoryQuery = undefined;
       this.directoryQueryAbort?.abort();
@@ -3170,6 +3279,7 @@ export class TerminalApp {
       const failure = isInterrupted ? undefined : classifyShellFailure(command.command, exitCode, outputText);
       if (failure) parts.main = parts.main.replace('Command failed', failure === 'command-not-found' ? 'Command not found' : 'Shell syntax error');
       else if (agent) parts.main = agentCompletionText(agent.id, elapsed, exitCode, isInterrupted);
+      parts.main += completionWaitFact(this.completedInputTiming);
       this.output.setCompletionLifecycle(`${parts.main}${parts.detail}`);
       const rowStyle = isInterrupted ? STOPPED : (exitCode !== 0 ? ERROR : SUCCESS);
       this.output.addHistoryLine(`${rowStyle}${parts.main}${SECONDARY}${parts.detail}${RESET}`);
@@ -3178,6 +3288,17 @@ export class TerminalApp {
       if (known) this.output.addHistoryLine(`${INFO}${known}${RESET}`);
     }
     this.running = undefined;
+    this.inputState = undefined;
+    this.completedInputTiming = undefined;
+    // An answer typed for this command but never sent must not become the next shell command.
+    const draft = this.runningDraft;
+    this.runningDraft = undefined;
+    if (draft?.answering) {
+      if (this.editor.text) {
+        this.editor.clear();
+        this.output.addFrontendInteraction(commandWords(command.command)[0] ?? 'command', 'The command finished before your reply was sent; the reply was discarded, not run.', INFO);
+      }
+    }
     if (!this.replaying && !command.cleared && completedRecord) {
       const interrupted = command.interrupted || exitCode === 130;
       const now = Date.now();
@@ -3194,6 +3315,7 @@ export class TerminalApp {
     this.queryExtractor.reset();
     if (this.passthrough) {
       this.passthrough = false;
+      this.commandModes.reset();
       // The program may have set a title or cwd as it exited (Vim: "Thanks for flying Vim"): reclaim both now.
       this.noteForeignScreen();
       this.renderer.resumeAfterPassthrough();
@@ -4013,12 +4135,13 @@ export class TerminalApp {
         live.forEach((session, index) => {
           const selected = index === browser.selectedIndex;
           const state = liveRowState(session, now);
-          const stateColor = state === 'failed' ? ERROR : state === 'attention' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
+          const stateColor = state === 'failed' ? ERROR : state === 'attention' || state === 'input' || state === 'inputLikely' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
           const agent = liveRowAgent(session);
           // Agent color only when identity is proven and color is allowed; generic otherwise.
           const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
           const signature = signatureAccent(session.signature);
-          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${(safe ? '*' : '●')} ${LIVE_ROW_LABELS[state].padEnd(16)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
+          const stateMark = state === 'input' ? (safe ? '!' : '◆') : state === 'inputLikely' ? (safe ? '?' : '◇') : (safe ? '*' : '●');
+          rows.push(truncateAnsi(`${selected ? ACCENT : SECONDARY}${selected ? '›' : ' '} ${stateColor}${stateMark} ${LIVE_ROW_LABELS[state].padEnd(17)}${RESET}${signature ? `${foreground(signature)}${safe ? '+' : '◆'}${RESET} ` : ''}${who}`
             + `${selected ? ACCENT : SECONDARY}${describeLiveRow(session, now)}${RESET}`, columns));
         });
         rows.push('', `${SUBTLE}  ARCHIVED${RESET}`);
@@ -4540,7 +4663,9 @@ export class TerminalApp {
     if (mode === 'off') return undefined;
     const project = this.context.project && this.context.project !== '…' ? this.context.project : basename(this.shellCwd) || this.shellCwd;
     const session = this.sessionId ? sessionTitleName(this.sessionIdentity, this.noticeLabels.get(this.sessionId)) : undefined;
-    const running = this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
+    const request = this.running && !this.passthrough ? this.inputState?.request : undefined;
+    const running = request ? `${inputGlyph(request)} ${inputProgram(request, this.running!.command)} needs input`
+      : this.running && !this.passthrough ? commandWords(this.running.command)[0] : undefined;
     return composeTitle(mode, project, session, running);
   }
 
@@ -6560,9 +6685,10 @@ export class TerminalApp {
     // Expired notices never paint, even between polls.
     const notices = this.noticeView.notices.filter(notice => noticeVisible(notice, now));
     const safe = getCurrentGlyphMode() === 'safe';
-    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷'};
+    const symbols = {done: safe ? '+' : '✦', attention: safe ? '!' : '◆', failed: safe ? 'x' : '×', ended: safe ? '-' : '○', long: safe ? '~' : '◷', input: safe ? '?' : '◇'};
     const rows = notices.map(notice => {
       const parts = describeNotice(notice, this.noticeLabels.get(notice.sessionId) ?? sessionLabel(notice.sessionId), now);
+      if (parts.symbol === 'input') return truncateAnsi(`${ACCENT}${inputGlyph({confidence: notice.confidence === 'likely' ? 'likely' : 'confirmed'})}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
       const color = parts.symbol === 'failed' ? ERROR : parts.symbol === 'attention' ? ACCENT : parts.symbol === 'done' ? SUCCESS : SECONDARY;
       return truncateAnsi(`${color}${symbols[parts.symbol]}${RESET} ${SECONDARY}${parts.text}${RESET}`, columns);
     });
@@ -6570,10 +6696,10 @@ export class TerminalApp {
     return rows;
   }
 
-  /** Poll the service's session list on a slow cadence while notices are on and NMSh owns the screen. */
+  /** Poll while notices or the explicit live session view need facts and NMSh owns the screen. */
   private syncNotices(): void {
     const wanted = this.presentationStarted && !this.stopped && !this.passthrough && !this.externalPassthrough && !this.frontendSuspended
-      && this.sessionMode === 'service' && this.promptConfiguration.sessionNotices;
+      && this.sessionMode === 'service' && (this.promptConfiguration.sessionNotices || Boolean(this.resumeBrowser?.liveOnly));
     if (wanted && !this.noticeTimer) {
       this.noticeTimer = presentationClock.subscribe(() => void this.refreshNotices(), NOTICE_REFRESH_MS);
       void this.refreshNotices();
@@ -6587,30 +6713,34 @@ export class TerminalApp {
     if (this.noticePolling) return;
     this.noticePolling = true;
     try {
-      const {sessions, ended} = await listSessionNotices();
+      const {sessions, ended} = await listSessionNotices({throwOnError: true});
       if (this.stopped) return;
       const ordered = [...sessions].sort((a, b) => a.createdAt - b.createdAt);
       // The person's own name, else the familiar signature, else the old ordinal label.
       this.noticeLabels = new Map(ordered.map((session, index) => [session.id, session.name || session.signature || sessionLabel(session.id, index + 1)]));
       this.noteSessionIdentity(sessions.find(session => session.id === this.sessionId));
       this.noticeSource = [...sessions.flatMap(session => (session.notice ? [session.notice] : [])), ...ended];
-      this.applyNotices();
+      const refreshedView = this.refreshSessionsView(sessions);
+      const noticesChanged = this.applyNotices();
+      if (refreshedView && !noticesChanged) this.render();
     } catch { /* notices are best effort */ } finally { this.noticePolling = false; }
   }
 
   /** Select what is visible now (expired notices drop out) and wake exactly when the next one expires. */
-  private applyNotices(now = Date.now()): void {
-    const next = selectNotices(this.noticeSource, this.sessionId, this.dismissedNotices, now);
+  private applyNotices(now = Date.now()): boolean {
+    const enabled = this.promptConfiguration.sessionNotices;
+    const next = enabled ? selectNotices(this.noticeSource, this.sessionId, this.dismissedNotices, now) : {notices: [], hidden: 0};
     const changed = JSON.stringify(next) !== JSON.stringify(this.noticeView);
     this.noticeView = next;
     if (this.noticeExpiry) { clearTimeout(this.noticeExpiry); this.noticeExpiry = undefined; }
-    const soonest = this.noticeSource.filter(notice => selectNotices([notice], this.sessionId, this.dismissedNotices, now).notices.length)
-      .map(notice => noticeExpiresAt(notice)).filter((at): at is number => at !== undefined).sort((a, b) => a - b)[0];
+    const soonest = enabled ? this.noticeSource.filter(notice => selectNotices([notice], this.sessionId, this.dismissedNotices, now).notices.length)
+      .map(notice => noticeExpiresAt(notice)).filter((at): at is number => at !== undefined).sort((a, b) => a - b)[0] : undefined;
     if (soonest !== undefined && !this.stopped) {
       this.noticeExpiry = setTimeout(() => { this.noticeExpiry = undefined; this.applyNotices(); if (!this.stopped) this.render(); }, Math.max(50, soonest - now + 50));
       this.noticeExpiry.unref();
     }
     if (changed) this.render();
+    return changed;
   }
 
   /** Clear every visible notice, for every attached frontend where the service supports it. */
@@ -8530,8 +8660,10 @@ export class TerminalApp {
       }
     }
 
+    const direct = this.directInputRequest();
     const inputRows = input.rows.map(row => {
       const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
+      if (direct) return row === input.rows[0] ? truncateAnsi(`${prefix}${SUBTLE}${directInputPlaceholder(direct, inputProgram(direct, this.running!.command))}${RESET}`, this.inputColumns(columns)) : '';
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
       for (let i = 0; i < glyphsInRow.length; i++) {
@@ -8585,11 +8717,7 @@ export class TerminalApp {
           );
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
-        case 'activity': {
-          if (!this.running) return [];
-          const activity = truncateAnsi(this.currentActivity(), columns);
-          return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
-        }
+        case 'activity': return this.activityRows(plan, columns);
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -8793,8 +8921,7 @@ export class TerminalApp {
     const rows = [...frame.rows];
     for (const region of plan.regions) {
       if (region.kind === 'activity' && this.running) {
-        const line = truncateAnsi(this.currentActivity(), frame.columns ?? 80);
-        const content = plan.composerPosition === 'top' ? ['', line] : [line, ''];
+        const content = this.activityRows(plan, frame.columns ?? 80);
         for (let index = 0; index < region.height; index++) rows[region.top + index] = content[index] ?? '';
       }
       // Live composer divider lines move with Chroma only when Divider lines follow Chroma.
@@ -8864,6 +8991,59 @@ export class TerminalApp {
     }
   }
 
+  /**
+   * The live activity region (two rows, always reserved while a command runs). Ordinarily the working line and a
+   * spacer; while the command waits for input, the attention line and the prompt it left open, so the question
+   * stays in view however far the transcript scrolled or folded. Nothing extra is reserved and the PTY never resizes.
+   */
+  private activityRows(plan: ScreenPlan, columns: number): string[] {
+    if (!this.running) return [];
+    const request = this.inputState?.request;
+    // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
+    if (request) return inputActivityRows({...this.inputState!, request}, this.running.command, this.running.startedAt, this.activityAnimationNow, columns).map(row => truncateAnsi(row, columns));
+    const activity = truncateAnsi(this.currentActivity(), columns);
+    return plan.composerPosition === 'top' ? ['', activity] : [activity, ''];
+  }
+
+  /** Keys go straight to the program (a hidden line or single keys) rather than through the composer. */
+  private directInputRequest() {
+    const request = this.inputState?.request;
+    return this.running && !this.passthrough && !this.startupPending && directInput(request) ? request : undefined;
+  }
+
+  private onInputState(state: InputState): void {
+    // A state for a finished run (a late message) never resurrects it.
+    if (!this.running) return;
+    this.inputState = state;
+    if (state.terminalOwner) {
+      this.onActiveModeChange('PASSTHROUGH');
+      return;
+    }
+    const request = state.request;
+    const draft = this.runningDraft;
+    // Keys typed after the program wrote its question, in the moment before NMSh could tell how it reads, were
+    // meant for it: a terminal would already have delivered them. Hand them over now instead of hiding them.
+    if (request && directInput(request) && draft && draft.startId === this.running.startId && draft.at >= request.since && this.editor.text) {
+      const typed = this.editor.text;
+      this.editor.clear();
+      this.runningDraft = undefined;
+      this.session.write(typed);
+    } else if (request && draft && draft.at >= request.since && this.editor.text) draft.answering = true;
+    this.render();
+  }
+
+  /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
+  private sendDirectKey(key: Key): void {
+    if (key.kind === 'interrupt') {
+      if (this.running) this.running.interrupted = true;
+      this.session.interrupt();
+      return;
+    }
+    if (key.kind === 'eof') { this.session.endInput(); return; }
+    const bytes = directKeyBytes(key);
+    if (bytes) this.session.write(bytes);
+  }
+
   private currentActivity(): string {
     if (!this.running) return '';
     const elapsed = this.activityAnimationNow - this.running.startedAt;
@@ -8875,7 +9055,7 @@ export class TerminalApp {
     const still = !this.decorativeMotionAllowed() || sweepStill(this.promptConfiguration);
     const {cells, style} = liveActivityPaint(parts.phrase, this.promptConfiguration, this.activityAnimationNow, still);
     const phrase = sweepCells(cells, animationElapsed * (isActive ? 1.4 : 1), style, colorLevel(), !this.decorativeMotionAllowed());
-    return `${phrase}${SECONDARY}${parts.duration}${RESET}`;
+    return `${phrase}${SECONDARY}${parts.duration}${waitedDetail(this.inputState, this.activityAnimationNow, elapsed)}${RESET}`;
   }
 
   private jumpAffordance(columns: number): string {
@@ -8917,9 +9097,11 @@ export class TerminalApp {
   }
 
   private layoutEditorInput(columns: number, maxVisibleRows = Number.POSITIVE_INFINITY) {
+    // Direct input: the composer shows where typing goes, never a draft, so the caret sits at the start.
+    const direct = Boolean(this.directInputRequest());
     return layoutInput(
-      this.editor.displayText,
-      this.editor.displayCursorIndex,
+      direct ? '' : this.editor.displayText,
+      direct ? 0 : this.editor.displayCursorIndex,
       this.inputColumns(columns),
       maxVisibleRows,
       this.railInputPrefix(columns),
@@ -9070,6 +9252,7 @@ export class TerminalApp {
     this.endSweep();
     process.stdin.off('data', this.onInput);
     process.stdout.off('resize', this.onResize);
+    process.off('exit', this.onProcessExit);
     process.off('SIGTSTP', this.onSuspend);
     process.off('SIGCONT', this.onContinue);
     process.off('SIGTERM', this.onTerminate);

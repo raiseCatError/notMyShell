@@ -33,8 +33,8 @@ export function knownProgram(session: SessionInfo): string | undefined {
 /**
  * Factual status from service evidence. Every clause is something the session
  * reported: what runs, whether it wrote recently, whether it asked for
- * attention, the title it set, or how the last command ended. Nothing is
- * inferred about what a program is waiting for; unknown stays unsaid.
+ * attention, the title it set, whether its input watch saw it wait for
+ * input, or how the last command ended. Unknown stays unsaid.
  */
 export function liveStatusParts(session: SessionInfo, now: number): string[] {
   if (!session.running) {
@@ -46,7 +46,11 @@ export function liveStatusParts(session: SessionInfo, now: number): string[] {
   const known = knownProgram(session);
   if (known) parts.push(known);
   else if (session.process && session.process !== commandWord(session.running)) parts.push(`process ${session.process}`);
-  if (session.attentionSince !== undefined) parts.push(`needs attention ${formatAge(now - session.attentionSince)}`);
+  // The service's input watch is the one source: confirmed or likely, never re-guessed here.
+  if (session.inputSince !== undefined) {
+    parts.push(`${session.inputConfidence === 'likely' ? 'probably waiting for input' : 'waiting for input'} ${formatAge(Math.max(0, now - session.inputSince))}`);
+    if (session.inputPrompt) parts.push(`“${session.inputPrompt.replace(/\s+/gu, ' ').slice(0, 40)}”`);
+  } else if (session.attentionSince !== undefined) parts.push(`needs attention ${formatAge(now - session.attentionSince)}`);
   else if (session.lastOutputAt !== undefined) {
     const quietFor = now - session.lastOutputAt;
     parts.push(quietFor < ACTIVE_OUTPUT_MS ? 'active' : `quiet ${formatAge(quietFor)}`);

@@ -1,5 +1,36 @@
 # Fish keystroke loss after `read`
 
+## Fish 3.7 input ownership (2026-10-11)
+
+The published queue head `7fb6b5a` fails both Fish read tests on Ubuntu 24.04 / Fish 3.7.0:
+`tests/inputAwarenessLive.test.ts` (read handover) and `tests/typingAfterRead.test.ts`. Reproduced in a disposable
+Linux arm64 VM with Node 26.10.0, independently of the Ubuntu amd64 Actions run `38071796100`. The answer remains
+in NMSh's composer or queue while Fish's reader waits. This is a routing bug, not the Fish 4 type-ahead limit below.
+
+Fish 3.7's `__fish_config_interactive.fish` explicitly does not enable bracketed paste in `read`; its line editor
+therefore does not supply the terminal-mode signal the frontend previously used for handover. Process probes and
+an open-line heuristic cannot reliably recognize a reader that redraws its prompt. `answersByDefault` was not the
+cause: it correctly keeps ordinary commands in the queue when no input request is known.
+
+The adapter now uses Fish's own `fish_read` event (also emitted for a read inside a function) to send an authenticated
+private `reader` marker. The session broadcasts terminal ownership before forwarding the prompt; the frontend
+hands over the terminal until Fish returns to its command prompt. This also covers hidden reads and `read; cat`
+without enabling extra terminal modes. Detached sessions retain this ownership for reattach. The marker never
+enters raw program output, transcript content or clipboard text.
+
+Regressions cover authentication and split markers, ownership lifecycle and serialization, real hidden-reader
+detach/reattach, and input after completion. The typing test builds a unique prompt for each iteration: a historical
+redraw of an earlier prompt must not authorize sending an answer to the current command.
+
+Separate CI findings: multiline submission must use Fish's `begin`/`end`, rather than the brace group accepted by
+Fish 4 and POSIX shells. The Ctrl+C survivor fixture must wait until its trap is installed, use a shell supporting
+`read -t` (Ubuntu `/bin/sh` is dash), and remain alive until the assertion releases it. These corrections preserve
+the same-shell queue and test actual routing rather than timing a fixed sleep.
+
+Physical Ghostty/Terminal.app interaction remains unvalidated. The following investigation concerns Fish 4 only.
+
+## Historical Fish 4 investigation
+
 Investigated on 2026-10-10 with fish 4.9.3, zsh 5.9 and Bash 5.3 on macOS 27.
 
 ## Symptom

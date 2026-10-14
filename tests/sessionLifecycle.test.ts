@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {existsSync, writeFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {fullscreenFixture} from './helpers/fullscreenFixture.js';
+import {fullscreenFailure} from './helpers/fullscreenFailure.js';
 import {SocketSessionClient} from '../src/session/SocketSessionClient.js';
 import {attachSession} from '../src/session/connectSession.js';
 import {socketPathFor} from '../src/session/runtimeDir.js';
@@ -85,10 +87,16 @@ test('SIGHUP detaches; Ctrl+D ends the session; /zsh detaches it for the ordinar
     await until(async () => (await sandbox.sessions()).length === 0, 15000, 'Ctrl+D to end the session');
     await until(() => !processAlive(pid), 15000, 'zsh to exit');
 
+    const release = join(sandbox.home, 'third-startup-release');
+    writeFileSync(join(sandbox.home, '.zshrc'), 'until test -f "$HOME/third-startup-release"; do sleep 0.05; done\n');
     const third = sandbox.launch();
     await third.waitFor(/❯/);
     const {pid: thirdPid} = await onlySession(sandbox);
-    // The composer appears before the shell's first prompt; /zsh is refused while it starts, so wait for readiness.
+    assert.equal((await sandbox.sessions()).find(session => session.pid === thirdPid)?.lastExit, undefined,
+      'a visible composer does not prove the gated shell is ready');
+    writeFileSync(release, '');
+    await until(async () => (await sandbox.sessions()).some(session => session.pid === thirdPid && session.lastExit !== undefined),
+      20_000, 'the third shell authenticated prompt');
     await third.run('echo READY', /READY/);
     third.pty.write('/zsh\r');
     // A deliberate handoff keeps the session: detached, its shell still alive, waiting for `nmsh`.
@@ -202,24 +210,24 @@ test('reattach into a fullscreen app resumes passthrough and makes it repaint at
   try {
     const fixture = join(sandbox.home, 'fullscreen.zsh');
     const stop = join(sandbox.home, 'stop');
-    writeFileSync(fixture, [
-      `printf '\\e[?1049h'`,
-      `trap 'printf "\\e[H\\e[2JREDRAW %s\\n" "$(stty size)"' WINCH`,
-      `printf 'TRAP-READY\\n'`,
-      `while [ ! -f ${stop} ]; do sleep 0.05; done`,
-      `printf '\\e[?1049l'`,
-    ].join('\n'));
+    writeFileSync(fixture, fullscreenFixture(stop));
     const first = sandbox.launch();
     await first.waitFor(/❯/);
     first.pty.write(`zsh ${fixture}\r`);
     // Detach only once the fixture's WINCH trap is installed, or the reattach resize can arrive before it.
     await first.waitFor(/TRAP-READY/);
-    const {id} = (await sandbox.sessions())[0]!;
+    const {id, pid} = (await sandbox.sessions())[0]!;
     first.pty.kill('SIGKILL');
     await waitState(sandbox, 'detached');
 
     const second = sandbox.launch(['--attach', id], {cols: 90, rows: 33});
-    await second.waitFor(/REDRAW 33 90/);
+    try {
+      await second.waitFor(/REDRAW 33 90/);
+    } catch (error) {
+      const observation = await fullscreenFailure(sandbox, id, pid, second);
+      if (error instanceof Error) error.message += `; fullscreen failure=${JSON.stringify(observation)}`;
+      throw error;
+    }
     writeFileSync(stop, '');
     await second.waitFor(/❯/, second.output.lastIndexOf('REDRAW'));
     await second.run('echo AFTER-FULLSCREEN', /AFTER-FULLSCREEN/);
@@ -233,9 +241,14 @@ test('vim and less survive detach and repaint after reattach', async () => {
   try {
     writeFileSync(join(sandbox.home, 'notes.txt'), 'VIM-FIXTURE-LINE\n');
     writeFileSync(join(sandbox.home, 'pager.txt'), Array.from({length: 200}, (_, i) => `LESS-LINE-${i}`).join('\n'));
-    for (const [command, visible, quit] of [
-      ['vim -u NONE -N notes.txt', /VIM-FIXTURE-LINE/, '\u001b:q!\r'],
-      ['less pager.txt', /LESS-LINE-0/, 'q'],
+    const attachmentSize = {cols: 110, rows: 35};
+    const pagerPrompt = 'NMSH-PAGER-READY';
+    // First text can come from the attach nudge. Wait for the full-size frame
+    // before quitting: native less can discard a key when WINCH interrupts its read.
+    const pagerFrame = new RegExp(`LESS-LINE-0[\\s\\S]*LESS-LINE-${attachmentSize.rows - 2}[\\r\\n]+${pagerPrompt}`);
+    for (const [command, visible, quit, repaint] of [
+      ['vim -u NONE -N notes.txt', /VIM-FIXTURE-LINE/, '\u001b:q!\r', /VIM-FIXTURE-LINE/],
+      [`less -P${pagerPrompt} pager.txt`, /LESS-LINE-0/, 'q', pagerFrame],
     ] as const) {
       const first = sandbox.launch();
       await first.waitFor(/❯/);
@@ -243,13 +256,21 @@ test('vim and less survive detach and repaint after reattach', async () => {
       const mark = first.mark;
       first.pty.write(`${command}\r`);
       await first.waitFor(visible, mark);
-      const {id} = (await sandbox.sessions())[0]!;
+      const {id, pid} = (await sandbox.sessions())[0]!;
       first.pty.kill('SIGKILL');
       await waitState(sandbox, 'detached');
-      const second = sandbox.launch(['--attach', id], {cols: 110, rows: 35});
-      await second.waitFor(visible);
-      second.pty.write(quit);
-      await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15000, `${command} to quit`);
+      const second = sandbox.launch(['--attach', id], attachmentSize);
+      let stage = 'reattach repaint';
+      try {
+        await second.waitFor(repaint);
+        stage = 'quit completion';
+        second.pty.write(quit);
+        await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15000, `${command} to quit`);
+      } catch (error) {
+        const observation = await fullscreenFailure(sandbox, id, pid, second);
+        if (error instanceof Error) error.message += `; stage=${stage}; fullscreen failure=${JSON.stringify(observation)}; output tail=${JSON.stringify(strip(second.output).slice(-512))}`;
+        throw error;
+      }
       await second.run('echo QUIT-OK', /QUIT-OK/);
       second.pty.write('exit\r');
       await second.waitExit();

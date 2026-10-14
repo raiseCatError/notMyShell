@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
 import {existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
-import {join} from 'node:path';
+import {dirname, join} from 'node:path';
 import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptConfiguration} from '../src/prompt/configuration.js';
 import {addTheme, setActiveTheme} from '../src/appearance/themeLibraryActions.js';
 import {assetRef, builtinTheme} from '../src/appearance/themeRefs.js';
@@ -480,9 +480,10 @@ test('reports: factual statuses; bat needs a reviewed setup; delta is detected o
 
 test('reloadTmux reaches only the tmux server of its own environment (an isolated test server here), never the person\'s', async t => {
   const box = sandbox();
-  const tmux = resolveCommand('tmux', box.env.PATH);
+  const tmux = resolveCommand('tmux', process.env.PATH);
   if (!tmux) { box.done(); t.skip('tmux is not installed'); return; }
-  const env = {...box.env, TMUX: ''};
+  // Resolve the installed tool portably, but retain the isolated socket directory.
+  const env = {...box.env, PATH: dirname(tmux), TMUX: ''};
   const run = (...args: string[]) => execFileSync(tmux, ['-f', '/dev/null', ...args], {env: {...env, PATH: '/usr/bin:/bin'}, encoding: 'utf8', timeout: 5000});
   try {
     run('new-session', '-d', '-s', 'nmsh-bridge-test');

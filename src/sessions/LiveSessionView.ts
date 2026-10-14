@@ -27,7 +27,9 @@ export function liveSessionRows(sessions: readonly SessionInfo[], currentId: str
   return [...sessions].sort((a, b) => a.createdAt - b.createdAt).map((session, index) => {
     const state = liveRowState(session, now);
     const agent = liveRowAgent(session);
-    const what = session.running ? `running ${sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
+    // The question comes first: it is what the person needs, and long command lines are cut at the row's end.
+    const prompt = session.running && session.inputPrompt ? `“${sessionText(session.inputPrompt).slice(0, 48)}” · ` : '';
+    const what = session.running ? `${prompt}running ${sessionText(session.running.replace(/\s+/gu, ' ')).slice(0, 48)} · ${formatAge(now - (session.runningSince ?? now))}`
       : `idle${session.idleSince ? ` ${formatAge(now - session.idleSince)}` : ''}`;
     const attachment = session.id === currentId ? 'this window' : session.state === 'attached' ? 'open in another window' : 'detached';
     const notice = session.notice ? ` · notice: ${session.notice.kind}` : '';
