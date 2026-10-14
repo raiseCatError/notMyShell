@@ -59,7 +59,29 @@ export class TaskOutput {
 
   /** The unfinished last line as it would be shown now (a progress line shows its latest state). */
   partial(): string {
-    return clean(this.partialRaw, this.limits.lineLength ?? DEFAULT_LINE_LENGTH);
+    return this.mirroredPartial ?? clean(this.partialRaw, this.limits.lineLength ?? DEFAULT_LINE_LENGTH);
+  }
+
+  /** The owner's unfinished line, when this output mirrors a task that runs elsewhere (the session service). */
+  private mirroredPartial?: string;
+
+  /**
+   * Mirror the owner's output: lines keep the owner's seq (a line already held is not taken twice), are cleaned again
+   * here, and the same limits apply. Earlier lines that were never received count as dropped.
+   */
+  receive(update: {lines: readonly OutputLine[]; partial: string; dropped: number; received: number}): void {
+    const length = this.limits.lineLength ?? DEFAULT_LINE_LENGTH;
+    for (const line of update.lines) {
+      if (line.seq <= this.lastSeq) continue;
+      const text = clean(line.text, length);
+      this.kept.push({seq: line.seq, text});
+      this.keptBytes += Buffer.byteLength(text) + 1;
+      this.nextSeq = line.seq + 1;
+      this.bound();
+    }
+    this.mirroredPartial = clean(update.partial, length);
+    this.received = Math.max(this.received, update.received);
+    this.dropped = Math.max(this.dropped, update.dropped, (this.kept[0]?.seq ?? this.nextSeq) - 1);
   }
 
   /** Flush the unfinished line, when the task ends. */
@@ -88,6 +110,10 @@ export class TaskOutput {
       this.keptBytes += Buffer.byteLength(piece) + 1;
       if (text.length <= length) break;
     }
+    this.bound();
+  }
+
+  private bound(): void {
     while (this.kept.length > this.limits.lines || (this.keptBytes > this.limits.bytes && this.kept.length > 1)) {
       const removed = this.kept.shift()!;
       this.keptBytes -= Buffer.byteLength(removed.text) + 1;

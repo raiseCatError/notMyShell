@@ -24,7 +24,7 @@ export const MAX_FRAME_BYTES = 8 * 1024 * 1024;
  * talking to an older service (same protocol version, still running its live
  * sessions) degrades factually instead of failing later.
  */
-export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions'] as const;
+export const SERVICE_FEATURES = ['shell-switch', 'shell-backends', 'notices', 'input-state', 'queue', 'queue-conditions', 'background-tasks'] as const;
 export type ServiceFeature = typeof SERVICE_FEATURES[number];
 
 /**
@@ -32,7 +32,7 @@ export type ServiceFeature = typeof SERVICE_FEATURES[number];
  * values (the input-state message, the "input" notice kind) only to a frontend that listed it, so an older frontend
  * attached to a newer service never receives a frame it would reject.
  */
-export const CLIENT_FEATURES = ['input-state', 'queue'] as const;
+export const CLIENT_FEATURES = ['input-state', 'queue', 'background-tasks'] as const;
 export type ClientFeature = typeof CLIENT_FEATURES[number];
 
 export function parseClientFeatures(text: string | undefined): Set<ClientFeature> {
@@ -66,6 +66,8 @@ export type ClientMessage =
   | {type: 'rename'; sessionId: string; name: string}
   /** One change to this session's command queue (QueueOp as JSON); only from frontends that listed 'queue'. */
   | {type: 'queue'; change: string}
+  /** One background task request (TaskOp as JSON); only from frontends that listed 'background-tasks'. */
+  | {type: 'task'; change: string}
   | {type: 'terminate'};
 
 export type ServerMessage =
@@ -106,6 +108,10 @@ export type ServerMessage =
   /** The session's command queue (QueueState as JSON) and what just happened to it. */
   | {type: 'queue-state'; state: string; dispatched?: number; refused?: string; dropped?: number}
   | {type: 'input-state'; terminalOwner?: number; since?: number; confidence?: string; mode?: string; prompt?: string; program?: string; waitedMs: number; waits: number}
+  /** This session's background tasks (TaskRecord[] as JSON), on attach and whenever one changes. */
+  | {type: 'tasks'; state: string}
+  /** New output of one task (TaskUpdate as JSON). */
+  | {type: 'task-output'; taskId: string; update: string}
   /** End of the backlog sent after attach. */
   | {type: 'replayed'; truncatedBytes: number}
   | {type: 'killed'; sessionId: string}
@@ -188,6 +194,9 @@ const SHAPES: Record<string, Shape> = {
   dismiss: {sessionId: 'string'},
   queue: {change: 'string'},
   'queue-state': {state: 'string', dispatched: 'int?', refused: 'string?', dropped: 'int?'},
+  task: {change: 'string'},
+  tasks: {state: 'string'},
+  'task-output': {taskId: 'string', update: 'string'},
   terminate: {},
   welcome: {version: 'int', service: 'string', startupSafety: 'int?', features: 'string?', build: 'string?'},
   error: {code: 'string', message: 'string'},

@@ -1,4 +1,6 @@
 import {QueueDispatcher} from './QueueDispatcher.js';
+import {SessionTasks, type TaskListener} from '../backgroundTasks/sessionTasks.js';
+import {taskOpFrom} from '../backgroundTasks/protocol.js';
 import {assignSignature} from './signatures.js';
 import {randomUUID} from 'node:crypto';
 import {chmodSync, lstatSync, unlinkSync} from 'node:fs';
@@ -63,6 +65,10 @@ interface ManagedSession {
   knowledge?: string;
   /** This session's command queue; it runs only in this session's shell (see QueueDispatcher). */
   queue: QueueDispatcher;
+  /** This session's background tasks: beside its shell, in their own terminals, ended with the session. */
+  tasks: SessionTasks;
+  /** The attached frontend's task listener, when it listed 'background-tasks'. */
+  taskListener?: TaskListener;
 }
 
 export {AlternateScreenTracker} from './TerminalModes.js';
@@ -228,6 +234,7 @@ export class SessionService {
               owned = this.create(message.cwd, message.env, message.columns, message.rows, send, backend);
               owned.controllerFeatures = features;
               send({type: 'created', sessionId: owned.record.id, pid: owned.record.pid, shell: owned.backend});
+              this.attachTasks(owned, send, features);
             } catch (error) {
               send({type: 'error', code: 'spawn', message: error instanceof Error ? error.message : String(error)});
             }
@@ -258,6 +265,8 @@ export class SessionService {
             // The live input state is not a stream event: a reattaching frontend gets it now, after the replay.
             if (features.has('input-state') && info.running && session.input) send(inputStateMessage(session.input));
             if (features.has('queue')) send(queueStateMessage(session.queue.state, {}));
+            // Background tasks kept running while detached: their list and recent output, never started again.
+            this.attachTasks(session, send, features);
             this.redraw(session, message.columns, message.rows);
             break;
           }
@@ -277,6 +286,16 @@ export class SessionService {
             this.endedNotices.dismiss(message.sessionId);
             send({type: 'dismissed', sessionId: message.sessionId});
             break;
+          case 'task': {
+            const change = taskOpFrom(message.change);
+            if (!owned || !features.has('background-tasks')) send({type: 'error', code: 'state', message: 'no background tasks for this connection'});
+            else if (!change) send({type: 'error', code: 'task', message: 'not a background task request'});
+            else {
+              const refused = owned.tasks.request(change);
+              if (refused) send({type: 'error', code: 'task', message: refused});
+            }
+            break;
+          }
           case 'queue': {
             const change = queueOpFrom(message.change);
             if (!owned || !features.has('queue')) send({type: 'error', code: 'state', message: 'no session queue for this connection'});
@@ -349,8 +368,21 @@ export class SessionService {
     session.record.state = 'attached';
   }
 
+  /** The attached frontend hears about this session's tasks only when it understands them. */
+  private attachTasks(session: ManagedSession, send: Send, features: ReadonlySet<ClientFeature>): void {
+    if (!features.has('background-tasks')) return;
+    const listener: TaskListener = {
+      tasks: records => { if (session.controller === send) send({type: 'tasks', state: JSON.stringify(records)}); },
+      output: (taskId, update) => { if (session.controller === send) send({type: 'task-output', taskId, update: JSON.stringify(update)}); },
+    };
+    session.taskListener = listener;
+    session.tasks.attach(listener);
+  }
+
   private detach(session: ManagedSession, send: Send): void {
     if (session.controller !== send) return;
+    session.tasks.detach(session.taskListener);
+    session.taskListener = undefined;
     session.controller = undefined;
     session.controllerFeatures = undefined;
     session.record.state = 'detached';
@@ -421,7 +453,10 @@ export class SessionService {
       state: 'attached', protocolVersion: PROTOCOL_VERSION, signature};
     const session: ManagedSession = {record, shell, backend, env, size: {columns, rows}, controller: send, idleSince: Date.now(), screen: new AlternateScreenTracker(), resizes: 0,
       seq: 0, backlog: new StreamBacklog(spoolPathFor(this.options.runtimeDir, record.id), this.options.backlogLimits),
-      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id), queue: new QueueDispatcher(shell)};
+      evidence: new SessionEvidence(), notices: new SessionNoticeTracker(record.id), queue: new QueueDispatcher(shell),
+      tasks: undefined as unknown as SessionTasks};
+    // The session's own shell runs each task's command; the launch environment is used for the spawn only.
+    session.tasks = new SessionTasks({shell: () => shellAdapter(session.backend).resolveExecutable(session.env), env: () => session.env});
     session.queue.on('state', (state, event) => {
       if (session.controllerFeatures?.has('queue')) session.controller?.(queueStateMessage(state, event));
     });
@@ -472,6 +507,8 @@ export class SessionService {
     });
     shell.on('exit', event => {
       session.queue.onShellExit();
+      // The session ends: so do its background tasks (interrupt, terminate, then kill what remains).
+      void session.tasks.shutdown();
       this.sessions.delete(record.id);
       if (session.inputNoticeTimer) { clearTimeout(session.inputNoticeTimer); session.inputNoticeTimer = undefined; }
       // Ending with no window attached is news; with one attached, that window saw it.
@@ -536,6 +573,7 @@ export class SessionService {
     this.closed = true;
     if (this.idleTimer) clearTimeout(this.idleTimer);
     for (const session of this.sessions.values()) session.shell.kill();
+    await Promise.all([...this.sessions.values()].map(session => session.tasks.shutdown()));
     this.sessions.clear();
     for (const socket of this.connections) socket.destroy();
     // Closing the listening server unlinks its socket path.
