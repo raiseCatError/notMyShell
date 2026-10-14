@@ -35,7 +35,9 @@ export function createCopyPicker(recent: readonly CompletedCommand[], includeSta
   return {records: recent.slice(0, COPY_MAX_RECORDS), query: '', searching: false, cursor: 0, chosen: new Set(), includeStatus, preview: true};
 }
 
-export type CopyPickerAction = {kind: 'close'} | {kind: 'copy'; records: CompletedCommand[]; includeStatus: boolean};
+export type CopyPickerAction = {kind: 'close'} | {kind: 'copy'; records: CompletedCommand[]; includeStatus: boolean}
+  /** r: the same selection as a report, through its review. */
+  | {kind: 'report'; records: CompletedCommand[]};
 
 /** The rows the search leaves, newest first, each with its /copy number. */
 export function copyPickerRows(state: CopyPickerState): Array<{record: CompletedCommand; number: number}> {
@@ -92,6 +94,7 @@ export function copyPickerKey(state: CopyPickerState, key: Key): CopyPickerActio
     return undefined;
   }
   if (key.kind === 'enter') return {kind: 'copy', records: copyPickerSelection(state), includeStatus: state.includeStatus};
+  if (key.kind === 'text' && key.value === 'r') return {kind: 'report', records: copyPickerSelection(state)};
   return undefined;
 }
 
@@ -120,7 +123,7 @@ export function renderCopyPicker(state: CopyPickerState, columns: number, height
   else if (!count) out.push(`  ${secondary}No output matches "${truncateText(state.query, Math.max(4, width - 24))}".${reset}`);
   const controls = renderControlRows(state.searching
     ? [['type', 'search'], ['↑↓', 'move'], ['Enter', 'done'], ['Esc', 'done']]
-    : [['↑↓', 'move'], ['Space', 'select'], ['a', 'all'], ['/', 'search'], ['s', 'status'], ['p', 'preview'], ['Enter', 'copy'], ['Esc', 'cancel']], width);
+    : [['↑↓', 'move'], ['Space', 'select'], ['a', 'all'], ['/', 'search'], ['s', 'status'], ['p', 'preview'], ['Enter', 'copy'], ['r', 'report'], ['Esc', 'cancel']], width);
   const focused = rows[state.cursor]?.record;
   const previewLines = state.preview && focused ? focused.output.split('\n').slice(0, 4) : [];
   const previewRoom = previewLines.length && height - out.length - controls.length >= 12 ? previewLines.length + 2 : 0;
