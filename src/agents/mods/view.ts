@@ -6,8 +6,8 @@ import {groupedWindow, groupLines} from '../../ui/groupedList.js';
 import {foreground, UI_COLORS} from '../../ui/palette.js';
 import {getCurrentGlyphMode, GLYPHS} from '../../ui/glyphs.js';
 import {harness} from '../harnesses.js';
-import {MOD_TABS, type ModsController} from './controller.js';
-import type {ModEntry} from './model.js';
+import {MOD_TABS, type ModInspection, type ModsController} from './controller.js';
+import type {ModComponents, ModEntry} from './model.js';
 
 /**
  * The /mods (/extensions) inventory as a native NMSh menu: the shared tab strip, a search and provider row,
@@ -110,7 +110,7 @@ export function confirmWords(entry: ModEntry, enable: boolean): string {
   return `${enable ? 'Enable' : 'Disable'} ${clean(entry.name, 80)}${entry.profileId ? ` for ${clean(entry.profileId, 40)}` : ''} at ${entry.claude?.scope ?? 'its'} scope? Enter confirms · Esc cancels`;
 }
 
-function detail(entry: ModEntry, columns: number, inspection?: import('./controller.js').ModInspection): string[] {
+function detail(entry: ModEntry, columns: number, inspection?: ModInspection): string[] {
   const c = color();
   const width = Math.max(1, columns - 2 - FIELD);
   const field = (label: string, value: string, style = c.secondary) => wrapCells(value, width).map((line, index) =>
@@ -154,7 +154,7 @@ function detail(entry: ModEntry, columns: number, inspection?: import('./control
   ];
 }
 
-function componentWords(components: import('./model.js').ModComponents): string {
+function componentWords(components: ModComponents): string {
   const parts = [components.mod ? 'mod hooks' : '', components.skills ? `${components.skills} skill${components.skills === 1 ? '' : 's'}` : '', components.agents ? `${components.agents} agent${components.agents === 1 ? '' : 's'}` : '',
     components.commands ? `${components.commands} command${components.commands === 1 ? '' : 's'}` : '', components.hookEvents ? `settings hooks on ${components.hookEvents} event${components.hookEvents === 1 ? '' : 's'}` : '',
     components.mcp ? 'MCP server' : '', components.lsp ? 'LSP server' : ''].filter(Boolean);

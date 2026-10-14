@@ -17,16 +17,33 @@ const LOADERS: ReadonlyArray<[RegExp, string]> = [
   [/['"]node:vm['"]|['"]vm['"]/u, 'node:vm'], [/worker_threads/u, 'worker threads'], [/WebAssembly\.(?:instantiate|compile|Module|Instance)/u, 'WebAssembly'],
 ];
 
+/** Every argv the mods code may give Claude's CLI, verbatim. */
+const PROVIDER_CLI: Readonly<Record<string, readonly string[]>> = {
+  'claudePlugins.ts': [
+    "['plugin', 'list', '--json']",
+    "['plugin', enable ? 'enable' : 'disable', claude.pluginId, '--scope', claude.scope, '--json']",
+    "['plugin', 'details', claude.pluginId]",
+    "['plugin', 'validate', entry.reference]",
+  ],
+};
+
 test('no code-loading path exists under src/agents/mods', () => {
   const files = readdirSync(MODS).filter(name => name.endsWith('.ts'));
   assert.ok(files.length > 0);
   for (const file of files) {
     const source = readFileSync(join(MODS, file), 'utf8');
     for (const [pattern, name] of LOADERS) assert.doesNotMatch(source, pattern, `${file} must not use ${name} until #341's isolation gate passes`);
-    // The one process use is the provider's own plugin listing: inventory of provider-native code, never running it in NMSh.
+    // The only process use is Claude's own plugin CLI (list, details, validate, and enable/disable at the installed
+    // scope, #347): it inventories and manages provider-native code inside the provider; nothing here runs mod code in
+    // NMSh. Each argv form is reviewed; any other call, a shell, or another process API fails this gate.
     if (/child_process/u.test(source)) {
-      assert.equal(file, 'claudeDiscovery.ts', `${file} spawns processes`);
-      assert.match(source, /\['plugin', 'list', '--json'\]/u);
+      assert.ok(Object.hasOwn(PROVIDER_CLI, file), `${file} spawns processes`);
+      const imports = [...source.matchAll(/import\s*\{([^}]*)\}\s*from\s*'node:child_process'/gu)].map(match => match[1]!.trim());
+      assert.deepEqual(imports, ['execFile'], `${file} uses only execFile`);
+      assert.doesNotMatch(source, /\bshell\s*:\s*true/u, `${file} never uses a shell`);
+      const calls = [...source.matchAll(/\[\s*'plugin'[^\]]*\]/gu)].map(match => match[0]);
+      assert.ok(calls.length > 0);
+      for (const call of calls) assert.ok(PROVIDER_CLI[file]!.includes(call), `${file}: ${call} is not a reviewed provider CLI call`);
     }
   }
 });
