@@ -36,8 +36,10 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
 
 const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
-  {name: '/copy', insertion: '/copy', description: 'Copy latest command output'},
-  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output'},
+  {name: '/copy', insertion: '/copy', description: 'Copy latest command output (or choose, per Settings → Copy)'},
+  {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
+  {name: '/copy settings', insertion: '/copy settings', description: 'Quick Copy or Interactive Picker, and whether copies include completion status'},
+  {name: '/cp', insertion: '/cp', description: 'Same as /copy (every form: /cp 2, /cp -3, /cp ui, /cp latest, --status)'},
   {name: '/appearance', insertion: '/appearance', description: 'Configure terminal appearance'},
   {name: '/motion', insertion: '/motion', description: 'Motion: context transitions, command launch, completion highlight and effects (same as /appearance → Motion)'},
   {name: '/prompt', insertion: '/prompt', description: 'Configure prompt provider and composer layout'},
@@ -134,7 +136,9 @@ export const slashCommands: readonly SlashCommand[] = RAW_COMMANDS.map(command =
 
 export type ParsedSlashCommand =
   | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
-  | {kind: 'copy'; index: number}
+  /** `args` is everything after /copy, parsed by parseCopyArgs (so a mistake gets a precise answer). */
+  | {kind: 'copy'; args: string}
+  | {kind: 'copySettings'}
   | {kind: 'appearance'}
   | {kind: 'motion'}
   | {kind: 'prompt'}
@@ -209,8 +213,10 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
-  const match = /^\/copy(?:\s+([1-9]\d*))?\s*$/u.exec(input);
-  if (match) return {kind: 'copy', index: Number(match[1] ?? '1')};
+  // /cp is /copy: one parser, one handler, every form.
+  if (/^\/(?:copy|cp)\s+settings\s*$/u.test(input)) return {kind: 'copySettings'};
+  const copy = /^\/(?:copy|cp)(?:\s+(.*))?$/su.exec(input);
+  if (copy) return {kind: 'copy', args: copy[1] ?? ''};
   if (/^\/appearance\s*$/u.test(input)) return {kind: 'appearance'};
   if (/^\/motion\s*$/u.test(input)) return {kind: 'motion'};
   if (/^\/prompt\s*$/u.test(input)) return {kind: 'prompt'};

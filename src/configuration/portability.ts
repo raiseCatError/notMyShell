@@ -25,6 +25,7 @@ export const PORTABLE_CATEGORIES = {
   chrome: ['uiChrome', 'glyphStyle', 'cursor'],
   syntax: ['syntax'],
   transcript: ['transcript', 'outputFolding'],
+  copy: ['copy'],
   layout: ['composerLayout', 'composerPosition', 'transcriptPresentation'],
   suggestions: ['suggestions', 'suggestionsOnEmpty'],
   providers: ['history', 'picker', 'navigation', 'welcome'],

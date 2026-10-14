@@ -13,6 +13,7 @@ import {CATPPUCCIN_ACCENTS, CATPPUCCIN_ACCENT_LABELS, normalizeCatppuccinAccent}
 import {availabilityOf, availableValues, currentCursorHost, unavailableReason, type CursorFeature} from '../cursor/backends.js';
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
+import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
 import {librarySummary} from '../appearance/themeLibrary.js';
@@ -376,6 +377,13 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     get: config => config.transcriptPresentation, set: (config, transcriptPresentation) => ({...config, transcriptPresentation})}),
   {id: 'composerDividers', label: 'Composer dividers', description: 'The horizontal lines around the composer; Off gives their rows back. Transcript dividers and prompt separators are separate', category: 'Layout',
     control: 'boolean', get: config => config.composerDividers, set: (config, composerDividers) => ({...config, composerDividers})},
+  enumRow({id: 'copyMode', label: '/copy without a number', description: 'Quick Copy copies the latest command output at once; Interactive Picker lists recent outputs to choose one or several. /copy N, -N, A-B and 1,3,5 always copy directly',
+    category: 'Copy', values: COPY_MODES, labels: COPY_MODES.map(mode => COPY_MODE_LABELS[mode]),
+    get: config => config.copy.mode, set: (config, mode) => ({...config, copy: {...config.copy, mode}})}),
+  {id: 'copyIncludeStatus', label: 'Include completion status', description: 'After each copied output, add the status NMSh showed when it finished (Completed or failed, exit code, time, waits for input). Off copies only the output. --status or --no-status overrides it once',
+    category: 'Copy', control: 'boolean', get: config => config.copy.includeStatus, set: (config, includeStatus) => ({...config, copy: {...config.copy, includeStatus}})},
+  {id: 'copyAutoExpand', label: 'Auto-expand copied output', description: 'After a successful copy, unfold the blocks whose output was copied. Off leaves folding as it was; what is copied is the same either way',
+    category: 'Copy', control: 'boolean', get: config => config.copy.autoExpand, set: (config, autoExpand) => ({...config, copy: {...config.copy, autoExpand}})},
   enumRow({id: 'outputFolding', level: 'advanced', label: 'Output folding', description: 'Off, Smart (long repetitive successes), or Always (every long block)', category: 'Transcript',
     values: OUTPUT_FOLDING_MODES, labels: ['Off', 'Smart', 'Always'],
     get: config => config.outputFolding, set: (config, outputFolding) => ({...config, outputFolding})}),
@@ -604,7 +612,7 @@ export const CONFIG_GROUP_BY_CATEGORY: Readonly<Record<string, ConfigGroup>> = {
   General: 'General', Updates: 'General',
   Appearance: 'Appearance', Presentation: 'Appearance', 'Idle visuals': 'Appearance', 'Live activity': 'Appearance',
   Prompt: 'Prompt & Composer', Layout: 'Prompt & Composer', 'Status strip': 'Prompt & Composer',
-  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor',
+  Editor: 'Editor', Syntax: 'Editor', Suggestions: 'Editor', Copy: 'Editor',
   Cursor: 'Cursor & Motion', Motion: 'Cursor & Motion',
   Sessions: 'Sessions & Alerts', 'Command notifications': 'Sessions & Alerts',
   Tools: 'Shell & Providers', Welcome: 'Shell & Providers', History: 'Shell & Providers',

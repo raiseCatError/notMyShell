@@ -628,6 +628,8 @@ export interface PromptConfiguration {
   uiChrome: UiChromeSettings;
   /** Compact cross-session notices above the composer (other sessions finished, failed, ended...). */
   sessionNotices: boolean;
+  /** What /copy does without a selection, and whether copies include NMSh's completion status. */
+  copy: CopySettings;
   /** Named agent launch profiles (provider-specific, never credentials); see src/agents/sessions/manager.ts. */
   agentProfiles: AgentProfile[];
   /** Keep Ask questions and replies with the session transcript. Approved actions follow their own history rules either way. */
@@ -710,6 +712,27 @@ export interface PromptConfiguration {
   spacing: number;
 }
 
+/** Quick Copy: `/copy` copies the latest output at once. Interactive Picker: `/copy` opens a list to choose from. */
+export const COPY_MODES = ['quick', 'picker'] as const;
+export type CopyMode = typeof COPY_MODES[number];
+export const COPY_MODE_LABELS: Record<CopyMode, string> = {quick: 'Quick Copy', picker: 'Interactive Picker'};
+
+export interface CopySettings {
+  /** What `/copy` with no selection does. */
+  mode: CopyMode;
+  /** Append each command's completion status (Completed/failed/interrupted, time, exit code, waits) after its output. */
+  includeStatus: boolean;
+  /** After a successful copy, unfold the blocks whose output was copied. Never changes what is copied. */
+  autoExpand: boolean;
+}
+
+export const DEFAULT_COPY: CopySettings = {mode: 'quick', includeStatus: false, autoExpand: false};
+
+export function normalizeCopy(value: unknown): CopySettings {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return {mode: raw.mode === 'picker' ? 'picker' : 'quick', includeStatus: raw.includeStatus === true, autoExpand: raw.autoExpand === true};
+}
+
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   presentation: {...DEFAULT_TREATMENT_SETTINGS, customStops: []},
   motion: {...DEFAULT_MOTION},
@@ -741,6 +764,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   keepAwake: {...DEFAULT_KEEP_AWAKE_PRESENTATION},
   agentProfiles: [],
   sessionNotices: true,
+  copy: {...DEFAULT_COPY},
   askRecord: true,
   askPresentation: 'chat' as const,
   localUnderstanding: {mode: 'auto', ask: true, folding: false},
@@ -841,7 +865,7 @@ export function normalizePromptConfiguration(value: unknown): PromptConfiguratio
     : [];
   const promptSymbolCustom = normalizeCustomGlyph(value.promptSymbolCustom);
   const tooling = {motion: normalizeMotion(value.motion), pastePreview: (value.pastePreview === 'always' || value.pastePreview === 'off' ? value.pastePreview : 'smart') as 'smart' | 'always' | 'off', cursor: normalizeCursor(value.cursor), statusStrip: normalizeStatusStrip(value.statusStrip), keepAwake: normalizeKeepAwakePresentation(value.keepAwake), idleVisuals: normalizeIdleVisuals(value.idleVisuals), liveActivity: normalizeLiveActivity(value.liveActivity), uiChrome: normalizeUiChrome(value.uiChrome),
-    sessionNotices: value.sessionNotices !== false, agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
+    sessionNotices: value.sessionNotices !== false, copy: normalizeCopy(value.copy), agentProfiles: normalizeProfiles(value.agentProfiles), agentActivity: value.agentActivity !== false, commandQueue: value.commandQueue !== false, askRecord: value.askRecord !== false, askPresentation: value.askPresentation === 'normal' ? 'normal' as const : 'chat' as const,
     localUnderstanding: normalizeLocalUnderstanding(value.localUnderstanding),
     shellBackend: isShellId(value.shellBackend) ? value.shellBackend : 'zsh',
     openWith: OPEN_WITH_IDS.includes(value.openWith as OpenWith) ? value.openWith as OpenWith : 'auto',

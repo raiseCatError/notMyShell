@@ -249,25 +249,33 @@ test('service: shutting down the shell during a blocked startup leaves no sessio
 });
 
 for (const command of ['less', 'vim']) {
-  test(`frontend: early ${command} cannot steal ownership from SIGINT-ignoring startup`, async () => {
-    const sandbox = new LiveSandbox({}, {NMSH_STARTUP_NOTICE_MS: '1500'});
-    try {
-      const answered = join(sandbox.home, 'answered');
-      zshrc(sandbox, `if [[ -t 0 ]]; then trap '' INT; read -k1 "?Blocked> "; print "$REPLY" > ${answered}; fi\n`);
-      const app = sandbox.launch();
-      await app.waitFor(/❯/);
-      app.pty.write(`${command}\r`);
-      await app.waitFor(/Shell startup is still running/);
-      assert.equal(existsSync(answered), false);
-      const [{pid}] = await sandbox.sessions();
-      app.pty.write('q');
-      app.pty.write('\u0003');
-      assert.equal(await app.waitExit(), 130);
-      await until(async () => (await sandbox.sessions()).length === 0, 15000, 'aborted session removed');
-      await until(() => !processAlive(pid), 15000, 'shell exited');
-      assert.equal(existsSync(answered), false);
-    } finally { await sandbox.dispose(); }
-  });
+  for (const delayedJournal of [false, true]) {
+    test(`frontend: early ${command} cannot steal ownership from SIGINT-ignoring startup${delayedJournal ? ' with delayed journal' : ''}`, async () => {
+      const sandbox = new LiveSandbox({}, {
+        NMSH_STARTUP_NOTICE_MS: delayedJournal ? '300' : '1500',
+        NMSH_TEST_EARLY_COMMAND: command,
+        NMSH_TEST_DELAY_EARLY_JOURNAL: delayedJournal ? '1' : '0',
+      });
+      try {
+        const answered = join(sandbox.home, 'answered');
+        zshrc(sandbox, `if [[ -t 0 ]]; then trap '' INT; read -k1 "?Blocked> "; print "$REPLY" > ${answered}; fi\n`);
+        // Submit through the actual composer pipeline before the notice, even
+        // when journaling prevents a transient composer from ever being drawn.
+        const app = sandbox.launch([], {cols: 100, rows: 30}, {}, resolve('tests/fixtures/earlyStartupSubmission.ts'));
+        await app.waitFor(/TEST-EARLY-SUBMISSION/);
+        await app.waitFor(/Shell startup is still running/);
+        if (delayedJournal) assert.match(strip(app.output), /TEST-JOURNAL-WAIT/);
+        assert.equal(existsSync(answered), false);
+        const [{pid}] = await sandbox.sessions();
+        app.pty.write('q');
+        app.pty.write('\u0003');
+        assert.equal(await app.waitExit(), 130);
+        await until(async () => (await sandbox.sessions()).length === 0, 15000, 'aborted session removed');
+        await until(() => !processAlive(pid), 15000, 'shell exited');
+        assert.equal(existsSync(answered), false);
+      } finally { await sandbox.dispose(); }
+    });
+  }
 }
 
 import {TerminalApp} from '../src/app/TerminalApp.js';

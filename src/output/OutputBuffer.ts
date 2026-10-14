@@ -7,7 +7,7 @@ import {PresentationMode} from './PresentationMode.js';
 import {CommandClassifier} from './Classifier.js';
 import {TranscriptCut} from '../session/TerminalModes.js';
 import {type WelcomeCatFrame, type WelcomeSnapshot} from './Welcome.js';
-import {shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
+import {foldHighlights, foldWindow, shouldAutoFold, shouldFoldAsk, type OutputFoldingMode, type RecordedAskTurn} from './FoldPolicy.js';
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
@@ -328,7 +328,8 @@ export class OutputBuffer {
     this.classifier?.tick();
   }
 
-  complete(exitCode: number): CompletedCommand | undefined {
+  /** `holdOpen`: the person is reading the transcript right now (scrolled back, selecting); the block finishes expanded. */
+  complete(exitCode: number, options: {holdOpen?: boolean} = {}): CompletedCommand | undefined {
     const held = this.cut?.flush();
     if (held) this.parser.write(held);
     this.parser.ensureLineBoundary();
@@ -340,7 +341,7 @@ export class OutputBuffer {
     const output = this.commandOutput(this.active.outputStart, endId);
     // Activity-bearing parents keep their own disclosure; otherwise the fold
     // policy decides from the finished output. Presentation only.
-    const autoFolded = this.active.activities.length === 0
+    const autoFolded = this.active.activities.length === 0 && !options.holdOpen
       && shouldAutoFold(this.outputFolding, {command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
         ...(this.classifier ? {facts: this.classifier.streamFacts} : {})});
     const expanded = this.active.activities.length === 0 && !autoFolded;
@@ -449,6 +450,11 @@ export class OutputBuffer {
       expanded: !shouldFoldAsk(this.outputFolding, body), frontend: 'ask', ask: {version: 1, turns: body.map(turn => ({role: turn.role, text: turn.text}))}});
   }
 
+  /** Completed shell command records, newest first, as /copy numbers them (NMSh-owned blocks such as recorded Ask are skipped). */
+  recentShellCommands(): CompletedCommand[] {
+    return this.completed.filter(record => !record.frontend);
+  }
+
   /** The index-th newest shell command record (NMSh-owned blocks such as recorded Ask are skipped). */
   recentShell(index: number): CompletedCommand | undefined {
     return this.completed.filter(record => !record.frontend)[index - 1];
@@ -508,7 +514,27 @@ export class OutputBuffer {
       historicalContexts: this.historicalContexts,
       welcome: this.welcome,
       ownerOf: this.blockOwnership(),
+      foldHighlights: record => this.foldHighlightsFor(record),
     };
+  }
+
+  /** Important hidden lines of a collapsed block, by line id; computed on first draw and kept per block identity. */
+  private readonly highlightCache = new Map<string, readonly number[]>();
+  private foldHighlightsFor(record: CompletedCommand): readonly number[] {
+    if (record.endId === undefined) return [];
+    const key = `${record.startId}:${record.outputStartId}:${record.endId}`;
+    const cached = this.highlightCache.get(key);
+    if (cached) return cached;
+    const {head, tail} = foldWindow(record.endId - record.outputStartId);
+    const from = record.outputStartId + head;
+    const to = record.endId - tail;
+    // Only the command's own lines: NMSh's lines inside the block are never highlighted as its output.
+    const lines: string[] = [];
+    for (let id = from; id < to; id += 1) lines.push(this.lineTypes.get(id) !== 'metadata' ? this.parser.plainLineAt(id) ?? '' : '');
+    const picked = foldHighlights(lines, 0, lines.length).map(index => from + index);
+    if (this.highlightCache.size > 512) this.highlightCache.clear();
+    this.highlightCache.set(key, picked);
+    return picked;
   }
 
   /**
@@ -534,8 +560,8 @@ export class OutputBuffer {
   }
 
   /** The finished, aligned sticky row for a block. */
-  presentSticky(startId: number, width: number): string | undefined {
-    return this.presenter.presentSticky(this.view(), startId, width);
+  presentSticky(startId: number, width: number, trailing = '', trailingWidth = 0): string | undefined {
+    return this.presenter.presentSticky(this.view(), startId, width, trailing, trailingWidth);
   }
 
   /** One-row sticky rendering of a block's submitted command (see the presenter). */
@@ -548,6 +574,19 @@ export class OutputBuffer {
     if (cmd) {
       cmd.expanded = !cmd.expanded;
       this.userToggled.add(cmd.startId);
+    }
+  }
+
+  /**
+   * Unfold these blocks (by startId) as the person's own choice: hints never fold them again, and they can still be
+   * collapsed by hand. Unknown ids (a cleared or replaced block) are ignored; nothing else changes.
+   */
+  expandBlocks(startIds: readonly number[]): void {
+    for (const startId of startIds) {
+      const record = this.completed.find(item => item.startId === startId);
+      if (!record || record.expanded) continue;
+      record.expanded = true;
+      this.userToggled.add(startId);
     }
   }
 
