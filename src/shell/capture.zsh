@@ -36,9 +36,15 @@ setopt rcquotes
     else
         zpty -w z source $1
     fi
+    local initialization_output=''
     while (( EPOCHREALTIME < deadline )) && zpty -t z; do
         if zpty -r z line; then
-            [[ $line == ok* || $line == *$'\nok'* ]] && return
+            # Nonblocking reads can split the readiness line. Preserve its bytes
+            # within a fixed bound; never turn a trimmed line fragment into readiness.
+            (( ${#initialization_output} + ${#line} > 65536 )) && break
+            initialization_output+=$line
+            [[ $initialization_output == $'ok\r\n'* || $initialization_output == $'ok\n'* ||
+               $initialization_output == *$'\nok\r\n'* || $initialization_output == *$'\nok\n'* ]] && return
         else
             sleep 0.005
         fi
