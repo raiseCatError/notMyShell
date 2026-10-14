@@ -241,9 +241,14 @@ test('vim and less survive detach and repaint after reattach', async () => {
   try {
     writeFileSync(join(sandbox.home, 'notes.txt'), 'VIM-FIXTURE-LINE\n');
     writeFileSync(join(sandbox.home, 'pager.txt'), Array.from({length: 200}, (_, i) => `LESS-LINE-${i}`).join('\n'));
-    for (const [command, visible, quit] of [
-      ['vim -u NONE -N notes.txt', /VIM-FIXTURE-LINE/, '\u001b:q!\r'],
-      ['less pager.txt', /LESS-LINE-0/, 'q'],
+    const attachmentSize = {cols: 110, rows: 35};
+    const pagerPrompt = 'NMSH-PAGER-READY';
+    // First text can come from the attach nudge. Wait for the full-size frame
+    // before quitting: native less can discard a key when WINCH interrupts its read.
+    const pagerFrame = new RegExp(`LESS-LINE-0[\\s\\S]*LESS-LINE-${attachmentSize.rows - 2}[\\r\\n]+${pagerPrompt}`);
+    for (const [command, visible, quit, repaint] of [
+      ['vim -u NONE -N notes.txt', /VIM-FIXTURE-LINE/, '\u001b:q!\r', /VIM-FIXTURE-LINE/],
+      [`less -P${pagerPrompt} pager.txt`, /LESS-LINE-0/, 'q', pagerFrame],
     ] as const) {
       const first = sandbox.launch();
       await first.waitFor(/❯/);
@@ -251,13 +256,21 @@ test('vim and less survive detach and repaint after reattach', async () => {
       const mark = first.mark;
       first.pty.write(`${command}\r`);
       await first.waitFor(visible, mark);
-      const {id} = (await sandbox.sessions())[0]!;
+      const {id, pid} = (await sandbox.sessions())[0]!;
       first.pty.kill('SIGKILL');
       await waitState(sandbox, 'detached');
-      const second = sandbox.launch(['--attach', id], {cols: 110, rows: 35});
-      await second.waitFor(visible);
-      second.pty.write(quit);
-      await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15000, `${command} to quit`);
+      const second = sandbox.launch(['--attach', id], attachmentSize);
+      let stage = 'reattach repaint';
+      try {
+        await second.waitFor(repaint);
+        stage = 'quit completion';
+        second.pty.write(quit);
+        await until(async () => (await sandbox.sessions())[0]?.running === undefined, 15000, `${command} to quit`);
+      } catch (error) {
+        const observation = await fullscreenFailure(sandbox, id, pid, second);
+        if (error instanceof Error) error.message += `; stage=${stage}; fullscreen failure=${JSON.stringify(observation)}; output tail=${JSON.stringify(strip(second.output).slice(-512))}`;
+        throw error;
+      }
       await second.run('echo QUIT-OK', /QUIT-OK/);
       second.pty.write('exit\r');
       await second.waitExit();
