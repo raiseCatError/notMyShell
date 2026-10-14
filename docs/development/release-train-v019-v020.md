@@ -222,6 +222,67 @@ width once from `this.dimensions()` and resizes the PTY from that width.
   in-process; submission hook only for direct composer submissions; task bar via `withNoticeRows`; `/background`.
   Touches `SessionService.ts`/`SessionProtocol.ts`, also Codex-stabilized files: after the freeze only.
 
+### v0.20 integration and exact-head evidence ledger
+
+Branch `release/v0.20.0`, pinned to the unpublished v0.19 RC `9e85a910`; draft PR
+[#392](https://github.com/raiseCatError/notMyShell/pull/392) based on `release/v0.19.0` (retarget to `master` after v0.19
+publishes). Current head **`44f4c232df6dce98701c1913e79da306f448dbd1`**.
+
+| Commit | What |
+| --- | --- |
+| `9f8f1085` | merge `integration/v020-modules` `8f079208`; Ruby/PHP per #385 (#370's files, count 16), v0.19 "declaration never spans lines" test kept |
+| `7377af4f` | merge #347 `ebdb1ad9` (clean) |
+| `207de26b` | merge #349 `66b60f3c` (TranscriptPresenter: NO_COLOR restore + word wrap; changelog entry carried) |
+| `fe60bdc4` | workspace sidebar/panel wiring (`workspaceHost.ts`, `workspaceFrame.ts`), `/sidebar`, `/panel`, `/keys` |
+| `1c418629` | #379 portable-mod gate reconciled with #347 (exact reviewed argv allowlist; `view.ts` type imports) |
+| `960e925f` | background tasks: `SessionTasks`, protocol feature `background-tasks` |
+| `5d547246` | background tasks: frontend, task bar, `/background`, composer-only hook, suggestions default off |
+| `84730131` | related PRs in `/worktrees` from the last `/github` listing; `p` opens the PR |
+| `62c6fad0` | release metadata, `docs/testing/v020-physical-qa.md` |
+| `44f4c232` | `/keys` host profile moved out of TerminalApp (hostIntegration) |
+
+| Gate | Head | Result |
+| --- | --- | --- |
+| Merge-only dispatch CI [38608819740](https://github.com/raiseCatError/notMyShell/actions/runs/38608819740) | `207de26b` | **failed** (portable-mod gate vs #347) → fixed in `1c418629`; failure preserved |
+| PR CI [38649082204](https://github.com/raiseCatError/notMyShell/actions/runs/38649082204), dispatch [38649080918](https://github.com/raiseCatError/notMyShell/actions/runs/38649080918) | `62c6fad0` | **failed**: hostIntegration (real defect) → fixed in `44f4c232` |
+| Local canonical `verify:release` | `62c6fad0` | **failed** 3/2609: hostIntegration (fixed), `configuredCompletion` "capture bounded to 4096" (0 records, 3.26 s) and `copyFolding` "Auto-expand On" (3.27 s). The latter two passed in 3 isolated reruns and in CI; unexplained, preserved, not classified |
+| PR CI [38650280119](https://github.com/raiseCatError/notMyShell/actions/runs/38650280119) | `44f4c232` | **pass**, every job |
+| Dispatch CI [38650273295](https://github.com/raiseCatError/notMyShell/actions/runs/38650273295) (Fedora, both timing smokes) | `44f4c232` | **pass**, every job |
+| Local canonical `verify:release` | `44f4c232` | **failed** 2/2609 under heavy unrelated load (load avg ~21: another project's svelte-check, a Codex session): `absolutePathLive` live fish (53 s; ownership probes ETIMEDOUT) and `codexAdapter` cancellation (10.4 s settle timeout). Both passed 3/3 isolated reruns. Preserved, not classified. **A clean, uncontended full rerun on this head is still required.** |
+| Skipped | all | 1: `the real installed Claude, read-only` (opt-in `NMSH_REAL_CLAUDE=1`; must not touch real accounts) |
+| Local `backgroundSupervisor` "leftover group that ends later" | dev runs | one 10.27 s failure in a combined local run (message not captured), then 1 isolated + 2 combined passes; plausibly a load-delayed exit observation; unconfirmed, preserved |
+| Physical QA | — | **NOT PERFORMED** |
+
+Logs: `/Volumes/nmsh-opus/logs/receipts/`, `/Volumes/nmsh-opus/logs/ci/`, `/Volumes/nmsh-opus/logs/v020/`.
+
+## Checkpoint and handover (2026-10-15)
+
+Work paused at the maintainer's request. Nothing is running; all release worktrees are clean and pushed. Not done:
+
+1. **v0.20 local canonical on `44f4c232` without contention.** Check `ps`/load first; run
+   `/Volumes/nmsh-opus/tools/receipt.sh verify-release /Volumes/nmsh-opus/wt/v020 -- npm run verify:release`.
+   Investigate any failure with controlled reproductions; do not weaken deadlines.
+2. **Security subset on the v0.20 head** (Codex's report/compare/clipboard command, as run on `9e85a910`), plus a
+   bounded security review of the new wiring diff (`fe60bdc4..44f4c232`).
+3. **Update #392's gate checklist** and the #359/#385 coordination comments with v0.20 status (not yet posted).
+4. **Maintainer decisions requested** (listed in #392): the portable-mod gate change in `1c418629`; background
+   suggestions default off; task output out of the transcript; detail panel without module diagnostics; Codex adapter
+   unwired; Claude mod toggle unverified live.
+5. **Physical QA for v0.19 and v0.20** (`docs/testing/v019-physical-qa.md`, `v020-physical-qa.md`): unperformed. The
+   display state: no Terminal.app windows on screen; the Automation permission was not touched. Synthetic tmux keys do
+   not count.
+6. **Publication** (only after all gates + explicit approval): v0.19 first (set date and `[0.19.0]` link, flip
+   "latest published" pointers in README/ROADMAP/AGENTS/SECURITY/`llms.txt`, rerun dispatch CI, mark #390 ready,
+   merge commit, tag, GitHub Release); then rebase nothing: retarget #392 to `master`, merge `master` into
+   `release/v0.20.0`, re-verify, and stop again for v0.20 approval. Homebrew needs separate approval.
+7. **Not wired, by decision:** sidebar rows for NMSh sessions/managed targets, click-to-select sidebar rows,
+   region-aware wheel, #365 explain in the detail panel, Codex control in `harnesses.ts`/`manager.ts`, live
+   transcript blocks for task output. Deferred from v0.19: module compaction explanations, external source previews.
+8. **Leftover processes:** two idle 2026-10-13 smoke session services (pids 94753, 95205,
+   `/Volumes/nmsh-opus/tmp/smoke/run`) still run; stopping them was refused by the permission policy. The maintainer
+   can stop them (`kill -TERM 94753 95205`).
+9. Unexplained local failures above remain open records; Codex's historical failures remain Codex's.
+
 ## Coordination rules
 
 - Never edit Codex-owned worktrees (`/Volumes/nmsh-t7/*`, `fix/workflow-*`, `feature/*` of the workflow stack), its
@@ -266,3 +327,4 @@ below and stop cleanly with no background processes left.
   (comment 6174328706); draft PR #390.
 - 2026-10-14 23:10 IST — All automated v0.19 gates pass on `9e85a910` (ledger above). v0.19 stops as a verified release
   candidate pending physical QA. v0.20 integration starts on `release/v0.20.0` pinned to `9e85a910`.
+- 2026-10-15 04:40 IST — v0.20 RC at `44f4c232`: CI PR + dispatch green; local canonical failed under contention (see ledger). Paused at maintainer request; handover above.
