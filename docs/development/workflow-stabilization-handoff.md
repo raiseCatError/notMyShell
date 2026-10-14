@@ -8,7 +8,7 @@ The original handoff at `cc853707cf6060bc4b8edc2c84313949075c557b` remains prese
 **Current new-source gate (2026-10-14):** **frontend freeze PENDING**. The following is captured exact-head evidence, not stack acceptance. Final reconciliation must read the latest actual CI again.
 
 - Input #348 `c9fcbf92701ef30d72a83e3cb75c31237dba160f`: local canonical **PASS**; captured candidate CI [SUCCESS 38510302856](https://github.com/raiseCatError/notMyShell/actions/runs/38510302856); captured actual PR CI [SUCCESS 38510689515](https://github.com/raiseCatError/notMyShell/actions/runs/38510689515).
-- Queue #357 `6739b30b5e4ed58389373185f44d361ec4c927e0`: local canonical **PASS**; captured candidate CI pending; captured actual PR CI pending.
+- Queue #357 `6739b30b5e4ed58389373185f44d361ec4c927e0`: local canonical **PASS**; captured candidate CI [SUCCESS 38511614653](https://github.com/raiseCatError/notMyShell/actions/runs/38511614653); captured actual PR CI [SUCCESS 38512062080](https://github.com/raiseCatError/notMyShell/actions/runs/38512062080).
 - Copy #358 `fe73f30ada1afa939e98860a96966e823dbb13ea`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
 - Report #360 `6dc44515e3561ec3480b87c6cbbf36cc7a28fb03`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
 - Compare #361 `4c744895b2d18cb9d191127df201de1d598573f3`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
@@ -38,7 +38,7 @@ These are candidates, not accepted heads. The publication columns record the las
 | Track | Committed local candidate | Last observed candidate fix head | Last observed original feature head |
 | --- | --- | --- | --- |
 | Input #348 | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` | `c9fcbf92701ef30d72a83e3cb75c31237dba160f` |
-| Queue #357 | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `473a7f24f54bd91fe669785d2e9f1fc156574707` |
+| Queue #357 | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `6739b30b5e4ed58389373185f44d361ec4c927e0` | `6739b30b5e4ed58389373185f44d361ec4c927e0` |
 | Copy #358 | `fe73f30ada1afa939e98860a96966e823dbb13ea` | `ce6cee16a53a44d03d906d0af6db41f796defa3d` | `ce6cee16a53a44d03d906d0af6db41f796defa3d` |
 | Report #360 | `6dc44515e3561ec3480b87c6cbbf36cc7a28fb03` | `690ff65f8b356f2a9d06b399bff17befbca57c4e` | `690ff65f8b356f2a9d06b399bff17befbca57c4e` |
 | Compare #361 | `4c744895b2d18cb9d191127df201de1d598573f3` | `4b25770ee5e7134e07f6f62d29cb01120a96b142` | `032365e2ffa9fd42563ae93e66fd487b41e66841` |

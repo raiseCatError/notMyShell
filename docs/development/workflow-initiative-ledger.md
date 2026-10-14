@@ -5,7 +5,7 @@ Current gate (2026-10-14): **freeze PENDING**. The current exact-head state is b
 **Current new-source gate (2026-10-14):** **frontend freeze PENDING**. The following is captured exact-head evidence, not stack acceptance. Final reconciliation must read the latest actual CI again.
 
 - Input #348 `c9fcbf92701ef30d72a83e3cb75c31237dba160f`: local canonical **PASS**; captured candidate CI [SUCCESS 38510302856](https://github.com/raiseCatError/notMyShell/actions/runs/38510302856); captured actual PR CI [SUCCESS 38510689515](https://github.com/raiseCatError/notMyShell/actions/runs/38510689515).
-- Queue #357 `6739b30b5e4ed58389373185f44d361ec4c927e0`: local canonical **PASS**; captured candidate CI pending; captured actual PR CI pending.
+- Queue #357 `6739b30b5e4ed58389373185f44d361ec4c927e0`: local canonical **PASS**; captured candidate CI [SUCCESS 38511614653](https://github.com/raiseCatError/notMyShell/actions/runs/38511614653); captured actual PR CI [SUCCESS 38512062080](https://github.com/raiseCatError/notMyShell/actions/runs/38512062080).
 - Copy #358 `fe73f30ada1afa939e98860a96966e823dbb13ea`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
 - Report #360 `6dc44515e3561ec3480b87c6cbbf36cc7a28fb03`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
 - Compare #361 `4c744895b2d18cb9d191127df201de1d598573f3`: local canonical **pending**; captured candidate CI pending; captured actual PR CI pending.
