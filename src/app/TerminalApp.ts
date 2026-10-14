@@ -97,7 +97,7 @@ import {
 } from '../ui/SettingsPanel.js';
 import {OUTPUT_FOLDING_MODES} from '../output/FoldPolicy.js';
 import {accessSync, appendFileSync, constants, existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync} from 'node:fs';
-import {shouldProbeGraphics, terminalProfile} from '../host/capabilities.js';
+import {shouldProbeGraphics} from '../host/capabilities.js';
 import {basename, delimiter, join, resolve as resolvePath} from 'node:path';
 import {spawn} from 'node:child_process';
 import {completionMenuRows, renderCompletion, renderCompletionMore, COMPLETION_ACTIONS} from '../shell/CompletionMenu.js';
@@ -358,7 +358,7 @@ import {composeWorkspaceRows} from './workspaceFrame.js';
 import type {WorkspaceOwner} from '../workspace/focus.js';
 import {columnAt, type WorkspaceColumns} from '../workspace/layout.js';
 import {createTmuxRunner, listTmuxPanes, tmuxServer, trustedTmux} from '../workspace/tmux.js';
-import {describeKeymap, hostNotes, type HostProfile} from '../workspace/keymapConfig.js';
+import {describeKeymap, hostNotes, keymapHostProfile} from '../workspace/keymapConfig.js';
 import type {WorkspaceEffect} from './workspaceHost.js';
 import type {ActivationIntent} from '../workspace/resources.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
@@ -9879,8 +9879,7 @@ export class TerminalApp {
   /** `/keys`: every workspace binding in effect, problems in keymap.json, and keys this host may take first. */
   private showWorkspaceKeys(command: string, reload: boolean): void {
     if (reload) this.workspace.loadKeymap();
-    const profile: HostProfile = {host: process.env.TERM_PROGRAM === 'Apple_Terminal' ? 'apple-terminal' : terminalProfile(process.env) === 'ghostty' ? 'ghostty' : 'other',
-      tmux: Boolean(process.env.TMUX)};
+    const profile = keymapHostProfile(process.env);
     const notes = [...new Set(this.workspace.bindings.flatMap(binding => hostNotes(binding.key, profile)))];
     const lines = [...(reload ? ['keymap.json read again.'] : []), ...describeKeymap(this.workspace.bindings),
       ...(this.workspace.problems.length ? ['Problems in keymap.json', ...this.workspace.problems.map(problem => `  ${problem.severity}${problem.entry === undefined ? '' : ` (entry ${problem.entry + 1})`}: ${problem.message}`)] : []),

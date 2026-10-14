@@ -1,3 +1,4 @@
+import {terminalProfile} from '../host/capabilities.js';
 import type {Key} from '../terminal/keys.js';
 import {resourceText} from './resources.js';
 import {chordLabel, DEFAULT_BINDINGS, WORKSPACE_ACTIONS, type Binding, type KeyChord, type KeymapContext, type WorkspaceActionId} from './keymap.js';
@@ -157,6 +158,11 @@ const TMUX_NAMES: Partial<Record<Key['kind'], string>> = {
   complete: 'Tab', focusPrevious: 'BTab', escape: 'Escape', enter: 'Enter', backspace: 'BSpace', toggleDetails: 'C-o', find: 'C-f', latest: 'C-g',
   suggestNext: 'C-n', suggestPrevious: 'C-p', historySearch: 'C-r', historyDelete: 'C-x', palette: 'F1',
 };
+
+/** The host as hostNotes needs it, from the environment (the frontend itself never branches on host products). */
+export function keymapHostProfile(env: NodeJS.ProcessEnv): HostProfile {
+  return {host: env.TERM_PROGRAM === 'Apple_Terminal' ? 'apple-terminal' : terminalProfile(env) === 'ghostty' ? 'ghostty' : 'other', tmux: Boolean(env.TMUX)};
+}
 
 /**
  * Known reasons a key may never reach NMSh in this host. These are notes, not guarantees in either direction: the
