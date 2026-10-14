@@ -211,12 +211,14 @@ terminals window whole entries around the selection with an `a-b/N` indicator.
 - `w` in a pull request (`/github`) opens `/worktrees` with that PR's head
   branch selected when a worktree has it checked out; branches from forks are
   not matched.
+- (v0.20) `/worktrees` receives the PR list from the last `/github` listing as `pullRequests`, only when the
+  shell's github.com `origin` is that same repository; nothing is fetched for it. `p` on a related PR closes the
+  manager and opens that pull request's detail in `/github`.
 
 ## Deferred integration
 
 - NMSh session focus, tmux focus, and opening a new session for a worktree.
 - #331 sidebar quick navigation (can reuse `discoverWorktrees` and the model).
 - #332 diff panel (consumes `DiffIntent`).
-- Passing the `/github` listing to `/worktrees` as `pullRequests` and opening the PR in `/github` on `openPullRequest` (TerminalApp).
 - #329 managed-target focus context.
 - Physical terminal QA.

@@ -336,6 +336,7 @@ import {GithubWorkspaceController, type ListTab, type WorkspaceIntent} from '../
 import {githubRepositoryFromRemote, workspaceKey} from '../githubWorkspace/host.js';
 import {attachRenderer, renderWorkspace, type RenderOptions as GithubRenderOptions} from '../githubWorkspace/render.js';
 import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
+import type {PrSummary} from '../githubWorkspace/model.js';
 import {GithubWorkspaceService} from '../githubWorkspace/service.js';
 import {GhSource} from '../githubWorkspace/source.js';
 import {loadModInventory, withLoadedIn} from '../agents/mods/inventory.js';
@@ -9025,7 +9026,10 @@ export class TerminalApp {
       this.render(); return;
     }
     this.panelOrigin = undefined;
-    const controller = new WorktreeManagerController({git, repository, currentPath: () => this.canonicalShellCwd()});
+    // Related PRs only from the last /github listing of this same github.com repository; never fetched from here.
+    const origin = await this.githubOrigin();
+    const controller = new WorktreeManagerController({git, repository, currentPath: () => this.canonicalShellCwd(),
+      pullRequests: () => (origin && this.githubListing?.repository.toLowerCase() === origin.toLowerCase() ? this.githubListing : undefined)});
     const panel = {controller, git, ...(select ? {select} : {})};
     this.worktreePanel = panel;
     this.render();
@@ -9084,6 +9088,11 @@ export class TerminalApp {
         if (command) { this.worktreePanel = undefined; this.returnFromPanel(); this.applySuggestion({insertion: command}); }
       }
     }
+    else if (outcome.kind === 'openPullRequest') {
+      this.worktreePanel = undefined;
+      this.returnFromPanel();
+      await this.openGithub('prs', outcome.pr.ref);
+    }
     this.render();
   }
 
@@ -9098,10 +9107,20 @@ export class TerminalApp {
     return [...body, ...extra];
   }
 
-  private async openGithub(tab: ListTab): Promise<void> {
-    const git = createGitRunner();
-    const remote = await git(this.shellCwd, ['remote', 'get-url', '--', 'origin'], {timeoutMs: 2000, maxBytes: 4096});
-    const repository = succeeded(remote) ? githubRepositoryFromRemote(remote.stdout) : undefined;
+  /** The github.com repository of the shell directory's `origin`, when it has one. */
+  private async githubOrigin(cwd = this.shellCwd): Promise<string | undefined> {
+    const remote = await createGitRunner()(cwd, ['remote', 'get-url', '--', 'origin'], {timeoutMs: 2000, maxBytes: 4096});
+    return succeeded(remote) ? githubRepositoryFromRemote(remote.stdout) : undefined;
+  }
+
+  /**
+   * The pull requests the last /github listing loaded, with its repository: the only evidence /worktrees uses for a
+   * related PR (it never fetches). Replaced whenever a /github PR list loads.
+   */
+  private githubListing?: {repository: string; prs: PrSummary[]};
+
+  private async openGithub(tab: ListTab, pullRequest?: PrSummary['ref']): Promise<void> {
+    const repository = await this.githubOrigin();
     if (!repository) {
       this.output.addFrontendInteraction(`/${tab === 'issues' ? 'issues' : 'github'}`, 'This directory has no github.com origin remote, so there is no repository to show.', INFO);
       this.render(); return;
@@ -9112,10 +9131,16 @@ export class TerminalApp {
       initialQueries: {prs: `repo:${repository} is:open`, issues: `repo:${repository} is:open`, search: `repo:${repository}`},
     });
     attachRenderer(controller, () => this.githubRenderOptions(this.githubPanel?.columns ?? this.dimensions().columns, this.dimensions().rows - 4));
-    const detach = controller.onChange(() => { if (this.githubPanel?.controller === controller) this.render(); });
+    const detach = controller.onChange(() => {
+      const list = controller.snapshot.lists.prs;
+      if (list.status === 'loaded') this.githubListing = {repository, prs: list.items.filter((item): item is PrSummary => item.ref.kind === 'pr')};
+      if (this.githubPanel?.controller === controller) this.render();
+    });
     this.githubPanel = {controller, repository, detach};
     this.render();
     await controller.submitQuery(tab);
+    // From /worktrees' related PR: that pull request's detail, read-only like every other.
+    if (pullRequest && this.githubPanel?.controller === controller) await controller.openDetail(pullRequest);
   }
 
   private githubRenderOptions(columns: number, rows: number): GithubRenderOptions {
