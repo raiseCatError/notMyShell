@@ -152,7 +152,7 @@ test('the live-session limit falls back factually and never ends detached sessio
     await until(async () => (await sandbox.sessions()).filter(s => s.state === 'detached').length === 2, 15000, '2 detached');
     pids.push(...(await sandbox.sessions()).map(s => s.pid));
     const third = sandbox.launch(['--new']);
-    await third.waitFor(/live sessions are already running \(the limit\)/);
+    await third.waitFor(/live\s+sessions\s+are\s+already\s+running\s+\(the\s+limit\)/);
     await third.waitFor(/cannot be detached or reattached/);
     await third.run('echo MODE=$NMSH_SESSION_MODE', /MODE=in-process/);
     assert.ok(pids.every(processAlive));

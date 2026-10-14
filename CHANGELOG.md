@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+- NMSh's own lines (`/copy` confirmations, notices, completion rows) wrap at word boundaries in narrow windows, with continuation rows indented under the text instead of splitting words such as `5 l`/`ines`. Copying a selection still gives the line exactly as stored. Shell output keeps the terminal's column wrapping ([#349](https://github.com/raiseCatError/notMyShell/pull/349)).
+
 ## [0.19.0] - Unreleased (release candidate)
 
 **Terminal workflow.** One command's result becomes useful for the next without NMSh taking execution away from the real shell. NMSh notices when a running command is waiting for you, lets you prepare the next commands while one runs, copies exactly what you choose, turns output into reviewed reports and comparisons, and keeps the commands you reuse. Nothing derived from output, the clipboard, a pin or a recipe runs without an explicit action, and every queued command still runs in your one persistent shell.

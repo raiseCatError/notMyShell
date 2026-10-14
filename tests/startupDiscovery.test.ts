@@ -167,7 +167,7 @@ test('several detached sessions: pick some, Esc for none; this window owns one, 
     picker.pty.write('\r');
     await picker.waitFor(/Reattached live session/);
     assert.equal(await shellPid(picker), pids[2], 'this window takes the first selected');
-    await picker.waitFor(/1 more selected live session need their own windows[\s\S]*they keep running/);
+    await picker.waitFor(/1\s+more\s+selected\s+live\s+session\s+need\s+their\s+own\s+windows[\s\S]*they\s+keep\s+running/);
     await detachedCount(sandbox, 2);
     assert.ok(pids.every(pid => processAlive(pid)), 'nothing selected or unselected was ended');
   } finally {
@@ -184,7 +184,7 @@ test('Open all restores every detached session: one here, the others as far as t
     assert.doesNotMatch(strip(all.output), /detached live sessions/, 'no picker');
     assert.equal(await shellPid(all), pids[1]);
     // The test host cannot open windows: the other session is named with its attach command.
-    await all.waitFor(/nmsh --attach [\w-]+/);
+    await all.waitFor(/nmsh\s+--attach\s+[\w-]+/);
     await detachedCount(sandbox, 1);
   } finally {
     await sandbox.dispose();
