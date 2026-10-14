@@ -92,7 +92,7 @@ test('Packs tab: recommendations with evidence, bundled and installed packs, exp
   s.modulesTab = 'packs';
   const shown = text(s);
   assert.match(shown, /Recommended here\n.*○ Terraform +main\.tf in this project/u);
-  assert.match(shown, /Bundled with NMSh\n.*Project & runtimes +nmsh\.project 1\.0\.0 · bundled · 6 modules/u);
+  assert.match(shown, /Bundled with NMSh\n.*Project & runtimes +nmsh\.project 1\.0\.0 · bundled · 8 modules/u);
   assert.match(shown, /Installed\n.*Acme infra +acme\.infra 1\.0\.0 · enabled · 1 modules/u);
   handlePromptPanelKey(key({kind: 'text', value: ' '}), s);
   assert.equal(s.draft.modules.find(module => module.id === 'nmsh.infrastructure:terraform')!.visible, true, 'only an explicit Space turns a recommendation on');

@@ -1,10 +1,148 @@
-# Terminal workflow initiative: ledger
+# Workflow initiative ledger
 
-The durable record for the "make the result of one command useful for the next" initiative (queue, copy,
-paste, reports, comparison, references, error navigation, pins/recipes, integrations). A fresh session resumes
-from this file and Git, not from a conversation. Update it with every slice.
+Canonical tracker: [#359](https://github.com/raiseCatError/notMyShell/issues/359). Updated 2026-10-12.
 
-Design and research: [docs/design/terminal-workflow.md](../design/terminal-workflow.md).
+## Current stabilization checkpoint
+
+Fresh-session recovery: [workflow stabilization handoff](workflow-stabilization-handoff.md).
+Development is stopped at a preservation checkpoint. Cedar/Birch host canonical passed;
+Amber full verification failed three compatibility cases. Elm commit 5447eb9 preserves
+incomplete acceptance tests (15 focused passed, 4 failed). Input 48a0ded Actions
+38157687343 failed macOS flowComposer PTY spawning; Ubuntu shards passed.
+No frontend freeze or final integration is claimed. Exact heads/commands/failures are
+in the handoff above.
+
+The shared frontend is **not frozen**. This record supersedes the historical status claims below. No workflow PR
+has been merged to master or the release branch. Physical terminal QA remains outstanding.
+
+| PR | Published head | Local additive candidate | Gate |
+| --- | --- | --- | --- |
+| #345 | 7122468 | unchanged | stack base |
+| #348 | 48a0ded | fix/workflow-cedar / 48a0ded | host canonical passed; current Actions failed macOS PTY spawn |
+| #357 | 7fb6b5a | fix/workflow-birch / 3adc451 | host canonical passed; final CI pending |
+| #358 | 790fd74 | fix/workflow-amber / 000736d | host canonical failed three compatibility cases; final CI pending |
+| #360 | afe7f69 | fix/workflow-coral / 80bd0cf | final canonical/CI pending |
+| #361 | b1cdfbe | fix/workflow-indigo / 0117a34 | final canonical/CI pending |
+| #367 | 66e164d | fix/workflow-willow / be037a0 | independent sibling; final canonical/CI pending |
+| #368 | 5a795ed | fix/workflow-maple / this checkpoint | final canonical/CI pending |
+
+All candidates preserve their published ancestors through additive merges. Owned
+worktrees use neutral names: nmsh-cedar-input, nmsh-birch-queue, nmsh-amber-copy,
+nmsh-coral-report, nmsh-indigo-compare, nmsh-willow-vocabulary and nmsh-maple-workflow.
+They are on external scratch storage. Existing worktrees and modifications were preserved.
+
+Temporary resources disappeared during continuations and interrupted two full
+runs. Those runs are not passing evidence. Committed work survived and was restored.
+Verification logs and the Linux VM now use durable external storage.
+The test runner supports NMSH_TEST_TMPDIR; fixture and key-diagnostic writers
+respect the selected temporary directory. Invalid storage fails instead of falling
+back. Source typecheck, focused lifecycle/privacy/platform tests and verify:fast
+passed for storage correction 9465eb5. The runner also isolates child HOME in the chosen root.
+
+## Confirmed findings and work
+
+- **Fish 3.7 reader ownership:** the native read editor deliberately does not enable bracketed paste. Waiting answers
+  remained in the composer/queue. The authenticated `fish_read` marker fixes handover before the prompt, including
+  hidden readers inside functions and detached readers. `answersByDefault` was not weakened. Details and exact
+  baseline evidence: [#356 comment](https://github.com/raiseCatError/notMyShell/issues/356#issuecomment-6106773236),
+  `docs/development/fish-typeahead.md`.
+- **Fish multiline submission:** use native `begin`/`end`; zsh/Bash use brace groups. Composer, dispatcher and parse
+  checks must use the real shell ID. Queue regressions verify persistence of shell variables and one logical record.
+- **Fixture synchronization:** unique runtime-built read prompts prevent historical redraws authorizing a reply;
+  the Ctrl+C survivor waits for trap installation, uses a timed-read-capable shell and an explicit release file.
+- **Attach privacy follow-up:** a final canonical run caught a password echoed by the outer PTY during journal I/O.
+  A slow-journal real-PTY fixture reproduces it. Raw input is now protected before passthrough output and throughout
+  probing/journaling; the later fixture follow-ups require their own final gate. Key diagnostics now exclude all running/startup input.
+- **Gemfile security:** `18e94d9` applies the bounded single-line Ruby declaration parser to the duplicate in #368.
+  Malicious-whitespace and cross-line declaration regressions pass. #370 remains the canonical runtime owner.
+- **Workflow additions (a16d556, 3097cbb):** clips deliberately kept in bounded frontend memory, reviewed through the
+  existing Paste Review/palette, history selection pinning with recorded cwd, and F8/Shift+F8 failure navigation.
+  Copy/folding remain independent. Clip and reference actions never submit commands automatically.
+- **Clipboard suggestions (a16d556):** off by default and frontend-only. macOS uses only NSPasteboard changeCount
+  while idle; contents are read only by explicit `/ps`. Linux has no supported metadata-only counter and fails closed.
+  The fixed native metadata query and lifecycle/privacy unit regressions passed.
+- **Guide/fixture corrections:** paste batches and pins are included in the guide; app fixtures pause the queue before
+  asserting accepted entries, preventing asynchronous parse checks from racing first-entry dispatch.
+- **Diagnostics/import audit:** module explanations distinguish uncollected/unknown/stale facts from known data;
+  collection metadata does not prove conditional visibility. Starship/Oh My Posh previews disclose loss, save only
+  after a second explicit action, and preserve source files. External-tool decisions describe bat's actual Theme
+  Bridge support; dedicated source-preview launching is not implemented.
+- **Fish parse-only transport:** Fish 3.7 on Linux rejects Node's socket-backed stdin with “Unable to read input
+  file: Is a directory”. Paste verification supplies Fish's script through `--no-execute -c` instead; failed/oversized
+  argv submission refuses the split. Regression checks prove neither commands nor substitutions execute.
+- **Diagnostic privacy:** module details show safe collection failure states, rather than raw exception paths or
+  values. Measured durations remain available; no new collector is invoked by opening details.
+
+- **Comparison UI trust boundary (5570d34):** restored command labels in the chooser header bypassed display sanitization. Both chooser and diff now use safe labels; format and separator controls become visible in authored review UI. Adversarial tests cover narrow layouts and actual clipboard bytes.
+- **Report Markdown status (25af5ba):** restored lifecycle text was a raw Markdown fact. It now uses the existing delimiter-sized inline-code representation, so HTML, links and backticks remain literal.
+- **Vocabulary (d4619e4):** selected activity pairs survive live detach/reattach, including previous-choice collision avoidance. Optional journal indices are validated; factual status still derives from lifecycle and exit code.
+- **Module diagnostics (1a372fb, 06433f1):** details show capability/source, freshness TTL, invalidation and demand-refresh policy, retained-cache availability and measured collection wall time excluding queue delay. Details reuse fact snapshots and renderer conditions; they add no collectors. Exact last-frame width-compaction decisions are not recorded.
+- **Cross-feature queue fixture (4636672):** the combined workflow's optional batch action changes the paste-preview footer. The fixture accepts that optional action while still testing whole-paste insertion and explicit once-only queueing. The original regex failure reproduced, and corrected real-PTY cases passed for zsh, Bash and Fish.
+
+- **Report fixture (ee5483e):** the existing live Copy as Report assertion now expects the literal Markdown status added by the security fix. Its name accurately states that every report is reviewed. Review, cancellation and actual clipboard-byte tests passed.
+- **Linux prerequisites:** the disposable minimal Ubuntu VM initially lacked less and vim. Their command-not-found failures are recorded; both tools are now installed in that VM. This changes no application installer policy.
+- **Metadata/installer fixtures (86fb4e4):** identical size and timestamps after an immediate mise config edit reproduced even at nanosecond precision. The stat-only cache test now supplies a definite timestamp change and documents explicit refresh for unchanged metadata. Provider review tests supply their own fake executable installer; they do not require host Homebrew or run an installer.
+
+- **Completion and home isolation (566c321):** the queue full run at f081c42 failed its first nested-path candidate assertion after about 1.5 seconds. Controlled slow initialization reproduces a bounded empty result and transport cleanup. Functional capture/cache fixtures now prepare their own completion cache; a new expiry/recovery test retains the production startup deadline. The suite runner also assigns a private home inside its selected temporary root, preventing generated shell caches from reaching the host home. The new isolation test failed before the correction; affected lifecycle/completion tests and verify:fast passed afterward. Final canonical/CI verification is pending.
+
+- **Fixture ownership follow-up (48a0ded, e2adc1e):** a visible composer preceded the third shell's authenticated startup prompt in the SIGHUP fixture; a controlled startup release gate now proves and waits for that transition. Same-shell queue tests use a release file rather than a fixed sleep, keeping all five entries pending until assertions finish. Interrupt typeahead waits for actual foreground process ownership before signalling. The focused SIGHUP case and all three shell queue cases plus Ctrl+C/Ctrl+Z passed.
+- **Short module details (52db115):** diagnostic rows now honor the panel's height and remain reachable through arrows/PageUp/PageDown. The viewport is ephemeral; reading and resizing do not change settings or demand collectors. Focused unit and real-PTY tests in a 50-column NO_COLOR Safe terminal, direct typecheck and verify:fast passed. Exact last-frame module width-compaction explanations remain an acceptance-integration follow-up.
+
+## Verification recorded so far
+
+Newest exact-head evidence is in the handoff above. Historical statements below
+apply to their recorded commits, not later head acceptance.
+
+- macOS canonical verification passed at 566c321 with the isolated child home. Its later startup-gate fixture commit needs a new exact-head gate.
+- The macOS queue run at 2dd8b80 failed five cases: a transient five-entry assertion after the holding sleep expired, signalling before actual foreground ownership, two no-output frontend startup deadlines and the bounded zoxide query fixture. The first two assumptions are corrected above. At inspection this 8 GiB/8 CPU host had load averages 18.05/50.35/59.36 and unrelated Xcode/xctest work active. Their processes are preserved. Host verification now runs one test worker with this track's Linux VM stopped; resource pressure is evidence, not a blanket explanation for remaining failures.
+- The Ubuntu run at 895aae5 passed ranking and multiplexer cases but failed SIGHUP's third-shell readiness. That exact run is failed evidence; the controlled startup correction must pass a new full gate.
+- macOS canonical verification and direct typecheck passed at 86fb4e4. [Actions 38150534791](https://github.com/raiseCatError/notMyShell/actions/runs/38150534791) passed the Ubuntu/macOS shards, Quality, Node 22 and aggregate checks; timing/Fedora jobs were skipped on the PR event. The isolated-home follow-up needs its own final gates.
+- Ubuntu canonical verification passed at 5e45e87 with Fish 3.7.0, including the unchanged ranking threshold. Multiplexer tests were skipped because the minimal VM lacked tmux/screen; those tools are now installed for the next run.
+- The Ubuntu canonical run at 5756f7c failed the report assertion, two missing-tool fixtures, mise timestamp assertion, provider installer availability assertion and the unchanged suggestion timing threshold. The timing test passed an isolated rerun; the final canonical gate must pass before publication.
+- Typecheck and canonical verification of published #348: passed; exact Actions head `684a3fbc837be97f185cc938f4fb13cbccf1533b`.
+- Queue candidate canonical verification passed before the additional attach privacy finding; that later failed run
+  is retained and must be superseded by a clean final run before pushing #357.
+- Ubuntu 24.04 arm64 / Fish 3.7.0 / Node 26.10.0: published queue baseline fails both original Fish read tests; fixed
+  snapshot passes `inputAwarenessLive`, `typingAfterRead`, `queryOrder`, `commandQueueLive` including detach,
+  interruption, same-shell grouping and narrow/NO_COLOR/Safe presentation. Ubuntu amd64 CI remains an independent gate.
+- Focused report/diff sanitization, hostile pin rendering, clip/paste staging, recipe review, history pinning, failure
+  keys, clipboard failure/EPIPE/size bounds, and actual stand-in clipboard diff bytes passed.
+- Live Report cancellation and actual clipboard bytes passed on macOS and in the Ubuntu canonical run at 5e45e87 with hostile controls, invisible Unicode, tokens and fence content.
+- Early full local runs inherited disabled colors/dumb TERM and one hit ENOSPC. They are failed runs, not evidence
+  of passing behavior. Final fixture runs explicitly set their truecolor environment; explicit NO_COLOR tests remain.
+
+## Cross-track boundary and remaining work
+
+[Native/workspace handoff PR #385](https://github.com/raiseCatError/notMyShell/pull/385) documents the current
+independent heads and remaining frontend wiring. It explicitly waits for the #359 stabilization checkpoint.
+Do not modify its handoff or branches. Ruby/PHP duplication is security-patched locally; reconcile against canonical
+#370 after its verified freeze, retaining module diagnostics, theme imports and independent workflow behavior.
+
+The overlap is localized and deliberately retained until the canonical native heads are frozen:
+
+| File | Integration decision |
+| --- | --- |
+| `src/context/capabilities/runtimes.ts` | #368's duplicate Ruby/PHP remains patched by `18e94d9`; take canonical #370's stronger runtime implementation at integration |
+| `src/context/packs/builtin/nmsh.project.json` | take the highest frozen native stack's catalog once, not both variants |
+| `tests/contextCapabilities.test.ts` | preserve workflow-independent tests; retain malicious-whitespace/declaration regressions and canonical runtime tests |
+| `tests/moduleManager.test.ts` | reconcile expected catalog contents with the highest native stack, preserving workflow diagnostics |
+| `docs/design/native-module-coverage.md` | retain #368's coverage research; update adoption status against the exact integrated native heads |
+
+No destructive revert of the published runtime commit is needed. Removing the duplicate before the native handoff
+would remove currently tested functionality from the standalone workflow PR; resolve these known file overlaps on
+the acceptance integration branch while preserving both security regressions. #370 owns additional install-layout
+support in `services.ts`, which this track has not changed.
+
+Next: complete final canonical verification and exact-head GitHub CI for every owned PR, then publish the frontend freeze checkpoint in #359. Acceptance integration follows both freezes in a separate `integration/nmsh-acceptance-*`
+branch/worktree; no master/release merge is authorized.
+
+Physical QA must cover Ghostty and Terminal.app, hidden input and immediate typing after completion/interrupt,
+queue/paste approval, clipboard/report/diff rendering, long-output folding, references, narrow/Safe/NO_COLOR,
+reattach, vocabulary and theme previews. Headless fixtures are not physical validation.
+
+---
+
+## Historical records (superseded; retained for context)
 
 ## Rules this work keeps
 
@@ -26,6 +164,9 @@ Design and research: [docs/design/terminal-workflow.md](../design/terminal-workf
 
 | `feature/copy-report` | `../notMyShell-report` | #360 (draft, base #358) | Copy as Report; security fixes below |
 | `feature/compare-output` | `../notMyShell-compare` | #361 (draft, base #360) | Compare output; contains #360 by merge |
+
+| `feature/expressive-activity-vocabulary` | `../notMyShell-activity` | none yet (PR body ready; opening it was held) | #362: Expressive/Classic wording, 663 curated pairs; contains #361 by merge; full suite green |
+| `feature/output-references` | `../notMyShell-references` | none yet | #353 references + failure navigation; #354 paste batches, `/ps`; #355 queue conditions, pins, recipes (separate commits); contains #361 |
 
 Other open PRs (independent, not part of this stack): #347 agent workspace, #349 notice word wrap, #346 mods.
 
@@ -100,3 +241,11 @@ navigation, #354 paste batches and clipboard, #355 pins/recipes/queue conditions
 - `/copy ui` picker keys, search and preview at your usual window sizes.
 - Queue in daily use: Enter while a command runs, Ctrl+Q/Ctrl+S, a failing step pausing the rest.
 - Smart folding on your adb/diagnostic commands; the important-lines preview.
+
+## Session 2 checkpoint (branches pushed, no PRs opened by this session)
+
+- `feature/expressive-activity-vocabulary` (#362): full suite green (2227 pass). PR body ready; `gh pr create` was held by the safety hook, so open it with base `feature/compare-output`.
+- `feature/output-references`: full suite green after fixing three deterministic count/registry tests (see last commit).
+- Security: the batch splitter got three review rounds; it is now gated by real-shell parse checks (`pasteBatchCheck.ts`) and a whole-versus-split execution differential test. `displaySafe` now shows bidi/format characters.
+- Not done: clipboard-change suggestions and ephemeral clips (#354), pin from history selection (#355), #365 explain/timings, #304 import, #366 decisions, native runtime modules (matrix in `docs/design/native-module-coverage.md`), workspace work (#330), physical QA for everything.
+- CI: Ubuntu Fish live tests (`read` hand-over, alt-screen passthrough) time out on #357/#358 runs; they pass locally on macOS. Tracked under #356; needs a Linux repro.

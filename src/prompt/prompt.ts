@@ -304,14 +304,21 @@ export function isCleanWorkingTree(git: NonNullable<PromptContext['git']>): bool
   return !git.staged && !git.modified && !git.untracked && !git.conflicts && !git.operation;
 }
 
+/** The shared display-condition check, also used by diagnostics; no data is collected here. */
+export function moduleConditionMet(config: ContextModuleConfig, context: PromptContext): boolean {
+  if (config.condition === 'inRepository' && !context.branch) return false;
+  if (config.condition === 'nonzeroExit' && (context.exitStatus ?? 0) === 0) return false;
+  // Toolchains match only detected toolchains, as their segments do below.
+  if (config.condition === 'onCommand' && !(config.id === 'toolchain'
+    ? (context.toolchains ?? []).some(id => matchesCommand(TOOLCHAIN_TRIGGERS[id], context.commandWords))
+    : isOnCommandRelevant(config.id, context.commandWords ?? []))) return false;
+  if (config.condition === 'shellDiffers' && !context.shell?.differs) return false;
+  return true;
+}
+
 function moduleSegments(config: ContextModuleConfig, context: PromptContext, icons: NativeIconMode, richGit: boolean, pathLevel: number): Array<{text: string; role: PromptRole; compact?: boolean}> {
   const status = context.exitStatus ?? 0;
-  if (!config.visible) return [];
-  if (config.condition === 'inRepository' && !context.branch) return [];
-  if (config.condition === 'nonzeroExit' && status === 0) return [];
-  // Toolchains filter per toolchain below; other on-command modules need a matching command.
-  if (config.condition === 'onCommand' && config.id !== 'toolchain' && !isOnCommandRelevant(config.id, context.commandWords ?? [])) return [];
-  if (config.condition === 'shellDiffers' && !context.shell?.differs) return [];
+  if (!config.visible || !moduleConditionMet(config, context)) return [];
 
   switch (config.id) {
     case 'project': return [{text: safePromptText(context.project), role: 'project'}];
@@ -367,9 +374,7 @@ function moduleSegments(config: ContextModuleConfig, context: PromptContext, ico
 function packModuleSegments(config: ContextModuleConfig, context: PromptContext, facts: ReturnType<typeof promptFacts>, icons: NativeIconMode,
   purpose: 'display' | 'snapshot'): Array<{text: string; role: PromptRole; compact?: boolean}> {
   const definition = moduleDefinition(config.id);
-  if (!definition?.pack || !config.visible) return [];
-  if (config.condition === 'inRepository' && !context.branch) return [];
-  if (config.condition === 'onCommand' && !matchesCommand(definition.triggers ?? [], context.commandWords)) return [];
+  if (!definition?.pack || !config.visible || !moduleConditionMet(config, context)) return [];
   return declarativeSegments(definition, facts, {icons, glyphs: getCurrentGlyphMode(), now: context.now ?? presentationNow().getTime(), purpose});
 }
 

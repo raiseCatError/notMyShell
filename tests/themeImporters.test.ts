@@ -161,3 +161,65 @@ test('bounded and binary input; unknown formats are refused with the supported l
   assert.match(errors(run('just some words\nnothing here', 'notes.txt')), /not a recognized theme format/u);
   assert.match(errors(run('a: [unclosed', 'bad.yaml')), /not a recognized theme format/u);
 });
+
+const STARSHIP = `
+add_newline = false
+palette = "mocha"
+format = "$directory$git_branch$character"
+
+[palettes.mocha]
+rosewater = "#f5e0dc"
+green = "#a6e3a1"
+red = "#f38ba8"
+blue = "#89b4fa"
+
+[directory]
+style = "bold bg:blue fg:#11111b"
+
+[git_branch]
+style = "fg:green"
+format = "[$symbol$branch]($style) "
+
+[nodejs]
+style = "bright-green"
+
+[golang]
+style = "bg:#00add8"
+
+[character]
+success_symbol = "[➜](bold green)"
+error_symbol = "[✗](bold red)"
+
+[custom.dangerous]
+command = "rm -rf ~"
+when = "true"
+style = "fg:#ff0000"
+`;
+
+test('Starship: static colors, palette names and character symbols become a Native theme; commands and names never run or invent colors', () => {
+  const result = preview(run(STARSHIP, 'starship.toml'));
+  assert.equal(result.format, 'starship');
+  valid(result);
+  assert.equal(result.theme.prompt.cwd, '#89b4fa', 'bg: from the palette name wins over fg:');
+  assert.equal(result.theme.prompt.gitBranch, '#a6e3a1');
+  assert.equal(result.theme.prompt.go, '#00add8');
+  assert.equal(result.theme.prompt.success, '#a6e3a1');
+  assert.equal(result.theme.prompt.failure, '#f38ba8');
+  assert.equal(result.theme.basedOn, 'Starship import');
+  const warnings = result.warnings.join('\n');
+  assert.match(warnings, /bright-green/u, 'an ANSI color name is reported, not turned into a color');
+  assert.match(warnings, /1 \[custom\] module ignored: their commands are never run/u);
+  assert.match(warnings, /configures \d+ modules/u);
+  assert.doesNotMatch(JSON.stringify(result.theme), /#ff0000/u, 'a custom module\'s color is not imported');
+  assert.ok(result.mapping.some(item => item.from === '[directory] style'));
+});
+
+test('Starship: an unknown palette, no usable colors, hostile names and oversized input are handled without guessing', () => {
+  assert.match(errors(run('[directory]\nstyle = "bold cyan"\n', 'starship.toml', 'starship')), /No static Starship style colors/u);
+  const missing = preview(run('palette = "nope"\n[git_branch]\nstyle = "fg:#112233"\n', 'starship.toml'));
+  assert.match(missing.warnings.join(' '), /"nope" is not defined/u);
+  const hostile = preview(run('[git_branch]\nstyle = "fg:#112233"\n', '\u001b[31mevil\u0007.toml', 'starship'));
+  assert.doesNotMatch(hostile.theme.name, /[\u0000-\u001f]/u);
+  assert.match(errors(run(`# ${'x'.repeat(IMPORT_SIZE_LIMIT)}\n[git_branch]\nstyle = "fg:#112233"\n`, 'starship.toml')), /larger than 256 KiB/u);
+  assert.match(errors(run('[unrelated]\nvalue = 1\n', 'a.toml')), /not an Oh My Posh config, a Starship config or a WezTerm/u);
+});

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DEFAULT_PROMPT_CONFIGURATION} from '../src/prompt/configuration.js';
 import {handlePromptPanelKey, promptPanelControls, promptPanelOwnsKey, renderPromptPanel, type PromptPanelState} from '../src/prompt/PromptPanel.js';
-import {catalogEntries, listedModules, modulesDirty, modulesItemCount, packEntries, type PackListing} from '../src/prompt/ModulesPanel.js';
+import {renderModulesManager, catalogEntries, listedModules, modulesDirty, modulesItemCount, packEntries, type PackListing} from '../src/prompt/ModulesPanel.js';
 import {parseSlashCommand, slashCommands} from '../src/commands/slashCommands.js';
 import {paletteItems} from '../src/ui/CommandPalette.js';
 import {firstPartyPacks} from '../src/context/modules.js';
@@ -160,6 +160,31 @@ test('at 50 columns details wrap instead of truncating, keep Reads/History/statu
   assert.match(listRows.join('\n'), /Modules {2}Catalog {2}Packs|Modules.*Catalog.*Packs/u, 'tab labels stay recognisable');
 });
 
+test('module details show measured time and safe failure state without raw exception paths or values', () => {
+  const s = state();
+  s.context = {status: () => ({state: 'failed', durationMs: 4.2, error: 'EACCES /Users/demo/private/config token=do-not-display', evidence: 'AWS config'})};
+  s.selectedIndex = listedModules(s).findIndex(module => module.id === 'nmsh.cloud:aws');
+  handlePromptPanelKey(ENTER, s);
+  const shown = renderPromptPanel(s, 50, [], [], Infinity).map(stripAnsi).join('\n');
+  assert.match(shown, /unavailable \(failed\).*took 4 ms/su);
+  assert.match(shown, /AWS config/u);
+  assert.doesNotMatch(shown, /Users|private|token=|do-not-display/u);
+  assert.match(shown, /cloud\.aws/u, 'the trusted capability is named');
+  assert.match(shown, /freshness TTL/u);
+  assert.match(shown, /queue delay/u);
+});
+
+test('module details distinguish enabled settings from a condition that currently does not match', () => {
+  const s = state();
+  s.context = {conditionMet: () => false, status: () => ({state: 'fresh', collectedAt: 1000}), now: 2000};
+  s.selectedIndex = listedModules(s).findIndex(module => module.id === 'nmsh.cloud:aws');
+  handlePromptPanelKey(ENTER, s);
+  const shown = renderPromptPanel(s, 100, [], [], Infinity).map(stripAnsi).join('\n');
+  assert.match(shown, /Enabled.*yes/u);
+  assert.match(shown, /current condition does not match/u);
+  assert.doesNotMatch(shown, /Why.*data is available/u);
+});
+
 test('external prompt providers keep the manager useful: unavailable surfaces say why, settings are kept, the Status Strip still works', async () => {
   const {surfaceAvailability} = await import('../src/context/surfaceRouter.js');
   const starship = {...structuredClone(DEFAULT_PROMPT_CONFIGURATION), provider: 'starship' as const};
@@ -247,4 +272,33 @@ test('/prompt → Modules: A saves module settings only, leaving other draft edi
     if (previous === undefined) delete process.env.XDG_CONFIG_HOME; else process.env.XDG_CONFIG_HOME = previous;
     rmSync(root, {recursive: true, force: true});
   }
+});
+
+test('short module details expose every diagnostic row through bounded scrolling without editing settings', () => {
+  const s = state(true);
+  s.context = {status: () => ({state: 'failed', durationMs: 4.2, hasValue: false, error: 'private-do-not-show'}), now: 4000};
+  s.selectedIndex = listedModules(s).findIndex(module => module.id === 'nmsh.cloud:aws');
+  handlePromptPanelKey(ENTER, s);
+  const before = JSON.stringify(s.draft);
+  const full = renderModulesManager(s, 50).map(stripAnsi);
+  const first = renderModulesManager(s, 50, s.context, 12).map(stripAnsi);
+  assert.ok(first.length <= 12, 'details honor the actual panel budget');
+  const seen = new Set(first);
+  for (let step = 0; step < full.length; step++) {
+    handlePromptPanelKey({kind: 'down'}, s);
+    for (const row of renderModulesManager(s, 50, s.context, 12).map(stripAnsi)) seen.add(row);
+  }
+  for (const row of full) assert.ok(seen.has(row), 'every source/cache/timing/why row is reachable: ' + row);
+  assert.match([...seen].join('\n'), /Source[\s\S]*Cache[\s\S]*Timing[\s\S]*Why/u);
+  assert.doesNotMatch([...seen].join('\n'), /private-do-not-show/u);
+  assert.equal(JSON.stringify(s.draft), before, 'reading does not edit or persist preferences');
+  const bottom = renderModulesManager(s, 50, s.context, 12);
+  handlePromptPanelKey({kind: 'down'}, s);
+  assert.deepEqual(renderModulesManager(s, 50, s.context, 12), bottom, 'scroll stops at the final row');
+  handlePromptPanelKey({kind: 'pageUp'}, s);
+  assert.notDeepEqual(renderModulesManager(s, 50, s.context, 12), bottom, 'PageUp reads earlier details');
+  renderModulesManager(s, 120, s.context, 1000);
+  assert.equal(renderModulesManager(s, 50, s.context, 12).length, 12, 'resize clamps the viewport');
+  handlePromptPanelKey(ESC, s);
+  assert.equal(s.detail, undefined, 'Esc returns to the same module selection');
 });

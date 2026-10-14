@@ -44,7 +44,11 @@ export interface ModulesManagerState {
   search?: {query: string; editing: boolean};
   /** Pack modules shown or hidden during this visit stay listed under Modules, so a row never vanishes under the cursor. */
   touched?: string[];
-  detail?: {kind: 'module' | 'pack'; id: string};
+  detail?: {
+    kind: 'module' | 'pack'; id: string; scroll?: number;
+    /** Ephemeral bounds from the rendered detail window; never saved as settings. */
+    viewport?: {maxScroll: number; page: number};
+  };
   /** A reviewed change awaiting Enter (Claude Code settings edit, pack removal). */
   confirm?: {request: ModulesRequest; title: string; lines: string[]};
   request?: ModulesRequest;
@@ -69,7 +73,9 @@ export interface PackListing {
 }
 
 export interface ModulesContext {
-  status?(capability: string): {state: string; collectedAt?: number; evidence?: string; error?: string};
+  /** Existing live display context; a false result is distinct from unavailable collection. */
+  conditionMet?(module: ContextModuleConfig): boolean;
+  status?(capability: string): {state: string; collectedAt?: number; evidence?: string; error?: string; durationMs?: number; hasValue?: boolean};
   packs?: readonly PackListing[];
   recommendations?: readonly Recommendation[];
   claudeBridge?: {state: string; detail?: string};
@@ -257,6 +263,13 @@ export function handleModulesManagerKey(key: Key, state: ModulesState, context: 
   }
   if (state.detail) {
     if (key.kind === 'escape' || key.kind === 'interrupt') { state.detail = undefined; return true; }
+    if (key.kind === 'up' || key.kind === 'down' || key.kind === 'pageUp' || key.kind === 'pageDown') {
+      const detail = state.detail;
+      const amount = key.kind === 'pageUp' || key.kind === 'pageDown' ? detail.viewport?.page ?? 1 : 1;
+      const direction = key.kind === 'up' || key.kind === 'pageUp' ? -1 : 1;
+      detail.scroll = Math.max(0, Math.min(detail.viewport?.maxScroll ?? 0, (detail.scroll ?? 0) + direction * amount));
+      return true;
+    }
     if (state.detail.kind === 'pack') {
       const pack = context.packs?.find(item => item.id === state.detail!.id);
       if (pack && !pack.builtIn && key.kind === 'text' && /^[eE]$/u.test(key.value)) { state.request = {kind: 'packEnabled', id: pack.id, enabled: pack.state !== 'enabled'}; return true; }
@@ -364,7 +377,7 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
   rows.push(truncateAnsi(`${PRIMARY}${clean(definition.label, 48)}${RESET}  ${SUBTLE}${CATEGORY_LABELS[definition.category]}${narrow ? '' : ` · ${origin}`}${RESET}`, columns),
     ...(narrow ? wrapped(origin, columns, SUBTLE) : []), ...wrapped(clean(definition.description, 240), columns, SECONDARY, '', 4), '');
   const surface = routeModule({...module, visible: true});
-  rows.push(...line('Shown', `${module.visible ? 'yes' : 'no'} · ${CONDITION_TEXT[module.condition]} · ${surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface]}`
+  rows.push(...line('Enabled', `${module.visible ? 'yes' : 'no'} · ${CONDITION_TEXT[module.condition]} · ${surface === 'hidden' ? 'Hidden' : MODULE_SURFACE_LABELS[surface as ModuleSurface]}`
     + `${module.surface === 'auto' || module.surface === undefined ? '' : ` (prefers ${MODULE_SURFACE_LABELS[definition.preferredSurface as ModuleSurface]})`}`));
   if (surface === 'statusStrip') rows.push(...line('Strip group', `${({left: 'Left', center: 'Center', right: 'Right'})[module.stripZone ?? 'right']} · /strip arranges groups and order`));
   if (surface !== 'hidden') {
@@ -378,20 +391,35 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
     return capability ? capability.reads.map(read => `${capability.title}: ${read}`) : LEGACY_READS[id] ? [LEGACY_READS[id]!] : [];
   });
   rows.push(`${SUBTLE}Reads${RESET}`, ...[...new Set(reads)].flatMap(read => wrapped(read, columns - 2, SECONDARY, '  ', 4).map((text, index) => index ? `  ${text}` : text.replace(/^ {2}/u, '  · '))));
-  rows.push(...wrapped('Nothing is executed from the workspace, no network is used, and secret values are never read.', columns, SECONDARY, '  '));
+  rows.push(...wrapped('Nothing is executed from the workspace and no network is used. Only approved metadata is exposed; secret values do not belong in module output or history.', columns, SECONDARY, '  '));
   const capabilities = [...definition.facts.keys()].map(id => coreCapability(id)).filter(Boolean);
   const history = capabilities.length && capabilities.every(capability => capability!.persistence === 'snapshot-safe');
   const privateFields = capabilities.flatMap(capability => Object.entries(capability!.fieldPolicy ?? {}).filter(([, policy]) => policy.persistence !== 'snapshot-safe').map(([field]) => field));
   rows.push(...line('History', definition.pack ? (history ? `may be kept with commands when shown in the Main Prompt${privateFields.length ? ` (never: ${privateFields.join(', ')})` : ''}`
     : 'live only; never kept in command history') : 'kept with commands when shown in the Main Prompt'));
   for (const capability of capabilities) {
+    // Declarative policy and existing snapshots only: opening details never demands a collector.
+    rows.push(...line('Source', clean(`${capability!.id} · ${capability!.scope} scope · ${capability!.trust}`, 200)));
+    const ttl = `${capability!.ttlMs} ms freshness TTL`;
+    const invalidation = capability!.invalidateOn.length ? `invalidated by ${capability!.invalidateOn.join(', ')}` : 'no event invalidation';
+    const refresh = capability!.refreshMs === undefined ? '' : ` · refresh every ${capability!.refreshMs} ms while demanded`;
+    rows.push(...line('Cache', clean(`${ttl} · ${invalidation}${refresh}`, 240)));
     const status = context.status?.(capability!.id);
     if (!status) continue;
     const age = status.collectedAt !== undefined && context.now !== undefined ? ` · ${Math.max(0, Math.round((context.now - status.collectedAt) / 1000))}s ago` : '';
-    const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refreshing` : status.state === 'absent' ? 'nothing to show here'
-      : status.state === 'pending' ? 'checking…' : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.error ?? status.state})` : 'not checked (module not in use)';
-    rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
+    const text = status.state === 'fresh' ? `fresh${age}` : status.state === 'stale' ? `last known${age}, refresh waits for demand` : status.state === 'absent' ? 'nothing to show here'
+      : status.state === 'pending' ? `checking…${status.hasValue ? ' · last known data retained' : ''}`
+        : status.state === 'timeout' || status.state === 'failed' ? `unavailable (${status.state})${status.hasValue ? ' · last known data retained' : ''}` : 'not checked';
+    // How long the last collection took is measured by the engine; nothing is collected to show it.
+    const took = status.durationMs === undefined ? '' : ` · took ${status.durationMs < 1 ? '<1' : Math.round(status.durationMs)} ms`;
+    rows.push(...line(narrow ? capability!.title : capability!.title.slice(0, 11), clean(`${text}${took}${status.evidence ? ` · ${status.evidence}` : ''}`, 200)));
   }
+  if (capabilities.length) rows.push(...line('Timing', 'last collection wall time; excludes queue delay. Opening details does not collect data.'));
+  const availability = surface === 'hidden' ? undefined : surfaceAvailability(surface, configuration);
+  rows.push(...line('Why', !module.visible ? 'turned off in Modules'
+    : availability && !availability.available ? availability.reason
+      : context.conditionMet?.(module) === false ? `hidden: current condition does not match (${CONDITION_TEXT[module.condition]})`
+        : whyText(module, surface, capabilities.map(capability => context.status?.(capability!.id)).filter((status): status is NonNullable<typeof status> => Boolean(status)), definition.triggers)));
   if (definition.facts.has('agent.claude')) {
     const bridge = context.claudeBridge;
     rows.push('', ...line('Claude Code', bridge?.state === 'configured' ? 'reports to NMSh through its status line · B to review removal'
@@ -399,6 +427,28 @@ function moduleDetailRows(module: ContextModuleConfig, context: ModulesContext, 
         : bridge?.state === 'unreadable' ? `settings not readable (${clean(bridge.detail, 80)})` : 'not reporting yet · B to review the one settings change'));
   }
   return rows;
+}
+
+/** One sentence on why this module is or is not on screen right now, from its settings and what the engine reported. */
+export function whyText(module: ContextModuleConfig, surface: string, statuses: ReadonlyArray<{state: string; error?: string; hasValue?: boolean}>, triggers?: readonly string[]): string {
+  if (!module.visible) return 'turned off in Modules';
+  if (surface === 'hidden') return 'routed to Hidden';
+  const failed = statuses.filter(status => status.state === 'timeout' || status.state === 'failed');
+  if (failed.length) {
+    const reason = failed.some(status => status.state === 'timeout') ? 'its data timed out' : 'its data could not be read; collection failed';
+    const cache = failed.some(status => status.hasValue) ? 'last known data is retained; no new value was collected'
+      : failed.every(status => status.hasValue === false) ? 'no cached value is available' : 'cached-data availability is unknown';
+    return `${reason}; ${cache}`;
+  }
+  if (statuses.length && statuses.every(status => status.state === 'absent')) return 'there is nothing for it to show in this directory';
+  if (statuses.length && statuses.every(status => status.state === 'idle') && module.condition === 'onCommand') {
+    return `shown after a command that uses it${triggers?.length ? ` (${clean(triggers.slice(0, 4).join(', '), 60)}…)` : ''}; no collection evidence is available yet`;
+  }
+  if (statuses.some(status => status.state === 'pending')) return 'being collected now';
+  if (statuses.some(status => status.state === 'stale')) return 'last known data is available; refresh waits for demand. Visibility follows the module condition and available space';
+  if (statuses.length && statuses.every(status => status.state === 'idle')) return 'not collected yet; only modules in use demand collection';
+  if (statuses.some(status => status.state === 'fresh')) return 'data is available; visibility follows the module condition and available space';
+  return 'collection evidence is not available; visibility follows the module condition and available space';
 }
 
 function packDetailRows(pack: PackListing, columns: number): string[] {
@@ -434,17 +484,34 @@ function whereText(module: ContextModuleConfig, configuration: PromptConfigurati
 const label = (id: string) => clean(moduleDefinition(id)?.label ?? `${id.slice(0, 40)} (missing pack)`, 64);
 
 /** A window of list rows around the selection, with counts of what is above and below. */
-function windowed(rows: string[], selectedRow: number, budget: number): string[] {
-  if (rows.length <= budget || budget < 5) return rows;
+function windowed(rows: string[], selectedRow: number, budget: number, fromStart = false): string[] {
+  if (rows.length <= budget) return rows;
+  if (budget < 5) {
+    const start = Math.max(0, Math.min(rows.length - Math.max(0, budget), selectedRow));
+    return rows.slice(start, start + Math.max(0, budget));
+  }
   const size = budget - 2;
-  const start = Math.max(0, Math.min(rows.length - size, selectedRow - Math.floor(size / 2)));
+  const start = Math.max(0, Math.min(rows.length - size, selectedRow - (fromStart ? 0 : Math.floor(size / 2))));
   const end = start + size;
   return [start ? `${SUBTLE}  ↑ ${start} more${RESET}` : '', ...rows.slice(start, end), end < rows.length ? `${SUBTLE}  ↓ ${rows.length - end} more${RESET}` : ''];
 }
 
 export function renderModulesManager(state: ModulesState, columns: number, context: ModulesContext = state.context ?? {}, budget = Infinity): string[] {
   const all = renderManagerRows(state, columns, context);
-  if (state.detail || state.confirm || all.rows.length <= budget) return all.rows;
+  if (state.detail) {
+    // Only ephemeral view bounds change here. Facts, preferences and demand do
+    // not change when the terminal is resized or the reader pages through data.
+    const head = Math.min(all.head, Math.max(0, budget - 1));
+    const content = all.rows.slice(head);
+    const available = Math.max(0, budget - head);
+    const page = Math.max(1, Math.min(content.length, available < 5 ? available : available - 2));
+    const maxScroll = Math.max(0, content.length - page);
+    const scroll = state.detail.scroll ?? 0;
+    state.detail.scroll = Number.isSafeInteger(scroll) ? Math.max(0, Math.min(maxScroll, scroll)) : 0;
+    state.detail.viewport = {maxScroll, page};
+    return [...all.rows.slice(0, head), ...windowed(content, state.detail.scroll, available, true)];
+  }
+  if (state.confirm || all.rows.length <= budget) return all.rows;
   return [...all.rows.slice(0, all.head), ...windowed(all.rows.slice(all.head), all.selectedRow - all.head, budget - all.head)];
 }
 
@@ -470,6 +537,7 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
     return {rows, head: rows.length, selectedRow: 0};
   }
   if (state.detail) {
+    const head = rows.length;
     if (state.detail.kind === 'pack') {
       const pack = context.packs?.find(item => item.id === state.detail!.id);
       rows.push(...(pack ? packDetailRows(pack, columns) : [`${SECONDARY}That pack is no longer available.${RESET}`]));
@@ -477,7 +545,7 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
       const module = state.draft.modules.find(item => item.id === state.detail!.id);
       rows.push(...(module ? moduleDetailRows(module, context, columns, state.draft) : [`${SECONDARY}That module is no longer configured.${RESET}`]));
     }
-    return {rows, head: rows.length, selectedRow: 0};
+    return {rows, head: Math.min(rows.length, head + 1), selectedRow: head};
   }
   const item = (index: number, text: string) => {
     if (index === state.selectedIndex) selectedRow = rows.length;
@@ -534,9 +602,10 @@ function renderManagerRows(state: ModulesState, columns: number, context: Module
 
 export function modulesManagerControls(state: ModulesState, context: ModulesContext = state.context ?? {}): Array<[string, string]> {
   if (state.confirm) return [['Enter', 'apply'], ['Esc', 'cancel']];
+  const read: Array<[string, string]> = state.detail?.viewport?.maxScroll ? [['↑↓', 'scroll'], ['PgUp/PgDn', 'page']] : [];
   if (state.detail?.kind === 'pack') {
     const pack = context.packs?.find(item => item.id === state.detail!.id);
-    return pack && !pack.builtIn ? [['E', pack.state === 'enabled' ? 'disable' : 'enable'], ['D', 'remove'], ['Esc', 'back']] : [['Esc', 'back']];
+    return pack && !pack.builtIn ? [...read, ['E', pack.state === 'enabled' ? 'disable' : 'enable'], ['D', 'remove'], ['Esc', 'back']] : [...read, ['Esc', 'back']];
   }
   const done: [string, string] = ['Esc', state.standalone ? 'close' : 'back to /prompt'];
   const apply: Array<[string, string]> = !state.standalone && modulesDirty(state) ? [['A', 'save modules now']] : [];
@@ -546,7 +615,7 @@ export function modulesManagerControls(state: ModulesState, context: ModulesCont
     const module = state.draft.modules.find(item => item.id === state.detail!.id);
     if (!module || !moduleDefinition(module.id)) return [['Esc', 'back']];
     const claude = moduleDefinition(state.detail.id)?.facts.has('agent.claude');
-    return [['Space', 'show/hide'], ...(conditionChoosable(module) ? [['←→', 'option'] as [string, string]] : []), ['S', 'surface'],
+    return [...read, ['Space', 'show/hide'], ...(conditionChoosable(module) ? [['←→', 'option'] as [string, string]] : []), ['S', 'surface'],
       ...(claude ? [['B', 'Claude Code bridge'] as [string, string]] : []), ...apply, ['Esc', 'back']];
   }
   const tab = state.modulesTab ?? 'modules';

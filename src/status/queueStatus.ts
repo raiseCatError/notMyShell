@@ -60,6 +60,15 @@ export function queueRow(state: QueueState, columns: number): string | undefined
     return `${accent}${truncateText(`${head} · ${count}`, columns)}${RESET}`;
   }
   const next = state.entries[0]!;
+  // The queue is waiting for the person, not for the shell: say so, in the one line that is always there.
+  if (next.condition === 'approve' && !next.approved) {
+    const asks = `${queueGlyph()} Queued (${count}) · next needs your approval`;
+    for (const hint of [' · /queue', '']) {
+      const room = columns - displayWidth(`${asks}: `) - displayWidth(hint);
+      if (room >= 8) return `${accent}${asks}${RESET}${subtle}: ${queuePreview(next.text, room)}${hint}${RESET}`;
+    }
+    return `${accent}${truncateText(`${queueGlyph()} Queued (${count}) · needs approval`, columns)}${RESET}`;
+  }
   const head = `${queueGlyph()} Queued (${count})`;
   const editing = state.editing === next.id ? ' (editing)' : '';
   for (const hint of [' · /queue', '']) {

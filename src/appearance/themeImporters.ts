@@ -401,6 +401,80 @@ export function importOhMyPosh(data: Record<string, unknown>, fileName: string, 
   return finish('oh-my-posh', theme, mapping, [...warnings], name);
 }
 
+// ---- Starship ----------------------------------------------------------------
+
+const STARSHIP_ROLE: Record<string, PromptThemeRole> = {directory: 'cwd', git_branch: 'gitBranch', nodejs: 'node', golang: 'go', python: 'python',
+  docker_context: 'docker', kubernetes: 'kubernetes', package: 'project'};
+const STARSHIP_MODIFIERS = new Set(['bold', 'italic', 'underline', 'dimmed', 'inverted', 'blink', 'hidden', 'strikethrough', 'none', 'prev_fg', 'prev_bg']);
+
+/**
+ * Starship config (TOML, already parsed as data). Only static colors are read: hex values in module `style` strings,
+ * the active `[palettes.*]` table that `palette = "name"` selects, and the `[…](style)` parts of the character
+ * module's success/error symbols. Format strings, `$variables`, conditions, `[custom.*]` commands, `command`/`when`
+ * keys, ANSI color names and 0–255 numbers are never evaluated or invented into colors; they become warnings. Which
+ * modules the file enables is disclosed, not imported: module visibility is chosen in NMSh's own Modules screen.
+ */
+export function importStarship(data: Record<string, unknown>, fileName: string, base: CustomTheme): ImportOutcome {
+  const warnings = new Set<string>(['Starship modules, format strings and commands are not imported; only static colors become an NMSh Native theme.']);
+  const palettes = isRecord(data.palettes) ? data.palettes : {};
+  const selected = typeof data.palette === 'string' ? data.palette : undefined;
+  const palette = selected && isRecord(palettes[selected]) ? palettes[selected] as Record<string, unknown> : {};
+  if (selected && !isRecord(palettes[selected])) warnings.add(`The palette "${sanitizeName(selected)}" is not defined in the file, so its names were not resolved.`);
+  const unresolved = new Set<string>();
+  const color = (style: unknown): string | undefined => {
+    if (typeof style !== 'string' || style.length > 200) return undefined;
+    let found: {fg?: string; bg?: string} = {};
+    for (const token of style.trim().split(/\s+/u).slice(0, 12)) {
+      const side = token.startsWith('bg:') ? 'bg' : 'fg';
+      const name = token.replace(/^(?:fg|bg):/u, '');
+      if (!name || STARSHIP_MODIFIERS.has(name)) continue;
+      const literal = hex(name) ?? (typeof palette[name] === 'string' ? hex(palette[name]) : undefined);
+      if (literal) found = {...found, [side]: literal};
+      else unresolved.add(sanitizeName(name));
+    }
+    return found.bg ?? found.fg;
+  };
+  const prompt: Partial<Record<PromptThemeRole, string>> = {};
+  const mapping: RoleMapping[] = [];
+  let accent: string | undefined;
+  const modules: string[] = [];
+  let custom = 0;
+  for (const [key, value] of Object.entries(data).slice(0, 200)) {
+    if (key === 'custom') { custom = isRecord(value) ? Object.keys(value).length : 1; continue; }
+    if (!isRecord(value)) continue;
+    if (key !== 'palettes') modules.push(sanitizeName(key));
+    const role = STARSHIP_ROLE[key];
+    const fill = color(value.style);
+    if (fill) accent ??= fill;
+    if (role && fill && !prompt[role]) { prompt[role] = fill; mapping.push({role: ROLE_LABELS[role], from: `[${sanitizeName(key)}] style`}); }
+    if (key === 'character') {
+      const symbolColor = (symbol: unknown) => typeof symbol === 'string' ? color(/\]\(([^)]{1,120})\)/u.exec(symbol)?.[1]) : undefined;
+      const success = symbolColor(value.success_symbol), failure = symbolColor(value.error_symbol);
+      if (success && !prompt.success) { prompt.success = success; mapping.push({role: 'Success', from: '[character] success_symbol'}); }
+      if (failure && !prompt.failure) { prompt.failure = failure; mapping.push({role: 'Failure', from: '[character] error_symbol'}); }
+    }
+  }
+  if (custom) warnings.add(`${custom} [custom] module${custom === 1 ? '' : 's'} ignored: their commands are never run.`);
+  if (unresolved.size) warnings.add(`Colors that are not static hex values (names, ANSI colors, numbers) were not imported: ${[...unresolved].slice(0, 6).join(', ')}${unresolved.size > 6 ? '…' : ''}.`);
+  if (!Object.keys(prompt).length && !accent) return {errors: ['No static Starship style colors were found to build an NMSh theme from.']};
+  const kept = PROMPT_THEME_ROLES.filter(role => !prompt[role]);
+  if (kept.length) warnings.add(`No Starship source for ${kept.map(role => ROLE_LABELS[role]).join(', ')}; ${kept.length === 1 ? 'it keeps' : 'they keep'} ${base.name} colors.`);
+  if (modules.length) warnings.add(`The file configures ${modules.length} module${modules.length === 1 ? '' : 's'} (${modules.slice(0, 8).join(', ')}${modules.length > 8 ? ', …' : ''}). Which modules NMSh shows is set in /modules; Starship itself keeps working as a prompt provider.`);
+  warnings.add('Starship does not define a terminal background; text tiers assume a dark terminal (change it in the editor).');
+  const name = sanitizeName(fileStem(fileName).replace(/^starship$/u, 'Starship')) || 'Starship theme';
+  const theme: CustomTheme = {...structuredClone(base), name, basedOn: 'Starship import', dark: true,
+    prompt: {...base.prompt, ...prompt}, ui: {...base.ui, ...(accent ? {accent} : {}),
+      ...(prompt.success ? {success: prompt.success} : {}), ...(prompt.failure ? {failure: prompt.failure} : {})}};
+  delete theme.terminal;
+  if (accent) mapping.push({role: 'Accent', from: 'first colored module'});
+  return finish('starship', theme, mapping, [...warnings], name);
+}
+
+function isStarship(data: unknown): data is Record<string, unknown> {
+  return isRecord(data) && !isRecord(data.colors) && (isRecord(data.palettes) || typeof data.palette === 'string' || typeof data.add_newline === 'boolean'
+    || Object.keys(STARSHIP_ROLE).some(key => isRecord(data[key])) || isRecord(data.character));
+}
+
 // ---- Dispatcher ------------------------------------------------------------
 
 function fileStem(fileName: string): string {
@@ -465,12 +539,13 @@ export function importThemeSource(text: string, fileName: string, defaults: Reco
     if (isScheme(json) && (want('base16') || want('base24'))) return schemeImport(json, text, defaults, format === 'auto' ? undefined : format);
     return {errors: ['This JSON is not an NMSh theme, Oh My Posh config, Windows Terminal scheme or Base16/Base24 scheme.']};
   }
-  if (extension === 'toml' || format === 'wezterm' || (format === 'oh-my-posh' && /^\s*\[/mu.test(text))) {
+  if (extension === 'toml' || format === 'wezterm' || ((format === 'oh-my-posh' || format === 'starship') && /^\s*\[/mu.test(text))) {
     let data: unknown;
     try { data = parseToml(text); } catch { return {errors: [looksLikeLua(text, fileName) ? WEZTERM_LUA_GUIDANCE : 'Not valid TOML.']}; }
     if (isOhMyPosh(data) && want('oh-my-posh')) return importOhMyPosh(data, fileName, base);
     if (isRecord(data) && isRecord(data.colors) && want('wezterm')) return importWezTermToml(data, fileName, defaults);
-    return {errors: ['This TOML is not an Oh My Posh config or a WezTerm color scheme.']};
+    if (isStarship(data) && want('starship')) return importStarship(data, fileName, base);
+    return {errors: ['This TOML is not an Oh My Posh config, a Starship config or a WezTerm color scheme.']};
   }
   if (format === 'auto' && looksLikeLua(text, fileName)) return {errors: [WEZTERM_LUA_GUIDANCE]};
   // Line-oriented terminal configs, detected by their own color syntax before YAML.
@@ -494,5 +569,5 @@ function windowsTerminalPalette(json: Record<string, unknown>): TerminalPalette 
     ...(hex(json.cursorColor) ? {cursor: hex(json.cursorColor)!} : {})};
 }
 
-export const IMPORT_FORMAT_CHOICES: readonly ImportFormatChoice[] = ['auto', 'nmsh', 'base16', 'base24', 'windows-terminal', 'oh-my-posh', 'kitty', 'ghostty', 'iterm2', 'wezterm'];
+export const IMPORT_FORMAT_CHOICES: readonly ImportFormatChoice[] = ['auto', 'nmsh', 'base16', 'base24', 'windows-terminal', 'oh-my-posh', 'starship', 'kitty', 'ghostty', 'iterm2', 'wezterm'];
 export const importFormatLabel = (format: ImportFormatChoice): string => format === 'auto' ? 'Detect automatically' : THEME_SOURCE_LABELS[format];
