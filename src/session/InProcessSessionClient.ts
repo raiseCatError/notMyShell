@@ -6,6 +6,8 @@ import {shellAdapter} from '../shell/adapters/registry.js';
 import {SERVICE_FEATURES, type ServiceFeature} from './SessionProtocol.js';
 import {QueueDispatcher, type QueueShell} from './QueueDispatcher.js';
 import type {QueueOp} from './CommandQueue.js';
+import {SessionTasks} from '../backgroundTasks/sessionTasks.js';
+import type {TaskOp} from '../backgroundTasks/protocol.js';
 import {SESSION_ID_ENV, SESSION_MODE_ENV, type SessionClient, type SessionClientEvents, type SessionOptions} from './SessionClient.js';
 
 type ShellLike = Pick<ShellSession, 'submit' | 'write' | 'interrupt' | 'endInput' | 'resize' | 'kill' | 'on'>
@@ -25,6 +27,9 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
   private readonly dispatcher: QueueDispatcher;
   /** This in-process session's NMSH_SESSION_ID (there is no service session id). */
   readonly contextId = `local-${randomUUID()}`;
+  /** Background tasks of this window's session; an in-process shell cannot outlive its window, and neither can they. */
+  private readonly tasks = new SessionTasks({shell: () => shellAdapter(this.shellId).resolveExecutable(process.env),
+    env: () => Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))});
 
   constructor(options: SessionOptions, private readonly factory: (options: SessionOptions) => ShellLike = defaultShell) {
     super();
@@ -55,10 +60,16 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
     shell.on('startup', tail => this.emit('startup', tail));
     shell.on('inputRejected', (data, submission) => this.emit('inputRejected', data, submission));
     shell.on('inputState', state => this.emit('inputState', state));
-    shell.on('exit', event => { this.dispatcher.onShellExit(); this.emit('exit', event); });
+    shell.on('exit', event => { this.dispatcher.onShellExit(); void this.tasks.shutdown(); this.emit('exit', event); });
   }
 
-  start(): void {}
+  start(): void {
+    this.tasks.attach({tasks: records => this.emit('tasks', records), output: (id, update) => this.emit('taskOutput', id, update)});
+  }
+  task(change: TaskOp): void {
+    const refused = this.tasks.request(change);
+    if (refused) this.emit('taskRefused', refused);
+  }
   submit(command: string): void { this.shell.submit(command); }
   write(data: string): void {
     if (data.includes('\u0003')) this.dispatcher.onInterrupt();
@@ -74,8 +85,8 @@ export class InProcessSessionClient extends EventEmitter<SessionClientEvents> im
   }
   endInput(): void { this.shell.endInput(); }
   resize(columns: number, rows: number): void { this.size = {columns, rows}; this.shell.resize(columns, rows); }
-  kill(): void { this.shell.kill(); }
-  detach(): void { this.shell.kill(); }
+  kill(): void { void this.tasks.shutdown(); this.shell.kill(); }
+  detach(): void { void this.tasks.shutdown(); this.shell.kill(); }
   ack(): void {}
 
   /** Same guards as the session service: never end a running command, a starting shell or jobs. */

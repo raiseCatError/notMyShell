@@ -6,6 +6,67 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.20.0] - Unreleased (release candidate)
+
+**Workspace, background tasks & native modules.** A workspace sidebar and detail panel sit beside the transcript; long-running commands run as background tasks beside the shell instead of in front of it; the native module catalog covers twelve more runtimes and tools; and Claude Code managed targets gain native model, effort and mod controls. Every region, task and control is reached through an explicit command or an opt-in key, and the persistent shell, the queue and program input keep their behavior.
+
+This release candidate is built on the **unpublished v0.19.0 release candidate**; neither is published until its physical-terminal QA passes ([v0.20 physical QA checklist](docs/testing/v020-physical-qa.md)).
+
+### Added
+
+#### Workspace sidebar and detail panel ([#330](https://github.com/raiseCatError/notMyShell/issues/330)–[#335](https://github.com/raiseCatError/notMyShell/issues/335))
+- `/sidebar` lists tmux panes of the server NMSh runs inside, this repository's worktrees and links to `/github`, `/agents` and `/sessions`; `/panel` explains the selected item. `/sidebar focus` and `/panel focus` give them the keyboard; Esc returns, Tab moves between regions, a click focuses a region.
+- On a wide terminal the regions dock beside the transcript and the shell is sized to the middle; on a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them.
+- Opening a worktree stages its `cd` in an empty composer; tmux navigation selects panes and windows by id through tmux from fixed system locations. Nothing runs by itself.
+- `keymap.json` binds workspace keys, opt-in and validated (composer keys must say what they replace); `/keys` shows the keys in effect, problems in the file and keys the terminal or tmux may take first; `/keys reload` reads it again.
+
+#### Background tasks ([#382](https://github.com/raiseCatError/notMyShell/issues/382))
+- `/background run <command>` (`/bg run`) starts a long-running command (`adb logcat`, `tail -f`, a dev server) in its own terminal beside the shell, in the shell's directory with its PATH, without the shell's aliases, functions or unexported variables.
+- A task bar above the composer: Up from an idle composer (after a shown agent shelf) or Shift+Up focuses it; Enter opens a task's output, `x` stops it (again later: terminate, then kill, paced so a held key cannot jump to SIGKILL), Delete removes a finished one. `/background` lists every task with details and preferences; `/background t3`, `stop`, `kill`, `remove` and `clear` act directly.
+- Tasks belong to the session: they keep running while the window is detached, a reattached window shows them and their recent output, and ending the session ends them. Task output never enters the shell, the transcript, copies, reports or comparisons; the transcript gets one line when a task starts and when it fails.
+- Suggestions are **off by default**. `/background suggestions on` offers a recognized command's family when you submit it: `b` background once, Enter here as before, `a` always, `n` never ask, Esc back to the draft.
+
+#### Native modules ([#364](https://github.com/raiseCatError/notMyShell/issues/364))
+- Runtimes: .NET, Swift, Zig and Deno ([#370](https://github.com/raiseCatError/notMyShell/pull/370), which also becomes the canonical Ruby and PHP implementation), Elixir, Dart and Flutter ([#372](https://github.com/raiseCatError/notMyShell/pull/372)). Requested versions come from the project's own files, active versions from the install location; no tool is ever run and a binary inside the workspace is refused.
+- One `build` module for Bazel, Gradle, Maven, CMake, Meson and Make with the version the project pins ([#373](https://github.com/raiseCatError/notMyShell/pull/373)).
+- Mercurial bookmark or branch and Jujutsu repository state in the version-control extras pack ([#374](https://github.com/raiseCatError/notMyShell/pull/374)).
+
+#### Managed Claude Code ([#347](https://github.com/raiseCatError/notMyShell/pull/347))
+- `/model` and `/effort` as native pickers over Claude's documented control requests; a change shows as requested until Claude reports it.
+- Claude mods with their real types and states per launch identity; enable and disable go through Claude's own `claude plugin` command at the installed scope, then running managed sessions reload. NMSh never edits Claude's settings files.
+- A context panel beside the agent conversation, provenance on every runtime fact, and Markdown rendering for agent output that reveals real link destinations and refuses smuggled characters.
+
+#### Worktrees and controls
+- `/worktrees` shows a related pull request only from evidence: the last `/github` listing of the same repository, with the PR's head branch in its own repository exactly the worktree's branch; `p` opens it in `/github` ([#381](https://github.com/raiseCatError/notMyShell/pull/381)).
+- A shared action-control renderer whose states are told apart by marks, not color, first used by the `/worktrees` confirmation ([#369](https://github.com/raiseCatError/notMyShell/pull/369)).
+
+### Changed
+- NMSh's own lines (`/copy` confirmations, notices, completion rows) wrap at word boundaries in narrow windows, with continuation rows indented under the text instead of splitting words such as `5 l`/`ines`. Copying a selection still gives the line exactly as stored. Shell output keeps the terminal's column wrapping ([#349](https://github.com/raiseCatError/notMyShell/pull/349)).
+
+### Security
+- Approval prompts show everything they approve: a multi-line command is shown on every line (cut at 600 characters with the remainder counted), so a harmless first line can no longer hide what follows; this fixes the shipped Claude adapter's permission prompts ([#380](https://github.com/raiseCatError/notMyShell/pull/380)).
+- Executable Portable Mods stay disabled behind a documented threat model and a regression gate; the only processes the mods code may start are Claude's own `plugin` commands in four reviewed forms, without a shell ([#379](https://github.com/raiseCatError/notMyShell/pull/379)).
+- Background tasks: every request, task record and output update crossing the session boundary is validated; task output is sanitized line by line and bounded; signals reach only a task's own process group; the environment is used for the spawn only and never stored.
+- Workspace text from tmux, Git and keymap files has whole escape sequences removed before it is drawn.
+
+### Compatibility
+- Node.js 22 or newer; zsh, Bash 4.4+ and Fish, as in v0.19.0.
+- Background tasks need a session service from this release (a service started by an older NMSh says so until it restarts) and POSIX process groups (macOS, Linux, WSL 2).
+- The tmux section of the sidebar needs tmux in `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin` or `/bin`.
+
+### Upgrade notes
+- Nothing new is on after the upgrade: the sidebar and panel are opened by command, the composer binds no workspace keys, and background suggestions are off.
+- Restart the session service (or start a new session) to use background tasks.
+
+### Known limitations
+- **Physical-terminal QA has not been performed** for the workspace regions, drawers, background tasks, keymap host notes or the new modules; automated tests and real-PTY suites cover them.
+- Clicks focus a region but do not select sidebar rows; the mouse wheel scrolls the transcript wherever the pointer is.
+- The sidebar lists tmux and worktrees only; NMSh sessions and managed targets as rows, and module diagnostics in the detail panel (they stay in `/modules` details), are not included.
+- Background tasks run in a separate shell: aliases, functions and unexported variables of the live shell are not available. A service restart ends the tasks it owned. Output kept by the task owner is 5,000 lines or 2 MiB per task.
+- The Codex app-server adapter is included but not wired: Codex and OpenCode sessions are shown, not controlled. Claude Remote Control stays unsupported for managed targets.
+- Claude mod enable/disable has not been exercised against a live Claude account in this release's verification.
+- Everything listed under v0.19.0's known limitations still applies.
+
 ## [0.19.0] - Unreleased (release candidate)
 
 **Terminal workflow.** One command's result becomes useful for the next without NMSh taking execution away from the real shell. NMSh notices when a running command is waiting for you, lets you prepare the next commands while one runs, copies exactly what you choose, turns output into reviewed reports and comparisons, and keeps the commands you reuse. Nothing derived from output, the clipboard, a pin or a recipe runs without an explicit action, and every queued command still runs in your one persistent shell.

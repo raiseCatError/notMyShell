@@ -169,7 +169,12 @@ Intents:
   `ResourceResolver` proves a resource for that path. The core ships no
   resolver.
 - `DiffIntent {repository, worktreePath, ref, head}` for a future #332 caller.
-- Related PR is always `unavailable: No pull request evidence yet` (#338).
+- Related PR (`p`, `openPullRequest`): available only with evidence from the host's cached `/github` listing
+  (`ControllerOptions.pullRequests`, never fetched by the manager). `relatedPullRequests` counts a PR only when its
+  head branch, in the PR's own repository, is exactly the worktree's branch: fork PRs with the same branch name,
+  PRs whose head repository GitHub did not report, detached worktrees and partial names are not evidence. Whether
+  the worktree's HEAD is the PR's head commit is reported separately (`atHead`). Without a listing the action says
+  `No pull request evidence yet`.
 
 Rendering: selection is a marker (`›`/`>`) plus weight, never color alone;
 `level: 'none'` emits no escape bytes; Safe glyphs are pure ASCII (and use
@@ -206,12 +211,14 @@ terminals window whole entries around the selection with an `a-b/N` indicator.
 - `w` in a pull request (`/github`) opens `/worktrees` with that PR's head
   branch selected when a worktree has it checked out; branches from forks are
   not matched.
+- (v0.20) `/worktrees` receives the PR list from the last `/github` listing as `pullRequests`, only when the
+  shell's github.com `origin` is that same repository; nothing is fetched for it. `p` on a related PR closes the
+  manager and opens that pull request's detail in `/github`.
 
 ## Deferred integration
 
 - NMSh session focus, tmux focus, and opening a new session for a worktree.
 - #331 sidebar quick navigation (can reuse `discoverWorktrees` and the model).
 - #332 diff panel (consumes `DiffIntent`).
-- #338 related PR evidence.
 - #329 managed-target focus context.
 - Physical terminal QA.

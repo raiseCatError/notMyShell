@@ -18,7 +18,7 @@
 
 **notMyShell (NMSh)** runs your real zsh, Bash or Fish in a persistent session and gives it a better front end: a composer that stays put, semantic highlighting, a readable transcript, live command feedback, sessions that survive closing the window, and themes that can reach the tools you use.
 
-Latest published stable release: [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0180---2026-10-13) for its scope and known limitations; physical-terminal QA for this release is still pending. v0.19.0 (terminal workflow: input awareness, command queue, reviewed reports and comparisons) is a release candidate on `release/v0.19.0` and is not published until its physical-terminal QA passes.
+Latest published stable release: [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0). The `master` branch includes this released work. See the [changelog](CHANGELOG.md#0180---2026-10-13) for its scope and known limitations; physical-terminal QA for this release is still pending. v0.19.0 (terminal workflow: input awareness, command queue, reviewed reports and comparisons) is a release candidate on `release/v0.19.0` and is not published until its physical-terminal QA passes. v0.20.0 (workspace sidebar and panel, background tasks, more native modules) is a release candidate built on it, on `release/v0.20.0`.
 
 ## See notMyShell in motion
 

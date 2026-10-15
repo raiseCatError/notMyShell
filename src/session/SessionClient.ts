@@ -5,6 +5,8 @@ import type {ShellId} from '../shell/adapters/ShellAdapter.js';
 import type {ServiceFeature} from './SessionProtocol.js';
 import type {InputState} from './inputState.js';
 import type {QueueOp, QueueState} from './CommandQueue.js';
+import type {TaskOp, TaskUpdate} from '../backgroundTasks/protocol.js';
+import type {TaskRecord} from '../backgroundTasks/supervisor.js';
 
 /** What happened with a queue change, by entry id (the text is in the previous state). */
 export interface QueueNews {
@@ -39,6 +41,12 @@ export interface SessionClientEvents {
   inputState: [InputState];
   /** The session's command queue changed: its entries, and what just ran, was refused or was dropped. */
   queueState: [QueueState, QueueNews];
+  /** This session's background tasks, on attach and whenever one changes (only with the 'background-tasks' feature). */
+  tasks: [readonly TaskRecord[]];
+  /** New output of one background task, separate from the shell's own output. */
+  taskOutput: [taskId: string, update: TaskUpdate];
+  /** A background task request was refused, with the reason. */
+  taskRefused: [reason: string];
   /** The backlog sent after a reattach has been delivered. */
   replayed: [{truncatedBytes: number}];
   /** The managed shell ended. */
@@ -77,6 +85,11 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}>;
   /** Change this session's command queue (only when `features` has 'queue'). */
   queue(change: QueueOp): void;
+  /**
+   * Ask the session's background task owner to start, stop or remove a task (only when `features` has
+   * 'background-tasks'). Tasks run beside the shell in their own terminals; they never use the shell's PTY.
+   */
+  task?(change: TaskOp): void;
   /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
   readonly features: ReadonlySet<ServiceFeature>;
   /** Build of the session service, when it reported one. */

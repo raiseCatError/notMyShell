@@ -6,6 +6,7 @@
 |---|---|
 | **Current release** | [v0.18.0 — Context Engine, Managed Agents & Workspaces](https://github.com/raiseCatError/notMyShell/releases/tag/v0.18.0) — released; physical QA pending ([checklist](docs/testing/v018-physical-qa.md)) |
 | **Release candidate** | v0.19.0 — Terminal workflow (input awareness, command queue, copy and Smart Folding, Copy as Report, Compare output, references, paste review, pins and recipes, activity wording) on `release/v0.19.0` — **not published**; publication waits for physical terminal QA ([checklist](docs/testing/v019-physical-qa.md)) |
+| **Release candidate (on v0.19 RC)** | v0.20.0 — Workspace, background tasks & native modules (`/sidebar`, `/panel`, `/keys`, `/background`, twelve more native modules, managed Claude `/model`/`/effort`/mods, related PRs in `/worktrees`) on `release/v0.20.0` — **not published**; waits for v0.19 and its own physical QA ([checklist](docs/testing/v020-physical-qa.md)) |
 | **macOS distribution** | Homebrew: `brew install raiseCatError/tap/nmsh`; source installation remains available |
 | **Current engineering focus** | [#305 — Native modules / Context Engine](https://github.com/raiseCatError/notMyShell/issues/305) and [#304 — Theme Bridge / semantic terminal](https://github.com/raiseCatError/notMyShell/issues/304); foundation released in v0.17.0, the module platform and further Theme Bridge work released in v0.18.0 |
 | **Included in v0.18.0** | Context Engine platform (capability scheduling, first-party catalog, Context Packs, Claude Code agent context), `/modules`, Status Strip 2.0 and `/strip`, managed Claude Code targets and `/mods` (#329), `/worktrees` (first slice of #337), read-only `/github` (first slice of #338), terminal title ownership, tmux/passthrough/cursor fixes; merged through [PR #345](https://github.com/raiseCatError/notMyShell/pull/345) (Status Strip 2.0 and the Ghostty physical-QA fixes reached master earlier through [PR #328](https://github.com/raiseCatError/notMyShell/pull/328)), see CHANGELOG → 0.18.0 |
@@ -156,6 +157,14 @@ The work formerly planned as v0.8–v0.15 ships together with v0.16 in one cumul
 | [#14](https://github.com/raiseCatError/notMyShell/issues/14) | Maintainer exercised real CLI/TUI use; deterministic suite extended; ongoing regression tracking |
 | [#15](https://github.com/raiseCatError/notMyShell/issues/15) | Moved to Future / Backlog; NMSh already degrades by capability in unknown embedded hosts |
 | [#18](https://github.com/raiseCatError/notMyShell/issues/18) | Code and CI in v0.17; physical Linux/WSL pass moved to a follow-up |
+
+## Release candidate — v0.20 Workspace, background tasks & native modules
+
+Integrated on `release/v0.20.0`, pinned to the unpublished v0.19 candidate: the standalone module work merged through
+`integration/v020-modules` (#370 → #372 → #373, #374, #369, #381, #379, #380, #375 → #376/#377/#378, #383 → #384), then
+#347 and #349, then the frontend wiring of the workspace regions, background tasks and related PRs. Executable
+Portable Mods stay disabled (#379); the Codex app-server adapter ships unwired (#380). Not published: it waits for v0.19
+and for its own physical QA.
 
 ## Release candidate — v0.19 Terminal workflow
 

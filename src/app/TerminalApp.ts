@@ -168,7 +168,7 @@ import {InProcessSessionClient} from '../session/InProcessSessionClient.js';
 import {cursorStyleSequence, TerminalRenderer} from '../terminal/TerminalRenderer.js';
 import {KeyDecoder, type Key} from '../terminal/keys.js';
 import {promptConfigurationPath} from '../configuration/paths.js';
-import {displayWidth, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
+import {displayWidth, padCells, repeatToWidth, stripAnsi, truncateAnsi, truncateText} from '../util/text.js';
 import {isSlashInput, parseSlashCommand, slashCommands, slashSuggestions, suggestionWindow, type ParsedSlashCommand} from '../commands/slashCommands.js';
 import {ClipboardUnavailableError, copyFeedback, copyStats, readClipboard, writeClipboard} from '../clipboard/clipboard.js';
 import {beginSelection, extendSelection, isRowSelected, selectedText, type TranscriptSelection} from '../output/TranscriptSelection.js';
@@ -327,7 +327,7 @@ import {discoverClaudeProfiles} from '../agents/profileDiscovery.js';
 import {ModsController, modsKeyAction} from '../agents/mods/controller.js';
 import {renderMods} from '../agents/mods/view.js';
 import {WorktreeManagerController} from '../worktrees/controller.js';
-import {repositoryIdentity} from '../worktrees/discovery.js';
+import {discoverWorktrees, repositoryIdentity} from '../worktrees/discovery.js';
 import {createGitRunner, succeeded, type GitRunner} from '../worktrees/git.js';
 import {newWorktreeRequest} from '../worktrees/host.js';
 import {displayText as worktreeText} from '../worktrees/model.js';
@@ -336,9 +336,31 @@ import {GithubWorkspaceController, type ListTab, type WorkspaceIntent} from '../
 import {githubRepositoryFromRemote, workspaceKey} from '../githubWorkspace/host.js';
 import {attachRenderer, renderWorkspace, type RenderOptions as GithubRenderOptions} from '../githubWorkspace/render.js';
 import {safeGithubUrl} from '../githubWorkspace/sanitize.js';
+import type {PrSummary} from '../githubWorkspace/model.js';
 import {GithubWorkspaceService} from '../githubWorkspace/service.js';
 import {GhSource} from '../githubWorkspace/source.js';
-import {loadModInventory} from '../agents/mods/inventory.js';
+import {loadModInventory, withLoadedIn} from '../agents/mods/inventory.js';
+import {inspectPlugin, setPluginEnabled} from '../agents/mods/claudePlugins.js';
+import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
+import {applyPickerChoice} from '../agents/input/surface.js';
+import {settingsEffort} from '../agents/claudeSettings.js';
+import {renderSidePanel, sidePanelShown, sidePanelWidth} from '../agents/workspace/sidePanel.js';
+import {WorkspaceHost} from './workspaceHost.js';
+import {BackgroundHost} from './backgroundHost.js';
+import {entersBar, removalBlocked} from '../backgroundTasks/bar.js';
+import {BackgroundManager} from '../backgroundTasks/manager.js';
+import {rememberFamily} from '../backgroundTasks/preferences.js';
+import {nextLevel} from '../backgroundTasks/protocol.js';
+import {explicitRun, parseBackgroundCommand, suggestionKey} from '../backgroundTasks/suggestion.js';
+import type {TaskRecord} from '../backgroundTasks/supervisor.js';
+import {TaskOutputView} from '../backgroundTasks/view.js';
+import {composeWorkspaceRows} from './workspaceFrame.js';
+import type {WorkspaceOwner} from '../workspace/focus.js';
+import {columnAt, type WorkspaceColumns} from '../workspace/layout.js';
+import {createTmuxRunner, listTmuxPanes, tmuxServer, trustedTmux} from '../workspace/tmux.js';
+import {describeKeymap, hostNotes, keymapHostProfile} from '../workspace/keymapConfig.js';
+import type {WorkspaceEffect} from './workspaceHost.js';
+import type {ActivationIntent} from '../workspace/resources.js';
 import {agentBlocks, agentPanelRows, renderAgentPanel, renderAgentView, renderShelf, shelfOrder, type AgentPanelState, type AgentViewMeta, type AgentViewState} from '../agents/sessions/AgentViews.js';
 import {harness} from '../agents/harnesses.js';
 import {defaultRuntimeDir, socketPathFor} from '../session/runtimeDir.js';
@@ -384,6 +406,12 @@ const GLYPH_ENTRY_INDEX = (): number => Math.max(0, SETTINGS_ENTRIES.findIndex(e
 const CONTEXT_SETTLE_MS = 150;
 
 export class TerminalApp {
+  /** Workspace regions (#330): sidebar, detail panel, their focus and keymap. Declared first: dimensions() reads it. */
+  private readonly workspace = new WorkspaceHost();
+  /** Background tasks of this session (#382): what the task owner reported, never run by the frontend itself. */
+  private readonly background = new BackgroundHost();
+  /** Task ids this window has already announced (a reattach adopts the existing list silently). */
+  private backgroundSeen?: Set<string>;
   private readonly buildIdentity = readBuildIdentity();
   private updateInProgress = false;
   /** The release version the last `/update` offered; `/update apply` installs only that. */
@@ -822,6 +850,8 @@ export class TerminalApp {
       this.presetStartup = new PresetStartup(preset);
     }
     setIconStyle(this.promptConfiguration.glyphStyle);
+    // keymap.json is validated once here and on /keys reload; a missing file is the defaults.
+    this.workspace.loadKeymap();
     // The backend this frontend manages, known before the first welcome is drawn.
     this.shellId = isShellId(connection?.shell) ? connection.shell : isShellId(connection?.attached?.shell) ? connection.attached.shell as ShellId : 'zsh';
     this.startWelcome(this.initialCwd);
@@ -866,6 +896,9 @@ export class TerminalApp {
     this.session.on('replayed', summary => this.finishReplay(summary));
     this.session.on('inputState', state => this.onInputState(state));
     this.session.on('queueState', (state, news) => this.onQueueState(state, news));
+    this.session.on('tasks', records => this.onBackgroundTasks(records));
+    this.session.on('taskOutput', (taskId, update) => { this.background.onOutput(taskId, update); if (!this.passthrough && !this.externalPassthrough) this.render(); });
+    this.session.on('taskRefused', reason => { this.output.addFrontendInteraction('/background', `Not done: ${reason}`, ERROR); this.render(); });
     this.session.on('inputRejected', (data, submission) => this.onInputRejected(data, submission));
     this.session.on('startup', tail => {
       this.startupTail = tail;
@@ -1397,6 +1430,10 @@ export class TerminalApp {
       this.terminalFocus = key.kind === 'focusIn' ? 'focused' : 'blurred';
       return;
     }
+    // Workspace columns: pointer events on a region are the workspace's; center events continue center-relative.
+    const routed = this.routeWorkspacePointer(key);
+    if (!routed) return;
+    key = routed;
     if (this.startupPending && key.kind === 'interrupt') { this.abortStartup(); return; }
     if (this.startupPanel) {
       // The shell is not ready; it may be waiting on a startup file. Abort is explicit, and nothing the
@@ -1785,6 +1822,8 @@ export class TerminalApp {
       const result = action ? this.modsPanel.dispatch(action) : undefined;
       if (result === 'close') {this.modsPanel = undefined; this.returnFromPanel();}
       else if (result === 'refresh') void this.refreshMods();
+      else if (result === 'toggle') void this.toggleMod();
+      else if (result === 'inspect') void this.inspectMod();
       this.render(); return;
     }
     if (this.worktreePanel) { void this.handleWorktreeKey(key); return; }
@@ -1837,6 +1876,8 @@ export class TerminalApp {
       return;
     }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
+    if (this.background.panel) { this.handleBackgroundPanelKey(key); return; }
+    if (this.background.bar.focused && this.handleBackgroundBarKey(key)) return;
     if (this.launcher) { this.handleLauncherKey(key); return; }
     if (this.agentPanel) { this.handleAgentPanelKey(key); return; }
     if (this.askState) {
@@ -1911,6 +1952,10 @@ export class TerminalApp {
       this.render();
       return;
     }
+    // Every panel, program and search above keeps its keys. Then a focused workspace region, or an opt-in keymap
+    // binding from an idle composer (it comes before the agent shelf, the task bar and history).
+    if (this.handleWorkspaceKey(key)) return;
+    if (this.background.suggestion && this.handleBackgroundSuggestionKey(key)) return;
     if (key.kind === 'mouseDrag' || key.kind === 'mouseRelease') { this.handleSelectionPointer(key.kind, key.y); return; }
     // Any other key or click ends a finished selection (its text is already on the clipboard).
     if (this.selection && !this.selection.dragging && key.kind !== 'wheelUp' && key.kind !== 'wheelDown' && key.kind !== 'mouseMove') {
@@ -2322,9 +2367,12 @@ export class TerminalApp {
       // Spatial focus: the shelf sits above the composer. Only an already visible shelf, from a completely idle
       // composer; a hidden shelf is never revealed by ↑, which stays shell history.
       if (this.composerIdle() && !this.composerHistory.active && this.shelfShown()) { this.shelf.focused = true; this.shelf.selected = 0; this.render(); return; }
+      // Then the background task bar (only from an idle composer, only when tasks are shown), then history.
+      if (this.enterBackgroundBar(key)) return;
       if (!this.editor.moveUp(this.inputColumns(columns), this.railInputPrefix(columns)) && !this.running) this.recallHistory('previous');
     } else if (key.kind === 'selectUp') {
       const {columns} = this.dimensions();
+      if (this.enterBackgroundBar(key)) return;
       this.editor.selectUp(this.inputColumns(columns), this.railInputPrefix(columns));
     } else if (key.kind === 'down') {
       const {columns} = this.dimensions();
@@ -2688,6 +2736,11 @@ export class TerminalApp {
     else if (slash.kind === 'ai') this.openAi(command, slash.target);
     else if (slash.kind === 'mods') this.openMods(slash.provider);
     else if (slash.kind === 'worktrees') await this.openWorktrees();
+    else if (slash.kind === 'workspace') {
+      await this.applyWorkspaceEffect(this.workspace.perform(slash.focus ? `${slash.region}.focus` : `${slash.region}.toggle`, this.terminalDimensions().columns));
+    }
+    else if (slash.kind === 'keys') this.showWorkspaceKeys(command, slash.reload);
+    else if (slash.kind === 'background') this.runBackgroundCommand(command);
     else if (slash.kind === 'github') await this.openGithub(slash.tab);
     else if (slash.kind === 'managedTarget') this.openManagedTarget(command, slash.provider, slash.action);
     else if (slash.kind === 'rawProvider') {
@@ -2972,7 +3025,7 @@ export class TerminalApp {
     }
   }
 
-  private async submit(realShell = false, skipInstallCheck = false): Promise<void> {
+  private async submit(realShell = false, skipInstallCheck = false, fromComposer = false): Promise<void> {
     this.clearCorrection();
     const command = this.editor.text;
     const slash = realShell ? undefined : parseSlashCommand(command);
@@ -2997,6 +3050,13 @@ export class TerminalApp {
       await this.runSlash(command, slash);
       this.render();
       return;
+    }
+    // Background tasks: only for a command typed and submitted from an idle composer, never queued, startup or program
+    // input. A family the person set to Always runs in the background; with suggestions on, a recognized command asks.
+    if (fromComposer && this.backgroundAvailable() && !this.running && !this.startupPending && !this.passthrough && !this.externalPassthrough) {
+      const decision = this.background.decide(command);
+      if (decision.action === 'background') { this.startBackgroundTask(command, decision.classification.family); this.render(); return; }
+      if (decision.action === 'suggest') { this.background.suggestion = {command, classification: decision.classification}; this.render(); return; }
     }
 
     const contextAtSubmission = this.context;
@@ -4473,7 +4533,7 @@ export class TerminalApp {
   }
 
   private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -4511,6 +4571,8 @@ export class TerminalApp {
     if (this.copyPicker) return renderCopyPicker(this.copyPicker, columns, this.dimensions().rows - 4);
     if (this.reportReview) return renderReportReview(this.reportReview, columns, this.dimensions().rows - 4);
     if (this.comparePanel) return renderComparePanel(this.comparePanel, columns, this.dimensions().rows - 4);
+    if (this.background.panel) return framePanel(this.background.panelRows(Math.max(1, columns - 4), this.dimensions().rows - 4,
+      {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'}), columns);
     if (this.rowPanel) return renderRowPanel(this.rowPanel, this.promptConfiguration, columns, this.dimensions().rows, this.rowPanel.rowIds.includes('copyMode') ? []
       : this.promptConfiguration.statusStrip.enabled ? [this.statusStripRow(columns - 2)] : ['  (Status strip Off)']);
     if (this.configureList) return renderConfigureList(this.configureList, registryFacts(), columns, this.dimensions().rows);
@@ -4555,8 +4617,16 @@ export class TerminalApp {
       if (session) {
         // The agent draft uses the shell composer's geometry and the terminal's own caret: the view reports where it is.
         const layout: {caret?: {row: number; column: number}} = {};
-        const rows = framePanel(renderAgentView(session, this.agentView, columns, this.dimensions().rows - (this.agentView.controller ? 1 : 4), Date.now(), this.agentViewMeta(session),
-          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout}), columns);
+        const height = this.dimensions().rows - (this.agentView.controller ? 1 : 4);
+        // The right panel sits beside the conversation when shown; the conversation keeps the composer and caret.
+        const panel = session.level === 'managed' && sidePanelShown(this.agentView.panel, columns);
+        const panelWidth = panel ? sidePanelWidth(columns) : 0;
+        const mainWidth = columns - (panel ? panelWidth + 3 : 0);
+        const main = renderAgentView(session, this.agentView, mainWidth, height, Date.now(), this.agentViewMeta(session),
+          {presentation: this.promptConfiguration.transcriptPresentation, composerPosition: this.promptConfiguration.composerPosition === 'top' ? 'top' : 'bottom', hardwareCaret: true, layout});
+        const side = panel ? renderSidePanel(session, panelWidth, main.length, Date.now(), this.agentSettingsEffort.get(session.id)) : [];
+        const divider = `${foreground(UI_COLORS.subtle)}${getCurrentGlyphMode() === 'safe' ? '|' : '│'}\u001b[0m`;
+        const rows = framePanel(panel ? main.map((row, index) => `${padCells(row, mainWidth, 0)} ${divider} ${side[index] ?? ''}`) : main, columns);
         // framePanel puts its rule first; a Top panel later moves that rule to its last row.
         this.agentCaret = layout.caret && {row: layout.caret.row + 1, column: layout.caret.column};
         return rows;
@@ -7081,7 +7151,8 @@ export class TerminalApp {
     const suggestion = this.clipboardChangeSuggested && !this.running && this.clipboardChangeWatch?.enabled
       ? [truncateAnsi(`${SUBTLE}Clipboard changed · /ps reads it for review${RESET}`, columns)] : [];
     const rows = [...this.clipboardRows(columns), ...suggestion, ...this.sessionNoticeRows(columns), ...this.taskRows(columns), ...this.watches.active().map(watch => truncateAnsi(watchRow(watch, now), columns)), ...this.pastePreviewRows(columns)];
-    return shelf ? [...rows, shelf] : rows;
+    const background = this.backgroundRows(columns);
+    return shelf ? [...rows, ...background, shelf] : [...rows, ...background];
   }
 
   /** The shell grammar this session's shell speaks, for splitting a paste into commands (none for other shells). */
@@ -8809,6 +8880,22 @@ export class TerminalApp {
       answer: (id, requestId, allow) => this.agents.get(id)?.pendingApproval?.requestId === requestId && this.agents.answer(id, allow),
       cancel: id => {this.agents.cancel(id);},
       choose: (id, requestId, answers) => this.agents.choose(id, requestId, answers),
+      openPicker: (target, kind) => {
+        if (!this.agents.controllable(target.id)) return {ok: false, reason: `/${kind} needs a running managed Claude target with a live control channel.`};
+        return kind === 'model' ? openModelPicker(target.telemetry) : openEffortPicker(target.telemetry, this.agentSettingsEffort.get(target.id));
+      },
+      togglePanel: state => {
+        const columns = this.dimensions().columns;
+        state.panel = !sidePanelShown(state.panel, columns);
+        if (state.panel && columns < 72) { state.panel = undefined; return 'The panel needs at least 72 columns; widen the terminal.'; }
+        return state.panel ? 'Panel shown. /panel hides it.' : 'Panel hidden. /panel shows it.';
+      },
+      refreshContext: target => {void this.agents.contextUsage(target.id).then(result => {
+        if (this.agentView?.sessionId === target.id) this.agentView.message = result.ok ? `Context: ${result.value.totalTokens.toLocaleString()} of ${result.value.maxTokens.toLocaleString()} tokens, by Claude's count.` : `Context unavailable: ${result.reason}`;
+        if (!this.stopped) this.render();
+      });},
+      applyPicker: (target, picker, row) => {void applyPickerChoice(view, picker, row, {
+        setModel: model => this.agents.setModel(target.id, model), setEffort: level => this.agents.setEffort(target.id, level), render: () => { if (!this.stopped) this.render(); }});},
       copy: text => {void writeClipboard(text).then(() => {view.message = 'Copied.'; this.render();}).catch(() => {view.message = 'Clipboard unavailable.'; this.render();});},
       copyReply: (target, index) => {void this.copyAgentBlock(target, index);},
     });
@@ -8903,12 +8990,20 @@ export class TerminalApp {
     this.render();
   }
 
+  /** Effort from each target's Claude settings files, read once off the render path. */
+  private readonly agentSettingsEffort = new Map<string, string | undefined>();
+
   /** Header facts for an agent view: the launch profile's label and configured model, and the shell's branch when the target shares its directory. */
   private agentViewMeta(session: AgentSession): AgentViewMeta {
     const profile = session.profileId ? this.promptConfiguration.agentProfiles.find(item => item.name === session.profileId) : undefined;
+    if (session.harness === 'claude' && session.cwd && !this.agentSettingsEffort.has(session.id)) {
+      this.agentSettingsEffort.set(session.id, undefined);
+      void settingsEffort(profile?.configDir, session.cwd).then(level => { if (level && !this.stopped) { this.agentSettingsEffort.set(session.id, level); this.render(); } });
+    }
+    const effort = this.agentSettingsEffort.get(session.id);
     const defaultDir = process.env.CLAUDE_CONFIG_DIR ? process.env.CLAUDE_CONFIG_DIR.replace(/^\/(?:Users|home)\/[^/]+/u, '~') : '~/.claude';
     return {...(profile ? {profileLabel: profileLabel(profile), ...(profile.model ? {configuredModel: profile.model} : {})} : {identity: session.harness === 'claude' ? `Default identity · ${defaultDir}` : 'Default identity'}),
-      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {})};
+      ...(session.cwd === this.shellCwd && this.context.branch ? {branch: this.context.branch} : {}), ...(effort ? {settingsEffort: effort} : {})};
   }
 
   private openMods(provider?: string): void {
@@ -8931,7 +9026,10 @@ export class TerminalApp {
       this.render(); return;
     }
     this.panelOrigin = undefined;
-    const controller = new WorktreeManagerController({git, repository, currentPath: () => this.canonicalShellCwd()});
+    // Related PRs only from the last /github listing of this same github.com repository; never fetched from here.
+    const origin = await this.githubOrigin();
+    const controller = new WorktreeManagerController({git, repository, currentPath: () => this.canonicalShellCwd(),
+      pullRequests: () => (origin && this.githubListing?.repository.toLowerCase() === origin.toLowerCase() ? this.githubListing : undefined)});
     const panel = {controller, git, ...(select ? {select} : {})};
     this.worktreePanel = panel;
     this.render();
@@ -8990,6 +9088,11 @@ export class TerminalApp {
         if (command) { this.worktreePanel = undefined; this.returnFromPanel(); this.applySuggestion({insertion: command}); }
       }
     }
+    else if (outcome.kind === 'openPullRequest') {
+      this.worktreePanel = undefined;
+      this.returnFromPanel();
+      await this.openGithub('prs', outcome.pr.ref);
+    }
     this.render();
   }
 
@@ -9004,10 +9107,20 @@ export class TerminalApp {
     return [...body, ...extra];
   }
 
-  private async openGithub(tab: ListTab): Promise<void> {
-    const git = createGitRunner();
-    const remote = await git(this.shellCwd, ['remote', 'get-url', '--', 'origin'], {timeoutMs: 2000, maxBytes: 4096});
-    const repository = succeeded(remote) ? githubRepositoryFromRemote(remote.stdout) : undefined;
+  /** The github.com repository of the shell directory's `origin`, when it has one. */
+  private async githubOrigin(cwd = this.shellCwd): Promise<string | undefined> {
+    const remote = await createGitRunner()(cwd, ['remote', 'get-url', '--', 'origin'], {timeoutMs: 2000, maxBytes: 4096});
+    return succeeded(remote) ? githubRepositoryFromRemote(remote.stdout) : undefined;
+  }
+
+  /**
+   * The pull requests the last /github listing loaded, with its repository: the only evidence /worktrees uses for a
+   * related PR (it never fetches). Replaced whenever a /github PR list loads.
+   */
+  private githubListing?: {repository: string; prs: PrSummary[]};
+
+  private async openGithub(tab: ListTab, pullRequest?: PrSummary['ref']): Promise<void> {
+    const repository = await this.githubOrigin();
     if (!repository) {
       this.output.addFrontendInteraction(`/${tab === 'issues' ? 'issues' : 'github'}`, 'This directory has no github.com origin remote, so there is no repository to show.', INFO);
       this.render(); return;
@@ -9018,10 +9131,16 @@ export class TerminalApp {
       initialQueries: {prs: `repo:${repository} is:open`, issues: `repo:${repository} is:open`, search: `repo:${repository}`},
     });
     attachRenderer(controller, () => this.githubRenderOptions(this.githubPanel?.columns ?? this.dimensions().columns, this.dimensions().rows - 4));
-    const detach = controller.onChange(() => { if (this.githubPanel?.controller === controller) this.render(); });
+    const detach = controller.onChange(() => {
+      const list = controller.snapshot.lists.prs;
+      if (list.status === 'loaded') this.githubListing = {repository, prs: list.items.filter((item): item is PrSummary => item.ref.kind === 'pr')};
+      if (this.githubPanel?.controller === controller) this.render();
+    });
     this.githubPanel = {controller, repository, detach};
     this.render();
     await controller.submitQuery(tab);
+    // From /worktrees' related PR: that pull request's detail, read-only like every other.
+    if (pullRequest && this.githubPanel?.controller === controller) await controller.openDetail(pullRequest);
   }
 
   private githubRenderOptions(columns: number, rows: number): GithubRenderOptions {
@@ -9061,8 +9180,57 @@ export class TerminalApp {
   private async refreshMods(): Promise<void> {
     const panel = this.modsPanel;
     if (!panel) return;
-    await panel.refresh(() => loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles));
+    await panel.refresh(async () => withLoadedIn(await loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles), this.agents.sessions));
     if (this.modsPanel === panel) this.render();
+  }
+
+  /**
+   * The confirmed change, through Claude's own command at the plugin's installed scope; then the listing is read again
+   * as evidence, and running managed targets of the same launch identity reload plugins. Says exactly what happened.
+   */
+  private async toggleMod(): Promise<void> {
+    const panel = this.modsPanel;
+    const pending = panel?.confirm;
+    const entry = panel?.inventoryEntry(pending?.key);
+    if (!panel || !pending || !entry) return;
+    panel.confirm = undefined;
+    const executable = resolveCommand('claude');
+    if (!executable) { panel.message = 'Claude Code is not on PATH.'; this.render(); return; }
+    panel.busy = `${pending.enable ? 'Enabling' : 'Disabling'} ${entry.name}…`;
+    this.render();
+    try {
+      const installed = new Set(panel.entries.filter(item => item.profileId === entry.profileId && item.claude).map(item => item.claude!.pluginId));
+      const result = await setPluginEnabled(executable, entry, pending.enable, installed);
+      if (!result.ok) { panel.message = `Not changed: ${result.message}`; return; }
+      await panel.refresh(async () => withLoadedIn(await loadModInventory(this.shellCwd, this.buildIdentity.version, this.promptConfiguration.agentProfiles), this.agents.sessions));
+      const after = panel.inventoryEntry(pending.key);
+      const confirmed = after?.enabled === (pending.enable ? 'yes' : 'no');
+      const targets = this.agents.sessions.filter(session => session.harness === 'claude' && session.level === 'managed' && (session.profileId ?? undefined) === (entry.profileId ?? undefined)
+        && this.agents.controllable(session.id) && (entry.claude?.scope === 'user' || session.cwd === entry.claude?.projectPath));
+      const reloads = await Promise.all(targets.map(async session => ({session, result: await this.agents.reloadPlugins(session.id)})));
+      const reloaded = reloads.filter(item => item.result.ok);
+      const errors = reloaded.reduce((sum, item) => sum + (item.result.ok ? item.result.value.errors : 0), 0);
+      panel.message = [
+        `${entry.name} ${pending.enable ? 'enabled' : 'disabled'}${result.alreadyInGoalState ? ' (it already was)' : ''}${confirmed ? ', confirmed by Claude\'s listing' : ', but Claude\'s listing does not show it yet'}.`,
+        targets.length ? `Reloaded in ${reloaded.length} of ${targets.length} running managed session${targets.length === 1 ? '' : 's'}${errors ? `; Claude reported ${errors} plugin load error${errors === 1 ? '' : 's'}` : ''}.` : 'New sessions pick it up; no managed session on this account is running.',
+        'Claude\'s own terminal sessions need /reload-plugins or a restart.',
+      ].join(' ');
+      if (this.modsPanel === panel) panel.setInventory(withLoadedIn([...panel.entries], this.agents.sessions));
+    } finally {
+      panel.busy = undefined;
+      if (this.modsPanel === panel) this.render();
+    }
+  }
+
+  private async inspectMod(): Promise<void> {
+    const panel = this.modsPanel;
+    const entry = panel?.selectedEntry;
+    const executable = resolveCommand('claude');
+    if (!panel || !entry?.claude || !executable || panel.inspections.has(entry.key)) return;
+    panel.busy = `Asking Claude to describe ${entry.name}…`;
+    this.render();
+    try { panel.inspections.set(entry.key, await inspectPlugin(executable, entry)); }
+    finally { panel.busy = undefined; if (this.modsPanel === panel) this.render(); }
   }
 
   /** /copy inside an agent view: the Nth newest reply's visible text, never protocol data. */
@@ -9462,7 +9630,7 @@ export class TerminalApp {
     // framePanel's frame line leads the panel (it moves below the panel under Dock Top), then title and spacer.
     const row = region.top + (plan.panelPosition === 'top' ? 0 : 1) + 2;
     if (row + size.rows > region.top + region.height) return undefined;
-    return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2, size);
+    return createImageOverlay(panel.protocol, panel.png, `about:${panel.protocol}:${row}:${size.columns}x${size.rows}`, row, 2 + (this.workspace.open ? this.workspaceColumns().center.x : 0), size);
   }
 
   /** Existing #91 tasks repaint their panel only while its geometry is unchanged. */
@@ -9624,9 +9792,330 @@ export class TerminalApp {
       !this.passthrough && !this.externalPassthrough && this.decorativeMotionAllowed() && colorLevel() !== 'none', now, this.cursorBackend());
     const painted = cursor.rows;
     try {
-      this.renderer.render({...frame, ...(cursor.hideCaret ? {cursorVisible: false} : {}), rows: active && region
-        ? applyEffect(painted, active, region, columns, now, getCurrentGlyphMode() === 'safe', colorLevel()) : painted});
+      this.renderer.render(this.composeWorkspaceFrame({...frame, ...(cursor.hideCaret ? {cursorVisible: false} : {}), rows: active && region
+        ? applyEffect(painted, active, region, columns, now, getCurrentGlyphMode() === 'safe', colorLevel()) : painted}, plan));
     } catch (error) { this.onTerminate(); throw error; }
+  }
+
+  /**
+   * Workspace regions are composed last, beside (docked) or over (a focused drawer) the finished center rows, so every
+   * effect, transition and cursor decision above stays in center coordinates. The Status Strip row keeps the full
+   * width. While a region has the keyboard, the composer's caret is not shown.
+   */
+  private composeWorkspaceFrame(frame: TerminalFrame, plan: ScreenPlan): TerminalFrame {
+    if (!this.workspace.open) return frame;
+    const terminal = this.terminalDimensions();
+    const owner = this.workspaceOwner();
+    const columns = this.workspace.plan(terminal.columns, this.workspaceSuppressed(), owner);
+    if (columns.sidebar.mode === 'hidden' && columns.panel.mode === 'hidden') return frame;
+    const status = plan.regions.find(region => region.kind === 'status' && region.height > 0);
+    const spanned = frame.rows.length - (status ? 1 : 0);
+    const safe = getCurrentGlyphMode() === 'safe';
+    const style = {safe, color: colorLevel() !== 'none', now: Date.now()};
+    const glyph = safe ? '|' : '│';
+    const rows = composeWorkspaceRows({rows: frame.rows, plan: columns,
+      sidebar: this.workspace.sidebarRows(columns, spanned, owner, style), panel: this.workspace.panelRows(columns, spanned, owner, style),
+      ...(status ? {fullWidth: new Map([[status.top, this.statusStripRow(terminal.columns)]])} : {}),
+      divider: style.color ? `${SUBTLE}${glyph}${RESET}` : glyph});
+    const regionOwns = owner === 'LEFT_SIDEBAR' || owner === 'RIGHT_PANEL';
+    return {...frame, rows, columns: terminal.columns, cursorColumn: frame.cursorColumn + columns.center.x, ...(regionOwns ? {cursorVisible: false} : {})};
+  }
+
+  /**
+   * Pointer events before anything else sees them: the column plan decides the region. A click on the sidebar or panel
+   * focuses it (the same action as /sidebar focus or /panel focus); a click in the center while a region has the
+   * keyboard returns it to the composer. Center events continue with center-relative columns, so every existing hit
+   * test keeps working unchanged. Returns undefined when the event was the workspace's.
+   */
+  private routeWorkspacePointer(key: Key): Key | undefined {
+    const x = 'x' in key ? key.x : undefined;
+    const y = 'y' in key ? key.y : undefined;
+    if (x === undefined || !this.workspace.open) return key;
+    const owner = this.workspaceOwner();
+    const plan = this.workspace.plan(this.terminalDimensions().columns, this.workspaceSuppressed(), owner);
+    if (plan.center.x === 0 && plan.sidebar.mode === 'hidden' && plan.panel.mode === 'hidden') return key;
+    const status = this.presentationFrame?.plan.regions.find(region => region.kind === 'status' && region.height > 0);
+    const center = {...key, x: Math.max(1, x - plan.center.x)} as Key;
+    if (status && y !== undefined && screenRowFromTerminal(y) === status.top) return center;
+    const hit = columnAt(plan, x - 1);
+    const regionOwns = owner === 'LEFT_SIDEBAR' || owner === 'RIGHT_PANEL';
+    if (hit === 'center') {
+      if (key.kind === 'mouseClick' && regionOwns) void this.applyWorkspaceEffect(this.workspace.perform('focus.return', plan.columns));
+      return center;
+    }
+    // A protected owner (a panel, a program, the agent view) keeps the keyboard; a click beside it does nothing.
+    if (key.kind === 'mouseClick' && (owner === 'COMPOSER' || regionOwns)) {
+      if (hit === 'sidebar' && owner !== 'LEFT_SIDEBAR') void this.applyWorkspaceEffect(this.workspace.perform('sidebar.focus', plan.columns));
+      if (hit === 'panel' && owner !== 'RIGHT_PANEL') void this.applyWorkspaceEffect(this.workspace.perform('panel.focus', plan.columns));
+    }
+    return undefined;
+  }
+
+  /** Workspace keys after every panel and owner that comes first (they are protected anyway): true when consumed. */
+  private handleWorkspaceKey(key: Key): boolean {
+    if (!this.workspace.open && !this.workspace.bindings.some(binding => binding.context === 'composerEmpty')) return false;
+    const owner = this.workspaceOwner();
+    const {columns, rows} = this.terminalDimensions();
+    const effect = this.workspace.handleKey(key, {owner, columns, viewRows: Math.max(1, rows - 4),
+      composerIdle: owner === 'COMPOSER' && this.composerIdle() && !this.composerHistory.active});
+    if (!effect) return false;
+    void this.applyWorkspaceEffect(effect);
+    return true;
+  }
+
+  private async applyWorkspaceEffect(effect: WorkspaceEffect): Promise<void> {
+    if (effect.kind === 'none') return;
+    if (effect.kind === 'refresh') { this.render(); await this.refreshWorkspaceSources(); return; }
+    if (effect.kind === 'intent') await this.performWorkspaceIntent(effect.intent);
+    this.render();
+  }
+
+  private workspaceRefreshGeneration = 0;
+
+  /**
+   * One explicit listing per open or focus: tmux (only the server NMSh runs inside, through the trusted tmux
+   * executable) and this repository's worktrees. Nothing polls; a newer refresh wins.
+   */
+  /** `/keys`: every workspace binding in effect, problems in keymap.json, and keys this host may take first. */
+  private showWorkspaceKeys(command: string, reload: boolean): void {
+    if (reload) this.workspace.loadKeymap();
+    const profile = keymapHostProfile(process.env);
+    const notes = [...new Set(this.workspace.bindings.flatMap(binding => hostNotes(binding.key, profile)))];
+    const lines = [...(reload ? ['keymap.json read again.'] : []), ...describeKeymap(this.workspace.bindings),
+      ...(this.workspace.problems.length ? ['Problems in keymap.json', ...this.workspace.problems.map(problem => `  ${problem.severity}${problem.entry === undefined ? '' : ` (entry ${problem.entry + 1})`}: ${problem.message}`)] : []),
+      ...(notes.length ? ['Host notes', ...notes.map(note => `  ${note}`)] : [])];
+    this.output.addFrontendInteraction(command, lines.join('\n'), this.workspace.problems.some(problem => problem.severity === 'error') ? ERROR : INFO);
+  }
+
+  /** Background tasks need an owner that offers them: this build in-process, or a session service from this release. */
+  private backgroundAvailable(): boolean {
+    return this.session.features.has('background-tasks') && typeof this.session.task === 'function';
+  }
+
+  /** The task bar and a waiting suggestion, above the composer; nothing while a program owns the screen. */
+  private backgroundRows(columns: number): string[] {
+    if (this.passthrough || this.externalPassthrough) return [];
+    return this.background.rows(columns, {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'})
+      .map(row => truncateAnsi(row, columns));
+  }
+
+  /**
+   * The task owner's list. The first list after this window attached is adopted silently (those tasks were announced
+   * where they started); later, a new task and an ending one each get one NMSh line, never the task's output.
+   */
+  private onBackgroundTasks(records: readonly TaskRecord[]): void {
+    const ended = this.background.onTasks(records);
+    if (!this.backgroundSeen) this.backgroundSeen = new Set(records.map(record => record.id));
+    else {
+      for (const record of records) if (!this.backgroundSeen.has(record.id)) {
+        this.backgroundSeen.add(record.id);
+        this.output.addFrontendInteraction('/background', BackgroundHost.startLine(record), INFO);
+      }
+      const notify = this.background.preferences.notify;
+      for (const record of ended) if (notify === 'always' || (notify === 'failure' && record.state === 'failed')) {
+        this.output.addFrontendInteraction('/background', BackgroundHost.endLine(record), record.state === 'failed' ? ERROR : INFO);
+      }
+    }
+    if (!this.passthrough && !this.externalPassthrough) this.render();
+  }
+
+  /** Start a task through the session's owner: the exact text, in the shell's current directory, with its live PATH. */
+  private startBackgroundTask(command: string, family?: string): void {
+    this.session.task?.({op: 'start', command, cwd: this.canonicalShellCwd(), path: this.shellPath(), ...(family ? {family} : {})});
+  }
+
+  /** Up (from an idle composer, when the preference allows) or Shift+Up enters the task bar: after the agent shelf, before history. */
+  private enterBackgroundBar(key: Key): boolean {
+    const composer = {empty: !this.editor.text && !this.editor.hasPasteAtoms, browsingHistory: this.composerHistory.active, foregroundBusy: Boolean(this.running),
+      otherOwner: this.workspaceOwner() !== 'COMPOSER' || !this.composerIdle()};
+    if (!entersBar(key, composer, this.background.records.length, this.background.preferences.upArrow)) return false;
+    this.background.bar.focused = true;
+    this.background.message = undefined;
+    this.render();
+    return true;
+  }
+
+  private handleBackgroundBarKey(key: Key): boolean {
+    const action = this.background.bar.handleKey(key, this.background.records, this.background.next);
+    this.background.message = undefined;
+    if (action.kind === 'leave') {
+      this.render();
+      if (action.forward) this.handleKey(action.forward);
+      return true;
+    }
+    if (action.kind === 'view') { this.background.bar.focused = false; this.background.panel = {kind: 'view', taskId: action.taskId, view: new TaskOutputView()}; }
+    else if (action.kind === 'stop') this.session.task?.({op: 'stop', id: action.taskId, level: action.level});
+    else if (action.kind === 'remove') this.session.task?.({op: 'remove', id: action.taskId});
+    else if (action.kind === 'toggle') this.background.setPreferences({...this.background.preferences, bar: this.background.bar.expanded ? 'expanded' : 'collapsed'});
+    else if (action.kind === 'none' && action.message) this.background.message = action.message;
+    this.render();
+    return true;
+  }
+
+  private handleBackgroundPanelKey(key: Key): void {
+    const panel = this.background.panel;
+    if (!panel) return;
+    const close = () => { this.background.panel = undefined; this.returnFromPanel(); };
+    if (panel.kind === 'manager') {
+      const outcome = panel.manager.handleKey(key, this.background.records, this.background.preferences, this.background.next);
+      if (outcome.kind === 'close') close();
+      else if (outcome.kind === 'view') this.background.panel = {kind: 'view', taskId: outcome.taskId, view: new TaskOutputView()};
+      else if (outcome.kind === 'stop') this.session.task?.({op: 'stop', id: outcome.taskId, level: outcome.level});
+      else if (outcome.kind === 'remove') this.session.task?.({op: 'remove', id: outcome.taskId});
+      else if (outcome.kind === 'clear') this.clearFinishedBackgroundTasks();
+      else if (outcome.kind === 'preferences') this.background.setPreferences(outcome.value);
+      this.render();
+      return;
+    }
+    const task = this.background.record(panel.taskId);
+    const output = this.background.output(panel.taskId);
+    const height = Math.max(1, this.dimensions().rows - 6);
+    if (!task || key.kind === 'escape' || (key.kind === 'text' && key.value === 'q')) close();
+    else if (key.kind === 'up' || key.kind === 'down') panel.view.scroll(key.kind === 'up' ? -1 : 1, output, height);
+    else if (key.kind === 'pageUp' || key.kind === 'pageDown') panel.view.scroll((key.kind === 'pageUp' ? -1 : 1) * Math.max(1, height - 1), output, height);
+    else if (key.kind === 'bufferEnd' || key.kind === 'latest') panel.view.end(output);
+    else if (key.kind === 'text' && key.value === 'x') {
+      const level = nextLevel(task);
+      if (level) this.session.task?.({op: 'stop', id: task.id, level});
+    }
+    this.render();
+  }
+
+  /** b / Enter / a / n / Esc on a waiting suggestion. Enter runs the command here exactly as it would have run. */
+  private handleBackgroundSuggestionKey(key: Key): boolean {
+    const suggestion = this.background.suggestion;
+    if (!suggestion) return false;
+    const choice = suggestionKey(key);
+    const {command, classification} = suggestion;
+    this.background.suggestion = undefined;
+    // Any other key: the draft comes back unchanged and the key acts on it as usual (nothing typed is lost).
+    if (!choice) { this.editor.replaceText(command); return false; }
+    const foreground = () => {
+      // The submission was already recorded for recall when it was first submitted.
+      if (this.sessionSubmissions.at(-1)?.text === command) this.sessionSubmissions.pop();
+      this.editor.replaceText(command);
+      void this.submit(false, true, false);
+    };
+    if (choice === 'edit') this.editor.replaceText(command);
+    else if (choice === 'foreground') foreground();
+    else if (choice === 'background') this.startBackgroundTask(command, classification.family);
+    else {
+      this.background.setPreferences(rememberFamily(this.background.preferences, classification.family, choice === 'always' ? 'always' : 'never'));
+      if (choice === 'always') this.startBackgroundTask(command, classification.family); else foreground();
+    }
+    this.render();
+    return true;
+  }
+
+  /** Remove every finished task whose processes are gone; say which were kept and why. */
+  private clearFinishedBackgroundTasks(): void {
+    const finished = this.background.records.filter(record => record.state !== 'running' && record.state !== 'stopping');
+    const kept = finished.filter(record => removalBlocked(record));
+    for (const record of finished) if (!removalBlocked(record)) this.session.task?.({op: 'remove', id: record.id});
+    if (kept.length) this.output.addFrontendInteraction('/background clear', `Kept ${kept.map(record => record.id).join(', ')}: their processes still run (x kills them).`, INFO);
+  }
+
+  /** `/background` (`/bg`): the manager, one task's output, or an explicit request. */
+  private runBackgroundCommand(command: string): void {
+    const parsed = parseBackgroundCommand(command);
+    const say = (text: string, tone = INFO) => this.output.addFrontendInteraction(command.trim(), text, tone);
+    if (!parsed) return;
+    if (!this.backgroundAvailable()) {
+      say('Background tasks need a session service from this NMSh release. Restart the session service (or start a new session) to use them.', ERROR);
+      return;
+    }
+    switch (parsed.kind) {
+      case 'open': this.background.panel = {kind: 'manager', manager: new BackgroundManager()}; return;
+      case 'view': {
+        if (!this.background.record(parsed.taskId)) { say(`No background task ${parsed.taskId}.`, ERROR); return; }
+        this.background.panel = {kind: 'view', taskId: parsed.taskId, view: new TaskOutputView()};
+        return;
+      }
+      case 'run': {
+        const run = explicitRun(command);
+        if (!run.ok) { say(run.reason, ERROR); return; }
+        if (this.startupPending) { say('The shell is still starting; run it once the prompt is ready.', ERROR); return; }
+        this.startBackgroundTask(run.command, run.classification?.family);
+        if (run.notes.length) say(run.notes.join('; '));
+        return;
+      }
+      case 'stop': {
+        const record = this.background.record(parsed.taskId);
+        if (!record) { say(`No background task ${parsed.taskId}.`, ERROR); return; }
+        // /background kill is the immediate explicit path; stop asks for the next level.
+        const level = parsed.force ? 'kill' : nextLevel(record);
+        if (!level) { say(`${parsed.taskId} was already killed; waiting for it to exit.`); return; }
+        this.session.task?.({op: 'stop', id: parsed.taskId, level});
+        return;
+      }
+      case 'remove': {
+        const record = this.background.record(parsed.taskId);
+        const blocked = record ? removalBlocked(record) : `no background task ${parsed.taskId}`;
+        if (blocked) { say(`Not removed: ${blocked}.`, ERROR); return; }
+        this.session.task?.({op: 'remove', id: parsed.taskId});
+        return;
+      }
+      case 'clear': this.clearFinishedBackgroundTasks(); return;
+      case 'suggestions':
+        this.background.setPreferences({...this.background.preferences, suggestions: parsed.value});
+        say(parsed.value === 'ask' ? 'NMSh will offer to run recognized long-running commands in the background.' : 'No background suggestions; Always rules still apply.');
+        return;
+      case 'forget':
+        this.background.setPreferences(rememberFamily(this.background.preferences, parsed.family, undefined));
+        say(`Forgot the decision for ${parsed.family.slice(0, 64)}.`);
+        return;
+      case 'invalid': say(parsed.reason, ERROR); return;
+    }
+  }
+
+  private async refreshWorkspaceSources(): Promise<void> {
+    const generation = ++this.workspaceRefreshGeneration;
+    const cwd = this.canonicalShellCwd();
+    const server = tmuxServer(process.env);
+    const executable = server ? trustedTmux() : undefined;
+    const runner = server && executable ? createTmuxRunner(executable, server) : undefined;
+    const [listing, worktrees] = await Promise.all([
+      runner ? listTmuxPanes(runner) : Promise.resolve(server ? {panes: [], observedAt: Date.now(), error: 'tmux was not found in a trusted location'} : undefined),
+      (async () => {
+        try { const git = createGitRunner(); return await discoverWorktrees(git, await repositoryIdentity(git, cwd)); } catch { return undefined; }
+      })(),
+    ]);
+    if (generation !== this.workspaceRefreshGeneration || this.stopped) return;
+    this.workspace.setSources({...(server ? {tmux: {server, ...(listing ? {listing} : {}), ...(runner ? {runner} : {})}} : {}), ...(worktrees ? {worktrees} : {}), cwd});
+    this.render();
+  }
+
+  /**
+   * What activating a sidebar item does, through the paths NMSh already uses: a directory is staged as `cd` in an empty
+   * composer (never run, never typed over a draft), a manager opens as its own command does, tmux navigates by id.
+   */
+  private async performWorkspaceIntent(intent: ActivationIntent): Promise<void> {
+    const toComposer = () => { this.workspace.state = {...this.workspace.state, owner: 'COMPOSER'}; };
+    if (intent.kind === 'changeDirectory') {
+      if (this.editor.text.trim() || this.running) { this.workspace.message = this.running ? 'A command is running; stage the cd when it has finished.' : 'Your draft is kept. Clear the composer, then open this again.'; return; }
+      let command: string | undefined;
+      try { command = directoryCommand(intent.path); } catch { this.workspace.message = 'That path cannot be typed safely as a cd command.'; return; }
+      toComposer();
+      this.applySuggestion({insertion: command});
+      return;
+    }
+    if (intent.kind === 'openManager') {
+      const slash = parseSlashCommand(intent.command);
+      if (!slash) return;
+      toComposer();
+      await this.runSlash(intent.command, slash);
+      return;
+    }
+    if (intent.kind === 'tmux') {
+      const args = this.workspace.tmuxArgs(intent);
+      const runner = this.workspace.sources.tmux?.runner;
+      if ('error' in args || !runner) { this.workspace.message = 'error' in args ? args.error : 'tmux is not available here'; return; }
+      const result = await runner(args);
+      this.workspace.message = result.code === 0 ? undefined : 'tmux could not switch there';
+      if (result.code === 0) void this.refreshWorkspaceSources();
+      return;
+    }
+    this.workspace.message = 'This item cannot be opened here.';
   }
 
   private renderPresentation(now: number): void {
@@ -9811,7 +10300,8 @@ export class TerminalApp {
       return;
     }
     if (this.preparingCommand) return;
-    void this.submit();
+    // The one direct composer submission: the only path that may offer or start a background task.
+    void this.submit(false, false, true);
   }
 
   /** `/queue` opens the manager; `/queue pause|resume|clear` act at once. */
@@ -9974,11 +10464,48 @@ export class TerminalApp {
     return this.inputFirstLinePrefix(this.inputColumns(columns));
   }
 
-  private dimensions(): {columns: number; rows: number} {
+  /** The terminal's real size. Everything NMSh draws in the middle uses dimensions() instead (the workspace center). */
+  private terminalDimensions(): {columns: number; rows: number} {
     return {
       columns: Math.max(1, process.stdout.columns || 80),
       rows: Math.max(1, process.stdout.rows || 24),
     };
+  }
+
+  /**
+   * The size of the center: the whole terminal unless a workspace region is docked beside it. Transcript wrapping,
+   * ScreenPlan, panels, hit testing and the PTY all follow this one width, so they cannot disagree; a drawer never
+   * changes it (opening one never resizes the shell).
+   */
+  private dimensions(): {columns: number; rows: number} {
+    const terminal = this.terminalDimensions();
+    if (!this.workspace.open) return terminal;
+    return {columns: this.workspaceColumns(terminal.columns).center.width, rows: terminal.rows};
+  }
+
+  /** The workspace column plan for this frame (see WorkspaceHost.plan): the single geometry path for regions. */
+  private workspaceColumns(columns = this.terminalDimensions().columns): WorkspaceColumns {
+    return this.workspace.plan(columns, this.workspaceSuppressed(), this.workspaceOwner());
+  }
+
+  /** Fullscreen or raw passthrough and idle visuals own the whole pane: no workspace chrome, the PTY gets every column. */
+  private workspaceSuppressed(): boolean {
+    return Boolean(this.passthrough || this.externalPassthrough || this.idle || this.frontendSuspended);
+  }
+
+  /**
+   * Who has the keyboard, as the workspace sees it. Anything that owns input before the composer is protected and never
+   * intercepted: startup, a program reading hidden or single-key input, passthrough, the agent view, every panel and
+   * search. Only then a focused, open region, and otherwise the composer.
+   */
+  private workspaceOwner(): WorkspaceOwner {
+    let owner: WorkspaceOwner | undefined;
+    if (this.workspaceSuppressed() || this.startupPending || this.startupPanel || this.directInputRequest()) owner = 'PASSTHROUGH';
+    else if (this.agentView) owner = 'AGENT_MESSAGE';
+    else if (this.settingsPanelActive || this.presetPanel || this.batchReview || this.pastePreview || this.launcher || this.agentPanel || this.shelf.focused
+      || this.background.bar.focused || this.background.suggestion) owner = 'PANEL';
+    else if (this.historySearchActive || this.directorySearchActive || this.findState?.editing) owner = 'SEARCH';
+    return this.workspace.owner(owner);
   }
 
   /** Transcript row under a terminal row, clamped to the transcript region so a drag past its edge keeps selecting. */

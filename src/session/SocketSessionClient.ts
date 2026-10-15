@@ -3,6 +3,7 @@ import {connect, type Socket} from 'node:net';
 import {dirname} from 'node:path';
 import {ensurePrivateRuntimeDir} from './runtimeDir.js';
 import type {QueueOp} from './CommandQueue.js';
+import {taskUpdateFrom, tasksFrom, type TaskOp} from '../backgroundTasks/protocol.js';
 import {CLIENT_FEATURES, FrameDecoder, PROTOCOL_VERSION, encodeMessage, inputStateFrom, parseFeatures, queueStateFrom, type ClientMessage, type ServiceFeature, type ServerMessage} from './SessionProtocol.js';
 import type {SessionInfo} from './SessionProtocol.js';
 import type {SessionNotice} from './SessionNotices.js';
@@ -230,6 +231,10 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   }
 
   private receive(message: ServerMessage): void {
+    // A refused task request is the task owner's answer, never a reply to a pending shell switch.
+    if (message.type === 'error' && message.code === 'task') { this.emit('taskRefused', message.message); return; }
+    if (message.type === 'tasks') { const tasks = tasksFrom(message.state); if (tasks) this.emit('tasks', tasks); return; }
+    if (message.type === 'task-output') { const update = taskUpdateFrom(message.update); if (update) this.emit('taskOutput', message.taskId, update); return; }
     if (message.type === 'shell-switched' || (message.type === 'error' && this.pendingSwitch)) {
       const pending = this.pendingSwitch;
       this.pendingSwitch = undefined;
@@ -273,6 +278,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
   queue(change: QueueOp): void { if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
+  task(change: TaskOp): void { if (this.features.has('background-tasks')) this.send({type: 'task', change: JSON.stringify(change)}); }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
   resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }

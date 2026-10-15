@@ -81,6 +81,22 @@ Use C in Paste Review to keep an ephemeral clip, or a block's Actions to keep it
 
 /clips suggestions on optionally checks macOS's native clipboard change counter while the composer is idle. It never reads clipboard contents. A changed counter suggests /ps; only that explicit command reads text for review. Suggestions default off, last only for this frontend, and stop with /clips suggestions off or if metadata fails. Linux clipboard tools have no supported metadata counter; background text polling is unsupported.
 
+## Workspace sidebar and detail panel
+
+/sidebar opens a sidebar beside the transcript: tmux panes of the server NMSh runs inside, this repository's worktrees, and links to /github, /agents and /sessions. /panel opens a detail panel for the selected item. /sidebar focus and /panel focus give them the keyboard; Esc returns to the composer and Tab moves between regions. In the sidebar, arrows move, Right/Left expand or collapse, Enter opens and / filters; in the panel, arrows and Page Up/Down scroll and q closes it. A click focuses a region.
+
+On a wide terminal the regions dock beside the transcript and the shell is sized to the middle. On a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them. Opening a worktree stages its cd in an empty composer; it never runs by itself.
+
+The composer binds no workspace keys by default. keymap.json in NMSh's configuration directory can add them (for example Left with an empty draft to focus the sidebar, with "replaces": true); /keys lists the keys in effect, any problems in the file and notes about keys your terminal or tmux may take first. /keys reload reads the file again.
+
+## Background tasks
+
+/background run <command> (or /bg run) starts a long-running command such as adb logcat, tail -f or a dev server in its own terminal beside the shell. It runs in the shell's current directory with its PATH, but without this shell's aliases, functions or unexported variables. Its output never mixes with the transcript or the shell.
+
+The task bar above the composer shows running and recent tasks. Up from an empty, idle prompt (after the agent shelf, when one is shown) or Shift+Up focuses it: Enter opens a task's output, x stops it (pressed again later: terminate, then kill), Delete removes a finished task, Space expands the bar, Esc returns. /background lists every task with its details and preferences; /background t3 opens one task's output; /background stop|kill|remove t3 and /background clear act directly.
+
+Nothing runs in the background unless you ask. /background suggestions on makes NMSh offer it when you submit a recognized long-running command: b runs it in the background once, Enter runs it here as before, a always backgrounds that command family, n stops asking, Esc returns to your draft. Tasks keep running while the window is detached and end with the session.
+
 ## Directory navigation
 
 Use /dirs or the command palette to find recorded directories. Native ranks frequency and recency from approved command history. Select with arrows and Enter or Tab to insert a literal cd command, then press Enter separately to run it in zsh. Ordinary cd keeps its normal behavior.
