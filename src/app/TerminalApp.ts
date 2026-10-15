@@ -7755,11 +7755,11 @@ export class TerminalApp {
       this.watchPanel = {selected: this.watches.active().length - 1, output: false};
       return;
     }
-    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stopped every watch.', INFO); return; }
+    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stop requested for all trackers; owned processes are being cleaned up.', INFO); return; }
     const watch = pick();
     if (!watch) { this.output.addFrontendInteraction(command, 'Nothing is being watched.', INFO); return; }
     const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : (this.watches.runNow(watch.id), true);
-    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Running' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the watch on ${watch.command}.` : 'Nothing changed.', INFO);
+    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refresh requested for' : op === 'stop' ? 'Stop requested for' : op === 'pause' ? 'Paused' : 'Resumed'} the tracker on ${watch.command}.` : 'Nothing changed.', INFO);
   }
 
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */
