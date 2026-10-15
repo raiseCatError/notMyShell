@@ -30,7 +30,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/tools': {group: 'Tools & integration', title: 'Open Tools'}, '/configure': {group: 'Tools & integration', title: 'Open Tool Configuration'},
   '/tmux': {group: 'Tools & integration', title: 'Configure tmux'}, '/integrations': {group: 'Tools & integration', title: 'Check Integrations'},
   '/dotfiles': {group: 'Tools & integration', title: 'Import Dotfiles'},
-  '/track': {group: 'Tools & integration', title: 'Track live command output'},
+  '/track': {alias: '/watch'},
   '/btw': {title: 'Open local intelligence'}, '/ask': {alias: '/btw'},
   '/caffeinate': {group: 'Tools & integration', title: 'Open Keep Awake'}, '/awake': {alias: '/caffeinate'}, '/zoomies': {alias: '/caffeinate'},
 };
