@@ -76,6 +76,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         for (const read of READS[shell]) {
           const what = `${read.name} after ${reactionMs} ms`;
           const mark = frontend.mark;
+          const before = (await records(sandbox)).filter(entry => entry.command === read.command).length;
           await type(frontend, read.command, 5);
           frontend.pty.write('\r');
           await pause(reactionMs);
@@ -89,8 +90,11 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
           assert.equal(all.some(record => record.command.trim() === read.keys), false, `${what}: the answer never ran as a command`);
           assert.equal(await queued(sandbox), 0, `${what}: nothing was queued`);
           if (read.secret) assert.equal(strip(frontend.output.slice(mark)).includes(SECRET), false, `${what}: the hidden answer is never drawn`);
-          // Exactly once, from the journal (Fish's reader has the terminal, so its output is not journaled).
-          const record = all.filter(entry => entry.command === read.command).at(-1);
+          // Exactly once, from the journal (Fish's reader has the terminal, so its output is not journaled). The journal is
+          // written after the screen (later on a slower host): wait for this run's own record first.
+          const journaled = async () => (await records(sandbox)).filter(entry => entry.command === read.command);
+          if (shell !== 'fish') await until(async () => (await journaled()).length > before, 15_000, `${what}: journaled`);
+          const record = (await journaled()).at(-1);
           if (shell !== 'fish' && read.keys === 'hello') assert.equal(record?.output.match(/ANSWER=hello/gu)?.length, 1, `${what}: answered exactly once`);
           await pause(400);
         }
