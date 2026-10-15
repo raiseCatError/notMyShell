@@ -62,6 +62,9 @@ test('/track classifies disk information as read-only, but never assumes Docker 
   assert.equal(watchSafety('df -h /Volumes/T7Projects $(rm -rf /tmp/x)').kind, 'refused');
   assert.equal(watchSafety('df -h `touch /tmp/x`').kind, 'refused');
   assert.equal(watchSafety('docker system df > /tmp/report').kind, 'refused');
+  assert.equal(watchSafety('df -h /tmp &').kind, 'refused');
+  assert.equal(watchSafety('df -h /tmp <<EOF').kind, 'refused');
+  assert.equal(watchSafety('df -h /tmp && date').kind, 'allowed');
 });
 
 test('/track reuses one current and previous snapshot, does not overlap manual refresh', async () => {
