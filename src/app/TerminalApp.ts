@@ -30,13 +30,12 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
-import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
-import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
-  SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+import {IDLE_FRAME_MS, type IdleMode, IDLE_MODE_LABELS} from '../idle/scenes.js';
+import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime, SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState, idlePreviewRows, previewSaver} from '../idle/IdleVisuals.js';
 import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
 import {makeRng} from '../idle/screenEffects.js';
 import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
@@ -532,6 +531,8 @@ export class TerminalApp {
   private screensaverPanel?: ScreensaverPanelState;
   private screensaverAnimation?: () => void;
   private readonly screensaverGrid = new CellGrid();
+  /** The sample screen previews animate when no screen of the person's is captured (see idlePreviewRows). */
+  private readonly idleSample: {key?: string; capture?: ScreenCapture} = {};
   /** Custom UI chrome colors draft. */
   private chromeEditor?: ChromeEditorState;
   /** Custom colors for idle visuals or Live activity, in the shared gradient stop editor. */
@@ -5710,11 +5711,15 @@ export class TerminalApp {
   private setupPreview(state: SetupState, columns: number): string[] {
     const section0 = SETUP_SECTIONS[state.section]?.id;
     // Prompt/Appearance previews show the base theme unless the local preview switch asks for the draft's Chroma.
-    const rawPreview = (section0 === 'appearance' || section0 === 'prompt') && !state.previewChroma;
+    // The preview shows the draft's Chroma as soon as it is on; P compares with the base theme.
+    const chromaStep = section0 === 'appearance' || section0 === 'prompt';
+    const shown = chromaStep && setupShowsChroma(state);
+    const rawPreview = chromaStep && !shown;
     const draft = rawPreview ? {...state.draft, presentation: {...state.draft.presentation, preset: 'off' as const}} : state.draft;
-    const chromaNote = section0 === 'appearance' || section0 === 'prompt'
-      ? [`  ${PRIMARY}\u001b[1mPreview Chroma${RESET}  ${SUBTLE}${state.previewChroma ? 'On' : 'Off'}  ·  Chroma setting  ${state.draft.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[state.draft.presentation.preset]}  ·  P toggles the preview only${RESET}`,
-        `  ${SUBTLE}${chromaPreviewNote(Boolean(state.previewChroma) && state.draft.presentation.preset !== 'off')}${RESET}`] : [];
+    const preset = state.draft.presentation.preset;
+    const chromaNote = chromaStep
+      ? [`  ${PRIMARY}\u001b[1mChroma setting${RESET}  ${SECONDARY}${preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[preset]}${RESET}  ${SUBTLE}·  preview shows ${shown ? 'it' : 'the base theme'}${preset === 'off' ? '' : `  ·  P ${shown ? 'compares with the base theme' : 'shows Chroma again'}`}${RESET}`,
+        `  ${SECONDARY}${chromaVisibilityNote(state.draft)}${RESET}`] : [];
     const section = SETUP_SECTIONS[state.section]?.id;
     const width = Math.max(10, columns - 4);
     const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
@@ -5834,12 +5839,24 @@ export class TerminalApp {
         break;
       }
       case 'idle': {
+        // The activity rows show the running and finished wording, not the screen saver.
+        const selectedId = setupSelectedRow(state)?.row.id;
+        if (selectedId === 'activityStyle' || selectedId === 'activityColors' || selectedId === 'setupActivityColors') {
+          rows.push(...this.setupActivityPreview(draft, state));
+          animate = !motion.still && !motion.disabled;
+          break;
+        }
         if (motion.disabled) { rows.push(`  ${SUBTLE}Decorative effects Off: idle visuals stay off.${RESET}`); break; }
         const mode = effectiveMode(draft.idleVisuals.mode, motion);
-        const elapsed = Date.now() - this.lastActivity;
-        rows.push(...idleFrameRows(this.screensaverGrid, {mode, width: Math.max(10, Math.min(56, columns - 6)), height: 6, palette: idlePaletteFor(draft),
-          level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode)})
-          .map(line => `  ${line}`));
+        // The real saver over a sample screen (the screen-animating ones need one), restarted when the mode changes;
+        // Random shows each saver it can choose, in turn, and says which.
+        const signature = `idle|${mode}`;
+        const now = Date.now();
+        if (state.previewKey !== signature) { state.previewKey = signature; state.previewStart = now; }
+        const preview = idlePreviewRows(this.screensaverGrid, {mode, width: Math.max(10, Math.min(56, columns - 6)), height: 7, palette: idlePaletteFor(draft),
+          level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', elapsed: now - (state.previewStart ?? now), still: motion.still, sample: this.idleSample});
+        rows.push(`  ${SUBTLE}Preview · ${mode === 'random' ? `Random · now ${IDLE_MODE_LABELS[preview.shown]}` : IDLE_MODE_LABELS[preview.shown]}${SCREEN_MODE_EFFECT[preview.shown] ? ' · over a sample screen; it animates your real screen' : ''}${motion.still ? ' · still (Reduced Motion)' : ''}${RESET}`,
+          ...preview.rows.map(line => `  ${line}`));
         animate = !motion.still;
         break;
       }
@@ -5856,6 +5873,36 @@ export class TerminalApp {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
     } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
     return [...chromaNote, ...rows].map(row => truncateAnsi(row, columns - 2));
+  }
+
+  /**
+   * The live activity wording as a command shows it, through the real renderers: while it runs (with the live
+   * activity colors and sweep), when it finishes, and when it fails, which stays factual in every style.
+   */
+  private setupActivityPreview(draft: PromptConfiguration, state: SetupState): string[] {
+    const expressive = draft.liveActivity.style === 'expressive';
+    const pair = expressive ? {active: 'Cooking', complete: 'Cooked'} : undefined;
+    const now = Date.now();
+    const signature = `activity|${draft.liveActivity.style}|${JSON.stringify(draft.liveActivity)}`;
+    if (state.previewKey !== signature) { state.previewKey = signature; state.previewStart = now; }
+    const elapsed = now - (state.previewStart ?? now);
+    const still = !this.decorativeMotionAllowed() || sweepStill(draft);
+    const parts = liveActivityParts('npm run build', 4200, still ? 0 : elapsed, pair);
+    const {cells, style} = liveActivityPaint(parts.phrase, draft, still ? 0 : elapsed, still);
+    const running = `${sweepCells(cells, still ? 0 : elapsed, style, colorLevel(), still)}${SECONDARY}${parts.duration}${RESET}`;
+    const at = new Date(2026, 0, 1, 14, 46);
+    const done = completedActivity('npm run build', 18_000, at, 0, false, undefined, pair);
+    const failed = completedActivity('npm run build', 2000, at, 1, false, undefined, pair);
+    const label = (text: string) => `  ${SECONDARY}${text.padEnd(11)}${RESET}`;
+    return [
+      `  ${PRIMARY}\u001b[1m${expressive ? 'Expressive' : 'Classic'}${RESET}  ${SECONDARY}${expressive ? 'a phrase while it runs, its past tense when done' : 'plain words: Running, then Completed'}${RESET}`,
+      '',
+      `${label('Running')}${running}`,
+      `${label('Completed')}${SUCCESS}${done.main}${RESET}${SECONDARY}${done.detail}${RESET}`,
+      `${label('Failed')}${ERROR}${failed.main}${RESET}${SECONDARY}${failed.detail}${RESET}`,
+      '',
+      `  ${SECONDARY}Failures and interrupts always keep their plain wording and exit code.${RESET}`,
+    ];
   }
 
   /**
@@ -6033,8 +6080,9 @@ export class TerminalApp {
     const size = previewSize(columns, rows);
     const mode = effectiveMode(settings.mode, motion);
     const elapsed = Date.now() - state.startedAt;
-    // Screen savers preview over the real screen snapshot taken when the gallery opened (cropped to the preview box).
-    const previewMode: IdleMode = mode === 'random' ? 'blackHole' : mode;
+    // Screen savers preview over the real screen snapshot taken when the gallery opened (cropped to the preview box);
+    // Random previews each saver it can choose, in turn.
+    const previewMode: IdleMode = previewSaver(mode, elapsed).mode;
     let capture: ScreenCapture | undefined;
     if (SCREEN_MODE_EFFECT[previewMode] && this.saverCapture) {
       if (!this.saverGalleryCapture || this.saverGalleryCapture.width !== Math.min(size.width, this.saverCapture.width) || this.saverGalleryCapture.height !== Math.min(size.height, this.saverCapture.height) || this.saverGalleryMode !== previewMode) {
@@ -6042,9 +6090,9 @@ export class TerminalApp {
       }
       capture = this.saverGalleryCapture;
     }
-    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode: previewMode, width: capture?.width ?? size.width, height: capture?.height ?? size.height,
-      time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode),
-      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(capture ? {capture} : {})});
+    const preview = motion.disabled ? [] : idlePreviewRows(this.screensaverGrid, {mode, width: capture?.width ?? size.width, height: capture?.height ?? size.height,
+      elapsed, still: motion.still, palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd',
+      ...(capture ? {capture} : {}), sample: this.idleSample}).rows;
     // A real animated preview while the gallery is open; one timer, removed with the panel.
     if (!motion.still && !motion.disabled && !this.screensaverAnimation) {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.screensaverPanel) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
@@ -6110,8 +6158,8 @@ export class TerminalApp {
     const title = editor.target === 'idle' ? 'Idle visuals · Custom colors' : 'Live activity · Custom colors';
     const rows = ['', ...renderGradientEditorRows(editor.gradient, title).map(row => `  ${row}`), '', `  ${SUBTLE}${GLYPHS.separator.repeat(2)} Preview${RESET}`];
     if (editor.target === 'idle') {
-      rows.push(...idleFrameRows(this.screensaverGrid, {mode: draft.idleVisuals.mode, width: Math.max(10, Math.min(56, columns - 6)), height: 5,
-        palette: idlePaletteFor(draft), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: 20_000}).map(line => `  ${line}`));
+      rows.push(...idlePreviewRows(this.screensaverGrid, {mode: draft.idleVisuals.mode, width: Math.max(10, Math.min(56, columns - 6)), height: 5,
+        palette: idlePaletteFor(draft), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', elapsed: 2000, still: true, sample: this.idleSample}).rows.map(line => `  ${line}`));
     } else {
       const {cells, style} = liveActivityPaint('• Running sleep 5 · ', draft);
       rows.push(`  ${sweepCells(cells, Number.POSITIVE_INFINITY, style, colorLevel(), true)}${SECONDARY}3.4s${RESET}`,

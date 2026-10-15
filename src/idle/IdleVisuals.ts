@@ -8,10 +8,10 @@ import {themeChromaStops} from '../prompt/prompt.js';
 import {isDeterministicPresentation} from '../presentation/environment.js';
 import type {ColorLevel} from '../presentation/capabilities.js';
 import {CellGrid} from './CellGrid.js';
-import type {ScreenCapture} from './screenCapture.js';
+import {captureFromRows, type ScreenCapture} from './screenCapture.js';
 import {
-  HIGH_MOTION, IDLE_FRAME_MS, IDLE_MODE_LABELS, IDLE_MODE_NOTES, IDLE_MODES, idlePalette, reducedMotionScene, renderScene,
-  type IdleMode, type IdlePalette,
+  HIGH_MOTION, IDLE_FRAME_MS, IDLE_MODE_LABELS, IDLE_MODE_NOTES, IDLE_MODES, idlePalette, randomCandidates, reducedMotionScene, renderScene,
+  SCREEN_MODE_EFFECT, type IdleMode, type IdlePalette,
 } from './scenes.js';
 import {framePanel} from '../ui/PanelShell.js';
 import {renderControls} from '../ui/controls.js';
@@ -89,6 +89,59 @@ export function idleFrameRows(grid: CellGrid, input: IdleFrameInput): string[] {
   grid.resize(input.width, input.height);
   renderScene(input.mode, grid, {time: input.time, seed: IDLE_SEED, palette: input.palette, level: input.level, nerd: input.nerd, ...(input.capture ? {capture: input.capture} : {})});
   return grid.toRows(input.level);
+}
+
+/**
+ * What an NMSh session looks like, for previewing a screen saver that animates the screen (Black Hole, Fireworks,
+ * Circletastic, raiseCatError) where no screen of the person's is captured (Setup, the color editor). Fixed text: the
+ * preview never captures the Setup panel or anything private.
+ */
+const SAMPLE_SCREEN = [
+  '\u001b[38;2;197;185;232m❯\u001b[0m npm test',
+  '  \u001b[38;2;116;181;154m✔\u001b[0m 42 passing \u001b[38;2;125;133;144m(1.2s)\u001b[0m',
+  '\u001b[38;2;197;185;232m❯\u001b[0m git status --short',
+  ' \u001b[38;2;205;115;123mM\u001b[0m src/app/TerminalApp.ts',
+  '\u001b[38;2;125;133;144m??\u001b[0m notes/ideas.md',
+  '\u001b[38;2;197;185;232m❯\u001b[0m make build',
+  '\u001b[38;2;205;115;123merror:\u001b[0m expected \';\' at main.c:12',
+  '\u001b[38;2;197;185;232m❯\u001b[0m ls',
+  'README.md  package.json  src  tests',
+];
+
+export function sampleCapture(width: number, height: number): ScreenCapture {
+  return captureFromRows(SAMPLE_SCREEN, width, height, IDLE_SEED);
+}
+
+/** How long Random's preview shows each saver it can pick before the next. */
+export const RANDOM_PREVIEW_DWELL_MS = 6000;
+
+/**
+ * The saver a preview shows for a mode at `elapsed`: the mode itself, or for Random each of the savers Random can
+ * actually choose (the registry's own candidates), in turn, with the time into that one.
+ */
+export function previewSaver(mode: IdleMode, elapsed: number): {mode: IdleMode; elapsed: number} {
+  if (mode !== 'random') return {mode, elapsed};
+  const candidates = randomCandidates().filter((id): id is IdleMode => (IDLE_MODES as readonly string[]).includes(id));
+  if (!candidates.length) return {mode: 'deepSpace', elapsed};
+  return {mode: candidates[Math.floor(elapsed / RANDOM_PREVIEW_DWELL_MS) % candidates.length]!, elapsed: elapsed % RANDOM_PREVIEW_DWELL_MS};
+}
+
+/**
+ * One preview frame of a screen saver, as the real renderer draws it: screen effects run over `capture` (the
+ * gallery's snapshot of the real screen) or over the sample screen. `sample` keeps the sample capture between
+ * frames (a screen effect keeps its own state per capture) and restarts it when the saver or size changes.
+ */
+export function idlePreviewRows(grid: CellGrid, input: Omit<IdleFrameInput, 'time' | 'capture'> & {elapsed: number; still: boolean; capture?: ScreenCapture;
+  sample: {key?: string; capture?: ScreenCapture}}): {rows: string[]; shown: IdleMode} {
+  const {mode, elapsed} = previewSaver(input.mode, input.elapsed);
+  let capture = SCREEN_MODE_EFFECT[mode] ? input.capture : undefined;
+  if (SCREEN_MODE_EFFECT[mode] && !capture) {
+    const key = `${mode}|${input.width}x${input.height}|${input.mode === 'random' ? Math.floor(input.elapsed / RANDOM_PREVIEW_DWELL_MS) : 0}`;
+    if (input.sample.key !== key || !input.sample.capture) { input.sample.key = key; input.sample.capture = sampleCapture(input.width, input.height); }
+    capture = input.sample.capture;
+  }
+  const time = input.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode);
+  return {rows: idleFrameRows(grid, {mode, width: input.width, height: input.height, time, palette: input.palette, level: input.level, nerd: input.nerd, ...(capture ? {capture} : {})}), shown: mode};
 }
 
 // ---- /screensaver gallery --------------------------------------------------------
