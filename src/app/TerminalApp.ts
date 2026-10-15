@@ -1777,6 +1777,12 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.watchPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'confirm' && panel.confirm) {
         const pending = panel.confirm;
+        const size = this.dimensions();
+        if (size.columns < 40 || size.rows < 12) {
+          panel.message = 'Resize to at least 40 columns and 12 rows to review this recurring command.';
+          this.render();
+          return;
+        }
         panel.confirm = undefined;
         const safety = watchSafety(pending.command);
         if (safety.kind === 'refused') panel.message = safety.reason;
