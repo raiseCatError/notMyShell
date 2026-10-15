@@ -12,6 +12,15 @@ const SHELL = '/bin/sh';
 const node = (script: string, ...args: string[]) => [process.execPath, script, ...args].map(part => `'${part}'`).join(' ');
 const env = (): Record<string, string> => ({PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: process.env.HOME ?? '/', TERM: 'xterm-256color'});
 const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+/**
+ * The sleeper in the background, then `leader` once the sleeper ignores the hangup (it creates a file), waiting at most
+ * about ten seconds. Without the wait, a slow Node start let the leader's exit hang the member up first, and the task
+ * rightly reported no leftovers.
+ */
+const afterSleeperReady = (cwd: string, ms: string, leader: string) => {
+  const ready = join(cwd, 'sleeper-ready');
+  return `${node(SLEEPER, ms, ready)} & i=0; while [ ! -e '${ready}' ] && [ $i -lt 1000 ]; do sleep 0.01; i=$((i+1)); done; ${leader}`;
+};
 
 async function waitFor(check: () => boolean, what: string, timeout = 10_000): Promise<void> {
   const deadline = Date.now() + timeout;
@@ -102,7 +111,7 @@ test('a pipeline stops as a whole; a detached helper it started (like the adb se
 
 test('processes left in the group after the leader exits are reported, and killed only on request', async () => {
   await withSupervisor(async (supervisor, cwd) => {
-    const {task} = supervisor.start({command: `${node(SLEEPER)} & sleep 1; exit 0`, cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
+    const {task} = supervisor.start({command: afterSleeperReady(cwd, '60000', 'sleep 1; exit 0'), cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
     await waitFor(() => supervisor.get(task.id)!.state !== 'running', 'leader exited');
     await new Promise(resolve => setTimeout(resolve, 300));
     const record = supervisor.get(task.id)!;
@@ -117,7 +126,7 @@ test('processes left in the group after the leader exits are reported, and kille
 test('a leftover group that ends later is noticed and forgotten: no stale "processes left", no kill aimed at a reused group id', async () => {
   await withSupervisor(async (supervisor, cwd) => {
     // The member outlives the leader by more than a second, past any one-off check after the exit.
-    const {task} = supervisor.start({command: `${node(SLEEPER, '1600')} & sleep 0.2; exit 0`, cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
+    const {task} = supervisor.start({command: afterSleeperReady(cwd, '1600', 'sleep 0.2; exit 0'), cwd, shell: SHELL, env: env()}) as {ok: true; task: TaskRecord};
     await waitFor(() => supervisor.get(task.id)!.state === 'exited', 'leader exited');
     await waitFor(() => supervisor.get(task.id)!.leftovers === true, 'leftovers reported');
     assert.equal(supervisor.remove(task.id), false, 'a task whose processes still run is not removed: nothing could stop them afterwards');
