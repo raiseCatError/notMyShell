@@ -1780,7 +1780,10 @@ export class TerminalApp {
         panel.confirm = undefined;
         const safety = watchSafety(pending.command);
         if (safety.kind === 'refused') panel.message = safety.reason;
-        else { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+        else {
+          try { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+          catch (error) { panel.message = error instanceof Error ? error.message : 'Could not start tracker.'; }
+        }
       } else if (action?.kind === 'pause') this.watches.pause(action.id);
       else if (action?.kind === 'resume') this.watches.resume(action.id);
       else if (action?.kind === 'now') this.watches.runNow(action.id);
@@ -7736,7 +7739,9 @@ export class TerminalApp {
     };
     if (op === 'list') { this.panelOrigin = undefined; this.watchPanel = {selected: 0, output: false}; return; }
     if (op === 'start') {
-      const {command: watched, intervalMs} = parseWatch(argument);
+      const parsed = parseWatch(argument);
+      if (parsed.error) { this.output.addFrontendInteraction(command, parsed.error, ERROR); return; }
+      const {command: watched, intervalMs} = parsed;
       const safety = watchSafety(watched);
       if (safety.kind === 'refused') { this.output.addFrontendInteraction(command, safety.reason, ERROR); return; }
       this.panelOrigin = undefined;
@@ -7745,7 +7750,8 @@ export class TerminalApp {
           reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no'}};
         return;
       }
-      this.watches.start(watched, this.shellCwd, intervalMs, safety);
+      try { this.watches.start(watched, this.shellCwd, intervalMs, safety); }
+      catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'Could not start tracker.', ERROR); return; }
       this.watchPanel = {selected: this.watches.active().length - 1, output: false};
       return;
     }
