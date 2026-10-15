@@ -130,7 +130,9 @@ export async function claudePluginEntries(listing: unknown, cwd: string, profile
       permissions: [], applicability: ['claude'], evidence: override ? `claude plugin list --json; overridden by ${override.file}` : 'claude plugin list --json',
       nativeType: nativeType(read?.components), ...(read ? {components: read.components} : {}), runtime: managedRuntime(read?.components), notes,
       claude: {pluginId: raw.id, scope: raw.scope === 'user' || raw.scope === 'project' || raw.scope === 'local' ? raw.scope : 'user', ...(raw.projectPath ? {projectPath: raw.projectPath} : {}), ...(profile?.configDir ? {configDir: profile.configDir} : {})},
-      toggle: override ? {supported: false, reason: `This project's ${override.file} decides it here; NMSh changes only the scope a plugin is installed at`} : {supported: true}});
+      toggle: override ? {supported: false, reason: `This project's ${override.file} decides it here; NMSh changes only the scope a plugin is installed at`}
+        : claudePluginWrites() ? {supported: true}
+          : {supported: false, reason: `Turning plugins on and off from NMSh is not verified in this release. In a shell: claude plugin ${enabled === true ? 'disable' : 'enable'} ${raw.id} --scope ${raw.scope === 'user' || raw.scope === 'project' || raw.scope === 'local' ? raw.scope : 'user'}`}});
   }
   return entries;
 }
@@ -158,12 +160,26 @@ export async function standaloneSkills(configDir: string, profile?: string): Pro
 
 export interface ToggleResult {ok: boolean; message: string; alreadyInGoalState?: boolean}
 
+/** The experimental switch for writing Claude's plugin settings from NMSh (NMSH_EXPERIMENTAL_CLAUDE_PLUGIN_TOGGLE=1). */
+export const CLAUDE_PLUGIN_WRITES_ENV = 'NMSH_EXPERIMENTAL_CLAUDE_PLUGIN_TOGGLE';
+
+/**
+ * Whether NMSh may change Claude plugin settings. Off by default: the enable/disable path has never been verified
+ * against a live account, and it writes the person's Claude settings. The inventory, states and Inspect are read-only
+ * and stay. Managed Claude is beta; this release defers its physical QA (items 4.1-4.3).
+ */
+export function claudePluginWrites(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[CLAUDE_PLUGIN_WRITES_ENV] === '1';
+}
+
 /**
  * Enable or disable an installed plugin at the scope it is installed at, through `claude plugin enable|disable
  * --scope … --json`. Only ids from the current listing are accepted: Claude's own command writes an unknown id into
  * settings as if it existed, so NMSh never sends one.
  */
 export async function setPluginEnabled(executable: string, entry: ModEntry, enable: boolean, installed: ReadonlySet<string>): Promise<ToggleResult> {
+  // Never reached without the switch (Space is not offered); refused here too, whatever the caller.
+  if (!claudePluginWrites()) return {ok: false, message: 'Turning plugins on and off from NMSh is not verified in this release'};
   const claude = entry.claude;
   if (!claude || !PLUGIN_ID.test(claude.pluginId) || !installed.has(claude.pluginId)) return {ok: false, message: 'Not an installed Claude plugin in the current listing'};
   const args = ['plugin', enable ? 'enable' : 'disable', claude.pluginId, '--scope', claude.scope, '--json'];
