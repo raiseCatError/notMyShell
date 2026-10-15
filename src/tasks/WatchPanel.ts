@@ -64,6 +64,10 @@ export function renderWatchPanel(state: WatchPanelState, watches: readonly Watch
   const reset = '\u001b[0m';
   const rows = [`${primary}  Live commands · /track / /watch${reset}`];
   if (state.confirm) {
+    if (columns < 40 || rowsAvailable < 10) {
+      return [`${primary}  Resize to review tracked command (40 columns, 12 rows)${reset}`,
+        `${secondary}  Confirmation is disabled at this size. Esc cancels.${reset}`].map(row => truncateAnsi(row, columns));
+    }
     const yes = state.confirm.choice === 'yes';
     rows.push('', `  ${primary}Watch ${state.confirm.command}?${reset}`, `  ${secondary}${state.confirm.reason}${reset}`,
       `  ${subtle}It runs in ${state.confirm.cwd}, every ${formatEvery(state.confirm.intervalMs ?? 5000)}, until you stop it.${reset}`, '',
