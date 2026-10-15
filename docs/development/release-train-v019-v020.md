@@ -226,7 +226,7 @@ width once from `this.dimensions()` and resizes the PTY from that width.
 
 Branch `release/v0.20.0`, pinned to the unpublished v0.19 RC `9e85a910`; draft PR
 [#392](https://github.com/raiseCatError/notMyShell/pull/392) based on `release/v0.19.0` (retarget to `master` after v0.19
-publishes). Current head **`44f4c232df6dce98701c1913e79da306f448dbd1`**.
+publishes). Current head **`c71a42846da4a3832e578f3fb9c28f192510d08e`** (was `44f4c232` until 2026-10-15 10:53Z).
 
 | Commit | What |
 | --- | --- |
@@ -240,6 +240,9 @@ publishes). Current head **`44f4c232df6dce98701c1913e79da306f448dbd1`**.
 | `84730131` | related PRs in `/worktrees` from the last `/github` listing; `p` opens the PR |
 | `62c6fad0` | release metadata, `docs/testing/v020-physical-qa.md` |
 | `44f4c232` | `/keys` host profile moved out of TerminalApp (hostIntegration) |
+| `00163da7` | portable-mod gate refuses eight demonstrated ways around it (self-test); plugin ids and the validated path can no longer reach Claude's argv as options (security review of `1c418629`) |
+| `1861666a` | Codex adapter: a cancel made before Codex names the turn is sent when it does (real defect found by the canonical run) |
+| `c71a4284` | background supervisor test: the leader exits only after the sleeper ignores the hangup (test race found by the canonical run) |
 
 | Gate | Head | Result |
 | --- | --- | --- |
@@ -248,12 +251,193 @@ publishes). Current head **`44f4c232df6dce98701c1913e79da306f448dbd1`**.
 | Local canonical `verify:release` | `62c6fad0` | **failed** 3/2609: hostIntegration (fixed), `configuredCompletion` "capture bounded to 4096" (0 records, 3.26 s) and `copyFolding` "Auto-expand On" (3.27 s). The latter two passed in 3 isolated reruns and in CI; unexplained, preserved, not classified |
 | PR CI [38650280119](https://github.com/raiseCatError/notMyShell/actions/runs/38650280119) | `44f4c232` | **pass**, every job |
 | Dispatch CI [38650273295](https://github.com/raiseCatError/notMyShell/actions/runs/38650273295) (Fedora, both timing smokes) | `44f4c232` | **pass**, every job |
-| Local canonical `verify:release` | `44f4c232` | **failed** 2/2609 under heavy unrelated load (load avg ~21: another project's svelte-check, a Codex session): `absolutePathLive` live fish (53 s; ownership probes ETIMEDOUT) and `codexAdapter` cancellation (10.4 s settle timeout). Both passed 3/3 isolated reruns. Preserved, not classified. **A clean, uncontended full rerun on this head is still required.** |
+| Local canonical `verify:release` | `44f4c232` | **failed** 2/2609 under heavy unrelated load (load avg ~21: another project's svelte-check, a Codex session): `absolutePathLive` live fish (53 s; ownership probes ETIMEDOUT) and `codexAdapter` cancellation (10.4 s settle timeout). Both passed 3/3 isolated reruns. Preserved, not classified. **A clean, uncontended full rerun on this head is still required.** Note added 2026-10-15: run 2's load samples show this suite alone drives load averages of 10–70 on this 8-core, 8 GB host, so "heavy unrelated load" was not established as the cause; `codexAdapter` was later shown to be a real defect (below). Receipt archived read-only as `/Volumes/nmsh-opus/logs/archive/run1-2026-10-14T2250Z-verify-release-44f4c232….{json,log}` (log sha256 `2ba49b34…`) because the receipt tool names files by head |
+| Local canonical `verify:release`, run 2 | `44f4c232` | **failed** 5/2609 (2603 pass, 1 skipped; bench typecheck and timing smoke not reached), 10:19:33–10:30:57Z, clean before/after, Node 26.10.0. Pre-run: load 5.9, 32 % memory free, 5 GB swap used, no other test/build workload (a `colima-suma` VM resident, Chrome, an idle Codex app session; none stopped). Sampled load during the run 5–70 (`/Volumes/nmsh-opus/logs/v020/load-run2-44f4c232.log`), mostly the suite's own node workers. Failures: `backgroundSupervisor` ×2 (leftovers false at 1.4 s; timed out waiting for leftovers, 10.3 s), `codexAdapter` cancellation (timed out waiting for settled; events user/started/model), `configuredCompletion` "capture bounded to 4096" (0 records, 5.7 s) and "warm cancellation backs off" (0 results, 4.0 s). Investigation below. Log sha256 `6e52d141abd607126ada4e05647627cf4eb5bc66e631b24b32f75412af49b596`, json `2fb760bb…` |
+
 | Skipped | all | 1: `the real installed Claude, read-only` (opt-in `NMSH_REAL_CLAUDE=1`; must not touch real accounts) |
-| Local `backgroundSupervisor` "leftover group that ends later" | dev runs | one 10.27 s failure in a combined local run (message not captured), then 1 isolated + 2 combined passes; plausibly a load-delayed exit observation; unconfirmed, preserved |
+| Local `backgroundSupervisor` "leftover group that ends later" | dev runs | one 10.27 s failure in a combined local run (message not captured), then 1 isolated + 2 combined passes; plausibly a load-delayed exit observation; unconfirmed, preserved. 2026-10-15: same signature as run 2; cause found (fixture race, below) |
+| Report/compare/clipboard security subset (v0.19's exact command) | `c71a4284` | **pass** 77/77, 0 skipped, no leaked roots; 10:52:10–10:52:36Z, clean before/after; `security-focused-c71a4284….{log,json}` (log sha256 `023d922b…`) |
+| Supplementary v0.20 security tests (`portableModGate`, `claudePlugins`, `sessionProtocol`, `backgroundSession`, `backgroundIntegration`, `backgroundSupervisor`, `workspaceIntegration`, `workspaceFrame`, `workspaceKeymap`, `codexAdapter`) | `c71a4284` | **pass** 72/73, 1 skipped (opt-in real Claude), no leaked roots; `security-v020-c71a4284….{log,json}` (log sha256 `a4870446…`) |
+| PR CI [38723507272](https://github.com/raiseCatError/notMyShell/actions/runs/38723507272), dispatch [38723501877](https://github.com/raiseCatError/notMyShell/actions/runs/38723501877) | `c71a4284` | **pass**, attempt 1. PR: every job (Fedora and timing smokes skipped by design on PR). Dispatch: every job, including Fedora, both timing smokes, Node 22 |
+| Local canonical `verify:release`, run 3 | `c71a4284` | **pass**: 2612 tests, 2611 pass, 0 fail, 1 skipped (opt-in real Claude); serial benchmark group 8/8; bench typecheck and timing smoke pass; exit 0. 10:54:13–11:01:45Z (test phase 431 s), clean before/after, macOS arm64 8 GB, Node 26.10.0, temp roots on `/Volumes/nmsh-opus/t`. Pre-run load 3.7, 36 % memory free, swap 5.4 of 6 GB used; no other test/build workload (the `colima-suma` VM idle at start); sampled peak load 20 (`load-run3-c71a4284.log`). Every test that failed in run 2 passed, including the unfixed `configuredCompletion` (1.1 s), which therefore stays an open record, not a resolved one. Log sha256 `dfa333189d1f8d90ebd637346020ef8e33b8ee45974e162c7e041dbf9d4d09ee`, json `7895dd70…` |
 | Physical QA | — | **NOT PERFORMED** |
 
-Logs: `/Volumes/nmsh-opus/logs/receipts/`, `/Volumes/nmsh-opus/logs/ci/`, `/Volumes/nmsh-opus/logs/v020/`.
+Logs: `/Volumes/nmsh-opus/logs/receipts/`, `/Volumes/nmsh-opus/logs/ci/`, `/Volumes/nmsh-opus/logs/v020/`,
+`/Volumes/nmsh-opus/logs/archive/`. Experiment scripts and outputs from the investigation below were kept in the
+session scratch area; their results are summarized here.
+
+#### Run 2 failure investigation (2026-10-15)
+
+No timeout was raised, no test disabled, no selection changed. Each signature reproduced or bounded by a controlled
+experiment, serially, with nothing else of this track running:
+
+- **`codexAdapter` cancellation: real defect.** `send()` queues the text while the thread starts, and `cancel()`
+  returned silently without a thread and turn id: no interrupt, no word to the person, and the turn ran. Deterministic
+  reproduction (cancel at 0 and 300 ms after `send` without waiting for `started`): events exactly `user, started,
+  model`, no `turn/interrupt`, never settled. Under 8 CPU-bound burners the unmodified test failed 2/2 (10.5 s, 10.4 s);
+  idle it passes. Fixed in `1861666a` (pending cancel sent when the turn is named); the new test fails on the old
+  adapter with the canonical signature and passes on the fix idle and 2/2 under burners. The adapter remains unwired.
+- **`backgroundSupervisor` leftovers ×2: test race; supervisor verdicts correct.** The tests start a background Node
+  sleeper and let the leader exit after `sleep 1` / `sleep 0.2`, assuming the sleeper has already ignored SIGHUP. Node
+  start-to-exit measured 0.28–0.46 s at load ~8. Real-supervisor matrix: a member that has ignored the hangup before
+  the leader exits is reported as leftover; one that has not is ended by it (plain `sleep` 2/2, a trap set 0.5 s late
+  3/4) and the task correctly reports no leftovers. The hangup's timing relative to the leader's exit itself varied
+  between trials and is not fully characterized. With an 800 ms slow-starting sleeper the old shape lost the member
+  1/10, the readiness-wait shape 0/10. Fixed in `c71a4284` (the sleeper reports readiness; the leader waits, bounded);
+  file passes 3/3 idle and 2/2 under burners. The 2026-10-14 dev-run failure had the same signature.
+- **`configuredCompletion` ×2: not reproduced; open.** Product behavior is fail-closed by design when the real zsh
+  helper (`zpty`, inner `zsh -i` with `compinit`) misses its startup deadline (`startupMs: 4000` in the tests, 1500
+  in the product). Isolated: 15/15 idle; 2/2 under 8 burners; 3/3 combined with three PTY-heavy live files at
+  concurrency 4. `zsh -i` with `compinit -D` starts in 0.18–0.36 s idle and 0.30–0.56 s under 8 burners. Within the
+  canonical runs, neighbouring completion tests took 0.3–0.6 s on v0.19 (`9e85a910`), 2–3 s in v0.20 run 1 and
+  ~3.7 s in run 2, i.e. within reach of the 4 s deadline, while the suite overall was 1.09× (median) / 2.9× (p90)
+  slower than v0.19. Consistent with suite-induced slowdown in that part of the run, but **the cause is not
+  established**; it stays an open record, as do `copyFolding` (62c6fad0) and `absolutePathLive` (44f4c232 run 1).
+
+### v0.20 physical-QA checklist audit (2026-10-15, against `44f4c232`)
+
+Every item of `docs/testing/v020-physical-qa.md` checked against the code it exercises. "Testable" means a person
+can judge the item as written; it says nothing about whether it passes. The checklist on the release branch is
+**unchanged**: the proposals below need the maintainer's approval before the checklist is edited.
+
+| Item | Status | Evidence / gap |
+|---|---|---|
+| 1.1 widths, docked vs drawer, `tput cols` | Implemented, testable | `planWorkspaceColumns`; `dimensions()` is the center width; drawers never resize the PTY |
+| 1.2 Safe glyphs, `NO_COLOR` | Implemented, testable | `composeWorkspaceFrame` style (safe/color) |
+| 1.3 regions hide for vim/less | Implemented, testable | `workspaceSuppressed()` on passthrough |
+| 1.4 tmux section, Enter switches pane, prefix/`bind -n` reach tmux first | Implemented, testable | `tmuxResources`, `tmuxNavigationArgs`, `trustedTmux` |
+| 1.4 "`/keys` names them" | **Partially implemented** | `hostNotes` can name root-table keys, but `keymapHostProfile` never fills `tmuxRootKeys` and nothing reads tmux's key tables or prefix: inside tmux `/keys` only notes Esc's escape-time. `docs/design/workspace.md` never promised it; the checklist clause overreaches |
+| 1.5 worktree Enter stages `cd -- '…'`; draft kept | Implemented, testable | `performWorkspaceIntent` + `directoryCommand` |
+| 1.6 click sidebar/panel/transcript: focus follows; transcript hits land right with the sidebar docked | Implemented, testable | `routeWorkspacePointer`: a click in a region focuses it, a center click returns focus, center events are translated to center columns |
+| 1.6 (implied) clicking a **row** selects it | **Explicitly deferred** | a click in the sidebar or panel only focuses the region; the row under the pointer is not selected (handover item 7). The item never says "select a row", but a tester will try it: the checklist should say what to expect |
+| — wheel over sidebar/panel scrolls that region | **Explicitly deferred**, not in the checklist | wheel events carry no position (`keys.ts`), so they bypass the pointer router and scroll the transcript wherever the pointer is (as the CHANGELOG's known limitations say) |
+| 1.7 `keymap.json` Left → `sidebar.focus` with `"replaces": true`; `/keys`; Terminal.app Page Up/Down note | Implemented, testable | `applyKeymap`, `hostNotes` (apple-terminal) |
+| 2.1–2.7 background tasks | Implemented, testable | task bar, `entersBar` (Up from idle composer), view follow/End, `ESCALATION_PAUSE_MS` x pacing, session-owned tasks, foreground default (`suggestions: 'off'`), hook only on direct composer submission |
+| 2.3 `adb logcat` part | Testable only with an Android device/emulator | otherwise Not run |
+| 3.1–3.2 native modules | Implemented; testable only where the toolchains are installed | per-toolchain Not run is legitimate |
+| 3.3 related PR `p`; fork PR not offered | Implemented, testable | `relatedPr.ts` requires the same head repository |
+| 4.1 `/model`, `/effort` | Implemented, testable with a disposable account | `agents/input/pickers.ts` |
+| 4.2 `/mods` enable/disable | Implemented; **never verified against a live account**; needs a disposable account | `setPluginEnabled`, `toggleMod` |
+| 4.3 multi-line approval shows every line | Implemented (agent approval view), testable with a disposable account | |
+| 5 v0.19 core on this build | Testable | as v0.19 |
+
+Missing despite being an acceptance requirement: only the 1.4 `/keys` clause. Other known deferrals and whether the
+checklist needs them:
+
+| Deferred capability | In a v0.20 acceptance item? | Recommendation |
+|---|---|---|
+| NMSh sessions / managed-target sidebar rows | No | defer; the sidebar lists tmux, worktrees and manager links only |
+| Sidebar click-to-select | Not required; implied by 1.6 wording | defer; add an explicit "expected: focus only" line to 1.6 |
+| Pointer-region-aware wheel | No | defer (already a CHANGELOG known limitation); mention in 1.6 so a tester does not log it as a regression |
+| Module diagnostics in the detail panel | No (`/modules` is canonical) | defer (decision 4) |
+| Live task output in transcript blocks | No; 2.5 requires the opposite | defer (decision 3) |
+| Module compaction explanations (from v0.19) | No | defer |
+| External source previews (from v0.19) | No | defer |
+| `/keys` naming tmux prefix and `bind -n` keys | **Yes (1.4)** | **maintainer choice:** (a) defer and reword 1.4 to "the prefix and `bind -n` keys reach tmux first; `/keys` notes tmux's Esc delay", recorded as a v0.20 known limitation; or (b) implement before v0.20: read `tmux show-options -g prefix` and `tmux list-keys -T root` once per `/keys` through the existing `trustedTmux` runner, with tests. Recommended: (a). The behavior that matters (tmux keeps its keys) is implemented and testable; (b) adds a new process call to a help command and would need its own review and verification cycle |
+
+Proposed checklist changes, for approval (not applied): 1.4 as above; 1.6 add "a click focuses the region; it does
+not select the row under the pointer, and the wheel scrolls the transcript wherever the pointer is (both deferred,
+both already CHANGELOG known limitations)". No item is
+removed. The QA runbook (`docs/development/release-qa-runbook.md`) tells the tester to record the 1.4 clause as
+**Fail (known gap)** until the maintainer decides.
+
+### v0.20 security review of the integration (`fe60bdc4..44f4c232`, 2026-10-15)
+
+Scope: the integration commits only (the merged PRs carry their own reviews). Read-only review of
+`src/session/*`, `src/backgroundTasks/{protocol,sessionTasks}.ts`, `src/app/{workspaceHost,workspaceFrame,backgroundHost}.ts`,
+the TerminalApp wiring, `src/workspace/tmux.ts`, `src/agents/mods/*` and `tests/portableModGate.test.ts`.
+
+| Area | Finding |
+|---|---|
+| Background task ownership | `task` requests are honored only for the connection that owns the session and listed `background-tasks`; output and lists are sent only while `session.controller === send`, so a superseded or older frontend receives nothing; every frame is validated (`taskOpFrom`, `tasksFrom`, `taskUpdateFrom`; ids `t\d+`, bounded sizes). Tasks end with the session (service shell exit, service close; in-process kill/detach). No issue |
+| Suggestions vs foreground input | the hook runs only from `routeComposer`'s final direct submission (`fromComposer`), and not while `running`, `startupPending`, `passthrough` or `externalPassthrough`; queued entries, program input (`send`, answers while running), startup and other `submit()` callers never reach it. Default `suggestions: 'off'`. No issue |
+| Session protocol compatibility | feature negotiation both ways (`SERVICE_FEATURES`/`CLIENT_FEATURES`); the client sends `task` only when the service listed it; a service never sends task frames to a client that did not list it; `backgroundAvailable()` hides `/background` otherwise. No issue |
+| Workspace focus and routing | workspace keys after protected owners; pointer events translated to center columns; protected owners keep the keyboard on a click beside them. No issue |
+| tmux | executable only from fixed system paths through `realpath` (`trustedTmux`); argv only. No issue |
+| Worktree `cd` | staged, never run; `directoryCommand` refuses unsafe paths and single-quotes the rest. No issue |
+| Related PR `p` | opens NMSh's own GitHub panel; no external process. No issue |
+| Clipboard / transcript isolation | task output never enters transcript blocks, so `/copy`, Copy as Report and `/compare` cannot include it (physical item 2.5 confirms). No issue |
+| **Portable-mod gate (`1c418629`)** | see below: **acceptable with conditions**; hardening and regression tests added |
+
+**`1c418629` assessment.** The gate change itself is a tightening of #379's single allowed call into four reviewed
+argv forms through `execFile` without a shell, and it is consistent with keeping executable Portable Mods disabled:
+no loader check was removed, and none of the four calls loads or runs mod code inside NMSh. But the static test could
+not establish what it claimed. Gaps found, each reproduced as a fixture against the gate:
+
+1. `shell: '/bin/sh'` (a shell given by path) passed; only `shell: true` was refused.
+2. A second `import * as cp from 'node:child_process'` beside the named import passed.
+3. The executable was never checked (`run('/bin/sh', …)` passed), and an argv array not starting with `'plugin'`
+   was never compared with the reviewed list.
+4. `args` could be changed after its reviewed literal (`args.push(...)`).
+5. `createRequire`/`node:module`/`process.dlopen` were not in the loader list.
+6. Only files inside `src/agents/mods` were scanned: a process helper imported from elsewhere passed.
+
+Runtime, two values from outside NMSh reached Claude's argv in option position: `PLUGIN_ID` accepted ids starting
+with `-` (`--settings@market`), and `validate` received `entry.reference` (the listing's `installPath`) without
+checking it is an absolute path. Both come from Claude's own `plugin list --json`, so exploitation would need
+Claude's listing to carry such a value; it is still argument injection into a process NMSh starts, and it is closed.
+
+What static tests cannot establish, and stays a residual risk recorded for the maintainer:
+- that `claude plugin validate` and `claude plugin details` never execute plugin code (Claude's implementation;
+  NMSh's own claim is "Claude's documented review step"). Only an explicit Inspect action runs them;
+- that `claude plugin list --json`, run with the shell's directory as cwd when `/mods` opens, does not act on an
+  untrusted repository's `.claude/settings*.json` beyond listing (Claude's trust model);
+- the live behavior of `enable`/`disable` against a real account (never verified; physical item 4.2);
+- anything reachable more than one import level away from `src/agents/mods`.
+
+Fixed in `00163da7`: every gap above is now refused, and a self-test feeds each fixture through the gate (the
+gate as committed in `1c418629` accepted all eight, re-run outside the test to confirm); runtime ids must start
+with a word character and only an absolute install path is validated (a behavioral test against a recording fake
+`claude` fails on the old code).
+
+Conditions for accepting the gate change: `00163da7` on the release head; physical item 4.2 run with
+a disposable account before the Claude plugin controls are advertised as working; the maintainer's explicit
+sign-off (decision 1).
+
+## Checkpoint and handover (2026-10-15, resumed session)
+
+State at the end of the resumed session; the earlier handover below is kept as written.
+
+| Release | Branch head (remote = local) | Working tree | PR |
+|---|---|---|---|
+| v0.19.0 | `9e85a9100d1a377ccb3b270c99d98cbae0ff2605` (unchanged) | clean | #390, draft |
+| v0.20.0 | `c71a42846da4a3832e578f3fb9c28f192510d08e` | clean | #392, draft, base `release/v0.19.0` |
+
+Automated gates: v0.19 all pass (unchanged, not rerun). v0.20 on `c71a4284`: local canonical run 3
+**pass** (2611/2612, 1 skipped), security subset 77/77, supplementary security 72/73 (1 skipped), PR CI
+38723507272 and dispatch CI 38723501877 pass on attempt 1. Earlier failed runs are preserved above.
+
+**Maintainer decisions still requiring explicit sign-off** (provisional direction in brackets):
+
+1. **Portable-mod gate** (`1c418629` + `00163da7`): acceptable **with conditions** (security review above). [Keep
+   execution disabled; accept the four reviewed Claude CLI forms.]
+2. **Background suggestions Off by default** [as built]. Trade-off: #383 designed `ask`; with Off, nobody discovers
+   backgrounding from Enter, but Enter on `tail -f`, `npm run dev`, `ping` behaves exactly as in v0.19.
+3. **Task output separate from the transcript** [as built]: bar, output view and `/background` only; consequence:
+   no `/copy`, Copy as Report or `/compare` of task output in v0.20 (physical item 2.5 checks exactly that).
+4. **Module diagnostics stay in `/modules`** [as built]; the detail panel shows sidebar selections only.
+5. **Codex adapter unwired and unadvertised** [as built]; `1861666a` fixes a real cancel defect in it, which does not
+   change that.
+6. **Claude plugin enable/disable**: never verified against a live account. Options: (a) run physical item 4.2 with a
+   disposable account before v0.20 sign-off; (b) if that cannot happen, defer the controls for v0.20 (inventory and
+   Inspect stay; Space/Enter toggling reports "not verified in this release" instead of running `claude plugin
+   enable|disable`), a small change with its own tests and re-verification; (c) ship as is with the existing
+   CHANGELOG known limitation. Recommended: (a), else (b). (c) ships an unverified write path into the person's
+   Claude settings.
+7. **`/keys` and tmux root keys** (checklist 1.4): defer and reword (recommended), or implement before v0.20 (see the
+   audit above).
+8. **Checklist wording** for 1.4 and 1.6 as proposed in the audit (nothing removed).
+9. **Open, unexplained local failures** (`configuredCompletion` ×2 on `44f4c232` run 2 and on `62c6fad0`,
+   `copyFolding` on `62c6fad0`, `absolutePathLive` on `44f4c232` run 1): whether a passing canonical run on the final
+   head is sufficient with these recorded as open, or whether they must be explained first.
+
+**Physical QA:** not performed for either release. Execution guide: `docs/development/release-qa-runbook.md`
+(this branch). Human-only gates: v0.19 passes 1–3 in Ghostty and Terminal.app, Bash or Fish on macOS, and a
+**physical Linux terminal with Fish 3.7**; v0.20 passes 1–5, of which pass 4 needs a disposable Claude account. If no
+physical Linux machine with Fish 3.7 is available, both releases are blocked on that row; a VM or CI does not
+substitute.
+
+**Publication:** unchanged from item 6 below. Nothing was merged, tagged, released, retargeted or force-pushed.
 
 ## Checkpoint and handover (2026-10-15)
 
@@ -280,7 +464,9 @@ Work paused at the maintainer's request. Nothing is running; all release worktre
    transcript blocks for task output. Deferred from v0.19: module compaction explanations, external source previews.
 8. **Leftover processes:** two idle 2026-10-13 smoke session services (pids 94753, 95205,
    `/Volumes/nmsh-opus/tmp/smoke/run`) still run; stopping them was refused by the permission policy. The maintainer
-   can stop them (`kill -TERM 94753 95205`).
+   can stop them (`kill -TERM 94753 95205`). **Resolved 2026-10-15:** the maintainer's
+   `ps -p 94753,95205 -o pid,ppid,command` returned no entries, and this track's own check at 10:19Z agreed. Nothing
+   was signalled by this track; nothing is inferred about other processes.
 9. Unexplained local failures above remain open records; Codex's historical failures remain Codex's.
 
 ## Coordination rules
@@ -328,3 +514,7 @@ below and stop cleanly with no background processes left.
 - 2026-10-14 23:10 IST — All automated v0.19 gates pass on `9e85a910` (ledger above). v0.19 stops as a verified release
   candidate pending physical QA. v0.20 integration starts on `release/v0.20.0` pinned to `9e85a910`.
 - 2026-10-15 04:40 IST — v0.20 RC at `44f4c232`: CI PR + dispatch green; local canonical failed under contention (see ledger). Paused at maintainer request; handover above.
+- 2026-10-15 15:49 IST — Resumed. Release image re-attached (it was detached; worktrees intact, clean, at the recorded SHAs; remote heads equal). Old smoke PIDs 94753/95205 confirmed absent. Earlier failed `44f4c232` receipt archived read-only before rerunning.
+- 2026-10-15 16:01 IST — `44f4c232` canonical run 2 failed 5/2609; investigated (ledger). Security review of the integration; gate bypasses found.
+- 2026-10-15 16:22 IST — `00163da7`, `1861666a`, `c71a4284` pushed (fast-forward). Security subsets pass.
+- 2026-10-15 16:31 IST — `c71a4284`: local canonical run 3 pass; PR and dispatch CI pass. All automated v0.20 gates pass on this head. Physical QA for both releases outstanding; maintainer decisions listed in the resumed handover.
