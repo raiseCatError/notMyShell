@@ -125,6 +125,24 @@ test('inspect: Claude\'s own static descriptions; a mod\'s hooks and calls are l
   assert.deepEqual(calls().at(-1)!.args, ['plugin', 'validate', skins]);
 });
 
+test('ids and paths reach Claude\'s CLI as arguments, never as options', async () => {
+  // A listing row whose id would read as an option is not offered at all.
+  assert.deepEqual(await claudePluginEntries([{id: '--help@market', scope: 'user', enabled: true}, {id: '-x@market', scope: 'user', enabled: true}], project), []);
+  const [skinsEntry] = await claudePluginEntries(LISTING, project, {name: 'account1', configDir: join(root, 'account1')});
+  const before = calls().length;
+  const dashed: ModEntry = {...skinsEntry!, claude: {...skinsEntry!.claude!, pluginId: '--settings@market'}};
+  assert.deepEqual(await setPluginEnabled(fake, dashed, true, new Set(['--settings@market'])), {ok: false, message: 'Not an installed Claude plugin in the current listing'});
+  assert.equal((await inspectPlugin(fake, dashed)).error, 'Not a Claude plugin');
+  assert.equal(calls().length, before, 'no command ran');
+  // validate is given only an absolute install path.
+  for (const reference of ['--plugin-dir=/tmp/elsewhere', 'relative/plugin']) {
+    const inspection = await inspectPlugin(fake, {...skinsEntry!, reference});
+    assert.match(inspection.details ?? '', /Always-on/u, 'details still describes it');
+    assert.deepEqual(inspection.hooks, [], reference);
+  }
+  assert.deepEqual(calls().slice(before).map(call => call.args[1]), ['details', 'details'], 'no validate ran');
+});
+
 test('loaded in: only managed targets of the same account whose own report names the plugin', async () => {
   const entries = await claudePluginEntries(LISTING, project, {name: 'account1', configDir: join(root, 'account1')});
   const target = (title: string, profileId: string | undefined, plugins: string[]): AgentSession => {

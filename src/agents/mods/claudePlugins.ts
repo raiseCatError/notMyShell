@@ -1,7 +1,7 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {lstat, readdir, readFile} from 'node:fs/promises';
-import {join} from 'node:path';
+import {isAbsolute, join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {displayText} from '../transcript/projection.js';
 import type {ModComponents, ModEntry} from './model.js';
@@ -16,7 +16,8 @@ import type {ModComponents, ModEntry} from './model.js';
 const run = promisify(execFile);
 const text = (value: unknown, limit = 256) => typeof value === 'string' ? displayText(value).replace(/\n/gu, ' ').slice(0, limit) : '';
 const MAX_JSON = 256 * 1024;
-const PLUGIN_ID = /^[\w.-]{1,96}@[\w.-]{1,96}$/u;
+// An id starts with a word character: it reaches Claude's CLI as an argument, never as something read as an option.
+const PLUGIN_ID = /^\w[\w.-]{0,95}@[\w.-]{1,96}$/u;
 
 /** One row of `claude plugin list --json` (Claude Code 2.1.29x), as far as NMSh reads it. */
 export interface ClaudeListing {
@@ -192,7 +193,8 @@ export async function inspectPlugin(executable: string, entry: ModEntry): Promis
   let details: string | undefined;
   try { details = displayText((await run(executable, ['plugin', 'details', claude.pluginId], options)).stdout).slice(0, 4000); } catch (error) { details = undefined; void error; }
   const hooks: string[] = [], calls: string[] = [];
-  if (entry.components?.mod && entry.reference) {
+  // Only an absolute install path is validated: a relative or option-shaped reference never reaches Claude's CLI.
+  if (entry.components?.mod && entry.reference && isAbsolute(entry.reference)) {
     try {
       // `validate` lists a mod's hooks and API calls without running it (Claude's documented review step).
       const {stdout} = await run(executable, ['plugin', 'validate', entry.reference], options).catch(error => ({stdout: (error as {stdout?: string}).stdout ?? ''}));
