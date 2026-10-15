@@ -1784,6 +1784,19 @@ export class TerminalApp {
       } else if (action?.kind === 'pause') this.watches.pause(action.id);
       else if (action?.kind === 'resume') this.watches.resume(action.id);
       else if (action?.kind === 'now') this.watches.runNow(action.id);
+      else if (action?.kind === 'copy') {
+        const latest = this.watches.get(action.id)?.current;
+        if (!latest) panel.message = 'No completed output to copy yet.';
+        else {
+          // The owned display snapshot is explicitly copied, never the accumulated
+          // stream from earlier refreshes. The normal /copy policy is unchanged.
+          void writeClipboard(latest.output).then(() => {
+            if (this.watchPanel === panel && !this.stopped) { panel.message = 'Copied latest tracked output.'; this.render(); }
+          }, () => {
+            if (this.watchPanel === panel && !this.stopped) { panel.message = 'Clipboard unavailable; nothing confirmed copied.'; this.render(); }
+          });
+        }
+      }
       else if (action?.kind === 'stop') this.watches.stop(action.id);
       this.render();
       return;
