@@ -121,3 +121,20 @@ test('geometry: the list takes rows from the transcript view, right after the ac
   assert.equal(regionOf(withQueueRows(tiny, 4), 'queue')?.height ?? 0, Math.max(0, tiny.transcript.height - 3), 'only what the transcript can spare');
   assert.equal(withQueueRows(planScreen({...base, panelRows: 10}), 4).regions.some(region => region.kind === 'queue'), false, 'a panel owns the screen');
 });
+
+test('paste review: NMSh commands among other lines are named, with where they go; one on its own needs no note', async () => {
+  const {analyzePaste, nmshCommandNote, needsPreview} = await import('../src/input/pasteGuard.js');
+  const {createPasteReview, renderPasteReview} = await import('../src/input/PasteReview.js');
+  const mixed = analyzePaste('printf one\n/copy\n/compare 1 2\nls');
+  assert.deepEqual(mixed.commands.map(command => command.kinds), [['read'], ['nmsh'], ['nmsh'], ['read']]);
+  assert.equal(nmshCommandNote(mixed, 'zsh'), '/copy, /compare are NMSh commands: here they reach zsh as text. Submit each alone to run it in NMSh.');
+  assert.equal(nmshCommandNote(analyzePaste('/copy'), 'zsh'), undefined, 'on its own it is NMSh\'s');
+  assert.equal(nmshCommandNote(analyzePaste('echo a\n/usr/bin/env true'), 'zsh'), undefined, 'an absolute path is the shell\'s');
+  assert.equal(nmshCommandNote(analyzePaste('echo a\n/notacommand'), 'zsh'), undefined, 'only real NMSh commands');
+  assert.ok(needsPreview(mixed, 'smart'));
+  const review = createPasteReview('echo a\n/queue', analyzePaste('echo a\n/queue'), true, 'bash');
+  const text = renderPasteReview(review, 100, 12).map(row => stripAnsi(row)).join('\n');
+  assert.match(text, /NMSh command\s+\/queue/u);
+  assert.match(text, /\/queue is an NMSh command: here it reaches bash as text\. Submit it alone to run it in NMSh\./u);
+  assert.ok(renderPasteReview(review, 100, 12).length <= 12, 'the note takes a body row, never more than the height');
+});

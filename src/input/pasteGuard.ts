@@ -1,3 +1,4 @@
+import {parseSlashCommand} from '../commands/slashCommands.js';
 /**
  * Paste Preview / Paste Guard. Ordinary single-line pastes insert at once;
  * a paste that is multiline, chains several commands, mutates, destroys,
@@ -6,7 +7,7 @@
  * Review / Cancel. Classification is for display only: what is inserted is
  * exactly what was pasted, and nothing runs until the person presses Enter.
  */
-export type PasteKind = 'text' | 'unknown' | 'navigation' | 'read' | 'project' | 'network' | 'install' | 'modifies' | 'destructive' | 'privilege' | 'pipeline';
+export type PasteKind = 'text' | 'unknown' | 'navigation' | 'read' | 'project' | 'network' | 'install' | 'modifies' | 'destructive' | 'privilege' | 'pipeline' | 'nmsh';
 
 export interface PasteCommand {
   /** The command's text as written (display only). */
@@ -147,6 +148,9 @@ function packageKinds(command: string, sub: string, rest: string[]): PasteKind[]
 }
 
 export function classifyCommand(text: string, pipedFrom: boolean): PasteKind[] {
+  // An NMSh command (/copy, /queue, /compare): NMSh's only when submitted on its own (see nmshCommandNote).
+  const slash = parseSlashCommand(text.trim());
+  if (slash && slash.kind !== 'unknown') return ['nmsh'];
   if (looksLikeProse(text)) return ['text'];
   const all = words(text);
   // Leading env assignments and sudo-like prefixes.
@@ -214,12 +218,12 @@ export function needsPreview(analysis: PasteAnalysis, mode: PastePreviewMode): b
     || analysis.commands.some(command => command.kinds.some(kind => ATTENTION.has(kind) || kind === 'modifies' && command.kinds.includes('network')));
 }
 
-export const KIND_LABELS: Record<PasteKind, string> = {text: 'plain text', unknown: 'unrecognized shell input', navigation: 'navigation', read: 'read-only', project: 'runs project script',
+export const KIND_LABELS: Record<PasteKind, string> = {nmsh: 'NMSh command', text: 'plain text', unknown: 'unrecognized shell input', navigation: 'navigation', read: 'read-only', project: 'runs project script',
   network: 'network', install: 'installs packages', modifies: 'modifies files', destructive: 'destructive', privilege: 'runs as root', pipeline: 'runs downloaded code'};
 
 /** The most important classification of a command, for its one-word label. */
 export function primaryKind(kinds: readonly PasteKind[]): PasteKind {
-  const order: PasteKind[] = ['pipeline', 'destructive', 'privilege', 'install', 'modifies', 'network', 'project', 'navigation', 'read', 'unknown', 'text'];
+  const order: PasteKind[] = ['pipeline', 'destructive', 'privilege', 'install', 'modifies', 'network', 'project', 'nmsh', 'navigation', 'read', 'unknown', 'text'];
   return order.find(kind => kinds.includes(kind)) ?? 'unknown';
 }
 
@@ -232,6 +236,21 @@ export function pasteHeader(analysis: PasteAnalysis): string {
   if (!shell) return `pasted · text · ${count(analysis.lines, 'line')}${size}`;
   const lead = analysis.commands.length === analysis.lines ? count(shell, 'shell line') : count(shell, 'command') + (analysis.lines > 1 ? ` · ${count(analysis.lines, 'line')}` : '');
   return `pasted · ${lead}${text ? ` · ${count(text, 'text line')}` : ''}${size}`;
+}
+
+/**
+ * NMSh commands inside a paste of several lines: the parser gives a submission to NMSh only when the whole of it is one
+ * NMSh command, so with other lines (inserted or queued) these reach the shell as text, which runs `/copy` as a path.
+ * Said before anything is submitted; nothing is reinterpreted or run differently.
+ */
+export function nmshCommandNote(analysis: PasteAnalysis, shell: string): string | undefined {
+  if (analysis.lines < 2 && analysis.commands.length < 2) return undefined;
+  const names = [...new Set(analysis.commands.filter(command => command.kinds.includes('nmsh')).map(command => command.text.trim().split(/\s+/u)[0]!))];
+  if (!names.length) return undefined;
+  const list = names.slice(0, 3).join(', ') + (names.length > 3 ? ` and ${names.length - 3} more` : '');
+  const one = names.length === 1;
+  return `${list} ${one ? 'is an NMSh command' : 'are NMSh commands'}: here ${one ? 'it reaches' : 'they reach'} ${shell} as text. `
+    + `Submit ${one ? 'it' : 'each'} alone to run it in NMSh.`;
 }
 
 /** Shown when the paste is not clearly an ordinary command: what the shell will receive does not change. */

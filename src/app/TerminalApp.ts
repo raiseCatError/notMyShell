@@ -245,7 +245,7 @@ import {CursorPresenter} from '../cursor/CursorPresenter.js';
 import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
-import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
+import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
 import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
@@ -1852,7 +1852,7 @@ export class TerminalApp {
     if (this.pastePreview) {
       const preview = this.pastePreview;
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch, this.shellId);
       else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
       else if (key.kind === 'text' && key.value.toLowerCase() === 'c') this.keepClip(preview.text, 'paste', this.shellCwd);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
@@ -2271,7 +2271,7 @@ export class TerminalApp {
         const batch = this.batchAvailable(key.value);
         this.pastePreview = {text: key.value, analysis, batch};
         // The compact strip never squeezes the composer: when this screen has no room for it, Review is the surface.
-        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch);
+        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch, this.shellId);
         this.render();
         return;
       }
@@ -2956,7 +2956,7 @@ export class TerminalApp {
         const analysis = analyzePaste(clip.text);
         const batch = this.batchAvailable(clip.text);
         this.pastePreview = {text: clip.text, analysis, batch};
-        this.pasteReview = createPasteReview(clip.text, analysis, batch);
+        this.pasteReview = createPasteReview(clip.text, analysis, batch, this.shellId);
         break;
       }
       case 'clearClips':
@@ -7162,7 +7162,7 @@ export class TerminalApp {
     const batch = this.batchAvailable(text);
     this.pastePreview = {text, analysis, batch};
     // An explicit /ps always shows the review first, whatever Paste Preview is set to.
-    this.pasteReview = createPasteReview(text, analysis, batch);
+    this.pasteReview = createPasteReview(text, analysis, batch, this.shellId);
   }
 
   /** Explicit staging only: never reads the clipboard, writes files or submits commands. */
@@ -7334,6 +7334,9 @@ export class TerminalApp {
     const hidden = analysis.commands.length - used;
     if (hidden > 0 && summary.length) summary[summary.length - 1] += `${SUBTLE} · +${hidden} more${RESET}`;
     for (const item of summary) rows.push(`  ${item}`);
+    // NMSh commands among other lines reach the shell as text: say so before anything is inserted or queued.
+    const nmsh = nmshCommandNote(analysis, this.shellId);
+    if (nmsh) rows.push(`${ACCENT}${nmsh}${RESET}`);
     if (analysis.commands.some(command => ['text', 'unknown'].includes(primaryKind(command.kinds)))) rows.push(`${SUBTLE}${PASTE_EXACT_NOTE}${RESET}`);
     rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel · C keep clip${RESET}`);
     return rows.map(row => truncateAnsi(row, columns));
