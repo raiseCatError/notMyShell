@@ -1,4 +1,4 @@
-import {renderTaskBar, TaskBarController} from '../backgroundTasks/bar.js';
+import {nextBarChange, onBar, renderTaskBar, TaskBarController} from '../backgroundTasks/bar.js';
 import {classifyCommand, isClassified} from '../backgroundTasks/detector.js';
 import {BackgroundManager} from '../backgroundTasks/manager.js';
 import {TaskOutput} from '../backgroundTasks/output.js';
@@ -67,6 +67,20 @@ export class BackgroundHost {
   }
 
   record(id: string): TaskRecord | undefined { return this.records.find(record => record.id === id); }
+
+  /** The task the person has in hand (selected on the bar, or open in the output view): the bar never lets it go. */
+  private inHand(): string | undefined {
+    return this.panel?.kind === 'view' ? this.panel.taskId : this.bar.focused ? this.bar.selectedId : undefined;
+  }
+
+  /**
+   * What the bar shows now: what runs, what left processes behind, the task in hand, and a finished task for a few
+   * seconds with its outcome (see FINISHED_ON_BAR_MS). Everything stays in /background; letting a row go stops nothing.
+   */
+  barTasks(now: number): TaskRecord[] { return this.records.filter(task => onBar(task, now, this.inHand())); }
+
+  /** When the bar next changes by itself (a finished task leaving it). */
+  nextBarChange(now: number): number | undefined { return nextBarChange(this.records, now, this.inHand()); }
   readonly next = (id: string): StopLevel | undefined => nextLevel(this.record(id));
 
   /** What submitting this command does: foreground (unchanged), a suggestion, or the background for an Always family. */
@@ -85,8 +99,9 @@ export class BackgroundHost {
   rows(width: number, style: {now: number; color: boolean; safe: boolean}): string[] {
     const rows: string[] = [];
     if (this.suggestion) rows.push(...renderSuggestion(this.suggestion, {width, color: style.color, safe: style.safe}));
-    if (this.records.length) rows.push(...renderTaskBar(this.bar, this.records, {width, ...style, next: this.next, upArrow: this.preferences.upArrow}));
-    if (this.message && this.records.length) rows.push(this.message.slice(0, Math.max(1, width)));
+    const shown = this.barTasks(style.now);
+    if (shown.length) rows.push(...renderTaskBar(this.bar, shown, {width, ...style, next: this.next, upArrow: this.preferences.upArrow}));
+    if (this.message && shown.length) rows.push(this.message.slice(0, Math.max(1, width)));
     return rows;
   }
 

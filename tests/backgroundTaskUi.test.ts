@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {entersBar, ESCALATION_PAUSE_MS, fitHints, renderTaskBar, TaskBarController, taskLabel, type ComposerState} from '../src/backgroundTasks/bar.js';
+import {entersBar, ESCALATION_PAUSE_MS, FINISHED_ON_BAR_MS, fitHints, nextBarChange, onBar, renderTaskBar, TaskBarController, taskLabel, type ComposerState} from '../src/backgroundTasks/bar.js';
 import {explicitRun, parseBackgroundCommand, renderSuggestion, suggestionKey} from '../src/backgroundTasks/suggestion.js';
 import {taskBlock, taskBlockText, TaskOutputView} from '../src/backgroundTasks/view.js';
 import {BackgroundManager} from '../src/backgroundTasks/manager.js';
@@ -61,8 +61,10 @@ test('bar rendering: no rows when empty; one summary row collapsed; bounded rows
   const bar = new TaskBarController();
   assert.equal(bar.rows([]), 0);
   assert.deepEqual(renderTaskBar(bar, [], {width: 80, now: NOW, safe: true, color: false}), []);
+  // At rest, the task that matters most by name (a failure first), the rest counted, and how to open the bar.
   const summary = renderTaskBar(bar, TASKS, {width: 80, now: NOW, safe: true, color: false});
-  assert.deepEqual(summary, ['* 3 background tasks · 2 running · 1 failed']);
+  assert.deepEqual(summary, [' x npm run dev  11:01  failed (exit 1) · +2 more (2 running)  ^ open']);
+  assert.deepEqual(renderTaskBar(bar, [TASKS[0]!], {width: 80, now: NOW, safe: false, color: false, upArrow: 'off'}), [' ∙ adb logcat  04:21  running  Shift+↑ open'], 'one task: its own row');
   bar.focused = true;
   bar.selectedId = 't1';
   assert.match(renderTaskBar(bar, TASKS, {width: 120, now: NOW, safe: true, color: false, next: () => 'interrupt'})[0]!, /^>\* adb logcat {2}04:21 {2}running {2}1\/3 {2}Enter view · x stop · Esc back$/u);
@@ -322,4 +324,43 @@ test('/background parsing is linear on a long pasted run of spaces', () => {
   assert.equal(parseBackgroundCommand(`/background ${' '.repeat(100_000)}x${' '.repeat(100_000)}`)?.kind, 'invalid');
   assert.equal(parseBackgroundCommand(`${' '.repeat(100_000)}x`), undefined);
   assert.ok(performance.now() - started < 250, `took ${(performance.now() - started).toFixed(0)} ms`);
+});
+
+test('bar lifecycle: a finished task shows its outcome briefly, a failure longer; nothing that runs ever leaves; the task in hand stays', () => {
+  const exited = task('e', {state: 'exited', exitCode: 0, endedAt: NOW});
+  const failed = task('f', {state: 'failed', exitCode: 2, endedAt: NOW});
+  const leftovers = task('l', {state: 'exited', exitCode: 0, endedAt: NOW - 3_600_000, leftovers: true});
+  const live = task('r', {startedAt: NOW - 9_999_999});
+  assert.ok(onBar(exited, NOW + FINISHED_ON_BAR_MS.exited - 1));
+  assert.equal(onBar(exited, NOW + FINISHED_ON_BAR_MS.exited), false, 'a clean end goes after a few seconds');
+  assert.ok(FINISHED_ON_BAR_MS.failed > FINISHED_ON_BAR_MS.exited, 'a failure stays longer');
+  assert.ok(onBar(failed, NOW + FINISHED_ON_BAR_MS.failed - 1));
+  assert.equal(onBar(failed, NOW + FINISHED_ON_BAR_MS.failed), false);
+  assert.ok(onBar(leftovers, NOW + 86_400_000), 'processes left behind keep it on the bar until they are killed');
+  assert.ok(onBar(live, NOW + 86_400_000), 'a running task is never let go');
+  assert.ok(onBar(exited, NOW + 86_400_000, 'e'), 'selected or open in the output view: never pulled away');
+  // The frontend redraws exactly when the next one leaves.
+  assert.equal(nextBarChange([exited, failed, leftovers, live], NOW), NOW + FINISHED_ON_BAR_MS.exited);
+  assert.equal(nextBarChange([leftovers, live], NOW), undefined);
+});
+
+test('bar alignment: one narrow cell per mark; pointer, mark and label in the same columns focused or not; selection is a band', () => {
+  const eastAsianAmbiguous = /[\u00b7\u2022\u25a0\u25cb\u25cf\u25d0\u2192]/u;
+  const bar = new TaskBarController(true);
+  const tasks = [task('t1'), task('t2', {state: 'stopping', stopRequested: 'interrupt'}), task('t3', {state: 'exited', exitCode: 0, endedAt: NOW}),
+    task('t4', {state: 'failed', exitCode: 1, endedAt: NOW}), task('t5', {state: 'stopped', endedAt: NOW})];
+  for (const safe of [true, false]) {
+    bar.focused = true; bar.selectedId = 't1';
+    const rows = renderTaskBar(bar, tasks, {width: 100, now: NOW, safe, color: true, maxRows: 10}).slice(1).map(stripAnsi);
+    for (const row of rows) {
+      assert.doesNotMatch(row.slice(0, 3), eastAsianAmbiguous, `${row}: no ambiguous-width mark`);
+      assert.equal(displayWidth(row.slice(0, 3)), 3, 'pointer, mark and a space: three cells');
+      assert.equal(row.indexOf('adb logcat'), 3, `${row}: the label starts in the same column`);
+    }
+  }
+  const colored = renderTaskBar(bar, tasks, {width: 100, now: NOW, safe: false, color: true, maxRows: 10});
+  assert.match(colored[1]!, /^\u001b\[48;/u, 'the selected row sits on the selection band');
+  assert.doesNotMatch(colored[2]!, /\u001b\[48;/u, 'other rows do not');
+  assert.equal(displayWidth(stripAnsi(colored[1]!)), 100, 'the band spans the row');
+  assert.match(renderTaskBar(bar, tasks, {width: 100, now: NOW, safe: true, color: false, maxRows: 10})[1]!, /^>\*/u, 'without color, the pointer marks the selection');
 });

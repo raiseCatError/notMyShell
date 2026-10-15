@@ -10041,8 +10041,21 @@ export class TerminalApp {
   /** The task bar and a waiting suggestion, above the composer; nothing while a program owns the screen. */
   private backgroundRows(columns: number): string[] {
     if (this.passthrough || this.externalPassthrough) return [];
-    return this.background.rows(columns, {now: Date.now(), color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'})
+    const now = Date.now();
+    this.scheduleBarChange(now);
+    return this.background.rows(columns, {now, color: colorLevel() !== 'none', safe: getCurrentGlyphMode() === 'safe'})
       .map(row => truncateAnsi(row, columns));
+  }
+
+  /** A finished task leaves the bar on its own after a moment: redraw then (one timer, for the soonest). */
+  private barChangeTimer?: {at: number; timer: NodeJS.Timeout};
+  private scheduleBarChange(now: number): void {
+    const at = this.background.nextBarChange(now);
+    if (at === undefined || this.barChangeTimer?.at === at) return;
+    if (this.barChangeTimer) clearTimeout(this.barChangeTimer.timer);
+    const timer = setTimeout(() => { this.barChangeTimer = undefined; if (!this.stopped) this.render(); }, Math.max(0, at - now) + 20);
+    timer.unref?.();
+    this.barChangeTimer = {at, timer};
   }
 
   /**
@@ -10074,7 +10087,7 @@ export class TerminalApp {
   private enterBackgroundBar(key: Key): boolean {
     const composer = {empty: !this.editor.text && !this.editor.hasPasteAtoms, browsingHistory: this.composerHistory.active, foregroundBusy: Boolean(this.running),
       otherOwner: this.workspaceOwner() !== 'COMPOSER' || !this.composerIdle()};
-    if (!entersBar(key, composer, this.background.records.length, this.background.preferences.upArrow)) return false;
+    if (!entersBar(key, composer, this.background.barTasks(Date.now()).length, this.background.preferences.upArrow)) return false;
     this.background.bar.focused = true;
     this.background.message = undefined;
     this.render();
@@ -10082,7 +10095,7 @@ export class TerminalApp {
   }
 
   private handleBackgroundBarKey(key: Key): boolean {
-    const action = this.background.bar.handleKey(key, this.background.records, this.background.next);
+    const action = this.background.bar.handleKey(key, this.background.barTasks(Date.now()), this.background.next);
     this.background.message = undefined;
     if (action.kind === 'leave') {
       this.render();
