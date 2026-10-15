@@ -157,3 +157,20 @@ test('live zsh: a command typed right after a read returns, or right after Ctrl+
     assert.equal(await queued(sandbox), 0);
   } finally { await sandbox.dispose(); }
 });
+
+test('live zsh: a command typed right after Ctrl+C on a waiting question is kept when the prompt returns mid-typing', {skip: supported ? false : 'unsupported platform', timeout: 120_000}, async () => {
+  const {sandbox, frontend} = await start('zsh');
+  const marker = join(sandbox.home, 'kept');
+  try {
+    // The question ends 1.5 s after Ctrl+C (its trap), so the prompt comes back while the next command is typed.
+    const mark = frontend.mark;
+    frontend.pty.write("( trap 'sleep 1.5; exit 130' INT; read -r 'r?Name: ' )\r");
+    await frontend.waitFor(/[Ww]aiting for input[\s\S]*Name:/u, mark);
+    frontend.pty.write('\u0003');
+    await type(frontend, `echo KEPT >> ${marker}`, 70);
+    frontend.pty.write('\r');
+    await until(() => existsSync(marker), 15_000, 'the command typed after Ctrl+C to run');
+    assert.equal(spawnSync('cat', [marker], {encoding: 'utf8'}).stdout, 'KEPT\n');
+    assert.doesNotMatch(strip(frontend.output.slice(mark)), /reply was discarded/u, 'it was never taken for a reply');
+  } finally { await sandbox.dispose(); }
+});
