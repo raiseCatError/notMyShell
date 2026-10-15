@@ -54,6 +54,16 @@ test('/copy: the final line break is the program\'s: kept when printed, never ad
   const blanks = run(buffer, 'printf', 'p\r\n\r\n\r\n', 0, '✔');
   assert.equal(serializeCopyPayload(blanks), 'p\n\n\n', 'blank lines at the end are kept');
   assert.equal(serializeCopyPayload(run(buffer, 'progress', '10%\r50%\r100%', 0, '✔')), '100%', 'a carriage return is not a line break');
+  // An escape split across reads is still not text.
+  buffer.beginCommand('split', ['❯ split']);
+  buffer.write('done\r\n\u001b[3');
+  buffer.write('8;5;2m\u001b[0m');
+  assert.equal(serializeCopyPayload(buffer.complete(0)!), 'done\n');
+  // Linear in the size of a write: a long run of escapes ending in text is read once.
+  const noisy = '\u001b[0m'.repeat(200_000) + 'x';
+  const started = performance.now();
+  assert.equal(serializeCopyPayload(run(buffer, 'noisy', noisy, 0, '✔')), 'x');
+  assert.ok(performance.now() - started < 2000, `escapes are scanned once (${Math.round(performance.now() - started)} ms)`);
   // NMSh's own line closes the command's open line on screen; it never makes the output end with a newline.
   buffer.beginCommand('printf', ['❯ printf']);
   buffer.write('open');

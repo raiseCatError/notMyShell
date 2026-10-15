@@ -339,8 +339,10 @@ export class OutputBuffer {
 
   /** Program output (never NMSh's own lines): drawn, and whether it last ended a line is remembered for exact copies. */
   private writeProgramText(text: string): void {
+    // The parser's own reading of the text: escapes (even split across writes) are not text. NMSh's lines don't count.
+    this.parser.takeEnding();
     this.parser.write(text);
-    const ends = endsLine(text);
+    const ends = this.parser.takeEnding();
     if (ends !== undefined && this.active) this.active.endsLine = ends;
   }
 
@@ -647,14 +649,4 @@ export class OutputBuffer {
       this.toggleExpanded(cmdIndex);
     }
   }
-}
-
-// Escape sequences a program may write after its last text (a color reset after the final newline, a title).
-const TRAILING_CONTROLS = /(?:\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[ -/]*[0-~])+$/u;
-
-/** Whether text ends a line (its last character before trailing escapes is a newline); undefined when it has no text. */
-export function endsLine(text: string): boolean | undefined {
-  const visible = text.replace(TRAILING_CONTROLS, '');
-  if (!visible) return undefined;
-  return visible.endsWith('\n');
 }

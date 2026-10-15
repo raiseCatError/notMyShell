@@ -69,6 +69,16 @@ export class AnsiOutputParser {
    */
   private discarding: false | 'osc' | 'string' | 'csi' | 'nf' = false;
 
+  /** Whether the last text written ended a line (see takeEnding); undefined until text arrives. */
+  private ending?: boolean;
+
+  /** Whether text written since the last call ended with a line break (true), other text (false), or none (undefined). */
+  takeEnding(): boolean | undefined {
+    const ending = this.ending;
+    this.ending = undefined;
+    return ending;
+  }
+
   /** Bytes retained for an unfinished sequence; never above MAX_CONTROL_SEQUENCE. */
   get retainedControlBytes(): number {
     return this.pending.length;
@@ -121,6 +131,7 @@ export class AnsiOutputParser {
         this.lines.push(this.current);
         this.current = [];
         this.column = 0;
+        this.ending = true;
         index += 1;
         continue;
       }
@@ -153,7 +164,7 @@ export class AnsiOutputParser {
       const width = stringWidth(value);
       if (width === 0) {
         const previous = this.findPreviousCell();
-        if (previous) { previous.text += value; this.touch(); }
+        if (previous) { previous.text += value; this.touch(); this.ending = false; }
       } else {
         this.put(value, width);
       }
@@ -385,6 +396,7 @@ export class AnsiOutputParser {
   }
 
   private put(text: string, width: number): void {
+    this.ending = false;
     for (let position = 0; position < width; position += 1) this.current[this.column + position] = undefined;
     this.current[this.column] = {text, width, style: this.style, ...(this.hyperlink ? {hyperlink: this.hyperlink, ...(this.authoring ? {authored: true as const} : {})} : {})};
     this.touch();
