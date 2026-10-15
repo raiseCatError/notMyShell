@@ -33,7 +33,7 @@ This release candidate is built on the **unpublished v0.19.0 release candidate**
 
 #### Managed Claude Code ([#347](https://github.com/raiseCatError/notMyShell/pull/347))
 - `/model` and `/effort` as native pickers over Claude's documented control requests; a change shows as requested until Claude reports it.
-- Claude mods with their real types and states per launch identity; enable and disable go through Claude's own `claude plugin` command at the installed scope, then running managed sessions reload. NMSh never edits Claude's settings files.
+- Claude mods with their real types and states per launch identity (read only). Turning a Claude plugin on or off from NMSh is **off in this release**: it was never verified against a live account and it would write your Claude settings, so the row names the `claude plugin enable|disable … --scope …` command to run yourself. Behind the experimental `NMSH_EXPERIMENTAL_CLAUDE_PLUGIN_TOGGLE=1`, it goes through Claude's own command at the installed scope and running managed sessions reload. NMSh never edits Claude's settings files. Managed Claude stays beta; its physical QA was deferred for this release.
 - A context panel beside the agent conversation, provenance on every runtime fact, and Markdown rendering for agent output that reveals real link destinations and refuses smuggled characters.
 
 #### Worktrees and controls
