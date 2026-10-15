@@ -2132,7 +2132,8 @@ export class TerminalApp {
     // Typing that starts while a command waits for a line is an answer: if the command ends before it is sent, it
     // is discarded rather than left to run as the next shell command.
     if (this.running && !this.editor.text && (key.kind === 'text' || key.kind === 'paste')) {
-      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault()};
+      // Right after Ctrl+C or Ctrl+Z, typing is type-ahead for the prompt, not a reply.
+      this.runningDraft = {startId: this.running.startId, at: Date.now(), answering: this.answersByDefault() && !this.justStopped()};
     }
     // Flow keeps the composer in the document: editing while scrolled back
     // returns to it first. Scrolling and mouse navigation alone never do.
@@ -2185,6 +2186,9 @@ export class TerminalApp {
         this.running.stoppedAt = Date.now();
         this.editor.clear();
         this.session.interrupt();
+        // Ctrl+C ends a waiting question: what is typed next is for the prompt, never a reply to discard.
+        this.runningDraft = undefined;
+        this.answerSent();
       } else {
         this.editor.clear();
         this.selectedSuggestion = 0;
@@ -2202,7 +2206,7 @@ export class TerminalApp {
       // Job control belongs to zsh: forward ^Z so it stops the foreground job.
       // With no foreground command there is nothing to suspend, so the idle
       // composer ignores it rather than treating it as text, undo, or exit.
-      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); }
+      if (this.running) { this.running.stoppedAt = Date.now(); this.session.write('\u001A'); this.runningDraft = undefined; this.answerSent(); }
       return;
     }
     if (key.kind === 'selectAll') {
@@ -10458,6 +10462,7 @@ export class TerminalApp {
     if (key.kind === 'interrupt') {
       if (this.running) { this.running.interrupted = true; this.running.stoppedAt = Date.now(); }
       this.session.interrupt();
+      this.answerSent();
       return;
     }
     if (key.kind === 'eof') { this.session.endInput(); return; }
