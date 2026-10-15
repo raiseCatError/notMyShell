@@ -115,7 +115,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/guide', insertion: '/guide', description: 'Interactive guide to everything NMSh can do'},
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
   {name: '/queue', insertion: '/queue', description: 'Commands queued to run after the current one: view, edit, reorder, pause or clear (/queue pause|resume|clear)'},
-  {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
+  {name: '/watch', insertion: '/watch ', description: 'Repeat finite commands with one live result (/watch or /track git status · --every 10s · pause|resume|refresh|stop)'},
   {name: '/track', insertion: '/track ', description: 'Refresh a finite command in one live view (/track df -h /Volumes/T7Projects · /track --every 5s -- docker system df · pause|resume|refresh|stop)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
