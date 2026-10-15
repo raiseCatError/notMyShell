@@ -1,3 +1,6 @@
+import {TREATMENT_PRESET_LABELS} from '../chroma/treatment.js';
+import {isReducedMotion} from '../presentation/environment.js';
+import {colorLevel} from '../presentation/capabilities.js';
 import type {Key} from '../terminal/keys.js';
 import {
   DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, WELCOME_PROVIDER_IDS,
@@ -263,7 +266,8 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: nativeOnly(SEPARATOR_ROW)},
     {row: configRow('promptSymbol')},
     // The one canonical Chroma setting (also in Appearance, /prompt, /appearance and /chroma).
-    {row: configRow('treatmentPreset'), note: () => 'The same Chroma setting as Appearance and /chroma; P toggles the preview only'},
+    // The one canonical Chroma setting (also in Appearance, /prompt, /appearance and /chroma); its note says what will show.
+    {row: configRow('treatmentPreset'), note: draft => chromaVisibilityNote(draft)},
     routeRow('setupPromptModules', 'Prompt modules & custom glyphs', 'Which modules show and in what order, and your own separator or prompt glyph, in /prompt', 'prompt', 'Prompt'),
   ], dynamicRows: draft => promptStyleRows(draft)},
   {id: 'appearance', title: 'Appearance', intro: [
@@ -279,7 +283,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('promptVibrance')},
     {row: configRow('uiChrome')},
     {row: configRow('uiChromePreset')},
-    {row: configRow('treatmentPreset'), note: () => `${CHROMA_SCOPE_NOTE} /chroma has every option`},
+    {row: configRow('treatmentPreset'), note: draft => chromaVisibilityNote(draft)},
     {row: configRow('treatmentIntensity')},
     {row: configRow('treatmentSemantic')},
     {row: configRow('treatmentScope')},
@@ -399,7 +403,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('idleRunBusy')},
     {row: configRow('idleColor')},
     routeRow('setupIdleColors', 'Edit idle colors', 'The idle visuals\' own gradient stops, with a live preview', 'idleColors', 'Idle visuals'),
-    {row: configRow('activityStyle'), note: draft => draft.liveActivity.style === 'expressive' ? 'Cooking… then Cooked for 18s; failures and interrupts keep their plain wording and exit code' : 'Running and Completed, as before'},
+    {row: configRow('activityStyle'), note: draft => draft.liveActivity.style === 'expressive' ? 'Cooking… while it runs, Cooked for 18s when done; failures stay factual' : 'Running npm test, then Completed; plain words'},
     {row: configRow('activityColors'), note: () => 'The running-command line only; finished commands show their plain result'},
     routeRow('setupActivityColors', 'Edit live activity colors', 'Gradient stops for the live activity line', 'activityColors', 'Live activity'),
   ]},
@@ -411,6 +415,21 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   ], facts: (_draft, context) => completionFacts(context.completion)},
   {id: 'review', title: 'Review & Apply', intro: [], rows: []},
 ];
+
+/**
+ * What a Chroma choice will visibly do with the rest of this draft, said where Chroma is chosen: Off (the default) and
+ * every setting that hides it or stills it, so a choice is never made without a visible result and no reason.
+ */
+export function chromaVisibilityNote(draft: PromptConfiguration, colors = colorLevel() !== 'none'): string {
+  const presentation = draft.presentation;
+  if (presentation.preset === 'off') return 'Off (the default): the prompt shows its theme colors. Choose a Chroma and the preview shows it at once';
+  if (!colors) return 'NO_COLOR is set: nothing is drawn in color, so Chroma has no visible effect here';
+  if (draft.provider !== 'nmsh') return `Chroma colors the Native prompt; ${draft.provider === 'none' ? 'with Prompt None there is no prompt to color' : 'your external prompt keeps its own colors'}, so the prompt will not change`;
+  const parts = [`${TREATMENT_PRESET_LABELS[presentation.preset]} on the ${presentation.scope === 'identity' ? 'identity modules only (the rest keeps theme colors)' : 'whole Native prompt'}`];
+  if (presentation.effectsOff) parts.push('Decorative effects Off: its colors show, its motion stays still');
+  else if (presentation.reducedMotion || isReducedMotion()) parts.push('Reduced Motion: its colors show, its motion stays still');
+  return `${parts.join(' · ')}; P compares with the base theme`;
+}
 
 /** Factual Local understanding copy per mode; nothing here implies a model is installed or downloads on its own. */
 function localUnderstandingNote(draft: PromptConfiguration): string {
@@ -477,7 +496,10 @@ export interface SetupState {
    * draft's Chroma. Off by default so the base theme colors are visible; it
    * never changes the draft or the saved Chroma.
    */
+  /** P's override of the Chroma preview (undefined: follow the Chroma setting; see setupShowsChroma). */
   previewChroma?: boolean;
+  /** The Chroma choice the override was made for; a new choice returns the preview to following it. */
+  previewChromaFor?: string;
   /** The cursor preview restarts when the selected row or the draft's cursor settings change. */
   previewKey?: string;
   previewStart?: number;
@@ -559,6 +581,16 @@ function currentRows(state: SetupState): readonly SetupRow[] {
   return state.section === sectionIndex('tools') ? [...rows, TOOL_CHOICE_ROW, BROWSE_ROW] : rows;
 }
 
+/**
+ * Whether Setup's Prompt and Appearance previews show Chroma: by default whenever the draft's Chroma is on, so choosing
+ * one is seen at once; P overrides it to compare with the base theme until the Chroma choice changes again.
+ */
+export function setupShowsChroma(state: SetupState): boolean {
+  const preset = state.draft.presentation.preset;
+  if (state.previewChromaFor !== preset) { state.previewChroma = undefined; state.previewChromaFor = preset; }
+  return preset !== 'off' && (state.previewChroma ?? true);
+}
+
 /** The selected row of the current step (undefined on steps without rows). */
 export function setupSelectedRow(state: SetupState): SetupRow | undefined {
   return currentRows(state)[state.row];
@@ -612,7 +644,8 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
   }
   const sectionId = SETUP_SECTIONS[state.section]?.id;
   if (key.kind === 'text' && key.value.toLowerCase() === 'p' && (sectionId === 'appearance' || sectionId === 'prompt')) {
-    state.previewChroma = !state.previewChroma;
+    // The preview follows the Chroma setting; P compares it with the base theme (and back).
+    state.previewChroma = !setupShowsChroma(state);
     return undefined;
   }
   const last = SETUP_SECTIONS.length - 1;
