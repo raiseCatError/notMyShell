@@ -1,5 +1,6 @@
 import {spawn, type ChildProcess} from 'node:child_process';
 import {classifyCommand, splitCommands, type PasteKind} from '../input/pasteGuard.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 
 /**
  * /watch: NMSh runs a command again and again on its own schedule (never a
@@ -36,19 +37,24 @@ export function watchSafety(command: string): WatchSafety {
       const target = /https?:\/\/([^/:\s]+)/u.exec(part.text)?.[1] ?? /\s([\w.-]+\.[a-z]{2,})(?:\s|$)/iu.exec(part.text)?.[1];
       if (target && !/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/u.test(target)) remote = true;
     }
-    if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
+    // Allow only Docker's explicit read-only disk report. Other Docker verbs (including
+    // 'system prune') still require confirmation, or are refused by the classifier.
+    const dockerDiskReport = /^docker\s+system\s+df(?:\s+(?:-v|--verbose))?\s*$/u.test(part.text);
+    if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !dockerDiskReport && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
   }
   return unknown ? {kind: 'confirm', reason: 'NMSh can\'t tell whether this command changes anything; it will run every interval.', network, remote} : {kind: 'allowed', network, remote};
 }
 
 /** "--every 5s", "every 10 seconds", "-n 2" → milliseconds (clamped to the minimum for the command). */
 export function parseWatch(text: string): {command: string; intervalMs?: number} {
-  const every = /^(?:--every|-n|every)\s+(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|minutes?|ms)?\s+/u.exec(text.trim());
-  if (!every) return {command: text.trim()};
+  const input = text.trim();
+  const every = /^(?:--every|-n|every)\s+(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|minutes?|ms)?(?:\s+|$)/u.exec(input);
+  const command = (every ? input.slice(every[0].length) : input).replace(/^--(?:\s+|$)/u, '').trim();
+  if (!every) return {command};
   const value = Number(every[1]);
   const unit = every[2] ?? 's';
   const intervalMs = unit === 'ms' ? value : /^m/u.test(unit) && unit !== 'ms' ? value * 60_000 : value * 1000;
-  return {command: text.trim().slice(every[0].length).trim(), intervalMs};
+  return {command, intervalMs};
 }
 
 export interface WatchRun {output: string; exitCode: number | null; at: number; durationMs: number}
@@ -134,6 +140,9 @@ export class WatchTasks {
   runNow(id: string): void {
     const watch = this.get(id);
     if (!watch || watch.status === 'stopped' || this.children.has(id)) return;
+    const timer = this.timers.get(id);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(id);
     const started = this.now();
     let output = '';
     let child: ChildProcess;
@@ -151,10 +160,14 @@ export class WatchTasks {
       clearTimeout(limit);
       if (this.children.get(id) !== child) return;
       this.children.delete(id);
-      this.record(watch, {output: output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, ''), exitCode: code, at: started, durationMs: this.now() - started});
+      // Each result is a fresh snapshot; hostile ANSI/OSC/bidi output must not
+      // escape the owned panel into terminal control or fake NMSh chrome.
+      this.record(watch, {output: output.split('\n').map(line => stripTerminalControls(line, MAX_OUTPUT)).join('\n'),
+        exitCode: code, at: started, durationMs: this.now() - started});
     };
     child.on('error', () => done(-1));
-    child.on('exit', code => done(code));
+    // Wait for the stdio streams to close before freezing the snapshot.
+    child.on('close', code => done(code));
   }
 
   private record(watch: WatchTask, run: WatchRun): void {
