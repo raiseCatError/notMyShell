@@ -208,6 +208,10 @@ export class WatchTasks {
     const limit = setTimeout(() => {
       timedOut = true;
       this.signalGroup(child, 'SIGKILL');
+      // A detached descendant may retain pipe FDs after the tracked shell dies.
+      // Stop consuming it; the sample must not wait on an unrelated pipe holder.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
     }, Math.min(60_000, watch.intervalMs * 3));
     limit.unref();
     child.on('error', error => { spawnError = String(error); });
@@ -290,7 +294,11 @@ export class WatchTasks {
       if (pending) clearTimeout(pending);
       const killTimer = setTimeout(() => {
         this.killTimers.delete(id);
-        if (this.children.get(id) === child) this.signalGroup(child, 'SIGKILL');
+        if (this.children.get(id) === child) {
+          this.signalGroup(child, 'SIGKILL');
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
       }, STOP_GRACE_MS);
       killTimer.unref();
       this.killTimers.set(id, killTimer);
