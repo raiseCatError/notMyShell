@@ -77,6 +77,11 @@ export interface SessionClient extends EventEmitter<SessionClientEvents> {
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}>;
   /** Change this session's command queue (only when `features` has 'queue'). */
   queue(change: QueueOp): void;
+  /**
+   * Look at the running command's input state now; resolves true once the look is done (any change it found has
+   * already been emitted as inputState), false when whatever owns the shell cannot look on demand.
+   */
+  lookInput?(): Promise<boolean>;
   /** Optional capabilities of whatever owns the shell (the service's welcome, or this build in-process). */
   readonly features: ReadonlySet<ServiceFeature>;
   /** Build of the session service, when it reported one. */

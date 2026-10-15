@@ -369,6 +369,8 @@ const SUCCESS = lazyForeground(UI_COLORS.success);
 const ERROR = lazyForeground(UI_COLORS.failure);
 /** How long after Ctrl+C or Ctrl+Z typing is taken as type-ahead for the shell prompt rather than queued. */
 const STOP_TYPE_AHEAD_MS = 2000;
+/** Longest a key waits for an on-demand look at the running command's input state before it is routed anyway. */
+const OWNERSHIP_LOOK_MS = 800;
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -769,6 +771,12 @@ export class TerminalApp {
    * are type-ahead for the shell and stay in the composer.
    */
   private runningDraft?: {startId: number; at: number; answering: boolean};
+  /**
+   * Keys held while the session looks whether the running command waits for input: the first key of a draft (a
+   * hidden reply is never drawn) and an Enter that would queue (a reply never becomes a queued command).
+   */
+  private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; release: () => void};
+  private replayingHeld = false;
   /** The previous command's phrase pair, so two commands in a row never get the same one. */
   private lastActivityPair?: ActivityVerbPair;
   /** This session's command queue as its owner (the session service or in-process client) last reported it. */
@@ -1256,6 +1264,8 @@ export class TerminalApp {
       this.logEditorKeyInput(data);
     }
     if (this.passthrough && !this.startupPending) {
+      // Keys held for an ownership look were typed first: they reach the program first.
+      this.ownershipLook?.release();
       this.session.write(data);
       return;
     }
@@ -2038,6 +2048,14 @@ export class TerminalApp {
     }
     if (key.kind === 'latest') {
       this.historyViewport.latest();
+      return;
+    }
+    if (this.ownershipLook) {
+      // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
+      if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
+      this.ownershipLook.release();
+    } else if (this.needsOwnershipLook(key)) {
+      this.holdForOwnershipLook(key);
       return;
     }
     // A program reading a hidden line or single keys gets each key as it is typed, as in any terminal: the
@@ -9799,6 +9817,7 @@ export class TerminalApp {
         this.editor.clear();
         this.runningDraft = undefined;
         this.session.write(`${text}\r`);
+        this.answerSent();
         return;
       }
       if (!text.trim()) return;
@@ -9859,12 +9878,17 @@ export class TerminalApp {
     // A state for a finished run (a late message) never resurrects it.
     if (!this.running) return;
     this.inputState = state;
+    const draft = this.runningDraft;
     if (state.terminalOwner) {
+      // A native reader took the terminal: what was typed for this command after it started is its input, as a
+      // terminal would have delivered it.
+      const typed = draft && draft.startId === this.running.startId && !this.queueCompose && !this.queueEdit ? this.editor.text : '';
       this.onActiveModeChange('PASSTHROUGH');
+      if (typed && this.passthrough) { this.editor.clear(); this.runningDraft = undefined; this.session.write(typed); }
+      this.ownershipLook?.release();
       return;
     }
     const request = state.request;
-    const draft = this.runningDraft;
     // Keys typed after the program wrote its question, in the moment before NMSh could tell how it reads, were
     // meant for it: a terminal would already have delivered them. Hand them over now instead of hiding them.
     if (request && directInput(request) && draft && draft.startId === this.running.startId && draft.at >= request.since && this.editor.text) {
@@ -9873,7 +9897,62 @@ export class TerminalApp {
       this.runningDraft = undefined;
       this.session.write(typed);
     } else if (request && draft && draft.at >= request.since && this.editor.text) draft.answering = true;
+    // The evidence a held key waited for has arrived.
+    if (request) this.ownershipLook?.release();
     this.render();
+  }
+
+  /**
+   * Whether this key decides where typing goes while a command runs and NMSh has no evidence yet that the command
+   * waits for input: the first key of a draft, or an Enter that would otherwise queue.
+   */
+  private needsOwnershipLook(key: Key): boolean {
+    // Right after Ctrl+C or Ctrl+Z, typing is type-ahead for the prompt the stop brings back.
+    if (this.replayingHeld || !this.running || this.passthrough || this.startupPending || this.queueCompose || this.queueEdit || this.justStopped()) return false;
+    if (this.inputState?.request || this.inputState?.terminalOwner || !this.session.lookInput || !this.session.features.has('input-look')) return false;
+    if ((key.kind === 'text' || key.kind === 'paste') && !this.editor.text) return true;
+    const text = this.editor.text;
+    return key.kind === 'enter' && Boolean(text.trim()) && !isSlashInput(text) && this.queueAvailable() && !this.answersByDefault();
+  }
+
+  /** Hold the key (and any typed after it) until the session has looked, then route them on that evidence. */
+  private holdForOwnershipLook(key: Key): void {
+    const running = this.running!;
+    const keys = [key];
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      clearTimeout(timer);
+      if (this.ownershipLook?.keys === keys) this.ownershipLook = undefined;
+      // The command ended while NMSh looked. A reply to its open question is discarded, never run; anything else
+      // is what it would have been without the look: typing for the next command, Enter running it after.
+      const ended = this.running?.startId !== running.startId;
+      const typing = (item: Key) => item.kind === 'text' || item.kind === 'paste' || item.kind === 'enter';
+      if (ended && hold.answering && keys.some(typing)) {
+        this.output.addFrontendInteraction(commandWords(running.command)[0] ?? 'command', 'The command finished before your reply was sent; the reply was discarded, not run.', INFO);
+      }
+      // The program took the terminal meanwhile (a native reader, a full-screen program): the keys are its own, in order.
+      if (!ended && this.passthrough) {
+        for (const item of keys) { const bytes = directKeyBytes(item); if (bytes) this.session.write(bytes); }
+        return;
+      }
+      const replay = ended && hold.answering ? keys.filter(item => !typing(item)) : keys;
+      this.replayingHeld = true;
+      try { for (const item of replay) this.handleKey(item); } finally { this.replayingHeld = false; }
+      this.render();
+    };
+    const timer = setTimeout(release, OWNERSHIP_LOOK_MS);
+    timer.unref?.();
+    const hold = {keys, startId: running.startId, answering: this.answersByDefault(), release};
+    this.ownershipLook = hold;
+    void this.lookWhenStarted(running.startId, Date.now() + OWNERSHIP_LOOK_MS).then(release, release);
+  }
+
+  /** Look once the shell has started the command (keys typed right after Enter arrive before its exec). */
+  private async lookWhenStarted(startId: number, deadline: number): Promise<void> {
+    while (this.running?.startId === startId && this.running.awaitingExec && Date.now() < deadline) await new Promise(done => setTimeout(done, 15));
+    if (this.running?.startId === startId && !this.running.awaitingExec) await this.session.lookInput?.();
   }
 
   /** Forward one key to the waiting program as the bytes a terminal sends; nothing is kept, shown or logged. */
@@ -9885,7 +9964,21 @@ export class TerminalApp {
     }
     if (key.kind === 'eof') { this.session.endInput(); return; }
     const bytes = directKeyBytes(key);
-    if (bytes) this.session.write(bytes);
+    if (!bytes) return;
+    const mode = this.inputState?.request?.mode;
+    this.session.write(bytes);
+    // One key answers a key read; Enter ends a hidden line (as the session's watch also decides).
+    if (mode === 'key' || /[\r\n]/u.test(bytes)) this.answerSent();
+  }
+
+  /**
+   * An answer just went to the waiting program. Until the session reports again, the question counts as answered:
+   * keys typed next (the next command, at typing speed) are routed on fresh evidence, never on the question that was
+   * just answered, so they never reach a program that stopped reading or a shell prompt NMSh does not draw.
+   */
+  private answerSent(): void {
+    if (this.inputState?.request) this.inputState = {timing: this.inputState.timing};
+    this.commandLine.reset();
   }
 
   /** This command's phrase pair under Expressive wording: chosen once from the command and its start, so it never changes while it runs. */

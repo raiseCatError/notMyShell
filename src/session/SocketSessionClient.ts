@@ -218,6 +218,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   features: ReadonlySet<ServiceFeature> = new Set();
   serviceBuild?: string;
   private pendingSwitch?: {resolve: (value: {shell: ShellId; pid: number}) => void; reject: (error: Error) => void};
+  private looks = new Map<number, (looked: boolean) => void>();
+  private nextLook = 1;
 
   switchShell(shell: ShellId, cwd: string): Promise<{shell: ShellId; pid: number}> {
     // Never send a message the service did not advertise.
@@ -242,6 +244,7 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
       ...(message.knowledge === undefined ? {} : {knowledge: message.knowledge}),
       ...(message.inputWaits ? {inputWaitMs: message.inputWaitMs ?? 0, inputWaits: message.inputWaits} : {})}, {seq: message.seq, at: message.at});
     else if (message.type === 'input-state') this.emit('inputState', inputStateFrom(message));
+    else if (message.type === 'input-looked') { this.looks.get(message.id)?.(true); this.looks.delete(message.id); }
     else if (message.type === 'queue-state') {
       const state = queueStateFrom(message.state);
       if (state) this.emit('queueState', state, {...(message.dispatched === undefined ? {} : {dispatched: message.dispatched}),
@@ -262,6 +265,8 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
     this.exited = true;
     this.pendingSwitch?.reject(new Error('The session ended.'));
     this.pendingSwitch = undefined;
+    for (const done of this.looks.values()) done(false);
+    this.looks.clear();
     this.emit('exit', {exitCode, ...(signal === undefined ? {} : {signal}), ...(lost ? {lost} : {})});
   }
 
@@ -273,6 +278,12 @@ export class SocketSessionClient extends EventEmitter<SessionClientEvents> imple
   submit(command: string): void { this.send({type: 'input', data: `${command}\r`, submission: 1}); }
   write(data: string): void { this.send({type: 'input', data}); }
   queue(change: QueueOp): void { if (this.features.has('queue')) this.send({type: 'queue', change: JSON.stringify(change)}); }
+  lookInput(): Promise<boolean> {
+    // Never send a message the service did not advertise.
+    if (!this.features.has('input-look') || this.exited || this.socket.destroyed) return Promise.resolve(false);
+    const id = this.nextLook++;
+    return new Promise(resolve => { this.looks.set(id, resolve); this.send({type: 'input-look', id}); });
+  }
   interrupt(): void { this.send({type: 'input', data: '\u0003'}); }
   endInput(): void { this.send({type: 'input', data: '\u0004'}); }
   resize(columns: number, rows: number): void { this.send({type: 'resize', columns: Math.max(2, columns), rows: Math.max(2, rows)}); }
