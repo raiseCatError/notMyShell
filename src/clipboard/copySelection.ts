@@ -1,4 +1,4 @@
-import type {CompletedCommand} from '../output/OutputBuffer.js';
+import {serializeCopyPayload, type CompletedCommand} from '../output/OutputBuffer.js';
 import {parseReportFlag, type ReportFormat} from './report.js';
 
 /**
@@ -116,14 +116,18 @@ export function resolveCopySelection(selector: Extract<CopySelector, {kind: 'lat
  */
 export function recordCopyText(record: CompletedCommand, includeStatus: boolean): string {
   const status = includeStatus ? record.lifecycleText.trim() : '';
+  const exact = serializeCopyPayload(record);
   // A trailing newline in the output would leave a blank line before the status; the output itself is unchanged.
-  const output = status ? record.output.replace(/\r?\n$/u, '') : record.output;
-  return [output, status].filter(Boolean).join('\n');
+  return status ? [exact.replace(/\r?\n$/u, ''), status].filter(Boolean).join('\n') : exact;
 }
 
-/** The clipboard text for records in the order given: each record's output, followed by its own status when included. */
+/**
+ * The clipboard text for records in the order given: each record's output, followed by its own status when included.
+ * Records are separated by a line break unless the previous one already ends with its own.
+ */
 export function copySelectionPayload(records: readonly CompletedCommand[], includeStatus: boolean): string {
-  return records.map(record => recordCopyText(record, includeStatus)).filter(Boolean).join('\n');
+  return records.map(record => recordCopyText(record, includeStatus)).filter(Boolean)
+    .reduce((payload, text) => !payload ? text : payload.endsWith('\n') ? payload + text : `${payload}\n${text}`, '');
 }
 
 /** The brief note after a successful copy: what was copied and how much (one output keeps the plain wording). */

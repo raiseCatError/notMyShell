@@ -12,6 +12,12 @@ export interface StyledCell {
    * Raw PTY links never carry this mark.
    */
   authored?: true;
+  /**
+   * One cell of the spaces a tab character advanced over (drawn as spaces); `tabSpan` on the first says how many.
+   * exactLine writes the tab back when the whole span is still intact.
+   */
+  tab?: true;
+  tabSpan?: number;
 }
 
 /** Targets NMSh may author: http(s) without credentials, and local file URLs. */
@@ -130,7 +136,12 @@ export class AnsiOutputParser {
       }
       if (character === '\t') {
         const spaces = 8 - (this.column % 8);
-        for (let count = 0; count < spaces; count += 1) this.put(' ', 1);
+        for (let count = 0; count < spaces; count += 1) {
+          this.put(' ', 1);
+          const cell = this.current[this.column - 1]!;
+          cell.tab = true;
+          if (count === 0) cell.tabSpan = spaces;
+        }
         index += 1;
         continue;
       }
@@ -219,6 +230,12 @@ export class AnsiOutputParser {
   plainLineAt(index: number): string | undefined {
     const line = this.lines[index];
     return line ? plainLine(line) : undefined;
+  }
+
+  /** A finished line as the program wrote it, tabs included (see exactLine). */
+  exactLineAt(index: number): string | undefined {
+    const line = this.lines[index];
+    return line ? exactLine(line) : undefined;
   }
 
   plainCurrentLine(): string {
@@ -384,6 +401,24 @@ export class AnsiOutputParser {
     }
     return undefined;
   }
+}
+
+/**
+ * plainLine, except that a tab whose spaces are all still on the line is written as the tab the program printed.
+ * A span something later overwrote (even in part) stays the spaces now shown. Trailing whitespace is trimmed alike.
+ */
+export function exactLine(line: StyledLine): string {
+  let result = '';
+  for (let index = 0; index < line.length; index += 1) {
+    const cell = line[index];
+    const span = cell?.tabSpan ?? 0;
+    if (span && Array.from({length: span}, (_, offset) => line[index + offset]).every(item => item?.tab && item.text === ' ')) {
+      result += '\t';
+      index += span - 1;
+    } else if (cell === undefined) result += ' ';
+    else if (cell !== null) result += cell.text;
+  }
+  return result.replace(/\s+$/u, '');
 }
 
 export function plainLine(line: StyledLine): string {

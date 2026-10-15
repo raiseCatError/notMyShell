@@ -4,6 +4,7 @@ import {chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync} from 'nod
 import {join} from 'node:path';
 import {OutputBuffer, serializeCopyPayload} from '../src/output/OutputBuffer.js';
 import {blockCopyPayload} from '../src/ui/BlockActions.js';
+import {copySelectionPayload} from '../src/clipboard/copySelection.js';
 import {LiveSandbox, until} from './helpers/liveFrontend.js';
 
 /**
@@ -23,27 +24,51 @@ test('/copy: a successful command copies its output only, never the completion r
   const buffer = new OutputBuffer();
   run(buffer, 'tar -xvf a.tar', 'x one.txt\r\nx two.txt\r\n', 0, '✔ Completed · 21.6s · 15:42');
   assert.equal(buffer.recentShell(1)!.lifecycleText, '✔ Completed · 21.6s · 15:42', 'the row is still recorded for display');
-  assert.equal(serializeCopyPayload(buffer.recentShell(1)!), 'x one.txt\nx two.txt');
+  assert.equal(serializeCopyPayload(buffer.recentShell(1)!), 'x one.txt\nx two.txt\n');
 });
 
 test('/copy: a failed command keeps its stderr and exit code on the record, without the failure row', () => {
   const buffer = new OutputBuffer();
   const record = run(buffer, 'make', 'cc -c main.c\r\nmain.c:3: error: expected ;\r\n', 2, '✖ Failed · exit 2 · 0.4s · 15:43');
   assert.equal(record.exitCode, 2);
-  assert.equal(serializeCopyPayload(record), 'cc -c main.c\nmain.c:3: error: expected ;');
+  assert.equal(serializeCopyPayload(record), 'cc -c main.c\nmain.c:3: error: expected ;\n');
 });
 
 test('/copy: multiline output keeps blank lines, indentation and inner spacing', () => {
   const buffer = new OutputBuffer();
-  // A tab is cursor movement on a terminal screen; NMSh's screen model copies it as the spaces it moved over.
-  const record = run(buffer, 'cat notes', 'title\r\n\r\n    indented  two  spaces\r\n\ttabbed\r\nlast\r\n', 0, '✔ Completed · 0s');
-  assert.equal(serializeCopyPayload(record), 'title\n\n    indented  two  spaces\n        tabbed\nlast');
+  // The screen draws a tab as the spaces it moved over; the copy is the tab the program printed (physical QA 1.11).
+  const record = run(buffer, 'cat notes', 'title\r\n\r\n    indented  two  spaces\r\n\ttabbed\r\na\tb\r\nlast\r\n', 0, '✔ Completed · 0s');
+  assert.equal(serializeCopyPayload(record), 'title\n\n    indented  two  spaces\n\ttabbed\na\tb\nlast\n');
+  assert.equal(record.output, 'title\n\n    indented  two  spaces\n        tabbed\na       b\nlast', 'search, compare and reports keep the drawn text');
+  // A tab span a program later overwrote is no longer that tab: the copy is what the screen shows.
+  const overwritten = run(buffer, 'tabs', 'x\tyz\rxxx\r\n', 0, '✔ Completed · 0s');
+  assert.equal(serializeCopyPayload(overwritten), 'xxx     yz\n');
+});
+
+test('/copy: the final line break is the program\'s: kept when printed, never added; escapes after it and NMSh\'s own lines do not count', () => {
+  const buffer = new OutputBuffer();
+  // A color reset or a title after the last newline still ends the output with that newline.
+  assert.equal(serializeCopyPayload(run(buffer, 'ls --color', '\u001b[34mdir\u001b[0m\r\n\u001b[0m\u001b]0;title\u0007', 0, '✔')), 'dir\n');
+  const unterminated = run(buffer, 'printf', 'x\r\ny', 0, '✔');
+  assert.equal(serializeCopyPayload(unterminated), 'x\ny', 'no line break printed, none added');
+  const blanks = run(buffer, 'printf', 'p\r\n\r\n\r\n', 0, '✔');
+  assert.equal(serializeCopyPayload(blanks), 'p\n\n\n', 'blank lines at the end are kept');
+  assert.equal(serializeCopyPayload(run(buffer, 'progress', '10%\r50%\r100%', 0, '✔')), '100%', 'a carriage return is not a line break');
+  // NMSh's own line closes the command's open line on screen; it never makes the output end with a newline.
+  buffer.beginCommand('printf', ['❯ printf']);
+  buffer.write('open');
+  buffer.addFrontendInteraction('/notices', 'Nothing new.');
+  const open = buffer.complete(0)!;
+  assert.equal(serializeCopyPayload(open), 'open');
+  assert.equal(serializeCopyPayload(run(buffer, 'true', '', 0, '✔')), '', 'silent stays empty');
+  // Several records: one line break between them, never two.
+  assert.equal(copySelectionPayload([unterminated, blanks, open], false), 'x\ny\np\n\n\nopen');
 });
 
 test('/copy: output that merely looks like a status line is the command\'s and is kept', () => {
   const buffer = new OutputBuffer();
   const record = run(buffer, 'printf', 'step 1\r\n✔ Completed · 21.6s · 15:42\r\nCompleted · 7 ms\r\n', 0, '✔ Completed · 0.1s · 15:44');
-  assert.equal(serializeCopyPayload(record), 'step 1\n✔ Completed · 21.6s · 15:42\nCompleted · 7 ms');
+  assert.equal(serializeCopyPayload(record), 'step 1\n✔ Completed · 21.6s · 15:42\nCompleted · 7 ms\n');
 });
 
 test('/copy N and block actions agree; folded output and long transcripts copy in full, also after restore', () => {
@@ -52,15 +77,16 @@ test('/copy N and block actions agree; folded output and long transcripts copy i
   const folded = run(buffer, 'seq 400', long, 0, '✔ Completed · 1.2s');
   for (let index = 0; index < 60; index++) run(buffer, `echo ${index}`, `out ${index}\r\n`, 0, `✔ Completed · ${index}ms`);
   assert.equal(folded.expanded, false, 'the long output is folded on screen');
-  const expected = Array.from({length: 400}, (_, index) => `line ${index + 1}`).join('\n');
+  const expected = `${Array.from({length: 400}, (_, index) => `line ${index + 1}`).join('\n')}\n`;
   assert.equal(serializeCopyPayload(buffer.recentShell(61)!), expected, 'a folded block copies every line');
-  assert.equal(serializeCopyPayload(buffer.recentShell(1)!), 'out 59');
-  assert.equal(serializeCopyPayload(buffer.recentShell(2)!), 'out 58');
+  // Exactly as printed: echo ends its line, so the copy does too.
+  assert.equal(serializeCopyPayload(buffer.recentShell(1)!), 'out 59\n');
+  assert.equal(serializeCopyPayload(buffer.recentShell(2)!), 'out 58\n');
   assert.equal(blockCopyPayload(buffer.recentShell(1)!, 'copyOutput'), serializeCopyPayload(buffer.recentShell(1)!), 'Copy output and /copy share one source');
   const restored = new OutputBuffer();
   restored.restoreTranscript(buffer.transcript());
   assert.equal(serializeCopyPayload(restored.recentShell(61)!), expected);
-  assert.equal(serializeCopyPayload(restored.recentShell(1)!), 'out 59');
+  assert.equal(serializeCopyPayload(restored.recentShell(1)!), 'out 59\n', 'the line break survives restore');
 });
 
 test('live: /copy and /copy N put exactly the command output on the clipboard, through the real composer', {timeout: 90_000}, async () => {
@@ -87,8 +113,8 @@ test('live: /copy and /copy N put exactly the command output on the clipboard, t
     await frontend.run('echo READY', /READY/u);
     await frontend.run(`printf 'alpha\\n\\n  beta  gamma\\n✔ Completed · 21.6s · 15:42\\n'`, /beta {2}gamma/u);
     await frontend.run(`sh -c 'echo to-stderr >&2; exit 3'`, /to-stderr/u);
-    assert.equal(await copied('/copy'), 'to-stderr');
-    assert.equal(await copied('/copy 2'), 'alpha\n\n  beta  gamma\n✔ Completed · 21.6s · 15:42', 'the look-alike line is the command\'s own');
+    assert.equal(await copied('/copy'), 'to-stderr\n');
+    assert.equal(await copied('/copy 2'), 'alpha\n\n  beta  gamma\n✔ Completed · 21.6s · 15:42\n', 'the look-alike line is the command\'s own');
     assert.doesNotMatch(await copied('/copy 3'), /Completed/u, 'echo READY copies as READY alone');
     // A silent command: nothing is copied and the clipboard keeps what it held.
     await frontend.run('true', /❯/u);
@@ -116,7 +142,7 @@ test('NMSh lines added while a command runs are shown in its block but are never
   output.addFrontendInteraction('/notices', 'Nothing new.');
   output.write('two\r\n');
   const record = output.complete(0)!;
-  assert.equal(serializeCopyPayload(record), 'one\ntwo');
+  assert.equal(serializeCopyPayload(record), 'one\ntwo\n');
 
   const restored = new OutputBuffer();
   restored.restoreTranscript(output.transcript());

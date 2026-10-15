@@ -86,7 +86,7 @@ test('resolve: oldest first; a missing number refuses the whole copy; -N takes w
 test('payload: output only by default; with status each record\'s own recorded status follows its own output', () => {
   const recent = transcript().recentShellCommands();
   const pick = (text: string) => (resolveCopySelection(selector(text), recent) as {records: typeof recent}).records;
-  assert.equal(copySelectionPayload(pick('2-4'), false), 'boom\na\n\n  b', 'silent commands add nothing; no status rows');
+  assert.equal(copySelectionPayload(pick('2-4'), false), 'boom\na\n\n  b\n', 'silent commands add nothing; no status rows; each output as printed');
   assert.equal(copySelectionPayload(pick('2-4'), true),
     'boom\n✘ Command failed · exit 2 · 12.9s · 10:02\n✔ Completed · 2 ms · 10:03\na\n\n  b\n✔ Completed · 1.4s · 10:04 · 3.1s waiting for input');
   assert.equal(copySelectionPayload(pick('3'), false), '', 'a silent command alone copies nothing');
@@ -113,7 +113,7 @@ test('folded and restored transcripts copy the full stored output, with the same
 
 test('block actions: Copy output and Copy command + output follow the status setting; Copy command never does', () => {
   const record = transcript().recentShellCommands()[3]!;
-  assert.equal(blockCopyPayload(record, 'copyOutput', false), 'boom');
+  assert.equal(blockCopyPayload(record, 'copyOutput', false), 'boom\n');
   assert.equal(blockCopyPayload(record, 'copyOutput', true), 'boom\n✘ Command failed · exit 2 · 12.9s · 10:02');
   assert.equal(blockCopyPayload(record, 'copyBoth', true), 'false-ish\nboom\n✘ Command failed · exit 2 · 12.9s · 10:02');
   assert.equal(blockCopyPayload(record, 'copyCommand', true), 'false-ish');

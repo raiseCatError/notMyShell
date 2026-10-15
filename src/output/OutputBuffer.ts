@@ -46,6 +46,10 @@ export interface CompletedCommand {
   inputWaits?: number;
   command: string;
   output: string;
+  /** The output as the program wrote it for exact copies (tabs kept), stored only when it differs from `output`. */
+  copyText?: string;
+  /** The program's output ended at a line break: an exact copy ends with one too. */
+  outputNewline?: true;
   lifecycleText: string;
   exitCode: number;
   startId: number;
@@ -84,7 +88,9 @@ export interface OutputTranscript {
  * command's and is kept.
  */
 export function serializeCopyPayload(record: CompletedCommand): string {
-  return record.output;
+  // As the program wrote it: its tabs, and its final line break when it ended with one.
+  const exact = record.copyText ?? record.output;
+  return exact && record.outputNewline ? `${exact}\n` : exact;
 }
 
 /** Stored line text, compared as the transcript draws it: trailing blanks are not content. */
@@ -142,6 +148,8 @@ export class OutputBuffer {
     activities: SecondaryActivity[];
     /** Its output cleared the screen: its header and earlier lines are gone. */
     cleared?: boolean;
+    /** The program's last text ended a line (see endsLine). */
+    endsLine?: boolean;
   };
   private classifier?: CommandClassifier;
   /** What of the active command's output is transcript text (see TranscriptCut). */
@@ -326,7 +334,14 @@ export class OutputBuffer {
   write(data: string): void {
     this.classifier?.pushChunk(data);
     const text = this.cut ? this.cut.push(data) : data;
-    if (text) this.parser.write(text);
+    if (text) this.writeProgramText(text);
+  }
+
+  /** Program output (never NMSh's own lines): drawn, and whether it last ended a line is remembered for exact copies. */
+  private writeProgramText(text: string): void {
+    this.parser.write(text);
+    const ends = endsLine(text);
+    if (ends !== undefined && this.active) this.active.endsLine = ends;
   }
 
   tickActiveCommand(): void {
@@ -336,7 +351,7 @@ export class OutputBuffer {
   /** `holdOpen`: the person is reading the transcript right now (scrolled back, selecting); the block finishes expanded. */
   complete(exitCode: number, options: {holdOpen?: boolean} = {}): CompletedCommand | undefined {
     const held = this.cut?.flush();
-    if (held) this.parser.write(held);
+    if (held) this.writeProgramText(held);
     this.parser.ensureLineBoundary();
     if (!this.active) return undefined;
     const endId = this.parser.completedCount();
@@ -344,6 +359,7 @@ export class OutputBuffer {
     this.classifier?.finalize(exitCode);
     const mode = this.classifier?.mode ?? 'INLINE';
     const output = this.commandOutput(this.active.outputStart, endId);
+    const exact = this.commandOutput(this.active.outputStart, endId, true);
     // Activity-bearing parents keep their own disclosure; otherwise the fold
     // policy decides from the finished output. Presentation only.
     const autoFolded = this.active.activities.length === 0 && !options.holdOpen
@@ -354,6 +370,8 @@ export class OutputBuffer {
     const record: CompletedCommand = {
       command: this.active.command,
       output,
+      ...(exact !== output ? {copyText: exact} : {}),
+      ...(output && this.active.endsLine ? {outputNewline: true as const} : {}),
       lifecycleText: '',
       exitCode,
       startId: this.active.start,
@@ -377,10 +395,10 @@ export class OutputBuffer {
    * What a command wrote: its block's lines without the ones NMSh added while it ran (a /copy confirmation, an Ask
    * exchange, a notice). Those stay where they were shown, but they were never the command's output.
    */
-  private commandOutput(start: number, end: number): string {
+  private commandOutput(start: number, end: number, exact = false): string {
     const lines: string[] = [];
     for (let index = start; index < end; index += 1) {
-      if (this.lineTypes.get(index) !== 'metadata') lines.push(this.parser.plainLineAt(index) ?? '');
+      if (this.lineTypes.get(index) !== 'metadata') lines.push((exact ? this.parser.exactLineAt(index) : this.parser.plainLineAt(index)) ?? '');
     }
     return lines.join('\n');
   }
@@ -629,4 +647,14 @@ export class OutputBuffer {
       this.toggleExpanded(cmdIndex);
     }
   }
+}
+
+// Escape sequences a program may write after its last text (a color reset after the final newline, a title).
+const TRAILING_CONTROLS = /(?:\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[ -/]*[0-~])+$/u;
+
+/** Whether text ends a line (its last character before trailing escapes is a newline); undefined when it has no text. */
+export function endsLine(text: string): boolean | undefined {
+  const visible = text.replace(TRAILING_CONTROLS, '');
+  if (!visible) return undefined;
+  return visible.endsWith('\n');
 }

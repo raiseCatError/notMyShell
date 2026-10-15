@@ -77,7 +77,8 @@ test('Auto-expand Off (default): no copy path changes folding; every copy reads 
       assert.deepEqual(folds(), ALL_FOLDED, command);
     }
     await type('/copy 1-4');
-    assert.equal(clip.read().split('\n').length, 900, 'all 900 lines, though every block is folded');
+    assert.equal(clip.read().replace(/\n$/u, '').split('\n').length, 900, 'all 900 lines, though every block is folded');
+    assert.ok(clip.read().endsWith('\n'), 'the last line keeps the line break it was printed with');
     // The picker, direct block Copy and the Actions menu's copies.
     await type('/copy ui');
     await instance['handleKey']({kind: 'text', value: 'a'});
