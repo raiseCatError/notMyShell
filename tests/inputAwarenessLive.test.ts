@@ -83,7 +83,7 @@ for (const shell of ['zsh', 'bash'] as const) {
       // A hidden line: keys go straight to the shell's read; nothing typed is drawn by NMSh.
       mark = frontend.mark;
       frontend.pty.write(`${shell === 'zsh' ? "read -s 'p?Password: '" : "read -s -p 'Password: ' p"}; echo; echo len=\${#p}\r`);
-      await frontend.waitFor(/◆ Waiting for input[\s\S]*Hidden input for (?:zsh|bash) · nothing you type is shown/u, mark);
+      await frontend.waitFor(/◆ Waiting for input[\s\S]*Hidden input · nothing you type is shown · Enter sends it to (?:zsh|bash)/u, mark);
       const typed = frontend.mark;
       frontend.pty.write('hunter2');
       await pause(300);
@@ -94,7 +94,7 @@ for (const shell of ['zsh', 'bash'] as const) {
       // A single key: answered without Enter, and no stray Enter reaches the shell afterwards.
       mark = frontend.mark;
       frontend.pty.write(`${shell === 'zsh' ? "read -k1 'k?Key: '" : "read -n1 -p 'Key: ' k"}; echo; echo key=$k\r`);
-      await frontend.waitFor(/◆ Waiting for input[\s\S]*Keys go straight to (?:zsh|bash)/u, mark);
+      await frontend.waitFor(/◆ Waiting for input[\s\S]*Press a key · it goes straight to (?:zsh|bash)/u, mark);
       frontend.pty.write('z');
       await frontend.waitFor(/key=z[\s\S]*Completed/u, mark);
       await frontend.run('echo AFTER', /AFTER/u);
@@ -176,11 +176,13 @@ test('live: an e2fsck-style yes/no session: each key answers one question, Enter
     const mark = frontend.mark;
     const started = Date.now();
     frontend.pty.write(`python3 ${ASKYN} 'Padding at end of inode bitmap is not set. Fix<y>? ' 'Inode 12 ref count is 2, should be 1. Fix<y>? ' 'Free blocks count wrong. Fix<y>? '\r`);
-    await frontend.waitFor(new RegExp(`◆ Waiting for input · ${PYTHON}[\\s\\S]*Padding at end of inode bitmap is not set\\. Fix<y>\\?  ·  each key goes straight to ${PYTHON}`, 'u'), mark);
-    assert.match(drawn(frontend, mark), new RegExp(`Keys go straight to ${PYTHON}`, 'u'), 'the composer says where typing goes');
+    await frontend.waitFor(new RegExp(`◆ Waiting for input · ${PYTHON}[\\s\\S]*Padding at end of inode bitmap is not set\\. Fix<y>\\?`, 'u'), mark);
+    assert.match(drawn(frontend, mark), new RegExp(`Press a key · it goes straight to ${PYTHON}`, 'u'), 'the composer says where typing goes');
     await pause(1200);
+    const second = frontend.mark;
     frontend.pty.write('n');
-    await frontend.waitFor(/Inode 12 ref count is 2, should be 1\. Fix<y>\?  ·  each key/u, mark);
+    // The answer ends the first wait at once; the next headline is the second question's own detection.
+    await frontend.waitFor(/Inode 12 ref count is 2, should be 1\. Fix<y>\?[\s\S]*◆ Waiting for input/u, second);
     const third = frontend.mark;
     frontend.pty.write('\r');
     // A fast typist answers the moment the question appears, before NMSh knows how it reads: the key still reaches it.
@@ -251,7 +253,7 @@ test('live: a waiting session is visible from another window, survives detach, a
     await back.waitFor(/◆ Waiting for input[\s\S]*First question\. Fix<y>\?/u, 0, 30_000);
     const answered = back.mark;
     back.pty.write('y');
-    await back.waitFor(/Second question\. Fix<y>\?  ·  each key/u, answered);
+    await back.waitFor(/Second question\. Fix<y>\?[\s\S]*◆ Waiting for input/u, answered);
     back.pty.write('n');
     await back.waitFor(/ANSWERS=yes,no[\s\S]*Completed[\s\S]*waiting for input \(2 prompts\)/u);
   } finally { await sandbox.dispose(); }

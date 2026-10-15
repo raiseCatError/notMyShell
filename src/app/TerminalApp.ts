@@ -190,7 +190,7 @@ import {PATH_DISPLAY_LEVELS} from '../prompt/pathDisplay.js';
 import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
-import {completionWaitFact, directInputPlaceholder, inputActivityRows, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
+import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
 import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
@@ -355,6 +355,8 @@ const AWAKE_POLL_MS = 5000;
 /** Free cells the input row keeps after typed text before Keep Awake yields it (Input row placement). */
 const AWAKE_INPUT_SLACK = 8;
 const ACCENT = lazyForeground(UI_COLORS.accent);
+/** A command waiting for the person: the waiting rows, the composer's prompt mark and /sessions rows share it. */
+const ATTENTION = lazyForeground(UI_COLORS.attention);
 /** NMSh ran this install with the user's confirmation; record it so an uninstall can be offered honestly. */
 function recordInstall(toolId: string, install: {label: string; command: string; args: readonly string[]}): void {
   try { new InstallProvenance().record({id: toolId, package: install.args.at(-1) ?? toolId}, {...install, args: [...install.args]}); } catch { /* best effort */ }
@@ -3386,7 +3388,7 @@ export class TerminalApp {
     rows.forEach((row, index) => {
       const selected = index === browser.selectedIndex;
       const marker = row.current ? (safe ? '*' : '●') : row.session.state === 'detached' ? (safe ? '-' : '◌') : (safe ? 'o' : '○');
-      const color = row.state === 'failed' ? ERROR : row.state === 'attention' || row.state === 'input' || row.state === 'inputLikely' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
+      const color = row.state === 'failed' ? ERROR : row.state === 'input' || row.state === 'inputLikely' ? ATTENTION : row.state === 'attention' ? ACCENT : row.state === 'completed' ? SUCCESS : SECONDARY;
       const who = row.agent ? `${agentColor(row.agent.color)}${safe ? row.agent.safeGlyph : row.agent.glyph} ${row.agent.short}${RESET} ` : '';
       out.push(truncateAnsi(`${selected ? `${ACCENT}›` : ' '} ${marker} ${PRIMARY}${(row.current ? 'this' : `#${row.ordinal}`).padEnd(5)}${RESET}${SECONDARY}${row.shell.padEnd(5)}${RESET} `
         + `${color}${row.stateLabel.padEnd(18)}${RESET}${who}${focusForeground(selected)}${row.summary}${RESET}`, columns));
@@ -4616,7 +4618,7 @@ export class TerminalApp {
         live.forEach((session, index) => {
           const selected = index === browser.selectedIndex;
           const state = liveRowState(session, now);
-          const stateColor = state === 'failed' ? ERROR : state === 'attention' || state === 'input' || state === 'inputLikely' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
+          const stateColor = state === 'failed' ? ERROR : state === 'input' || state === 'inputLikely' ? ATTENTION : state === 'attention' ? ACCENT : state === 'completed' ? SUCCESS : state === 'active' ? PRIMARY : SECONDARY;
           const agent = liveRowAgent(session);
           // Agent color only when identity is proven and color is allowed; generic otherwise.
           const who = agent ? `${agentColor(agent.color)}${safe ? agent.safeGlyph : agent.glyph} ${agent.short}${RESET} ` : '';
@@ -9346,13 +9348,15 @@ export class TerminalApp {
 
     const direct = this.directInputRequest();
     const inputRows = input.rows.map(row => {
-      const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${ACCENT}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
+      // While a program waits for the person, the composer's mark takes the waiting color: typing answers it.
+      const mark = this.running && !this.passthrough && !this.queueCompose && this.answersByDefault() ? ATTENTION : ACCENT;
+      const prefix = row.prefix.startsWith(GLYPHS.prompt) ? `${mark}${GLYPHS.prompt}${RESET}${row.prefix.slice(GLYPHS.prompt.length)}` : row.prefix;
       if (direct) {
-        const queueHint = this.queueAvailable() ? ' · Ctrl+Q queues a command' : '';
-        return row === input.rows[0] ? truncateAnsi(`${prefix}${SUBTLE}${directInputPlaceholder(direct, inputProgram(direct, this.running!.command))}${queueHint}${RESET}`, this.inputColumns(columns)) : '';
+        return row === input.rows[0] ? truncateAnsi(`${prefix}${SECONDARY}${inputComposerHint(direct, inputProgram(direct, this.running!.command), this.queueAvailable())}${RESET}`, this.inputColumns(columns)) : '';
       }
       const hint = row === input.rows[0] && !this.editor.text ? this.composerHint() : undefined;
-      if (hint) return truncateAnsi(`${prefix}${SUBTLE}${hint}${RESET}`, this.inputColumns(columns));
+      // An instruction for a waiting program reads at secondary contrast; the ordinary running hint stays subtle.
+      if (hint) return truncateAnsi(`${prefix}${hint.waiting ? SECONDARY : SUBTLE}${hint.text}${RESET}`, this.inputColumns(columns));
       let textStyled = '';
       const glyphsInRow = graphemes(row.text);
       for (let i = 0; i < glyphsInRow.length; i++) {
@@ -9705,13 +9709,17 @@ export class TerminalApp {
   }
 
   /** While a command runs, the empty composer says what Enter will do with what you type. */
-  private composerHint(): string | undefined {
-    if (!this.running || this.passthrough || this.queueEdit || !this.queueAvailable() || this.justStopped()) return undefined;
+  private composerHint(): {text: string; waiting: boolean} | undefined {
+    if (!this.running || this.passthrough || this.queueEdit || this.justStopped()) return undefined;
     // The program's question keeps the activity rows, so the composer itself says how compose mode ends.
-    if (this.queueCompose) return 'Queue a command · Enter adds it · Esc returns to the program';
+    if (this.queueCompose) return {text: 'Queue a command · Enter adds it · Esc returns to the program', waiting: false};
     const request = this.inputState?.request;
     const program = request ? inputProgram(request, this.running.command) : commandWords(this.running.command)[0] ?? 'the program';
-    return this.answersByDefault() ? `Enter answers ${program} · Ctrl+Q queues a command` : `Enter queues the next command · Ctrl+S sends to ${program}`;
+    // A waiting program gets the one instruction, with or without a queue; a question NMSh has not yet probed reads
+    // as a line.
+    if (this.answersByDefault()) return {text: inputComposerHint(request ?? {since: 0, confidence: 'likely', mode: 'line'}, program, this.queueAvailable()), waiting: true};
+    if (!this.queueAvailable()) return undefined;
+    return {text: `Enter queues the next command · Ctrl+S sends to ${program}`, waiting: false};
   }
 
   /** Ctrl+C or Ctrl+Z was sent moments ago: typing is type-ahead for the prompt the stop brings back. */

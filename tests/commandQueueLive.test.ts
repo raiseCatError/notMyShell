@@ -113,7 +113,7 @@ test('live: a program waiting for a line gets Enter; Ctrl+Q queues; Ctrl+S sends
     let mark = frontend.mark;
     frontend.pty.write(`read 'x?Name: '; echo got=$x\r`);
     await frontend.waitFor(/[◆◇] (?:Probably w|W)aiting for input[\s\S]*Name:/u, mark);
-    await frontend.waitFor(/Enter answers zsh · Ctrl\+Q queues a command/u, mark);
+    await frontend.waitFor(/Type your answer · Enter sends it to zsh · Ctrl\+Q queues a command/u, mark);
     frontend.pty.write('echo QUEUED-AFTER-READ\u0011');
     await frontend.waitFor(/≡ 1 queued|≡ Queued \(1\)/u, mark);
     frontend.pty.write('alice\r');

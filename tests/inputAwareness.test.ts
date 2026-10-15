@@ -9,7 +9,8 @@ import {describeNotice, noticeVisibleMs, SessionNoticeTracker} from '../src/sess
 import {liveStatusParts} from '../src/session/liveStatus.js';
 import {LIVE_ROW_LABELS, liveRowState} from '../src/sessions/ResumeBrowser.js';
 import {directKeyBytes} from '../src/terminal/keyBytes.js';
-import {completionWaitFact, directInputPlaceholder, inputActivityRows, waitedDetail} from '../src/status/inputStatus.js';
+import {completionWaitFact, inputActivityRows, inputComposerHint, waitedDetail} from '../src/status/inputStatus.js';
+import {foreground, UI_COLORS} from '../src/ui/palette.js';
 import {displayWidth, stripAnsi} from '../src/util/text.js';
 
 function withEnv<T>(patch: Record<string, string | undefined>, run: () => T): T {
@@ -501,13 +502,22 @@ test('presentation: distinct from Running in words and glyphs; fits narrow width
   withEnv({NO_COLOR: undefined, NMSH_ICONS: undefined, TERM: 'xterm-256color'}, () => {
     const [first, second] = inputActivityRows(state, 'e2fsck -f disk.img', 0, 100_000, 100);
     assert.equal(stripAnsi(first), '◆ Waiting for input · e2fsck · 18.0s · 1m 40s total');
-    assert.equal(stripAnsi(second), '  Padding at end of inode bitmap is not set. Fix<y>?  ·  each key goes straight to e2fsck');
+    assert.equal(stripAnsi(second), '  Padding at end of inode bitmap is not set. Fix<y>?', 'the question as written; how to answer is the composer\'s');
+    // Its own hue: never the running shimmer's lavender or the accent.
+    assert.ok(first.startsWith(foreground(UI_COLORS.attention)), 'the attention color leads the row');
+    for (const other of [UI_COLORS.accent, UI_COLORS.workingBase, UI_COLORS.workingPeak]) assert.notDeepEqual(UI_COLORS.attention, other);
+    // No question on the line (`read -r reply`): the second row says what the program reads, never empty.
+    const bare = inputActivityRows({...state, request: {since: 82_000, confidence: 'likely', mode: 'line', program: 'zsh'}}, 'read -r reply', 0, 100_000, 100).map(stripAnsi);
+    assert.equal(bare[0], '◇ Probably waiting for input · zsh · 18.0s · 1m 40s total');
+    assert.equal(bare[1], '  zsh is probably reading a line');
+    assert.equal(stripAnsi(inputActivityRows({...state, request: {since: 82_000, confidence: 'confirmed', mode: 'hidden', program: 'bash'}}, 'read -s', 0, 100_000, 100)[1]),
+      '  bash is reading hidden input');
     for (const columns of [20, 32, 48]) {
       for (const row of inputActivityRows(state, 'e2fsck -f disk.img', 0, 100_000, columns)) assert.ok(displayWidth(stripAnsi(row)) <= columns, `${columns}: ${stripAnsi(row)}`);
     }
     const narrow = inputActivityRows(state, 'e2fsck', 0, 100_000, 32).map(stripAnsi);
     assert.match(narrow[0], /^◆ Waiting for input · 18\.0s$/u, 'the wait and its time survive; detail goes first');
-    assert.match(narrow[1], /^ {2}Padding at end/u, 'the question outranks the hint');
+    assert.match(narrow[1], /^ {2}Padding at end/u, 'the question keeps its row');
     assert.equal(displayWidth(narrow[1]), 32, 'without the hint, the question takes the whole row');
   });
   withEnv({NO_COLOR: '1', NMSH_ICONS: 'safe'}, () => {
@@ -517,7 +527,10 @@ test('presentation: distinct from Running in words and glyphs; fits narrow width
     assert.match(stripAnsi(first), /^\? Probably waiting for input · e2fsck · 18\.0s$/u);
     assert.equal(stripAnsi(inputActivityRows(state, 'e2fsck', 0, 100_000, 80)[0]).charAt(0), '!');
   });
-  assert.equal(directInputPlaceholder({...state.request, mode: 'hidden'}, 'sudo'), 'Hidden input for sudo · nothing you type is shown');
+  // One instruction in the composer per kind of read; hidden input never shows what is typed.
+  assert.equal(inputComposerHint({...state.request, mode: 'hidden'}, 'sudo', true), 'Hidden input · nothing you type is shown · Enter sends it to sudo · Ctrl+Q queues a command');
+  assert.equal(inputComposerHint(state.request, 'e2fsck', true), 'Press a key · it goes straight to e2fsck · Ctrl+Q queues a command');
+  assert.equal(inputComposerHint({...state.request, confidence: 'likely', mode: 'line'}, 'bash', false), 'Type your answer · Enter sends it to bash');
   assert.equal(completionWaitFact({waitedMs: 18_000, waits: 1}), ' · 18.0s waiting for input');
   assert.equal(completionWaitFact({waitedMs: 65_000, waits: 3}), ' · 1m 5s waiting for input (3 prompts)');
   assert.equal(completionWaitFact({waitedMs: 300, waits: 1}), '', 'an instant answer is not worth a fact');
