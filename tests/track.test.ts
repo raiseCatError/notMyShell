@@ -73,8 +73,8 @@ test('/track reuses one current and previous snapshot, does not overlap manual r
   try {
     const task = engine.start('sleep 0.3; printf "sample\\n"', cwd, 2000,
       {kind: 'allowed', network: false, remote: false});
-    engine.runNow(task.id);
-    engine.runNow(task.id);
+    assert.equal(engine.runNow(task.id), false, 'a running sample refuses concurrent refresh');
+    assert.equal(engine.runNow(task.id), false);
     await waitFor(() => task.runs === 1);
     assert.equal(task.runs, 1, 'manual refresh must not overlap a running sample');
     assert.equal(task.current?.output, 'sample\n');
@@ -85,7 +85,7 @@ test('/track reuses one current and previous snapshot, does not overlap manual r
       {kind: 'copy', id: task.id}, 'copy targets exactly the selected tracker');
     assert.match(stripAnsi(renderWatchPanel({selected: 0, output: true}, [task], 100, Date.now(), 20).join('\n')),
       /Latest completed output[\s\S]*sample/u);
-    engine.runNow(task.id);
+    assert.equal(engine.runNow(task.id), true, 'refresh begins after completion');
     await waitFor(() => task.runs === 2);
     assert.equal(task.current?.output, 'sample\n');
     assert.equal(task.previous?.output, 'sample\n');
