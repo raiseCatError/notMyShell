@@ -165,7 +165,7 @@ test('/track fails visibly when the command or working directory is unavailable'
       {kind: 'allowed', network: false, remote: false});
     await waitFor(() => missingCwd.runs === 1);
     assert.equal(missingCwd.current?.exitCode, -1);
-    assert.equal(missingCwd.current?.error, 'spawn failed' === missingCwd.current?.error ? 'spawn failed' : missingCwd.current?.error);
+    assert.match(missingCwd.current?.error ?? '', /ENOENT|spawn/u);
     assert.equal(engine.active().length, 2);
   } finally {
     engine.dispose();
