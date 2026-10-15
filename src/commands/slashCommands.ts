@@ -30,6 +30,7 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
   '/tools': {group: 'Tools & integration', title: 'Open Tools'}, '/configure': {group: 'Tools & integration', title: 'Open Tool Configuration'},
   '/tmux': {group: 'Tools & integration', title: 'Configure tmux'}, '/integrations': {group: 'Tools & integration', title: 'Check Integrations'},
   '/dotfiles': {group: 'Tools & integration', title: 'Import Dotfiles'},
+  '/track': {group: 'Tools & integration', title: 'Track live command output'},
   '/btw': {title: 'Open local intelligence'}, '/ask': {alias: '/btw'},
   '/caffeinate': {group: 'Tools & integration', title: 'Open Keep Awake'}, '/awake': {alias: '/caffeinate'}, '/zoomies': {alias: '/caffeinate'},
 };
@@ -115,6 +116,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/rename', insertion: '/rename ', description: 'Name this live session (display only); /rename alone returns to its familiar signature'},
   {name: '/queue', insertion: '/queue', description: 'Commands queued to run after the current one: view, edit, reorder, pause or clear (/queue pause|resume|clear)'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
+  {name: '/track', insertion: '/track ', description: 'Refresh a finite command in one live view (/track df -h /Volumes/T7Projects · /track --every 5s -- docker system df · pause|resume|refresh|stop)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
   {name: '/providers', insertion: '/providers', description: 'What NMSh uses for prompt, welcome, suggestions, history and more; switch, install, detect'},
@@ -351,11 +353,14 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
   const queue = /^\/queue(?:\s+(pause|resume|clear))?\s*$/u.exec(input);
   if (queue) return {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
-  const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
+  // /track reuses the established /watch scheduler, safety gate and live panel.
+  // Refresh is a spelling of 'now'; it never makes an overlapping run.
+  const watch = /^\/(?:watch|track)(?:\s+(.*))?$/u.exec(input);
   if (watch) {
     const rest = (watch[1] ?? '').trim();
-    const op = /^(stop|pause|resume|now)(?:\s+(.*))?$/u.exec(rest);
-    return op ? {kind: 'watch', op: op[1] as 'stop' | 'pause' | 'resume' | 'now', arguments: (op[2] ?? '').trim()} : {kind: 'watch', op: rest ? 'start' : 'list', arguments: rest};
+    const op = /^(stop|pause|resume|now|refresh)(?:\s+(.*))?$/u.exec(rest);
+    return op ? {kind: 'watch', op: op[1] === 'refresh' ? 'now' : op[1] as 'stop' | 'pause' | 'resume' | 'now', arguments: (op[2] ?? '').trim()}
+      : {kind: 'watch', op: rest && rest !== 'list' ? 'start' : 'list', arguments: rest === 'list' ? '' : rest};
   }
   const rename = /^\/rename(?:\s+(.*))?$/u.exec(input);
   if (rename) return {kind: 'rename', name: (rename[1] ?? '').trim()};
