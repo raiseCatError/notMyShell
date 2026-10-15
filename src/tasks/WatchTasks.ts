@@ -149,6 +149,13 @@ export class WatchTasks {
   /** Start watching a command already judged allowed (or confirmed). The first run starts at once. */
   start(command: string, cwd: string, intervalMs: number | undefined, safety: Exclude<WatchSafety, {kind: 'refused'}>): WatchTask {
     if (this.active().length >= MAX_ACTIVE_WATCHES) throw new Error(`At most ${MAX_ACTIVE_WATCHES} active trackers can run.`);
+    // Stopped rows do not appear in the manager; do not retain unlimited stale records.
+    if (this.watches.length >= 128) {
+      for (let index = 0; index < this.watches.length && this.watches.length > 64;) {
+        if (this.watches[index]?.status === 'stopped') this.watches.splice(index, 1);
+        else index += 1;
+      }
+    }
     if (intervalMs !== undefined && (!Number.isFinite(intervalMs) || intervalMs <= 0 || intervalMs > MAX_INTERVAL_MS)) {
       throw new Error('Invalid tracking interval.');
     }
