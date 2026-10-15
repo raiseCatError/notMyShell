@@ -68,7 +68,7 @@ test('/track reuses one current and previous snapshot, does not overlap manual r
     assert.equal(engine.active().length, 1);
     assert.match(stripAnsi(watchRow(task, Date.now())), /Track · sleep 0\.3.*updated/u);
     assert.match(stripAnsi(renderWatchPanel({selected: 0, output: true}, [task], 100, Date.now(), 20).join('\n')),
-      /Latest completed output.*sample/u);
+      /Latest completed output[\s\S]*sample/u);
     engine.runNow(task.id);
     await waitFor(() => task.runs === 2);
     assert.equal(task.current?.output, 'sample\n');
