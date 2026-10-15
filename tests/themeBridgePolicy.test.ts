@@ -14,7 +14,7 @@ import {batTheme, bsdLsColors, validateBatTheme, validBsdLsColors} from '../src/
 import {artifactPath, batConfigDirectory, loadLedger} from '../src/themeBridge/artifacts.js';
 import {applyThemeBridge, batReady, bridgeEnvironment, integrationHealth, reportTargets, setupBat, type BridgeContext, type TargetFacts} from '../src/themeBridge/runtime.js';
 import {createThemeStudio, studioKey} from '../src/appearance/ThemeStudio.js';
-import {createSetup, sectionIndex, setupKey} from '../src/setup/SetupCat.js';
+import {createSetup, sectionIndex, setupKey, setupShowsChroma} from '../src/setup/SetupCat.js';
 
 const base = (): PromptConfiguration => structuredClone(DEFAULT_PROMPT_CONFIGURATION);
 const facts = (extra: Partial<Record<BridgeTargetId, TargetFacts>> = {}) =>
@@ -148,7 +148,9 @@ test('preview Chroma switches are local: Theme Studio and Setup toggle only thei
   const config = normalizePromptConfiguration({presentation: {preset: 'aurora'}});
   const setup = createSetup(config);
   setup.section = sectionIndex('appearance');
+  // Setup's preview shows the chosen Chroma at once; P compares with the base theme.
+  assert.equal(setupShowsChroma(setup), true);
   setupKey(setup, {kind: 'text', value: 'p'});
-  assert.equal(setup.previewChroma, true);
+  assert.equal(setupShowsChroma(setup), false);
   assert.equal(setup.draft.presentation.preset, 'aurora', 'the draft (and saved) Chroma is unchanged');
 });
