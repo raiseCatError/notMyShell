@@ -394,6 +394,108 @@ Conditions for accepting the gate change: `00163da7` on the release head; physic
 a disposable account before the Claude plugin controls are advertised as working; the maintainer's explicit
 sign-off (decision 1).
 
+## Physical QA findings and stabilization (2026-10-15/16)
+
+The maintainer's first physical QA in Ghostty (screenshots and notes) stopped both releases. **Neither candidate head
+moved:** `release/v0.19.0` is still `9e85a910`, `release/v0.20.0` still `c71a4284`; their evidence above stands. The
+fixes are on separate branches (below) for review. Automated real-PTY evidence here is not physical QA.
+
+### Triage
+
+| Finding | Class | Result |
+|---|---|---|
+| `read`, hidden and single-key reads lose the answer; Enter or text goes to the queue (1.3, 1.4, 1.5, 1.7) | **Confirmed defect (P0)** | Reproduced on `9e85a910` through the real frontend, PTY and session service; fixed |
+| Waiting state too subtle | Confirmed UX defect | Redesigned |
+| `seq 1 400` copies 399 lines (1.12); 1.11 bytes | **Confirmed defect (P1)** | The final newline was lost and tabs became spaces, before the clipboard; fixed |
+| `/queue`, `/copy`, `/compare` inside a multi-line submission | Test-procedure contamination (expected parser contract) | Not a defect; the paste review now says it |
+| Cannot reconnect after closing the window; only an archive in `/resume` (2.2–2.4) | **Misunderstood procedure, not a product defect** | Window close leaves the session live on both candidates; the QA helper made a new directory each launch. Five QA sessions from 19:46–20:30 are still running. New launcher fixes the procedure |
+| Queue-pause notice twice | Confirmed UX defect | One transcript notice; the row is state and action |
+| Queue approval only via `/queue` + `a`; no preview of what runs next | UX change | Implemented (queue preview, contextual review) |
+| Task bar: dot, misalignment, purple selection, lingering finished tasks | Confirmed UX defects | Fixed |
+| Setup previews empty/unrelated; Chroma change shows nothing; activity wording hard to read | Confirmed UX defects | Fixed (narrow, tested); step reorder proposed only |
+| Sidebar/detail panel too large, detached | Design | Proposal: `workspace-ui-decision.md` (recommends delegate, then retire); nothing changed |
+| `z notMyShell` fails | **QA environment**, not NMSh | NMSh never initializes zoxide; the isolated QA home has no `.zshrc`, so `z` is undefined |
+| `/compare` unified diff; Report redaction; NO_COLOR program colors; no composer overlap; mouse focus; `/background run` started | Positive observations | Recorded as observations only; the items still need their full checklist steps |
+| Native modules work in limited use; full module QA and task lifecycle QA | Unverified | Outstanding |
+| Managed Claude (4.1–4.3) | **Deferred by the maintainer** | Not performed; plugin writes now off by default (below) |
+
+### Diagnostics (real PTY, isolated sandbox; macOS, zsh 5.9, Bash 5.3, Fish 4.9)
+
+**A: `read -r QA_REPLY; printf 'ANSWER=%s\n' "$QA_REPLY"`, answer `hello`, at 0, 150 and 700 ms after the command's
+Enter.** On `9e85a910`: zsh and Bash never answered (the text was queued); single-key reads (`read -k 1`, `read -n 1`)
+never answered; hidden reads and Fish failed at 0 ms. On the fix: every case in zsh, Bash and Fish answered, exactly once
+in the journal (zsh/Bash), nothing queued, nothing run as a command, no hidden character drawn.
+
+**B: `printf 'a\tb\n  indented\nüñí\n'`, then `/copy` on its own.** Candidate (bytes handed to the clipboard tool):
+`6120202020202020620a2020696e64656e7465640ac3bcc3b1c3ad` (tab as 7 spaces, no final newline). Fix, through the real
+`pbcopy`/`pbpaste`: `6109620a2020696e64656e7465640ac3bcc3b1c3ad0a` (expected). The person's clipboard was saved (all 4
+types) and restored; hashes matched.
+
+**C: `seq 1 400`, then `/copy`.** Candidate: 400 records, 399 newlines, no frontend text, folding irrelevant (392 lines
+were folded and all copied). Fix: `pbpaste | wc -l` = 400; `awk 'END {print NR, $0}'` = `400 400`;
+`tail -c 16 | xxd -p` = `3339370a3339380a3339390a3430300a`; no non-numeric lines. Root cause: output was stored through
+the screen model, which draws a tab as spaces and joins lines without recording the final line break.
+
+### Root causes and fixes
+
+- **Input:** on macOS the only line/key-read evidence was a question-shaped prompt left open, so prompt-less reads
+  were invisible; a key typed before the first probe (150–400 ms, backing off to 10 s) was routed on no evidence.
+  Fix: the shell holding its own terminal is a builtin's read (keys: confirmed; line: likely after two samples);
+  an on-demand `input-look` probe (negotiated feature) before routing the first key of a draft or an Enter that would
+  queue; held keys reach a program that took the terminal; an answer clears the frontend's stale request.
+  Known limit: on macOS a `wait` builtin looks like a line read (shown as "Probably").
+- **Copy:** tab spans kept; a per-record `outputNewline` from program output only; one exact copy path.
+- **Recovery:** procedure. `nmsh-qa.zsh` (this branch) with `nmsh_qa`, `nmsh_qa_reopen`, `nmsh_qa_sessions`,
+  `nmsh_qa_list`, `nmsh_qa_adopt`; it refuses non-QA directories.
+- **Security review** of the fix commits found two issues, both fixed with tests: a quadratic trailing-escape regex
+  (`4cb32e32`) and an NMSh-command paste label that could mask a risk label (`bbb7b384`).
+
+### Branches (nothing merged into a release branch; nothing tagged, released or retargeted)
+
+| Branch | Base | Commits | For |
+|---|---|---|---|
+| `fix/v019-input-ownership` | `9e85a910` | `d9676fa8` input ownership, `d21ebb4c` waiting state, `3907848f` exact copy, `4cb32e32` linear ending | **v0.19 required** (P0/P1) |
+| `fix/v019-queue-ux` | input branch | `a3bec80f` queue preview and review, `ce63a575` + `bbb7b384` paste disclosure | v0.19 recommended (P2) |
+| `fix/v019-setup-ux` | input branch | `afd88117` previews, Chroma clarity, activity example | v0.19 recommended (P2) |
+| `stabilize/v0.19.0` | input branch | merges the two above | the v0.19 candidate to verify |
+| `fix/v020-stabilization` | `c71a4284` | `62305167` merge of the input branch | **v0.20 required** (backport) |
+| `fix/v020-task-ux` | v0.20 stabilization | `3f946be0` task bar | v0.20 recommended |
+| `fix/v020-claude-defer` | v0.20 stabilization | `968f2974` plugin writes off by default | v0.20, per the managed-Claude deferral |
+| `stabilize/v0.20.0` | v0.20 stabilization | merges `stabilize/v0.19.0`, task bar, Claude deferral | the v0.20 candidate to verify |
+
+Backport rule: every v0.19 fix reaches v0.20 by merge (never cherry-pick); v0.20-only work stays off v0.19.
+
+### Verification log (stabilization heads)
+
+| Head | Gate | Result | Evidence |
+|---|---|---|---|
+| `stabilize/v0.19.0` `1179936b` | local canonical `verify:release` | **fail 4/2456** (kept): three tests still pinned the dropped final newline or the old Setup Chroma preview; one new live test exposed a real race (below) | `verify-release-1179936bbc655a520c39c9ab9a9ef17ebb48f0cf.{log,json}` |
+| `stabilize/v0.19.0` `bcc8e760` | local canonical | **pass** 2457/2457 | `verify-release-bcc8e760….{log,json}` (log sha256 `f4f31b00…`) |
+| `stabilize/v0.19.0` `bcc8e760` | PR CI 38803588641, dispatch CI 38803613336 | **fail** (kept): Ubuntu shard 1/2 only; a new live test read the journal before Linux wrote it (test synchronization, fixed `23fcb4f4`); macOS, Fedora, Node 22 and timing jobs passed | GitHub Actions |
+| `stabilize/v0.20.0` `36858e76` | local canonical | **fail 2/2641** (kept): the portable-mod gate's textual `shell:` rule matched the deferral note's words; reworded (`7f18d766`), the gate unchanged | `verify-release-36858e76….{log,json}` (sha256 `a7fd9f1c…`) |
+| `stabilize/v0.20.0` `aff3f8cc` | local canonical | **fail 1/2641** (kept): the same journal timing in the Bash live test, under local load; fixed by `23fcb4f4` | `verify-release-aff3f8cc….{log,json}` (sha256 `2647a07d…`) |
+| **`stabilize/v0.19.0` `adfce9c1`** | local canonical | **pass** 2457/2457, 0 skipped; bench typecheck and timing smoke | `verify-release-adfce9c1….{log,json}` (sha256 `6f0087ac…`), 20:50:59–20:56:47Z, clean before/after |
+| **`stabilize/v0.19.0` `adfce9c1`** | PR CI 38805295259, dispatch CI 38805309388 (all shards, Node 22, Fedora, timing) | **pass** | GitHub Actions |
+| **`stabilize/v0.20.0` `2f00b301`** | local canonical | **pass** 2640/2641, 1 skipped (the pre-existing skip) | `verify-release-2f00b301….{log,json}` (sha256 `c8fa7b90…`), 20:56:47–21:02:57Z, clean before/after |
+| **`stabilize/v0.20.0` `2f00b301`** | PR CI 38805309322, dispatch CI 38805314450 | **pass** | GitHub Actions |
+
+Draft PRs (not ready, not merged): **#395** `stabilize/v0.19.0` → `release/v0.19.0`; **#396** `stabilize/v0.20.0` →
+`release/v0.20.0`. #390, #392 and #394 are untouched. The physical QA gate is unchanged and not passed.
+Visual checks (VHS stills, not physical QA): waiting states, queue preview and review, task bar, and on v0.20 the
+activity line, queue block, task bar and composer stacked without overlap.
+
+**Race found by that run (fixed, `fb395506`):** after Ctrl+C on a read with a question open, the frontend still held the
+question, so the next command's first key started a draft marked as a reply; when the prompt came back mid-typing,
+the existing reply rule discarded it and the rest ran as a fragment. Reproduced deterministically (a trap delays the
+prompt by 1.5 s) before the fix; the test passes after it. Ctrl+C and Ctrl+Z now end the question in the frontend.
+
+### Physical QA still required (nothing above passes a checklist item)
+
+All of v0.19 passes 1–3 and v0.20 passes 1–3 and 5 must be repeated by a person on the stabilized builds, with
+particular attention to 1.3, 1.4, 1.5, 1.7 (input), 1.11–1.12 (bytes), 2.2–2.4 (reopen with `nmsh_qa_reopen`), the
+queue preview and review, the task bar, and Setup's previews. Physical Linux/Fish 3.7 remains outstanding for both.
+Managed Claude 4.1–4.3: **deferred by the maintainer, not performed, not passed**.
+
 ## Checkpoint and handover (2026-10-15, resumed session)
 
 State at the end of the resumed session; the earlier handover below is kept as written.
