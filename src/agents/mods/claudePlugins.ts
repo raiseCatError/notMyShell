@@ -132,7 +132,7 @@ export async function claudePluginEntries(listing: unknown, cwd: string, profile
       claude: {pluginId: raw.id, scope: raw.scope === 'user' || raw.scope === 'project' || raw.scope === 'local' ? raw.scope : 'user', ...(raw.projectPath ? {projectPath: raw.projectPath} : {}), ...(profile?.configDir ? {configDir: profile.configDir} : {})},
       toggle: override ? {supported: false, reason: `This project's ${override.file} decides it here; NMSh changes only the scope a plugin is installed at`}
         : claudePluginWrites() ? {supported: true}
-          : {supported: false, reason: `Turning plugins on and off from NMSh is not verified in this release. In a shell: claude plugin ${enabled === true ? 'disable' : 'enable'} ${raw.id} --scope ${raw.scope === 'user' || raw.scope === 'project' || raw.scope === 'local' ? raw.scope : 'user'}`}});
+          : {supported: false, reason: `Turning plugins on and off from NMSh is not verified in this release. Run it yourself: claude plugin ${enabled === true ? 'disable' : 'enable'} ${raw.id} --scope ${raw.scope === 'user' || raw.scope === 'project' || raw.scope === 'local' ? raw.scope : 'user'}`}});
   }
   return entries;
 }

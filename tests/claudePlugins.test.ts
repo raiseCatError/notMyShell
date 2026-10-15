@@ -235,7 +235,7 @@ test('default: plugin changes are off and explained; the inventory stays; Claude
     const listing = [{id: 'skins@market', version: '1.0.0', scope: 'user', enabled: true, installPath: '/nonexistent/skins'}];
     const [entry] = await claudePluginEntries(listing, '/nonexistent-project');
     assert.equal(entry!.enabled, 'yes', 'what Claude reports is still read and shown');
-    assert.deepEqual(entry!.toggle, {supported: false, reason: 'Turning plugins on and off from NMSh is not verified in this release. In a shell: claude plugin disable skins@market --scope user'});
+    assert.deepEqual(entry!.toggle, {supported: false, reason: 'Turning plugins on and off from NMSh is not verified in this release. Run it yourself: claude plugin disable skins@market --scope user'});
     // Even a direct call never starts Claude: the executable here would fail the test if it ran.
     assert.deepEqual(await setPluginEnabled('/nonexistent/claude-must-not-run', entry!, false, new Set(['skins@market'])),
       {ok: false, message: 'Turning plugins on and off from NMSh is not verified in this release'});
