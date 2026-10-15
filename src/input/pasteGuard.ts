@@ -148,9 +148,15 @@ function packageKinds(command: string, sub: string, rest: string[]): PasteKind[]
 }
 
 export function classifyCommand(text: string, pipedFrom: boolean): PasteKind[] {
-  // An NMSh command (/copy, /queue, /compare): NMSh's only when submitted on its own (see nmshCommandNote).
+  // An NMSh command (/copy, /queue, /compare) is NMSh's only when submitted on its own (see nmshCommandNote); among
+  // other lines the shell receives it, so it is classified like any shell text too and a risk always outranks it
+  // (`/copy $(curl … | sh)` still says it runs downloaded code).
   const slash = parseSlashCommand(text.trim());
-  if (slash && slash.kind !== 'unknown') return ['nmsh'];
+  if (slash && slash.kind !== 'unknown') return [...shellKinds(text, pipedFrom).filter(kind => kind !== 'unknown' && kind !== 'text'), 'nmsh'];
+  return shellKinds(text, pipedFrom);
+}
+
+function shellKinds(text: string, pipedFrom: boolean): PasteKind[] {
   if (looksLikeProse(text)) return ['text'];
   const all = words(text);
   // Leading env assignments and sudo-like prefixes.

