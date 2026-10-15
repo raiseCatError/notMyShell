@@ -175,9 +175,9 @@ export class WatchTasks {
   }
 
   /** Run once now (skipped while a run is still in flight: runs never overlap). */
-  runNow(id: string): void {
+  runNow(id: string): boolean {
     const watch = this.get(id);
-    if (!watch || watch.status === 'stopped' || this.children.has(id)) return;
+    if (!watch || watch.status === 'stopped' || this.children.has(id)) return false;
     const timer = this.timers.get(id);
     if (timer) clearTimeout(timer);
     this.timers.delete(id);
@@ -194,7 +194,7 @@ export class WatchTasks {
       child = spawn(this.shell, ['-c', watch.command], {cwd: watch.cwd, env: {...this.env, NO_COLOR: '1', FORCE_COLOR: '0'}, detached: true, stdio: ['ignore', 'pipe', 'pipe']});
     } catch (error) {
       this.record(watch, {output: stripTerminalControls(String(error), MAX_OUTPUT), exitCode: -1, at: started, durationMs: 0, error: 'spawn failed'});
-      return;
+      return true;
     }
     this.children.set(id, child);
     const take = (decoder: StringDecoder, chunk: Buffer) => {
@@ -230,6 +230,7 @@ export class WatchTasks {
         ...(spawnError ? {error: stripTerminalControls(spawnError, 300)} : {}),
         ...(signal ? {signal} : {})});
     });
+    return true;
   }
 
   private signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
