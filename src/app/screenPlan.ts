@@ -24,6 +24,8 @@ export type RegionKind =
   | 'inspector'
   | 'suggestions'
   | 'activity'
+  /** The expanded command queue, right after the activity region (see withQueueRows); never part of the PTY. */
+  | 'queue'
   | 'composerBorder'
   | 'prompt'
   | 'input'
@@ -368,6 +370,31 @@ export function withNoticeRows(plan: ScreenPlan, count: number, kind: 'notices' 
   const shift = (region: Region): Region => (region.top >= at ? {...region, top: region.top + count} : region);
   const regions = [...plan.regions.slice(0, index), {kind, top: at, height: count}, ...plan.regions.slice(index).map(shift)];
   return {...plan, rows: plan.rows + count, regions, transcript: shift(plan.transcript)};
+}
+
+/** The transcript keeps at least this many rows when the queue's list takes some. */
+const QUEUE_MIN_TRANSCRIPT = 3;
+
+/**
+ * The queue's list, right after the activity region (its header is the activity region's queue row). The rows come
+ * from the transcript's view, never from the shell's terminal: ptyRows stays as planned, so a growing or shrinking
+ * queue never resizes the running program. Rows that do not fit leave the list shorter; none means no list.
+ */
+export function withQueueRows(plan: ScreenPlan, count: number): ScreenPlan {
+  const activity = regionOf(plan, 'activity');
+  if (count <= 0 || !activity || plan.panelActive || activity.top < plan.transcript.top) return plan;
+  const take = Math.min(count, Math.max(0, plan.transcript.height - QUEUE_MIN_TRANSCRIPT));
+  if (take <= 0) return plan;
+  const transcriptEnd = plan.transcript.top + plan.transcript.height;
+  const activityEnd = activity.top + activity.height;
+  // Everything from the transcript's end through the activity region moves up; the list fills the rows it leaves.
+  const moved = (region: Region): Region => region.kind === 'transcript' ? {...region, height: region.height - take}
+    : region.top >= transcriptEnd && region.top < activityEnd ? {...region, top: region.top - take} : region;
+  const regions = plan.regions.map(moved);
+  regions.splice(regions.findIndex(region => region.kind === 'activity') + 1, 0, {kind: 'queue', top: activityEnd - take, height: take});
+  const transcript = moved(plan.transcript);
+  return {...plan, regions: regions.filter(region => region.height > 0), transcript,
+    viewportRows: Math.max(1, plan.composerPosition === 'flow' ? transcript.height : plan.viewportRows - take)};
 }
 
 export function regionOf(plan: ScreenPlan, kind: RegionKind): Region | undefined {

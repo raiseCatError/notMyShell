@@ -30,13 +30,12 @@ import {referenceCopyText, referencePaletteItems} from '../ui/ReferenceMenu.js';
 import {integrationActivation} from '../tools/Activation.js';
 import {confirmToolInstall, createToolsPanel, refreshTools, renderTools, toolsKey, type ToolsPanel} from '../tools/ToolsPanel.js';
 import {describeCommandSource, describeSlashCommand, inspectCommand, renderInspector} from '../shell/CommandInspector.js';
-import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState} from '../setup/SetupCat.js';
+import {CHROMA_PREVIEW_NOTE, createSetup, NATIVE_ONLY_NOTE, renderSetup, SETUP_MIN_SIZE, SETUP_SECTIONS, setupIsIdempotent, setupKey, setupSelectedRow, type SetupState, setupShowsChroma, chromaVisibilityNote} from '../setup/SetupCat.js';
 import {glyphDiagnosticRows} from '../setup/glyphDiagnostic.js';
 import {fits, renderTooSmall, type MinimumSize} from '../ui/Modal.js';
 import {CellGrid} from '../idle/CellGrid.js';
-import {IDLE_FRAME_MS, type IdleMode} from '../idle/scenes.js';
-import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime,
-  SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState} from '../idle/IdleVisuals.js';
+import {IDLE_FRAME_MS, type IdleMode, IDLE_MODE_LABELS} from '../idle/scenes.js';
+import {createScreensaverPanel, effectiveMode, idleFrameRows, idleMotion, idlePaletteFor, previewSize, renderScreensaverPanel, sceneTime, SCREENSAVER_MIN_SIZE, screensaverKey, IDLE_SEED, type ScreensaverPanelState, idlePreviewRows, previewSaver} from '../idle/IdleVisuals.js';
 import {captureFromRows, cropCapture, type ScreenCapture} from '../idle/screenCapture.js';
 import {makeRng} from '../idle/screenEffects.js';
 import {SCREEN_MODE_EFFECT, pickRandomSaver, saverLoopComplete, IDLE_FRAME_MS as SAVER_FRAME_MS} from '../idle/scenes.js';
@@ -191,7 +190,7 @@ import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
-import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
+import {pauseReason, pausedGlyph, queueGlyph, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
@@ -245,7 +244,7 @@ import {CursorPresenter} from '../cursor/CursorPresenter.js';
 import {runDoctor} from '../doctor/doctor.js';
 import {parseWatch, watchSafety, WatchTasks} from '../tasks/WatchTasks.js';
 import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '../tasks/WatchPanel.js';
-import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis} from '../input/pasteGuard.js';
+import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
 import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
@@ -294,7 +293,7 @@ import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentRepor
 import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
 import {detectAgentCommand} from '../agents/agents.js';
 import {describeNotice, noticeExpiresAt, noticeKey, noticeVisible, selectNotices, sessionLabel, type NoticeView, type SessionNotice} from '../session/SessionNotices.js';
-import {composerEdgeStates, cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {composerEdgeStates, cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan, withQueueRows, regionOf} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
@@ -395,6 +394,10 @@ const ERROR = lazyForeground(UI_COLORS.failure);
 const STOP_TYPE_AHEAD_MS = 2000;
 /** Longest a key waits for an on-demand look at the running command's input state before it is routed anyway. */
 const OWNERSHIP_LOOK_MS = 800;
+/** How long after confirming a queue review an empty Enter is not sent to the command that just started. */
+const QUEUE_CONFIRM_SETTLE_MS = 600;
+/** The transcript keeps at least this many rows when the expanded queue takes some (as withQueueRows does). */
+const QUEUE_MIN_TRANSCRIPT_ROWS = 3;
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -560,6 +563,8 @@ export class TerminalApp {
   private screensaverPanel?: ScreensaverPanelState;
   private screensaverAnimation?: () => void;
   private readonly screensaverGrid = new CellGrid();
+  /** The sample screen previews animate when no screen of the person's is captured (see idlePreviewRows). */
+  private readonly idleSample: {key?: string; capture?: ScreenCapture} = {};
   /** Custom UI chrome colors draft. */
   private chromeEditor?: ChromeEditorState;
   /** Custom colors for idle visuals or Live activity, in the shared gradient stop editor. */
@@ -807,6 +812,13 @@ export class TerminalApp {
    */
   private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; release: () => void};
   private replayingHeld = false;
+  /**
+   * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
+   * While it is armed it owns the keys: Enter or y confirms, n or Esc leaves everything as it was, e edits.
+   */
+  private queueReview?: {kind: QueueAffordance; id: number};
+  /** After a review is confirmed, an empty Enter for a moment is swallowed: it never reaches the command it started. */
+  private queueConfirmedAt = 0;
   /** The previous command's phrase pair, so two commands in a row never get the same one. */
   private lastActivityPair?: ActivityVerbPair;
   /** This session's command queue as its owner (the session service or in-process client) last reported it. */
@@ -1880,7 +1892,7 @@ export class TerminalApp {
     if (this.pastePreview) {
       const preview = this.pastePreview;
       if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch);
+      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch, this.shellId);
       else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
       else if (key.kind === 'text' && key.value.toLowerCase() === 'c') this.keepClip(preview.text, 'paste', this.shellCwd);
       else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
@@ -2097,6 +2109,7 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    if (this.queueReview) { this.queueReviewKey(key); return; }
     if (this.ownershipLook) {
       // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
       if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
@@ -2304,7 +2317,7 @@ export class TerminalApp {
         const batch = this.batchAvailable(key.value);
         this.pastePreview = {text: key.value, analysis, batch};
         // The compact strip never squeezes the composer: when this screen has no room for it, Review is the surface.
-        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch);
+        if (!this.pasteCompactFits()) this.pasteReview = createPasteReview(key.value, analysis, batch, this.shellId);
         this.render();
         return;
       }
@@ -2997,7 +3010,7 @@ export class TerminalApp {
         const analysis = analyzePaste(clip.text);
         const batch = this.batchAvailable(clip.text);
         this.pastePreview = {text: clip.text, analysis, batch};
-        this.pasteReview = createPasteReview(clip.text, analysis, batch);
+        this.pasteReview = createPasteReview(clip.text, analysis, batch, this.shellId);
         break;
       }
       case 'clearClips':
@@ -5780,11 +5793,15 @@ export class TerminalApp {
   private setupPreview(state: SetupState, columns: number): string[] {
     const section0 = SETUP_SECTIONS[state.section]?.id;
     // Prompt/Appearance previews show the base theme unless the local preview switch asks for the draft's Chroma.
-    const rawPreview = (section0 === 'appearance' || section0 === 'prompt') && !state.previewChroma;
+    // The preview shows the draft's Chroma as soon as it is on; P compares with the base theme.
+    const chromaStep = section0 === 'appearance' || section0 === 'prompt';
+    const shown = chromaStep && setupShowsChroma(state);
+    const rawPreview = chromaStep && !shown;
     const draft = rawPreview ? {...state.draft, presentation: {...state.draft.presentation, preset: 'off' as const}} : state.draft;
-    const chromaNote = section0 === 'appearance' || section0 === 'prompt'
-      ? [`  ${PRIMARY}\u001b[1mPreview Chroma${RESET}  ${SUBTLE}${state.previewChroma ? 'On' : 'Off'}  ·  Chroma setting  ${state.draft.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[state.draft.presentation.preset]}  ·  P toggles the preview only${RESET}`,
-        `  ${SUBTLE}${chromaPreviewNote(Boolean(state.previewChroma) && state.draft.presentation.preset !== 'off')}${RESET}`] : [];
+    const preset = state.draft.presentation.preset;
+    const chromaNote = chromaStep
+      ? [`  ${PRIMARY}\u001b[1mChroma setting${RESET}  ${SECONDARY}${preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[preset]}${RESET}  ${SUBTLE}·  preview shows ${shown ? 'it' : 'the base theme'}${preset === 'off' ? '' : `  ·  P ${shown ? 'compares with the base theme' : 'shows Chroma again'}`}${RESET}`,
+        `  ${SECONDARY}${chromaVisibilityNote(state.draft)}${RESET}`] : [];
     const section = SETUP_SECTIONS[state.section]?.id;
     const width = Math.max(10, columns - 4);
     const label = (text: string) => `  ${SUBTLE}${text.padEnd(12)}${RESET}`;
@@ -5904,12 +5921,24 @@ export class TerminalApp {
         break;
       }
       case 'idle': {
+        // The activity rows show the running and finished wording, not the screen saver.
+        const selectedId = setupSelectedRow(state)?.row.id;
+        if (selectedId === 'activityStyle' || selectedId === 'activityColors' || selectedId === 'setupActivityColors') {
+          rows.push(...this.setupActivityPreview(draft, state));
+          animate = !motion.still && !motion.disabled;
+          break;
+        }
         if (motion.disabled) { rows.push(`  ${SUBTLE}Decorative effects Off: idle visuals stay off.${RESET}`); break; }
         const mode = effectiveMode(draft.idleVisuals.mode, motion);
-        const elapsed = Date.now() - this.lastActivity;
-        rows.push(...idleFrameRows(this.screensaverGrid, {mode, width: Math.max(10, Math.min(56, columns - 6)), height: 6, palette: idlePaletteFor(draft),
-          level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode)})
-          .map(line => `  ${line}`));
+        // The real saver over a sample screen (the screen-animating ones need one), restarted when the mode changes;
+        // Random shows each saver it can choose, in turn, and says which.
+        const signature = `idle|${mode}`;
+        const now = Date.now();
+        if (state.previewKey !== signature) { state.previewKey = signature; state.previewStart = now; }
+        const preview = idlePreviewRows(this.screensaverGrid, {mode, width: Math.max(10, Math.min(56, columns - 6)), height: 7, palette: idlePaletteFor(draft),
+          level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', elapsed: now - (state.previewStart ?? now), still: motion.still, sample: this.idleSample});
+        rows.push(`  ${SUBTLE}Preview · ${mode === 'random' ? `Random · now ${IDLE_MODE_LABELS[preview.shown]}` : IDLE_MODE_LABELS[preview.shown]}${SCREEN_MODE_EFFECT[preview.shown] ? ' · over a sample screen; it animates your real screen' : ''}${motion.still ? ' · still (Reduced Motion)' : ''}${RESET}`,
+          ...preview.rows.map(line => `  ${line}`));
         animate = !motion.still;
         break;
       }
@@ -5926,6 +5955,36 @@ export class TerminalApp {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.setupState) this.render(); }, 150);
     } else if (!animate && this.screensaverAnimation) { this.screensaverAnimation(); this.screensaverAnimation = undefined; }
     return [...chromaNote, ...rows].map(row => truncateAnsi(row, columns - 2));
+  }
+
+  /**
+   * The live activity wording as a command shows it, through the real renderers: while it runs (with the live
+   * activity colors and sweep), when it finishes, and when it fails, which stays factual in every style.
+   */
+  private setupActivityPreview(draft: PromptConfiguration, state: SetupState): string[] {
+    const expressive = draft.liveActivity.style === 'expressive';
+    const pair = expressive ? {active: 'Cooking', complete: 'Cooked'} : undefined;
+    const now = Date.now();
+    const signature = `activity|${draft.liveActivity.style}|${JSON.stringify(draft.liveActivity)}`;
+    if (state.previewKey !== signature) { state.previewKey = signature; state.previewStart = now; }
+    const elapsed = now - (state.previewStart ?? now);
+    const still = !this.decorativeMotionAllowed() || sweepStill(draft);
+    const parts = liveActivityParts('npm run build', 4200, still ? 0 : elapsed, pair);
+    const {cells, style} = liveActivityPaint(parts.phrase, draft, still ? 0 : elapsed, still);
+    const running = `${sweepCells(cells, still ? 0 : elapsed, style, colorLevel(), still)}${SECONDARY}${parts.duration}${RESET}`;
+    const at = new Date(2026, 0, 1, 14, 46);
+    const done = completedActivity('npm run build', 18_000, at, 0, false, undefined, pair);
+    const failed = completedActivity('npm run build', 2000, at, 1, false, undefined, pair);
+    const label = (text: string) => `  ${SECONDARY}${text.padEnd(11)}${RESET}`;
+    return [
+      `  ${PRIMARY}\u001b[1m${expressive ? 'Expressive' : 'Classic'}${RESET}  ${SECONDARY}${expressive ? 'a phrase while it runs, its past tense when done' : 'plain words: Running, then Completed'}${RESET}`,
+      '',
+      `${label('Running')}${running}`,
+      `${label('Completed')}${SUCCESS}${done.main}${RESET}${SECONDARY}${done.detail}${RESET}`,
+      `${label('Failed')}${ERROR}${failed.main}${RESET}${SECONDARY}${failed.detail}${RESET}`,
+      '',
+      `  ${SECONDARY}Failures and interrupts always keep their plain wording and exit code.${RESET}`,
+    ];
   }
 
   /**
@@ -6103,8 +6162,9 @@ export class TerminalApp {
     const size = previewSize(columns, rows);
     const mode = effectiveMode(settings.mode, motion);
     const elapsed = Date.now() - state.startedAt;
-    // Screen savers preview over the real screen snapshot taken when the gallery opened (cropped to the preview box).
-    const previewMode: IdleMode = mode === 'random' ? 'blackHole' : mode;
+    // Screen savers preview over the real screen snapshot taken when the gallery opened (cropped to the preview box);
+    // Random previews each saver it can choose, in turn.
+    const previewMode: IdleMode = previewSaver(mode, elapsed).mode;
     let capture: ScreenCapture | undefined;
     if (SCREEN_MODE_EFFECT[previewMode] && this.saverCapture) {
       if (!this.saverGalleryCapture || this.saverGalleryCapture.width !== Math.min(size.width, this.saverCapture.width) || this.saverGalleryCapture.height !== Math.min(size.height, this.saverCapture.height) || this.saverGalleryMode !== previewMode) {
@@ -6112,9 +6172,9 @@ export class TerminalApp {
       }
       capture = this.saverGalleryCapture;
     }
-    const preview = motion.disabled ? [] : idleFrameRows(this.screensaverGrid, {mode: previewMode, width: capture?.width ?? size.width, height: capture?.height ?? size.height,
-      time: motion.still ? 20_000 : sceneTime(elapsed, Math.floor(elapsed / IDLE_FRAME_MS[mode]), mode),
-      palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', ...(capture ? {capture} : {})});
+    const preview = motion.disabled ? [] : idlePreviewRows(this.screensaverGrid, {mode, width: capture?.width ?? size.width, height: capture?.height ?? size.height,
+      elapsed, still: motion.still, palette: idlePaletteFor(this.promptConfiguration), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd',
+      ...(capture ? {capture} : {}), sample: this.idleSample}).rows;
     // A real animated preview while the gallery is open; one timer, removed with the panel.
     if (!motion.still && !motion.disabled && !this.screensaverAnimation) {
       this.screensaverAnimation = presentationClock.subscribe(() => { if (this.screensaverPanel) this.render(); }, Math.max(120, IDLE_FRAME_MS[mode]));
@@ -6180,8 +6240,8 @@ export class TerminalApp {
     const title = editor.target === 'idle' ? 'Idle visuals · Custom colors' : 'Live activity · Custom colors';
     const rows = ['', ...renderGradientEditorRows(editor.gradient, title).map(row => `  ${row}`), '', `  ${SUBTLE}${GLYPHS.separator.repeat(2)} Preview${RESET}`];
     if (editor.target === 'idle') {
-      rows.push(...idleFrameRows(this.screensaverGrid, {mode: draft.idleVisuals.mode, width: Math.max(10, Math.min(56, columns - 6)), height: 5,
-        palette: idlePaletteFor(draft), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', time: 20_000}).map(line => `  ${line}`));
+      rows.push(...idlePreviewRows(this.screensaverGrid, {mode: draft.idleVisuals.mode, width: Math.max(10, Math.min(56, columns - 6)), height: 5,
+        palette: idlePaletteFor(draft), level: colorLevel(), nerd: getCurrentGlyphMode() === 'nerd', elapsed: 2000, still: true, sample: this.idleSample}).rows.map(line => `  ${line}`));
     } else {
       const {cells, style} = liveActivityPaint('• Running sleep 5 · ', draft);
       rows.push(`  ${sweepCells(cells, Number.POSITIVE_INFINITY, style, colorLevel(), true)}${SECONDARY}3.4s${RESET}`,
@@ -7221,7 +7281,7 @@ export class TerminalApp {
     const batch = this.batchAvailable(text);
     this.pastePreview = {text, analysis, batch};
     // An explicit /ps always shows the review first, whatever Paste Preview is set to.
-    this.pasteReview = createPasteReview(text, analysis, batch);
+    this.pasteReview = createPasteReview(text, analysis, batch, this.shellId);
   }
 
   /** Explicit staging only: never reads the clipboard, writes files or submits commands. */
@@ -7393,6 +7453,9 @@ export class TerminalApp {
     const hidden = analysis.commands.length - used;
     if (hidden > 0 && summary.length) summary[summary.length - 1] += `${SUBTLE} · +${hidden} more${RESET}`;
     for (const item of summary) rows.push(`  ${item}`);
+    // NMSh commands among other lines reach the shell as text: say so before anything is inserted or queued.
+    const nmsh = nmshCommandNote(analysis, this.shellId);
+    if (nmsh) rows.push(`${ACCENT}${nmsh}${RESET}`);
     if (analysis.commands.some(command => ['text', 'unknown'].includes(primaryKind(command.kinds)))) rows.push(`${SUBTLE}${PASTE_EXACT_NOTE}${RESET}`);
     rows.push(`${SUBTLE}Enter insert · R review${preview.batch ? ' · B queue as commands' : ''} · Esc cancel · C keep clip${RESET}`);
     return rows.map(row => truncateAnsi(row, columns));
@@ -9415,12 +9478,72 @@ export class TerminalApp {
       panelRows,
       railPresentation: this.preparedRail(columns).presentation,
     };
-    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return planScreen(input);
+    // The expanded queue asks for exactly the rows its block needs within what the transcript can spare, so the plan
+    // and the painted block always agree (a block painted at its own height is the same block).
+    const listed = (plan: ScreenPlan) => {
+      if (panelRows !== undefined) return plan;
+      const budget = Math.min(this.queueBudget(rows), Math.max(0, plan.transcript.height - QUEUE_MIN_TRANSCRIPT_ROWS) + 1);
+      return withQueueRows(plan, Math.max(0, (this.queueBlockRows(columns, budget)?.length ?? 0) - 1));
+    };
+    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return listed(planScreen(input));
     // Flow scrolled back: where the view starts decides how much of the composer
     // is still on screen, and it is resolved against the following capacity.
     const following = planScreen({...input, detached: false});
     const viewStart = this.historyViewport.resolve(transcriptRows, following.viewportRows);
-    return this.historyViewport.detached ? planScreen({...input, viewStart}) : following;
+    return listed(this.historyViewport.detached ? planScreen({...input, viewStart}) : following);
+  }
+
+  /**
+   * The expanded queue (header and list) when the screen has room, else undefined (the one-line row says it). Room
+   * follows the terminal's height: up to three commands from 24 rows, two from 18, none below. Hidden while a
+   * program waits for input: its question stays next to the composer.
+   */
+  private queueBlockRows(columns: number, budget: number): string[] | undefined {
+    if (!this.queueAvailable() || !this.queueState.entries.length || this.queueEdit) return undefined;
+    if (this.running && (this.inputState?.request || this.passthrough)) return undefined;
+    const review = this.queueReview?.kind;
+    return budget >= 2 ? queueBlock(this.queueState, columns, budget, {...(review ? {review} : {}), ...(this.queueAffordance() ? {affordance: this.queueAffordance()!} : {})}) : undefined;
+  }
+
+  /** Rows the expanded queue may use (header included) on a screen of `rows`; the plan may give it fewer. */
+  private queueBudget(rows: number): number {
+    return rows >= 28 && this.queueReview?.kind === 'approve' ? 7 : rows >= 24 ? 5 : rows >= 18 ? 3 : 0;
+  }
+
+  /**
+   * What the queue offers from an empty Enter: only at idle (no command, so no program can be waiting for input),
+   * with an empty composer and nothing else owning input. A paused queue offers a review before resuming; an entry
+   * that asks first offers a review before approving. Nothing ever runs from one key.
+   */
+  private queueAffordance(): QueueAffordance | undefined {
+    if (this.running || this.passthrough || this.startupPending || this.editor.text || this.queueEdit || this.queueCompose || this.queuePanel) return undefined;
+    if (!this.queueAvailable() || !this.queueState.entries.length) return undefined;
+    if (this.queueState.paused) return 'resume';
+    const next = this.queueState.entries[0]!;
+    return this.queueConditionsAvailable() && next.condition === 'approve' && !next.approved ? 'approve' : undefined;
+  }
+
+  /** Keys while a queue review is armed: it owns them until confirmed or dismissed. */
+  private queueReviewKey(key: Key): void {
+    const review = this.queueReview!;
+    const value = key.kind === 'text' ? key.value.toLowerCase() : '';
+    if (key.kind === 'enter' || value === 'y') {
+      this.queueReview = undefined;
+      this.queueConfirmedAt = Date.now();
+      // The exact entry that was reviewed: a queue that changed meanwhile already dismissed the review.
+      this.session.queue(review.kind === 'approve' ? {op: 'approve', id: review.id} : {op: 'resume'});
+    } else if (key.kind === 'escape' || key.kind === 'interrupt' || value === 'n') {
+      this.queueReview = undefined;
+      // Not now: an entry that asks first would hold everything typed behind it, so the queue pauses and commands run.
+      if (review.kind === 'approve' && value === 'n') {
+        this.session.queue({op: 'pause'});
+        this.output.addFrontendInteraction('/queue', 'Not approved; the queue is paused, so your commands run directly. /queue to come back to it.', INFO);
+      }
+    } else if (value === 'e') {
+      this.queueReview = undefined;
+      this.beginQueueEdit(review.id);
+    }
+    this.render();
   }
 
   private render(): void {
@@ -9579,6 +9702,7 @@ export class TerminalApp {
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': return this.activityRows(plan, columns);
+        case 'queue': return this.queueBlockRows(columns, region.height + 1)?.slice(1) ?? [];
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -10179,8 +10303,11 @@ export class TerminalApp {
    * stays in view however far the transcript scrolled or folded. Nothing extra is reserved and the PTY never resizes.
    */
   private activityRows(plan: ScreenPlan, columns: number): string[] {
-    const queue = this.queueLine(columns);
-    if (!this.running) return queue ? [queue, ''] : [];
+    // With the list shown (the plan's queue region), its header takes the queue row and the list follows it.
+    const region = regionOf(plan, 'queue');
+    const listed = region ? this.queueBlockRows(columns, region.height + 1) : undefined;
+    const queue = listed?.[0] ?? this.queueLine(columns);
+    if (!this.running) return queue ? (listed ? ['', queue] : [queue, '']) : [];
     const request = this.inputState?.request;
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
     if (request) {
@@ -10240,7 +10367,8 @@ export class TerminalApp {
   private queueLine(columns: number): string | undefined {
     if (!this.queueAvailable()) return undefined;
     if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
-    return queueRow(this.queueState, columns);
+    const affordance = this.queueAffordance();
+    return queueRow(this.queueState, columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
   }
 
   private onQueueState(state: QueueState, news: QueueNews): void {
@@ -10250,8 +10378,15 @@ export class TerminalApp {
     if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
     const paused = state.paused;
     // A pause NMSh decided (not the person's own) is a safety event: say it where the failure is.
+    // Said once, where it happened; the queue's own row carries what is waiting and what to do.
     if (paused && paused.reason !== 'user' && paused.at !== previous.paused?.at && state.entries.length) {
-      this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}${SECONDARY} ${state.entries.length} waiting · /queue to resume or clear${RESET}`);
+      this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}`);
+    }
+    // A review is for what was shown: any change to what it would act on dismisses it, so nothing unseen runs.
+    const review = this.queueReview;
+    if (review && (state.entries[0]?.id !== review.id || (review.kind === 'resume') !== Boolean(state.paused)
+      || (review.kind === 'approve' && (state.entries[0]?.approved || state.entries[0]?.condition !== 'approve' || state.entries[0]?.text !== previous.entries[0]?.text)))) {
+      this.queueReview = undefined;
     }
     if (this.queueEdit && !state.entries.some(entry => entry.id === this.queueEdit!.id)) {
       this.queueEdit = undefined;
@@ -10309,6 +10444,8 @@ export class TerminalApp {
         void this.submit();
         return;
       }
+      // A rapid second Enter after confirming a queue review is not an answer for the command it just started.
+      if (intent === 'enter' && !text.trim() && Date.now() - this.queueConfirmedAt < QUEUE_CONFIRM_SETTLE_MS) return;
       const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
       if (toProgram) {
         this.editor.clear();
@@ -10322,6 +10459,13 @@ export class TerminalApp {
       return;
     }
     if (intent === 'send') return;
+    // An empty Enter where the queue offers something arms its review; nothing runs yet.
+    const affordance = intent === 'enter' && !text.trim() ? this.queueAffordance() : undefined;
+    if (affordance && Date.now() - this.queueConfirmedAt >= QUEUE_CONFIRM_SETTLE_MS) {
+      this.queueReview = {kind: affordance, id: this.queueState.entries[0]!.id};
+      this.render();
+      return;
+    }
     if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused))) {
       this.enqueue(text);
       return;

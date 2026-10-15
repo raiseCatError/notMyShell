@@ -52,7 +52,7 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         frontend.pty.write('w');
         await frontend.waitFor(/asks first/u, mark);
         frontend.pty.write('\u001b');
-        await frontend.waitFor(/next needs your approval: touch/u, mark, 20_000);
+        await frontend.waitFor(/next needs your approval[\s\S]*touch/u, mark, 20_000);
         await pause(1500);
         assert.equal(existsSync(marker), false, 'nothing runs while it waits for approval');
         mark = frontend.mark;
