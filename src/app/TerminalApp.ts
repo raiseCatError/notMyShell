@@ -191,7 +191,7 @@ import {completedActivity, liveActivityParts} from '../status/activity.js';
 import {ACTIVITY_VERBS, selectActivityVerb, type ActivityVerbPair} from '../status/activityVerbs.js';
 import {OpenLine, promptShaped} from '../session/openLine.js';
 import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, inputProgram, waitedDetail} from '../status/inputStatus.js';
-import {pauseReason, pausedGlyph, queueGlyph, queueRow} from '../status/queueStatus.js';
+import {pauseReason, pausedGlyph, queueGlyph, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
@@ -294,7 +294,7 @@ import {detectShellEnvironment, shellEnvironmentRows, type ShellEnvironmentRepor
 import {agentColor, agentCompletionText, renderAgentStats} from '../agents/AgentStatsView.js';
 import {detectAgentCommand} from '../agents/agents.js';
 import {describeNotice, noticeExpiresAt, noticeKey, noticeVisible, selectNotices, sessionLabel, type NoticeView, type SessionNotice} from '../session/SessionNotices.js';
-import {composerEdgeStates, cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan} from './screenPlan.js';
+import {composerEdgeStates, cursorScreenRow, planScreen, regionAt, withNoticeRows, withStatusRow, screenRowFromTerminal, terminalRowFromScreen, type Region, type ScreenPlan, withQueueRows, regionOf} from './screenPlan.js';
 import {AppearanceState, handleAppearanceKey, renderAppearancePanel, BLUR_MODES} from '../appearance/AppearancePanel.js';
 import {KeyboardState, handleKeyboardKey, renderKeyboardPanel} from '../keyboard/KeyboardPanel.js';
 import {Highlighter} from '../input/Highlighter.js';
@@ -373,6 +373,10 @@ const ERROR = lazyForeground(UI_COLORS.failure);
 const STOP_TYPE_AHEAD_MS = 2000;
 /** Longest a key waits for an on-demand look at the running command's input state before it is routed anyway. */
 const OWNERSHIP_LOOK_MS = 800;
+/** How long after confirming a queue review an empty Enter is not sent to the command that just started. */
+const QUEUE_CONFIRM_SETTLE_MS = 600;
+/** The transcript keeps at least this many rows when the expanded queue takes some (as withQueueRows does). */
+const QUEUE_MIN_TRANSCRIPT_ROWS = 3;
 const clipboardFailure = (error: unknown): string => error instanceof ClipboardUnavailableError ? error.message : 'Clipboard copy failed';
 /** Keys that edit or submit the composer; in Flow they bring a scrolled-back view back to it. */
 const FLOW_EDIT_KEYS: ReadonlySet<Key['kind']> = new Set(['text', 'paste', 'backspace', 'delete', 'deleteWord',
@@ -779,6 +783,13 @@ export class TerminalApp {
    */
   private ownershipLook?: {keys: Key[]; startId: number; answering: boolean; release: () => void};
   private replayingHeld = false;
+  /**
+   * The queue review a first empty Enter armed at idle (resume a paused queue, or approve the entry that asks first).
+   * While it is armed it owns the keys: Enter or y confirms, n or Esc leaves everything as it was, e edits.
+   */
+  private queueReview?: {kind: QueueAffordance; id: number};
+  /** After a review is confirmed, an empty Enter for a moment is swallowed: it never reaches the command it started. */
+  private queueConfirmedAt = 0;
   /** The previous command's phrase pair, so two commands in a row never get the same one. */
   private lastActivityPair?: ActivityVerbPair;
   /** This session's command queue as its owner (the session service or in-process client) last reported it. */
@@ -2052,6 +2063,7 @@ export class TerminalApp {
       this.historyViewport.latest();
       return;
     }
+    if (this.queueReview) { this.queueReviewKey(key); return; }
     if (this.ownershipLook) {
       // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
       if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
@@ -9247,12 +9259,72 @@ export class TerminalApp {
       panelRows,
       railPresentation: this.preparedRail(columns).presentation,
     };
-    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return planScreen(input);
+    // The expanded queue asks for exactly the rows its block needs within what the transcript can spare, so the plan
+    // and the painted block always agree (a block painted at its own height is the same block).
+    const listed = (plan: ScreenPlan) => {
+      if (panelRows !== undefined) return plan;
+      const budget = Math.min(this.queueBudget(rows), Math.max(0, plan.transcript.height - QUEUE_MIN_TRANSCRIPT_ROWS) + 1);
+      return withQueueRows(plan, Math.max(0, (this.queueBlockRows(columns, budget)?.length ?? 0) - 1));
+    };
+    if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return listed(planScreen(input));
     // Flow scrolled back: where the view starts decides how much of the composer
     // is still on screen, and it is resolved against the following capacity.
     const following = planScreen({...input, detached: false});
     const viewStart = this.historyViewport.resolve(transcriptRows, following.viewportRows);
-    return this.historyViewport.detached ? planScreen({...input, viewStart}) : following;
+    return listed(this.historyViewport.detached ? planScreen({...input, viewStart}) : following);
+  }
+
+  /**
+   * The expanded queue (header and list) when the screen has room, else undefined (the one-line row says it). Room
+   * follows the terminal's height: up to three commands from 24 rows, two from 18, none below. Hidden while a
+   * program waits for input: its question stays next to the composer.
+   */
+  private queueBlockRows(columns: number, budget: number): string[] | undefined {
+    if (!this.queueAvailable() || !this.queueState.entries.length || this.queueEdit) return undefined;
+    if (this.running && (this.inputState?.request || this.passthrough)) return undefined;
+    const review = this.queueReview?.kind;
+    return budget >= 2 ? queueBlock(this.queueState, columns, budget, {...(review ? {review} : {}), ...(this.queueAffordance() ? {affordance: this.queueAffordance()!} : {})}) : undefined;
+  }
+
+  /** Rows the expanded queue may use (header included) on a screen of `rows`; the plan may give it fewer. */
+  private queueBudget(rows: number): number {
+    return rows >= 28 && this.queueReview?.kind === 'approve' ? 7 : rows >= 24 ? 5 : rows >= 18 ? 3 : 0;
+  }
+
+  /**
+   * What the queue offers from an empty Enter: only at idle (no command, so no program can be waiting for input),
+   * with an empty composer and nothing else owning input. A paused queue offers a review before resuming; an entry
+   * that asks first offers a review before approving. Nothing ever runs from one key.
+   */
+  private queueAffordance(): QueueAffordance | undefined {
+    if (this.running || this.passthrough || this.startupPending || this.editor.text || this.queueEdit || this.queueCompose || this.queuePanel) return undefined;
+    if (!this.queueAvailable() || !this.queueState.entries.length) return undefined;
+    if (this.queueState.paused) return 'resume';
+    const next = this.queueState.entries[0]!;
+    return this.queueConditionsAvailable() && next.condition === 'approve' && !next.approved ? 'approve' : undefined;
+  }
+
+  /** Keys while a queue review is armed: it owns them until confirmed or dismissed. */
+  private queueReviewKey(key: Key): void {
+    const review = this.queueReview!;
+    const value = key.kind === 'text' ? key.value.toLowerCase() : '';
+    if (key.kind === 'enter' || value === 'y') {
+      this.queueReview = undefined;
+      this.queueConfirmedAt = Date.now();
+      // The exact entry that was reviewed: a queue that changed meanwhile already dismissed the review.
+      this.session.queue(review.kind === 'approve' ? {op: 'approve', id: review.id} : {op: 'resume'});
+    } else if (key.kind === 'escape' || key.kind === 'interrupt' || value === 'n') {
+      this.queueReview = undefined;
+      // Not now: an entry that asks first would hold everything typed behind it, so the queue pauses and commands run.
+      if (review.kind === 'approve' && value === 'n') {
+        this.session.queue({op: 'pause'});
+        this.output.addFrontendInteraction('/queue', 'Not approved; the queue is paused, so your commands run directly. /queue to come back to it.', INFO);
+      }
+    } else if (value === 'e') {
+      this.queueReview = undefined;
+      this.beginQueueEdit(review.id);
+    }
+    this.render();
   }
 
   private render(): void {
@@ -9411,6 +9483,7 @@ export class TerminalApp {
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': return this.activityRows(plan, columns);
+        case 'queue': return this.queueBlockRows(columns, region.height + 1)?.slice(1) ?? [];
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -9690,8 +9763,11 @@ export class TerminalApp {
    * stays in view however far the transcript scrolled or folded. Nothing extra is reserved and the PTY never resizes.
    */
   private activityRows(plan: ScreenPlan, columns: number): string[] {
-    const queue = this.queueLine(columns);
-    if (!this.running) return queue ? [queue, ''] : [];
+    // With the list shown (the plan's queue region), its header takes the queue row and the list follows it.
+    const region = regionOf(plan, 'queue');
+    const listed = region ? this.queueBlockRows(columns, region.height + 1) : undefined;
+    const queue = listed?.[0] ?? this.queueLine(columns);
+    if (!this.running) return queue ? (listed ? ['', queue] : [queue, '']) : [];
     const request = this.inputState?.request;
     // A wait reads top to bottom (headline, then the question) wherever the composer is docked.
     if (request) {
@@ -9751,7 +9827,8 @@ export class TerminalApp {
   private queueLine(columns: number): string | undefined {
     if (!this.queueAvailable()) return undefined;
     if (this.queueEdit) return truncateAnsi(`${SECONDARY}${queueGlyph()} Editing a queued command${RESET}${SUBTLE} · Enter saves · Esc cancels${RESET}`, columns);
-    return queueRow(this.queueState, columns);
+    const affordance = this.queueAffordance();
+    return queueRow(this.queueState, columns, {...(this.queueReview ? {review: this.queueReview.kind} : {}), ...(affordance ? {affordance} : {})});
   }
 
   private onQueueState(state: QueueState, news: QueueNews): void {
@@ -9761,8 +9838,15 @@ export class TerminalApp {
     if (news.dropped) this.output.addHistoryLine(`${INFO}${news.dropped} queued command${news.dropped === 1 ? '' : 's'} did not run: the shell ended.${RESET}`);
     const paused = state.paused;
     // A pause NMSh decided (not the person's own) is a safety event: say it where the failure is.
+    // Said once, where it happened; the queue's own row carries what is waiting and what to do.
     if (paused && paused.reason !== 'user' && paused.at !== previous.paused?.at && state.entries.length) {
-      this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}${SECONDARY} ${state.entries.length} waiting · /queue to resume or clear${RESET}`);
+      this.output.addHistoryLine(`${STOPPED}${pausedGlyph()} Queue paused: ${pauseReason(paused)}.${RESET}`);
+    }
+    // A review is for what was shown: any change to what it would act on dismisses it, so nothing unseen runs.
+    const review = this.queueReview;
+    if (review && (state.entries[0]?.id !== review.id || (review.kind === 'resume') !== Boolean(state.paused)
+      || (review.kind === 'approve' && (state.entries[0]?.approved || state.entries[0]?.condition !== 'approve' || state.entries[0]?.text !== previous.entries[0]?.text)))) {
+      this.queueReview = undefined;
     }
     if (this.queueEdit && !state.entries.some(entry => entry.id === this.queueEdit!.id)) {
       this.queueEdit = undefined;
@@ -9820,6 +9904,8 @@ export class TerminalApp {
         void this.submit();
         return;
       }
+      // A rapid second Enter after confirming a queue review is not an answer for the command it just started.
+      if (intent === 'enter' && !text.trim() && Date.now() - this.queueConfirmedAt < QUEUE_CONFIRM_SETTLE_MS) return;
       const toProgram = intent === 'send' || (intent === 'enter' && (!this.queueAvailable() || !text.trim() || this.answersByDefault() || this.passthrough || this.justStopped()));
       if (toProgram) {
         this.editor.clear();
@@ -9833,6 +9919,13 @@ export class TerminalApp {
       return;
     }
     if (intent === 'send') return;
+    // An empty Enter where the queue offers something arms its review; nothing runs yet.
+    const affordance = intent === 'enter' && !text.trim() ? this.queueAffordance() : undefined;
+    if (affordance && Date.now() - this.queueConfirmedAt >= QUEUE_CONFIRM_SETTLE_MS) {
+      this.queueReview = {kind: affordance, id: this.queueState.entries[0]!.id};
+      this.render();
+      return;
+    }
     if (text.trim() && !slash && this.queueAvailable() && (intent === 'queue' || (this.queueState.entries.length > 0 && !this.queueState.paused))) {
       this.enqueue(text);
       return;

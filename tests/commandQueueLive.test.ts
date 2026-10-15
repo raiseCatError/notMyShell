@@ -68,7 +68,10 @@ for (const shell of ['zsh', 'bash', 'fish'] as const) {
         frontend.pty.write(`${line}\r`);
         await pause(80);
       }
-      await frontend.waitFor(/≡ Queued \(5\) · next: cd sub/u, mark);
+      // Room for the list (30 rows): what runs next, in order.
+      // (A redraw writes only the rows that changed, so the header and the list rows are checked apart.)
+      await frontend.waitFor(/├─ next {2}cd sub/u, mark);
+      await frontend.waitFor(/≡ Queue · 5 pending/u, mark);
       assert.match(drawn(frontend, mark), /Enter queues the next command · Ctrl\+S sends to sh/u, 'the empty composer says what Enter does');
       writeFileSync(release, '');
       await frontend.waitFor(/STATE sub kept fn-x (?:opt|on)/u, mark, 30_000);
@@ -92,8 +95,9 @@ test('live: a failed command pauses the queue with its reason; nothing after it 
     frontend.pty.write(`sh -c 'sleep 1; exit 3'\r`);
     await frontend.waitFor(/Running sh -c/u, mark);
     frontend.pty.write(`touch ${marker}\r`);
-    await frontend.waitFor(/Queue paused: sh -c 'sleep 1; exit 3' failed \(exit 3\)\. 1 waiting · \/queue to resume or clear/u, mark, 20_000);
-    await frontend.waitFor(/⏸ Queue paused · sh -c 'sleep 1; exit 3' failed \(exit 3\) · 1 waiting/u, mark);
+    // Said once where it happened; the queue's row carries what waits and what to do, not the same sentence again.
+    await frontend.waitFor(/Queue paused: sh -c 'sleep 1; exit 3' failed \(exit 3\)\./u, mark, 20_000);
+    await frontend.waitFor(/⏸ Queue paused · 1 pending[\s\S]*Enter to review before anything runs · \/queue/u, mark);
     await pause(1500);
     assert.equal(existsSync(marker), false, 'the follow-up did not run blindly');
     // A command typed at the prompt still runs at once; the paused queue keeps waiting.
@@ -286,7 +290,7 @@ test('live: the queue belongs to the session: it survives detach and reattach an
     await first.waitFor(/Running sleep 4/u, mark);
     first.pty.write(`touch ${marker}\r`);
     first.pty.write('sleep 6\r');
-    await first.waitFor(/≡ Queued \(2\)/u, mark);
+    await first.waitFor(/≡ Queue · 2 pending/u, mark);
     const [session] = await sandbox.sessions();
     first.pty.kill('SIGKILL');
     await until(async () => (await sandbox.sessions()).find(item => item.id === session!.id)?.state === 'detached', 15_000, 'detached');
