@@ -5,7 +5,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {parseWatch, watchSafety, WatchTasks, MIN_LOCAL_MS} from '../src/tasks/WatchTasks.js';
-import {renderWatchPanel, watchRow} from '../src/tasks/WatchPanel.js';
+import {renderWatchPanel, watchPanelKey, watchRow} from '../src/tasks/WatchPanel.js';
 import {stripAnsi} from '../src/util/text.js';
 
 function waitFor(predicate: () => boolean, timeoutMs = 5000): Promise<void> {
@@ -67,6 +67,8 @@ test('/track reuses one current and previous snapshot, does not overlap manual r
     assert.equal(task.previous, undefined, 'no artificial previous sample');
     assert.equal(engine.active().length, 1);
     assert.match(stripAnsi(watchRow(task, Date.now())), /Track · sleep 0\.3.*updated/u);
+    assert.deepEqual(watchPanelKey({selected: 0, output: true}, {kind: 'text', value: 'c'}, [task]),
+      {kind: 'copy', id: task.id}, 'copy targets exactly the selected tracker');
     assert.match(stripAnsi(renderWatchPanel({selected: 0, output: true}, [task], 100, Date.now(), 20).join('\n')),
       /Latest completed output[\s\S]*sample/u);
     engine.runNow(task.id);
