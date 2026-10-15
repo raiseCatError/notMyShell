@@ -113,6 +113,26 @@ test('cancellation is acknowledged only when the turn completes as interrupted',
   assert.deepEqual(client.find(message => message.method === 'turn/interrupt')?.params, {threadId: 'thr_1', turnId: 'turn_1'});
 });
 
+test('a cancel made before Codex has named the turn is sent when it does, never dropped', async () => {
+  // No wait at all: the message is still queued behind thread/start, so neither the thread nor the turn has an id yet.
+  const client = await session('interrupt', async (codex, events, wait) => {
+    codex.send('long task');
+    codex.cancel();
+    await wait('settled');
+    assert.deepEqual(events.at(-1), {kind: 'settled', ok: false, interrupted: true});
+    assert.ok(events.some(event => event.kind === 'requestsCleared'));
+  });
+  assert.deepEqual(client.filter(message => message.method === 'turn/interrupt').map(message => message.params), [{threadId: 'thr_1', turnId: 'turn_1'}], 'sent once');
+  // Nothing running: a cancel is not remembered for a later turn.
+  await session('interrupt', async (codex, events, wait) => {
+    await wait('started');
+    codex.cancel();
+    codex.send('next');
+    await new Promise(resolve => setTimeout(resolve, 300));
+    assert.equal(events.some(event => event.kind === 'settled'), false);
+  });
+});
+
 test('a failed turn reports the provider\'s own message; a refused initialization ends the session honestly', async () => {
   await session('fail', async (codex, events, wait) => {
     codex.send('go');

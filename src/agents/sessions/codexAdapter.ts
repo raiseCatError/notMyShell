@@ -177,6 +177,8 @@ export class CodexSession {
   private failed = false;
   private interruptTimer?: ReturnType<typeof setTimeout>;
   private initializeTimer?: ReturnType<typeof setTimeout>;
+  /** A cancel asked for before Codex named the turn: sent the moment it does (see cancel). */
+  private cancelPending = false;
 
   constructor(private readonly options: CodexSessionOptions) {}
 
@@ -213,7 +215,7 @@ export class CodexSession {
 
   private fail(reason: string): void {
     if (this.failed) return;
-    this.failed = true; this.queued = [];
+    this.failed = true; this.queued = []; this.cancelPending = false;
     clearTimeout(this.initializeTimer);
     this.options.onEvent({kind: 'settled', ok: false, message: reason});
     this.close();
@@ -233,14 +235,14 @@ export class CodexSession {
   }
 
   private handle({events, request, response, turnId, fileChange}: CodexMessageResult): void {
-    if (turnId) this.turnId = turnId;
+    if (turnId) this.namedTurn(turnId);
     if (fileChange) { this.fileChanges.set(fileChange.id, fileChange.paths); if (this.fileChanges.size > 256) this.fileChanges.delete(this.fileChanges.keys().next().value!); }
     if (response && typeof response.id === 'number') {
       const kind = this.calls.get(response.id);
       this.calls.delete(response.id);
       if (response.error !== undefined) {
         if (kind === 'initialize' || kind === 'thread') this.fail(kind === 'initialize' ? 'Codex app-server refused initialization' : 'Codex could not start a thread');
-        else if (kind === 'turn') this.options.onEvent({kind: 'settled', ok: false, message: 'Codex refused the message'});
+        else if (kind === 'turn') { this.cancelPending = false; this.options.onEvent({kind: 'settled', ok: false, message: 'Codex refused the message'}); }
         else if (kind === 'interrupt') this.options.onEvent({kind: 'incomplete', reason: 'Codex refused the interrupt request'});
         return;
       }
@@ -260,7 +262,7 @@ export class CodexSession {
       } else if (kind === 'turn') {
         const result = record(response.result) ? response.result : {};
         const turn = record(result.turn) ? result.turn : {};
-        if (typeof turn.id === 'string') this.turnId = turn.id;
+        if (typeof turn.id === 'string') this.namedTurn(turn.id);
       }
       return;
     }
@@ -270,7 +272,7 @@ export class CodexSession {
         event = {...event, target: approvalFiles(paths), input: {...event.input, ...(paths ? {files: paths.slice(0, 50)} : {})}};
       }
       if (event.kind === 'started') { if (this.startedReported) continue; this.startedReported = true; } // thread/started and the thread/start response may arrive in either order
-      if (event.kind === 'settled') { clearTimeout(this.interruptTimer); this.interruptTimer = undefined; this.turnId = undefined; this.approvals.clear(); }
+      if (event.kind === 'settled') { clearTimeout(this.interruptTimer); this.interruptTimer = undefined; this.turnId = undefined; this.cancelPending = false; this.approvals.clear(); }
       this.options.onEvent(event);
     }
     if (request) {
@@ -279,6 +281,12 @@ export class CodexSession {
       // Requests NMSh does not implement are refused rather than ignored, so Codex never waits on NMSh.
       else this.write({id: request.id, error: {code: -32601, message: 'Not supported by NMSh'}});
     }
+  }
+
+  /** Codex named the running turn (the turn/start answer or turn/started, whichever comes first): a waiting cancel goes now. */
+  private namedTurn(turnId: string): void {
+    this.turnId = turnId;
+    if (this.cancelPending) { this.cancelPending = false; this.interrupt(); }
   }
 
   private startTurn(text: string): boolean {
@@ -307,9 +315,17 @@ export class CodexSession {
   /**
    * Ask Codex to interrupt the running turn. A request is not an acknowledged cancellation: only a turn that completes
    * as `interrupted` is reported as one. Without an answer in time, the person is told the request is unconfirmed.
+   * Before Codex has named the turn (the thread is still starting, or turn/start is unanswered), the request waits and
+   * is sent as soon as it does: a cancel made early is never dropped.
    */
   cancel(): void {
-    if (!this.child || !this.threadId || !this.turnId) return;
+    if (!this.child) return;
+    if (this.threadId && this.turnId) this.interrupt();
+    else if (this.queued.length || [...this.calls.values()].includes('turn')) this.cancelPending = true;
+  }
+
+  private interrupt(): void {
+    if (!this.threadId || !this.turnId) return;
     this.approvals.clear(); this.options.onEvent({kind: 'requestsCleared'});
     this.call('interrupt', 'turn/interrupt', {threadId: this.threadId, turnId: this.turnId});
     clearTimeout(this.interruptTimer);
