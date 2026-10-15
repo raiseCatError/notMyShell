@@ -97,6 +97,8 @@ function isTranscript(value: unknown): value is OutputTranscript {
       && typeof record.command === 'string'
       && typeof record.output === 'string' && typeof record.lifecycleText === 'string'
       && (record.outputIncomplete === undefined || record.outputIncomplete === true)
+      && (record.copyText === undefined || typeof record.copyText === 'string')
+      && (record.outputNewline === undefined || record.outputNewline === true)
       && typeof record.exitCode === 'number' && typeof record.startId === 'number'
       && typeof record.outputStartId === 'number'
       && (record.historicalContext === undefined
