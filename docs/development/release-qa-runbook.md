@@ -28,24 +28,42 @@ AppleScript, headless PTY runs, screenshots of a window driven any of those ways
 
    If `--version` shows a different commit, run `npm run build` in that worktree (it only rewrites the ignored
    `dist/`), then check again. A non-empty `status` means stop and report it.
-3. Paste this helper into a zsh in each terminal you test from. It launches a candidate with a throwaway home,
-   configuration, runtime directory and working directory, so your real NMSh sessions (`nmsh` already running on this
-   Mac), settings, history and Claude accounts are never touched.
+3. Load the QA launcher in each zsh you test from. It starts a candidate with a throwaway home, configuration,
+   runtime directory (its own session service) and working directory, so your real NMSh sessions (`nmsh` already
+   running on this Mac), settings, history and Claude accounts are never touched, and it remembers each QA directory
+   so you never retype paths:
 
    ```sh
-   nmsh_qa() {  # nmsh_qa v019|v020 [VAR=value ...]
-     local w=/Volumes/nmsh-opus/wt/$1; shift
-     local q=$(mktemp -d /Volumes/nmsh-opus/t/qa-XXXXXX)
-     mkdir -p $q/home $q/work $q/run; chmod 700 $q/run
-     print "QA dir $q"; git -C $w rev-parse --short HEAD; node $w/dist/index.js --version
-     (cd $q/work && env HOME=$q/home XDG_CONFIG_HOME=$q/home/.config NMSH_RUNTIME_DIR=$q/run "$@" node $w/dist/index.js)
-   }
+   source /Volumes/nmsh-opus/wt/release-train/docs/development/nmsh-qa.zsh
+   nmsh_qa v019                  # a new isolated session (Setup runs on its fresh home: accept the defaults)
+   nmsh_qa v019 NO_COLOR=1       # extra variables are remembered for reopening
+   nmsh_qa_reopen v019           # the same QA session again after closing the window (same home, config, runtime)
+   nmsh_qa_sessions v019         # what is live in that QA directory's own service, before reopening
+   nmsh_qa_list                  # every QA directory, newest first
    ```
 
-   The first launch shows Setup (fresh home): accept the defaults. To leave, `exit` the shell or close the window.
-   Detach/reattach tests must reuse the **same** QA dir: reattach with
-   `(cd <QA dir>/work && env HOME=<QA dir>/home XDG_CONFIG_HOME=<QA dir>/home/.config NMSH_RUNTIME_DIR=<QA dir>/run node /Volumes/nmsh-opus/wt/<v>/dist/index.js)`
-   and use `/resume` inside.
+   Every command refuses a directory that is not a QA directory made for that candidate, so a typo can never reach
+   your real sessions. To leave, `exit` the shell (ends it) or close the window (detaches it: it keeps running).
+
+   **What you see when reopening (items 2.2–2.4):**
+
+   | You see | It means |
+   |---|---|
+   | `nmsh_qa_sessions` lists a session, and NMSh opens with **"1 detached live session · running …"** (R Resume) | the shell survived the window closing; Resume reattaches to it, with its running command and queue |
+   | `/resume` shows the session under live sessions (**● Running** or idle) | the same live shell, reachable from inside NMSh |
+   | `/resume` shows it only as a transcript (**"interrupted"** or **"ran …"**) and `nmsh_qa_sessions` says `none` | the shell is gone; Resume restores its transcript only, and Enter starts a new shell |
+   | `nmsh_qa_sessions` says `none` right after closing a window | the session service ended: that is a failure of 2.2; send the QA dir name |
+
+   Do not reopen with `nmsh_qa v019` (that makes a new, empty QA directory) or by retyping the variables: with one
+   of the three paths missing, NMSh reads the QA transcripts but connects to your real session service, so the QA
+   session looks "interrupted" and your real sessions appear beside it.
+
+   **QA sessions from before the launcher** (made with the earlier one-line helper) are still live if their windows
+   were only closed. On 2026-10-15 five were running: `qa-kba0PW`, `qa-7JWXlU`, `qa-Son7hg` and `qa-yUbvpL` (v0.19)
+   and `qa-HK06Zw` (v0.20), under `/Volumes/nmsh-opus/t/`. Bring one under the launcher with
+   `nmsh_qa_adopt v019 /Volumes/nmsh-opus/t/qa-7JWXlU` (it checks the layout and that its service runs that
+   candidate), then `nmsh_qa_reopen v019`. Or `exit` them from inside, or leave them; nothing else uses them.
+
 4. Record once per machine: `sw_vers`, `zsh --version`, `bash --version | head -1`, `fish --version`, and the
    terminal's version (Ghostty: `ghostty +version`; Terminal.app: Terminal → About Terminal).
 
@@ -80,7 +98,7 @@ Window size about 120×36 unless an item says otherwise. Quick reference for wha
 | 1.13 | `echo 'token=ghp_FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE path=/Users/someone/private'` → block Actions → Copy as Report | review shows token and path redacted; Enter copies exactly the reviewed text (`pbpaste`); Esc leaves the old clipboard | the fake token or path reaches the clipboard after Enter, or Esc changes it |
 | 1.14 | `printf 'one\ntwo\n'`, `printf 'one\nthree\n'`, `/compare` | changed line shown; side by side at ≥140 columns, unified below; `c` copies an unredacted plain diff with a caution | wrong lines, or `c` redacts silently |
 | 2.1 | `vim`, resize several times, `:q`; `less /etc/services`, resize, `q` at once | final size repainted; composer back with the cursor in place | stale size, garbage, lost cursor |
-| 2.2 | `sleep 30`, queue `echo ONCE`, close the window; relaunch the same QA dir, `/resume` | transcript, queue and activity intact; `ONCE` prints once | anything runs twice or is lost |
+| 2.2 | `sleep 30`, queue `echo ONCE`, close the window; `nmsh_qa_reopen v019`, R (Resume) | the startup screen offers the live session; transcript, queue and activity intact; `ONCE` prints once, after `sleep` | anything runs twice or is lost; `nmsh_qa_sessions` says `none` |
 | 3.1 | launch with `nmsh_qa v019 NO_COLOR=1`, then `ls --color=always /` (macOS: `ls -G /` or `git -c color.ui=always diff`) | NMSh's rows plain; the program's colors as written | NMSh colors appear, or program colors are stripped |
 | 3.2 | resize to 40, 80, 120 columns and ~15 rows while a queue entry, a waiting read, a report review and a compare are visible | everything readable and reachable; nothing overlaps the composer | overlap, unreachable controls |
 
@@ -166,6 +184,7 @@ the screen was wrong. "Looked fine" for an item you did not perform is not a res
 track turns these into the Results tables and the #359/#390/#392 records; nothing is marked passed that you did not
 report.
 
-Cleanup afterwards: `exit` each QA session's shell so its session service has nothing left to keep; check
+Cleanup afterwards: `exit` each QA session's shell so its session service has nothing left to keep (`nmsh_qa_list`
+shows which still have one); check
 `ps -axo pid,command | grep '[n]msh-opus/wt/v0'` and stop only processes listed there. Then
 `tmux -L nmsh-qa kill-server` if you used session G, and remove the QA scratch only: `rm -rf /Volumes/nmsh-opus/t/qa-*`.
