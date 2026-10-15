@@ -1,5 +1,7 @@
 import {spawn, type ChildProcess} from 'node:child_process';
+import {StringDecoder} from 'node:string_decoder';
 import {classifyCommand, splitCommands, type PasteKind} from '../input/pasteGuard.js';
+import {stripTerminalControls} from '../util/terminalControls.js';
 
 /**
  * /watch: NMSh runs a command again and again on its own schedule (never a
@@ -19,9 +21,27 @@ const REFUSED: ReadonlySet<PasteKind> = new Set(['install', 'modifies', 'destruc
 export const DEFAULT_INTERVAL_MS = 5000;
 export const MIN_LOCAL_MS = 2000;
 export const MIN_REMOTE_MS = 15000;
+export const MAX_INTERVAL_MS = 3_600_000;
+export const MAX_ACTIVE_WATCHES = 8;
+const MAX_COMMAND = 4096;
 const MAX_OUTPUT = 200_000;
+const STOP_GRACE_MS = 1500;
 
 export function watchSafety(command: string): WatchSafety {
+  if (!command.trim() || command.length > MAX_COMMAND || /[\u0000-\u001f\u007f]/u.test(command)) {
+    return {kind: 'refused', reason: 'A tracked command must be nonempty, single-line and at most 4096 characters.'};
+  }
+  // A harmless-looking first word is not evidence that embedded shell execution is safe.
+  // Fail closed rather than scheduling substitutions, backticks or process substitutions.
+  if (/\$\(|`|[<>]\(/u.test(command)) {
+    return {kind: 'refused', reason: 'Shell and process substitutions cannot be tracked repeatedly.'};
+  }
+  const outsideQuotes = command.replace(/"(?:\\.|[^"\\])*"|'[^']*'/gu, '""');
+  // Detached shell jobs would outlive the observed sample and multiply on every
+  // tick; heredocs also need a different stdin/input-ownership contract.
+  if (/(?:^|[^&])&(?!&)|<</u.test(outsideQuotes)) {
+    return {kind: 'refused', reason: 'Background operators and heredocs cannot be tracked safely.'};
+  }
   const parts = splitCommands(command);
   if (!parts.length) return {kind: 'refused', reason: 'There is no command to watch.'};
   let unknown = false;
@@ -36,22 +56,34 @@ export function watchSafety(command: string): WatchSafety {
       const target = /https?:\/\/([^/:\s]+)/u.exec(part.text)?.[1] ?? /\s([\w.-]+\.[a-z]{2,})(?:\s|$)/iu.exec(part.text)?.[1];
       if (target && !/^(?:localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/u.test(target)) remote = true;
     }
-    if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
+    // Allow only Docker's explicit read-only disk report. Other Docker verbs (including
+    // 'system prune') still require confirmation, or are refused by the classifier.
+    const dockerDiskReport = /^docker\s+system\s+df(?:\s+(?:-v|--verbose))?\s*$/u.test(part.text);
+    if ((kinds.includes('unknown') || kinds.includes('project') || kinds.includes('text')) && !dockerDiskReport && !TEST_RUNNERS.test(part.text) && !/^git\s+(?:status|log|diff|branch|remote|show)\b/u.test(part.text)) unknown = true;
   }
   return unknown ? {kind: 'confirm', reason: 'NMSh can\'t tell whether this command changes anything; it will run every interval.', network, remote} : {kind: 'allowed', network, remote};
 }
 
-/** "--every 5s", "every 10 seconds", "-n 2" → milliseconds (clamped to the minimum for the command). */
-export function parseWatch(text: string): {command: string; intervalMs?: number} {
-  const every = /^(?:--every|-n|every)\s+(\d+(?:\.\d+)?)\s*(s|sec|secs|seconds?|m|min|minutes?|ms)?\s+/u.exec(text.trim());
-  if (!every) return {command: text.trim()};
+/** Parse a finite interval strictly. Invalid cadence never falls through as shell text. */
+export function parseWatch(text: string): {command: string; intervalMs?: number; error?: string} {
+  const input = text.trim();
+  const marker = /^(?:--every|-n|every)(?:\s+|$)/u;
+  if (!marker.test(input)) return {command: input.replace(/^--(?:\s+|$)/u, '').trim()};
+  const every = /^(?:--every|-n|every)\s+(\d+(?:\.\d+)?)\s*(ms|seconds?|secs?|s|minutes?|mins?|m)?(?:\s+|$)/u.exec(input);
+  if (!every) return {command: '', error: 'Invalid interval. Use /track --every 5s -- <command>.'};
   const value = Number(every[1]);
   const unit = every[2] ?? 's';
-  const intervalMs = unit === 'ms' ? value : /^m/u.test(unit) && unit !== 'ms' ? value * 60_000 : value * 1000;
-  return {command: text.trim().slice(every[0].length).trim(), intervalMs};
+  const multiplier = unit === 'ms' ? 1 : /^(?:m|min|minute)/u.test(unit) ? 60_000 : 1000;
+  const intervalMs = value * multiplier;
+  if (!Number.isFinite(intervalMs) || intervalMs <= 0 || intervalMs > MAX_INTERVAL_MS) {
+    return {command: '', error: 'Interval must be positive and at most 60 minutes.'};
+  }
+  const command = input.slice(every[0].length).replace(/^--(?:\s+|$)/u, '').trim();
+  if (!command) return {command: '', error: 'Provide a finite command after the interval.'};
+  return {command, intervalMs};
 }
 
-export interface WatchRun {output: string; exitCode: number | null; at: number; durationMs: number}
+export interface WatchRun {output: string; exitCode: number | null; at: number; durationMs: number; truncated?: boolean; timedOut?: boolean; error?: string; signal?: string | null}
 
 export interface WatchTask {
   id: string;
@@ -109,6 +141,7 @@ export class WatchTasks {
   readonly watches: WatchTask[] = [];
   private readonly timers = new Map<string, NodeJS.Timeout>();
   private readonly children = new Map<string, ChildProcess>();
+  private readonly killTimers = new Map<string, NodeJS.Timeout>();
   private readonly listeners = new Set<(watch: WatchTask, transition?: 'pass' | 'fail') => void>();
 
   constructor(private readonly shell: string = '/bin/sh', private readonly now: () => number = Date.now, private readonly env: NodeJS.ProcessEnv = process.env) {}
@@ -121,6 +154,17 @@ export class WatchTasks {
 
   /** Start watching a command already judged allowed (or confirmed). The first run starts at once. */
   start(command: string, cwd: string, intervalMs: number | undefined, safety: Exclude<WatchSafety, {kind: 'refused'}>): WatchTask {
+    if (this.active().length >= MAX_ACTIVE_WATCHES) throw new Error(`At most ${MAX_ACTIVE_WATCHES} active trackers can run.`);
+    // Stopped rows do not appear in the manager; do not retain unlimited stale records.
+    if (this.watches.length >= 128) {
+      for (let index = 0; index < this.watches.length && this.watches.length > 64;) {
+        if (this.watches[index]?.status === 'stopped') this.watches.splice(index, 1);
+        else index += 1;
+      }
+    }
+    if (intervalMs !== undefined && (!Number.isFinite(intervalMs) || intervalMs <= 0 || intervalMs > MAX_INTERVAL_MS)) {
+      throw new Error('Invalid tracking interval.');
+    }
     counter += 1;
     const minimum = safety.remote ? MIN_REMOTE_MS : MIN_LOCAL_MS;
     const watch: WatchTask = {id: `watch-${counter}`, command, cwd, intervalMs: Math.max(minimum, intervalMs ?? DEFAULT_INTERVAL_MS), startedAt: this.now(), runs: 0,
@@ -131,30 +175,68 @@ export class WatchTasks {
   }
 
   /** Run once now (skipped while a run is still in flight: runs never overlap). */
-  runNow(id: string): void {
+  runNow(id: string): boolean {
     const watch = this.get(id);
-    if (!watch || watch.status === 'stopped' || this.children.has(id)) return;
+    if (!watch || watch.status === 'stopped' || this.children.has(id)) return false;
+    const timer = this.timers.get(id);
+    if (timer) clearTimeout(timer);
+    this.timers.delete(id);
     const started = this.now();
     let output = '';
+    let receivedBytes = 0;
+    let truncated = false;
+    let timedOut = false;
+    let spawnError: string | undefined;
+    const stdoutDecoder = new StringDecoder('utf8');
+    const stderrDecoder = new StringDecoder('utf8');
     let child: ChildProcess;
     try {
       child = spawn(this.shell, ['-c', watch.command], {cwd: watch.cwd, env: {...this.env, NO_COLOR: '1', FORCE_COLOR: '0'}, detached: true, stdio: ['ignore', 'pipe', 'pipe']});
-    } catch (error) { this.record(watch, {output: String(error), exitCode: -1, at: started, durationMs: 0}); return; }
+    } catch (error) {
+      this.record(watch, {output: stripTerminalControls(String(error), MAX_OUTPUT), exitCode: -1, at: started, durationMs: 0, error: 'spawn failed'});
+      return true;
+    }
     this.children.set(id, child);
-    const take = (chunk: Buffer) => { if (output.length < MAX_OUTPUT) output += chunk.toString().slice(0, MAX_OUTPUT - output.length); };
-    child.stdout?.on('data', take);
-    child.stderr?.on('data', take);
-    // A run never outlives a few intervals (bounded at a minute).
-    const limit = setTimeout(() => { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, Math.min(60_000, watch.intervalMs * 3));
+    const take = (decoder: StringDecoder, chunk: Buffer) => {
+      const kept = Math.min(chunk.length, Math.max(0, MAX_OUTPUT - receivedBytes));
+      if (kept) { receivedBytes += kept; output += decoder.write(chunk.subarray(0, kept)); }
+      if (kept < chunk.length) truncated = true;
+    };
+    child.stdout?.on('data', (chunk: Buffer) => take(stdoutDecoder, chunk));
+    child.stderr?.on('data', (chunk: Buffer) => take(stderrDecoder, chunk));
+    // Timeout is not a successful completion, even when the shell exits on a signal.
+    const limit = setTimeout(() => {
+      timedOut = true;
+      this.signalGroup(child, 'SIGKILL');
+      // A detached descendant may retain pipe FDs after the tracked shell dies.
+      // Stop consuming it; the sample must not wait on an unrelated pipe holder.
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+    }, Math.min(60_000, watch.intervalMs * 3));
     limit.unref();
-    const done = (code: number | null) => {
+    child.on('error', error => { spawnError = String(error); });
+    // Only 'close' guarantees the captured stdio has finished, unlike 'exit'.
+    child.on('close', (code, signal) => {
       clearTimeout(limit);
+      const killTimer = this.killTimers.get(id);
+      if (killTimer) clearTimeout(killTimer);
+      this.killTimers.delete(id);
       if (this.children.get(id) !== child) return;
       this.children.delete(id);
-      this.record(watch, {output: output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/gu, ''), exitCode: code, at: started, durationMs: this.now() - started});
-    };
-    child.on('error', () => done(-1));
-    child.on('exit', code => done(code));
+      output += stdoutDecoder.end() + stderrDecoder.end();
+      const sanitized = output.split('\n').map(line => stripTerminalControls(line, MAX_OUTPUT)).join('\n');
+      this.record(watch, {output: sanitized, exitCode: code ?? -1, at: started, durationMs: this.now() - started,
+        ...(truncated ? {truncated} : {}), ...(timedOut ? {timedOut} : {}),
+        ...(spawnError ? {error: stripTerminalControls(spawnError, 300)} : {}),
+        ...(signal ? {signal} : {})});
+    });
+    return true;
+  }
+
+  private signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+    if (!child.pid) return;
+    try { process.kill(-child.pid, signal); }
+    catch { try { child.kill(signal); } catch { /* already exited */ } }
   }
 
   private record(watch: WatchTask, run: WatchRun): void {
@@ -200,15 +282,28 @@ export class WatchTasks {
     return true;
   }
 
-  /** Stop: no more runs, the in-flight run's process group is ended, nothing is left behind. */
+  /** Stop scheduling, signal the owned process group, and bound graceful termination. */
   stop(id: string): boolean {
     const watch = this.get(id);
     if (!watch || watch.status === 'stopped') return false;
     watch.status = 'stopped';
     this.schedule(watch);
     const child = this.children.get(id);
-    this.children.delete(id);
-    if (child?.pid) { try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } } }
+    if (child) {
+      this.signalGroup(child, 'SIGTERM');
+      const pending = this.killTimers.get(id);
+      if (pending) clearTimeout(pending);
+      const killTimer = setTimeout(() => {
+        this.killTimers.delete(id);
+        if (this.children.get(id) === child) {
+          this.signalGroup(child, 'SIGKILL');
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+        }
+      }, STOP_GRACE_MS);
+      killTimer.unref();
+      this.killTimers.set(id, killTimer);
+    }
     this.emit(watch);
     return true;
   }

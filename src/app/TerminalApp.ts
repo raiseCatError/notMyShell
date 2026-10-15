@@ -1777,13 +1777,35 @@ export class TerminalApp {
       if (action?.kind === 'close') { this.watchPanel = undefined; this.returnFromPanel(); }
       else if (action?.kind === 'confirm' && panel.confirm) {
         const pending = panel.confirm;
+        const size = this.dimensions();
+        if (size.columns < 40 || size.rows < 14) {
+          panel.message = 'Resize to at least 40 columns and 14 rows to review this recurring command.';
+          this.render();
+          return;
+        }
         panel.confirm = undefined;
         const safety = watchSafety(pending.command);
         if (safety.kind === 'refused') panel.message = safety.reason;
-        else { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+        else {
+          try { this.watches.start(pending.command, pending.cwd, pending.intervalMs, safety); panel.selected = this.watches.active().length - 1; }
+          catch (error) { panel.message = error instanceof Error ? error.message : 'Could not start tracker.'; }
+        }
       } else if (action?.kind === 'pause') this.watches.pause(action.id);
       else if (action?.kind === 'resume') this.watches.resume(action.id);
-      else if (action?.kind === 'now') this.watches.runNow(action.id);
+      else if (action?.kind === 'now' && !this.watches.runNow(action.id)) panel.message = 'The current sample is still running; no overlapping refresh was started.';
+      else if (action?.kind === 'copy') {
+        const latest = this.watches.get(action.id)?.current;
+        if (!latest) panel.message = 'No completed output to copy yet.';
+        else {
+          // The owned display snapshot is explicitly copied, never the accumulated
+          // stream from earlier refreshes. The normal /copy policy is unchanged.
+          void writeClipboard(latest.output).then(() => {
+            if (this.watchPanel === panel && !this.stopped) { panel.message = 'Copied latest tracked output.'; this.render(); }
+          }, () => {
+            if (this.watchPanel === panel && !this.stopped) { panel.message = 'Clipboard unavailable; nothing confirmed copied.'; this.render(); }
+          });
+        }
+      }
       else if (action?.kind === 'stop') this.watches.stop(action.id);
       this.render();
       return;
@@ -7723,7 +7745,9 @@ export class TerminalApp {
     };
     if (op === 'list') { this.panelOrigin = undefined; this.watchPanel = {selected: 0, output: false}; return; }
     if (op === 'start') {
-      const {command: watched, intervalMs} = parseWatch(argument);
+      const parsed = parseWatch(argument);
+      if (parsed.error) { this.output.addFrontendInteraction(command, parsed.error, ERROR); return; }
+      const {command: watched, intervalMs} = parsed;
       const safety = watchSafety(watched);
       if (safety.kind === 'refused') { this.output.addFrontendInteraction(command, safety.reason, ERROR); return; }
       this.panelOrigin = undefined;
@@ -7732,15 +7756,16 @@ export class TerminalApp {
           reason: safety.kind === 'confirm' ? safety.reason : 'It contacts a remote host every interval (at least every 15s).', choice: 'no'}};
         return;
       }
-      this.watches.start(watched, this.shellCwd, intervalMs, safety);
+      try { this.watches.start(watched, this.shellCwd, intervalMs, safety); }
+      catch (error) { this.output.addFrontendInteraction(command, error instanceof Error ? error.message : 'Could not start tracker.', ERROR); return; }
       this.watchPanel = {selected: this.watches.active().length - 1, output: false};
       return;
     }
-    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stopped every watch.', INFO); return; }
+    if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stop requested for all trackers; owned processes are being cleaned up.', INFO); return; }
     const watch = pick();
     if (!watch) { this.output.addFrontendInteraction(command, 'Nothing is being watched.', INFO); return; }
-    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : (this.watches.runNow(watch.id), true);
-    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Running' : op === 'stop' ? 'Stopped' : op === 'pause' ? 'Paused' : 'Resumed'} the watch on ${watch.command}.` : 'Nothing changed.', INFO);
+    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : this.watches.runNow(watch.id);
+    this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refresh requested for' : op === 'stop' ? 'Stop requested for' : op === 'pause' ? 'Paused' : 'Resumed'} the tracker on ${watch.command}.` : 'Nothing changed.', INFO);
   }
 
   /** /doctor: local, bounded, read-only checks gathered in parallel; a live line while they run. */

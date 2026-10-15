@@ -158,7 +158,7 @@ export const CONCEPTS: readonly Concept[] = [
   {id: 'doctor', label: 'Doctor', support: 'actionable', open: '/doctor', covers: ['/doctor'],
     aliases: ['doctor', 'health check', 'diagnostics', 'diagnose', 'check my setup', 'is everything ok', 'whats wrong with my setup', 'check environment'],
     description: '/doctor checks NMSh, the shell, this project, Git, tools, the local model and the host terminal with local, read-only checks, and offers actions that open the right place; it never fixes anything silently.'},
-  {id: 'watch', label: 'Watch', support: 'actionable', open: '/watch', covers: ['/watch'],
+  {id: 'watch', label: 'Watch', support: 'actionable', open: '/watch', covers: ['/watch', '/track'],
     aliases: ['watch', 'watch a command', 'rerun every', 'repeat a command', 'keep running', 'monitor a command'],
     description: '/watch runs a command on NMSh\'s own schedule and shows what changed in one live block (pause, run now, stop). Commands that install, modify or destroy are refused; unknown ones need a Yes.'},
   {id: 'pastePreview', label: 'Paste preview', support: 'settings', open: '/settings', where: 'Settings → Editor → Paste preview (Smart, Always, Off)', covers: ['settings:Editor'],
