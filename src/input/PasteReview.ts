@@ -1,5 +1,5 @@
 import type {Key} from '../terminal/keys.js';
-import {KIND_LABELS, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, type PasteKind} from './pasteGuard.js';
+import {KIND_LABELS, nmshCommandNote, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, type PasteKind} from './pasteGuard.js';
 import {renderControls} from '../ui/controls.js';
 import {foreground, UI_COLORS} from '../ui/palette.js';
 import {padCells, truncateAnsi} from '../util/text.js';
@@ -23,11 +23,13 @@ export interface PasteReviewState {
   top: number;
   /** The paste splits into separate commands that could be queued (offered as B). */
   batch: boolean;
+  /** NMSh commands among several lines reach this shell as text: said above the controls (see nmshCommandNote). */
+  note?: string;
 }
 
 export type PasteReviewResult = 'insert' | 'back' | 'cancel' | 'batch' | 'clip' | undefined;
 
-export function createPasteReview(text: string, analysis: PasteAnalysis, batch = false): PasteReviewState {
+export function createPasteReview(text: string, analysis: PasteAnalysis, batch = false, shell = 'the shell'): PasteReviewState {
   const lines = text.replace(/\r\n?/gu, '\n').split('\n');
   const starts: Array<PasteKind | undefined> = new Array(lines.length).fill(undefined);
   // Locate each command in order from where the previous one ended; display-only, linear in the paste size.
@@ -44,17 +46,18 @@ export function createPasteReview(text: string, analysis: PasteAnalysis, batch =
     while (lineIndex + 1 < lines.length && offsets[lineIndex + 1]! <= found) lineIndex += 1;
     starts[lineIndex] ??= primaryKind(command.kinds);
   }
-  return {text, analysis, lines, starts, top: 0, batch};
+  const note = nmshCommandNote(analysis, shell);
+  return {text, analysis, lines, starts, top: 0, batch, ...(note ? {note} : {})};
 }
 
 /** The body rows available for source lines: header, a blank, a note row and the footer are fixed. */
-function bodyRows(height: number): number {
-  return Math.max(1, height - 4);
+function bodyRows(height: number, state?: PasteReviewState): number {
+  return Math.max(1, height - 4 - (state?.note ? 1 : 0));
 }
 
 export function pasteReviewKey(state: PasteReviewState, key: Key, height: number): PasteReviewResult {
-  const page = Math.max(1, bodyRows(height) - 1);
-  const max = Math.max(0, state.lines.length - bodyRows(height));
+  const page = Math.max(1, bodyRows(height, state) - 1);
+  const max = Math.max(0, state.lines.length - bodyRows(height, state));
   const move = (to: number) => { state.top = Math.max(0, Math.min(max, to)); };
   if (key.kind === 'enter') return 'insert';
   if (key.kind === 'escape') return 'back';
@@ -91,7 +94,7 @@ export function renderPasteReview(state: PasteReviewState, columns: number, heig
   const failure = foreground(UI_COLORS.failure);
   const reset = '\u001B[0m';
   const total = state.lines.length;
-  const rows = bodyRows(height);
+  const rows = bodyRows(height, state);
   const top = Math.max(0, Math.min(state.top, Math.max(0, total - rows)));
   const last = Math.min(total, top + rows);
   const numberWidth = String(total).length;
@@ -105,6 +108,7 @@ export function renderPasteReview(state: PasteReviewState, columns: number, heig
     out.push(truncateAnsi(`  ${subtle}${String(index + 1).padStart(numberWidth)}${reset}  ${label}${kind === 'text' ? subtle : secondary}${displaySafe(state.lines[index]!)}${reset}`, columns));
   }
   const exact = state.analysis.commands.some(command => primaryKind(command.kinds) === 'text' || primaryKind(command.kinds) === 'unknown');
+  if (state.note) out.push(truncateAnsi(`  ${accent}${state.note}${reset}`, columns));
   out.push(truncateAnsi(`  ${subtle}${exact ? PASTE_EXACT_NOTE : 'Nothing runs until you press Enter again.'}${reset}`, columns));
   out.push(renderControls([['↑↓ PgUp PgDn', 'scroll'], ['Enter', 'insert'], ...(state.batch ? [['B', 'queue as commands'] as const] : []), ['Esc', 'back'], ['C', 'keep clip']]));
   // A very short terminal drops the note before the controls; the panel never exceeds its height.
