@@ -5,7 +5,7 @@ import {foreground, UI_COLORS} from '../ui/palette.js';
 import {truncateAnsi} from '../util/text.js';
 import type {WatchTask} from './WatchTasks.js';
 
-/** /watch: one live block per watch (current, previous, what changed), never a pile of repeated output. */
+/** /track and /watch share one live snapshot view: no duplicated transcript output. */
 export interface WatchPanelState {
   selected: number;
   /** Showing the selected watch's current output. */
@@ -49,8 +49,9 @@ export function watchRow(watch: WatchTask, now: number): string {
   const reset = '\u001b[0m';
   const state = watch.current ? (watch.current.exitCode === 0 ? foreground(UI_COLORS.success) : foreground(UI_COLORS.failure)) : subtle;
   const mark = watch.status === 'paused' ? '‖' : '◉';
-  return `${state}${mark}${reset} ${secondary}Watching · ${watch.command.slice(0, 40)}${reset}${subtle} · every ${formatEvery(watch.intervalMs)}${watch.summary ? ` · ${watch.summary}` : ''}`
-    + `${watch.changes.length ? ' · changed' : ''} · runs ${watch.runs}${watch.status === 'paused' ? ' · paused' : ` · ${ago(now - watch.startedAt)}`}${reset}`;
+  const last = watch.current ? ` · updated ${ago(Math.max(0, now - watch.current.at - watch.current.durationMs))} ago` : ' · first run pending';
+  return `${state}${mark}${reset} ${secondary}Track · ${watch.command.slice(0, 40)}${reset}${subtle} · every ${formatEvery(watch.intervalMs)}${watch.summary ? ` · ${watch.summary}` : ''}`
+    + `${watch.changes.length ? ' · changed' : ''} · runs ${watch.runs}${watch.status === 'paused' ? ' · paused' : last}${reset}`;
 }
 
 export function renderWatchPanel(state: WatchPanelState, watches: readonly WatchTask[], columns: number, now: number, rowsAvailable: number): string[] {
@@ -59,7 +60,7 @@ export function renderWatchPanel(state: WatchPanelState, watches: readonly Watch
   const subtle = foreground(UI_COLORS.subtle);
   const accent = foreground(UI_COLORS.accent);
   const reset = '\u001b[0m';
-  const rows = [`${primary}  Watch${reset}`];
+  const rows = [`${primary}  Live commands · /track / /watch${reset}`];
   if (state.confirm) {
     const yes = state.confirm.choice === 'yes';
     rows.push('', `  ${primary}Watch ${state.confirm.command}?${reset}`, `  ${secondary}${state.confirm.reason}${reset}`,
@@ -69,7 +70,7 @@ export function renderWatchPanel(state: WatchPanelState, watches: readonly Watch
     return rows.map(row => truncateAnsi(row, columns));
   }
   if (!watches.length) {
-    rows.push('', `  ${secondary}Nothing is being watched.${reset}`, `  ${subtle}/watch git status · /watch --every 10s npm test · stop with /watch stop${reset}`);
+    rows.push('', `  ${secondary}No active command trackers.${reset}`, `  ${subtle}/track df -h /Volumes/T7Projects · /track --every 5s -- docker system df${reset}`);
     if (state.message) rows.push('', `  ${secondary}${state.message}${reset}`);
     rows.push('', renderControls([['Esc', 'close']]));
     return rows.map(row => truncateAnsi(row, columns));
@@ -80,7 +81,7 @@ export function renderWatchPanel(state: WatchPanelState, watches: readonly Watch
   if (state.output) {
     const lines = (watch.current?.output ?? '').split('\n');
     const room = Math.max(4, rowsAvailable - rows.length - 3);
-    rows.push(`  ${subtle}Current output · ${lines.length} lines${lines.length > room ? ` (last ${room})` : ''}${reset}`, ...lines.slice(-room).map(line => `  ${line}`));
+    rows.push(`  ${subtle}Latest completed output · ${lines.length} lines${lines.length > room ? ` (last ${room})` : ''}${watch.current ? ` · exit ${watch.current.exitCode ?? 'signal'}` : ' · pending'}${reset}`, ...lines.slice(-room).map(line => `  ${line}`));
   } else {
     rows.push(`  ${subtle}Current${reset}   ${secondary}${watch.summary ?? (watch.current ? `exit ${watch.current.exitCode}` : 'running…')}${reset}`);
     if (watch.previous) rows.push(`  ${subtle}Previous${reset}  ${secondary}${watch.previousSummary ?? `exit ${watch.previous.exitCode}`}${reset}`);
