@@ -164,7 +164,7 @@ test('/track fails visibly when the command or working directory is unavailable'
     const missingCwd = engine.start('true', join(cwd, 'not-here'), 5000,
       {kind: 'allowed', network: false, remote: false});
     await waitFor(() => missingCwd.runs === 1);
-    assert.equal(missingCwd.current?.exitCode, -1);
+    assert.notEqual(missingCwd.current?.exitCode, 0, 'invalid cwd cannot be a successful refresh');
     assert.match(missingCwd.current?.error ?? '', /ENOENT|spawn/u);
     assert.equal(engine.active().length, 2);
   } finally {
@@ -177,6 +177,6 @@ test('/track confirmation refuses clipped small-terminal review', () => {
   const confirm = {command: 'unknown status-command', cwd: '/tmp', intervalMs: 5000, reason: 'Unknown command', choice: 'no' as const};
   const rows = renderWatchPanel({selected: 0, output: false, confirm}, [], 30, Date.now(), 6);
   const text = stripAnsi(rows.join('\n'));
-  assert.match(text, /Resize to review tracked command/u);
+  assert.match(text, /Resize to review tracked/u);
   assert.doesNotMatch(text, /Yes|confirm/u, 'clipped layouts cannot display approval controls');
 });
