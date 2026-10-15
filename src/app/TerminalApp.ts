@@ -1792,7 +1792,7 @@ export class TerminalApp {
         }
       } else if (action?.kind === 'pause') this.watches.pause(action.id);
       else if (action?.kind === 'resume') this.watches.resume(action.id);
-      else if (action?.kind === 'now') this.watches.runNow(action.id);
+      else if (action?.kind === 'now' && !this.watches.runNow(action.id)) panel.message = 'The current sample is still running; no overlapping refresh was started.';
       else if (action?.kind === 'copy') {
         const latest = this.watches.get(action.id)?.current;
         if (!latest) panel.message = 'No completed output to copy yet.';
@@ -7764,7 +7764,7 @@ export class TerminalApp {
     if (op === 'stop' && argument === 'all') { for (const watch of active) this.watches.stop(watch.id); this.output.addFrontendInteraction(command, 'Stop requested for all trackers; owned processes are being cleaned up.', INFO); return; }
     const watch = pick();
     if (!watch) { this.output.addFrontendInteraction(command, 'Nothing is being watched.', INFO); return; }
-    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : (this.watches.runNow(watch.id), true);
+    const done = op === 'stop' ? this.watches.stop(watch.id) : op === 'pause' ? this.watches.pause(watch.id) : op === 'resume' ? this.watches.resume(watch.id) : this.watches.runNow(watch.id);
     this.output.addFrontendInteraction(command, done ? `${op === 'now' ? 'Refresh requested for' : op === 'stop' ? 'Stop requested for' : op === 'pause' ? 'Paused' : 'Resumed'} the tracker on ${watch.command}.` : 'Nothing changed.', INFO);
   }
 
