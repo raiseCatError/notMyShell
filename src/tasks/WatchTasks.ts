@@ -36,6 +36,12 @@ export function watchSafety(command: string): WatchSafety {
   if (/\$\(|`|[<>]\(/u.test(command)) {
     return {kind: 'refused', reason: 'Shell and process substitutions cannot be tracked repeatedly.'};
   }
+  const outsideQuotes = command.replace(/"(?:\\.|[^"\\])*"|'[^']*'/gu, '""');
+  // Detached shell jobs would outlive the observed sample and multiply on every
+  // tick; heredocs also need a different stdin/input-ownership contract.
+  if (/(?:^|[^&])&(?!&)|<</u.test(outsideQuotes)) {
+    return {kind: 'refused', reason: 'Background operators and heredocs cannot be tracked safely.'};
+  }
   const parts = splitCommands(command);
   if (!parts.length) return {kind: 'refused', reason: 'There is no command to watch.'};
   let unknown = false;
