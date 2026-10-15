@@ -15,7 +15,7 @@ export interface WatchPanelState {
   message?: string;
 }
 
-export type WatchPanelAction = {kind: 'close'} | {kind: 'pause' | 'resume' | 'stop' | 'now'; id: string} | {kind: 'confirm'};
+export type WatchPanelAction = {kind: 'close'} | {kind: 'pause' | 'resume' | 'stop' | 'now' | 'copy'; id: string} | {kind: 'confirm'};
 
 const formatEvery = (ms: number) => ms % 60_000 === 0 ? `${ms / 60_000}m` : `${Math.round(ms / 100) / 10}s`;
 const ago = (ms: number) => ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`;
@@ -37,6 +37,7 @@ export function watchPanelKey(state: WatchPanelState, key: Key, watches: readonl
     const letter = key.value.toLowerCase();
     if (letter === 'p') return {kind: watch.status === 'paused' ? 'resume' : 'pause', id: watch.id};
     if (letter === 'r') return {kind: 'now', id: watch.id};
+    if (letter === 'c') return {kind: 'copy', id: watch.id};
     if (letter === 's') return {kind: 'stop', id: watch.id};
   }
   return undefined;
@@ -89,6 +90,6 @@ export function renderWatchPanel(state: WatchPanelState, watches: readonly Watch
     rows.push(`  ${subtle}Runs ${watch.runs} · ${ago(now - watch.startedAt)}${watch.network ? ' · repeated network access' : ''}${reset}`);
   }
   if (state.message) rows.push('', `  ${secondary}${state.message}${reset}`);
-  rows.push('', renderControls([['↑↓', 'select'], ['Enter', state.output ? 'summary' : 'view output'], ['P', watch.status === 'paused' ? 'resume' : 'pause'], ['R', 'run now'], ['S', 'stop'], ['Esc', 'close']]));
+  rows.push('', renderControls([['↑↓', 'select'], ['Enter', state.output ? 'summary' : 'view output'], ['P', watch.status === 'paused' ? 'resume' : 'pause'], ['R', 'run now'], ['C', 'copy latest'], ['S', 'stop'], ['Esc', 'close']]));
   return rows.map(row => truncateAnsi(row, columns));
 }
