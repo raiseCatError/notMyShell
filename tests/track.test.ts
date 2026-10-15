@@ -40,6 +40,14 @@ test('/track is a native /watch alias with list, refresh and controls', () => {
     {command: 'docker system df', intervalMs: 5000});
   assert.deepEqual(parseWatch('--every 2s -- df -h /Volumes/T7Projects'),
     {command: 'df -h /Volumes/T7Projects', intervalMs: MIN_LOCAL_MS});
+  assert.deepEqual(parseWatch('--every 1500ms -- docker system df'),
+    {command: 'docker system df', intervalMs: 1500});
+  assert.deepEqual(parseWatch('--every 2 minutes -- df -h /Volumes/T7Projects'),
+    {command: 'df -h /Volumes/T7Projects', intervalMs: 120000});
+  for (const invalid of ['--every', '--every 5s', '--every -1s -- df', '--every 1e100s df', '--every 0s df',
+    '--every 99999999999999999999999999999999999999m df', '--every 61m df', '--every banana df']) {
+    assert.ok(parseWatch(invalid).error, invalid);
+  }
 });
 
 test('/track classifies disk information as read-only, but never assumes Docker writes are safe', () => {
@@ -50,7 +58,10 @@ test('/track classifies disk information as read-only, but never assumes Docker 
   assert.equal(watchSafety('docker system df; rm -rf /tmp/x').kind, 'refused');
   assert.equal(watchSafety('docker system df && docker system prune').kind, 'confirm');
   assert.equal(watchSafety('sudo docker system df').kind, 'refused');
-  assert.equal(watchSafety('docker system df $(touch /tmp/unsafe)').kind, 'confirm');
+  assert.equal(watchSafety('docker system df $(touch /tmp/unsafe)').kind, 'refused');
+  assert.equal(watchSafety('df -h /Volumes/T7Projects $(rm -rf /tmp/x)').kind, 'refused');
+  assert.equal(watchSafety('df -h `touch /tmp/x`').kind, 'refused');
+  assert.equal(watchSafety('docker system df > /tmp/report').kind, 'refused');
 });
 
 test('/track reuses one current and previous snapshot, does not overlap manual refresh', async () => {
@@ -97,6 +108,42 @@ test('/track strips terminal control sequences from the displayed snapshot', asy
     assert.equal(task.current?.exitCode, 0);
     assert.equal(task.current?.output, 'alpha\nbeta\n');
     assert.ok(engine.stop(task.id));
+  } finally {
+    engine.dispose();
+    rmSync(cwd, {recursive: true, force: true});
+  }
+});
+
+test('/track bounds retained snapshots, preserves split UTF-8 and records truncation', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'nmsh-track-bound-'));
+  const engine = new WatchTasks('/bin/sh');
+  try {
+    const cmd = `node -e 'process.stdout.write("π"); process.stdout.write("x".repeat(250000))'`;
+    const task = engine.start(cmd, cwd, 2000, {kind: 'allowed', network: false, remote: false});
+    await waitFor(() => task.runs === 1);
+    assert.equal(task.current?.exitCode, 0);
+    assert.ok(task.current?.truncated, 'truncation is visible');
+    assert.ok(Buffer.byteLength(task.current?.output ?? '') <= 200100, 'output is bounded');
+    assert.ok(task.current?.output.startsWith('π'), 'UTF-8 survives split chunks');
+    engine.stop(task.id);
+  } finally {
+    engine.dispose();
+    rmSync(cwd, {recursive: true, force: true});
+  }
+});
+
+test('/track caps concurrent trackers and rejects non-finite intervals', async () => {
+  const cwd = mkdtempSync(join(tmpdir(), 'nmsh-track-limit-'));
+  const engine = new WatchTasks('/bin/sh');
+  try {
+    assert.throws(() => engine.start('true', cwd, Infinity, {kind: 'allowed', network: false, remote: false}), /interval/u);
+    const active = Array.from({length: 8}, () =>
+      engine.start('sleep 1', cwd, 5000, {kind: 'allowed', network: false, remote: false}));
+    assert.equal(engine.active().length, 8);
+    assert.throws(() => engine.start('true', cwd, 5000, {kind: 'allowed', network: false, remote: false}), /At most 8/u);
+    for (const task of active) engine.stop(task.id);
+    await waitFor(() => engine.scheduled === 0);
+    assert.equal(engine.active().length, 0);
   } finally {
     engine.dispose();
     rmSync(cwd, {recursive: true, force: true});
