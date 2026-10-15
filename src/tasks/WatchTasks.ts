@@ -149,7 +149,6 @@ export class WatchTasks {
   /** Start watching a command already judged allowed (or confirmed). The first run starts at once. */
   start(command: string, cwd: string, intervalMs: number | undefined, safety: Exclude<WatchSafety, {kind: 'refused'}>): WatchTask {
     if (this.active().length >= MAX_ACTIVE_WATCHES) throw new Error(`At most ${MAX_ACTIVE_WATCHES} active trackers can run.`);
-    if (watchSafety(command).kind === 'refused') throw new Error('This command is unsafe to run repeatedly.');
     if (intervalMs !== undefined && (!Number.isFinite(intervalMs) || intervalMs <= 0 || intervalMs > MAX_INTERVAL_MS)) {
       throw new Error('Invalid tracking interval.');
     }
