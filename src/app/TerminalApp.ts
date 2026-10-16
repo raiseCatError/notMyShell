@@ -344,7 +344,7 @@ import {openEffortPicker, openModelPicker} from '../agents/input/pickers.js';
 import {applyPickerChoice} from '../agents/input/surface.js';
 import {settingsEffort} from '../agents/claudeSettings.js';
 import {renderSidePanel, sidePanelShown, sidePanelWidth} from '../agents/workspace/sidePanel.js';
-import {WorkspaceHost} from './workspaceHost.js';
+import {WORKSPACE_DISABLED_MESSAGE, WorkspaceHost} from './workspaceHost.js';
 import {BackgroundHost} from './backgroundHost.js';
 import {entersBar, removalBlocked} from '../backgroundTasks/bar.js';
 import {BackgroundManager} from '../backgroundTasks/manager.js';
@@ -414,7 +414,8 @@ const CONTEXT_SETTLE_MS = 150;
 
 export class TerminalApp {
   /** Workspace regions (#330): sidebar, detail panel, their focus and keymap. Declared first: dimensions() reads it. */
-  private readonly workspace = new WorkspaceHost();
+  /** The docked sidebar and detail panel: experimental, gated by the workspacePanels setting (Off by default). */
+  private readonly workspace = new WorkspaceHost(() => this.configuration.workspacePanels);
   /** Background tasks of this session (#382): what the task owner reported, never run by the frontend itself. */
   private readonly background = new BackgroundHost();
   /** Task ids this window has already announced (a reattach adopts the existing list silently). */
@@ -523,6 +524,8 @@ export class TerminalApp {
     if (turnedOff) this.understanding?.modeChanged();
     // Theme Bridge follows the same funnel: a theme, library or bridge change regenerates what Follow/Choose targets use.
     if (themeBridgeKey(previous) !== themeBridgeKey(next)) this.scheduleThemeBridge();
+    // Experimental workspace regions turned Off: close them now; the next frame gives the PTY every column again.
+    if (!next.workspacePanels && this.workspace?.open) this.workspace.close();
   }
   /** Optional local understanding; creates nothing until a feature is eligible to use it. */
   private readonly understanding = new LocalUnderstanding(() => this.configuration.localUnderstanding);
@@ -2774,7 +2777,7 @@ export class TerminalApp {
     else if (slash.kind === 'mods') this.openMods(slash.provider);
     else if (slash.kind === 'worktrees') await this.openWorktrees();
     else if (slash.kind === 'workspace') {
-      await this.applyWorkspaceEffect(this.workspace.perform(slash.focus ? `${slash.region}.focus` : `${slash.region}.toggle`, this.terminalDimensions().columns));
+      await this.applyWorkspaceEffect(this.workspace.perform(slash.focus ? `${slash.region}.focus` : `${slash.region}.toggle`, this.terminalDimensions().columns), command);
     }
     else if (slash.kind === 'keys') this.showWorkspaceKeys(command, slash.reload);
     else if (slash.kind === 'background') this.runBackgroundCommand(command);
@@ -10010,7 +10013,8 @@ export class TerminalApp {
 
   /** Workspace keys after every panel and owner that comes first (they are protected anyway): true when consumed. */
   private handleWorkspaceKey(key: Key): boolean {
-    if (!this.workspace.open && !this.workspace.bindings.some(binding => binding.context === 'composerEmpty')) return false;
+    // Experimental regions Off: keymap.json bindings stay as written but take no key; the key does what it always did.
+    if (!this.workspace.open && (!this.workspace.available || !this.workspace.bindings.some(binding => binding.context === 'composerEmpty'))) return false;
     const owner = this.workspaceOwner();
     const {columns, rows} = this.terminalDimensions();
     const effect = this.workspace.handleKey(key, {owner, columns, viewRows: Math.max(1, rows - 4),
@@ -10020,8 +10024,9 @@ export class TerminalApp {
     return true;
   }
 
-  private async applyWorkspaceEffect(effect: WorkspaceEffect): Promise<void> {
+  private async applyWorkspaceEffect(effect: WorkspaceEffect, command = '/sidebar'): Promise<void> {
     if (effect.kind === 'none') return;
+    if (effect.kind === 'disabled') { this.output.addFrontendInteraction(command, WORKSPACE_DISABLED_MESSAGE, INFO); this.render(); return; }
     if (effect.kind === 'refresh') { this.render(); await this.refreshWorkspaceSources(); return; }
     if (effect.kind === 'intent') await this.performWorkspaceIntent(effect.intent);
     this.render();
@@ -10038,7 +10043,9 @@ export class TerminalApp {
     if (reload) this.workspace.loadKeymap();
     const profile = keymapHostProfile(process.env);
     const notes = [...new Set(this.workspace.bindings.flatMap(binding => hostNotes(binding.key, profile)))];
-    const lines = [...(reload ? ['keymap.json read again.'] : []), ...describeKeymap(this.workspace.bindings),
+    const lines = [...(reload ? ['keymap.json read again.'] : []),
+      ...(this.workspace.available ? [] : ['The workspace sidebar and detail panel are experimental and Off (Settings → Layout): the bindings below take no key until they are turned on.']),
+      ...describeKeymap(this.workspace.bindings),
       ...(this.workspace.problems.length ? ['Problems in keymap.json', ...this.workspace.problems.map(problem => `  ${problem.severity}${problem.entry === undefined ? '' : ` (entry ${problem.entry + 1})`}: ${problem.message}`)] : []),
       ...(notes.length ? ['Host notes', ...notes.map(note => `  ${note}`)] : [])];
     this.output.addFrontendInteraction(command, lines.join('\n'), this.workspace.problems.some(problem => problem.severity === 'error') ? ERROR : INFO);

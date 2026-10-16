@@ -325,6 +325,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'editor', title: 'Editor', intro: ['The composer, syntax colors and suggestions.'], rows: [
     {row: configRow('composerPosition')},
     {row: configRow('composerDividers')},
+    {row: configRow('workspacePanels'), note: draft => draft.workspacePanels
+      ? 'Experimental: /sidebar and /panel open beside the transcript and narrow it while docked'
+      : 'Off (default): /sidebar and /panel stay closed; /worktrees, /sessions, /github and /background are unaffected'},
     {row: configRow('pastePreview')},
     {row: configRow('copyMode'), note: draft => draft.copy.mode === 'picker' ? '/copy opens a list of recent outputs to choose from; /copy latest still copies at once' : '/copy copies the latest output at once; /copy ui opens the picker'},
     {row: configRow('copyAutoExpand'), note: draft => draft.copy.autoExpand ? 'A copied block unfolds so you can see what was copied' : 'Copying never changes what is folded'},

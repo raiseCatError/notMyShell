@@ -81,9 +81,11 @@ Use C in Paste Review to keep an ephemeral clip, or a block's Actions to keep it
 
 /clips suggestions on optionally checks macOS's native clipboard change counter while the composer is idle. It never reads clipboard contents. A changed counter suggests /ps; only that explicit command reads text for review. Suggestions default off, last only for this frontend, and stop with /clips suggestions off or if metadata fails. Linux clipboard tools have no supported metadata counter; background text polling is unsupported.
 
-## Workspace sidebar and detail panel
+## Workspace sidebar and detail panel (experimental)
 
-/sidebar opens a sidebar beside the transcript: tmux panes of the server NMSh runs inside, this repository's worktrees, and links to /github, /agents and /sessions. /panel opens a detail panel for the selected item. /sidebar focus and /panel focus give them the keyboard; Esc returns to the composer and Tab moves between regions. In the sidebar, arrows move, Right/Left expand or collapse, Enter opens and / filters; in the panel, arrows and Page Up/Down scroll and q closes it. A click focuses a region.
+Experimental and Off by default: turn it on in Settings → Layout → Workspace sidebar & panel (or Setup → Editor). While it is Off, /sidebar and /panel say how to turn it on and open nothing, and keymap.json workspace keys take no key. /worktrees, /sessions, /github and /background never depend on it.
+
+When it is On, /sidebar opens a sidebar beside the transcript: tmux panes of the server NMSh runs inside, this repository's worktrees, and links to /github, /agents and /sessions. /panel opens a detail panel for the selected item. /sidebar focus and /panel focus give them the keyboard; Esc returns to the composer and Tab moves between regions. In the sidebar, arrows move, Right/Left expand or collapse, Enter opens and / filters; in the panel, arrows and Page Up/Down scroll and q closes it. A click focuses a region.
 
 On a wide terminal the regions dock beside the transcript and the shell is sized to the middle. On a narrow one a region opens as a drawer over the transcript only while it has the keyboard, and the shell keeps its width. Fullscreen programs and idle visuals hide them. Opening a worktree stages its cd in an empty composer; it never runs by itself.
 
