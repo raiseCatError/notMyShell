@@ -40,3 +40,7 @@ Supporting plans: execution-timeline-slice-2, slice-2b, slice-2c (2026-10-16).
 - Final verify:fast and benchmark typechecking pass. First bounded timing smoke failed configured-cold with no candidates; unchanged cold fixture passes alone on 2C control. Query budgets remain unchanged; preserve release-tail.log and fresh timing-smoke-recheck.log separately.
 
 - Fresh bounded timing smoke passed with original budgets. The first failure remains in release-tail.log; local full canonical remains red as documented.
+
+- Correction to the initial baseline diagnosis: focused/control commands inherited NMSH_RETURN_SESSION. An unavailable handoff target intentionally forces Ask rather than Always in src/index.ts. This is expected safety behavior, not an established startup preference bug. Canonical commands already removed handoff variables; their detached-session setup and cleanup timeouts remain separate. Clean-environment reruns preserve every assertion.
+
+- Clean-environment startup discovery passes in full on the integration source; the baseline Always-resume control passes too. No production startup regression is established. The earlier full-run detached setup and lsof timeouts remain preserved; local canonical is not claimed green.
