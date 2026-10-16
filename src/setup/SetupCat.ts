@@ -98,7 +98,7 @@ export interface SetupSection {
 
 /** Direct entry names to the section they open. */
 export const SETUP_ENTRIES: Readonly<Record<string, string>> = {
-  prompt: 'prompt', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', syntax: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask', cursor: 'cursor', motion: 'motion', sessions: 'sessions',
+  prompt: 'prompt', look: 'appearance', appearance: 'appearance', chroma: 'appearance', tools: 'tools', editor: 'editor', syntax: 'editor', transcript: 'transcript', shell: 'shell', ask: 'ask', cursor: 'cursor', motion: 'motion', sessions: 'sessions',
 };
 
 const configRow = (id: string): SettingsRow => {
@@ -189,6 +189,17 @@ function bridgeTargetRows(draft: PromptConfiguration, context: SetupContext | un
   } satisfies SetupRow));
 }
 
+/**
+ * Prompt's view of Chroma: read-only, because Chroma is chosen in exactly one place (Look, with the rows that depend on
+ * it and a live preview). Enter goes there, on the Chroma row; it never changes the draft.
+ */
+export const CHROMA_IN_LOOK_ROW: SetupRow = {
+  row: {id: 'setupChromaInLook', label: 'Chroma', description: 'Chroma colors the Native prompt; it is chosen in Look, beside the theme it recolors. Enter goes there',
+    category: 'Prompt', control: 'action', actionLabel: 'Look ›', destination: 'appearance', run: config => config,
+    value: config => `${config.presentation.preset === 'off' ? 'Off' : TREATMENT_PRESET_LABELS[config.presentation.preset]} · change it in Look ›`},
+  note: draft => chromaVisibilityNote(draft),
+};
+
 function routeRow(id: string, label: string, description: string, destination: SettingsDestination, category: string): SetupRow {
   return {row: {id, label, description, category, control: 'action', actionLabel: 'Open ›', destination},
     note: () => 'Enter applies this Setup first, then opens it; it keeps the choices you made here'};
@@ -243,34 +254,9 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
   {id: 'terminal', title: 'Terminal', intro: ['Glyphs your terminal font can draw.'], rows: [
     {row: configRow('glyphStyle'), note: draft => draft.glyphStyle === 'nerd' ? 'Needs a Nerd Font in your terminal' : 'Works with any terminal font'},
   ]},
-  // The same cursor rows as Settings; rich editing (the color picker, trail and particle colors, physics) is /cursor, opened over this draft.
-  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects, Off by default. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
-    {row: configRow('cursorShape'), note: draft => draft.cursor.shape === 'host' ? 'Host default: your terminal keeps its own cursor' : 'Applied while NMSh owns the composer; full-screen programs get your normal cursor'},
-    {row: configRow('cursorBlink')},
-    {row: configRow('cursorRenderer'), note: draft => chooseBackend(draft.cursor, currentCursorHost()).reason},
-    {row: configRow('cursorMotion')},
-    {row: configRow('cursorEffect')},
-    {row: configRow('cursorIdle')},
-    {row: configRow('cursorColor'), note: draft => caretColorNote(currentCursorHost(), draft.cursor.color.source)},
-    {row: configRow('cursorColorFamily')},
-    {row: configRow('cursorColorVariant')},
-    {row: configRow('cursorColorAccent')},
-    {row: configRow('cursorColorCustom')},
-    // Speed, intensity, trail length and particle amount, trail/particle colors and the physics live in /cursor, opened over this draft.
-    {row: configRow('cursorAdvanced'), note: () => 'Speed, intensity, trail and particles, trail/particle colors and physics; changes stay in this Setup draft until Apply'},
-  ], facts: draft => [`Renderer in use: ${chooseBackend(draft.cursor, currentCursorHost()).reason}`]},
-  {id: 'prompt', title: 'Prompt', intro: [NATIVE_PROMPT_RECOMMENDATION, 'Deep prompt customization lives in /prompt.'], rows: [
-    {...PROMPT_PROVIDER_ROW, note: (draft, context) => draft.provider === 'nmsh' ? 'Built in · no installation required'
-      : draft.provider === 'none' ? 'None · composer only · themes still style NMSh UI, syntax and Theme Bridge' : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · ${NATIVE_ONLY_NOTE}`},
-    {row: nativeOnly(configRow('promptStyle'))},
-    {row: nativeOnly(SEPARATOR_ROW)},
-    {row: configRow('promptSymbol')},
-    // The one canonical Chroma setting (also in Appearance, /prompt, /appearance and /chroma).
-    // The one canonical Chroma setting (also in Appearance, /prompt, /appearance and /chroma); its note says what will show.
-    {row: configRow('treatmentPreset'), note: draft => chromaVisibilityNote(draft)},
-    routeRow('setupPromptModules', 'Prompt modules & custom glyphs', 'Which modules show and in what order, and your own separator or prompt glyph, in /prompt', 'prompt', 'Prompt'),
-  ], dynamicRows: draft => promptStyleRows(draft)},
-  {id: 'appearance', title: 'Appearance', intro: [
+  // Look: the theme first, then what depends on it (text, chrome), then Chroma, the one place it is chosen, with its
+  // own rows under it. Motion-wide switches (Reduced Motion, Decorative effects) are on the Motion step.
+  {id: 'appearance', title: 'Look', intro: [
     'Theme: the base NMSh prompt/UI palette · Theme text: whether it colors NMSh text · UI chrome: frames, tabs, selection, separators, accents.',
     'Chroma: an optional treatment over the Native prompt/effects and opted-in surfaces; Full Chroma may override the prompt\'s theme colors. Your terminal and editor keep their own colors.',
   ], rows: [
@@ -292,10 +278,6 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('treatmentMotion')},
     {row: configRow('treatmentSpeed')},
     {row: configRow('treatmentCurve')},
-    {row: configRow('reducedMotion')},
-    {row: configRow('effectsOff')},
-    {row: configRow('shimmer')},
-    {row: configRow('autoEffects')},
     routeRow('setupChromeColors', 'Edit UI chrome colors', 'Accent, text, separator, selection and status roles with the color picker', 'chromeColors', 'Appearance'),
     {...routeRow('setupThemeStudio', 'Theme Studio', 'Create, edit, import, export and manage Native themes; selection is above', 'themeStudio', 'Appearance'),
       row: {id: 'setupThemeStudio', label: 'Theme Studio', description: 'Create, edit, import, export and manage Native themes; selection is above', category: 'Appearance',
@@ -305,9 +287,41 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
       : 'No: every tool keeps its own colors; NMSh injects and changes nothing'},
     routeRow('setupHostWindow', 'Terminal window (opacity, blur)', 'Host window opacity and blur where your terminal supports it', 'appearance', 'Appearance'),
   ], dynamicRows: (draft, context) => bridgeTargetRows(draft, context)},
-  // General NMSh motion: the same rows /appearance → Motion edits, with the same real previews.
+  {id: 'prompt', title: 'Prompt', intro: [NATIVE_PROMPT_RECOMMENDATION, 'Deep prompt customization lives in /prompt.'], rows: [
+    {...PROMPT_PROVIDER_ROW, note: (draft, context) => draft.provider === 'nmsh' ? 'Built in · no installation required'
+      : draft.provider === 'none' ? 'None · composer only · themes still style NMSh UI, syntax and Theme Bridge' : `${PROMPT_PROVIDER_ROW.note!(draft, context)} · ${NATIVE_ONLY_NOTE}`},
+    {row: nativeOnly(configRow('promptStyle'))},
+    {row: nativeOnly(SEPARATOR_ROW)},
+    {row: configRow('promptSymbol')},
+    // Chroma is chosen only in Look; here it is a read-only line that goes there.
+    CHROMA_IN_LOOK_ROW,
+    routeRow('setupPromptModules', 'Prompt modules & custom glyphs', 'Which modules show and in what order, and your own separator or prompt glyph, in /prompt', 'prompt', 'Prompt'),
+  ], dynamicRows: draft => promptStyleRows(draft)},
+  // General NMSh motion: Reduced Motion and Decorative effects first (they govern every row after them, and Chroma's
+  // motion in Look), then the same rows /appearance → Motion edits, with the same real previews.
   {id: 'motion', title: 'Motion', intro: ['Short, finite presentations of real events. Each can be Off; Reduced Motion, Decorative Effects Off and NO_COLOR stop all of them.',
-    'The preview below runs the selected one on sample content, once; it never touches your session.'], rows: [{row: configRow('motion_rendering')}, ...MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)})), {row: configRow('motion_intensity')}, {row: configRow('motion_speed')}]},
+    'The preview below runs the selected one on sample content, once; it never touches your session.'], rows: [
+    {row: configRow('reducedMotion'), note: draft => draft.presentation.reducedMotion ? 'On: everything below, Chroma motion and the cursor effects stay still; colors stay' : undefined},
+    {row: configRow('effectsOff')},
+    {row: configRow('shimmer')},
+    {row: configRow('autoEffects')},
+    {row: configRow('motion_rendering')}, ...MOTION_ROWS.map(item => ({row: configRow(`motion_${item.key}`)})), {row: configRow('motion_intensity')}, {row: configRow('motion_speed')}]},
+  // The same cursor rows as Settings; rich editing (the color picker, trail and particle colors, physics) is /cursor, opened over this draft.
+  {id: 'cursor', title: 'Cursor', intro: ['The text caret and its optional effects, Off by default. Portable effects are built in; Ghostty and Kitty can add a GPU version via /cursor.'], rows: [
+    {row: configRow('cursorShape'), note: draft => draft.cursor.shape === 'host' ? 'Host default: your terminal keeps its own cursor' : 'Applied while NMSh owns the composer; full-screen programs get your normal cursor'},
+    {row: configRow('cursorBlink')},
+    {row: configRow('cursorRenderer'), note: draft => chooseBackend(draft.cursor, currentCursorHost()).reason},
+    {row: configRow('cursorMotion')},
+    {row: configRow('cursorEffect')},
+    {row: configRow('cursorIdle')},
+    {row: configRow('cursorColor'), note: draft => caretColorNote(currentCursorHost(), draft.cursor.color.source)},
+    {row: configRow('cursorColorFamily')},
+    {row: configRow('cursorColorVariant')},
+    {row: configRow('cursorColorAccent')},
+    {row: configRow('cursorColorCustom')},
+    // Speed, intensity, trail length and particle amount, trail/particle colors and the physics live in /cursor, opened over this draft.
+    {row: configRow('cursorAdvanced'), note: () => 'Speed, intensity, trail and particles, trail/particle colors and physics; changes stay in this Setup draft until Apply'},
+  ], facts: draft => [`Renderer in use: ${chooseBackend(draft.cursor, currentCursorHost()).reason}`]},
   {id: 'editor', title: 'Editor', intro: ['The composer, syntax colors and suggestions.'], rows: [
     {row: configRow('composerPosition')},
     {row: configRow('composerDividers')},
@@ -333,7 +347,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('historyTheme')},
     {row: configRow('divider')},
     {row: configRow('dividerDensity')},
-    {row: configRow('dividerColors'), note: () => 'Live composer dividers follow Appearance → Divider lines; past dividers never move'},
+    {row: configRow('dividerColors'), note: () => 'Live composer dividers follow Divider lines (Look, under Chroma); past dividers never move'},
     {row: configRow('outputFolding')},
   ]},
   {id: 'history', title: 'History & navigation', intro: ['NMSh Native covers history, directory jumps and picking.', 'External providers are optional alternatives.'], rows: [
@@ -492,7 +506,7 @@ export interface SetupState {
    */
   cursorPanel?: CursorPanelState;
   /**
-   * Local preview only (P on Prompt/Appearance): show the preview through the
+   * Local preview only (P on Look/Prompt): show the preview through the
    * draft's Chroma. Off by default so the base theme colors are visible; it
    * never changes the draft or the saved Chroma.
    */
@@ -519,9 +533,10 @@ export function sectionIndex(id: string): number {
 export function createSetup(configuration: PromptConfiguration, entry?: string): SetupState {
   const target = entry ? SETUP_ENTRIES[entry] : undefined;
   const section = target ? sectionIndex(target) : 0;
-  const rows = SETUP_SECTIONS[section]!.rows;
-  const row = entry === 'chroma' ? Math.max(0, rows.findIndex(item => item.row.id === 'treatmentPreset')) : 0;
-  return {section, row, draft: structuredClone(configuration), saved: structuredClone(configuration), tools: 'keep', context: {statuses: {}}};
+  const state: SetupState = {section, row: 0, draft: structuredClone(configuration), saved: structuredClone(configuration), tools: 'keep', context: {statuses: {}}};
+  // The row index counts only the rows shown for this draft (hidden theme rows come before Chroma).
+  if (entry === 'chroma') state.row = Math.max(0, currentRows(state).findIndex(item => item.row.id === 'treatmentPreset'));
+  return state;
 }
 
 export function parseSetupEntry(argument: string | undefined): string | undefined | false {
@@ -540,7 +555,7 @@ export function setupChanges(state: SetupState): Array<{label: string; from: str
   const seen = new Set<string>();
   for (const section of SETUP_SECTIONS) {
     for (const {row} of [...sectionRows(section, state.draft), ...sectionRows(section, state.saved)]) {
-      if (seen.has(row.id)) continue;
+      if (seen.has(row.id) || row.id === CHROMA_IN_LOOK_ROW.row.id) continue;
       seen.add(row.id);
       const from = rowValue(row, state.saved);
       const to = rowValue(row, state.draft);
@@ -582,7 +597,7 @@ function currentRows(state: SetupState): readonly SetupRow[] {
 }
 
 /**
- * Whether Setup's Prompt and Appearance previews show Chroma: by default whenever the draft's Chroma is on, so choosing
+ * Whether Setup's Look and Prompt previews show Chroma: by default whenever the draft's Chroma is on, so choosing
  * one is seen at once; P overrides it to compare with the base theme until the Chroma choice changes again.
  */
 export function setupShowsChroma(state: SetupState): boolean {
@@ -667,6 +682,11 @@ export function setupKey(state: SetupState, key: Key): SetupResult | undefined {
     }
   } else if (key.kind === 'enter' && rows[state.row]?.row.control === 'action') {
     const row = rows[state.row]!.row;
+    if (row.id === CHROMA_IN_LOOK_ROW.row.id) {
+      go(sectionIndex('appearance'));
+      state.row = Math.max(0, currentRows(state).findIndex(item => item.row.id === 'treatmentPreset'));
+      return undefined;
+    }
     if (row.control === 'action' && row.destination === 'cursor') return {kind: 'cursorEditor', advanced: false, row: row.id === 'cursorAdvanced' ? 'speed' : 'colorCustom'};
     // An in-draft action (reset a list), or a route: apply this Setup, then open the real editor.
     if (row.control === 'action' && row.run) { state.draft = row.run(state.draft); return undefined; }
