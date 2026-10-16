@@ -547,6 +547,7 @@ workspace switch is v0.20-only.
 | `891ee583` | local canonical | **pass** 2655/2656, 1 skipped (the existing opt-in real-Claude skip) | `verify-release-891ee583….{log,json}` (log sha256 `f3107641…`), 03:37:51–03:44:50Z, clean before/after |
 | `891ee583` | PR CI 38847064977 | **pass** | GitHub Actions |
 | `891ee583` | dispatch CI 38847061537 attempt 1 | **fail** (kept): the same test, Ubuntu 2/2, Fish 3.7.0: the next command typed right after a completed one (`after1`) was lost | GitHub Actions, attempt 1 |
+| `891ee583` | dispatch CI 38847061537 attempt 2 (failed jobs) | **pass** | GitHub Actions |
 
 Focused runs before the canonical ones: v0.19 503/503 (every test file touching slash commands or Setup), v0.20
 1308/1309 (134 files touching the workspace, Setup, Settings, configuration, Ask concepts, help or slash commands;
@@ -696,4 +697,4 @@ below and stop cleanly with no background processes left.
 - 2026-10-15 16:01 IST — `44f4c232` canonical run 2 failed 5/2609; investigated (ledger). Security review of the integration; gate bypasses found.
 - 2026-10-15 16:22 IST — `00163da7`, `1861666a`, `c71a4284` pushed (fast-forward). Security subsets pass.
 - 2026-10-15 16:31 IST — `c71a4284`: local canonical run 3 pass; PR and dispatch CI pass. All automated v0.20 gates pass on this head. Physical QA for both releases outstanding; maintainer decisions listed in the resumed handover.
-- 2026-10-16 09:40 IST — Stabilization QA launcher (qa19/qa20), Setup order (both), workspace regions experimental (v0.20). New heads `1aeb05c0` / `891ee583`: local canonical pass on both; PR CI pass on both; dispatch CI attempt 1 failed `typingAfterRead` (Fish 3.7) on both, v0.19 attempt 2 passed; open item recorded. Release heads unchanged.
+- 2026-10-16 09:40 IST — Stabilization QA launcher (qa19/qa20), Setup order (both), workspace regions experimental (v0.20). New heads `1aeb05c0` / `891ee583`: local canonical pass on both; PR CI pass on both; dispatch CI attempt 1 failed `typingAfterRead` (Fish 3.7) on both, attempt 2 passed on both; open item recorded. Post-v0.20 proposals pushed on `docs/post-v020-proposals` (`7a892521`). Release heads unchanged.
