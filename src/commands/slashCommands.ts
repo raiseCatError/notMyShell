@@ -121,7 +121,7 @@ const RAW_COMMANDS: readonly SlashCommand[] = [
   {name: '/qr', insertion: '/qr', alias: '/queue', description: 'Review before resuming the queue'},
   {name: '/qc', insertion: '/qc', alias: '/queue', description: 'Review before clearing queued commands'},
   {name: '/pause', insertion: '/pause', alias: '/queue', description: 'Pause the command queue'},
-  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue settings opens its Settings'},
+  {name: '/queue', insertion: '/queue', description: 'Execution timeline and queue manager (/q): /qp or /pause pauses, /qr reviews resume, /qc reviews clear; /queue pause|resume|clear, /queue history reviews finished chains, /queue save-summary saves the newest after a review, /queue settings opens its Settings'},
   {name: '/watch', insertion: '/watch ', description: 'Run a command repeatedly and show what changed (/watch git status · --every 10s · /watch stop|pause|resume)'},
   {name: '/doctor', insertion: '/doctor', description: 'Health check: NMSh, shell, project, Git, tools, local model and host (local, read-only)'},
   {name: '/llm', insertion: '/llm', description: 'Local Intelligence: the optional local model for Ask and Smart Folding (status, setup, stop, remove)'},
@@ -222,7 +222,7 @@ export type ParsedSlashCommand =
   | {kind: 'llm'}
   | {kind: 'doctor'}
   | {kind: 'watch'; op: 'list' | 'stop' | 'pause' | 'resume' | 'now' | 'start'; arguments: string}
-  | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear'}
+  | {kind: 'queue'; op: 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'}
   | {kind: 'rename'; name: string}
   | {kind: 'directories', query: string}
   | {kind: 'history', query: string}
@@ -360,9 +360,9 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (/^\/doctor\s*$/u.test(input)) return {kind: 'doctor'};
   const shortcut = ({'/qp': 'pause', '/pause': 'pause', '/qr': 'resume', '/qc': 'clear'} as const)[input.trim() as '/qp'];
   if (shortcut) return {kind: 'queue', op: shortcut};
-  const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings))?\s*$/u.exec(input);
+  const queue = /^\/(?:queue|q)(?:\s+(pause|resume|clear|settings|history|save-summary))?\s*$/u.exec(input);
   if (queue) return queue[1] === 'settings' ? {kind: 'settings', view: 'config', destination: 'queue'}
-    : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear'};
+    : {kind: 'queue', op: (queue[1] ?? 'open') as 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'};
   const watch = /^\/watch(?:\s+(.*))?$/u.exec(input);
   if (watch) {
     const rest = (watch[1] ?? '').trim();

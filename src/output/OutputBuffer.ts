@@ -11,6 +11,7 @@ import {foldHighlights, foldWindow, shouldAutoFold, shouldFoldAsk, type OutputFo
 import {type PromptSnapshot} from '../prompt/snapshot.js';
 import {type TranscriptAppearance} from '../prompt/configuration.js';
 import {TranscriptPresenter, type TranscriptView} from './TranscriptPresenter.js';
+import {queueSummaryFrom, SUMMARY_LIMIT, type QueueSummary} from '../session/QueueSummary.js';
 
 export {renderHistoricalContext} from './TranscriptPresenter.js';
 
@@ -77,6 +78,11 @@ export interface OutputTranscript {
   lines: SerializedLine[];
   visualGaps: number[];
   lineTypes: Array<[number, 'command' | 'metadata']>;
+  /**
+   * The session's saved Queue Summaries, oldest first: typed metadata about observed chains, never output and never
+   * a record. Display surfaces draw it; /copy, compare, search and exports read only records and lines.
+   */
+  queueSummaries?: QueueSummary[];
 }
 
 /** Serialise a completed command into the copy payload (PTY output + lifecycle row). */
@@ -154,6 +160,8 @@ export class OutputBuffer {
   private classifier?: CommandClassifier;
   /** What of the active command's output is transcript text (see TranscriptCut). */
   private cut?: TranscriptCut;
+  /** The session's saved summaries, newest last; bounded by the owner's own limit. */
+  private queueSummaryList: QueueSummary[] = [];
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
@@ -198,7 +206,18 @@ export class OutputBuffer {
       lines: this.parser.snapshot(),
       visualGaps: [...this.visualGaps],
       lineTypes: [...this.lineTypes.entries()],
+      ...(this.queueSummaryList.length ? {queueSummaries: this.queueSummaryList.map(summary => structuredClone(summary))} : {}),
     };
+  }
+
+  /** The session's saved summaries as this presentation holds them, newest last. */
+  get queueSummaries(): readonly QueueSummary[] {
+    return this.queueSummaryList;
+  }
+
+  /** Replace the presentation's summaries with the owner's exact list; nothing here is ever replayed or executed. */
+  setQueueSummaries(summaries: readonly QueueSummary[]): void {
+    this.queueSummaryList = summaries.slice(-SUMMARY_LIMIT).map(summary => structuredClone(summary));
   }
 
   restoreTranscript(transcript: OutputTranscript): void {
@@ -223,6 +242,9 @@ export class OutputBuffer {
     this.active = undefined;
     this.classifier = undefined;
     this.cut = undefined;
+    // A restored transcript adopts its own summaries; malformed journal data is refused, never guessed.
+    this.queueSummaryList = (transcript.queueSummaries ?? []).slice(-SUMMARY_LIMIT)
+      .map(summary => queueSummaryFrom(summary)).filter((summary): summary is QueueSummary => summary !== undefined);
   }
 
   clearPresentation(): void {
@@ -235,6 +257,7 @@ export class OutputBuffer {
     this.active = undefined;
     this.classifier = undefined;
     this.cut = undefined;
+    this.queueSummaryList = [];
   }
 
   /** Applies to commands that finish from now on; existing blocks keep their state. */

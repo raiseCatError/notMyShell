@@ -3,6 +3,7 @@ import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {nmshConfigDirectory} from '../configuration/paths.js';
 import type {OutputTranscript} from '../output/OutputBuffer.js';
+import {queueSummaryFrom, SUMMARY_LIMIT} from '../session/QueueSummary.js';
 
 /** Another live process holds this transcript's lock. */
 export class TranscriptBusyError extends Error {
@@ -73,6 +74,19 @@ interface TranscriptFile extends TranscriptSession {
   schemaVersion: number;
 }
 
+/** Journaled summaries fail closed: bounded, valid artifacts only, exactly one per chain. */
+function validQueueSummaries(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!Array.isArray(value) || value.length > SUMMARY_LIMIT) return false;
+  const ids = new Set<string>();
+  for (const summary of value) {
+    const parsed = queueSummaryFrom(summary);
+    if (!parsed || ids.has(parsed.id)) return false;
+    ids.add(parsed.id);
+  }
+  return true;
+}
+
 function isTranscript(value: unknown): value is OutputTranscript {
   if (!value || typeof value !== 'object') return false;
   const transcript = value as Partial<OutputTranscript>;
@@ -135,7 +149,8 @@ function isTranscript(value: unknown): value is OutputTranscript {
     && transcript.visualGaps.every(index => Number.isInteger(index) && index >= 0)
     && Array.isArray(transcript.lineTypes)
     && transcript.lineTypes.every(entry => Array.isArray(entry) && entry.length === 2
-      && Number.isInteger(entry[0]) && entry[0] >= 0 && (entry[1] === 'command' || entry[1] === 'metadata'));
+      && Number.isInteger(entry[0]) && entry[0] >= 0 && (entry[1] === 'command' || entry[1] === 'metadata'))
+    && validQueueSummaries(transcript.queueSummaries);
 }
 
 function parseSession(text: string): TranscriptSession {

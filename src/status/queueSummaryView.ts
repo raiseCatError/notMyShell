@@ -3,7 +3,7 @@ import {displaySafe} from '../input/PasteReview.js';
 import {DEFAULT_TREATMENT_SETTINGS, paintDivider, type TreatmentSettings} from '../chroma/treatment.js';
 import {foreground, UI_COLORS, type RgbColor} from '../ui/palette.js';
 import {GLYPHS} from '../ui/glyphs.js';
-import {displayWidth, truncateText} from '../util/text.js';
+import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {formatDuration} from './commandTiming.js';
 
 /**
@@ -26,6 +26,8 @@ export interface QueueSummaryViewOptions {
   exitCodes?: boolean;
   inputWaits?: boolean;
   treatment?: TreatmentSettings;
+  /** Presentation-only caption; a save review titles the container it is about to store. */
+  title?: string;
   now?: number;
 }
 
@@ -118,13 +120,13 @@ function textRow(segments: readonly Segment[], inner: number, align: SummaryAlig
   return [{text: ' '.repeat(1 + before)}, ...segments, {text: ' '.repeat(after + 1)}];
 }
 
-function titleRow(width: number, treatment: TreatmentSettings, now: number): string {
-  const title = truncateText('Queue Summary', Math.max(1, width));
-  const fill = Math.max(0, width - displayWidth(title) - 2);
+function titleRow(width: number, treatment: TreatmentSettings, now: number, title: string): string {
+  const caption = truncateText(title, Math.max(1, width));
+  const fill = Math.max(0, width - displayWidth(caption) - 2);
   const left = Math.floor(fill / 2);
   const right = fill - left;
   const dashes = GLYPHS.separator;
-  return `${paintDivider(dashes.repeat(left), treatment, now)} ${foreground(UI_COLORS.secondary)}${title}${RESET} ${paintDivider(dashes.repeat(right), treatment, now)}`;
+  return `${paintDivider(dashes.repeat(left), treatment, now)} ${foreground(UI_COLORS.secondary)}${caption}${RESET} ${paintDivider(dashes.repeat(right), treatment, now)}`;
 }
 
 /**
@@ -147,14 +149,31 @@ export function renderQueueSummary(summary: QueueSummary, columns: number, heigh
   room -= aggregates.length;
   let overflow = 0;
   if (entries.length > room) {
-    const keep = room >= 2 ? room - 1 : Math.max(0, room);
-    overflow = entries.length - keep;
+    // The results marker shares the entries' rows; with no row left for even the marker, the aggregate counts
+    // stand alone rather than the block outgrowing the height it was given.
+    const keep = Math.max(0, room - 1);
+    overflow = room >= 1 ? entries.length - keep : 0;
     entries.length = keep;
   }
   const pad = ' '.repeat(offset);
-  const rows = [titleRow(width, treatment, now), ...entries.map(painted), ...(overflow ? [painted(textRow([{text: `+${overflow} more results`, color: UI_COLORS.subtle}], inner, align))] : []),
+  const rows = [titleRow(width, treatment, now, options.title ?? 'Queue Summary'), ...entries.map(painted), ...(overflow ? [painted(textRow([{text: `+${overflow} more results`, color: UI_COLORS.subtle}], inner, align))] : []),
     ...aggregates.map(painted), paintDivider(GLYPHS.separator.repeat(width), treatment, now)];
   return rows.map(row => pad + row);
+}
+
+/**
+ * The same summary as one factual line for the activity row under the container: counts and wall elapsed only,
+ * never an invented detail. As the terminal narrows, complete facts drop from the end; the status and first fact stay.
+ */
+export function queueSummaryLine(summary: QueueSummary, columns: number): string {
+  const facts = aggregateFacts(summary).filter(segment => segment.text !== ' · ');
+  const parts: Segment[] = [{text: 'Queue Summary', color: summaryTone(summary)}];
+  for (const fact of facts) {
+    const separator = {text: ' · ', color: UI_COLORS.subtle};
+    if (parts.length > 1 && displayWidth(written([...parts, separator, fact])) > columns) break;
+    parts.push(separator, fact);
+  }
+  return truncateAnsi(painted(parts), columns);
 }
 
 /** The same layout without color, for plain rereviewed/copy surfaces. */

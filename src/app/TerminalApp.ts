@@ -54,7 +54,7 @@ import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeB
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
-import {DEFAULT_REPORT_OPTIONS, describeFindings, scanSensitive, type ReportFormat} from '../clipboard/report.js';
+import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, type ReportFormat} from '../clipboard/report.js';
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
 import {configuredEditor} from '../host/HostActions.js';
 import {comparePanelKey, createComparePanel, renderComparePanel, type ComparePanelState} from '../ui/ComparePanel.js';
@@ -198,6 +198,10 @@ import {completionWaitFact, inputActivityRows, inputComposerHint, inputGlyph, in
 import {pauseReason, pausedGlyph, queueGlyph, queuePreview, queueRow, queueBlock, type QueueAffordance} from '../status/queueStatus.js';
 import {queueSettingsPreview} from '../status/queueSettingsPreview.js';
 import {queuePanelKey, renderQueuePanel, type QueuePanelState} from '../queue/QueuePanel.js';
+import {queueHistoryPanelKey, renderQueueHistoryPanel, type QueueHistoryPanelState} from '../queue/QueueHistoryPanel.js';
+import {queueSummaryLine, renderQueueSummary, type QueueSummaryViewOptions} from '../status/queueSummaryView.js';
+import {buildQueueSummary, recognizedExecutables, reviewedTextSafe, type QueueSummary} from '../session/QueueSummary.js';
+import type {QueueTimeline} from '../session/ExecutionTimeline.js';
 import type {QueueEntry, QueueState} from '../session/CommandQueue.js';
 import type {QueueNews} from '../session/SessionClient.js';
 import {directInput, type InputState, type InputTiming} from '../session/inputState.js';
@@ -843,6 +847,15 @@ export class TerminalApp {
   /** A queued entry being edited in the composer: Enter saves it in place, Esc cancels. */
   private queueEdit?: {id: number; draft: string};
   private queuePanel?: QueuePanelState;
+  /** `/queue history`: the recent settled chains as a review panel; the owner keeps the chains themselves. */
+  private queueHistoryPanel?: QueueHistoryPanelState;
+  /**
+   * An armed summary save review: the exact artifact the container showed and the redacted texts it would keep.
+   * Enter stores precisely that through the owner, which re-validates everything; Esc stores nothing.
+   */
+  private summaryReview?: {chainId: number; revision?: number; texts: (string | null)[]; summary: QueueSummary};
+  /** `/queue save-summary` asked for one chain's retained results; the review arms when the owner answers. */
+  private pendingSummarySave?: number;
   private pinsPanel?: PinsPanelState;
   private readonly clips = new ClipStore();
   private readonly clipboardChangeCounter = clipboardCounter();
@@ -873,6 +886,12 @@ export class TerminalApp {
   private shellHandoffCwd?: string;
   private shellHandoffRequested = false;
   private presentationStartCwd = process.cwd();
+  /**
+   * Whether the presentation is this window's own live session. A restored archive brings its own saved summaries
+   * and never adopts the live queue's: otherwise the next journal checkpoint would archive another session's
+   * artifacts into it. A fresh view and a reattached journal are this window's own again.
+   */
+  private presentationOwned = true;
   private resumeBrowser?: ResumeBrowserState;
   private journal?: SessionJournal;
   private preparingCommand = false;
@@ -1056,7 +1075,11 @@ export class TerminalApp {
     this.continuedJournal = journal;
     this.welcomeGeneration += 1;
     this.queueReview = undefined;
+    this.summaryReview = undefined;
+    this.pendingSummarySave = undefined;
+    this.queueHistoryPanel = undefined;
     this.output.restoreTranscript(journal.transcript);
+    this.presentationOwned = true;
     this.presentationStartCwd = journal.startCwd;
     if (journal.live) {
       this.streamSeq = Math.max(this.streamSeq, journal.live.seq);
@@ -1157,6 +1180,9 @@ export class TerminalApp {
    */
   private onShellExec(command: string, at = Date.now(), historyAllowed?: number, queued?: string): void {
     this.queueReview = undefined;
+    // New work makes an older chain's save review stale, and a pending detail fetch has nothing left to show.
+    this.summaryReview = undefined;
+    this.pendingSummarySave = undefined;
     this.effects.cancel();
     if (this.running) {
       this.running.awaitingExec = false;
@@ -1801,6 +1827,20 @@ export class TerminalApp {
     }
     if (this.cursorPanel) { this.handleCursorPanelKey(key, this.cursorPanel); this.render(); return; }
     if (this.pinsPanel) { void this.handlePinsKey(key); return; }
+    if (this.queueHistoryPanel) {
+      const action = queueHistoryPanelKey(this.queueHistoryPanel, key, this.queueState);
+      if (action?.kind === 'close') { this.queueHistoryPanel = undefined; this.returnFromPanel(); }
+      else if (action?.kind === 'detail') {
+        this.queueHistoryPanel.detail = action.chainId;
+        this.session.queue(action.chainId === undefined ? {op: 'history-detail'} : {op: 'history-detail', chainId: action.chainId});
+      } else if (action?.kind === 'save') {
+        this.queueHistoryPanel = undefined;
+        this.returnFromPanel();
+        this.beginSummarySave(action.chainId);
+      }
+      this.render();
+      return;
+    }
     if (this.queuePanel) {
       const action = queuePanelKey(this.queuePanel, key, this.queueState, this.queueConditionsAvailable(), this.session.features.has('queue-timeline'));
       if (action?.kind === 'close') { this.queuePanel = undefined; this.returnFromPanel(); }
@@ -2126,6 +2166,7 @@ export class TerminalApp {
       return;
     }
     if (this.queueReview) { this.queueReviewKey(key); return; }
+    if (this.summaryReview) { this.summaryReviewKey(key); return; }
     if (this.ownershipLook) {
       // Ctrl+C is never held: what was typed is routed on what is known now, then the interrupt goes.
       if (key.kind !== 'interrupt') { this.ownershipLook.keys.push(key); return; }
@@ -3399,7 +3440,11 @@ export class TerminalApp {
       return false;
     }
     this.queueReview = undefined;
+    this.summaryReview = undefined;
+    this.pendingSummarySave = undefined;
+    this.queueHistoryPanel = undefined;
     this.output.clearPresentation();
+    this.presentationOwned = true;
     this.presentationStartCwd = this.shellCwd;
     this.startWelcome(this.presentationStartCwd);
     this.historyViewport.latest();
@@ -3550,7 +3595,11 @@ export class TerminalApp {
       return;
     }
     this.queueReview = undefined;
+    this.summaryReview = undefined;
+    this.pendingSummarySave = undefined;
+    this.queueHistoryPanel = undefined;
     this.output.restoreTranscript(restored.transcript);
+    this.presentationOwned = false;
     this.welcomeGeneration += 1;
     this.presentationStartCwd = restored.startCwd;
     this.resumeBrowser = undefined;
@@ -4595,7 +4644,7 @@ export class TerminalApp {
 
   private get settingsPanelActive(): boolean {
     return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
-      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
+      || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
   /** Complex panels declare the smallest size that shows their essential controls. */
@@ -4704,6 +4753,7 @@ export class TerminalApp {
     if (this.pinsPanel) return framePanel(renderPinsPanel(this.pinsPanel, columns, this.dimensions().rows - 4), columns);
     if (this.batchReview) return framePanel(renderBatchReview(this.batchReview, columns, this.dimensions().rows - 4), columns);
     if (this.pasteReview) return framePanel(renderPasteReview(this.pasteReview, columns, this.dimensions().rows - 4), columns);
+    if (this.queueHistoryPanel) return framePanel(renderQueueHistoryPanel(this.queueHistoryPanel, this.queueState, columns, this.dimensions().rows - 4), columns);
     if (this.queuePanel) return framePanel(renderQueuePanel(this.queuePanel, this.queueState, this.running?.command, columns, this.dimensions().rows - 4, this.queueConditionsAvailable()), columns);
     if (this.watchPanel) return framePanel(renderWatchPanel(this.watchPanel, this.watches.active(), columns, Date.now(), this.dimensions().rows - 4), columns);
     if (this.doctorPanel) return framePanel(renderDoctorPanel(this.doctorPanel, columns, Date.now(), !this.decorativeMotionAllowed()), columns);
@@ -9539,8 +9589,10 @@ export class TerminalApp {
     const listed = (plan: ScreenPlan) => {
       if (panelRows !== undefined) return plan;
       const budget = Math.min(this.queueBudget(rows), Math.max(0, plan.transcript.height - QUEUE_MIN_TRANSCRIPT_ROWS) + 1);
-      const timeline = this.timelineVisible();
-      return withQueueRows(plan, Math.max(0, (this.queueBlockRows(columns, budget)?.length ?? 0) - (timeline ? 0 : 1)), timeline);
+      // The timeline's and the summary's own first row is their header; only the expanded entry list shares its
+      // first row with the activity region.
+      const inline = this.timelineVisible() || Boolean(this.summaryChrome());
+      return withQueueRows(plan, Math.max(0, (this.queueBlockRows(columns, budget)?.length ?? 0) - (inline ? 0 : 1)), inline);
     };
     if (input.composerPosition !== 'flow' || !input.detached || panelRows !== undefined) return listed(planned());
     // Flow scrolled back: where the view starts decides how much of the composer
@@ -9557,6 +9609,10 @@ export class TerminalApp {
    */
   private queueBlockRows(columns: number, budget: number): string[] | undefined {
     this.queueVisibleRows.clear();
+    // The summary's own container: the newest saved artifact at idle, or exactly what an armed save review showed.
+    const chrome = this.summaryChrome();
+    if (chrome) return budget >= 3 ? renderQueueSummary(chrome.summary, columns, budget,
+      {...this.summaryViewOptions(), ...(chrome.review ? {title: 'Save this Queue Summary?'} : {})}) : undefined;
     if (!this.queueAvailable() || (!this.queueState.entries.length && !this.timelineVisible()) || this.queueEdit) return undefined;
     if (this.running && (this.inputState?.request || this.passthrough)) return undefined;
     const review = this.queueReview?.kind;
@@ -9570,8 +9626,30 @@ export class TerminalApp {
 
   /** Rows the expanded queue may use (header included) on a screen of `rows`; the plan may give it fewer. */
   private queueBudget(rows: number): number {
+    if (this.summaryChrome()) return rows >= 30 ? 8 : rows >= 24 ? 6 : rows >= 18 ? 4 : 0;
     if (this.timelineVisible()) return rows >= 30 ? 7 : rows >= 24 ? 6 : rows >= 18 ? 3 : 0;
     return rows >= 28 && this.queueReview?.kind === 'approve' ? 7 : rows >= 24 ? 5 : rows >= 18 ? 3 : 0;
+  }
+
+  /**
+   * The summary the chrome shows: exactly what an armed save review displayed, else the newest saved artifact at
+   * idle — no queue entries, nothing running, the timeline's own view dismissed. A new chain, the timeline's
+   * transient view and the expanded queue all own the space instead; the entry list itself never shows summaries.
+   */
+  private summaryChrome(): {summary: QueueSummary; review: boolean} | undefined {
+    if (this.summaryReview) return {summary: this.summaryReview.summary, review: true};
+    if (!this.queueAvailable() || this.running || this.timelineVisible() || this.queueState.entries.length || this.queueEdit) return undefined;
+    // A restored archive shows the summaries its own transcript carried; a live view shows the owner's newest.
+    const latest = (this.presentationOwned ? this.queueState.summaries : this.output.queueSummaries)?.at(-1);
+    return latest ? {summary: latest, review: false} : undefined;
+  }
+
+  /** The one presentation contract: the chrome and its review read the same Queue Settings. */
+  private summaryViewOptions(now = Date.now()): QueueSummaryViewOptions {
+    const queue = this.promptConfiguration.queue;
+    return {detail: queue.summaryDetail, placement: queue.summaryPlacement, align: queue.summaryAlign,
+      durations: queue.summaryDurations, exitCodes: queue.summaryExitCodes, inputWaits: queue.summaryInputWaits,
+      treatment: this.promptConfiguration.presentation, now};
   }
 
   /**
@@ -9769,7 +9847,9 @@ export class TerminalApp {
         }), ...(menuOverflow ? [renderCompletionMore(hiddenBelow, suggestionView.start, columns)] : [])]);
         // The spacer sits between the newest output and the activity line in both positions.
         case 'activity': return this.activityRows(plan, columns);
-        case 'queue': return this.timelineVisible() ? this.queueBlockRows(columns, region.height) ?? [] : this.queueBlockRows(columns, region.height + 1)?.slice(1) ?? [];
+        case 'queue': return this.timelineVisible() || this.summaryChrome()
+          ? this.queueBlockRows(columns, region.height) ?? []
+          : this.queueBlockRows(columns, region.height + 1)?.slice(1) ?? [];
         case 'composerBorder': return [this.composerEdgeRow('composerBorder', plan, columns, now)];
         case 'prompt': return [promptLine];
         case 'input': return inputRows;
@@ -10407,6 +10487,12 @@ export class TerminalApp {
   private activityRows(plan: ScreenPlan, columns: number): string[] {
     // With the list shown (the plan's queue region), its header takes the queue row and the list follows it.
     const region = regionOf(plan, 'queue');
+    const chrome = this.summaryChrome();
+    if (region && chrome && !this.inputState?.request) {
+      const line = truncateAnsi(queueSummaryLine(chrome.summary, columns), columns);
+      // A review says what its keys do; the plain view carries only the saved artifact's own facts.
+      return [line, chrome.review ? truncateAnsi(`${SECONDARY}Enter saves this summary · Esc cancels${RESET}`, columns) : ''];
+    }
     if (region && this.timelineVisible() && !this.inputState?.request) {
       const execution = this.queueState.timeline?.executions.find(entry => entry.status === 'running');
       const ownsRunning = Boolean(execution);
@@ -10484,6 +10570,8 @@ export class TerminalApp {
   /** The queue's line: what is queued and what runs next, or why it waits; an edit in progress says how to finish. */
   private queueLine(columns: number): string | undefined {
     if (!this.queueAvailable()) return undefined;
+    const chrome = this.summaryChrome();
+    if (chrome) return queueSummaryLine(chrome.summary, columns);
     if (this.timelineVisible() && !this.queueState.entries.length) return renderQueueActivitySummary(this.queueState, performance.now() - this.queueObservedMono, columns);
     if (this.queueState.timeline && this.queueState.entries.length && !this.queueEdit && !this.queueReview) {
       const pause = this.queueState.paused;
@@ -10533,6 +10621,41 @@ export class TerminalApp {
     if (this.queueEdit && !state.entries.some(entry => entry.id === this.queueEdit!.id)) {
       this.queueEdit = undefined;
       this.output.addFrontendInteraction('/queue', 'That queued command already ran or was removed; your edit is still in the composer.', INFO);
+    }
+    // The owner is the authority for saved summaries: the presentation replaces its own list, never merges, so a
+    // replayed or reattached state cannot duplicate one. An older service without the feature leaves the journaled
+    // list exactly as the transcript carried it, and a restored archive keeps its own session's summaries.
+    if (this.presentationOwned && this.session.features.has('queue-history')) {
+      const previous = this.output.queueSummaries;
+      this.output.setQueueSummaries(state.summaries ?? []);
+      const updated = this.output.queueSummaries;
+      const changed = previous.length !== updated.length || previous.some((summary, index) => summary.id !== updated[index]?.id);
+      if (changed) void this.journal?.flush().catch(() => {});
+    }
+    // A requested save arms its review when the owner answers with the chain's own retained results.
+    const pending = this.pendingSummarySave;
+    if (pending !== undefined) {
+      this.pendingSummarySave = undefined;
+      const record = state.history?.find(item => item.id === pending);
+      if (state.historyDetail?.id === pending && record) this.armSummarySave(state.historyDetail, record.resultsOmitted);
+      else if (state.history !== undefined && !record) {
+        this.output.addFrontendInteraction('/queue save-summary', 'That chain left history before its results could be reviewed; nothing was saved.', INFO);
+      } else this.pendingSummarySave = pending;
+    }
+    // A save review is for the chain it showed: a changed queue, a save that already happened elsewhere, or a chain
+    // that left history all dismiss it, so nothing unseen is stored.
+    const save = this.summaryReview;
+    if (save) {
+      const saved = Boolean(state.summaries?.some(summary => summary.chainId === save.chainId));
+      const stale = save.revision !== undefined && state.revision !== save.revision;
+      const left = state.history !== undefined && !state.history.some(record => record.id === save.chainId);
+      if (saved || stale || left) {
+        this.summaryReview = undefined;
+        this.output.addFrontendInteraction('/queue save-summary', saved
+          ? 'That chain already has a saved summary; nothing is rewritten.'
+          : stale ? 'The queue changed while the summary review was open; nothing was saved.'
+            : 'That chain left history while the summary review was open; nothing was saved.', INFO);
+      }
     }
     this.render();
   }
@@ -10618,14 +10741,16 @@ export class TerminalApp {
     void this.submit(false, false, true);
   }
 
-  /** `/queue` opens the manager; `/queue pause|resume|clear` act at once. */
-  private handleQueueCommand(command: string, op: 'open' | 'pause' | 'resume' | 'clear'): void {
+  /** `/queue` opens the manager; `/queue pause|resume|clear` act at once; history and save-summary review. */
+  private handleQueueCommand(command: string, op: 'open' | 'pause' | 'resume' | 'clear' | 'history' | 'save-summary'): void {
     if (!this.queueAvailable()) {
       this.output.addFrontendInteraction(command, this.session.features.has('queue')
         ? 'Queueing is off (Settings → Sessions → Queue commands).' : 'This session\'s service is older and has no command queue; restart NMSh\'s session service to use it.', INFO);
       return;
     }
     if (op === 'open') { this.panelOrigin = undefined; this.queuePanel = {selected: 0}; return; }
+    if (op === 'history') { this.openQueueHistory(command); return; }
+    if (op === 'save-summary') { this.beginSummarySave(); return; }
     const count = this.queueState.entries.length;
     if (op === 'pause') {
       this.session.queue({op: 'pause'});
@@ -10648,6 +10773,84 @@ export class TerminalApp {
     this.queueReview = {kind, id: next.id, ...(this.session.features.has('queue-timeline') ? {revision: this.queueState.revision} : {})};
   }
 
+  /** `/queue history`: the recent settled chains; the owner keeps them, this only reviews what it observed. */
+  private openQueueHistory(command: string): void {
+    if (this.running || this.passthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'Wait for the foreground program to finish before reviewing finished chains.', INFO); return;
+    }
+    if (!this.session.features.has('queue-history')) {
+      this.output.addFrontendInteraction(command, 'This session\'s service keeps no finished-chain history; restart NMSh\'s session service to review it.', INFO); return;
+    }
+    if (!(this.queueState.history?.length)) {
+      this.output.addFrontendInteraction(command, 'No finished chains yet; settled chains stay reviewable in history, newest first.', INFO); return;
+    }
+    this.panelOrigin = undefined;
+    this.queueHistoryPanel = {selected: 0};
+  }
+
+  /**
+   * Save one chain's summary: ask the owner for exactly what it observed, show the typed artifact the save would
+   * store (command text only in its redacted review form, and only through this review), then wait for Enter.
+   * Nothing is stored before that confirmation, and the owner re-validates everything it receives.
+   */
+  private beginSummarySave(chainId?: number): void {
+    const command = '/queue save-summary';
+    if (!this.session.features.has('queue-history')) {
+      this.output.addFrontendInteraction(command, 'This session\'s service keeps no chain history to summarize; restart NMSh\'s session service to save one.', INFO); return;
+    }
+    if (this.running || this.passthrough || this.startupPending) {
+      this.output.addFrontendInteraction(command, 'Wait for the foreground program to finish before saving a summary.', INFO); return;
+    }
+    const history = this.queueState.history ?? [];
+    const record = chainId === undefined ? history.at(-1) : history.find(item => item.id === chainId);
+    if (!record) {
+      this.output.addFrontendInteraction(chainId === undefined ? command : '/queue history',
+        chainId === undefined ? 'Nothing has finished to summarize yet.' : 'That chain is no longer in history; nothing was saved.', INFO);
+      return;
+    }
+    if (this.queueState.summaries?.some(summary => summary.chainId === record.id)) {
+      this.output.addFrontendInteraction(command, 'That chain already has a saved summary; nothing is rewritten.', INFO); return;
+    }
+    const detail = this.queueState.historyDetail?.id === record.id ? this.queueState.historyDetail : undefined;
+    if (detail) { this.armSummarySave(detail, record.resultsOmitted); this.render(); return; }
+    this.pendingSummarySave = record.id;
+    this.session.queue({op: 'history-detail', chainId: record.id});
+    this.render();
+  }
+
+  /** Arm the reviewed save: the container shows exactly the artifact the owner will store once Enter confirms it. */
+  private armSummarySave(detail: QueueTimeline, omitted: number): void {
+    const texts = detail.executions.map(execution => {
+      if (execution.status === 'running') return null;
+      const redacted = redactText(execution.text, homedir()).text;
+      return reviewedTextSafe(redacted) ? redacted : null;
+    });
+    const summary = buildQueueSummary(detail, {savedAt: Date.now(), origin: 'reviewed', names: recognizedExecutables(this.shellId),
+      ...(omitted ? {entriesOmitted: omitted} : {}), reviewed: texts});
+    // One review owns the keys: arming this one gives up any entry review that was open.
+    this.queueReview = undefined;
+    this.summaryReview = {chainId: detail.id, texts, summary, ...(this.session.features.has('queue-timeline') ? {revision: this.queueState.revision} : {})};
+  }
+
+  /** The save review's keys: Enter or y stores exactly what the container showed; Esc, n or Ctrl+C stores nothing. */
+  private summaryReviewKey(key: Key): void {
+    const review = this.summaryReview;
+    if (!review) return;
+    const value = key.kind === 'text' ? key.value.toLowerCase() : '';
+    if (key.kind === 'escape' || key.kind === 'interrupt' || value === 'n') {
+      this.summaryReview = undefined;
+      this.render();
+      return;
+    }
+    if (key.kind === 'enter' || value === 'y') {
+      this.summaryReview = undefined;
+      this.queueConfirmedAt = Date.now();
+      this.session.queue({op: 'save-summary', chainId: review.chainId, reviewed: {text: review.texts},
+        ...(review.revision === undefined ? {} : {expectedRevision: review.revision})});
+    }
+    this.render();
+  }
+
   private queuePolicyNote(): string {
     const policy = this.queueState.timeline?.status === 'active' ? this.queueState.timeline.failurePolicy : this.promptConfiguration.queueFailurePolicy;
     return failurePolicyNote(policy);
@@ -10660,8 +10863,10 @@ export class TerminalApp {
   private timelineVisible(): boolean {
     if (!this.promptConfiguration.queue.liveTimeline) return false;
     const timeline = this.queueState.timeline;
+    // A focused review pauses the completed view's dismissal: what it reviewed stays on screen until it is answered.
+    const held = this.queueTransientUntil > 0 && Boolean(this.queueReview || this.summaryReview);
     return this.queueAvailable() && Boolean(timeline && (timeline.status === 'active'
-      || (this.promptConfiguration.queue.transient && performance.now() < this.queueTransientUntil)));
+      || (this.promptConfiguration.queue.transient && (held || performance.now() < this.queueTransientUntil))));
   }
 
   /** Load a queued entry into the composer to edit it in place; the queue holds at that entry until it is saved. */
