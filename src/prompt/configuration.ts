@@ -751,6 +751,15 @@ export function normalizeCopy(value: unknown): CopySettings {
 export const QUEUE_RECENT_RESULTS_STEPS = [0, 1, 2] as const;
 export const QUEUE_UPCOMING_STEPS = [1, 2] as const;
 export const QUEUE_TRANSIENT_SECONDS_STEPS = [6, 8, 10, 15, 20, 30] as const;
+/** The saved summary's choices; every row applies whatever auto-save is set to. */
+export const QUEUE_SUMMARY_DETAILS = ['detailed', 'compact'] as const;
+export const QUEUE_SUMMARY_PLACEMENTS = ['left', 'center', 'right'] as const;
+export const QUEUE_SUMMARY_ALIGNS = ['left', 'center', 'right'] as const;
+export const QUEUE_SUMMARY_DETAIL_LABELS: Readonly<Record<typeof QUEUE_SUMMARY_DETAILS[number], string>> = {detailed: 'Detailed', compact: 'Compact'};
+export const QUEUE_SUMMARY_POSITION_LABELS: Readonly<Record<typeof QUEUE_SUMMARY_PLACEMENTS[number], string>> = {left: 'Left', center: 'Centered', right: 'Right'};
+export type QueueSummaryDetail = typeof QUEUE_SUMMARY_DETAILS[number];
+export type QueueSummaryPlacement = typeof QUEUE_SUMMARY_PLACEMENTS[number];
+export type QueueSummaryAlign = typeof QUEUE_SUMMARY_ALIGNS[number];
 
 /**
  * How the execution timeline presents observed queue work. Presentation only: it never changes dispatch, pause,
@@ -767,16 +776,40 @@ export interface QueuePresentationSettings {
   transient: boolean;
   /** How long the finished chain stays visible (6–30 seconds). */
   transientSeconds: number;
+  /** Save one typed summary automatically when each chain settles; Off keeps summaries explicit and reviewed. */
+  autoSaveSummary: boolean;
+  /** How saved summaries read: each observed result, or the compact totals container. */
+  summaryDetail: QueueSummaryDetail;
+  /** Where the bounded summary container sits in its row. */
+  summaryPlacement: QueueSummaryPlacement;
+  /** How the text inside the container aligns; status glyphs and facts keep their columns. */
+  summaryAlign: QueueSummaryAlign;
+  /** Show each observed duration in a saved summary. */
+  summaryDurations: boolean;
+  /** Show each observed exit code in a saved summary. */
+  summaryExitCodes: boolean;
+  /** Show observed input waits when one was recorded; nothing is ever guessed. */
+  summaryInputWaits: boolean;
 }
 
 function boundedCount(value: unknown, min: number, max: number, fallback: number): number {
   return typeof value === 'number' && Number.isInteger(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 
+/** A hand-set value from a closed set; anything else falls back to the shipped default. */
+function pickValue<T extends string>(values: readonly T[], value: unknown, fallback: T): T {
+  return typeof value === 'string' && (values as readonly string[]).includes(value) ? value as T : fallback;
+}
+
 export function normalizeQueuePresentation(value: unknown): QueuePresentationSettings {
   const raw = isRecord(value) ? value : {};
   return {liveTimeline: raw.liveTimeline !== false, recentResults: boundedCount(raw.recentResults, 0, 2, 2),
-    upcoming: boundedCount(raw.upcoming, 1, 2, 2), transient: raw.transient !== false, transientSeconds: boundedCount(raw.transientSeconds, 6, 30, 8)};
+    upcoming: boundedCount(raw.upcoming, 1, 2, 2), transient: raw.transient !== false, transientSeconds: boundedCount(raw.transientSeconds, 6, 30, 8),
+    autoSaveSummary: raw.autoSaveSummary === true,
+    summaryDetail: pickValue(QUEUE_SUMMARY_DETAILS, raw.summaryDetail, 'detailed'),
+    summaryPlacement: pickValue(QUEUE_SUMMARY_PLACEMENTS, raw.summaryPlacement, 'center'),
+    summaryAlign: pickValue(QUEUE_SUMMARY_ALIGNS, raw.summaryAlign, 'left'),
+    summaryDurations: raw.summaryDurations !== false, summaryExitCodes: raw.summaryExitCodes !== false, summaryInputWaits: raw.summaryInputWaits === true};
 }
 
 export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
@@ -817,7 +850,9 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   agentActivity: true,
   commandQueue: true,
   queueFailurePolicy: 'pause',
-  queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8},
+  queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
+    autoSaveSummary: false, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
+    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false},
   workspacePanels: false,
   shellBackend: 'zsh',
   openWith: 'auto',

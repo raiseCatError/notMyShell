@@ -60,8 +60,8 @@
 
 **Interfaces:** `renderQueueSummary(summary, columns, height, options)` with `options: {detail?, placement?, align?, durations?, exitCodes?, inputWaits?, treatment?, now?}`; `queueSummaryLines(summary, columns, options)` for the plain/rereviewed form.
 
-- [ ] RED: the default is a centered bounded container with left-aligned contents; Container Left/Center/Right move the whole block; internal alignment changes only the text inside it; Compact and Detailed differ only in presentation; exit codes and durations can each be hidden; hidden facts never change status truthfulness; a missing duration/wait renders nothing; 80×30 and 32×18 stay readable without cutting an exit code away; the aggregate lines always state factual counts and wall elapsed (or `no execution observed`); Safe glyphs and NO_COLOR keep the same shape.
-- [ ] Implement the renderer over the shared dividers, palette roles, glyphs and `formatDuration`.
+- [x] RED: the default is a centered bounded container with left-aligned contents; Container Left/Center/Right move the whole block; internal alignment changes only the text inside it; Compact and Detailed differ only in presentation; exit codes and durations can each be hidden; hidden facts never change status truthfulness; a missing duration/wait renders nothing; 80×30 and 32×18 stay readable without cutting an exit code away; the aggregate lines always state factual counts and wall elapsed (or `no execution observed`); Safe glyphs and NO_COLOR keep the same shape.
+- [x] Implement the renderer over the shared dividers, palette roles, glyphs and `formatDuration`.
 
 ### Task 5: Settings, portability and discovery
 
@@ -69,8 +69,8 @@
 
 **Interfaces:** `QueuePresentationSettings` gains `autoSaveSummary`, `summaryDetail`, `summaryPlacement`, `summaryAlign`, `summaryDurations`, `summaryExitCodes`, `summaryInputWaits` with stepper/preset constants and normalization; `QUEUE_SETTINGS_ROW_IDS` gains the new rows plus the summary preview.
 
-- [ ] RED: defaults are auto-save Off, detailed, centered/left, durations On, exit codes On, input waits Off; normalization clamps/rejects malformed values; the preview draws the production summary renderer for the current settings; portability round-trips the group; Setup and Ask discover the destination.
-- [ ] Implement the rows, normalization, preview and discovery.
+- [x] RED: defaults are auto-save Off, detailed, centered/left, durations On, exit codes On, input waits Off; normalization clamps/rejects malformed values; the preview draws the production summary renderer for the current settings; portability round-trips the group; Setup and Ask discover the destination.
+- [x] Implement the rows, normalization, preview and discovery.
 
 ### Task 6: Application integration, journal and privacy boundaries
 
@@ -93,3 +93,4 @@
 
 - 2026-10-16: The maintainer approved the Slice 1 and 2A checkpoints and authorized Slice 2B on the same feature branch (`feature/post-v020-execution-ux`, last verified checkpoint `069d954e`). Automated approval is not physical QA; Ghostty/Terminal.app validation stays outstanding.
 - 2026-10-16: Tasks 1–3 implemented: bounded chain archive (`ExecutionTimeline`), typed artifacts (`QueueSummary`), owner ops (`history-detail`, `save-summary`, `summaries-auto`), transported validation and `queue-history` negotiation. `tests/queueHistory.test.ts` 18/18; affected suites 108/108; build clean.
+- 2026-10-16: Tasks 4–5 implemented: one shared summary renderer (`queueSummaryView`, Compact/Detailed, placement/alignment, optional durations/exit codes/observed waits, Safe glyphs and NO_COLOR), the Queue settings' summary rows and normalization, the production-rendered preview, portability and Setup discovery. `tests/queueSummaryView.test.ts` 9/9; `tests/queueSettings.test.ts` 12/12; settings/setup/portability suites 86/86; build clean.

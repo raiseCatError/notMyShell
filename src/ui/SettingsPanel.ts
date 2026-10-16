@@ -14,7 +14,7 @@ import {availabilityOf, availableValues, currentCursorHost, unavailableReason, t
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
-import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, type QueuePresentationSettings} from '../prompt/configuration.js';
+import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
 import {librarySummary} from '../appearance/themeLibrary.js';
@@ -426,6 +426,23 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'queueTransientSeconds', parent: 'queueTransient', when: config => config.queue.transient, label: 'Keep visible', description: 'How long the finished timeline stays before it dismisses (6–30 seconds)', category: 'Queue',
     control: 'stepper', steps: QUEUE_TRANSIENT_SECONDS_STEPS, format: value => `${value}s`,
     get: config => config.queue.transientSeconds, set: (config, transientSeconds) => withQueue(config, {transientSeconds})},
+  {id: 'queueSummaryAutoSave', label: 'Save summaries', description: 'Save one typed summary when each execution chain ends: observed outcomes, durations and counts only — never output, prompts, hidden input or private paths. Off by default: explicit saves go through a review', category: 'Queue',
+    control: 'boolean', get: config => config.queue.autoSaveSummary, set: (config, autoSaveSummary) => withQueue(config, {autoSaveSummary})},
+  enumRow({id: 'queueSummaryDetail', label: 'Summary detail', description: 'Detailed lists each observed result under the totals; Compact keeps the totals container only. Presentation only: the saved artifact never changes', category: 'Queue',
+    values: QUEUE_SUMMARY_DETAILS, labels: QUEUE_SUMMARY_DETAILS.map(value => QUEUE_SUMMARY_DETAIL_LABELS[value]),
+    get: config => config.queue.summaryDetail, set: (config, summaryDetail) => withQueue(config, {summaryDetail})}),
+  enumRow({id: 'queueSummaryPlacement', label: 'Summary placement', description: 'Where the bounded summary container sits: left, centered (default) or right', category: 'Queue',
+    values: QUEUE_SUMMARY_PLACEMENTS, labels: QUEUE_SUMMARY_PLACEMENTS.map(value => QUEUE_SUMMARY_POSITION_LABELS[value]),
+    get: config => config.queue.summaryPlacement, set: (config, summaryPlacement) => withQueue(config, {summaryPlacement})}),
+  enumRow({id: 'queueSummaryAlign', label: 'Summary text alignment', description: 'How text inside the container aligns; status marks and observed facts keep their readable columns', category: 'Queue',
+    values: QUEUE_SUMMARY_ALIGNS, labels: QUEUE_SUMMARY_ALIGNS.map(value => QUEUE_SUMMARY_POSITION_LABELS[value]),
+    get: config => config.queue.summaryAlign, set: (config, summaryAlign) => withQueue(config, {summaryAlign})}),
+  {id: 'queueSummaryDurations', label: 'Summary durations', description: 'Show each observed command duration in saved summaries; a duration that was never observed stays absent', category: 'Queue',
+    control: 'boolean', get: config => config.queue.summaryDurations, set: (config, summaryDurations) => withQueue(config, {summaryDurations})},
+  {id: 'queueSummaryExitCodes', label: 'Summary exit codes', description: 'Show each observed exit code in saved summaries; only codes the shell actually reported are ever shown', category: 'Queue',
+    control: 'boolean', get: config => config.queue.summaryExitCodes, set: (config, summaryExitCodes) => withQueue(config, {summaryExitCodes})},
+  {id: 'queueSummaryInputWaits', label: 'Summary input waits', description: 'Show how long a command waited for your input when that wait was observed; Off by default, and nothing is ever guessed', category: 'Queue',
+    control: 'boolean', get: config => config.queue.summaryInputWaits, set: (config, summaryInputWaits) => withQueue(config, {summaryInputWaits})},
   {id: 'agentActivity', label: 'Agent activity', description: 'Local-only durations and counts for Claude Code and Codex CLI runs (/agents); never prompts or output', category: 'Sessions',
     control: 'boolean', get: config => config.agentActivity, set: (config, agentActivity) => ({...config, agentActivity})},
   enumRow({id: 'shellBackend', label: 'Default shell', description: 'Shell for new sessions; /shell switches the current session and lists what is installed', category: 'Sessions',
@@ -615,7 +632,8 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
  * Setup edit, plus the shared motion controls the timeline follows. Never a second copy of the settings.
  */
 export const QUEUE_SETTINGS_ROW_IDS = ['commandQueue', 'queueFailurePolicy', 'queueTimeline', 'queueRecentResults', 'queueUpcoming',
-  'queueTransient', 'queueTransientSeconds', 'motion_rendering', 'motion_eventFeedback', 'reducedMotion'] as const;
+  'queueTransient', 'queueTransientSeconds', 'queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign',
+  'queueSummaryDurations', 'queueSummaryExitCodes', 'queueSummaryInputWaits', 'motion_rendering', 'motion_eventFeedback', 'reducedMotion'] as const;
 
 /** Text cue (not color) that a value differs from its default. */
 const CHANGED_MARK = () => (getCurrentGlyphMode() === 'nerd' ? '•' : '*');

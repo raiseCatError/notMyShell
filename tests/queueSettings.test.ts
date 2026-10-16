@@ -5,7 +5,7 @@ import {DEFAULT_PROMPT_CONFIGURATION, normalizePromptConfiguration, type PromptC
 import {parseSlashCommand} from '../src/commands/slashCommands.js';
 import {adjustSettingsRow, configGroup, QUEUE_SETTINGS_ROW_IDS, SETTINGS_ENTRIES, SETTINGS_ROWS, settingsRowValue, toggleSettingsRow} from '../src/ui/SettingsPanel.js';
 import {createRowPanel, renderRowPanel, rowPanelKey} from '../src/ui/RowPanel.js';
-import {queueSettingsPreview} from '../src/status/queueSettingsPreview.js';
+import {queueSettingsPreview, queueSummaryPreview} from '../src/status/queueSettingsPreview.js';
 import {queueBlock} from '../src/status/queueStatus.js';
 import {exportSettings, planImport} from '../src/configuration/portability.js';
 import {TerminalApp} from '../src/app/TerminalApp.js';
@@ -26,21 +26,42 @@ const timeline: QueueTimeline = {id: 1, createdAt: 1000, startedAt: 1000, observ
 const running: QueueState = {timeline, revision: 4, entries: [{id: 4, text: 'git status', addedAt: 3000}, {id: 5, text: 'echo done', addedAt: 3000}]};
 const plain = (state: QueueState, options: Record<string, unknown> = {}) => queueBlock(state, 80, 7, {now: 3000, animate: false, ...options})!.map(stripAnsi).join('\n');
 
-test('queue presentation defaults match the approved spec: timeline on, two results, two upcoming, eight-second completed view', () => {
-  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.queue, {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8});
+test('queue presentation defaults match the approved spec: timeline on, two results, two upcoming, eight-second completed view, summaries off', () => {
+  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.queue, {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
+    autoSaveSummary: false, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
+    summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false});
   assert.deepEqual(normalizePromptConfiguration({}).queue, DEFAULT_PROMPT_CONFIGURATION.queue, 'an existing configuration keeps the defaults');
 });
 
 test('queue presentation normalization bounds every value and keeps a hand-set in-range retention', () => {
+  const defaults = DEFAULT_PROMPT_CONFIGURATION.queue;
   assert.deepEqual(normalizePromptConfiguration({queue: {recentResults: -4, upcoming: 0, transientSeconds: 2}}).queue,
-    {liveTimeline: true, recentResults: 0, upcoming: 1, transient: true, transientSeconds: 6});
+    {...defaults, recentResults: 0, upcoming: 1, transientSeconds: 6});
   assert.deepEqual(normalizePromptConfiguration({queue: {recentResults: 9, upcoming: 9, transientSeconds: 300}}).queue,
-    {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 30});
+    {...defaults, recentResults: 2, upcoming: 2, transientSeconds: 30});
   assert.equal(normalizePromptConfiguration({queue: {recentResults: 1.5}}).queue.recentResults, 2, 'a non-integer falls back to the default');
   assert.equal(normalizePromptConfiguration({queue: {transientSeconds: 12}}).queue.transientSeconds, 12, 'any integer in 6–30 is kept, not snapped to a preset');
   assert.equal(normalizePromptConfiguration({queue: {liveTimeline: false, transient: false}}).queue.liveTimeline, false);
   assert.equal(normalizePromptConfiguration({queue: 'nope'}).queue.liveTimeline, true, 'a malformed group falls back to the defaults');
   assert.equal(normalizePromptConfiguration({queue: null}).queue.transientSeconds, 8);
+});
+
+test('the summary settings normalize conservatively: saves off, detailed, centered, left-aligned, waits hidden', () => {
+  const defaults = DEFAULT_PROMPT_CONFIGURATION.queue;
+  assert.equal(defaults.autoSaveSummary, false, 'automatic saving is Off by default');
+  assert.equal(defaults.summaryDetail, 'detailed');
+  assert.equal(defaults.summaryPlacement, 'center');
+  assert.equal(defaults.summaryAlign, 'left');
+  assert.equal(defaults.summaryDurations, true);
+  assert.equal(defaults.summaryExitCodes, true);
+  assert.equal(defaults.summaryInputWaits, false, 'input waits stay hidden until asked for');
+  const hand: Partial<typeof defaults> = {autoSaveSummary: true, summaryDetail: 'compact', summaryPlacement: 'right', summaryAlign: 'right',
+    summaryDurations: false, summaryExitCodes: false, summaryInputWaits: true};
+  assert.deepEqual(normalizePromptConfiguration({queue: hand}).queue, {...defaults, ...hand}, 'in-range choices are kept exactly');
+  assert.equal(normalizePromptConfiguration({queue: {autoSaveSummary: 'yes'}}).queue.autoSaveSummary, false, 'only an explicit true turns saving on');
+  assert.equal(normalizePromptConfiguration({queue: {summaryDetail: 'everything'}}).queue.summaryDetail, 'detailed');
+  assert.equal(normalizePromptConfiguration({queue: {summaryPlacement: 'middle'}}).queue.summaryPlacement, 'center');
+  assert.equal(normalizePromptConfiguration({queue: {summaryAlign: 'justify'}}).queue.summaryAlign, 'left');
 });
 
 test('the production renderer keeps the configured recent results and upcoming entries', () => {
@@ -114,6 +135,24 @@ test('the Queue panel edits the shared rows and hides values that no longer appl
   assert.doesNotMatch(renderRowPanel(panel, config, 80, 40, []).map(stripAnsi).join('\n'), /Keep visible/u);
 });
 
+test('the summary rows are part of the Queue destination and edit the shared settings', () => {
+  const ids = ['queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign', 'queueSummaryDurations', 'queueSummaryExitCodes', 'queueSummaryInputWaits'];
+  for (const id of ids) {
+    assert.ok(QUEUE_SETTINGS_ROW_IDS.includes(id), `${id} is in the Queue destination`);
+    assert.ok(SETTINGS_ROWS.some(item => item.id === id), `${id} is a real Settings row`);
+    assert.equal(configGroup(SETTINGS_ROWS.find(item => item.id === id)!), 'Sessions & Alerts', `${id} stays in the Sessions group`);
+  }
+  assert.equal(settingsRowValue(row('queueSummaryDetail'), withQueue({summaryDetail: 'compact'})), 'Compact');
+  assert.equal(toggleSettingsRow(row('queueSummaryDetail'), withQueue({summaryDetail: 'compact'}))!.queue.summaryDetail, 'detailed');
+  assert.equal(settingsRowValue(row('queueSummaryPlacement'), withQueue({summaryPlacement: 'center'})), 'Centered');
+  assert.equal(adjustSettingsRow(row('queueSummaryPlacement'), withQueue({summaryPlacement: 'center'}), -1)!.queue.summaryPlacement, 'left');
+  assert.equal(adjustSettingsRow(row('queueSummaryPlacement'), withQueue({summaryPlacement: 'right'}), 1)!.queue.summaryPlacement, 'left', 'cycling wraps');
+  assert.equal(toggleSettingsRow(row('queueSummaryAutoSave'), withQueue({autoSaveSummary: false}))!.queue.autoSaveSummary, true);
+  assert.equal(toggleSettingsRow(row('queueSummaryDurations'), withQueue({summaryDurations: true}))!.queue.summaryDurations, false);
+  assert.equal(toggleSettingsRow(row('queueSummaryExitCodes'), withQueue({summaryExitCodes: true}))!.queue.summaryExitCodes, false);
+  assert.equal(toggleSettingsRow(row('queueSummaryInputWaits'), withQueue({summaryInputWaits: false}))!.queue.summaryInputWaits, true);
+});
+
 test('the Queue panel preview is the production renderer over frozen observations and follows the settings', () => {
   const lines = queueSettingsPreview(DEFAULT_PROMPT_CONFIGURATION, 76).map(stripAnsi);
   const text = lines.join('\n');
@@ -133,27 +172,52 @@ test('the Queue panel preview is the production renderer over frozen observation
   assert.match(classic, /git status/u);
   const transient = queueSettingsPreview(withQueue({transientSeconds: 20}), 76).map(stripAnsi).join('\n');
   assert.match(transient, /resume and clear are always reviewed/u, 'the preview explains session ownership and reviewed resume/clear');
+  assert.match(text, /Queue Summary/u, 'the saved summary container is part of the preview');
+  assert.match(text, /2 succeeded/u);
+  assert.match(text, /exit 1/u, 'the frozen observed failure is shown');
+  assert.match(text, /wall time 5.6s/u);
+  assert.deepEqual(queueSummaryPreview(withQueue({}), 76).map(stripAnsi), queueSummaryPreview(DEFAULT_PROMPT_CONFIGURATION, 76).map(stripAnsi), 'deterministic, no live session');
+  const summaryCompact = queueSummaryPreview(withQueue({summaryDetail: 'compact'}), 76).map(stripAnsi).join('\n');
+  assert.match(summaryCompact, /Queue Summary/u);
+  assert.doesNotMatch(summaryCompact, /exit 1|1.0s/u, 'compact keeps the totals only');
+  const withoutFacts = queueSummaryPreview(withQueue({summaryDurations: false, summaryExitCodes: false}), 76).map(stripAnsi).join('\n');
+  assert.doesNotMatch(withoutFacts, /exit 1|1.0s/u, 'hidden facts stay hidden in the preview');
+  assert.match(withoutFacts, /2 succeeded/u, 'the factual counts never change');
+  const left = queueSummaryPreview(withQueue({summaryPlacement: 'left'}), 76).map(stripAnsi);
+  const centered = queueSummaryPreview(withQueue({summaryPlacement: 'center'}), 76).map(stripAnsi);
+  assert.equal(left[0]!.length - left[0]!.trimStart().length, 0, 'left placement sits at the edge');
+  assert.ok(centered[0]!.length - centered[0]!.trimStart().length > 0, 'the default container is centered');
 });
 
 test('the Queue panel keeps its preview and footer visible at the exact fit height', () => {
   const panel = createRowPanel('Queue', '/queue · /settings queue', [...QUEUE_SETTINGS_ROW_IDS], 'queue');
   const config = DEFAULT_PROMPT_CONFIGURATION;
-  const compact = renderRowPanel(panel, config, 80, 24, queueSettingsPreview(config, 76)).map(stripAnsi);
-  assert.match(compact.join('\n'), /Queue · 5 commands/u, 'the preview is shown when it exactly fits');
+  const preview = queueSettingsPreview(config, 76);
+  let fit = 0;
+  for (let height = 10; height <= 60 && !fit; height += 1) {
+    if (/Queue Summary/u.test(renderRowPanel(panel, config, 80, height, preview).map(stripAnsi).join('\n'))) fit = height;
+  }
+  assert.ok(fit > 0, 'the preview fits at some height');
+  const compact = renderRowPanel(panel, config, 80, fit, preview).map(stripAnsi);
+  assert.match(compact.join('\n'), /Queue Summary/u, 'the preview is shown when it exactly fits');
   assert.doesNotMatch(compact.join('\n'), /While a command runs/u, 'the description yields before the controls do');
   assert.match(compact.at(-1) ?? '', /Esc close/u, 'the footer controls are never cut from the tail');
-  const tall = renderRowPanel(panel, config, 80, 30, queueSettingsPreview(config, 76)).map(stripAnsi);
+  const tall = renderRowPanel(panel, config, 80, fit + 12, preview).map(stripAnsi);
   assert.match(tall.join('\n'), /While a command runs/u, 'the focused row description appears when there is room');
   assert.match(tall.at(-1) ?? '', /Esc close/u);
 });
 
 test('queue behavior and presentation transfer with the sessions settings category', () => {
-  const config: PromptConfiguration = {...withQueue({liveTimeline: false, recentResults: 0, upcoming: 1, transient: false, transientSeconds: 30}), queueFailurePolicy: 'continue'};
+  const config: PromptConfiguration = {...withQueue({liveTimeline: false, recentResults: 0, upcoming: 1, transient: false, transientSeconds: 30,
+    autoSaveSummary: true, summaryDetail: 'compact', summaryPlacement: 'right', summaryInputWaits: true}), queueFailurePolicy: 'continue'};
   const document = exportSettings(config, ['sessions']);
   assert.deepEqual(document.categories.sessions!.queue, config.queue);
   assert.equal(document.categories.sessions!.queueFailurePolicy, 'continue');
   const plan = planImport(DEFAULT_PROMPT_CONFIGURATION, document, ['sessions']);
   assert.deepEqual(plan.next.queue, config.queue);
+  assert.equal(plan.next.queue.autoSaveSummary, true);
+  assert.equal(plan.next.queue.summaryDetail, 'compact');
+  assert.equal(plan.next.queue.summaryPlacement, 'right');
   assert.equal(plan.next.queueFailurePolicy, 'continue');
 });
 
