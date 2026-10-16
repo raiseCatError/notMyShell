@@ -53,6 +53,7 @@ import {applyThemeBridge, bridgeColorLevel, bridgeStateExists, detectTargets, fz
 import {createThemeBridgePanel, renderThemeBridgePanel, themeBridgeKey as themeBridgePanelKey, type BridgePanelAction, type BridgePanelContext, type ThemeBridgePanelState} from '../themeBridge/ThemeBridgePanel.js';
 import {createRowPanel, renderRowPanel, rowPanelKey, type RowPanelState} from '../ui/RowPanel.js';
 import {copiedNote, copySelectionPayload, parseCopyArgs, recordCopyText, resolveCopySelection} from '../clipboard/copySelection.js';
+import {captureOutputAnchor, createOutputSelection, moveOutputSelection, restoreOutputAnchor, revealOutputSelection, validateOutputSelection, type OutputAnchor, type OutputScope, type OutputSelection} from '../output/OutputSelection.js';
 import {copyPickerKey, createCopyPicker, renderCopyPicker, type CopyPickerState} from '../ui/CopyPicker.js';
 import {DEFAULT_REPORT_OPTIONS, describeFindings, redactText, scanSensitive, type ReportFormat} from '../clipboard/report.js';
 import {applyReportEdit, createReportReview, createTextReview, renderReportReview, reportReviewKey, type ReportReviewState} from '../ui/ReportReview.js';
@@ -86,10 +87,10 @@ import {applyUiTheme, uiColorsFor} from '../appearance/uiTheme.js';
 import {chromeColorsFrom, resolveChrome} from '../appearance/uiChrome.js';
 import {CHROME_EDITOR_MIN_SIZE, chromeEditorKey, createChromeEditor, renderChromeEditor, type ChromeEditorState} from '../appearance/ChromeEditor.js';
 import {promptSymbolGlyph} from '../prompt/glyphChoices.js';
-import {framePanel, renderTabStrip, tabCycleDelta} from '../ui/PanelShell.js';
+import {framePanel, renderTabStrip, selectedRowBand, tabCycleDelta} from '../ui/PanelShell.js';
 import {providerExplanation} from '../setup/providerExplanations.js';
 import {liveActivityPaint} from '../status/liveActivityColors.js';
-import {renderControls} from '../ui/controls.js';
+import {renderControlRows, renderControls} from '../ui/controls.js';
 import {gradientEditorControls, gradientEditorKey, renderGradientEditorRows, type GradientEditorState} from '../ui/GradientEditor.js';
 import {
   adjustSettingsRow, isInlineEditable, resetSettingsRow, settingsRowChanged, renderSettingsPanel, selectedSettingsRow, settingsItemCount, settingsRowDestination,
@@ -773,6 +774,10 @@ export class TerminalApp {
   private toolConfigurationLoading = false;
   private toolConfigurationGeneration = 0;
   private paletteState?: PaletteState;
+  private blockPaletteContext?: {palette: PaletteState; scope: OutputScope};
+  private outputNavigation?: OutputSelection<{anchor: OutputAnchor; draft: string; cursor: number}> & {includeStatus: boolean; report?: ReportFormat; busy?: boolean};
+  /** Only this originating contextual palette can return to navigation. */
+  private blockPaletteReturn?: {selection: NonNullable<TerminalApp['outputNavigation']>; palette: PaletteState};
   /** Palette entry ids used this session, most recent first. */
   private paletteRecent: string[] = [];
   /** Captured previews per external welcome provider, fetched once per panel. */
@@ -1486,6 +1491,10 @@ export class TerminalApp {
   };
 
   private handleKey(key: Key): void {
+    const navigating = Boolean(this.outputNavigation);
+    const validNavigation = this.reconcileOutputNavigation();
+    if (navigating && !validNavigation && this.outputNavigationAvailable()
+      && ['up', 'down', 'enter', 'escape'].includes(key.kind)) { this.render(); return; }
     // Adjacent typing barely animates the caret; every other movement travels (cursor effects only).
     this.caretCause = key.kind === 'text' || key.kind === 'backspace' || key.kind === 'delete' || key.kind === 'paste' ? 'typing' : 'jump';
     if (this.effects.active && (key.kind === 'escape' || (key.kind === 'interrupt' && !this.running))) {
@@ -1670,7 +1679,13 @@ export class TerminalApp {
     }
     if (this.paletteState) {
       const state = this.paletteState;
-      if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'palette') this.paletteState = undefined;
+      if (key.kind === 'escape' || key.kind === 'interrupt' || key.kind === 'palette') {
+        const returning = this.blockPaletteReturn?.palette === state;
+        this.paletteState = undefined;
+        this.blockPaletteContext = undefined;
+        this.blockPaletteReturn = undefined;
+        if (returning && this.outputNavigation) this.revealOutputNavigation();
+      }
       else {
         const result = handlePaletteKey(key, state, this.paletteRecent);
         if (result && result !== 'changed') {
@@ -1681,6 +1696,7 @@ export class TerminalApp {
       this.render();
       return;
     }
+    if (this.outputNavigation && this.handleOutputNavigationKey(key)) return;
     if (key.kind === 'palette') {
       if (!this.running) this.openPalette();
       this.render();
@@ -2798,6 +2814,15 @@ export class TerminalApp {
       this.render();
     }
     else if (slash.kind === 'copy') await this.copySlash(command, slash.args);
+    else if (slash.kind === 'actions') {
+      if (!this.outputNavigationAvailable()) return;
+      if (slash.error) this.output.addFrontendInteraction(command.trim(), slash.error, ERROR);
+      else if (slash.index !== undefined) {
+        const record = this.output.recentShell(slash.index);
+        if (record) this.openBlockPalette(record.startId);
+        else this.output.addFrontendInteraction(command.trim(), `No completed command output at ${slash.index}.`, ERROR);
+      } else this.openOutputNavigation('actions');
+    }
     else if (slash.kind === 'pasteClipboard') await this.pasteClipboard(command);
     else if (slash.kind === 'clips') {
       if (slash.suggestions === undefined) this.openClips();
@@ -3030,6 +3055,97 @@ export class TerminalApp {
     say('Staged in the composer for you to review. Press Enter to run it.');
   }
 
+  private outputScope() { return {session: `${this.sessionId ?? 'in-process'}:${this.shellId}`, generation: this.output.presentationGeneration}; }
+
+  /** Reuse the workspace's ownership model, excluding only this selector and its own originating palette. */
+  private outputNavigationAvailable(): boolean {
+    return !this.stopped && !this.running && !this.startupPending && !this.shellSwitching && !this.preparingCommand && !this.frontendSuspended
+      && !this.passthrough && !this.externalPassthrough && !this.queueReview && !this.summaryReview && this.pendingSummarySave === undefined && !this.queueCompose && !this.queueEdit && !this.ownershipLook
+      && this.workspaceOwner(true) === 'COMPOSER';
+  }
+
+  private openOutputNavigation(intent: 'copy' | 'actions', includeStatus = this.promptConfiguration.copy.includeStatus, report?: ReportFormat): void {
+    if (!this.outputNavigationAvailable()) return;
+    const {columns, rows} = this.dimensions();
+    const wrapped = this.output.wrapped(columns);
+    const state = createOutputSelection(intent, this.outputScope(), this.output.recentShellCommands(), {
+      anchor: captureOutputAnchor(wrapped, this.historyViewport, this.planFrame(columns, rows).viewportRows),
+      draft: this.editor.text, cursor: this.editor.cursorIndex,
+    });
+    if (!state) { this.noteClipboard('No completed command output yet.', 'info'); return; }
+    this.clearBlockFocus();
+    this.selection = undefined;
+    this.outputNavigation = {...state, includeStatus, report};
+    this.revealOutputNavigation();
+  }
+
+  private revealOutputNavigation(): void {
+    if (!this.outputNavigation) return;
+    const {columns, rows} = this.dimensions();
+    revealOutputSelection(this.output.wrapped(columns), this.historyViewport, this.planFrame(columns, rows).viewportRows, this.outputNavigation.focusedId);
+  }
+
+  /** False means there is no valid navigation left. Ownership/generation loss never restores stale state. */
+  private reconcileOutputNavigation(): boolean {
+    const state = this.outputNavigation;
+    if (!state) return false;
+    if (this.outputNavigationAvailable() && validateOutputSelection(state, this.outputScope(), this.output.recentShellCommands())) return true;
+    const vanished = this.outputNavigationAvailable() && state.scope.session === this.outputScope().session
+      && state.scope.generation === this.outputScope().generation;
+    this.endOutputNavigation(false);
+    if (vanished) this.noteClipboard('Selected output is no longer available.', 'info');
+    return false;
+  }
+
+  private endOutputNavigation(restore: boolean): void {
+    const state = this.outputNavigation;
+    if (!state) return;
+    if (this.blockPaletteReturn?.selection === state) {
+      if (this.blockPaletteContext?.palette === this.blockPaletteReturn.palette) this.blockPaletteContext = undefined;
+      if (this.paletteState === this.blockPaletteReturn.palette) this.paletteState = undefined;
+      this.blockPaletteReturn = undefined;
+    }
+    this.outputNavigation = undefined;
+    if (restore && this.outputNavigationAvailable() && state.scope.session === this.outputScope().session
+      && state.scope.generation === this.outputScope().generation) {
+      const {columns, rows} = this.dimensions();
+      restoreOutputAnchor(this.output.wrapped(columns), this.historyViewport, this.planFrame(columns, rows).viewportRows, state.returnTo.anchor);
+      // The editor, including paste atoms and its cursor, was never modified. Never overwrite a newer draft.
+    }
+  }
+
+  private handleOutputNavigationKey(key: Key): boolean {
+    const state = this.outputNavigation;
+    if (!state) return false;
+    if (key.kind === 'escape' || key.kind === 'interrupt') { this.endOutputNavigation(true); this.render(); return true; }
+    if (key.kind === 'up' || key.kind === 'down') {
+      moveOutputSelection(state, key.kind); this.revealOutputNavigation(); this.render(); return true;
+    }
+    if (key.kind === 'enter') { void this.activateOutputNavigation(); return true; }
+    // Pointer hit testing must use the displayed viewport; restoring here would retarget clicks/drags.
+    if (['mouseMove', 'mouseClick', 'mouseDrag', 'mouseRelease', 'wheelUp', 'wheelDown', 'pageUp', 'pageDown'].includes(key.kind)) return false;
+    // Letters and normal editor keys retain their composer meaning.
+    this.endOutputNavigation(true);
+    return false;
+  }
+
+  private async activateOutputNavigation(): Promise<void> {
+    if (!this.reconcileOutputNavigation()) return;
+    const state = this.outputNavigation!;
+    if (state.busy) return;
+    const record = this.output.recentShellCommands().find(record => record.startId === state.focusedId);
+    if (!record) { this.endOutputNavigation(false); return; }
+    if (state.intent === 'actions') { this.openBlockPalette(record.startId); this.render(); return; }
+    if (state.report) { this.endOutputNavigation(false); this.startReport([record], state.report); return; }
+    state.busy = true;
+    const copied = await this.copyRecords([record], state.includeStatus);
+    if (this.outputNavigation === state) {
+      state.busy = false;
+      if (this.reconcileOutputNavigation() && copied) this.endOutputNavigation(true);
+    }
+    this.render();
+  }
+
   private clearBlockFocus(): void {
     this.focusedCommandIndex = undefined;
     this.focusedLineIndex = undefined;
@@ -3039,7 +3155,13 @@ export class TerminalApp {
   private openBlockPalette(startId: number): void {
     if (this.running || this.settingsPanelActive) return;
     const record = this.output.view().completed.find(item => item.startId === startId);
-    if (record) this.paletteState = createPalette(blockPaletteItems(record));
+    if (record && !record.frontend) {
+      this.paletteState = createPalette(blockPaletteItems(record));
+      this.blockPaletteContext = {palette: this.paletteState, scope: this.outputScope()};
+      if (this.outputNavigation?.intent === 'actions' && this.outputNavigation.focusedId === startId) {
+        this.blockPaletteReturn = {selection: this.outputNavigation, palette: this.paletteState};
+      }
+    }
   }
 
   private async runBlockAction(startId: number, action: BlockActionId): Promise<void> {
@@ -3047,7 +3169,9 @@ export class TerminalApp {
     const records = this.output.view().completed;
     const index = records.findIndex(item => item.startId === startId);
     const record = records[index];
-    if (!record) return; // A clear/restore must never act on stale screen coordinates.
+    if (!record || !blockPaletteItems(record).some(item => item.action.kind === 'block' && item.action.id === action)) return;
+    // Selection itself never runs actions. An explicit choice ends it before any editor/program handoff.
+    this.endOutputNavigation(false);
     const includeStatus = this.promptConfiguration.copy.includeStatus;
     if (action === 'copyOutput') await this.copyRecords([record], includeStatus);
     else if (action === 'copyReport') this.startReport([record], 'markdown');
@@ -3076,6 +3200,20 @@ export class TerminalApp {
 
   /** Executes only the declared NMSh action of the chosen entry. */
   private async runPaletteItem(item: PaletteItem): Promise<void> {
+    if (item.action.kind === 'block' && this.blockPaletteContext) {
+      const context = this.blockPaletteContext;
+      this.blockPaletteContext = undefined;
+      if (context.scope.session !== this.outputScope().session || context.scope.generation !== this.outputScope().generation) {
+        if (this.paletteState === context.palette) this.paletteState = undefined;
+        this.endOutputNavigation(false);
+        this.noteClipboard('Selected output is no longer available.', 'info');
+        return;
+      }
+    }
+    if (item.action.kind === 'block' && this.blockPaletteReturn) {
+      if (!this.outputNavigationAvailable() || !this.reconcileOutputNavigation()) return;
+      this.endOutputNavigation(false);
+    }
     this.paletteRecent = [item.id, ...this.paletteRecent.filter(id => id !== item.id)].slice(0, 20);
     const action = item.action;
     const config = structuredClone(this.promptConfiguration);
@@ -3389,6 +3527,7 @@ export class TerminalApp {
 
   /** /copy and /cp: one parser, the configured default, and the same clipboard write as the picker and block Copy. */
   private async copySlash(command: string, args: string): Promise<void> {
+    if (!this.outputNavigationAvailable()) return;
     const parsed = parseCopyArgs(args);
     if (!parsed.ok) { this.output.addFrontendInteraction(command.trim(), parsed.error, ERROR); return; }
     const {selector, status, report} = parsed.request;
@@ -3397,6 +3536,10 @@ export class TerminalApp {
       this.panelOrigin = undefined;
       this.copyPicker = createCopyPicker(this.output.recentShellCommands(), includeStatus);
       this.copyPickerReport = report;
+      return;
+    }
+    if (selector.kind === 'default' && this.promptConfiguration.copy.mode === 'navigate') {
+      this.openOutputNavigation('copy', includeStatus, report);
       return;
     }
     const resolved = resolveCopySelection(selector.kind === 'default' ? {kind: 'latest', count: 1} : selector, this.output.recentShellCommands());
@@ -3411,6 +3554,7 @@ export class TerminalApp {
    * the clipboard as it was. Feedback is a brief note above the composer, given only after the write succeeded.
    */
   private async copyRecords(records: readonly CompletedCommand[], includeStatus: boolean, before?: string): Promise<boolean> {
+    const scope = this.outputScope();
     const payload = [before ?? '', copySelectionPayload(records, includeStatus)].filter(Boolean).join('\n');
     if (!payload.trim()) {
       const what = records.length === 1 ? `${records[0]!.command.split('\n')[0]!.slice(0, 60)} printed no output` : 'the selected commands printed no output';
@@ -3421,8 +3565,9 @@ export class TerminalApp {
     catch (error) { this.noteClipboard(clipboardFailure(error), 'error'); return false; }
     // Folding is presentation and copying reads stored data: only the explicit setting connects them, and only
     // for the blocks whose text was copied (a silent block copied for nothing stays as it was).
-    if (this.promptConfiguration.copy.autoExpand) {
-      this.output.expandBlocks(records.filter(record => recordCopyText(record, includeStatus)).map(record => record.startId));
+    if (this.promptConfiguration.copy.autoExpand && scope.session === this.outputScope().session && scope.generation === this.outputScope().generation) {
+      const live = this.output.recentShellCommands();
+      this.output.expandBlocks(records.filter(record => live.includes(record) && recordCopyText(record, includeStatus)).map(record => record.startId));
     }
     this.noteClipboard(copiedNote(records.length, copyStats(payload), includeStatus), 'success');
     return true;
@@ -3439,6 +3584,13 @@ export class TerminalApp {
   }
 
   private clipboardRows(columns: number): string[] {
+    if (this.outputNavigation && !this.paletteState) {
+      const intent = this.outputNavigation.intent === 'copy' ? 'Copy output' : 'Actions';
+      const enter = this.outputNavigation.intent === 'copy' ? this.outputNavigation.report ? 'review report' : 'copy' : 'actions';
+      return [...renderControlRows([[intent, ''], ['↑↓', 'output'], ['Enter', enter], ['Esc', 'return']], Math.max(1, columns)),
+        ...(this.clipboardNote && Date.now() <= this.clipboardNote.until ? [displaySafe(this.clipboardNote.text)] : [])]
+        .map(row => truncateAnsi(row, columns));
+    }
     const note = this.clipboardNote;
     if (!note || this.passthrough || Date.now() > note.until) return [];
     const glyph = note.tone === 'success' ? `${SUCCESS}${GLYPHS.success}` : note.tone === 'error' ? `${ERROR}${GLYPHS.failure}` : `${SUBTLE}·`;
@@ -4684,8 +4836,10 @@ export class TerminalApp {
     return syntaxSgrForConfiguration(this.promptConfiguration);
   }
 
-  private get settingsPanelActive(): boolean {
-    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || this.paletteState || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
+  private get settingsPanelActive(): boolean { return this.hasModalInput(); }
+
+  private hasModalInput(ignorePalette = false): boolean {
+    return Boolean(this.stopsEditor || this.chromeEditor || this.screensaverPanel || this.themeStudio || this.themeBridgePanel || this.rowPanel || this.copyPicker || this.reportReview || this.comparePanel || this.background.panel || this.batchReview || this.pinsPanel || this.stripStudio || this.configureList || this.tmuxPanel || this.dotfiles || this.setupState || this.installPrompt || this.presetPanel || this.toolsPanel || this.toolConfigurationLoading || this.toolConfiguration || this.promptPanelState || this.transcriptPanelState || this.providerPanelState || (!ignorePalette && this.paletteState) || this.syntaxPanelState || this.layoutPanelState || this.settingsPanelState
       || this.resumeBrowser || this.appearanceHub || this.keyboardState || this.startupPanel || this.aboutPanel || this.shellPanel || this.openPanel || this.askState || this.agentView || this.agentPanel || this.launcher || this.modsPanel || this.worktreePanel || this.githubPanel || this.providersOverview || this.understandingPanel || this.cursorPanel || this.doctorPanel || this.watchPanel || this.queuePanel || this.queueHistoryPanel || this.pasteReview || this.misePanel || this.keepAwakePanel);
   }
 
@@ -9760,6 +9914,7 @@ export class TerminalApp {
   }
 
   private render(): void {
+    this.reconcileOutputNavigation();
     if (this.stopped || this.passthrough || this.externalPassthrough || this.frontendSuspended) { this.cancelPresentation(); return; }
     this.hostSemantics.flush();
     this.hostTitle.set(this.desiredTitle());
@@ -9831,6 +9986,12 @@ export class TerminalApp {
       ? this.output.presentSticky(sticky.startId, columns, this.styledControls(stickyControls.controls, stickyControls.width), stickyControls.width)
       : this.output.presentSticky(sticky.startId, columns));
     if (stickyRow && visible.length > 0) visible[0] = stickyRow;
+    if (this.outputNavigation && !panelRows) {
+      const focusedId = this.outputNavigation.focusedId;
+      visible.forEach((ansi, offset) => {
+        if (wrapped[viewStart + offset]?.blockStartId === focusedId) visible[offset] = selectedRowBand(ansi, columns);
+      });
+    }
     const SELECTION_BG = background(UI_COLORS.selection);
     const sel = this.editor.displaySelection;
 
@@ -10264,6 +10425,9 @@ export class TerminalApp {
     const notes = [...new Set(this.workspace.bindings.flatMap(binding => hostNotes(binding.key, profile)))];
     const lines = [...(reload ? ['keymap.json read again.'] : []),
       ...(this.workspace.available ? [] : ['The workspace sidebar and detail panel are experimental and Off (Settings → Layout): the bindings below take no key until they are turned on.']),
+      'Completed output: /copy or /cp selects output (new configurations); /actions or /action selects for Actions.',
+      'Output selection: Up older, Down newer, Enter copies or opens Actions, Esc returns. In Actions, Esc returns to the selected output.',
+      'Shift+Tab focuses transcript blocks; Enter opens Actions on a focused command. /copy ui opens multi-selection.',
       ...describeKeymap(this.workspace.bindings),
       ...(this.workspace.problems.length ? ['Problems in keymap.json', ...this.workspace.problems.map(problem => `  ${problem.severity}${problem.entry === undefined ? '' : ` (entry ${problem.entry + 1})`}: ${problem.message}`)] : []),
       ...(notes.length ? ['Host notes', ...notes.map(note => `  ${note}`)] : [])];
@@ -11188,11 +11352,11 @@ export class TerminalApp {
    * intercepted: startup, a program reading hidden or single-key input, passthrough, the agent view, every panel and
    * search. Only then a focused, open region, and otherwise the composer.
    */
-  private workspaceOwner(): WorkspaceOwner {
+  private workspaceOwner(ignoreNavigation = false): WorkspaceOwner {
     let owner: WorkspaceOwner | undefined;
     if (this.workspaceSuppressed() || this.startupPending || this.startupPanel || this.directInputRequest()) owner = 'PASSTHROUGH';
     else if (this.agentView) owner = 'AGENT_MESSAGE';
-    else if (this.settingsPanelActive || this.presetPanel || this.batchReview || this.pastePreview || this.launcher || this.agentPanel || this.shelf.focused
+    else if ((!ignoreNavigation && this.outputNavigation) || this.hasModalInput(ignoreNavigation && this.blockPaletteReturn?.palette === this.paletteState) || this.presetPanel || this.batchReview || this.pastePreview || this.launcher || this.agentPanel || this.shelf.focused
       || this.background.bar.focused || this.background.suggestion) owner = 'PANEL';
     else if (this.historySearchActive || this.directorySearchActive || this.findState?.editing) owner = 'SEARCH';
     return this.workspace.owner(owner);
@@ -11297,6 +11461,8 @@ export class TerminalApp {
     if (this.stopped) return;
     this.hostTitle.end();
     this.stopped = true;
+    this.endOutputNavigation(false);
+    this.blockPaletteContext = undefined;
     this.clips.clear();
     this.clipboardChangeWatch?.stop(); this.clipboardChangeSuggested = false;
     this.contextEngine.dispose();

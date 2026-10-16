@@ -40,6 +40,7 @@ test('catalog integrity: destinations are real NMSh commands; no hallucinated su
 
 // Representative phrases per concept: canonical words and natural aliases (concept → expected destination or kind).
 const MATRIX: Array<[string, string]> = [
+  ['open output actions', '/actions'],
   ['change chroma', '/chroma'], ['turn animated prompt colors off', 'answer:/chroma'], ['what is chroma', 'answer'],
   ['change my ghost text', '/providers'], ['autosuggestion settings', '/providers'], ['turn suggestions off', 'setting:none'], ['enable suggestions', 'setting:nmsh'],
   ['tab completion', 'answer'], ['completion settings', 'answer'],

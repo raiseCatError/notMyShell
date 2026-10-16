@@ -184,10 +184,10 @@ test('picker render: says whether statuses are included before Enter; fits narro
   assert.match(stripAnsi(renderCopyPicker(picker, 100, 30).join('\n')), /Completion status: not included/u);
 });
 
-test('settings: Quick Copy and status Off by default; normalized; exported and imported with the copy category', () => {
-  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.copy, {mode: 'quick', includeStatus: false, autoExpand: false});
+test('settings: output navigation and status Off by default; normalized; exported and imported with the copy category', () => {
+  assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.copy, {mode: 'navigate', includeStatus: false, autoExpand: false});
   assert.deepEqual(normalizePromptConfiguration({copy: {mode: 'picker', includeStatus: true}} as never).copy, {mode: 'picker', includeStatus: true, autoExpand: false});
-  assert.deepEqual(normalizePromptConfiguration({copy: {mode: 'weird', includeStatus: 'yes'}} as never).copy, {mode: 'quick', includeStatus: false, autoExpand: false});
+  assert.deepEqual(normalizePromptConfiguration({copy: {mode: 'weird', includeStatus: 'yes'}} as never).copy, {mode: 'navigate', includeStatus: false, autoExpand: false});
   assert.deepEqual(PORTABLE_CATEGORIES.copy, ['copy']);
   const exported = exportSettings({...DEFAULT_PROMPT_CONFIGURATION, copy: {mode: 'picker', includeStatus: true, autoExpand: false}}, ['copy']);
   assert.deepEqual(exported.categories.copy, {copy: {mode: 'picker', includeStatus: true, autoExpand: false}});

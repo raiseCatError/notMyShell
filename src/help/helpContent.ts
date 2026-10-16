@@ -113,6 +113,8 @@ After an unambiguous simple command-not-found typo in zsh, Bash or Fish, NMSh ma
 
 - A large multiline paste is **one editable atom**; Enter submits its original text. Press Ctrl+O beside it to inspect or unwrap.
 - Portable Select-All is Alt+A.
+- /copy and /cp select completed output by default for new configurations. Up selects older output, Down newer, Enter copies full stored output, Esc restores the previous view. Saved Quick Copy and Interactive Picker choices remain in effect; /copy latest copies directly and /copy ui always opens multi-selection.
+- /actions and /action use the same navigation; Enter opens the selected block’s Actions. Esc returns to that selection, then Esc restores the previous view. /actions N opens output N directly (1 is newest). These selectors require the idle composer.
 - Shift+Tab focuses a past command; Enter opens its actions. **Open in pager** shows the command and its complete stored output in less (or your PAGER) and returns to NMSh when you quit; the text goes to the pager only on its stdin, never through the shell.
 - VS Code Cmd+A keybinding JSON:
 

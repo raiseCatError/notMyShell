@@ -11,7 +11,7 @@ import {LiveSandbox, strip, until, type Frontend} from './helpers/liveFrontend.j
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 
 function withClipboard(config: Record<string, unknown> = {}, env: Record<string, string> = {}, size = {cols: 100, rows: 30}) {
-  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh', ...config}, {});
+  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh', copy: {mode: 'quick'}, ...config}, {});
   const bin = join(sandbox.root, 'fake-bin');
   mkdirSync(bin);
   const clip = join(sandbox.root, 'clipboard.txt');

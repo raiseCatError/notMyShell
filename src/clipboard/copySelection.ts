@@ -6,7 +6,7 @@ import {parseReportFlag, type ReportFormat} from './report.js';
  * each one's output. One parser and one payload builder for /copy, the interactive picker and the per-block Copy
  * actions, so every path copies the same text for the same records.
  *
- * - `/copy`          the configured default (Quick Copy: the latest output; Interactive Picker: choose)
+ * - `/copy`          the configured default (Output navigation; saved Quick Copy/Interactive Picker choices are honored)
  * - `/copy latest`   the latest output, whatever the default
  * - `/copy ui`       the Interactive Picker, whatever the default
  * - `/copy N`        the Nth latest output

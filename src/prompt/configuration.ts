@@ -726,10 +726,10 @@ export interface PromptConfiguration {
   spacing: number;
 }
 
-/** Quick Copy: `/copy` copies the latest output at once. Interactive Picker: `/copy` opens a list to choose from. */
-export const COPY_MODES = ['quick', 'picker'] as const;
+/** New configurations navigate transcript output; explicitly saved Quick Copy/Interactive Picker choices remain valid. */
+export const COPY_MODES = ['navigate', 'quick', 'picker'] as const;
 export type CopyMode = typeof COPY_MODES[number];
-export const COPY_MODE_LABELS: Record<CopyMode, string> = {quick: 'Quick Copy', picker: 'Interactive Picker'};
+export const COPY_MODE_LABELS: Record<CopyMode, string> = {navigate: 'Output navigation', quick: 'Quick Copy', picker: 'Interactive Picker'};
 
 export interface CopySettings {
   /** What `/copy` with no selection does. */
@@ -740,11 +740,11 @@ export interface CopySettings {
   autoExpand: boolean;
 }
 
-export const DEFAULT_COPY: CopySettings = {mode: 'quick', includeStatus: false, autoExpand: false};
+export const DEFAULT_COPY: CopySettings = {mode: 'navigate', includeStatus: false, autoExpand: false};
 
 export function normalizeCopy(value: unknown): CopySettings {
   const raw = value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  return {mode: raw.mode === 'picker' ? 'picker' : 'quick', includeStatus: raw.includeStatus === true, autoExpand: raw.autoExpand === true};
+  return {mode: raw.mode === 'quick' || raw.mode === 'picker' ? raw.mode : 'navigate', includeStatus: raw.includeStatus === true, autoExpand: raw.autoExpand === true};
 }
 
 /** The Queue settings' steppers; retention accepts any integer in 6–30, the stepper offers these presets. */

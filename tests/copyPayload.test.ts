@@ -101,7 +101,7 @@ test('/copy N and block actions agree; folded output and long transcripts copy i
 
 test('live: /copy and /copy N put exactly the command output on the clipboard, through the real composer', {timeout: 90_000}, async () => {
   // A stand-in pbcopy/xclip first on PATH records what NMSh copies; the person's clipboard is never touched.
-  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh'}, {});
+  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh', copy: {mode: 'quick'}}, {});
   const bin = join(sandbox.root, 'fake-bin');
   mkdirSync(bin);
   const clip = join(sandbox.root, 'clipboard.txt');

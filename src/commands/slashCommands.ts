@@ -35,10 +35,12 @@ const META: Record<string, Pick<SlashCommand, 'group' | 'title' | 'alias'>> = {
 };
 
 const RAW_COMMANDS: readonly SlashCommand[] = [
+  {name: '/actions', insertion: '/actions', description: 'Select completed output: Up/Down moves, Enter opens Actions, Esc returns; /actions N opens output N directly'},
+  {name: '/action', insertion: '/action', alias: '/actions', description: 'Same as /actions, including /action N'},
   {name: '/effects', insertion: '/effects ', description: 'Preview sparkles, rain or confetti in owned chrome; /effects stop cancels'},
-  {name: '/copy', insertion: '/copy', description: 'Copy latest command output (or choose, per Settings → Copy)'},
+  {name: '/copy', insertion: '/copy', description: 'Select completed output: Up/Down, Enter copies, Esc returns (saved Quick Copy preferences still apply)'},
   {name: '/copy N', insertion: '/copy ', description: 'Copy Nth previous output; -N the latest N, A-B or 1,3,5 several; --status adds completion status'},
-  {name: '/copy settings', insertion: '/copy settings', description: 'Quick Copy or Interactive Picker, and whether copies include completion status'},
+  {name: '/copy settings', insertion: '/copy settings', description: 'Output navigation, Quick Copy or Interactive Picker; completion status and auto-expand preferences'},
   {name: '/compare', insertion: '/compare', description: 'Compare two outputs: /compare (latest with its previous run), /compare N, /compare N M (numbers as /copy)'},
   {name: '/pins', insertion: '/pins', description: 'Commands and recipes you kept: stage a pin, or review and queue a recipe (nothing runs by itself)'},
   {name: '/ps', insertion: '/ps', description: 'Paste from the clipboard, reviewed first: read when you run it, never in the background'},
@@ -155,6 +157,7 @@ export type ParsedSlashCommand =
   | {kind: 'effects'; effect: 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help'; placement: 'top' | 'bottom'}
   /** `args` is everything after /copy, parsed by parseCopyArgs (so a mistake gets a precise answer). */
   | {kind: 'copy'; args: string}
+  | {kind: 'actions'; index?: number; error?: string}
   | {kind: 'copySettings'}
   /** /ps: read the clipboard now and bring it to paste review. */
   | {kind: 'pasteClipboard'}
@@ -241,6 +244,13 @@ export function parseSlashCommand(input: string): ParsedSlashCommand | undefined
   if (!isSlashInput(input)) return undefined;
   const effect = /^\/effects(?:\s+(sparkles|rain|confetti|stop))?(?:\s+(top|bottom))?\s*$/u.exec(input);
   if (effect) return {kind: 'effects', effect: (effect[1] ?? 'help') as 'sparkles' | 'rain' | 'confetti' | 'stop' | 'help', placement: (effect[2] ?? 'bottom') as 'top' | 'bottom'};
+  const actions = /^\/(?:actions|action)(?:\s+(.*?))?\s*$/u.exec(input);
+  if (actions) {
+    const selector = actions[1]?.trim();
+    if (!selector) return {kind: 'actions'};
+    return /^[1-9]\d{0,2}$/u.test(selector) ? {kind: 'actions', index: Number(selector)}
+      : {kind: 'actions', error: 'Use /actions or /actions N (1 is the latest completed output).'};
+  }
   const compare = /^\/compare(?:\s+(.*?))?\s*$/u.exec(input);
   if (compare) {
     const words = (compare[1] ?? '').split(/\s+/u).filter(Boolean);

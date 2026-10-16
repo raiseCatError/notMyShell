@@ -140,6 +140,9 @@ export function placeableRecords(records: readonly CompletedCommand[], lines: re
 }
 
 export class OutputBuffer {
+  /** Changes whenever line/start IDs can be reused; selectors must not cross this boundary. */
+  private generation = 0;
+  get presentationGeneration(): number { return this.generation; }
   private welcome?: WelcomeSnapshot;
   /** How rows look; presentation state here is never serialized into transcripts. */
   readonly presenter = new TranscriptPresenter();
@@ -167,6 +170,7 @@ export class OutputBuffer {
 
   constructor(private readonly onClear?: () => void) {
     this.parser = new AnsiOutputParser(() => {
+      this.generation++;
       this.visualGaps.clear();
       this.lineTypes.clear();
       this.historicalContexts.clear();
@@ -223,6 +227,7 @@ export class OutputBuffer {
   }
 
   restoreTranscript(transcript: OutputTranscript): void {
+    this.generation++;
     this.welcome = transcript.welcome ? {...transcript.welcome, identity: {...transcript.welcome.identity}} : undefined;
     this.parser.restore(transcript.lines);
     const lines = Array.from({length: this.parser.completedCount()}, (_, index) => this.parser.plainLineAt(index) ?? '');
@@ -250,6 +255,7 @@ export class OutputBuffer {
   }
 
   clearPresentation(): void {
+    this.generation++;
     this.welcome = undefined;
     this.parser.restore([]);
     this.completed.length = 0;

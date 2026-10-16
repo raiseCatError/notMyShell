@@ -12,7 +12,7 @@ import {LiveSandbox, strip, until} from './helpers/liveFrontend.js';
 const supported = process.platform === 'darwin' || process.platform === 'linux';
 
 test('live: /copy hands the clipboard the exact bytes printed: tabs, spaces, UTF-8 and the final newline; folded output in full', {skip: supported ? false : 'unsupported platform', timeout: 150_000}, async () => {
-  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh'}, {});
+  const sandbox = new LiveSandbox({provider: 'none', shellBackend: 'zsh', copy: {mode: 'quick'}}, {});
   const bin = join(sandbox.root, 'fake-bin');
   mkdirSync(bin);
   const clip = join(sandbox.root, 'clipboard.bin');

@@ -381,7 +381,7 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
     control: 'boolean', get: config => config.workspacePanels, set: (config, workspacePanels) => ({...config, workspacePanels})},
   {id: 'composerDividers', label: 'Composer dividers', description: 'The horizontal lines around the composer; Off gives their rows back. Transcript dividers and prompt separators are separate', category: 'Layout',
     control: 'boolean', get: config => config.composerDividers, set: (config, composerDividers) => ({...config, composerDividers})},
-  enumRow({id: 'copyMode', label: '/copy without a number', description: 'Quick Copy copies the latest command output at once; Interactive Picker lists recent outputs to choose one or several. /copy N, -N, A-B and 1,3,5 always copy directly',
+  enumRow({id: 'copyMode', label: '/copy without a number', description: 'Output navigation selects transcript blocks with Up/Down and Enter; Quick Copy copies the latest output at once; Interactive Picker chooses one or several. /copy N, -N, A-B and 1,3,5 always copy directly',
     category: 'Copy', values: COPY_MODES, labels: COPY_MODES.map(mode => COPY_MODE_LABELS[mode]),
     get: config => config.copy.mode, set: (config, mode) => ({...config, copy: {...config.copy, mode}})}),
   {id: 'copyIncludeStatus', label: 'Include completion status', description: 'After each copied output, add the status NMSh showed when it finished (Completed or failed, exit code, time, waits for input). Off copies only the output. --status or --no-status overrides it once',

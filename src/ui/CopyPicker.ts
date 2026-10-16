@@ -2,6 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import {renderControlRows} from './controls.js';
 import {focusForeground, foreground, UI_COLORS} from './palette.js';
+import {selectedRowBand} from './PanelShell.js';
 import {GLYPHS} from './glyphs.js';
 import {displayWidth, truncateAnsi, truncateText} from '../util/text.js';
 import {copyStats} from '../clipboard/clipboard.js';
@@ -131,13 +132,14 @@ export function renderCopyPicker(state: CopyPickerState, columns: number, height
   const first = Math.max(0, Math.min(state.cursor - Math.floor(listRoom / 2), count - listRoom));
   rows.slice(first, first + listRoom).forEach(({record, number}, offset) => {
     const isCursor = first + offset === state.cursor;
-    const box = state.chosen.has(record.startId) ? '[x]' : '[ ]';
+    const mark = state.chosen.has(record.startId) ? GLYPHS.success : ' ';
     const outcome = record.exitCode === 0 ? '' : ` · exit ${record.exitCode}`;
     const detail = `${lineCount(record.output)}${outcome}`;
     const label = String(number).padStart(3);
     const commandRoom = Math.max(4, width - displayWidth(label) - displayWidth(detail) - 9);
     const command = truncateText(displaySafe(record.command.split('\n')[0]!) + (record.command.includes('\n') ? ' …' : ''), commandRoom);
-    out.push(`${isCursor ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${isCursor ? accent : subtle}${box}${reset} ${subtle}${label}${reset}  ${focusForeground(isCursor)}${command}${reset}  ${subtle}${detail}${reset}`);
+    const row = `${isCursor ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${isCursor ? accent : subtle}${mark}${reset} ${subtle}${label}${reset}  ${focusForeground(isCursor)}${command}${reset}  ${subtle}${detail}${reset}`;
+    out.push(isCursor ? selectedRowBand(row, columns) : row);
   });
   if (previewRoom) {
     out.push('', ...previewLines.map(line => `  ${subtle}│${reset} ${secondary}${truncateText(displaySafe(line), Math.max(4, width - 2))}${reset}`));

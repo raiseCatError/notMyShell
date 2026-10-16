@@ -77,7 +77,7 @@ const tmuxBinary = ['/opt/homebrew/bin/tmux', '/usr/local/bin/tmux', '/usr/bin/t
 
 test('tmux, for real: a private server is listed and navigated with the same argv, and nothing else is touched', {skip: tmuxBinary ? false : 'tmux is not installed'}, async () => {
   // A short private socket path: Unix sockets have a small path limit. This server is the test's own and is killed afterwards.
-  const directory = await mkdtemp(join(process.platform === 'win32' ? tmpdir() : '/tmp', 'wsx-'));
+  const directory = await mkdtemp(join(tmpdir(), 'wsx-'));
   const socket = join(directory, 's');
   const tmux = (...args: string[]) => execFileSync(tmuxBinary!, ['-f', '/dev/null', '-S', socket, ...args], {env: {PATH: '/usr/bin:/bin', HOME: directory, TERM: 'xterm-256color'}, encoding: 'utf8'});
   try {

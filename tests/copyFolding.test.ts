@@ -35,6 +35,9 @@ const lines = (count: number, prefix: string) => Array.from({length: count}, (_,
 
 function app(autoExpand = false) {
   const instance = new TerminalApp();
+  // The fixture supplies completed shell records directly; model its already-ready prompt too.
+  instance['startupPending'] = false;
+  clearTimeout(instance['startupTimer']); instance['startupTimer'] = undefined;
   const output = instance['output'] as OutputBuffer;
   output.setOutputFolding('smart');
   const add = (command: string, text: string, exitCode = 0) => {

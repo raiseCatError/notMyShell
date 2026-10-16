@@ -2,6 +2,7 @@ import type {Key} from '../terminal/keys.js';
 import type {CompletedCommand} from '../output/OutputBuffer.js';
 import {renderControlRows} from './controls.js';
 import {focusForeground, foreground, UI_COLORS} from './palette.js';
+import {framePanel, selectedRowBand} from './PanelShell.js';
 import {GLYPHS} from './glyphs.js';
 import {displayWidth, padCells, truncateAnsi, truncateText} from '../util/text.js';
 import {displaySafe} from '../input/PasteReview.js';
@@ -57,7 +58,7 @@ export function comparePanelKey(state: ComparePanelState, key: Key, columns: num
   }
   const comparison = state.comparison;
   const rows = viewRows(state, columns);
-  const room = Math.max(1, height - headerRows(state).length - 3);
+  const room = diffRoom(state, columns, height);
   const changes = rows.map((row, index) => row.change && !rows[index - 1]?.change ? index : -1).filter(index => index >= 0);
   if (key.kind === 'escape' || key.kind === 'interrupt' || (key.kind === 'text' && key.value === 'q')) {
     // Esc goes back to choosing the other side; a second Esc closes.
@@ -143,17 +144,21 @@ export function renderComparePanel(state: ComparePanelState, columns: number, he
     out.push(`  ${primary}Compare output${reset}  ${subtle}${truncateText(`with ${displaySafe(sideLabel(state.base))}`, Math.max(4, width - 16))}${reset}`, '');
     if (!state.candidates.length) out.push(`  ${secondary}No other completed command to compare with.${reset}`);
     const controls = renderControlRows([['↑↓', 'choose'], ['Enter', 'compare'], ['Esc', 'cancel']], width);
-    const room = Math.max(1, height - out.length - controls.length - 1);
+    // Gaps yield before candidates or controls on a short chooser.
+    if (height < out.length + controls.length + 4 && out.at(-1) === '') out.pop();
+    const footerGap = height >= out.length + controls.length + 4 ? 1 : 0;
+    const room = Math.max(0, height - 2 - out.length - controls.length - footerGap);
     const first = Math.max(0, Math.min(state.cursor - Math.floor(room / 2), state.candidates.length - room));
     state.candidates.slice(first, first + room).forEach(({record, number}, offset) => {
       const index = first + offset;
       const focused = index === state.cursor;
       const note = index === state.suggested ? '  previous run' : '';
       const label = truncateText(displaySafe(sideLabel(record)), Math.max(4, width - 8 - displayWidth(note)));
-      out.push(`${focused ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${subtle}${String(number).padStart(3)}${reset}  ${focusForeground(focused)}${label}${reset}${accent}${note}${reset}`);
+      const row = `${focused ? `${accent}${GLYPHS.selection}${reset}` : ' '} ${subtle}${String(number).padStart(3)}${reset}  ${focusForeground(focused)}${label}${reset}${accent}${note}${reset}`;
+      out.push(focused ? selectedRowBand(row, columns) : row);
     });
-    out.push('', ...controls.map(row => `  ${row}`));
-    return out.map(line => truncateAnsi(line, columns));
+    out.push(...Array<string>(footerGap).fill(''), ...controls.map(row => `  ${row}`));
+    return frameCompare(out, columns, height);
   }
   const comparison = state.comparison;
   const sideBySideAvailable = columns >= SIDE_BY_SIDE_COLUMNS;
@@ -163,12 +168,42 @@ export function renderComparePanel(state: ComparePanelState, columns: number, he
   out.push(`  ${accent}${truncateText(summary(comparison), width)}${reset}${state.note ? `${subtle}  ·  ${truncateText(state.note, Math.max(4, width - displayWidth(summary(comparison)) - 5))}${reset}` : ''}`);
   for (const note of comparisonNotes(comparison)) out.push(`  ${subtle}${truncateText(note, width)}${reset}`);
   out.push('');
-  const controls = renderControlRows([['↑↓', 'scroll'], ['n/N', 'next/previous change'], ['w', state.ignoreWhitespace ? 'exact' : 'ignore spaces'],
-    ...(sideBySideAvailable ? [['s', state.sideBySide ? 'unified' : 'side by side'] as const] : []), ['c', 'copy diff'], ['r', 'report…'], ['Esc', 'back']], width);
+  const headerCount = diffHeaderCount(state, columns, height);
+  if (headerCount < out.length) {
+    const half = Math.max(1, Math.floor((width - 7) / 2));
+    const sides = `  ${secondary}A ${truncateText(displaySafe(sideLabel(comparison.a)), half)} | B ${truncateText(displaySafe(sideLabel(comparison.b)), half)}${reset}`;
+    const compact = headerCount >= 3 ? [out[0]!, sides, out[3]!, ...out.slice(4)] : [out[0]!, out[3]!];
+    out.splice(0, out.length, ...compact.slice(0, headerCount));
+  }
+  const controls = diffControls(state, columns, height);
   const rows = viewRows(state, columns);
-  const room = Math.max(1, height - out.length - controls.length - 1);
+  const room = diffRoom(state, columns, height);
   state.scroll = Math.max(0, Math.min(state.scroll, Math.max(0, rows.length - room)));
   for (const row of rows.slice(state.scroll, state.scroll + room)) out.push(`  ${row.text}`);
   out.push('', ...controls.map(row => `  ${row}`));
-  return out.map(line => truncateAnsi(line, columns)).slice(0, Math.max(1, height));
+  return frameCompare(out, columns, height);
+}
+
+/** Both keyboard paging and drawing reserve the same frame, header and wrapped footer rows. */
+function diffControls(state: ComparePanelState, columns: number, height: number): string[] {
+  const full = renderControlRows([['↑↓', 'scroll'], ['n/N', 'next/previous change'], ['w', state.ignoreWhitespace ? 'exact' : 'ignore spaces'],
+    ...((columns >= SIDE_BY_SIDE_COLUMNS) ? [['s', state.sideBySide ? 'unified' : 'side by side'] as const] : []), ['c', 'copy diff'], ['r', 'report…'], ['Esc', 'back']], Math.max(1, columns - 4));
+  if (height >= headerRows(state).length + full.length + 6) return full;
+  // Keep the diff readable on short screens. All existing keys still work; show the essential controls.
+  return renderControlRows([['↑↓', 'scroll'], ['Esc', 'back'], ['c', 'diff'], ['r', 'report']], Math.max(1, columns - 4));
+}
+
+function diffHeaderCount(state: ComparePanelState, columns: number, height: number): number {
+  // Reserve diff rows plus the footer on short screens; the full header returns when room permits.
+  return Math.max(1, Math.min(headerRows(state).length, height - 2 - diffControls(state, columns, height).length - 4));
+}
+
+function diffRoom(state: ComparePanelState, columns: number, height: number): number {
+  return Math.max(0, height - 2 - diffHeaderCount(state, columns, height) - diffControls(state, columns, height).length - 1);
+}
+
+function frameCompare(rows: string[], columns: number, height: number): string[] {
+  const rule = framePanel([], columns)[0]!;
+  if (height <= 1) return [rule].slice(0, Math.max(0, height));
+  return [...framePanel(rows.slice(0, Math.max(0, height - 2)).map(row => truncateAnsi(row, columns)), columns), rule];
 }
