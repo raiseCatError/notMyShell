@@ -1,6 +1,6 @@
 # Execution timeline and output interaction
 
-Status: proposed design for maintainer review; no product implementation authorized by this document itself.
+Status: approved with the three precise maintainer amendments incorporated below (2026-10-16). Slice 1 implementation is authorized; its visual checkpoint precedes larger summary/Settings work.
 Date: 2026-10-16. Scope includes the subsequent `/actions` and `/action` request.
 
 ## Intent and protected state
@@ -53,7 +53,7 @@ Use session-owned execution-chain metadata beside the existing dispatcher, with 
 
 Each chain has a session-scoped immutable ID, captured failure policy, start/end observations, termination reason, aggregate counts and ordered execution references. Each execution has an immutable ID, optional queue-entry ID, original submission provenance, shell ID, observed start/end times, optional wait facts, result and optional transcript reference. Queue entries remain owned by `CommandQueue`; completed results must not be inserted back into pending entries.
 
-A chain opens when work is queued. If a manually started command is active, adopt its already observed start timestamp and label its provenance as manual. If an older service cannot supply the timestamp, show it as unknown rather than using queue-add time. A submission waiting for an exec marker is `starting`, not completed or duplicated. A valid empty/comment-only submission that produces no exec marker receives a factual no-observed-execution result; never invent an execution duration or exit code for it.
+A chain opens when work is queued. If a manually started command is active and the queue was not already paused when that command began, adopt its already observed start timestamp and label its provenance as manual. Independent foreground commands started while a queue is paused do not join that paused chain: they retain separate execution provenance, do not change its counts or timing facts, do not overwrite its original pause reason, and never resume it. Only explicitly dispatched queue entries or the original adopted predecessor belong to the chain. If an older service cannot supply the timestamp, show it as unknown rather than using queue-add time. A submission waiting for an exec marker is `starting`, not completed or duplicated. A valid empty/comment-only submission that produces no exec marker receives a factual no-observed-execution result; never invent an execution duration or exit code for it.
 
 The logical chain ends only when no pending entry, submitted entry or active chain execution remains. Queue additions while a chain is running join it. After a chain has ended, new work starts a new chain even while the preceding transient summary remains visible. A new active chain replaces that transient view; the old run remains reviewable within history retention.
 
@@ -73,7 +73,7 @@ Queued commands continue through the same persistent shell. Grouped submissions 
 
 Persistent setting: **On queued command failure**, `Pause remaining queue` by default or `Continue remaining queue`. Capture it when a new chain is admitted/reviewed. Changes affect future chains, never silently modify an existing chain's reviewed policy. Review surfaces state the captured policy.
 
-Compatibility: queues without a captured policy use Pause. Saved recipes keep their explicit `always`/`approve` entry conditions; staging a recipe for a new chain displays the current policy before confirmation. Joining an active chain uses that chain's captured policy and displays it. Restored pending entries retain their captured policy but are held for reviewed resume; absent legacy metadata means Pause. No automatic replay occurs from a journal.
+Compatibility: queues without a captured policy use Pause. Saved recipes keep their explicit `always`/`approve` entry conditions; staging a recipe for a new chain displays the current policy before confirmation. Joining an active chain uses that chain's captured policy and displays it. Existing live-session queues retain their captured policy across detach/reattach. Archived persistence/restoration of pending command text is deferred to a separate security-reviewed feature; no new pending-command replay or persistence is introduced here.
 
 Eligibility order:
 
@@ -104,6 +104,10 @@ Bind review to a queue revision plus exact affected IDs/text/policy, with compar
 
 Queue add/start/result/failure/pause/resume/clear/finish trigger finite existing transition primitives. Waiting queues do not subscribe to a looping animation. Reduced Motion, effects Off and NO_COLOR settle immediately, with status conveyed in text/glyphs. Unsubscribe on settle, panel ownership changes, stop and passthrough.
 
+### Required visual checkpoint after Slice 1
+
+Before starting the larger summary/Settings UI, generate and show the maintainer real production-renderer previews of running, success, failure, manual pause, interruption and completed states at normal and narrow terminal widths. Use the actual timeline renderer and screen-plan geometry with deterministic observed-state fixtures. Capture both renderer output and reproducible commands/source SHA. Mockups above/below are design targets only and never implementation evidence. Stop at this visual checkpoint for maintainer review before Slice 2; preserve the independently gated scrolling prototype.
+
 ## Slice 2: summaries, history, Settings and multiline choice
 
 Transient completed view defaults On for 8 seconds (bounded setting 6–30 seconds); history remains available after it dismisses. Opening a review pauses dismissal while focused. Live timeline defaults On. Automatic saved summaries default Off.
@@ -120,12 +124,12 @@ Use the existing Settings system: a Queue destination accessible through `/setti
 
 | Group | Controls |
 | --- | --- |
-| Behavior | Queue enabled, failure policy, default approval for new entries, persistence policy, reviewed resume/clear explanation |
+| Behavior | Queue enabled, failure policy, default approval for new entries, existing live-session behavior explanation, reviewed resume/clear explanation |
 | Appearance | Live timeline, recent 0–2, upcoming 1–2, existing glyph mode, theme-role preview |
 | Motion | Link to existing Clean/Rich, event feedback and Reduced Motion controls; no second engine |
 | History and summaries | Transient On/Off, retention seconds, auto-save, output display mode, placement/alignment, Compact/Detailed, duration/exit/wait display |
 
-Persistence default remains session-owned live state; do not start automatically persisting queued text across shell restarts. Opt-in archived queue persistence must redact/minimize stored text and restore to a held review; unsafe/unverifiable content is not persisted. This setting never promises to restore shell variables or jobs. Reviewed resume/clear are safety invariants, not toggles that enable one-keystroke execution/discard.
+Preserve existing session-owned live queue state and detach/reattach behavior. Archived persistence/restoration of pending command text is out of scope and deferred to a separate security-reviewed feature. Do not add a persistence toggle, pending-command journal, restart replay, or a new command-persistence system. Execution-summary history remains in scope as bounded NMSh metadata and does not restore pending commands or shell state. Reviewed resume/clear are safety invariants, not toggles that enable one-keystroke execution/discard.
 
 Previews use the exact pure timeline/summary renderer with frozen simulated metadata, the current palette and glyph/motion policy, no real execution. Fixtures: running with two upcoming, success promotion, failed/paused with exit code, manual pause, completed, 32 columns, and saved summary in all three container placements. Color customization reuses existing semantic roles rather than a separate queue palette.
 
@@ -221,7 +225,7 @@ Use independent coherent commits for each slice; no merge/tag/publication. A pro
 | Slice | Automated acceptance | Real-PTY acceptance |
 | --- | --- | --- |
 | 1 | Chain promotion and terminal outcomes; manual predecessor; add/remove/edit/clear; captured failure policy; stable pause cause; always/approve; legacy protocol negotiation; alias parity; revision-bound reviews; geometry/PTY-size invariants; bounded clocks | zsh/Bash/Fish sequential state/order exactly once; failing/interrupted/surviving Ctrl+C; manual pause then unrelated failure; hidden/single-key reads; Ctrl+Q ownership; detach/reattach; narrow/Safe/NO_COLOR |
-| 2 | Journal metadata validation/roundtrip/idempotence; retention; factual wall/wait counts; secret omission/redaction; reversible folding retains exact copy/search/report/export; production/preview renderer identity; settings normalization; grammar fixtures and invalidated review | Separate/block paste order and shared state; heredoc/function/loop; service reconnect/restored holds; exact 400-line copies with folded queued output |
+| 2 | Journal metadata validation/roundtrip/idempotence; retention; factual wall/wait counts; secret omission/redaction; reversible folding retains exact copy/search/report/export; production/preview renderer identity; settings normalization; grammar fixtures and invalidated review | Separate/block paste order and shared state; heredoc/function/loop; live-service reconnect with held queue state; exact 400-line copies with folded queued output |
 | 3 | Stable-ID selector navigation; empty/no-output/disappearing blocks; restoration with folds/filter/resize; Copy versus Actions intent; palette Esc return; contextual registry parity; alias/N parsing; no selection side effects; independent multi-picker operation; Compare frame dimensions | Clipboard tabs/Unicode/trailing newline and `seq 1 400`; report fake-token/private-path redaction; compare unchanged; `/actions` keyboard and pointer parity; editor/rerun handoff; input ownership and fullscreen refusal |
 | 4 | Recorded benchmark results and gate decision; deterministic easing endpoints/retarget/cancel; no idle subscription; FOLLOW/DETACHED; selection/search/fold/anchor invariants | Physical wheel/trackpad, page keys, selection, resize and fullscreen apps in Ghostty/Terminal.app; 400/10,000 lines; reduced motion/NO_COLOR responsiveness |
 
@@ -231,4 +235,4 @@ Physical QA stays outstanding until actually performed by the maintainer. Preser
 
 ## Review checkpoint
 
-Approve or correct this written design before product code and implementation planning. Main decisions to review are captured-per-chain failure policy, conservative paste separation, safe-label-only automatic summaries, compatibility-preserving Copy preference migration, and the independently gated scrolling prototype. No additional permission is needed for routine isolated implementation/verification after design approval; merges, tags and publishing remain prohibited by the user's instruction.
+The maintainer approved the revised design and authorized implementation planning plus isolated Slice 1 work once these amendments were incorporated: independent paused-queue foreground provenance; deferred archived pending-command persistence; and production-renderer visual review after Slice 1. Main retained decisions are captured-per-chain failure policy, conservative paste separation, safe-label-only automatic summaries, compatibility-preserving Copy preference migration, and the independently gated scrolling prototype. No additional permission is needed for routine isolated implementation/verification after design approval; merges, tags and publishing remain prohibited by the user's instruction.
