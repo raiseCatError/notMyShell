@@ -257,7 +257,7 @@ import {renderWatchPanel, watchPanelKey, watchRow, type WatchPanelState} from '.
 import {analyzePaste, KIND_LABELS, needsPreview, PASTE_EXACT_NOTE, pasteHeader, primaryKind, type PasteAnalysis, nmshCommandNote} from '../input/pasteGuard.js';
 import type {BatchShell} from '../input/pasteBatch.js';
 import {createPasteReview, displaySafe, pasteReviewKey, renderPasteReview, type PasteReviewState} from '../input/PasteReview.js';
-import {batchFromCommands, batchReviewKey, batchTexts, createBatchReview, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
+import {batchFromCommands, batchRefusal, batchReviewKey, batchTexts, createBatchReview, createBatchReviewWithRefusal, renderBatchReview, type BatchReviewState} from '../input/BatchReview.js';
 import {QUEUE_LIMIT} from '../session/CommandQueue.js';
 import {addPin, addRecipe, changeItem, keepProblem, loadPins, pinsPath, removeItem, type PinData, type Recipe} from '../pins/PinStore.js';
 import {createPinsPanel, pinsPanelKey, renderPinsPanel, type PinsPanelState} from '../pins/PinsPanel.js';
@@ -1927,10 +1927,21 @@ export class TerminalApp {
           this.output.addFrontendInteraction('/ps', `Queued ${texts.length} command${texts.length === 1 ? '' : 's'}. They run one at a time in this shell; /queue shows them.`, INFO);
         }
         done();
-      } else if (action?.kind === 'edit') { this.editor.insertPaste(batchTexts(review).join('\n')); done(); }
-      else if (action?.kind === 'text') { this.editor.insertPaste(review.source); done(); }
-      else if (action?.kind === 'back') { this.batchReview = undefined; if (review.title) this.openPins(); }
-      else if (action?.kind === 'cancel') done();
+      } else if (action?.kind === 'block') {
+        done();
+        void this.runReviewedBlock(review.source);
+      } else if (action?.kind === 'edit') {
+        this.editor.insertPaste(review.source);
+        done();
+      } else if (action?.kind === 'text') {
+        this.editor.insertPaste(review.source);
+        done();
+      } else if (action?.kind === 'back') {
+        this.batchReview = undefined;
+        if (review.title) this.openPins();
+      } else if (action?.kind === 'cancel') {
+        done();
+      }
       this.render();
       return;
     }
@@ -1947,13 +1958,35 @@ export class TerminalApp {
     }
     if (this.pastePreview) {
       const preview = this.pastePreview;
-      if (key.kind === 'enter') { this.pastePreview = undefined; this.editor.insertPaste(preview.text); this.selectedSuggestion = 0; }
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'r') this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch, this.shellId);
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) void this.openBatchReview(preview.text);
-      else if (key.kind === 'text' && key.value.toLowerCase() === 'c') this.keepClip(preview.text, 'paste', this.shellCwd);
-      else if (key.kind === 'escape' || key.kind === 'interrupt') this.pastePreview = undefined;
-      this.render();
-      return;
+      if (key.kind === 'enter') {
+        this.pastePreview = undefined;
+        this.editor.insertPaste(preview.text);
+        this.selectedSuggestion = 0;
+        this.render();
+        return;
+      }
+      if (key.kind === 'text' && key.value.toLowerCase() === 'r') {
+        this.pasteReview = createPasteReview(preview.text, preview.analysis, preview.batch, this.shellId);
+        this.render();
+        return;
+      }
+      if (key.kind === 'text' && key.value.toLowerCase() === 'b' && preview.batch) {
+        void this.openBatchReview(preview.text);
+        this.render();
+        return;
+      }
+      if (key.kind === 'text' && key.value.toLowerCase() === 'c') {
+        this.keepClip(preview.text, 'paste', this.shellCwd);
+        this.render();
+        return;
+      }
+      if (key.kind === 'escape' || key.kind === 'interrupt') {
+        this.pastePreview = undefined;
+        this.render();
+        return;
+      }
+      // Any other key (typing, editing) invalidates the paste preview and continues normal processing
+      this.pastePreview = undefined;
     }
     if (this.shelf.focused && this.handleShelfKey(key)) return;
     if (this.background.panel) { this.handleBackgroundPanelKey(key); return; }
@@ -3870,9 +3903,18 @@ export class TerminalApp {
     const elapsed = completedAt.getTime() - command.startedAt;
     this.output.setActiveActivities(this.tapActivityObserver.finish(completedAt.getTime()));
     // Never collapse output under the reader: while scrolled back or selecting, the block finishes expanded.
-    const completedRecord = this.output.complete(exitCode, {holdOpen: this.historyViewport.detached || Boolean(this.selection)});
+    const isQueued = Boolean(command.queued);
+    const isInterrupted = command.interrupted || exitCode === 130;
+    const foldQueued = Boolean(isQueued && this.promptConfiguration.queue.outputDisplay === 'fold');
+    const completedRecord = this.output.complete(exitCode, {
+      holdOpen: this.historyViewport.detached || Boolean(this.selection),
+      queued: isQueued,
+      foldQueued,
+      interrupted: isInterrupted,
+    });
     if (this.replaying && completedRecord) this.replayedRecords.push(completedRecord);
     if (completedRecord) {
+      if (isQueued) completedRecord.queued = true;
       completedRecord.startedAt = command.startedAt;
       completedRecord.durationMs = Math.max(0, elapsed);
       // Wall-clock duration stays whole; the time spent waiting for the person is a separate, measured fact.
@@ -3882,7 +3924,7 @@ export class TerminalApp {
       this.directoryQueryAbort?.abort();
       this.historyService.record(completedRecord, this.journal?.id ?? this.sessionId ?? 'current');
       this.historyQuery = undefined;
-      if (!this.replaying) void this.adviseFolding(completedRecord);
+      if (!this.replaying && !isQueued) void this.adviseFolding(completedRecord);
     }
     this.suggestions.record({command: command.command, cwd: command.cwd, exitCode, at: command.startedAt, previous: this.submittedCommands[0]});
     this.submittedCommands.unshift(command.command);
@@ -7348,21 +7390,44 @@ export class TerminalApp {
 
   /**
    * B: split the paste, have the real shell parse-check every command on its own (it never runs them), and only then
-   * show the review. A boundary the shell does not accept means the paste stays one block of text.
+   * show the review. A boundary the shell does not accept means command separation is refused with a clear explanation,
+   * while still providing Run as block, Edit, or Cancel choices.
    */
   private async openBatchReview(text: string): Promise<void> {
     const shell = this.batchShell();
-    const review = shell ? createBatchReview(text, shell, Math.max(0, QUEUE_LIMIT - this.queueState.entries.length)) : undefined;
-    if (!shell || !review) return;
+    if (!shell) return;
+    const capacity = Math.max(0, QUEUE_LIMIT - this.queueState.entries.length);
+    const review = createBatchReview(text, shell, capacity);
+    if (!review) {
+      const refusal = batchRefusal(text, shell) ?? 'Separation was refused.';
+      this.batchReview = createBatchReviewWithRefusal(text, shell, capacity, refusal);
+      this.render();
+      return;
+    }
     const check = await verifyCommands(batchTexts(review), shell);
     if (this.stopped || this.pastePreview?.text !== text) return;
-    if (check.ok) { review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · '); this.batchReview = review; }
-    else {
-      this.output.addFrontendInteraction('/ps', check.reason, INFO);
+    if (check.ok) {
+      review.note = [review.note, this.queuePolicyNote()].filter(Boolean).join(' · ');
+      this.batchReview = review;
+    } else {
+      this.batchReview = createBatchReviewWithRefusal(text, shell, capacity, check.reason);
       this.pastePreview = {...this.pastePreview, batch: false};
       if (this.pasteReview) this.pasteReview.batch = false;
     }
     this.render();
+  }
+
+  /**
+   * Run the reviewed paste as one outer execution in the real shell.
+   * Grouped blocks remain one observed outer execution.
+   */
+  private async runReviewedBlock(text: string): Promise<void> {
+    if (this.running) {
+      this.output.addFrontendInteraction('/ps', 'A command is running: wait for it to complete or choose Queue separately.', ERROR);
+      return;
+    }
+    this.editor.replaceText(text);
+    await this.submit(true, true, false);
   }
 
   /** /ps: read the clipboard now, once, and bring it to paste review. Nothing is kept, inserted or run by reading it. */
@@ -9475,6 +9540,9 @@ export class TerminalApp {
     const unavailable = adapter.unavailableReason(process.env);
     if (unavailable) return refuse(unavailable);
     if (this.shellSwitching) return refuse('A shell switch is already in progress.');
+    this.batchReview = undefined;
+    this.pasteReview = undefined;
+    this.pastePreview = undefined;
     this.shellSwitching = true;
     const from = shellAdapter(this.shellId).label;
     try {

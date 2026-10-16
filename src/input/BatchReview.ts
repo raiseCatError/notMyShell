@@ -17,6 +17,9 @@ export interface BatchEntry extends BatchCommand {
   kinds: PasteKind[];
 }
 
+export type BatchChoice = 'block' | 'queue' | 'edit' | 'cancel';
+export const BATCH_CHOICES: readonly BatchChoice[] = ['block', 'queue', 'edit', 'cancel'];
+
 export interface BatchReviewState {
   /** The paste exactly as it arrived. */
   source: string;
@@ -30,9 +33,21 @@ export interface BatchReviewState {
   title?: string;
   /** What the commands expect (the recipe's folder and the current one), shown above the list. */
   note?: string;
+  /** Active execution choice: 'block' | 'queue' | 'edit' | 'cancel'. */
+  choice?: BatchChoice;
+  /** Refusal reason if separation into separate commands is refused or unsafe. */
+  refusal?: string;
+  /** Verified statement count (from parse validation). */
+  verifiedCount?: number;
 }
 
-export type BatchReviewAction = {kind: 'queue'} | {kind: 'text'} | {kind: 'edit'} | {kind: 'back'} | {kind: 'cancel'};
+export type BatchReviewAction =
+  | {kind: 'queue'}
+  | {kind: 'block'}
+  | {kind: 'text'}
+  | {kind: 'edit'}
+  | {kind: 'back'}
+  | {kind: 'cancel'};
 
 /** Contents of `$( )`, `<( )`, `>( )` and backtick substitutions in a command (balanced; an approximation that errs towards finding more). */
 function substitutions(text: string): string[] {
@@ -79,13 +94,70 @@ export function entryKinds(text: string, depth = 0): PasteKind[] {
 export function createBatchReview(source: string, shell: BatchShell, capacity: number): BatchReviewState | undefined {
   const result = splitBatch(source, shell);
   if (!result.ok || result.commands.length < 2) return undefined;
-  return {source, entries: result.commands.map(command => ({...command, kinds: entryKinds(command.text)})), cursor: 0, top: 0, capacity};
+  return {
+    source,
+    entries: result.commands.map(command => ({...command, kinds: entryKinds(command.text)})),
+    cursor: 0,
+    top: 0,
+    capacity,
+    choice: 'queue',
+    verifiedCount: result.commands.length,
+  };
+}
+
+/**
+ * Creates a batch review state for multiline paste with execution choices, including when command separation is refused.
+ */
+export function createBatchReviewWithRefusal(source: string, shell: BatchShell, capacity: number, refusal?: string): BatchReviewState {
+  const result = splitBatch(source, shell);
+  if (result.ok && result.commands.length >= 2 && !refusal) {
+    return {
+      source,
+      entries: result.commands.map(command => ({...command, kinds: entryKinds(command.text)})),
+      cursor: 0,
+      top: 0,
+      capacity,
+      choice: 'queue',
+      verifiedCount: result.commands.length,
+    };
+  }
+  const lines = source.split('\n');
+  const reason = refusal ?? (result.ok ? 'It is a single command.' : result.reason);
+  return {
+    source,
+    entries: [{text: source, firstLine: 1, lastLine: lines.length, kinds: entryKinds(source)}],
+    cursor: 0,
+    top: 0,
+    capacity,
+    choice: 'block',
+    refusal: reason,
+    verifiedCount: result.ok ? result.commands.length : 1,
+  };
+}
+
+/** Available execution choices for the given batch review state. */
+export function batchAvailableChoices(state: BatchReviewState): BatchChoice[] {
+  const choices: BatchChoice[] = ['block'];
+  const canQueue = !state.refusal && state.entries.length >= 2 && state.entries.length <= state.capacity;
+  if (canQueue) choices.push('queue');
+  choices.push('edit', 'cancel');
+  return choices;
 }
 
 /** A reviewed list of commands that are already separate (a recipe's steps): the same review, queue and safety. */
 export function batchFromCommands(commands: readonly string[], capacity: number, details: {title: string; note?: string}): BatchReviewState {
   const entries = commands.map((text, index): BatchEntry => ({text, firstLine: index + 1, lastLine: index + 1, kinds: entryKinds(text)}));
-  return {source: commands.join('\n'), entries, cursor: 0, top: 0, capacity, title: details.title, ...(details.note ? {note: details.note} : {})};
+  return {
+    source: commands.join('\n'),
+    entries,
+    cursor: 0,
+    top: 0,
+    capacity,
+    choice: 'queue',
+    verifiedCount: commands.length,
+    title: details.title,
+    ...(details.note ? {note: details.note} : {}),
+  };
 }
 
 /** Why a paste is not offered as a batch (for the review's own note), or undefined when it is. */
@@ -106,7 +178,36 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
     state.entries.splice(to, 0, entry!);
     state.cursor = to;
   };
-  if (key.kind === 'enter') return state.entries.length && state.entries.length <= state.capacity ? {kind: 'queue'} : undefined;
+
+  const choices = batchAvailableChoices(state);
+  const currentChoice = state.choice ?? (state.refusal ? 'block' : 'queue');
+  const cycleChoice = (step: number) => {
+    let idx = choices.indexOf(currentChoice);
+    if (idx === -1) idx = 0;
+    state.choice = choices[(idx + step + choices.length) % choices.length];
+  };
+
+  // Choice navigation (Left / Right / Tab / Shift+Tab)
+  if (key.kind === 'left' || key.kind === 'focusPrevious') {
+    cycleChoice(-1);
+    return undefined;
+  }
+  if (key.kind === 'right' || key.kind === 'complete' || key.kind === 'focusNext') {
+    cycleChoice(1);
+    return undefined;
+  }
+
+  if (key.kind === 'enter') {
+    if (currentChoice === 'queue') {
+      if (state.refusal) return undefined;
+      return state.entries.length && state.entries.length <= state.capacity ? {kind: 'queue'} : undefined;
+    }
+    if (currentChoice === 'block') return {kind: 'block'};
+    if (currentChoice === 'edit') return {kind: 'edit'};
+    if (currentChoice === 'cancel') return {kind: 'cancel'};
+    return undefined;
+  }
+
   if (key.kind === 'escape') return {kind: 'back'};
   if (key.kind === 'interrupt') return {kind: 'cancel'};
   if (key.kind === 'up' || key.kind === 'wheelUp') select(state.cursor - 1);
@@ -116,12 +217,21 @@ export function batchReviewKey(state: BatchReviewState, key: Key, height: number
   else if (key.kind === 'delete' || key.kind === 'backspace') remove(state);
   else if (key.kind === 'text') {
     const value = key.value.toLowerCase();
+    if (value === '1') { state.choice = 'block'; return undefined; }
+    if (value === '2') {
+      if (choices.includes('queue')) state.choice = 'queue';
+      return undefined;
+    }
+    if (value === '3') { state.choice = 'edit'; return undefined; }
+    if (value === '4') { state.choice = 'cancel'; return undefined; }
+    if (value === 'b') { state.choice = 'block'; return undefined; }
     if (value === 'x') remove(state);
     else if (value === 'k') move(-1);
     else if (value === 'j') move(1);
     else if (value === 't') return {kind: 'text'};
     else if (value === 'e' && state.entries.length) return {kind: 'edit'};
-    else if (value === 'q' && state.entries.length && state.entries.length <= state.capacity) return {kind: 'queue'};
+    else if (value === 'q' && state.entries.length && state.entries.length <= state.capacity && !state.refusal) return {kind: 'queue'};
+    else if (value === 'c') return {kind: 'cancel'};
   }
   state.top = Math.max(0, Math.min(state.top, Math.max(0, state.entries.length - rows)));
   if (state.cursor < state.top) state.top = state.cursor;
@@ -156,11 +266,11 @@ function wrapRows(line: string, width: number): string[] {
   return rows;
 }
 
-const FIXED_ROWS = 10;
+const FIXED_ROWS = 12;
 const listRows = (height: number) => Math.max(1, Math.min(8, height - FIXED_ROWS - 3));
 const RISKY: ReadonlySet<PasteKind> = new Set(['destructive', 'privilege', 'pipeline']);
 
-/** At most `height` rows: header, the list (scrolling), the selected command in full, the notes and the controls. */
+/** At most `height` rows: header, choices, the list (scrolling), the selected command in full, the notes and the controls. */
 export function renderBatchReview(state: BatchReviewState, columns: number, height: number): string[] {
   const primary = foreground(UI_COLORS.primary);
   const subtle = foreground(UI_COLORS.subtle);
@@ -170,9 +280,39 @@ export function renderBatchReview(state: BatchReviewState, columns: number, heig
   const reset = '\u001B[0m';
   const count = state.entries.length;
   const width = Math.max(10, columns - 4);
-  const out: string[] = [`  ${primary}Review commands${reset}  ${subtle}${truncateText(`${state.title ? `${state.title} · ` : ''}${count} command${count === 1 ? '' : 's'}, in this order`, Math.max(8, width - 18))}${reset}`];
+  const verifiedStr = state.verifiedCount !== undefined ? ` · ${state.verifiedCount} verified statement${state.verifiedCount === 1 ? '' : 's'}` : '';
+  const out: string[] = [`  ${primary}Review commands${reset}  ${subtle}${truncateText(`${state.title ? `${state.title} · ` : ''}${count} command${count === 1 ? '' : 's'}${verifiedStr}, in this order`, Math.max(8, width - 18))}${reset}`];
   if (state.note) out.push(`  ${subtle}${truncateText(state.note, width)}${reset}`);
+  if (state.refusal) out.push(`  ${failure}! Separation refused: ${truncateText(state.refusal, Math.max(8, width - 24))}${reset}`);
+
+  // Execution choices bar
+  const choices = batchAvailableChoices(state);
+  const activeChoice = state.choice ?? (state.refusal ? 'block' : 'queue');
+  const compact = columns < 70;
+  const choicePills: string[] = [];
+
+  const blockFocused = activeChoice === 'block';
+  const blockLabel = compact ? '1 Block' : '1 Run as block';
+  choicePills.push(blockFocused ? `${accent}${GLYPHS.selection} [${blockLabel} · 1 outer execution]${reset}` : `${subtle}[${blockLabel}]${reset}`);
+
+  const queueFocused = activeChoice === 'queue';
+  const canQueue = choices.includes('queue');
+  if (canQueue) {
+    const queueLabel = compact ? `2 Queue (${count})` : `2 Queue separately · ${count} statement${count === 1 ? '' : 's'}`;
+    choicePills.push(queueFocused ? `${accent}${GLYPHS.selection} [${queueLabel}]${reset}` : `${subtle}[2 Queue]${reset}`);
+  } else {
+    choicePills.push(`${subtle}[2 Queue · refused]${reset}`);
+  }
+
+  const editFocused = activeChoice === 'edit';
+  choicePills.push(editFocused ? `${accent}${GLYPHS.selection} [3 Edit]${reset}` : `${subtle}[3 Edit]${reset}`);
+
+  const cancelFocused = activeChoice === 'cancel';
+  choicePills.push(cancelFocused ? `${accent}${GLYPHS.selection} [4 Cancel]${reset}` : `${subtle}[4 Cancel]${reset}`);
+
+  out.push(`  ${choicePills.join('  ')}`);
   out.push('');
+
   const rows = listRows(height);
   const numberWidth = String(count).length;
   const labelWidth = columns >= 76 ? 26 : 0;
@@ -190,8 +330,24 @@ export function renderBatchReview(state: BatchReviewState, columns: number, heig
   if (count > rows) out.push(`  ${subtle}${state.top + 1}–${Math.min(count, state.top + rows)} of ${count}${reset}`);
   const selected = state.entries[state.cursor];
   const notes = 2;
-  const controls = renderControlRows([['↑↓', 'select'], ['x', 'remove'], ['k j', 'move'], ['Enter', `queue ${count}`], ['e', 'edit as text'], ['t', 'original text'], ['Esc', 'back']], columns);
-  if (selected) {
+
+  const actionLabel = activeChoice === 'block'
+    ? 'run as block'
+    : activeChoice === 'queue'
+      ? `queue ${count}`
+      : activeChoice === 'edit'
+        ? 'edit in composer'
+        : 'cancel';
+  const controls = renderControlRows([['↑↓', 'select'], ['←→/Tab', 'choice'], ['Enter', actionLabel], ['e', 'edit as text'], ['t', 'original text'], ['Esc', 'back']], columns);
+
+  if (activeChoice === 'block' && state.entries.length <= 1) {
+    out.push('', `  ${subtle}Entire block, exactly as it will run as 1 outer execution${reset}`);
+    const wrapped = state.source.split('\n').flatMap(line => wrapRows(line, Math.max(8, width - 4)));
+    const room = Math.max(2, height - out.length - notes - controls.length - 1);
+    const shown = wrapped.length > room ? room - 1 : room;
+    for (const row of wrapped.slice(0, shown)) out.push(`    ${secondary}${row}${reset}`);
+    if (wrapped.length > shown) out.push(`    ${failure}… ${wrapped.length - shown} more row${wrapped.length - shown === 1 ? "" : "s"} hidden; still part of the command${reset}`);
+  } else if (selected) {
     const kind = primaryKind(selected.kinds);
     out.push('', `  ${subtle}Command ${state.cursor + 1}, exactly as it will be queued${reset}${RISKY.has(kind) || kind === 'install' || kind === 'modifies' ? `${RISKY.has(kind) ? failure : accent} · ${KIND_LABELS[kind]} somewhere in it${reset}` : ''}`);
     const wrapped = selected.text.split('\n').flatMap(line => wrapRows(line, Math.max(8, width - 4)));
@@ -201,8 +357,17 @@ export function renderBatchReview(state: BatchReviewState, columns: number, heig
     if (wrapped.length > shown) out.push(`    ${failure}… ${wrapped.length - shown} more row${wrapped.length - shown === 1 ? "" : "s"} hidden; still part of the command${reset}`);
   }
   out.push('');
-  if (count > state.capacity) out.push(`  ${failure}${truncateText(`The queue has room for ${state.capacity} more; remove ${count - state.capacity} to queue these.`, width)}${reset}`);
-  else out.push(`  ${subtle}${truncateText('Nothing runs until you press Enter. Then the shell runs them one at a time, and the queue stops if one fails.', width)}${reset}`);
+  if (activeChoice === 'block') {
+    out.push(`  ${subtle}${truncateText('Nothing runs until you press Enter. The shell runs 1 outer execution.', width)}${reset}`);
+  } else if (activeChoice === 'edit') {
+    out.push(`  ${subtle}${truncateText('Press Enter to open this text in the composer for editing. Nothing will be executed.', width)}${reset}`);
+  } else if (activeChoice === 'cancel') {
+    out.push(`  ${subtle}${truncateText('Press Enter to cancel and discard this paste. Nothing will be executed.', width)}${reset}`);
+  } else if (count > state.capacity) {
+    out.push(`  ${failure}${truncateText(`The queue has room for ${state.capacity} more; remove ${count - state.capacity} to queue these.`, width)}${reset}`);
+  } else {
+    out.push(`  ${subtle}${truncateText('Nothing runs until you press Enter. Then the shell runs them one at a time, and the queue stops if one fails.', width)}${reset}`);
+  }
   out.push(...controls.map(row => `  ${row}`));
   const fixed = Math.max(4, height);
   return (out.length > fixed ? [...out.slice(0, fixed - 1), out[out.length - 1]!] : out).map(row => truncateAnsi(row, columns));

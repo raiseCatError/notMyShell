@@ -28,6 +28,7 @@ const plain = (state: QueueState, options: Record<string, unknown> = {}) => queu
 
 test('queue presentation defaults match the approved spec: timeline on, two results, two upcoming, eight-second completed view, summaries off', () => {
   assert.deepEqual(DEFAULT_PROMPT_CONFIGURATION.queue, {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
+    outputDisplay: 'inline',
     autoSaveSummary: false, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
     summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false});
   assert.deepEqual(normalizePromptConfiguration({}).queue, DEFAULT_PROMPT_CONFIGURATION.queue, 'an existing configuration keeps the defaults');
@@ -55,9 +56,11 @@ test('the summary settings normalize conservatively: saves off, detailed, center
   assert.equal(defaults.summaryDurations, true);
   assert.equal(defaults.summaryExitCodes, true);
   assert.equal(defaults.summaryInputWaits, false, 'input waits stay hidden until asked for');
-  const hand: Partial<typeof defaults> = {autoSaveSummary: true, summaryDetail: 'compact', summaryPlacement: 'right', summaryAlign: 'right',
+  assert.equal(defaults.outputDisplay, 'inline', 'output display defaults to inline');
+  const hand: Partial<typeof defaults> = {outputDisplay: 'fold', autoSaveSummary: true, summaryDetail: 'compact', summaryPlacement: 'right', summaryAlign: 'right',
     summaryDurations: false, summaryExitCodes: false, summaryInputWaits: true};
   assert.deepEqual(normalizePromptConfiguration({queue: hand}).queue, {...defaults, ...hand}, 'in-range choices are kept exactly');
+  assert.equal(normalizePromptConfiguration({queue: {outputDisplay: 'hidden'}}).queue.outputDisplay, 'inline', 'malformed outputDisplay falls back to default');
   assert.equal(normalizePromptConfiguration({queue: {autoSaveSummary: 'yes'}}).queue.autoSaveSummary, false, 'only an explicit true turns saving on');
   assert.equal(normalizePromptConfiguration({queue: {summaryDetail: 'everything'}}).queue.summaryDetail, 'detailed');
   assert.equal(normalizePromptConfiguration({queue: {summaryPlacement: 'middle'}}).queue.summaryPlacement, 'center');
@@ -136,12 +139,16 @@ test('the Queue panel edits the shared rows and hides values that no longer appl
 });
 
 test('the summary rows are part of the Queue destination and edit the shared settings', () => {
-  const ids = ['queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign', 'queueSummaryDurations', 'queueSummaryExitCodes', 'queueSummaryInputWaits'];
+  const ids = ['queueOutputDisplay', 'queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign', 'queueSummaryDurations', 'queueSummaryExitCodes', 'queueSummaryInputWaits'];
   for (const id of ids) {
     assert.ok(QUEUE_SETTINGS_ROW_IDS.includes(id), `${id} is in the Queue destination`);
     assert.ok(SETTINGS_ROWS.some(item => item.id === id), `${id} is a real Settings row`);
     assert.equal(configGroup(SETTINGS_ROWS.find(item => item.id === id)!), 'Sessions & Alerts', `${id} stays in the Sessions group`);
   }
+  assert.equal(settingsRowValue(row('queueOutputDisplay'), withQueue({outputDisplay: 'inline'})), 'Inline');
+  assert.equal(settingsRowValue(row('queueOutputDisplay'), withQueue({outputDisplay: 'fold'})), 'Fold queued output');
+  assert.equal(toggleSettingsRow(row('queueOutputDisplay'), withQueue({outputDisplay: 'inline'}))!.queue.outputDisplay, 'fold');
+  assert.equal(toggleSettingsRow(row('queueOutputDisplay'), withQueue({outputDisplay: 'fold'}))!.queue.outputDisplay, 'inline');
   assert.equal(settingsRowValue(row('queueSummaryDetail'), withQueue({summaryDetail: 'compact'})), 'Compact');
   assert.equal(toggleSettingsRow(row('queueSummaryDetail'), withQueue({summaryDetail: 'compact'}))!.queue.summaryDetail, 'detailed');
   assert.equal(settingsRowValue(row('queueSummaryPlacement'), withQueue({summaryPlacement: 'center'})), 'Centered');

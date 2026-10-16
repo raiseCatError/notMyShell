@@ -57,6 +57,8 @@ export interface CompletedCommand {
   outputStartId: number;
   endId?: number;
   expanded?: boolean;
+  /** Whether this command was started from the command queue. */
+  queued?: boolean;
   /** Live presentation observed while running; `FOLDED` only in older transcripts. */
   mode?: PresentationMode;
   historicalContext?: HistoricalContextSnapshot;
@@ -373,8 +375,8 @@ export class OutputBuffer {
     this.classifier?.tick();
   }
 
-  /** `holdOpen`: the person is reading the transcript right now (scrolled back, selecting); the block finishes expanded. */
-  complete(exitCode: number, options: {holdOpen?: boolean} = {}): CompletedCommand | undefined {
+  /** Options passed when a command block settles. Presentation only. */
+  complete(exitCode: number, options: {holdOpen?: boolean; queued?: boolean; foldQueued?: boolean; interrupted?: boolean} = {}): CompletedCommand | undefined {
     const held = this.cut?.flush();
     if (held) this.writeProgramText(held);
     this.parser.ensureLineBoundary();
@@ -385,11 +387,24 @@ export class OutputBuffer {
     const mode = this.classifier?.mode ?? 'INLINE';
     const output = this.commandOutput(this.active.outputStart, endId);
     const exact = this.commandOutput(this.active.outputStart, endId, true);
-    // Activity-bearing parents keep their own disclosure; otherwise the fold
-    // policy decides from the finished output. Presentation only.
-    const autoFolded = this.active.activities.length === 0 && !options.holdOpen
-      && shouldAutoFold(this.outputFolding, {command: this.active.command, output, exitCode, lineCount: endId - this.active.outputStart,
-        ...(this.classifier ? {facts: this.classifier.streamFacts} : {})});
+    const lineCount = endId - this.active.outputStart;
+    const isInterrupted = Boolean(options.interrupted || exitCode === 130);
+    const isFailed = exitCode !== 0 || isInterrupted;
+
+    // Activity-bearing parents keep their own disclosure; otherwise the fold policy decides from the finished output.
+    // Queued commands: never fold failed or interrupted commands (critical failure facts stay visible).
+    // If foldQueued is set (outputDisplay === 'fold') and command succeeded with output, start folded.
+    let autoFolded = false;
+    if (this.active.activities.length === 0 && !options.holdOpen) {
+      if (options.queued) {
+        if (!isFailed && options.foldQueued && lineCount > 0) {
+          autoFolded = true;
+        }
+      } else {
+        autoFolded = shouldAutoFold(this.outputFolding, {command: this.active.command, output, exitCode, lineCount,
+          ...(this.classifier ? {facts: this.classifier.streamFacts} : {})});
+      }
+    }
     const expanded = this.active.activities.length === 0 && !autoFolded;
 
     const record: CompletedCommand = {
@@ -403,6 +418,7 @@ export class OutputBuffer {
       outputStartId: this.active.outputStart,
       endId,
       expanded,
+      ...(options.queued ? {queued: true as const} : {}),
       mode,
       historicalContext: this.active.historicalContext ? structuredClone(this.active.historicalContext) : undefined,
       activities: this.active.activities.length > 0

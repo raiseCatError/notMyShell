@@ -1,0 +1,13 @@
+  Review commands[0m  3 commands · 3 verified sta…[0m
+  [1 Block][0m  › [2 Queue (3)][0m  [3 Edit][0m  [4 Cancel][0m
+
+›[0m 1[0m  [1mgit fetch origin[0m
+  2[0m  git pull --ff-only[0m
+  3[0m  npm test[0m
+
+  Command 1, exactly as it will be queued[0m
+    git fetch origin[0m
+
+  Nothing runs until you press Enter. Then the …[0m
+  ↑↓ select · ←→/Tab choice · Enter queue 3[0m
+  e edit as text · t original text · Esc back[0m

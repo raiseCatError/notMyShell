@@ -1,0 +1,13 @@
+  Review commands[0m  3 commands · 3 verified statements, in this order[0m
+  [1 Run as block][0m  > [2 Queue separately · 3 statements][0m  [3 Edit][0m  [4 Cancel][0m
+
+>[0m 1[0m  network                     [0m[1mgit fetch origin[0m
+  2[0m  modifies files              [0mgit pull --ff-only[0m
+  3[0m  runs project script         [0mnpm test[0m
+
+  Command 1, exactly as it will be queued[0m
+    git fetch origin[0m
+
+  Nothing runs until you press Enter. Then the shell runs them one at a time,…[0m
+  ↑↓ select · ←→/Tab choice · Enter queue 3 · e edit as text · t original text[0m
+  Esc back[0m

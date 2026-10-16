@@ -382,6 +382,7 @@ export const SETUP_SECTIONS: readonly SetupSection[] = [
     {row: configRow('queueUpcoming')},
     {row: configRow('queueTransient'), note: draft => draft.queue.transient ? `On: a finished chain stays visible for ${draft.queue.transientSeconds}s, then dismisses` : 'Off: a finished chain dismisses as soon as it ends'},
     {row: configRow('queueTransientSeconds')},
+    {row: configRow('queueOutputDisplay')},
     {row: configRow('queueSummaryAutoSave'), note: draft => draft.queue.autoSaveSummary
       ? 'On: each finished chain saves one typed summary — observed outcomes, durations and counts only, never output, prompts or hidden input'
       : 'Off: summaries are saved only when you ask, with an explicit redacted review'},

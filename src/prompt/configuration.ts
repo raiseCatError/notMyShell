@@ -757,6 +757,9 @@ export const QUEUE_SUMMARY_PLACEMENTS = ['left', 'center', 'right'] as const;
 export const QUEUE_SUMMARY_ALIGNS = ['left', 'center', 'right'] as const;
 export const QUEUE_SUMMARY_DETAIL_LABELS: Readonly<Record<typeof QUEUE_SUMMARY_DETAILS[number], string>> = {detailed: 'Detailed', compact: 'Compact'};
 export const QUEUE_SUMMARY_POSITION_LABELS: Readonly<Record<typeof QUEUE_SUMMARY_PLACEMENTS[number], string>> = {left: 'Left', center: 'Centered', right: 'Right'};
+export const QUEUE_OUTPUT_DISPLAYS = ['inline', 'fold'] as const;
+export type QueueOutputDisplay = typeof QUEUE_OUTPUT_DISPLAYS[number];
+export const QUEUE_OUTPUT_DISPLAY_LABELS: Readonly<Record<QueueOutputDisplay, string>> = {inline: 'Inline', fold: 'Fold queued output'};
 export type QueueSummaryDetail = typeof QUEUE_SUMMARY_DETAILS[number];
 export type QueueSummaryPlacement = typeof QUEUE_SUMMARY_PLACEMENTS[number];
 export type QueueSummaryAlign = typeof QUEUE_SUMMARY_ALIGNS[number];
@@ -776,6 +779,8 @@ export interface QueuePresentationSettings {
   transient: boolean;
   /** How long the finished chain stays visible (6–30 seconds). */
   transientSeconds: number;
+  /** Output display preference for finished queued commands: inline (default) or collapsed behind a fold hint. */
+  outputDisplay: QueueOutputDisplay;
   /** Save one typed summary automatically when each chain settles; Off keeps summaries explicit and reviewed. */
   autoSaveSummary: boolean;
   /** How saved summaries read: each observed result, or the compact totals container. */
@@ -805,6 +810,7 @@ export function normalizeQueuePresentation(value: unknown): QueuePresentationSet
   const raw = isRecord(value) ? value : {};
   return {liveTimeline: raw.liveTimeline !== false, recentResults: boundedCount(raw.recentResults, 0, 2, 2),
     upcoming: boundedCount(raw.upcoming, 1, 2, 2), transient: raw.transient !== false, transientSeconds: boundedCount(raw.transientSeconds, 6, 30, 8),
+    outputDisplay: pickValue(QUEUE_OUTPUT_DISPLAYS, raw.outputDisplay, 'inline'),
     autoSaveSummary: raw.autoSaveSummary === true,
     summaryDetail: pickValue(QUEUE_SUMMARY_DETAILS, raw.summaryDetail, 'detailed'),
     summaryPlacement: pickValue(QUEUE_SUMMARY_PLACEMENTS, raw.summaryPlacement, 'center'),
@@ -851,6 +857,7 @@ export const DEFAULT_PROMPT_CONFIGURATION: PromptConfiguration = {
   commandQueue: true,
   queueFailurePolicy: 'pause',
   queue: {liveTimeline: true, recentResults: 2, upcoming: 2, transient: true, transientSeconds: 8,
+    outputDisplay: 'inline',
     autoSaveSummary: false, summaryDetail: 'detailed', summaryPlacement: 'center', summaryAlign: 'left',
     summaryDurations: true, summaryExitCodes: true, summaryInputWaits: false},
   workspacePanels: false,

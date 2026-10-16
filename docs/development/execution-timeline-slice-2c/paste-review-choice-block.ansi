@@ -1,0 +1,13 @@
+  Review commands[0m  3 commands · 3 verified statements, in this order[0m
+  › [1 Run as block · 1 outer execution][0m  [2 Queue][0m  [3 Edit][0m  [4 Cancel][0m
+
+›[0m 1[0m  network                     [0m[1mgit fetch origin[0m
+  2[0m  modifies files              [0mgit pull --ff-only[0m
+  3[0m  runs project script         [0mnpm test[0m
+
+  Command 1, exactly as it will be queued[0m
+    git fetch origin[0m
+
+  Nothing runs until you press Enter. The shell runs 1 outer execution.[0m
+  ↑↓ select · ←→/Tab choice · Enter run as block · e edit as text[0m
+  t original text · Esc back[0m

@@ -104,6 +104,7 @@ function isTranscript(value: unknown): value is OutputTranscript {
       || (Array.isArray(transcript.welcome.captured) && transcript.welcome.captured.every(line => typeof line === 'string')))))
     && Array.isArray(transcript.records)
     && transcript.records.every(record => record && (record.historyEligible === undefined || typeof record.historyEligible === 'boolean')
+      && (record.queued === undefined || typeof record.queued === 'boolean')
       && (record.startedAt === undefined || Number.isFinite(record.startedAt))
       && (record.durationMs === undefined || (Number.isFinite(record.durationMs) && record.durationMs >= 0))
       && (record.inputWaitMs === undefined || (Number.isFinite(record.inputWaitMs) && record.inputWaitMs >= 0))

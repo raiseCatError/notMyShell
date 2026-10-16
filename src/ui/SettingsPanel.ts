@@ -14,7 +14,7 @@ import {availabilityOf, availableValues, currentCursorHost, unavailableReason, t
 import {describeCursorColor, contextFor} from '../cursor/colors.js';
 import {CURSOR_EFFECTS, CURSOR_IDLE_EFFECTS, CURSOR_LEVELS, CURSOR_MOTIONS, CURSOR_RENDERERS, type CursorSettings} from '../prompt/configuration.js';
 import {COPY_MODES, COPY_MODE_LABELS} from '../prompt/configuration.js';
-import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
+import {QUEUE_RECENT_RESULTS_STEPS, QUEUE_UPCOMING_STEPS, QUEUE_TRANSIENT_SECONDS_STEPS, QUEUE_OUTPUT_DISPLAYS, QUEUE_OUTPUT_DISPLAY_LABELS, QUEUE_SUMMARY_DETAILS, QUEUE_SUMMARY_DETAIL_LABELS, QUEUE_SUMMARY_PLACEMENTS, QUEUE_SUMMARY_ALIGNS, QUEUE_SUMMARY_POSITION_LABELS, type QueuePresentationSettings} from '../prompt/configuration.js';
 import {CHROME_PRESET_LABELS, CHROME_PRESETS, CHROME_SOURCES, chromeColorsFrom, LAVENDER_TINT_LABELS, LAVENDER_TINTS, resolveChrome} from '../appearance/uiChrome.js';
 import {currentSelectionFamily, defaultVariant, FAMILY_IDS, FAMILY_LABELS, familyOf, selectionFamilies, selectionFamilyLabel, selectionVariants, selectSelectionFamily, variantOptions} from '../appearance/themeSelection.js';
 import {librarySummary} from '../appearance/themeLibrary.js';
@@ -426,6 +426,9 @@ export const SETTINGS_ROWS: readonly SettingsRow[] = [
   {id: 'queueTransientSeconds', parent: 'queueTransient', when: config => config.queue.transient, label: 'Keep visible', description: 'How long the finished timeline stays before it dismisses (6–30 seconds)', category: 'Queue',
     control: 'stepper', steps: QUEUE_TRANSIENT_SECONDS_STEPS, format: value => `${value}s`,
     get: config => config.queue.transientSeconds, set: (config, transientSeconds) => withQueue(config, {transientSeconds})},
+  enumRow({id: 'queueOutputDisplay', label: 'Queued output display', description: 'Inline (default) keeps complete output visible; Fold queued output starts successful queued output collapsed behind a reversible fold hint. Failed commands never fold, and exact output is always preserved', category: 'Queue',
+    values: QUEUE_OUTPUT_DISPLAYS, labels: QUEUE_OUTPUT_DISPLAYS.map(value => QUEUE_OUTPUT_DISPLAY_LABELS[value]),
+    get: config => config.queue.outputDisplay, set: (config, outputDisplay) => withQueue(config, {outputDisplay})}),
   {id: 'queueSummaryAutoSave', label: 'Save summaries', description: 'Save one typed summary when each execution chain ends: observed outcomes, durations and counts only — never output, prompts, hidden input or private paths. Off by default: explicit saves go through a review', category: 'Queue',
     control: 'boolean', get: config => config.queue.autoSaveSummary, set: (config, autoSaveSummary) => withQueue(config, {autoSaveSummary})},
   enumRow({id: 'queueSummaryDetail', label: 'Summary detail', description: 'Detailed lists each observed result under the totals; Compact keeps the totals container only. Presentation only: the saved artifact never changes', category: 'Queue',
@@ -632,7 +635,7 @@ export const SETTINGS_ENTRIES: readonly SettingsRow[] = [
  * Setup edit, plus the shared motion controls the timeline follows. Never a second copy of the settings.
  */
 export const QUEUE_SETTINGS_ROW_IDS = ['commandQueue', 'queueFailurePolicy', 'queueTimeline', 'queueRecentResults', 'queueUpcoming',
-  'queueTransient', 'queueTransientSeconds', 'queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign',
+  'queueTransient', 'queueTransientSeconds', 'queueOutputDisplay', 'queueSummaryAutoSave', 'queueSummaryDetail', 'queueSummaryPlacement', 'queueSummaryAlign',
   'queueSummaryDurations', 'queueSummaryExitCodes', 'queueSummaryInputWaits', 'motion_rendering', 'motion_eventFeedback', 'reducedMotion'] as const;
 
 /** Text cue (not color) that a value differs from its default. */

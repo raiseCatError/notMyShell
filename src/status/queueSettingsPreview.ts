@@ -59,6 +59,7 @@ export function queueSettingsPreview(config: PromptConfiguration, columns: numbe
     : queueBlock(state, width, 5, {now: PREVIEW_EPOCH, animate: false, liveTimeline: false});
   const notes = ['Queue state lives in the live session · resume and clear are always reviewed',
     'Saved summaries keep only observed facts: outcomes, durations, exit codes and counts',
-    'Never output, prompts, hidden input, secret arguments or private paths'];
+    'Never output, prompts, hidden input, secret arguments or private paths',
+    ...(config.queue.outputDisplay === 'fold' ? ['Queued command output starts collapsed · failed commands always stay visible'] : [])];
   return [...(lines ?? []), ...queueSummaryPreview(config, width), ...notes.map(note => `${foreground(UI_COLORS.subtle)}${note}\u001B[0m`)];
 }
