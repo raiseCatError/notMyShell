@@ -11,6 +11,38 @@ to send back. Item numbers refer to those files: `v19 1.6` is item 1.6 in the v0
 Terminal.app window, and on a physical Linux machine for the Linux rows. **Does not count:** tmux `send-keys`,
 AppleScript, headless PTY runs, screenshots of a window driven any of those ways, a VM or CI.
 
+## Stabilized builds: what to test now
+
+Physical QA is repeated on the **stabilized** candidates (draft PRs #395 and #396), not on `wt/v019` and `wt/v020`,
+which still hold the original release candidates and the QA sessions made with them on 2026-10-15. In a new Ghostty
+or Terminal.app window (a plain zsh, not inside NMSh):
+
+```sh
+source /Volumes/nmsh-opus/wt/release-train/docs/development/nmsh-qa.zsh
+qa19        # new isolated QA session on the stabilized v0.19 build    (qa20 for v0.20)
+qa19r       # reopen that same session after closing the window       (qa20r for v0.20)
+```
+
+`qa19 NO_COLOR=1` adds variables (remembered by `qa19r`). `nmsh_qa_stable_list` shows the pinned commits, whether
+each build verifies, and every stabilized QA session with its service; `nmsh_qa_stable_sessions v019` shows what is
+live in one. Each launch first prints `STABILIZED v019 candidate`, the full commit, the branch, the build directory
+and the QA directory; check the commit against #395/#396's gate list. The launcher:
+
+- runs only a read-only build of the pinned commit under `/Volumes/nmsh-opus/qa-builds/`, and refuses to start if
+  that build's commit, sources, `dist` digest or own build identity differ;
+- gives every session its own HOME, configuration, runtime directory (session service and socket) and working
+  directory, and does not pass on `CLAUDE_CONFIG_DIR`, `ZDOTDIR`, `HISTFILE` or the outer shell's `NMSH_*` variables;
+- reopens a session on the build it was made with, and refuses when the service in its runtime directory is any
+  other build, or when the latest session belongs to an older pin (it prints both ways forward);
+- refuses to start from inside NMSh, and refuses original-candidate QA directories (and the original commands
+  refuse stabilized ones);
+- ends or deletes nothing on its own: `nmsh_qa_stable_stop <dir>` and `nmsh_qa_stable_remove <dir>` ask first and
+  only accept stabilized QA directories.
+
+Everything below about reopening (what "1 detached live session" means, 2.2–2.4) applies unchanged; read
+`nmsh_qa_reopen` / `nmsh_qa_sessions` as `qa19r` / `nmsh_qa_stable_sessions`. The `wt/v019`/`wt/v020` steps in
+section 0 are only for the original candidates.
+
 ## 0. Before you start (about 5 minutes)
 
 1. Attach the release image if `/Volumes/nmsh-opus` is missing:
